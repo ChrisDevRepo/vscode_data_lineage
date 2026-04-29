@@ -1,83 +1,27 @@
 # Changelog
 
-## [Unreleased]
-
-### Changed
-- **Lighter per-hop active prompt (~700 tokens / hop saved, ~12K / 18-hop session).** The classification menu (`business → 1 / technical → 1 / both → 2`) is replaced by a single rendered line for the locked angle. Mode-irrelevant routing/pruning teaching no longer ships in SM (engine drives the agenda; AI only proposes additions a tool result reveals). Synthesis-grouping internals removed from the per-hop Metadata Protocol (sibling detection happens at synthesis, not capture). Engine-state echoes (`engine_status`, `expected_reply`, `legal_replies`, `session_ends_when`, `free_text`) dropped from `<mission_state>` — those are mechanically enforced via `LanguageModelChatToolMode.Required` + `toolPolicy`, restating in prose was dead weight.
-- **Cleaner business-classified output.** Cross-angle redirect line (`"Datatype lists, distribution/indexing hints, execution-plan notes belong in the technical angle"`) removed from `business_capture`; the substantive content (datatype declarations, execution-plan affordances) moved into `technical_capture` as positive instruction. Negation in business prompts was priming model attention onto technical topics (transaction-atomicity paragraphs, datatype lists). Business body recipe rewritten with a positive content checklist (filter conditions, calculations, rules, processes, dependencies, status transitions, risks) and SQL/data-warehousing jargon scrubbed (`"JOIN keys"` → `"matching criteria"`, `"COALESCE fallbacks"` → `"null-safe defaults"`, `"SCD-2"` example → `"applies tier-discount when order qualifies"`).
-- **Stronger closing template.** When `closing` ships (analysis spans 5+ sections), it is now required: through-line paragraph + a top-risks `| Risk | Scope |` markdown table lifted from ⚠️ markers in the captured sections. Eliminates the case where the chat output ended without a final summary.
-- **Numeric char-count advisories on prose fields → qualitative descriptors.** `summary` (`~100–300 chars`) and structural `## Purpose` (`≤200 chars`) tool-param/template descriptors replaced with `"one short sentence digest"` / `"one short sentence"`. Anthropic prompt-engineering doctrine: numeric ranges on free prose waste generation tokens on length-counting and trigger awkward truncation. Hard ceilings on machine-parseable fields (`badge_label maxLength: 30`, `note_caption maxLength: 200`) remain as Zod constraints.
-- **Per-hop User-message refreshed at every wipe.** The gate-approval directive (`"Current focus for hop 1 is X"`) was frozen at session start and reused verbatim across all hops. Now reflects the engine's current focus + hop number after every sliding-memory wipe.
-
-### Fixed
-- **`excludeTypes` NL guidance.** Tool description for `lineage_start_exploration.excludeTypes` now explicitly maps NL phrases (`"no views"`, `"exclude all views"`, `"tables only"`, `"skip UDFs"`) to the appropriate type list. Previous wording missed type-level exclusions when the user phrased them at type rather than identifier level.
-
-### Fixed
-- **No stale per-hop sub-question at synthesis.** The `<current_task>` block from the last active-phase hop no longer leaks into the synthesis prompt.
-
-### Removed
-- **`description` is no longer an AI-writeable field.** The full description shown in the description overlay is built deterministically by the engine (`orderAndAssemble`) from `title + intro + sections[] + closing`. Removed the AI-input field, the YAML template, the `STAGE_BY_KEY` entry, and the validation passthrough — the AI now writes structured parts only; the engine assembles the document. No user-visible change to the rendered overlay.
-
-### Added
-- **Pick the analysis lens before exploration.** Choose `business`, `technical`, or `both` when starting a `@lineage` exploration. Business reports describe domain meaning (rules, formulas, consumer impact). Technical reports describe execution (SQL evidence, joins, loading patterns, antipatterns). `both` produces two peer sections per node, one of each.
-- **Approve scope before analysis runs.** Every exploration shows a scope tree (Schema → Type → Node) with the live hop count. Approve to proceed, **Refine scope** to narrow it, or **Cancel**. Refine opens the chat input prefilled — describe the narrowing in plain English ("ignore staging", "drop UDFs", "trace ProductID only") and the assistant re-runs the scope. The loop continues until you approve or cancel.
-- **Column trace.** Ask `@lineage` to follow specific columns end-to-end ("trace TotalRevenue back to its sources"). Per-hop column attribution is captured alongside the regular analysis.
-- **Hop-by-hop progress.** During long explorations, `@lineage` shows `Hop X / N — analyzing <node>…` per step, then `Synthesizing the answer…` while assembling the final report.
-- **Follow-up after the report.** Once a graph is rendered, follow-up actions appear as chips: replay the full description, explore deferred objects, or ask refinements ("rename a label", "drop a node from the graph", "add this related object") — refinements edit the existing report instead of restarting.
-- **Smart grouping at synthesis.** When several procedures share the same shape (e.g. 3+ SPs with the same TRUNCATE+INSERT skeleton differing only in filter, or sibling EV cases / allocation rules), `@lineage` labels them once, groups them under a single section, and summarises them together — one comparison table with the shared SQL hoisted above the rows. Distinct logic still gets its own section.
-- **Big-picture closing.** When the analysis spans 5+ sections, the report ends with a one-paragraph through-line that names the overall pipeline answer in the lens you asked for, plus a `⚠️` flag for any cross-cutting risk that doesn't fit a single section.
-
-### Changed
-- **Business-mode quality matches `main`.** `@lineage` business-mission output (chat narrative, structured graph description, badge labels) is restored to the depth and structure produced before the testing branch's regressions. Technical mission and `both` mission produce their own corresponding outputs without bleeding into business reports.
-- **Cleaner reports.** Reports open with a one-sentence answer to the original question, then group related objects together before per-object detail. Out-of-scope objects are no longer enumerated inline — they remain available via the deferred-objects follow-up chip.
-- **Friendlier progress lines.** Progress reads as plain sentences ("Inspecting 3 neighbours for pruning…", "Loading lineage context…") instead of raw tool names.
-- **Customisable prompt templates.** `assets/aiOutputTemplates.yaml` drives both per-hop capture and final report rendering. Edit either side; changes flow through.
-- **Cleaner cancellation.** Pressing Stop mid-response exits cleanly — no "stream closed" error.
-
-### Fixed
-- **No technical content in business reports.** SQL fences, XPath, namespace URIs, datatype tables, and JOIN syntax no longer leak into business-mission slots. Business reports stay business; technical reports stay technical.
-- **No planning preamble in chat.** The `Now I have all slots. Assembling the final report.` leak no longer welds onto the first heading of the synthesised answer.
-- **Visible synthesis progress.** The 30–90s synthesis call now shows a `Synthesizing the answer…` progress chip — no perceived hang.
-- **Sibling procedures kept distinct in reports.** Each procedure gets its own section unless it genuinely shares the same shape (then it joins a comparison table). Pipeline-stage over-grouping that collapsed 22 procedures into 7 buckets is fixed.
-
 ## [0.9.9] - 2026-04-26
 
 ### Added
-- **Scope confirmation before long explorations** — `@lineage` shows the planned scope (nodes, schemas, depth) and asks for approval. Reply `yes` to proceed, `no` to pause, or ask a different question to redirect.
-- **Natural-language scope hints** — Phrases like "direct neighbors", "one level", or "ignore UDFs and views" are honored as actual scope rules, not just prompt prose.
-- **Mission briefing** — `@lineage` writes a short plan (intent, scope, filters) at the start of each exploration. Stays anchored across long multi-hop sessions.
-- **Deferred follow-ups** — References that fall outside the approved scope are surfaced as one-click chips below the response. Click to investigate that specific object.
-- **Incremental view updates** — Ask `@lineage` to add or remove specific tables in an existing view without restarting the analysis.
+- **Pick the analysis lens before exploration** — Choose `business`, `technical`, or `both` when starting a `@lineage` exploration. Business reports describe domain meaning (rules, formulas, consumer impact). Technical reports describe execution (SQL evidence, joins, loading patterns, anti-patterns). `both` produces two peer sections per node, one of each angle.
+- **Approve scope before analysis starts** — Every exploration shows a scope tree (Schema → Type → Node) with the live hop count. Approve to proceed, **Refine scope** to narrow it, or **Cancel**. Describe the narrowing in plain English ("ignore staging", "drop UDFs", "trace ProductID only") and the assistant re-runs. The loop continues until you approve or cancel.
+- **Follow-up chips after the report** — Once a graph is rendered, follow-up actions appear as chips: replay the full description, explore deferred objects, or ask refinements ("rename a label", "drop a node from the graph", "add this related object"). Refinements edit the existing report instead of restarting.
+- **Smart grouping at synthesis** — When several procedures share the same shape (e.g. 3+ SPs with the same TRUNCATE+INSERT skeleton differing only in filter, or sibling EV cases / allocation rules), `@lineage` labels them once and summarises them as a single comparison table. Distinct logic still gets its own section.
+- **Big-picture closing** — When the analysis spans 5+ sections, the report ends with a one-paragraph through-line naming the overall pipeline answer in the chosen lens, plus a `⚠️` risk table for cross-cutting issues that don't fit a single section.
 - **Show-full-description chip** — Every `@lineage` response that produced a graph view includes a chip that replays the full AI description inline. No re-analysis, no extra API call.
-- **Loading Pattern line** — Reports for stored procedures now start with a one-line `**Loading Pattern:**` summary (full / incremental / SCD2 / MERGE / etc.). Views and functions skip the line.
-- **Business vs technical reports** — Pick `business`, `technical`, or `both` when starting an exploration. Business reports describe domain meaning (rules, formulas, consumer impact); technical reports describe execution (SQL evidence, joins, loading patterns, antipatterns). `both` produces two peer sections per node, one of each angle.
-- **Customizable AI output templates** — `aiOutputTemplates.yaml` now drives both what `@lineage` captures per node AND how the final report renders. Edit either side; changes flow through.
-- **Better compatibility with Copilot Free** — `@lineage` resolves the active chat model dynamically, fixing "Chat provider not registered" errors.
+- **Better Copilot Free compatibility** — `@lineage` resolves the active chat model dynamically, fixing "Chat provider not registered" errors.
 
 ### Changed
-- **Friendlier chat progress lines.** While `@lineage` works, progress lines now read as plain sentences — "Inspecting 3 neighbours for pruning…", "Hop 5 / 22 — analyzing spCadenceRule_DEPT…", "Loading lineage context…" — instead of raw tool names like "Invoking get_neighbor_columns…". One source of truth covers both the inline chat stream and VS Code's native invocation chrome.
-- **`Objects` row in the AI description overlay.** Each section's objects render as a single comma-separated row of clickable links, prefixed by a small "Objects" caption — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node.
-- **Cleaner synthesis reports.** Out-of-scope objects no longer appear as an enumerated "Deferred objects for follow-up" section inside the report. The report stays anchored on the analyzed nodes; the post-synthesis follow-up chip remains the single place to drill into deferred objects.
-- **`@lineage` is clearer about its current focus.** The hop prompt now states the focus node id in plain text (in `<mission_state>` and in the gate-resume message), so the AI reliably identifies its analysis target on hop 1 — eliminating the first-hop waste where the AI inspected the origin table instead of the seeded procedure.
-- **Starting-point table summaries.** When you ask about a table as your starting point, `@lineage` now produces one clean dossier slot for it — Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys — instead of folding the table into a neighbouring procedure's analysis. Mid-graph tables are unchanged (still contracted through to the procedures around them).
-- **Synthesis rendering rules.** The intro paragraph is now narrative prose only (no column dumps). Sibling procedures sharing the same shape (e.g. multiple EV cases, multiple allocation rules) render as one comparison table with the shared formula hoisted above — not one bullet per variant. Every ⚠️ invariant from every slot is preserved (no merging across variants). Section headers use plain `##` — no auto-numbered prefix.
-- **Authoring hygiene.** Procedure analysis names only columns the procedure reads or writes. Neighbour tables' full schemas belong in catalog inspection output, not in a procedure's slot. Soft authoring aim is 800–2 000 chars per `Columns / logic` section — split into sub-sections rather than prose-extending a single section.
-- **Cheaper synthesis retry.** When the synthesis free-text guard fires, the retry re-sends a minimal prompt (plus the essential system / user / tool-result messages) instead of the full stable prefix — cuts retry cost significantly.
-- **Ask follow-ups after the report** — once `@lineage` finishes, you can keep asking: tweak a label, drop a node from the graph, or add a deferred node. Refinements edit the existing report instead of starting over.
-- **Reports answer the question first** — every `@lineage` report opens with a one-sentence answer to the original question, then groups related objects together before diving into per-object detail.
+- **Reports answer the question first** — Every `@lineage` report opens with a one-sentence answer to the original question, then groups related objects before per-object detail.
+- **Friendlier progress lines** — Progress reads as plain sentences ("Inspecting 3 neighbours for pruning…", "Loading lineage context…") instead of raw tool names. A `Synthesizing the answer…` chip appears during the final assembly step.
+- **Loading pattern always visible** — Stored procedures open with a one-line `**Loading Pattern:**` summary (full / incremental / SCD2 / MERGE / etc.) in the report header. Previously captured only in AI memory.
+- **Starting-point table summaries** — When you ask about a table as your starting point, `@lineage` produces a clean dossier (Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys) instead of folding it into a neighbouring procedure's analysis.
+- **Objects listed inline** — Each section's objects render as a single comma-separated row of clickable links — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node.
+- **Out-of-scope objects moved to follow-up chips** — Deferred objects no longer appear as an enumerated section inside the report body.
+- **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both what `@lineage` captures per node and how the final report renders. Previously it only controlled report rendering.
 - **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
-- **30-minute AI session timeout** — Idle exploration sessions expire automatically. Starting a new exploration discards any old in-progress one with a brief in-chat notice — no blocking dialog.
-- **Cleaner cancellation** — Pressing Stop mid-response no longer produces a red "stream closed" error. The handler exits cleanly.
-
-### Fixed
-- **"Show full description" chip restored.** The chip that replays the full AI description inline after a graph view was lost during an earlier refactor. It now reappears below every successful `@lineage` exploration that produced a view; clicking it prints the cached description verbatim, with no model round-trip.
-- **Slot hijack on first hop.** If the AI's `submit_findings` was rejected with `focus_mismatch`, it could retry by just swapping the `focus_node_id` field while keeping the original (wrong-subject) analysis body. The analysis would then end up stored under an unrelated node. `submit_findings` now rejects with `focus_subject_mismatch` when the authored analysis opens by naming a different scope node than the declared focus — identifier-match contract, not content judgement.
-- **Silent route drops.** Routes that passed acceptance but produced no new hop (table whose contracted forward fell outside scope) no longer silently report `accepted: true`. The route_outcome is downgraded to `{ accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' }` so the AI can tell routed-and-enqueued apart from routed-but-dropped.
-- **Prompt duplication.** The "Grounding rule" sentence was repeated four times across the active-phase prompt; the out-of-scope routing paragraph was repeated three times. Both are now stated once in their canonical surface.
-- **`/search` and `/trace` returning empty** — Slash commands now reliably invoke their lineage tools instead of fast-failing with zero tokens.
-- **Lost first-node context after consent** — The first node's context is now preserved across the consent boundary, preventing tool hallucinations at the start of an exploration.
-- **Truncated DDL during AI exploration** — `@lineage` can now resolve full DDL on demand during multi-hop traces.
-- **Out-of-scope deferred follow-ups** — Dependencies hidden by a natural-language filter (e.g. "ignore UDFs") are offered as deferred follow-up chips instead of being silently dropped.
+- **30-minute session timeout** — Idle exploration sessions expire automatically. Starting a new exploration discards any old in-progress one with a brief in-chat notice — no blocking dialog.
+- **Cleaner cancellation** — Pressing Stop mid-response exits cleanly — no "stream closed" error.
 
 ## [0.9.8] - 2026-04-12
 

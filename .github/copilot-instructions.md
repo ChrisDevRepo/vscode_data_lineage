@@ -12,7 +12,7 @@ A VS Code extension for visualizing SQL dependencies. Key technologies:
 ## Documentation Reference (Mandatory for non-trivial changes)
 - [**System Architecture**](../docs/ARCHITECTURE.md): Map & Router, Bipartite analysis, Hourglass context.
 - [**Developer Guide**](../docs/DEVELOPER_GUIDE.md): Prompt builders, builder hierarchy, dual ingestion flows.
-- [**Interface Specs**](../docs/README.md): Detailed contracts for Parse Rules, DMV Queries, and Profiling.
+- [**Parse Rules**](../docs/PARSE_RULES.md), [**DMV Queries**](../docs/DMV_QUERIES.md), [**Profiling**](../docs/PROFILING_PATTERNS.md): SQL parser YAML reference, DBA contract, and profiling SQL patterns.
 - [**Contributing**](../CONTRIBUTING.md): Testing tiers, coding standards, snapshot protocol.
 
 ## Engineering Standards

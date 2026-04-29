@@ -118,12 +118,12 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 
 | Tool | Discovery | ACTIVE inline BB | ACTIVE SM (BB+CT) | Synthesis | Completed | Purpose |
 |------|:---------:|:----------------:|:-----------------:|:---------:|:---------:|---------|
-| `get_context` | ✓ | — | — | ✓ | — | Schemas, stats, active filter |
-| `search_objects` | ✓ | — | — | ✓ | ✓ | Resolve name / column → ID |
-| `search_ddl` | ✓ | — | — | ✓ | ✓ | Regex over SP / view / function bodies |
-| `get_object_detail` | ✓ | — | — | ✓ | ✓ | Full metadata + DDL + neighbours for one object |
+| `get_context` | ✓ | — | — | — | — | Schemas, stats, active filter |
+| `search_objects` | ✓ | — | — | — | ✓ | Resolve name / column → ID |
+| `search_ddl` | ✓ | — | — | — | ✓ | Regex over SP / view / function bodies |
+| `get_object_detail` | ✓ | — | — | — | ✓ | Full metadata + DDL + neighbours for one object |
 | `get_neighbor_columns` | — | — | ✓ | — | — | Columns + types + FKs for direct neighbours (no DDL); used for prune decisions |
-| `detect_graph_patterns` | ✓ | — | — | ✓ | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
+| `detect_graph_patterns` | ✓ | — | — | — | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
 | `start_exploration` | ✓ | — | — | — | ✓ (supplement) | Hand off to the state machine |
 | `submit_findings` | — | ✓ | ✓ | — | — | Submit hop analysis + route + prune. Required mode. |
 | `present_result` | — | — | — | ✓ | ✓ | Author the final report (sections, summary, highlights) |
@@ -268,7 +268,7 @@ The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `send
 - **ACTIVE tool palette is narrow** — `submit_findings` only in inline BB; `+ get_neighbor_columns` in SM. Multi-tool would force `Required` to downgrade to `Auto` on some providers; the policy is enforced by [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts).
 - **Repeat-Reject Guard** — [`src/ai/repeatRejectGuard.ts`](../src/ai/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
 - **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here" — `complete: true` is silently ignored in SM mode.
-- **Classification gate at session lock-in.** `start_exploration` accepts an optional `classification` (`business` | `technical` | `both`); when omitted, `sess.classification` defaults to `business` at gate-emit. The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification at the tool handler boundary (`toolProvider.validateSectionsAgainstClassification`); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.
+- **Classification gate at session lock-in.** `start_exploration` requires `classification` (`business` | `technical` | `both`); missing or invalid values are rejected at the Zod boundary — there is no engine fallback. The tool-param description in `package.json` biases the AI toward `business` for ambiguous intent (`technical` only for explicit perf/index/tuning asks; `both` only for explicit "both angles" requests). The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification at the tool handler boundary (`toolProvider.validateSectionsAgainstClassification`); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.
 - **Two-stage template gate** — `STAGE_BY_KEY` (phase routing) and `CLASSIFICATION_GATED` (per-classification filter) in [`templateRenderer.ts`](../src/ai/templateRenderer.ts) decide which YAML keys ship per stage. `closing` carries an additional `slotCount >= 5` gate. No template body for an un-fired stage / classification ever reaches the model.
 - **Identifier-match contract on capture.** `submit_findings` rejects with `focus_subject_mismatch` when any captured `section.text` opens by naming a different scope node than the declared `focus_node_id`. Mechanical scan of the first 200 chars; not a content-quality judgement.
 - **Gate detail always rendered** — when the session is `awaiting_gate` at finalizer time, `dispatchExit` rebuilds the detail from `engine.getScopeSummary()` (rendered through `renderScopeSummaryMd`) if no `gate`-exit fired this turn. Refine narration ("I'll remove the views…") with no tool call still shows the current scope tree above the buttons.

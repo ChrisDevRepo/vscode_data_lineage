@@ -108,7 +108,8 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
                    + buildModeBlock(BB|CT)
                    + buildColumnAspectPrompt        (CT only)
      synthesis   → buildSynthesisPrompt
-     completed   → buildFollowUpPrompt
+     completed   → buildDeferredQuestionsPrompt (when deferred questions exist)
+               | buildFollowUpPrompt (otherwise)
 3. resolveStagePrompt                 (always — YAML *_capture (active) + per-field synthesis instructions; classification-gated; closing gated on slotCount ≥ 5)
 4. buildMissionBriefBlock                  (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
 5. buildMemoryBlock                   (SM active only — <short_term_memory> + tally)

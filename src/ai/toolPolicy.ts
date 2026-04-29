@@ -13,7 +13,7 @@
  * | `discover`                | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, start_exploration |
  * | `active` (inline_bb)      | submit_findings                                                                                  |
  * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
- * | `synthesis`               | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, present_result |
+ * | `synthesis`               | present_result                                                                                    |
  * | `completed`               | present_result, get_object_detail, search_ddl, search_objects, start_exploration (supplement-only) |
  *
  * Deliberately excluded from every LM phase: `lineage_get_neighborhood` — it

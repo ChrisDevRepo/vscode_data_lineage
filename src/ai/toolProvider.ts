@@ -159,7 +159,7 @@ class ToolHandler {
     return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(JSON.stringify(data))]);
   }
 
-  private logAndReturn(toolName: string, data: object, input?: any): vscode.LanguageModelToolResult {
+  private logAndReturn(toolName: string, data: object, input?: unknown): vscode.LanguageModelToolResult {
     const sess = this.getSession();
     const json = JSON.stringify(data);
     const chars = json.length;
@@ -248,7 +248,7 @@ class ToolHandler {
     }
   }
 
-  public getContext(input: any) {
+  public getContext(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const offPolicy = this.offPolicyOrNull('lineage_get_context');
@@ -259,19 +259,19 @@ class ToolHandler {
     } catch (err) { return this.toolError('get_context', err); }
   }
 
-  public searchObjects(input: any) {
+  public searchObjects(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const offPolicy = this.offPolicyOrNull('lineage_search_objects');
       if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { query: 'string' });
       if (inputErr) return this.toolResult(inputErr);
-      const { query, types, schemas, mode } = input;
+      const { query, types, schemas, mode } = input as { query: string; types?: ObjectType[]; schemas?: string[]; mode?: 'substring' | 'regex' };
       return this.logAndReturn('search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter), input);
     } catch (err) { return this.toolError('search_objects', err); }
   }
 
-  public startExploration(input: any) {
+  public startExploration(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const sess = this.getSession();
@@ -513,7 +513,7 @@ class ToolHandler {
     }
   }
 
-  public submitFindings(input: any) {
+  public submitFindings(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const sess = this.getSession();
@@ -819,35 +819,35 @@ class ToolHandler {
     } catch (err) { return this.toolError('present_result', err); }
   }
 
-  public runBfsTrace(input: any) {
+  public runBfsTrace(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
-      const { id, upstream_hops, downstream_hops, types, schemas, include_ddl, target } = input;
+      const { id, upstream_hops, downstream_hops, types, schemas, include_ddl, target } = input as { id: string; upstream_hops?: number; downstream_hops?: number; types?: ObjectType[]; schemas?: string[]; include_ddl?: boolean; target?: string };
       const result = runBfsTrace(this.requireModel(), this.requireGraph(), id, upstream_hops ?? 3, downstream_hops ?? 3, types, schemas, include_ddl ?? true, this.getSession().columnStore, target);
       return this.logAndReturn('get_neighborhood', result, input);
     } catch (err) { return this.toolError('get_neighborhood', err); }
   }
 
-  public getObjectDetail(input: any) {
+  public getObjectDetail(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const offPolicy = this.offPolicyOrNull('lineage_get_object_detail');
       if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { id: 'string' });
       if (inputErr) return this.toolResult(inputErr);
-      const { id } = input;
+      const { id } = input as { id: string };
       return this.logAndReturn('get_object_detail', getObjectDetail(this.requireModel(), id, this.getSession().columnStore), input);
     } catch (err) { return this.toolError('get_object_detail', err); }
   }
 
-  public runAnalysis(input: any) {
+  public runAnalysis(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const offPolicy = this.offPolicyOrNull('lineage_detect_graph_patterns');
       if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { type: 'string' });
       if (inputErr) return this.toolResult(inputErr);
-      const { type, min_degree, max_size } = input;
+      const { type, min_degree, max_size } = input as { type: string; min_degree?: number; max_size?: number };
       const anaCfg = vscode.workspace.getConfiguration('dataLineageViz');
       const resolvedMinDegree = min_degree ?? anaCfg.get<number>('analysis.hubMinDegree');
       const resolvedMaxSize   = max_size   ?? anaCfg.get<number>('analysis.islandMaxSize');
@@ -856,14 +856,14 @@ class ToolHandler {
     } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
 
-  public searchDdl(input: any) {
+  public searchDdl(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const offPolicy = this.offPolicyOrNull('lineage_search_ddl');
       if (offPolicy) return offPolicy;
       const inputErr = validateToolInput(input, { query: 'string' });
       if (inputErr) return this.toolResult(inputErr);
-      const { query, types } = input;
+      const { query, types } = input as { query: string; types?: ('view' | 'procedure' | 'function')[] };
       return this.logAndReturn('search_ddl', searchDdl(this.requireModel(), query, types, this.getSession().columnStore), input);
     } catch (err) { return this.toolError('search_ddl', err); }
   }
@@ -878,7 +878,7 @@ class ToolHandler {
    * both conditions and returns a structured error on violation — the tool is
    * never a backdoor for out-of-scope exploration.
    */
-  public getNeighborColumns(input: any) {
+  public getNeighborColumns(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const sess = this.getSession();

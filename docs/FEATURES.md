@@ -239,9 +239,12 @@ Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `dataLineageViz.layout.direction` | `LR` | Graph flow: `LR` (left-to-right) or `TB` (top-to-bottom). |
-| `dataLineageViz.layout.edgeStyle` | `smoothstep` | Line style: `smoothstep`, `step`, `straight`, `bezier`. |
+| `dataLineageViz.layout.edgeStyle` | `default` | Line style: `default` (smooth bezier), `smoothstep`, `step`, `straight`. |
 | `dataLineageViz.layout.minimapEnabled` | `true` | Show the navigation minimap. |
-| `dataLineageViz.layout.rankSeparation` | `100` | Distance between layout layers. |
+| `dataLineageViz.layout.rankSeparation` | `120` | Horizontal spacing between dependency layers (px). |
+| `dataLineageViz.layout.nodeSeparation` | `30` | Vertical spacing between nodes in the same layer (px). |
+| `dataLineageViz.layout.edgeAnimation` | `true` | Animate edges when running a trace. |
+| `dataLineageViz.layout.highlightAnimation` | `false` | Animate edges when clicking a node. |
 
 ### `@lineage` AI
 
@@ -249,7 +252,20 @@ Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
 |---------|---------|---------|
 | `dataLineageViz.ai.enabled` | `true` | Enable / disable the `@lineage` participant and tools. |
 | `dataLineageViz.ai.maxRounds` | `50` | Safety cap on tool turns per investigation (5–100). |
-| `dataLineageViz.ai.inlineTokenBudget` | `10000` | Max DDL chars for one-shot delivery before switching to hop-by-hop. |
+| `dataLineageViz.ai.inlineTokenBudget` | `10000` | Max estimated token budget for one-shot DDL delivery before switching to hop-by-hop (1000–100000). |
 | `dataLineageViz.ai.inlineNodeCap` | `10` | Max scope nodes for one-shot delivery (1–100). |
 | `dataLineageViz.ai.outputTemplateFile` | `""` | Path to custom YAML output templates. See [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 | `dataLineageViz.ai.showToolInvocations` | `false` | Show each tool call as an expandable chat part with input JSON (developer debugging). |
+
+### Table profiling
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `dataLineageViz.tableStatistics.enabled` | `true` | Enable on-demand column statistics (quick / standard modes). |
+| `dataLineageViz.tableStatistics.standardModeEnabled` | `true` | Include AVG, STDEV, min/max, zero/empty counts alongside row/null/distinct. |
+| `dataLineageViz.tableStatistics.excludeExternalTables` | `true` | Skip external tables (OPENROWSET, remote sources) to avoid cross-system queries. |
+| `dataLineageViz.tableStatistics.queryTimeout` | `60` | Seconds to wait for a per-table profiling query. |
+| `dataLineageViz.tableStatistics.sampleThreshold` | `100000` | Row count above which the table is sampled instead of fully scanned. |
+| `dataLineageViz.tableStatistics.sampleSize` | `10000` | Number of rows in the TABLESAMPLE when sampling is triggered. |
+| `dataLineageViz.tableStatistics.useApproxDistinct` | `true` | Use `APPROX_COUNT_DISTINCT` for faster (±2%) distinct counts. |
+| `dataLineageViz.tableStatistics.maxColumns` | `50` | Maximum columns profiled per table; wider tables are truncated. |
