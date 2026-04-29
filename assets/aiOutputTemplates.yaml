@@ -321,8 +321,7 @@ structural_summary:
     ## Grain / keys
     Primary key + common join keys from foreign keys. One short paragraph.
 
-    Banned in this template: transform formulas, CASE logic, business rules,
-    step-by-step behaviour. Those belong in the procedure slots.
+    Scope: structure and relationships only — the surrounding procedure slots carry all transform logic.
 
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompts.ts. No separate per-angle templates
