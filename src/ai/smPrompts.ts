@@ -16,7 +16,7 @@ const BLOCK = {
     '## Verdict Protocol',
     '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
     '- pass: Node is pure wire (SELECT *, synonym). No transformation. (Use analyze if ANY logic exists.)',
-    '- prune: Utility node (logging/error) or irrelevant to the mission.',
+    '- prune: Utility node (logging/error), or downstream consumer that is topologically adjacent but does not contribute to the stated question.',
   ].join('\n'),
 
   /**
@@ -60,7 +60,7 @@ const BLOCK = {
   /** Trimmed routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */
   routingSm: [
     '## Routing',
-    'Engine selects the next focus node from the agenda. For each focus node: if its function falls outside the `<mission_brief>` — not only logging/error utilities, but any node that does not contribute to the user\'s stated question — emit `verdict: "prune"`. If a tool result surfaces a topologically-valid neighbor not yet on the agenda, add it via `route_requests` (source the id verbatim from the tool result). Otherwise emit `route_requests: []`.',
+    'Engine selects the next focus node from the agenda. For each focus node: if its function falls outside the `<mission_brief>` — not only logging/error utilities, but any node that does not contribute to the user\'s stated question — emit `verdict: "prune"`. Only add a neighbor via `route_requests` if it directly contributes to answering the user\'s stated question — topological adjacency is not sufficient justification. A downstream consumer of a source table is not itself a source. Source the id verbatim from the tool result. Otherwise emit `route_requests: []`.',
   ].join('\n'),
 
   /**
@@ -153,7 +153,7 @@ export function buildSynthesisReminder(question: string): string {
   return [
     '## Synthesis Reminder — re-read before calling `lineage_present_result`',
     `- User question: "${question}"`,
-    '- `sections[]` is REQUIRED — the captured per-node bodies belong here, not in `intro`. Lift each `detail_slots[i].sections[j].text` verbatim into a peer entry.',
+    '- `sections[]` is REQUIRED — select from `detail_slots[]` only the nodes that directly answer the user question. Lift selected bodies verbatim; omit nodes whose role is orthogonal to the question even if captured.',
     '- GROUP along two orthogonal axes: (1) keep each captured slot\'s `angle` separate — a business section and a technical section remain individual entries; under `classification = both` this yields two parallel streams. (2) Within a single angle, nodes that share `badge_label` become one section (badge → `label`, every grouped node id → `node_ids[]`).',
     '- Every badged node deserves business meaning AND SQL evidence (predicate, formula, join key); a label without evidence is incomplete.',
     '- Carry every formula in LaTeX math syntax (`$expr$` inline, `$$expr$$` block) and every ⚠️ risk callout from capture into the assembled section. Math captured as LaTeX renders as math; math turned into prose stays prose.',
