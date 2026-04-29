@@ -913,7 +913,7 @@ export class NavigationEngine implements IHopStateMachine {
       Array.from(this.excludedNodeIds).sort().join(','),
       Array.from(this.passNodeIds).sort().join(','),
     ].join('|');
-    let h = 5381;
+    let h = 5381; // DJB2 hash — standard seed
     for (let i = 0; i < contractParts.length; i++) h = ((h << 5) + h + contractParts.charCodeAt(i)) | 0;
     const contractHash = Math.abs(h).toString(16).padStart(8, '0').slice(0, 8);
     const filtersDigest = `excludeTypes=${this.excludedTypes.size},excludeSchemas=${this.excludedSchemas.size},excludeNodeIds=${this.excludedNodeIds.size},passNodeIds=${this.passNodeIds.size}`;

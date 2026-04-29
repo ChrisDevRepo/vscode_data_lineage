@@ -45,6 +45,7 @@ export function renderScopeSummaryMd(s: ScopeSummary): string {
 
   const passSet = new Set(s.activeFilters.passNodeIds.map(n => n.toLowerCase()));
 
+  // Larger schemas first so the AI sees the heaviest scope upfront; tie-break by name for determinism.
   const schemaEntries = Object.entries(s.bySchema).sort((a, b) => {
     const ds = b[1].scope - a[1].scope;
     if (ds !== 0) return ds;

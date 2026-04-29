@@ -44,6 +44,44 @@ import { getToolInvocationLabel } from './toolLabels';
 import { renderScopeSummaryMd } from './scopeSummaryRenderer';
 export { renderScopeSummaryMd } from './scopeSummaryRenderer';
 
+/** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
+const SAFETY_RATIO = 0.7;
+
+/** Truth table for `validateSectionsAgainstClassification`. Adding a classification = one new entry here, no parallel switch arms. */
+const SECTION_RULES: Record<ClassificationValue, {
+  required: CaptureAngle[];
+  forbidden: CaptureAngle[];
+  count: number;
+  missingMsg: string;
+  forbiddenMsg: string | null;
+  countMsg: string;
+}> = {
+  business: {
+    required: ['business'],
+    forbidden: ['technical'],
+    count: 1,
+    missingMsg: 'classification=business requires exactly one section with angle="business".',
+    forbiddenMsg: 'classification=business rejects technical sections — submit only the business angle.',
+    countMsg: 'classification=business expects one section; got more.',
+  },
+  technical: {
+    required: ['technical'],
+    forbidden: ['business'],
+    count: 1,
+    missingMsg: 'classification=technical requires exactly one section with angle="technical".',
+    forbiddenMsg: 'classification=technical rejects business sections — submit only the technical angle.',
+    countMsg: 'classification=technical expects one section; got more.',
+  },
+  both: {
+    required: ['business', 'technical'],
+    forbidden: [],
+    count: 2,
+    missingMsg: 'classification=both requires two sections — one with angle="business" and one with angle="technical".',
+    forbiddenMsg: null,
+    countMsg: 'classification=both expects exactly two sections (one per angle).',
+  },
+};
+
 /**
  * Validates a finding's `sections[]` against the locked session classification.
  *
@@ -68,39 +106,16 @@ function validateSectionsAgainstClassification(
   if (!classification) {
     return list.length === 0 ? 'sections[] must contain at least one section when verdict is analyze or pass.' : null;
   }
+  const rule = SECTION_RULES[classification];
   const angles = new Set(list.map(s => s.angle));
-  switch (classification) {
-    case 'business':
-      if (list.length === 0 || !angles.has('business')) {
-        return 'classification=business requires exactly one section with angle="business".';
-      }
-      if (angles.has('technical')) {
-        return 'classification=business rejects technical sections — submit only the business angle.';
-      }
-      if (list.length > 1) {
-        return 'classification=business expects one section; got more.';
-      }
-      return null;
-    case 'technical':
-      if (list.length === 0 || !angles.has('technical')) {
-        return 'classification=technical requires exactly one section with angle="technical".';
-      }
-      if (angles.has('business')) {
-        return 'classification=technical rejects business sections — submit only the technical angle.';
-      }
-      if (list.length > 1) {
-        return 'classification=technical expects one section; got more.';
-      }
-      return null;
-    case 'both':
-      if (!angles.has('business') || !angles.has('technical')) {
-        return 'classification=both requires two sections — one with angle="business" and one with angle="technical".';
-      }
-      if (list.length !== 2) {
-        return 'classification=both expects exactly two sections (one per angle).';
-      }
-      return null;
+  for (const req of rule.required) {
+    if (!angles.has(req)) return rule.missingMsg;
   }
+  for (const forb of rule.forbidden) {
+    if (angles.has(forb)) return rule.forbiddenMsg!;
+  }
+  if (list.length !== rule.count) return rule.countMsg;
+  return null;
 }
 
 /**
@@ -459,7 +474,6 @@ class ToolHandler {
       } else {
         const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
         const maxRounds = aiCfg.get<number>('maxRounds', 50);
-        const SAFETY_RATIO = 0.7;
         const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
         if (initResult.scopeSize > safeMax) {
           const safeDepth = suggestNarrowerDepth(g, data.origin, data.direction || 'bidirectional', safeMax);
