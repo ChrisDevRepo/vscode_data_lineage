@@ -81,11 +81,34 @@ The contract is locked mechanically at the tool handler boundary: each `submit_f
 
 ### Column trace mode
 
-Column trace is activated when `start_exploration` is called with `targetColumns`. It does not replace `business_capture` / `technical_capture`; those still fire per the gate above. The CT overlay adds:
+Column trace is activated when `start_exploration` is called with `targetColumns`. Every CT hop has two obligations:
 
-- A `<column_state>` block injected into the per-hop system prompt by `buildColumnAspectPrompt()` ([`src/ai/prompts.ts`](../src/ai/prompts.ts)) listing `target_columns`, `done_columns`, `active_columns`.
-- Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
-- A `column_flow` requirement in `submit_findings` for column attribution.
+**1. Narrative — `sections[].text` (same as BB)**
+`business_capture` / `technical_capture` templates fire exactly as in BB mode. The AI writes `sections[].text` describing the business purpose, data flow, formulas, and SQL evidence for the node. This is not a CT addition — it is the base hop obligation in all modes.
+
+**2. Structural provenance — `column_flow` (CT addition)**
+The AI additionally declares how each active target column flows through the node. This is mechanically enforced — the engine rejects every non-prune verdict without `column_flow` (`column_flow_required`). Outside CT the field is accepted but ignored.
+
+`column_flow` shape per entry:
+- `out_col` — column on this node, or `@Param` for procedures.
+- `writes_to?` — for writer procedures: `{ node, col }` naming the table column being written. Resolves the edge direction: `from_node=proc, to_node=Employee` rather than `to_node=focusId`.
+- `contributors[]` — upstream sources: `{ from_node, from_col, role }`.
+
+`role` values: `source` (terminal — no further upstream), `rename`, `formula`, `case`, `coalesce`, `join_value`, `aggregate`, `filter_only` (excluded from edge accumulation — WHERE/JOIN-ON predicate only, not data output).
+
+Terminal source (`role="source"`, `contributors:[]`) applies to: stored base column, procedure `@Param`, magic number/literal, system function (e.g. `GETDATE()`). Empty `contributors` is not an error.
+
+Validated edges accumulate in `ColumnAspect.edges[]` and are exposed via `SmResult.columnAspect`. Branch termination is structural — a branch is closed when its last edge carries `role="source"`. No completion flag is used.
+
+Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
+
+**Per-hop injection.** `buildCurrentTaskBlock` appends a `<column_trace>` XML block to `<current_task>` listing the active columns and the structural sub-question for the hop. `buildColumnAspectPrompt` injects the full CT protocol (two-channel contract, role table, terminal source rules) into the stable system prompt.
+
+**Gate.** `scopeSummaryRenderer` shows `Column-Trace — columns: [X, Y]` in the consent gate so the user sees which columns are traced before approving.
+
+**Synthesis.** When the agenda drains, `buildCtSynthesisBlock` renders the accumulated edge chain and appends it to the synthesis reminder. `present_result` is anchored to the traced path rather than free-form prose.
+
+**Follow-up column traces from `completed` phase.** When the user asks a follow-up column question after a completed trace, the AI calls `start_exploration` with the same origin node and new `targetColumns`. If the origin matches the prior result (`sess.resultGraph.originNodeId`), `toolProvider.ts` auto-routes to the supplement path: `supplementAgenda(visitedIds)` re-queues all previously visited nodes, `setColumnTargets(targetColumns)` updates the engine's column-trace context, and the session re-enters `exploring` without a gate or archive wipe. Different-origin follow-ups still trigger a fresh start with gate confirmation.
 
 ## Key inventory — purpose & maintenance
 

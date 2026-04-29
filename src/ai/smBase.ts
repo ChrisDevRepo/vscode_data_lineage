@@ -505,6 +505,15 @@ export class NavigationEngine implements IHopStateMachine {
     return this._columnAspect;
   }
 
+  /** Updates column-trace targets in place — mirrors setInlineMode / extendAllowedSchemas pattern. */
+  public setColumnTargets(targetColumns: string[]): void {
+    this._columnAspect = {
+      target_columns: targetColumns,
+      active_columns: targetColumns,
+      edges: [],
+    };
+  }
+
   /** Gets the size of the active exploration scope. */
   public get scopeSize(): number {
     return this.scopeNodeIds.size;
@@ -619,6 +628,7 @@ export class NavigationEngine implements IHopStateMachine {
       direction: this._direction,
       inlineMode: this._inlineMode,
       columnAspectActive: !!this._columnAspect,
+      targetColumns: this._columnAspect?.target_columns,
       bySchema,
       activeFilters: {
         schemas: Array.from(this.excludedSchemas).sort(),
@@ -852,8 +862,8 @@ export class NavigationEngine implements IHopStateMachine {
     if (params.targetColumns && params.targetColumns.length > 0) {
       this._columnAspect = {
         target_columns: params.targetColumns,
-        done_columns: [],
         active_columns: params.targetColumns,
+        edges: [],
       };
     } else {
       this._columnAspect = null;
@@ -1189,6 +1199,9 @@ export class NavigationEngine implements IHopStateMachine {
       if (!focusId || !this.nodeMap.has(focusId)) {
         return { error: 'invalid_focus_node', got: focusId };
       }
+      if (this._columnAspect && finding.verdict === 'analyze' && !finding.column_flow?.length) {
+        return { error: 'column_flow_required', hint: "Column trace is active. Emit `column_flow` for every node with verdict='analyze'. If the node does not interact with the traced columns, use verdict='prune' instead." };
+      }
 
       const acceptedNids = new Set<string>();
       if (finding.route_requests) {
@@ -1282,12 +1295,30 @@ export class NavigationEngine implements IHopStateMachine {
         }
       }
 
+      // CT contract: column_flow required for all non-prune verdicts when CT is active
+      if (this._columnAspect && finding.verdict !== 'prune') {
+        if (!finding.column_flow || finding.column_flow.length === 0) {
+          return {
+            error: 'column_flow_required',
+            hint: `CT active — verdict=${finding.verdict} requires column_flow for [${this._columnAspect.active_columns.join(', ')}]. Submit column_flow declaring how each active column flows through this node, or use verdict=prune if this node does not interact with the traced columns.`,
+          };
+        }
+      }
+
       // Column Aspect Validation: column_flow structured JSON
       if (this._columnAspect && finding.column_flow) {
         const focusNode = this.nodeMap.get(focusId)!;
         const validFocusCols = new Set(getNodeColumns(focusNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
 
+        const activeLower = this._columnAspect.active_columns.map(c => c.toLowerCase());
+
         for (const entry of finding.column_flow) {
+          // out_col must be one of the active CT columns (or a @param alias for it)
+          if (!activeLower.includes(entry.out_col.toLowerCase())) {
+            allInvalidRoutes.push({ id: focusId, reason: `column_flow_invalid: out_col "${entry.out_col}" is not in active_columns [${this._columnAspect.active_columns.join(', ')}]. Only declare column_flow for the tracked columns.` });
+            continue;
+          }
+
           if (!validFocusCols.has(entry.out_col.toLowerCase())) {
             allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='prune'.` });
             continue;
@@ -1300,7 +1331,7 @@ export class NavigationEngine implements IHopStateMachine {
               continue;
             }
             const validNeighborCols = new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-            if (!validNeighborCols.has(cont.from_col.toLowerCase())) {
+            if (validNeighborCols.size > 0 && !validNeighborCols.has(cont.from_col.toLowerCase())) {
               allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
             }
           }
@@ -1340,6 +1371,26 @@ export class NavigationEngine implements IHopStateMachine {
         this.lastHopDetailChars = sections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
         this.lastHopSummaryChars = finding.summary?.length ?? 0;
         this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
+
+        // Accumulate validated column lineage edges (filter_only excluded — not data flow)
+        if (this._columnAspect && finding.column_flow) {
+          for (const entry of finding.column_flow) {
+            const toNode = entry.writes_to?.node.toLowerCase() ?? focusId;
+            const toCol  = entry.writes_to?.col  ?? entry.out_col;
+            for (const cont of entry.contributors) {
+              if (cont.role === 'filter_only') continue;
+              this._columnAspect.edges.push({
+                hop_node:  focusId,
+                hop:       this.hopCount,
+                from_node: cont.from_node.toLowerCase(),
+                from_col:  cont.from_col,
+                to_node:   toNode,
+                to_col:    toCol,
+                role:      cont.role,
+              });
+            }
+          }
+        }
       }
 
       this.memory.recordVerdict(finding.verdict);
@@ -1688,6 +1739,7 @@ export class NavigationEngine implements IHopStateMachine {
       edges: finalEdges,
       suggested_sections: sections,
       detail_slots: mem.detail_slots,
+      columnAspect: this._columnAspect,
     };
   }
 

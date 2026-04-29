@@ -126,13 +126,15 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
 | `buildToolUsageBlock` | `prompts.ts` | `submit_findings` / pruning usage. |
 | `buildModeBlock(isInline, targetColumns?)` | `smPrompts.ts` | BB verdict + analysis + routing; CT = BB + column protocol. |
-| `buildColumnAspectPrompt` | `prompts.ts` | `<column_state>` XML block (CT context). |
+| `buildColumnAspectPrompt` | `prompts.ts` | CT protocol block — two-channel contract, role table, terminal source rules. Injected into stable system prompt when CT is active. |
+| `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. Renders accumulated `ColumnEdge[]` as a directed edge list so `present_result` anchors to the traced path. |
+| `buildCurrentTaskBlock(task, columns?)` | `prompts.ts` | `<current_task>` XML block; when `columns` are passed (CT active), appends `<column_trace>` sub-block with the structural lineage sub-question. |
 | `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + per-field synthesis keys; classification-gated; `closing` size-gated on slotCount ≥ 5. |
 | `orderAndAssemble` | `tools.ts` | Engine-built description blob from AI's title + intro + sections[] + closing — sole assembly path. |
 | `buildMissionBriefBlock` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks. |
 | `buildMemoryBlock` | `prompts.ts` | `<short_term_memory>` XML block + tally line. |
 
-**Hybrid format rule.** Markdown headers for static structural sections (protocols, numbered rules); XML tags for dynamic per-hop data so the model can locate them precisely (`<mission_brief>`, `<current_task>`, `<short_term_memory>`, `<column_state>`).
+**Hybrid format rule.** Markdown headers for static structural sections (protocols, numbered rules); XML tags for dynamic per-hop data so the model can locate them precisely (`<mission_brief>`, `<current_task>`, `<short_term_memory>`, `<column_trace>`).
 
 ## Testing
 

@@ -26,24 +26,42 @@ export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 export type Verdict = 'analyze' | 'pass' | 'prune';
 
 /**
+ * Semantic role of a column contribution in the lineage chain.
+ * `source` means this branch is terminal — no further upstream exists.
+ * `filter_only` means the column appears in WHERE/JOIN-ON only and is excluded from data-flow edges.
+ */
+export type ColumnFlowRole =
+  'formula' | 'rename' | 'case' | 'coalesce' |
+  'join_value' | 'aggregate' | 'filter_only' | 'source';
+
+/**
  * State and constraints for the column-tracing aspect of an exploration.
  */
 export interface ColumnAspect {
-  /** Target columns requested at session start. */
+  /** Target columns requested at session start. Immutable. */
   target_columns: string[];
-  /** Columns that have reached a terminal physical source. */
-  done_columns: string[];
-  /** Columns currently being tracked in the focus node. */
+  /** Columns relevant to the current focus node. Updated per-hop from the agenda entry. */
   active_columns: string[];
+  /**
+   * Accumulated validated column lineage edges, appended each hop.
+   * A branch is terminal when its last edge carries `role="source"`.
+   * Completeness is structural — derivable from this array; no completion flag needed.
+   */
+  edges: ColumnEdge[];
 }
 
 /**
  * Structured attribution of data flow for a specific output column.
  */
 export interface ColumnFlowEntry {
-  /** Name of the column in the focus node. */
+  /** Column name on the focus node, or procedure parameter prefixed with @. */
   out_col: string;
-  /** List of upstream contributors for this column. */
+  /**
+   * For writer procedures: the table column this node writes to.
+   * When present, the lineage edge is `focus_node.out_col → writes_to.node.writes_to.col`.
+   */
+  writes_to?: { node: string; col: string };
+  /** Upstream contributors. Empty array declares a terminal source (magic number, stored column, @param). */
   contributors: ColumnFlowContributor[];
 }
 
@@ -53,10 +71,31 @@ export interface ColumnFlowEntry {
 export interface ColumnFlowContributor {
   /** ID of the neighbor node providing the data. */
   from_node: string;
-  /** Name of the column in that neighbor. */
+  /** Name of the column in that neighbor (or @param for procedures). */
   from_col: string;
   /** Semantic role of the contribution. */
-  role: 'formula' | 'rename' | 'case' | 'coalesce' | 'join_value' | 'aggregate' | 'filter_only' | 'source';
+  role: ColumnFlowRole;
+}
+
+/**
+ * One directed edge in the accumulated column lineage chain.
+ * Built from validated `column_flow` submissions, one edge per (out_col, contributor) pair.
+ */
+export interface ColumnEdge {
+  /** Focus node where this edge was analyzed. */
+  hop_node: string;
+  /** Hop number when this edge was captured. */
+  hop: number;
+  /** Upstream contributor node. */
+  from_node: string;
+  /** Column name on the contributor (or @param for procedures). */
+  from_col: string;
+  /** Downstream consumer node. */
+  to_node: string;
+  /** Column name on the consumer. */
+  to_col: string;
+  /** Semantic role. `source` means this branch terminates here — no further upstream in graph. */
+  role: ColumnFlowRole;
 }
 
 
@@ -216,7 +255,11 @@ export interface HopFinding {
   badge_label?: string;
   /** Optional short descriptive text to attach to this node in the final view. */
   note_caption?: string;
-  /** Structured attribution of column-level data flow, present when the column aspect is active. */
+  /**
+   * Structured attribution of column-level data flow.
+   * Required (and validated) when the column aspect is active and `verdict === 'analyze'`.
+   * Ignored when the column aspect is inactive — submit only in column-trace sessions.
+   */
   column_flow?: ColumnFlowEntry[];
 }
 
@@ -413,6 +456,8 @@ export interface ScopeSummary {
   inlineMode: boolean;
   /** True when the session has `targetColumns` (column-trace aspect). */
   columnAspectActive: boolean;
+  /** Target columns being traced, present when `columnAspectActive` is true. */
+  targetColumns?: string[];
   /** Schema → type → leaf rollup used by `renderScopeSummaryMd` to build the tree. */
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf>; }>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
@@ -451,6 +496,8 @@ export interface SmResult {
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /** High-fidelity analysis artifacts for each visited node. */
   detail_slots: DetailSlot[];
+  /** Column lineage chain. Present when CT was active for this session; null otherwise. */
+  columnAspect: ColumnAspect | null;
 }
 
 

@@ -27,6 +27,7 @@ import {
   presentNode, presentColumn, presentColumnCompact, presentFkCompact,
   presentSchema, presentNeighbor, presentFilter,
 } from './aiPresenter';
+import type { ColumnFlowRole } from './smTypes';
 
 
 import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
@@ -160,10 +161,11 @@ const HopFindingSchema = z.object({
   note_caption: z.string().optional(),
   column_flow: z.array(z.object({
     out_col: z.string(),
+    writes_to: z.object({ node: z.string(), col: z.string() }).optional(),
     contributors: z.array(z.object({
       from_node: z.string(),
       from_col: z.string(),
-      role: z.enum(['formula', 'rename', 'case', 'coalesce', 'join_value', 'aggregate', 'filter_only', 'source']),
+      role: z.enum(['formula', 'rename', 'case', 'coalesce', 'join_value', 'aggregate', 'filter_only', 'source'] satisfies [ColumnFlowRole, ...ColumnFlowRole[]]),
     })),
   })).optional(),
 });
@@ -276,7 +278,35 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
 
 
 /**
+ * Extracts `@ParamName` identifiers from a procedure/function DDL signature.
+ *
+ * @remarks
+ * Parses the parameter list between `CREATE PROCEDURE`/`CREATE FUNCTION` and the `AS` keyword.
+ * Returns each `@Param` as a synthetic column name so `getNodeColumns` can include them
+ * for CT validation at procedure hops.
+ *
+ * @param ddl - Raw DDL body of a procedure or function.
+ * @returns Array of parameter names (with leading `@`), or empty array if none found.
+ */
+export function parseProcParams(ddl: string): string[] {
+  // Match everything between the object header and the AS/BEGIN keyword
+  const headerMatch = ddl.match(/CREATE\s+(?:PROCEDURE|PROC|FUNCTION)\s+[^\s(]+\s*([\s\S]*?)\s+AS\b/i);
+  if (!headerMatch) return [];
+  const paramSection = headerMatch[1];
+  const params: string[] = [];
+  // Each @Param followed by a type declaration
+  const paramRe = /@(\w+)\s+\w/g;
+  let m: RegExpExecArray | null;
+  while ((m = paramRe.exec(paramSection)) !== null) {
+    params.push(`@${m[1]}`);
+  }
+  return params;
+}
+
+/**
  * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
+ * For procedure and function nodes, synthetic `@Param` entries from the DDL signature are
+ * appended so CT validation can match parameter names in `column_flow`.
  *
  * @param nodeId - The unique identifier of the node.
  * @param nodeMap - The ground-truth map of all nodes.
@@ -287,7 +317,18 @@ export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: ColumnStore,
 ): ColumnDef[] | undefined {
-  return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
+  const base = (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
+  const node = nodeMap.get(nodeId);
+  if (node && SCRIPT_TYPES.has(node.type)) {
+    const ddl = (typeof store?.getDdl === 'function' ? store.getDdl(nodeId) : undefined) ?? node.bodyScript;
+    if (ddl) {
+      const params = parseProcParams(ddl);
+      if (params.length > 0) {
+        return [...(base ?? []), ...params.map(p => ({ name: p, type: 'param' } as ColumnDef))];
+      }
+    }
+  }
+  return base;
 }
 
 /**

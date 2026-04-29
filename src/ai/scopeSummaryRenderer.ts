@@ -34,7 +34,8 @@ export function renderScopeSummaryMd(s: ScopeSummary): string {
   const dirLabel = s.direction === 'bidirectional' ? 'bidirectional' : s.direction;
   const depthLabel = s.depth !== null ? `depth ${s.depth}` : 'unbounded depth';
   const modeLabel = s.inlineMode ? 'Inline (one-shot)' : 'Sliding-Memory (multi-hop)';
-  const traceLabel = s.columnAspectActive ? 'Column-Trace' : 'Blackboard';
+  const colLabel = s.targetColumns?.length ? ` — columns: [${s.targetColumns.join(', ')}]` : '';
+  const traceLabel = s.columnAspectActive ? `Column-Trace${colLabel}` : 'Blackboard';
 
   lines.push('### Exploration plan (proposed)');
   lines.push('');

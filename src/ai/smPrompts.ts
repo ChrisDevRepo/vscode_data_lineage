@@ -8,6 +8,7 @@
  */
 
 import { buildColumnAspectPrompt } from './prompts';
+import type { ColumnEdge } from './smTypes';
 
 
 const BLOCK = {
@@ -161,4 +162,34 @@ export function buildSynthesisReminder(question: string): string {
     '- For broad questions where you omit `text`: the engine injects full archive depth — correct behavior, no action needed. For specific questions where you write `text`: answer the question directly; depth follows from the question, not the archive.',
     '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
   ].join('\n');
+}
+
+
+/**
+ * Renders the accumulated column lineage chain as a synthesis context block.
+ *
+ * @remarks
+ * Appended to the synthesis reminder when CT was active and edges were recorded.
+ * Presents the directed graph in a flat edge list so the AI can structure
+ * `present_result` around the actual traced path rather than free-form prose.
+ *
+ * @param edges - Validated edges from `ColumnAspect.edges`.
+ * @returns Formatted markdown block anchoring synthesis to the column chain.
+ */
+export function buildCtSynthesisBlock(edges: ColumnEdge[]): string {
+  const lines = ['## Column Trace Chain'];
+  if (edges.length === 0) {
+    lines.push('No edges recorded — verify column_flow was submitted at each hop.');
+    return lines.join('\n');
+  }
+  for (const e of edges) {
+    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (${e.role}, hop ${e.hop})`);
+  }
+  lines.push('');
+  lines.push('Structure present_result using this chain:');
+  lines.push('- summary: one sentence naming origin → source path');
+  lines.push('- intro: anchor to chain — name start, writers, terminal source');
+  lines.push('- sections[]: group by chain role (origin / writers / source)');
+  lines.push('- highlight_groups: source=terminal nodes, target=origin, transform=writers');
+  return lines.join('\n');
 }

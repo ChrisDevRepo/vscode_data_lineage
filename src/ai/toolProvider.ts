@@ -36,7 +36,7 @@ import { prunePreserveOnly } from './viewPrune';
 import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNode } from '../engine/types';
 import { type SerializedFilterState, type AIViewMetadata } from '../engine/projectStore';
 import { PendingGateSchema } from './sessionPhase';
-import { buildSynthesisReminder } from './smPrompts';
+import { buildSynthesisReminder, buildCtSynthesisBlock } from './smPrompts';
 import { getAllowedLmToolNames, activeModeOf, type LmStage } from './toolPolicy';
 import { CLASSIFICATION_LABEL, type ClassificationValue } from './classification';
 import type { CapturedSection, CaptureAngle } from './memoryManager';
@@ -289,6 +289,14 @@ class ToolHandler {
       }
       const data = parsed.data;
 
+      // DRY helper: propagates follow-up context updates shared by supplement + same-origin retrace.
+      const applyFollowUpContext = (engine: NavigationEngine): void => {
+        if (data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
+        if (data.classification) sess.setClassification(data.classification);
+        if (typeof data.mission_brief === 'string') sess.memory.setMissionBrief(data.mission_brief);
+        if (data.question) sess.memory.setUserQuestion(data.question);
+      };
+
       // Post-synthesis supplement path: reuse the existing engine, extend the agenda,
       // run one-shot inline. Merges new slots into the existing archive — no reset.
       if (data.supplement) {
@@ -301,6 +309,7 @@ class ToolHandler {
         }
         const res = priorEngine.supplementAgenda(data.supplement.nodeIds);
         if ('error' in res) return this.logAndReturn('start_exploration', res, input);
+        applyFollowUpContext(priorEngine);
         sess.enterExploring();
         this.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds.length} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}`);
         const hopCtx = priorEngine.getHopContext();
@@ -339,10 +348,27 @@ class ToolHandler {
       const isRefining = sess.phase.kind === 'awaiting_gate'
         && sess.phase.gate.gate === 'confirm_sm_start'
         && priorLive;
-      // Fresh exploration from the completed (follow-up) phase: the AI has decided the
-      // question is a genuinely new trace, not a refinement. Discard the prior archive
-      // so the confirm_sm_start gate can fire and the new run starts clean.
+      // Follow-up from completed phase: same-origin → convergent retrace (no gate, no wipe);
+      // different origin → divergent fresh exploration (gate + archive reset).
       if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
+        const sameOrigin =
+          !!data.origin && !!sess.resultGraph?.originNodeId &&
+          data.origin.toLowerCase() === sess.resultGraph.originNodeId.toLowerCase();
+
+        if (sameOrigin) {
+          const visitedIds = prior.getDetailSlots().map(s => s.nodeId);
+          const toRetrace = visitedIds.length > 0 ? visitedIds : [data.origin];
+          const res = prior.supplementAgenda(toRetrace);
+          if (!('error' in res)) {
+            applyFollowUpContext(prior);
+            sess.startExplorationRoundId = sess.currentRoundId;
+            sess.enterExploring();
+            this.logger.info(`[${sess.id}] [Phase] completed → exploring (retrace) — origin=${data.origin} cols=${JSON.stringify(data.targetColumns)}`);
+            return this.logAndReturn('start_exploration', { ok: true, retrace: true, ...prior.getHopContext() }, input);
+          }
+          // supplementAgenda failed → fall through to divergent path.
+        }
+
         this.logger.info(`[${sess.id}] [Phase] completed → discover — fresh start_exploration (origin=${data.origin}); prior archive discarded`);
         sess.resetExploration();
         sess.startExplorationRoundId = sess.currentRoundId;
@@ -636,7 +662,11 @@ class ToolHandler {
         const finalResult = engine.getResult();
         sess.storeSmResult(finalResult);
         if (!sess.classification) sess.setClassification('business');
-        const synthesisReminder = buildSynthesisReminder(sess.memory.getUserQuestion());
+        const baseReminder = buildSynthesisReminder(sess.memory.getUserQuestion());
+        const ctBlock = finalResult.columnAspect && finalResult.columnAspect.edges.length > 0
+          ? '\n' + buildCtSynthesisBlock(finalResult.columnAspect.edges)
+          : '';
+        const synthesisReminder = baseReminder + ctBlock;
         const lmResult = {
           status: finalResult.status,
           originNodeId: finalResult.originNodeId,

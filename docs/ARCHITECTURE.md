@@ -39,7 +39,7 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 | **Inline run** | AI | One-shot analysis; AI sees the full scope's DDL at once and self-terminates with `complete: true`. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |
-| **Completed** | User | Holds the result graph. Follow-up edits/prunes re-render in place; `supplement` extends the existing archive via SM; a fresh question wipes everything and returns to Discovery. |
+| **Completed** | User | Holds the result graph. Three convergent operations (no gate, no wipe): (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes inline; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). |
 
 ## Component map
 
@@ -208,7 +208,7 @@ The dotted reverse arrows are **reads back from the archive into the next hop's 
 | `active_schemas` | `getWorkingMemory()` | Schema filter still in effect this hop. |
 | `budget_pressure` | `getWorkingMemory()` (optional) | `'tight'` or `'exceeded'` — surfaced when the engine wants the AI to wind down. |
 | `short_term_memory` | `getShortTermMemory()` — `detailSlots.values().slice(-3)` | Sliding window of the last three node summaries, injected as the `<short_term_memory>` XML block in the system prompt. **This is the "iteratively growing" view of the archive.** |
-| `column_aspect` | column tracker (CT mode only) | `{ target_columns, done_columns, active_columns }` — present only when the session is tracing specific columns. |
+| `column_aspect` | column tracker (CT mode only) | `{ target_columns, active_columns, edges[] }` — present only when the session is tracing specific columns. `edges[]` accumulates validated `ColumnEdge` entries each hop; branch termination is structural (`role="source"`). |
 
 None of these WM fields are stored — they are computed from the archive (or the constants) every hop. Global engine state (agenda, visited set, pending questions) is intentionally excluded from this payload; that's what keeps each hop's input bounded even on a long trace.
 
@@ -233,7 +233,7 @@ None of these WM fields are stored — they are computed from the archive (or th
 | `working_memory.active_schemas` | Schemas currently on the session allowlist |
 | `working_memory.topological_map` | `navigation_path` (origin → … → focus) and `current_focus` |
 | `working_memory.approved_border` | (SM only) `{ schemas, depth_cap }` locked at `confirm_sm_start` |
-| `working_memory.column_aspect` | (CT only) `{ target_columns, done_columns, active_columns }` |
+| `working_memory.column_aspect` | (CT only) `{ target_columns, active_columns, edges[] }` |
 
 ## The system prompt builder
 
@@ -298,8 +298,9 @@ stateDiagram-v2
     Analysis --> Synthesis: agenda drained
     Synthesis --> Completed: present_result
     Completed --> Analysis: supplement / extend scope
+    Completed --> Analysis: same-origin retrace (auto-supplement)
     Completed --> Synthesis: re-render only
-    Completed --> Discovery: fresh question
+    Completed --> Discovery: fresh question (different origin)
 ```
 
 **Analysis hop loop.** Inside the Analysis phase, every hop runs this cycle until the agenda is empty.
@@ -355,7 +356,7 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Class D** | Direct answer via discovery tools — one isolated object or graph-wide metadata. No "flow" narration. |
 | **Class S** | State-machine exploration via `start_exploration` — anything spanning ≥ 2 connected objects. |
 | **BB** (Blackboard) | Default nav mode. Used when no target columns are specified. |
-| **CT** (Column Trace) | Nav mode activated when `targetColumns` are set. Adds column validation + `column_flow` attribution. |
+| **CT** (Column Trace) | Nav mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus the CT addition: `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every non-prune verdict; engine rejects with `column_flow_required` if omitted. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
 | **Inline mode** | One-shot execution for scopes within `inlineNodeCap` and `inlineTokenBudget`. AI may self-terminate. |
 | **SM mode** | Hop-by-hop execution for larger scopes. Memory wiped each hop; engine owns termination. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |

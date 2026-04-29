@@ -106,6 +106,8 @@ export function buildDiscoveryPrompt(): string {
     '',
     'Signals — verbs "analyze / explain / walk through / trace / track / follow / document / compare"; nouns "lineage / dependencies / graph / relationship / impact / blast radius / pipeline / flow / path / join path"; scope qualifiers "direct neighbours / one hop up / upstream only / downstream of X / between A and B"; NL filters that only make sense over a scope ("ignore UDFs", "only tables", "exclude schema X", name-based exclusions); any column name tied to an object (set `targetColumns`).',
     '',
+    '**Column Trace selection:** if the user names a specific column (`[Object].[Column]` or "the X column"), extract it directly as `targetColumns`. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its column list, then select the 2–4 columns that match the intent. Pass all selected columns to `lineage_start_exploration` as `targetColumns`.',
+    '',
     '**Rule:** If the user asks for a "lineage graph", "annotated trace", or to "explain the joins/pipeline" of an object, you MUST use Class S. Do not short-circuit to Class D prose just because you found the neighbors in a detail lookup.',
     '',
     'Resolve every user-named identifier — both the origin and any names the user said to ignore / exclude / drop / skip — with `lineage_search_objects` BEFORE calling `lineage_start_exploration`. The model has many schemas; user-shorthand names ("RECON", "EXCP2") often live in a non-default schema. Inventing an id like `[dbo].[recon]` causes `lineage_start_exploration` to reject with `unknown_node_ids`. If multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
@@ -350,19 +352,35 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     '# Column Trace Protocol',
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    '## Layered pruning',
-    'When Column Trace is active, two filters apply in order:',
-    '1. **Mechanical column filter (first):** if a node does not contain, read, or write any target column, prune it. This is a structural check, not a judgment call.',
-    '2. **Mission filter (second, for nodes that pass the column filter):** apply the standard mission-relevance pruning rules.',
+    '## Two channels per hop — both required',
+    '- **column_flow** (structural): where does each active column come from on this node?',
+    '  Mechanically enforced — engine rejects verdict=analyze or verdict=pass without it.',
+    '- **sections[].text** (semantic): why does this node matter? business/technical context.',
     '',
-    '## Tracing rules',
-    '- Trace only the listed target columns. Follow renames across hops using SQL evidence.',
-    '- Analyze transform logic (SELECT expressions, CASE, COALESCE). Ignore row-filtering (WHERE / JOIN-ON) unless it modifies the traced value.',
-    '- Terminal source (column originates here, no upstream writer): `verdict=analyze`, `badge_label=Source`.',
-    '- Upstream writer exists but not yet visited: `verdict=pass`, route to the writer.',
+    '## Per-hop verdict',
+    '- `analyze`: node transforms or is the terminal source of a target column.',
+    '  Submit column_flow for each active column.',
+    '  Terminal source (no further upstream possible): role:"source", contributors:[].',
+    '  Applies to: stored base column, procedure parameter (@Param), hardcoded literal',
+    '  (magic number / constant string), system function (GETDATE(), NEWID()).',
+    '  All four are origins — declare them explicitly. Empty contributors is not an error.',
+    '- `pass`: column flows through unchanged; upstream writer not yet visited.',
+    '  Submit column_flow naming the contributor AND route_requests to visit it.',
+    '  Records the edge here; attribution resolves at the routed node.',
+    '- `prune`: node does not interact with any target column. No column_flow needed.',
     '',
-    '## Attribution',
-    'For every node with `verdict=analyze`, emit `column_flow`. Map each `out_col` to its upstream `contributors` with `from_node`, `from_col`, `role`. Use only column names present in the node DDL.',
+    '## column_flow rules',
+    '- One entry per active target column visible on this node.',
+    '- Multiple contributors (formula / CASE / COALESCE): list each as a separate contributor entry.',
+    '- Rename: from_col ≠ out_col, role:"rename".',
+    '- Fan-out (one source → two output columns): two column_flow entries, same from_col.',
+    '- Writer procedure: set writes_to:{node, col} to declare the table column being written.',
+    '  out_col = the procedure parameter (@Param). contributors:[] when no upstream in graph.',
+    '',
+    '## role values',
+    '`source` — terminal, stored here · `rename` — direct rename · `formula` — arithmetic/concat',
+    '`case` — CASE expression · `coalesce` — COALESCE/ISNULL · `join_value` — joined table value',
+    '`aggregate` — SUM/COUNT/etc · `filter_only` — WHERE/JOIN-ON only, NOT data output',
   ].join('\n');
 }
 
@@ -419,10 +437,15 @@ export function buildMissionBriefBlock(brief: string, question: string): string 
  * distinguish the invariant root question from the sub-question to answer
  * THIS hop — removing ambiguity about which segment is active.
  *
+ * When CT is active, a `<column_trace>` block is appended injecting the
+ * structural lineage sub-question from the engine (SM-side) alongside the
+ * AI's semantic `<sub_question>`.
+ *
  * @param currentTask - Pipe-concatenated questions from the engine agenda.
+ * @param columnTraceColumns - Active CT target columns for this hop; omit when CT is inactive.
  * @returns Structured `<current_task>` XML block, or an empty string if `currentTask` is absent.
  */
-export function buildCurrentTaskBlock(currentTask: string): string {
+export function buildCurrentTaskBlock(currentTask: string, columnTraceColumns?: string[]): string {
   if (!currentTask) return '';
   const parts = currentTask.split(/\s*\|\s*/).map(p => p.trim()).filter(Boolean);
   const rootMatch = parts[0]?.match(/^Root Question:\s*(.*)$/i);
@@ -434,6 +457,15 @@ export function buildCurrentTaskBlock(currentTask: string): string {
   if (rootQuestion) lines.push(`  <root_question>${rootQuestion}</root_question>`);
   if (preceding.length > 0) lines.push(`  <preceding_questions>\n    - ${preceding.join('\n    - ')}\n  </preceding_questions>`);
   if (subQuestion) lines.push(`  <sub_question>${subQuestion}</sub_question>`);
+  if (columnTraceColumns && columnTraceColumns.length > 0) {
+    lines.push(
+      `  <column_trace>`,
+      `    Active columns: [${columnTraceColumns.join(', ')}]`,
+      `    For each: declare column_flow — from which node and column does it arrive?`,
+      `    For writer procedures: declare writes_to (target table + column) and set role=source.`,
+      `  </column_trace>`,
+    );
+  }
   lines.push('</current_task>');
   return lines.join('\n');
 }

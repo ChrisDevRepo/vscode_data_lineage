@@ -498,7 +498,10 @@ export class LineageParticipant {
         // from the last hop leaks into the synthesis prompt.
         if (!engine || phase === 'discover' || phase === 'synthesis') return '';
         const dynamic: string[] = [];
-        const currentTaskBlock = buildCurrentTaskBlock(engine.getCurrentTask());
+        const currentTaskBlock = buildCurrentTaskBlock(
+          engine.getCurrentTask(),
+          engine.columnAspect?.active_columns,
+        );
         if (currentTaskBlock) dynamic.push(currentTaskBlock);
         if (phase === 'active' && !engine.inlineMode) {
           // Mission state first — anchors focus_node_id before the model reads STM content.
