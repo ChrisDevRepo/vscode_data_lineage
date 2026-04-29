@@ -69,13 +69,12 @@ intro:
   stages: [synthesis]
   instruction: >
     2–4 sentences of narrative prose as a standalone paragraph before the
-    sections. Open by acknowledging the lens implied by the user's question
-    (the **Mission type:** set above — `business`, `technical`, or `both`)
-    and answer at headline level: what does the analysis reveal, where does
-    data originate, what structural pre-conditions does the reader need.
-    Refer to shared state by role ("central scratch-pad table", "terminal
-    publication step") rather than by listing its columns. Schema details
-    (column names, data types, nullability) belong in the later sections.
+    sections. Open with the direct answer to the user's stated question —
+    name the origin, the key relationship, or the finding the user asked
+    for — then set architectural context. Refer to shared state by role
+    ("central scratch-pad table", "terminal publication step") rather than
+    by listing its columns. Schema details (column names, data types,
+    nullability) belong in the later sections.
   example: >
     Read as a business-driven view: TotalRevenue is the product of Qty
     and UnitPrice — both computed independently before joining at
@@ -154,8 +153,10 @@ business_capture:
 
     Submit one section: `{ angle: "business", text: "<body>" }`. The
     archive has no length cap and synthesis lifts your text verbatim —
-    write as deeply as the node's business role warrants. Brevity here
-    becomes brevity in the final report.
+    write at the depth the node's role in answering the user's question
+    warrants. Nodes that directly address the question get full depth;
+    context nodes in scope but tangential to the question get a brief
+    functional note. Brevity here becomes brevity in the final report.
 
     <emphasis>
     Highest-value content, in order:
@@ -213,7 +214,10 @@ business_capture:
        ("1. New → 2. Approved → 3. Shipped"). Capture the business
        state change, not the SQL UPDATE that effects it.
     7. Mark data-quality risks with ⚠️ inline at the point they apply.
-    8. Wrap column and object names in `\`backticks\``.
+    8. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
+       this view makes queryable and its business meaning — not how the
+       SELECT is structured.
+    9. Wrap column and object names in `\`backticks\``.
     </body_recipe>
   example: |
     `spCalcRevenue` computes `TotalRevenue = $Qty \times UnitPrice$` at the
