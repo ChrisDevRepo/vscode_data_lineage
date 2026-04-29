@@ -703,9 +703,18 @@ export function GraphCanvas({
   // Derive visible schemas for the Legend — externals are excluded from the colorful legend
   // list but remain in the underlying model/filters so they don't disappear from the graph.
   const legendSchemas = useMemo(() => {
+    // In overview mode localNodes are SchemaNodeData buckets; read schemaName directly.
+    if (graphMode === 'overview') {
+      return localNodes
+        .filter(n => n.type === 'schemaNode')
+        .map(n => (n.data as SchemaNodeData).schemaName)
+        .filter(s => !!s && s.trim().length > 0)
+        .sort();
+    }
+
     const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
       || trace.mode === 'filtered' || trace.mode === 'analysis';
-    
+
     // We only show schemas in the legend if they contain at least one non-external object.
     const schemasWithRealObjects = new Set(
       localNodes
@@ -719,7 +728,7 @@ export function GraphCanvas({
       return (renderedSchemas || []).filter(s => schemasWithRealObjects.has(s));
     }
     return Array.from(schemasWithRealObjects).filter(Boolean).sort();
-  }, [trace.mode, localNodes, renderedSchemas]);
+  }, [graphMode, trace.mode, localNodes, renderedSchemas]);
 
   return (
     <div className="flex flex-col h-screen">

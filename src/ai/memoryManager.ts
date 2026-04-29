@@ -288,6 +288,20 @@ export class AiMemoryManager {
     return { detail_slots: Array.from(this.detailSlots.values()) };
   }
 
+  /**
+   * Returns the verbatim captured text for one node + angle combination.
+   *
+   * @remarks
+   * Used by the synthesis engine to inject archive text into `present_result.sections[]`
+   * when the model omits `text` (structural-decisions-only synthesis protocol).
+   *
+   * @returns The captured section body, or `undefined` when the node has not been
+   *   visited or no section for the requested angle was captured.
+   */
+  public getSectionText(nodeId: string, angle: CaptureAngle): string | undefined {
+    return this.detailSlots.get(nodeId)?.sections.find(s => s.angle === angle)?.text;
+  }
+
   /** JSON snapshot of the manager's current state — used by telemetry and eval extraction. */
   public toJSON(): MemoryStateSnapshot {
     const slots: Record<string, DetailSlot> = {};

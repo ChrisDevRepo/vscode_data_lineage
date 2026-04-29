@@ -95,8 +95,8 @@ closing:
     in the lens the user requested, and
     (2) a top-risks markdown table — the cross-cutting data-quality / scope
     risks that span sections (each row prefixed with ⚠️). Two columns:
-    `| Risk | Scope |`. Lift verbatim from ⚠️ markers in the captured
-    sections; do not invent new risks.
+    `| Risk | Scope |`. Draw from ⚠️ markers visible in the node
+    summaries and note_captions; do not invent new risks.
   example: |
     The CadenceWorker pipeline reloads from staging each run, applies a
     nine-stage rule cascade (init → OOS gate → AC reallocation → integrity

@@ -1236,7 +1236,7 @@ const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'go
  * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
  */
 export function orderAndAssemble(
-  sections: Array<{ label: string; node_ids?: string[]; text: string }>,
+  sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
   opts?: {
     title?: string;
     intro?: string;
@@ -1336,9 +1336,10 @@ export function autoFixPresentResult(
 
   // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args)
   const unescapeNewlines = (s: string): string => s.replace(/\\n/g, '\n');
-  if (fixed.intro)   fixed = { ...fixed, intro:   unescapeNewlines(fixed.intro) };
-  if (fixed.closing) fixed = { ...fixed, closing: unescapeNewlines(fixed.closing) };
-  if (fixed.summary) fixed = { ...fixed, summary: unescapeNewlines(fixed.summary) };
+  if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
+  if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
+  if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
+  if (fixed.sections) fixed = { ...fixed, sections: fixed.sections.map(s => ({ ...s, text: s.text ? unescapeNewlines(s.text) : s.text })) };
 
   // 1. Auto-truncate name at word boundary if too long
   if (fixed.name && fixed.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) {
@@ -1605,7 +1606,7 @@ export function validatePresentResult(
   // Either AI submitted sections[] (which the engine assembles into a description before
   // validation) OR an engine-assembled description is supplied. Without one, there's no body.
   if (!hasSections && !hasAssembled) {
-    errors.push('sections[] is required — at least one section with label and text. Lift each detail_slots[].sections[].text verbatim into sections[].text.');
+    errors.push('sections[] is required — provide at least one section with label, angle, and node_ids[].');
   }
 
   // Mechanical fence-closure check on the engine-assembled blob (catches cases where
@@ -1625,7 +1626,7 @@ export function validatePresentResult(
         }
       }
       if (!sec.text || sec.text.trim().length === 0) {
-        errors.push(`Section "${sec.label}" is missing text — write the per-node content from the detail archive`);
+        errors.push(`Section "${sec.label}" is missing text — ensure node_ids[] references nodes that were analyzed during the hop loop`);
       }
       if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
     }

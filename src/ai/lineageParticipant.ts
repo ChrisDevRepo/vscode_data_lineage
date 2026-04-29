@@ -499,12 +499,12 @@ export class LineageParticipant {
         const currentTaskBlock = buildCurrentTaskBlock(engine.getCurrentTask());
         if (currentTaskBlock) dynamic.push(currentTaskBlock);
         if (phase === 'active' && !engine.inlineMode) {
-          const stm = sess.memory.getShortTermMemory();
-          dynamic.push(buildMemoryBlock(stm, engine.currentHop, engine.scopeSize));
-          // Mission state — focus + progress only. Engine-orchestration fields removed
+          // Mission state first — anchors focus_node_id before the model reads STM content.
           // (mechanically enforced via toolMode.Required + toolPolicy).
           const agendaRemaining = Math.max(0, engine.scopeSize - engine.currentHop);
           dynamic.push(buildMissionStateBlock(engine.currentHop, engine.scopeSize, agendaRemaining, engine.currentFocus));
+          const stm = sess.memory.getShortTermMemory();
+          dynamic.push(buildMemoryBlock(stm, engine.currentHop, engine.scopeSize));
         }
         return dynamic.filter(Boolean).join('\n');
       };

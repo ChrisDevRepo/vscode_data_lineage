@@ -53,10 +53,11 @@ export interface ResultGraph {
   /** AI-supplied closing note from `present_result.input.closing`. */
   closing?: string;
   /**
-   * AI-supplied report sections from `present_result.input.sections[]`. Each carries the
-   * verbatim section body lifted from per-node detail-memory at synthesis.
+   * AI-supplied report sections from `present_result.input.sections[]`.
+   * When `text` is absent the engine injects verbatim body from the in-memory archive
+   * via `AiMemoryManager.getSectionText(nodeId, angle)`.
    */
-  sections?: Array<{ label: string; node_ids?: string[]; text: string }>;
+  sections?: Array<{ label: string; node_ids?: string[]; angle?: 'business' | 'technical'; text?: string }>;
 }
 
 /** 

@@ -850,13 +850,18 @@
             },
             "sections": {
               "type": "array",
-              "description": "Report sections grouping nodes with explanatory text.",
+              "description": "Report sections grouping nodes by badge label and angle. Provide label, angle, and node_ids — omit text (the engine injects verbatim archive content).",
               "items": {
                 "type": "object",
                 "properties": {
                   "label": {
                     "type": "string",
-                    "description": "Section title and node badge."
+                    "description": "Section title and node badge (from badge_label in the captured slot)."
+                  },
+                  "angle": {
+                    "type": "string",
+                    "enum": ["business", "technical"],
+                    "description": "Capture angle for this section group. Required when text is omitted — determines which archived body the engine injects."
                   },
                   "node_ids": {
                     "type": "array",
@@ -866,12 +871,11 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Markdown analysis for this group."
+                    "description": "Markdown analysis for this group. Omit at synthesis — the engine injects verbatim text from the archive. Provide only for follow-up text edits where the user requested modified wording."
                   }
                 },
                 "required": [
-                  "label",
-                  "text"
+                  "label"
                 ]
               }
             },

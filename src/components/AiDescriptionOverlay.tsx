@@ -49,7 +49,8 @@ function CodeComponent({ className, children, ...props }: React.ClassAttributes<
  * Single-line `$$expr$$` (no embedded newline) passes through unchanged.
  */
 function normalizeBlockMath(src: string): string {
-  return src.replace(/\$\$([\s\S]+?)\$\$/g, (match, body: string) => {
+  const clean = src.replace(/\\n/g, '\n');
+  return clean.replace(/\$\$([\s\S]+?)\$\$/g, (match, body: string) => {
     if (!body.includes('\n')) return match;
     const trimmed = body.replace(/^\n+/, '').replace(/\n+$/, '');
     return `$$\n${trimmed}\n$$`;
