@@ -41,6 +41,7 @@ import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
 import { PerformanceCollector } from './diagnostics';
 import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from './messageEnvelope';
+import { matchesTransientNetPattern } from './transientErrors';
 export { classifyGateReply } from './sessionPhase';
 
 /**
@@ -96,6 +97,19 @@ function renderHopDirective(engine: NavigationEngine | null): string {
   return focusId
     ? `Continue. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
     : 'Continue the hop-by-hop analysis — call submit_findings for the current focus node.';
+}
+
+/**
+ * Classifies an LM `sendRequest` exception as a transient network failure that is safe to retry.
+ *
+ * @remarks
+ * `vscode.LanguageModelError` codes (Cancelled / NotFound / NoPermissions / Blocked) are
+ * intentional model-side decisions and must never be retried. The transient-network text match
+ * is delegated to the vscode-free helper so unit tests can exercise it under tsx.
+ */
+export function isTransientLmError(err: unknown): boolean {
+  if (err instanceof vscode.LanguageModelError) return false;
+  return matchesTransientNetPattern(err);
 }
 
 /**
@@ -621,7 +635,31 @@ export class LineageParticipant {
           writer.progress('Synthesizing the answer…');
           sess.synthesisProgressEmitted = true;
         }
-        const response = await model.sendRequest(envelope.toArray() as vscode.LanguageModelChatMessage[], { tools, toolMode }, token);
+        // Bounded retry around sendRequest: a single transient network blip before any
+        // tokens stream would otherwise terminate the session and discard a complete archive.
+        // Wraps the request only — once the stream begins, partial markdown has been surfaced
+        // to the user and replay would duplicate output, so mid-stream failures still propagate.
+        const MAX_RETRIES = 1;
+        const RETRY_DELAY_MS = 1500;
+        let response: vscode.LanguageModelChatResponse;
+        let attempt = 0;
+        while (true) {
+          try {
+            response = await model.sendRequest(envelope.toArray() as vscode.LanguageModelChatMessage[], { tools, toolMode }, token);
+            break;
+          } catch (err) {
+            if (attempt >= MAX_RETRIES || token.isCancellationRequested || !isTransientLmError(err)) {
+              throw err;
+            }
+            attempt++;
+            const code = (err as { code?: string })?.code ?? (err instanceof Error ? err.message : String(err));
+            this.logger.warn(`Transient sendRequest retry — code=${trunc(code, 200)} attempt=${attempt}/${MAX_RETRIES} delay=${RETRY_DELAY_MS}ms`);
+            await new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(resolve, RETRY_DELAY_MS);
+              token.onCancellationRequested(() => { clearTimeout(timer); reject(new Error('cancelled')); });
+            });
+          }
+        }
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';

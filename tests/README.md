@@ -31,6 +31,7 @@ tests/
 │   ├── sm-robustness.test.ts              # SM scope robustness + present_result prune regression
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
 │   ├── refine-loop.test.ts                # Discovery-phase refinement loop: classifier, exclusion axes, getScopeSummary, classifyForRefine, renderScopeSummaryMd
+│   ├── transient-retry.test.ts            # Transient-network classifier guarding the LM-call retry loop
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
 │   └── hooks/                             # React hook unit tests (vitest)
 │
