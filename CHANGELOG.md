@@ -4,16 +4,16 @@
 
 ### Added
 - **Pick the analysis lens before exploration** — Choose `business`, `technical`, or `both` when starting a `@lineage` exploration. Business reports describe domain meaning (rules, formulas, consumer impact). Technical reports describe execution (SQL evidence, joins, loading patterns, anti-patterns). `both` produces two peer sections per node, one of each angle.
-- **Approve scope before analysis starts** — Every exploration shows a scope tree (Schema → Type → Node) with the live hop count. Approve to proceed, **Refine scope** to narrow it, or **Cancel**. Describe the narrowing in plain English ("ignore staging", "drop UDFs", "trace ProductID only") and the assistant re-runs. The loop continues until you approve or cancel.
+- **Approve scope before analysis starts** — Every exploration shows a scope tree (Schema → Type → Node) with the live hop count. Approve to proceed, **Refine scope** to narrow it, or **Cancel**. Describe the narrowing e.g. ("ignore staging", "drop UDFs", "trace ProductID only") and the assistant re-runs. The loop continues until you approve or cancel.
 
 
 ### Changed
-- **Lighter per-hop AI context** — active-phase prompt is ~700 tokens leaner per hop (≈12 K over an 18-hop session) through classification-locked template routing and removal of engine-state prose enforced mechanically by `LanguageModelChatToolMode.Required` and `toolPolicy`.
+- **Faster, more focused AI hops** — each exploration step sends a leaner context to the model by routing only the templates relevant to the locked analysis angle and removing repeated guidance the engine already enforces structurally.
 - **Starting-point table summaries** — When you ask about a table as your starting point, `@lineage` produces a clean dossier (Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys) instead of folding it into a neighbouring procedure's analysis.
-- **Objects listed inline** — Each section's objects render as a single comma-separated row of clickable links — easier to scan than the previous one-heading-per-object stack. Clicking a name still focuses the graph on that node..
 - **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both per-hop capture instructions (`business_capture`, `technical_capture`, `structural_summary`) and final report rendering (`title`, `intro`, `closing`, `notes`, `highlights`). Previously it only controlled report rendering; per-hop analysis content required source edits.
+- **Unified exploration engine** — the three separate state-machine classes (Blackboard, Column Trace, and their abstract base) are merged into a single `NavigationEngine` with mode variants (Inline, SM-Blackboard, SM-Column-Trace). Classification locking, scope approval gate, and the Detail Archive memory model are shared across all modes.
+- **Typed extension-webview messaging contract** — all messages between the extension host and the graph UI are now defined in a single Zod-validated schema; replaces untyped `postMessage` calls so malformed messages are caught at the boundary instead of causing silent UI failures.
 - **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
-- **30-minute session timeout** — Idle exploration sessions expire automatically. Starting a new exploration discards any old in-progress one with a brief in-chat notice — no blocking dialog.
 - **Cleaner cancellation** — Pressing Stop mid-response exits cleanly — no "stream closed" error.
 
 ## [0.9.8] - 2026-04-12
