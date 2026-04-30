@@ -59,7 +59,6 @@ The extension covers **intra-database DDL only**. The following are out of scope
 
 - **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source. Target tables appear as leaves; the upstream pipeline does not.
 - **Cross-database / cross-server flow** — surfaced only when the SQL body uses a fully qualified three- or four-part name; the remote side appears as an external-reference node, not a fully traced sub-graph.
-- **Runtime data manipulation** — DML executed outside stored procedures (application-layer `INSERT`s, bulk loads, CDC consumers) leaves no DDL footprint.
 - **Dynamic SQL** — `EXEC(@sql)` and `sp_executesql` cannot be analysed statically.
 - **Unqualified references** — references without a schema prefix are excluded.
 
