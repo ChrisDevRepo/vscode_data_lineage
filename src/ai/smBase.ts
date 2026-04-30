@@ -1369,17 +1369,15 @@ export class NavigationEngine implements IHopStateMachine {
         const activeLower = this._columnAspect.active_columns.map(c => c.toLowerCase());
 
         for (const entry of finding.column_flow) {
-          // out_col must be one of the active CT columns (or a @param alias for it)
+          // out_col must be one of the active CT columns
           if (!activeLower.includes(entry.out_col.toLowerCase())) {
             allInvalidRoutes.push({ id: focusId, reason: `column_flow_invalid: out_col "${entry.out_col}" is not in active_columns [${this._columnAspect.active_columns.join(', ')}]. Only declare column_flow for the tracked columns.` });
             continue;
           }
 
-          // Procedures write columns to tables; their @params (from parseProcParams) are INPUT parameters,
-          // not the output column names they produce. Skip the column-existence check for proc focus nodes.
-          // Views, tables, and functions have verifiable column schemas — validate those normally.
-          const focusIsProc = focusNode.type === 'procedure';
-          if (!focusIsProc && !validFocusCols.has(entry.out_col.toLowerCase())) {
+          // out_col must exist on the focus node when column metadata is available.
+          // Procedures have no output-column metadata; size=0 skips the check.
+          if (validFocusCols.size > 0 && !validFocusCols.has(entry.out_col.toLowerCase())) {
             allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='prune'.` });
             continue;
           }
@@ -1390,15 +1388,24 @@ export class NavigationEngine implements IHopStateMachine {
               allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor node "${cont.from_node}" not found in graph.` });
               continue;
             }
-            // Skip from_col check when contributor is a proc/function: @params from parseProcParams
-            // are inputs to the routine, not the column names that flow out of it.
-            // Tables and views are readers — their columns are verifiable metadata.
-            const neighborIsProcOrFunc = neighbor.type === 'procedure' || neighbor.type === 'function';
-            const validNeighborCols = neighborIsProcOrFunc
-              ? new Set<string>()
-              : new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-            if (validNeighborCols.size > 0 && !validNeighborCols.has(cont.from_col.toLowerCase())) {
-              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
+            if (neighbor.type === 'procedure') {
+              // Procedures have no output-column metadata. Validate from_col against the procedure's
+              // inbound source node columns instead (one-to-one: the column entering the SP must exist
+              // on at least one of its data sources — the table or view that feeds it).
+              const spInbound = this.model.neighborIndex[neighbor.id.toLowerCase()]?.in ?? [];
+              const inboundCols = new Set<string>();
+              for (const inId of spInbound) {
+                getNodeColumns(inId, this.nodeMap, this.store ?? undefined)?.forEach(c => inboundCols.add(c.name.toLowerCase()));
+              }
+              if (inboundCols.size > 0 && !inboundCols.has(cont.from_col.toLowerCase())) {
+                allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist in any inbound source of procedure "${cont.from_node}".` });
+              }
+            } else {
+              // Tables, views, functions: validate from_col directly against their own column schemas.
+              const validNeighborCols = new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+              if (validNeighborCols.size > 0 && !validNeighborCols.has(cont.from_col.toLowerCase())) {
+                allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
+              }
             }
           }
         }

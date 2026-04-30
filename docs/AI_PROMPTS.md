@@ -107,7 +107,7 @@ Validated edges accumulate in `ColumnAspect.edges[]` and are exposed via `SmResu
 
 Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
 
-**Column validation gates (smBase.ts).** `out_col` existence is not validated for procedure focus nodes — procedures write to target tables and their DDL body does not expose those column names as owned metadata. `from_col` is not validated when the contributor is a procedure or function — `parseProcParams` returns execution parameters (@StartDate, @Mode, etc.), not data-column names; checking against that set always produces false negatives. Tables and views are readers with verifiable column schemas and are always validated. `validateNeighborIds` lowercases input IDs before checking internal engine sets (which use lowercase keys).
+**Column validation gates (smBase.ts).** `out_col` existence is checked only when the focus node has column metadata (`size > 0`); procedures have no output-column metadata so the check skips automatically. `from_col` validation is split by contributor type: procedure contributors are validated against their inbound source node columns (one-to-one rule — the column entering the SP must exist on at least one of its data sources); tables, views, and functions are validated directly against their own column schemas. `getNodeColumns` returns `node.columns` only — execution parameters are not included. `validateNeighborIds` lowercases input IDs before checking internal engine sets (which use lowercase keys).
 
 **Upstream column inspection.** Before declaring `from_col` in `contributors`, the AI can call `lineage_get_neighbor_columns` to inspect upstream column schemas — avoids guessing column names on nodes not yet visited.
 
