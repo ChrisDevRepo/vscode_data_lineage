@@ -1135,6 +1135,33 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
+      // CT column derivation + auto-prune: when a route_request omitted `columns`, the
+      // agenda entry has no activeColumns. Recover from accumulated edges (prior hops'
+      // column_flow declared this node as a contributor with a specific from_col). If
+      // no edges reach this node either, the node has no tracked columns and is pruned
+      // automatically — only in CT mode.
+      if (this._columnAspect) {
+        const entryColumns = candidate.activeColumns ?? [];
+        const activeColumns =
+          entryColumns.length > 0
+            ? entryColumns
+            : Array.from(
+                new Set(
+                  this._columnAspect.edges
+                    .filter(e => e.from_node === candidate.nodeId)
+                    .map(e => e.from_col)
+                    .filter((c): c is string => !!c),
+                ),
+              );
+        if (activeColumns.length === 0) {
+          this.visited.add(candidate.nodeId);
+          this.memory.recordVerdict('prune');
+          this.log('debug', `[CT] auto-prune ${candidate.nodeId} — no active columns`);
+          continue;
+        }
+        candidate.activeColumns = activeColumns;
+      }
+
       entry = candidate;
       break;
     }
