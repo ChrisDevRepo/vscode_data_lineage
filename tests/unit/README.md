@@ -8,7 +8,7 @@
 
 | Tier | Command | What runs |
 |------|---------|-----------|
-| Core | `npm test` | Parser, dacpac, graph, DMV, snapshot, AI tool registration, repeat-reject guard, classification, session-stale, schema-boundary, message envelope, SM robustness, refine loop |
+| Core | `npm test` | Parser, dacpac, graph, DMV, snapshot, AI tool registration, repeat-reject guard, classification, schema-boundary, message envelope, SM robustness, refine loop |
 | AI-heavy | `npm run test:unit:ai` | NavigationEngine + cascade + bipartite + supplement |
 | Hooks (vitest) | `npm run test:hooks` | React hook tests under `tests/unit/hooks/` |
 | Snapshot | `npm run test:snapshot` | Parser baseline TSV (refresh: `:update`) |

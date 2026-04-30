@@ -127,14 +127,8 @@ export class AiSession {
   public hopLog: HopLogEntry[] = [];
   
   // ── Telemetry / Log Correlation ──
-  /** Unix timestamp of session creation. */
+  /** Unix timestamp of session creation. Pinned at creation; used for result-graft windowing. */
   public startTime: number;
-  /**
-   * Unix timestamp of the last user-driven activity (new prompt, gate resume).
-   * Drives {@link isStale}; distinct from {@link startTime}, which stays pinned to
-   * session creation for result-graft windowing.
-   */
-  public lastActivity: number;
   /** Total number of tool execution rounds performed. */
   public hopCount = 0;
   /** Monotonic round id (bumped by participant on each LM round). Used to detect parallel calls to strictly-serial tools. */
@@ -168,38 +162,6 @@ export class AiSession {
     this.columnStore = new ColumnStore();
     this.outputTemplates = templates ?? { ...EMPTY_AI_TEMPLATES };
     this.startTime = Date.now();
-    this.lastActivity = this.startTime;
-  }
-
-  /**
-   * Determines if the session has been idle past the stale threshold (30 minutes
-   * since the last user activity).
-   *
-   * @remarks
-   * Measured from {@link lastActivity}, not {@link startTime}: a user resuming a
-   * long-pending gate is active, and the session should not be wiped under them.
-   */
-  public isStale(): boolean {
-    const STALE_AFTER_MS = 30 * 60 * 1000;
-    return (Date.now() - this.lastActivity) > STALE_AFTER_MS;
-  }
-
-  /**
-   * Marks the session as active now. Call on every user-driven turn boundary
-   * (new prompt, gate approval/redirect) so {@link isStale} measures true idle.
-   */
-  public touch(): void {
-    this.lastActivity = Date.now();
-  }
-
-  /**
-   * Resets the session state if it is stale or if a previous exploration is complete.
-   */
-  public resetIfStale(): void {
-    if (this.isStale() || this.stateMachine?.status === 'complete') {
-      this.resetExploration();
-      this.regenerateSessionId();
-    }
   }
 
   private generateId(): string {
@@ -286,7 +248,6 @@ export class AiSession {
   public regenerateSessionId(): void {
     this.id = this.generateId();
     this.startTime = Date.now();
-    this.lastActivity = this.startTime;
   }
 
   /**

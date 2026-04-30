@@ -251,7 +251,6 @@ export class LineageParticipant {
       }
     }
 
-    sess.touch();
     // Reset the parallel-call guard at every turn entry. `currentRoundId` is per-turn
     // (set to roundCount in the hop loop, which restarts at 0 each turn); without this
     // reset, a successful start_exploration in turn N parks `startExplorationRoundId`

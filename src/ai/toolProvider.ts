@@ -339,8 +339,6 @@ class ToolHandler {
         }, input);
       }
 
-      sess.resetIfStale();
-
       if (sess.startExplorationRoundId !== null && sess.startExplorationRoundId === sess.currentRoundId) {
         return this.logAndReturn('start_exploration', {
           error: 'parallel_call_forbidden',
