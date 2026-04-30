@@ -2,19 +2,38 @@ import { memo, useState } from 'react';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
+/**
+ * Props for the {@link InlineTraceControls} component.
+ */
 interface InlineTraceControlsProps {
+  /** ID of the node starting the trace. */
   startNodeId: string;
+  /** Display name of the start node. */
   startNodeName: string;
+  /** Initial upstream depth to show in the input. */
   defaultUpstream?: number;
+  /** Initial downstream depth to show in the input. */
   defaultDownstream?: number;
+  /** Callback fired when the user applies the trace configuration. */
   onApply: (config: {
     startNodeId: string;
     upstreamLevels: number;
     downstreamLevels: number;
   }) => void;
+  /** Callback fired to cancel the trace configuration. */
   onClose: () => void;
 }
 
+/**
+ * A configuration bar for setting up a lineage trace.
+ * 
+ * It appears when a user initiates a trace but before the BFS is executed.
+ * Users can specify numerical depths for upstream and downstream traversal
+ * or select "All" for an exhaustive trace.
+ * 
+ * @param props - The component props.
+ * @returns A memoized React component.
+ */
 export const InlineTraceControls = memo(function InlineTraceControls({
   startNodeId,
   startNodeName,

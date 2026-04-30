@@ -29,6 +29,11 @@ jobs:
             "secrets*.json"
             "**/test-data/**"
             "**/.claude/**"
+            ".claude/**"
+            "**/test-internal/**"
+            "test-internal/**"
+            "**/docs-internal/**"
+            "docs-internal/**"
             "customer-data/**"
           )
 

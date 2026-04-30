@@ -1,20 +1,64 @@
+/**
+ * @module GraphAnalysis
+ * Provides advanced graph-theoretic analysis functions for the database schema graph.
+ *
+ * This module leverages `graphology` to perform structural investigations, including:
+ * - Neighbor discovery (connected schemas).
+ * - Island detection (isolated subgraphs).
+ * - Hub analysis (highly connected nodes).
+ * - Orphan detection (disconnected nodes).
+ * - Longest dependency path calculation.
+ * - Cycle detection (bidirectional or circular dependencies).
+ * - External reference identification (cross-database or file-based dependencies).
+ */
+
 import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
-import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
+import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig, type DatabaseModel } from './types';
 
-// ─── Islands (Connected Components) ─────────────────────────────────────────
+/**
+ * Discovers all schemas that have at least one edge connecting to a node in the target schema.
+ * Uses the pre-built `neighborIndex` for O(NodesInSchema * Degree) performance.
+ *
+ * @param model - The complete database model.
+ * @param schema - The target schema name.
+ * @returns A set of schema names connected to the target schema (includes the target schema).
+ */
+export function getNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
+  const neighborSchemas = new Set<string>([schema]);
+  
+  const focusNodes = model.nodes.filter(n => n.schema === schema);
+  
+  for (const node of focusNodes) {
+    const neighbors = model.neighborIndex[node.id];
+    if (!neighbors) continue;
+    
+    const allNeighborIds = [...neighbors.in, ...neighbors.out];
+    for (const nid of allNeighborIds) {
+      const neighborMeta = model.catalog[nid];
+      if (neighborMeta && neighborMeta.schema) {
+        neighborSchemas.add(neighborMeta.schema);
+      }
+    }
+  }
+  
+  return neighborSchemas;
+}
 
+/**
+ * Detects isolated subgraphs (islands) that are disconnected from the rest of the graph.
+ *
+ * @param graph - The graph instance.
+ * @param maxSize - Maximum node count for a component to be considered an "island".
+ * @returns Result object containing the discovered island groups.
+ */
 export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'islands', groups: [], summary: 'No nodes in graph' };
   }
 
   let components = connectedComponents(graph);
-
-  // Sort by size ascending (smallest islands first)
   components.sort((a, b) => a.length - b.length);
-
-  // Islands need 2+ nodes (single isolated nodes → Orphan analysis); filter by maxSize
   components = components.filter(c => c.length >= 2 && c.length <= maxSize);
 
   const groups: AnalysisGroup[] = components.map((nodeIds, i) => {
@@ -40,14 +84,18 @@ export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   };
 }
 
-// ─── Hubs (High-Degree Nodes) ───────────────────────────────────────────────
-
+/**
+ * Identifies high-degree "hub" nodes that serve as central points in the graph.
+ *
+ * @param graph - The graph instance.
+ * @param minDegree - Minimum degree threshold for a node to be classified as a hub.
+ * @returns Result object detailing the detected hubs.
+ */
 export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'hubs', groups: [], summary: 'No nodes in graph' };
   }
 
-  // Collect nodes that meet the minimum degree threshold
   const nodesByDegree: Array<{ id: string; degree: number; inDegree: number; outDegree: number }> = [];
   graph.forEachNode((id) => {
     const degree = graph.degree(id);
@@ -61,7 +109,6 @@ export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
     }
   });
 
-  // Sort by degree descending
   nodesByDegree.sort((a, b) => b.degree - a.degree);
 
   const groups: AnalysisGroup[] = nodesByDegree.map((hub) => {
@@ -88,8 +135,12 @@ export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   };
 }
 
-// ─── Orphans (Isolated Nodes with degree 0) ─────────────────────────────────
-
+/**
+ * Finds orphan nodes that have no inbound or outbound connections.
+ *
+ * @param graph - The graph instance.
+ * @returns Result object grouping orphans by schema and object type.
+ */
 export function analyzeOrphans(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'orphans', groups: [], summary: 'No nodes in graph' };
@@ -102,7 +153,6 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
     }
   });
 
-  // Group orphans by schema + type
   const buckets = new Map<string, string[]>();
   for (const id of orphanIds) {
     const schema = graph.getNodeAttribute(id, 'schema');
@@ -113,7 +163,6 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
     buckets.set(key, arr);
   }
 
-  // Sort buckets by size descending
   const sortedKeys = [...buckets.keys()].sort(
     (a, b) => (buckets.get(b)?.length || 0) - (buckets.get(a)?.length || 0)
   );
@@ -140,21 +189,26 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
   };
 }
 
-// ─── Longest Path (Deepest Dependency Chain) ────────────────────────────────
-
+/**
+ * Calculates the longest non-cyclic dependency chains in the graph.
+ *
+ * @param graph - The graph instance.
+ * @param minNodes - Minimum nodes required in a chain to be reported.
+ * @param maxChains - Maximum number of chains to return.
+ * @returns Result object containing the discovered dependency chains.
+ */
 export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }
 
-  // DFS + memoization: compute longest downstream depth for each node
   const depth = new Map<string, number>();
   const successor = new Map<string, string>();
   const visiting = new Set<string>();
 
   function dfsLP(node: string): number {
     if (depth.has(node)) return depth.get(node)!;
-    if (visiting.has(node)) return 0; // cycle guard
+    if (visiting.has(node)) return 0;
     visiting.add(node);
 
     let maxDown = 0;
@@ -176,7 +230,6 @@ export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains
 
   graph.forEachNode((id) => dfsLP(id));
 
-  // Collect root nodes and reconstruct chains from those with deepest paths
   const roots: Array<{ id: string; depth: number }> = [];
   graph.forEachNode((id) => {
     const d = depth.get(id) || 0;
@@ -185,7 +238,6 @@ export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains
     }
   });
 
-  // If no true roots (cycles everywhere), fall back to nodes with highest depth
   if (roots.length === 0) {
     graph.forEachNode((id) => {
       const d = depth.get(id) || 0;
@@ -195,7 +247,6 @@ export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains
 
   roots.sort((a, b) => b.depth - a.depth);
 
-  // Reconstruct chains, deduplicate by end-node
   const chains: Array<{ nodeIds: string[]; length: number }> = [];
   const seenEndpoints = new Set<string>();
 
@@ -205,7 +256,7 @@ export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains
     const visited = new Set<string>([cur]);
     while (successor.has(cur)) {
       cur = successor.get(cur)!;
-      if (visited.has(cur)) break; // cycle in successor chain
+      if (visited.has(cur)) break;
       visited.add(cur);
       chain.push(cur);
     }
@@ -214,7 +265,7 @@ export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains
     if (seenEndpoints.has(endNode)) continue;
     seenEndpoints.add(endNode);
 
-    if (chain.length < minNodes) continue; // skip short chains
+    if (chain.length < minNodes) continue;
     chains.push({ nodeIds: chain, length: chain.length - 1 });
     if (chains.length >= maxChains) break;
   }
@@ -242,18 +293,19 @@ export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains
   };
 }
 
-// ─── Cycles (Circular Dependencies via DFS 3-color) ─────────────────────────
-
+/**
+ * Detects circular dependencies (Strongly Connected Components of size 2+).
+ *
+ * @param graph - The graph instance.
+ * @returns Result object detailing the detected cycles.
+ */
 export function analyzeCycles(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'cycles', groups: [], summary: 'No nodes in graph' };
   }
 
-  // Each SCC of size ≥ 2 is a distinct cycle group
   const sccs = stronglyConnectedComponents(graph);
   const cycleComponents = sccs.filter(scc => scc.length >= 2);
-
-  // Sort by size descending (largest cycles first)
   cycleComponents.sort((a, b) => b.length - a.length);
 
   const groups: AnalysisGroup[] = cycleComponents.map((nodeIds, i) => {
@@ -281,8 +333,12 @@ export function analyzeCycles(graph: Graph): AnalysisResult {
   };
 }
 
-// ─── External Refs (File Sources + Cross-DB References) ─────────────────────
-
+/**
+ * Identifies external references (files or cross-database links) within the graph.
+ *
+ * @param graph - The graph instance.
+ * @returns Result object grouping external references by kind.
+ */
 export function analyzeExternalRefs(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'external-refs', groups: [], summary: 'No nodes in graph' };
@@ -313,7 +369,6 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
         meta: { kind: 'file', database: '', neighborCount: neighborIds.length },
       });
     } else {
-      // db: name is "schema.object", externalDatabase is the db name
       const label = externalDatabase ? `${externalDatabase} / ${name}` : name;
       dbGroups.push({
         id: `extref-${id}`,
@@ -324,7 +379,6 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
     }
   });
 
-  // Sort file groups alphabetically, db groups by database then label
   fileGroups.sort((a, b) => a.label.localeCompare(b.label));
   dbGroups.sort((a, b) => {
     const dbCmp = String(a.meta!.database).localeCompare(String(b.meta!.database));
@@ -339,8 +393,15 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
   return { type: 'external-refs', groups, summary };
 }
 
-// ─── Dispatch ───────────────────────────────────────────────────────────────
-
+/**
+ * Unified entry point to run a specific analysis type on the graph.
+ *
+ * @param graph - The graphology instance.
+ * @param type - Type of analysis to perform.
+ * @param analysisConfig - Analysis-specific thresholds.
+ * @param maxNodes - Safety limit for graph exploration.
+ * @returns The resulting analysis report.
+ */
 export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   switch (type) {
     case 'islands': return analyzeIslands(graph, Math.min(analysisConfig.islandMaxSize, maxNodes));

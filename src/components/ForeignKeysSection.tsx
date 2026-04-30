@@ -1,8 +1,30 @@
+import React from 'react';
 import type { ForeignKeyInfo } from '../engine/types';
 import { highlightText } from './highlight';
 import { Tooltip } from './ui/Tooltip';
 
-export function ForeignKeysSection({ fks, findQuery }: { fks: ForeignKeyInfo[]; findQuery?: string }) {
+/**
+ * Props for the {@link ForeignKeysSection} component.
+ */
+interface ForeignKeysSectionProps {
+  /** Array of foreign key information objects to be displayed. */
+  fks: ForeignKeyInfo[];
+  /** Optional search query for highlighting matching text in the table. */
+  findQuery?: string;
+}
+
+/**
+ * A component that renders a table displaying foreign key constraints for a specific SQL table.
+ *
+ * @remarks
+ * This section includes columns for the constraint name, source columns, referenced table, and delete rules.
+ * It uses {@link Tooltip} for truncated text and {@link highlightText} for search result visualization.
+ * It is typically rendered within a table detail or property panel.
+ *
+ * @param props - The component properties.
+ * @returns A {@link React.JSX.Element} displaying the foreign keys table.
+ */
+export function ForeignKeysSection({ fks, findQuery }: ForeignKeysSectionProps) {
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>
       <div className="ln-section-label mb-2">
@@ -11,10 +33,10 @@ export function ForeignKeysSection({ fks, findQuery }: { fks: ForeignKeyInfo[]; 
       <table className="ln-detail-table">
         <thead>
           <tr style={{ borderBottom: '1px solid var(--ln-border)' }}>
-            <th>Constraint</th>
-            <th>Column(s)</th>
-            <th>References</th>
-            <th>On Delete</th>
+            <th className="text-left font-semibold">Constraint</th>
+            <th className="text-left font-semibold">Column(s)</th>
+            <th className="text-left font-semibold">References</th>
+            <th className="text-left font-semibold">On Delete</th>
           </tr>
         </thead>
         <tbody>

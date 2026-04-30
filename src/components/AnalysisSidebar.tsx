@@ -5,15 +5,36 @@ import { SidePanel } from './SidePanel';
 import { Tooltip } from './ui/Tooltip';
 import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';
 
+/**
+ * Props for the `AnalysisSidebar` component.
+ */
 interface AnalysisSidebarProps {
+  /** The current active analysis state. */
   analysis: AnalysisMode;
+  /** The full graph instance, used for deriving additional metadata about hubs or paths. */
   graph?: Graph | null;
+  /** Callback triggered when a group is selected from the list. */
   onSelectGroup: (groupId: string) => void;
+  /** Callback triggered to clear the current group selection. */
   onClearGroup: () => void;
+  /** Callback triggered to close the sidebar entirely. */
   onClose: () => void;
+  /** Optional callback to switch to a different analysis algorithm. */
   onSwitchAnalysis?: (type: AnalysisType) => void;
 }
 
+/**
+ * A sidebar panel that displays the results and details of structural graph analyses.
+ * 
+ * @remarks
+ * This component provides:
+ * - A mode-switcher to toggle between different analysis types (SCC, Islands, Hubs, etc.).
+ * - A summary of the overall analysis findings.
+ * - An interactive list of groups (islands, cycles, etc.) discovered by the algorithm.
+ * - Support for categorizing groups, specifically for external reference tracking.
+ * 
+ * @param props - The component props.
+ */
 export const AnalysisSidebar = memo(function AnalysisSidebar({
   analysis,
   graph,
@@ -25,6 +46,10 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
   const info = ANALYSIS_TYPE_INFO[analysis.type];
   const { result, activeGroupId } = analysis;
 
+  /**
+   * Handles user interaction with a group item.
+   * Toggles the group selection state.
+   */
   const handleGroupClick = useCallback(
     (groupId: string) => {
       if (activeGroupId === groupId) {
@@ -161,16 +186,28 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
   );
 });
 
-// ─── Individual Group Item ──────────────────────────────────────────────────
 
+/**
+ * Props for the `AnalysisGroupItem` component.
+ */
 interface AnalysisGroupItemProps {
+  /** The analysis group data to render. */
   group: AnalysisGroup;
+  /** The type of analysis this group belongs to. */
   analysisType: AnalysisType;
+  /** Whether this group is currently selected/active. */
   isActive: boolean;
+  /** Callback triggered when the item is clicked. */
   onClick: () => void;
+  /** Optional graph instance for additional metadata lookups. */
   graph?: Graph | null;
 }
 
+/**
+ * A list item representing a single group discovered during graph analysis.
+ * 
+ * @param props - The component props.
+ */
 const AnalysisGroupItem = memo(function AnalysisGroupItem({
   group,
   analysisType,
@@ -205,6 +242,15 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
   );
 });
 
+/**
+ * Renders descriptive metadata for an analysis group based on its type.
+ * 
+ * @param meta - The metadata record for the group.
+ * @param type - The analysis type.
+ * @param nodeIds - The IDs of nodes within this group.
+ * @param graph - Optional graph instance for lookups.
+ * @returns A formatted string describing the group's properties.
+ */
 function renderMeta(
   meta: Record<string, string | number>,
   type: AnalysisType,

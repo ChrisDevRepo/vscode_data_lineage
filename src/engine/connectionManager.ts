@@ -1,66 +1,114 @@
+/**
+ * @module ConnectionManager
+ * Handles database connectivity, DMV query management, and integration with the `ms-mssql.mssql` extension.
+ *
+ * This module provides the infrastructure for:
+ * - Loading and validating DMV (Dynamic Management View) queries from built-in or custom sources.
+ * - Orchestrating connections via the MSSQL extension's connection picker.
+ * - Executing queries with automated timeout handling and placeholder expansion.
+ * - Retrieving server metadata and managing connection lifecycles.
+ */
+
 import * as vscode from 'vscode';
-import * as path from 'path';
 import * as yaml from 'js-yaml';
-import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult } from '../types/mssql';
+import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult, IServerInfo } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
-import { logInfo, logDebug, logWarn, logTrace } from '../utils/log';
+import { Logger, trunc, sanitizeForLog } from '../utils/log';
 
+/**
+ * The unique identifier for the Microsoft MSSQL extension.
+ */
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
-// ─── DMV Query Loading ──────────────────────────────────────────────────────
-
+/**
+ * Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server.
+ */
 export interface DmvQuery {
+  /** 
+   * The unique name/key of the query. 
+   * Known keys: 'schema-preview', 'all-objects', 'nodes', 'columns', 'dependencies'.
+   */
   name: string;
+  /** A human-readable description of the query's purpose. */
   description: string;
+  /** The raw SQL statement to execute. */
   sql: string;
-  phase?: number;  // 1 = Phase 1 (unfiltered), 2 = Phase 2 ({{SCHEMAS}} expanded)
+  /** 
+   * The execution phase of the query.
+   * `1`: Preliminary phase (unfiltered).
+   * `2`: Main extraction phase (typically filters by schema).
+   * @default 2
+   */
+  phase?: number;
 }
 
+/**
+ * Root configuration structure for DMV query definition files.
+ */
 export interface DmvQueriesConfig {
+  /** Schema version of the configuration file. */
   version: number;
+  /** The collection of queries defined in the file. */
   queries: DmvQuery[];
 }
 
+/**
+ * Loads DMV queries by checking the workspace configuration for a custom path, 
+ * falling back to built-in defaults if necessary.
+ * 
+ * @param outputChannel - The VS Code output channel for logging.
+ * @param extensionUri - The base URI of the extension for resolving built-in assets.
+ * @returns A promise resolving to an array of validated DMV queries.
+ */
 export async function loadDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
 ): Promise<DmvQuery[]> {
+  const logger = Logger.create(outputChannel, 'Config');
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
   const customPath = cfg.get<string>('dmvQueriesFile', '');
 
   if (customPath) {
     const resolved = resolveWorkspacePath(customPath);
     if (resolved) {
+      logger.info(`Reading DMV queries custom: ${resolved}`);
       try {
-        const fileUri = vscode.Uri.file(resolved);
-        const data = await vscode.workspace.fs.readFile(fileUri);
-        const content = new TextDecoder().decode(data);
-        const parsed = yaml.load(content) as DmvQueriesConfig;
+        const data = await vscode.workspace.fs.readFile(vscode.Uri.file(resolved));
+        const parsed = yaml.load(new TextDecoder().decode(data)) as DmvQueriesConfig;
 
         if (parsed?.queries && Array.isArray(parsed.queries)) {
-          const valid = parsed.queries.filter(q => q.name && q.sql);
+          const skipped: string[] = [];
+          const valid = parsed.queries.filter((q, i) => {
+            if (!q.name || !q.sql) {
+              const label = q?.name || `query[${i}]`;
+              logger.info(`Skipped DMV query '${label}': missing ${!q?.name ? "'name'" : "'sql'"} field`);
+              skipped.push(label);
+              return false;
+            }
+            return true;
+          });
           if (valid.length > 0) {
             const KNOWN_NAMES = ['schema-preview', 'all-objects', 'nodes', 'columns', 'dependencies'];
             const loadedNames = new Set(valid.map(q => q.name));
             const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
             if (missingNames.length > 0) {
-              logWarn(outputChannel, 'Config', `Custom DMV queries missing: ${missingNames.join(', ')} — DB import may fail`);
+              logger.warn(`Custom DMV queries missing known names: ${missingNames.join(', ')} — DB import may fail`);
               vscode.window.showWarningMessage(`Custom DMV queries missing: ${missingNames.join(', ')}. DB import may fail.`);
             }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
-            logInfo(outputChannel, 'Config', `Loaded ${valid.length} custom DMV queries from ${path.basename(customPath)}`);
+            logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped.length} skipped`);
             return valid;
           }
         }
-        logWarn(outputChannel, 'Config', `Invalid custom DMV queries in ${customPath} — using built-in defaults`);
+        logger.warn(`Fallback DMV queries custom → built-in: reason=missing or invalid "queries" array at ${resolved}`);
         vscode.window.showWarningMessage('Custom DMV queries invalid — using built-in defaults.');
       } catch (err) {
-        logWarn(outputChannel, 'Config', `Failed to load custom DMV queries: ${err instanceof Error ? err.message : String(err)} — using built-in defaults`);
+        logger.warn(`Fallback DMV queries custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${resolved}`);
         vscode.window.showWarningMessage('Failed to load custom DMV queries — using built-in defaults. Check Output channel.');
       }
     } else {
-      logWarn(outputChannel, 'Config', `Cannot resolve DMV queries path "${customPath}" — using built-in defaults`);
+      logger.warn(`Fallback DMV queries custom → built-in: reason=cannot resolve path "${customPath}"`);
       vscode.window.showWarningMessage(`Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`);
     }
   }
@@ -68,29 +116,39 @@ export async function loadDmvQueries(
   return loadBuiltInDmvQueries(outputChannel, extensionUri);
 }
 
+/**
+ * Loads the built-in DMV queries from the extension's `assets` directory.
+ * 
+ * @param outputChannel - The VS Code output channel for logging.
+ * @param extensionUri - The base URI of the extension.
+ * @returns A promise resolving to the built-in DMV queries.
+ * @throws If the built-in configuration file is missing or corrupted.
+ */
 async function loadBuiltInDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
 ): Promise<DmvQuery[]> {
+  const logger = Logger.create(outputChannel, 'Config');
   const yamlUri = vscode.Uri.joinPath(extensionUri, 'assets', 'dmvQueries.yaml');
+  logger.info(`Reading DMV queries built-in: ${yamlUri.fsPath}`);
   const data = await vscode.workspace.fs.readFile(yamlUri);
-  const content = new TextDecoder().decode(data);
-  const parsed = yaml.load(content) as DmvQueriesConfig;
+  const parsed = yaml.load(new TextDecoder().decode(data)) as DmvQueriesConfig;
 
   if (!parsed?.queries || !Array.isArray(parsed.queries)) {
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
   }
 
-  logDebug(outputChannel, 'Config', `Using built-in DMV queries (${parsed.queries.length} queries)`);
+  logger.info(`Applied DMV queries: ${parsed.queries.length} loaded from built-in, 0 skipped`);
   return parsed.queries;
 }
 
-// ─── MSSQL Extension Access ─────────────────────────────────────────────────
-
-export function isMssqlAvailable(): boolean {
-  return vscode.extensions.getExtension(MSSQL_EXTENSION_ID) !== undefined;
-}
-
+/**
+ * Accesses the MSSQL extension API, ensuring the extension is installed and activated.
+ * 
+ * @param outputChannel - The VS Code output channel for logging.
+ * @returns A promise resolving to the `IExtension` exports.
+ * @throws If the MSSQL extension is not installed.
+ */
 async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExtension> {
   const ext = vscode.extensions.getExtension<IExtension>(MSSQL_EXTENSION_ID);
   if (!ext) {
@@ -98,11 +156,16 @@ async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExt
   }
 
   const api = ext.isActive ? ext.exports : await ext.activate();
-  logDebug(outputChannel, 'DB', `MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext.packageJSON?.version ?? '?'} found`);
-
   return api;
 }
 
+/**
+ * Retrieves the connection sharing service from the MSSQL extension.
+ * 
+ * @param outputChannel - The VS Code output channel for logging.
+ * @returns A promise resolving to the `IConnectionSharingService`.
+ * @throws If the MSSQL extension version does not support connection sharing.
+ */
 async function getConnectionSharingApi(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<IConnectionSharingService> {
@@ -113,70 +176,102 @@ async function getConnectionSharingApi(
   return api.connectionSharing;
 }
 
-// ─── Prompt-Based Connection Flow ────────────────────────────────────────────
-
 /**
- * Shows the MSSQL extension's native connection picker, connects, and
- * returns a connectionUri that can be used with executeSimpleQuery().
- * Returns undefined if the user cancels the picker.
+ * Triggers the native MSSQL connection picker and initiates a connection.
+ * 
+ * @param outputChannel - The VS Code output channel for logging.
+ * @returns Connection URI and metadata, or `undefined` if the user cancels.
  */
 export async function promptForConnection(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
+  const logger = Logger.create(outputChannel, 'DB');
+  const ext = vscode.extensions.getExtension(MSSQL_EXTENSION_ID);
+  logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext?.packageJSON?.version ?? '?'} found`);
   const api = await getMssqlApi(outputChannel);
 
   const connectionInfo = await api.promptForConnection(true);
   if (!connectionInfo) {
-    logInfo(outputChannel, 'DB', 'User cancelled connection picker');
+    logger.info('User cancelled connection picker');
     return undefined;
   }
 
-  logInfo(outputChannel, 'DB', `Connecting to ${connectionInfo.server}/${connectionInfo.database}`);
+  logger.info(`Connecting to ${connectionInfo.server}/${connectionInfo.database}`);
+  const connectStart = Date.now();
   const connectionUri = await api.connect(connectionInfo, false);
-  logInfo(outputChannel, 'DB', 'Connected');
+  logger.info(`Connected (${Date.now() - connectStart}ms)`);
 
   return { connectionUri, connectionInfo };
 }
 
-/** Strip password and connectionString before persisting to workspaceState */
+/**
+ * Sanitizes connection info by removing secrets (passwords and raw connection strings).
+ * 
+ * @param info - The raw connection information.
+ * @returns A sanitized clone of the connection information.
+ */
 export function stripSensitiveFields(info: IConnectionInfo): Omit<IConnectionInfo, 'password' | 'connectionString'> {
   const { password: _pw, connectionString: _cs, ...safe } = info;
   return safe;
 }
 
 /**
- * Connect directly using stored IConnectionInfo (bypasses the picker).
- * Returns undefined on failure so the caller can fall back to promptForConnection.
+ * Attempts a direct reconnection using existing credentials. 
+ * Falls back to the picker if direct connection fails.
+ * 
+ * @param connectionInfo - The existing connection credentials.
+ * @param outputChannel - The VS Code output channel for logging.
+ * @returns Connection details on success, or `undefined` on failure.
  */
 export async function connectDirect(
   connectionInfo: IConnectionInfo,
   outputChannel: vscode.LogOutputChannel,
 ): Promise<{ connectionUri: string; connectionInfo: IConnectionInfo } | undefined> {
+  const logger = Logger.create(outputChannel, 'DB');
+  const ext = vscode.extensions.getExtension(MSSQL_EXTENSION_ID);
+  logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext?.packageJSON?.version ?? '?'} found`);
   const api = await getMssqlApi(outputChannel);
 
-  logDebug(outputChannel, 'DB', `>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
+  logger.debug(`>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
+  const reconnectStart = Date.now();
   try {
     const connectionUri = await api.connect(connectionInfo, false);
-    logDebug(outputChannel, 'DB', 'Reconnected');
+    logger.info(`Reconnected (${Date.now() - reconnectStart}ms)`);
     return { connectionUri, connectionInfo };
   } catch (err) {
-    logWarn(outputChannel, 'DB', `Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
+    logger.warn(`Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
     return undefined;
   }
 }
 
-function dmvTimeout<T>(promise: Promise<T>, ms: number, queryName: string): Promise<T> {
+/**
+ * Utility to wrap an asynchronous operation with a timeout constraint.
+ * 
+ * @template T - The return type of the promise.
+ * @param promise - The promise to monitor.
+ * @param ms - Timeout duration in milliseconds.
+ * @param timeoutMessage - Message for the thrown error upon timeout.
+ * @returns A promise that resolves with the original value or rejects on timeout.
+ */
+export function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
   let handle: ReturnType<typeof setTimeout>;
   return Promise.race([
     promise.finally(() => clearTimeout(handle)),
     new Promise<never>((_, reject) => {
-      handle = setTimeout(() => reject(new Error(`DMV query "${queryName}" timed out after ${ms / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)), ms);
+      handle = setTimeout(() => reject(new Error(timeoutMessage)), ms);
     }),
   ]);
 }
 
 /**
- * Execute DMV queries against a connected database.
+ * Executes a batch of DMV queries sequentially.
+ * 
+ * @param connectionUri - The active connection URI.
+ * @param queries - List of queries to execute.
+ * @param outputChannel - Logger output channel.
+ * @param onProgress - Optional callback for tracking execution progress.
+ * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
+ * @returns A map of query names to their execution results.
  */
 export async function executeDmvQueries(
   connectionUri: string,
@@ -185,6 +280,7 @@ export async function executeDmvQueries(
   onProgress?: (step: number, total: number, label: string) => void,
   queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
 
   const results = new Map<string, SimpleExecuteResult>();
@@ -195,26 +291,32 @@ export async function executeDmvQueries(
     const step = i + 1;
 
     onProgress?.(step, total, query.name);
-    logDebug(outputChannel, 'DB', `Executing query: ${query.name} (${step}/${total})...`);
-    logTrace(outputChannel, 'DB', `SQL for '${query.name}':\n${query.sql}`);
+    logger.debug(`Executing ${query.name} (${step}/${total}) — SQL: ${trunc(sanitizeForLog(query.sql), 300)}`);
 
     const start = Date.now();
     const queryPromise = sharing.executeSimpleQuery(connectionUri, query.sql);
-    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
+    const result = queryTimeoutMs
+      ? await withQueryTimeout(queryPromise, queryTimeoutMs, `DMV query "${query.name}" timed out after ${queryTimeoutMs / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)
+      : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.info(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
   return results;
 }
 
-// ─── Schema-Filtered Query Execution (Phase 2) ─────────────────────────────
-
 /**
- * Execute Phase 2 DMV queries with {{SCHEMAS}} placeholder expansion.
- * Skips Phase 1 queries (phase === 1). Expands {{SCHEMAS}} in remaining queries.
+ * Executes Phase 2 queries with `{{SCHEMAS}}` substitution.
+ * 
+ * @param connectionUri - The active connection URI.
+ * @param queries - Candidate queries to filter and execute.
+ * @param schemas - Schema names for placeholder replacement.
+ * @param outputChannel - Logger output channel.
+ * @param onProgress - Progress tracking callback.
+ * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
+ * @returns Results for the executed Phase 2 queries.
  */
 export async function executeDmvQueriesFiltered(
   connectionUri: string,
@@ -224,14 +326,14 @@ export async function executeDmvQueriesFiltered(
   onProgress?: (step: number, total: number, label: string) => void,
   queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
 
   const phase2Queries = queries.filter(q => (q.phase ?? 2) !== 1);
 
-  // Validate: warn if any Phase 2 query is missing {{SCHEMAS}}
   for (const q of phase2Queries) {
     const warning = validateSchemaPlaceholder(q.name, q.sql, q.phase ?? 2);
-    if (warning) logWarn(outputChannel, 'DB', warning);
+    if (warning) logger.warn(warning);
   }
 
   const results = new Map<string, SimpleExecuteResult>();
@@ -243,45 +345,71 @@ export async function executeDmvQueriesFiltered(
     const sql = expandSchemaPlaceholder(query.sql, schemas);
 
     onProgress?.(step, total, query.name);
-    logDebug(outputChannel, 'DB', `Executing filtered query: ${query.name} (${step}/${total})...`);
-    logTrace(outputChannel, 'DB', `SQL for '${query.name}':\n${sql}`);
+    logger.debug(`Executing ${query.name} (${step}/${total}) — SQL: ${trunc(sanitizeForLog(sql), 300)}`);
 
     const start = Date.now();
     const queryPromise = sharing.executeSimpleQuery(connectionUri, sql);
-    const result = queryTimeoutMs ? await dmvTimeout(queryPromise, queryTimeoutMs, query.name) : await queryPromise;
+    const result = queryTimeoutMs
+      ? await withQueryTimeout(queryPromise, queryTimeoutMs, `DMV query "${query.name}" timed out after ${queryTimeoutMs / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`)
+      : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logDebug(outputChannel, 'DB', `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.info(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
   return results;
 }
 
-/** Get server info (version, edition) for a connected database. */
+/**
+ * Retrieves server-level metadata (version, edition, etc.) from the connection.
+ * 
+ * @param connectionUri - The active connection URI.
+ * @param outputChannel - The VS Code output channel for logging.
+ * @returns Server info metadata.
+ */
 export async function getServerInfo(
   connectionUri: string,
   outputChannel: vscode.LogOutputChannel,
-): Promise<import('../types/mssql').IServerInfo> {
+): Promise<IServerInfo> {
   const sharing = await getConnectionSharingApi(outputChannel);
   return sharing.getServerInfo(connectionUri);
 }
 
-/** Execute a single SQL query against a connected database. */
+/**
+ * Executes a single SQL command without batching or placeholders.
+ * 
+ * @param connectionUri - The active connection URI.
+ * @param sql - The SQL script to execute.
+ * @param outputChannel - Logger output channel.
+ * @returns The query execution result.
+ */
 export async function executeSimpleQuery(
   connectionUri: string,
   sql: string,
   outputChannel: vscode.LogOutputChannel,
 ): Promise<SimpleExecuteResult> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
-  return sharing.executeSimpleQuery(connectionUri, sql);
+  logger.debug(`Executing simple query — SQL: ${trunc(sanitizeForLog(sql), 300)}`);
+  const start = Date.now();
+  const result = await sharing.executeSimpleQuery(connectionUri, sql);
+  logger.info(`Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`);
+  return result;
 }
 
+/**
+ * Gracefully terminates the database connection.
+ * 
+ * @param connectionUri - The connection URI to close.
+ * @param outputChannel - Logger output channel.
+ */
 export async function disconnectDatabase(
   connectionUri: string,
   outputChannel: vscode.LogOutputChannel,
 ): Promise<void> {
+  const logger = Logger.create(outputChannel, 'DB');
   const sharing = await getConnectionSharingApi(outputChannel);
   await sharing.disconnect(connectionUri);
-  logInfo(outputChannel, 'DB', 'Disconnected');
+  logger.info('Disconnected');
 }

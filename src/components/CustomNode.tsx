@@ -1,42 +1,78 @@
 import { memo } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
-import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getVirtualExtColor } from '../utils/schemaColors';
+import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
 import type { ObjectType } from '../engine/types';
 
-/* NodeToolbar is still used for notes (bottom). Badges use absolute positioning
-   inside the node container so they overlay without shifting internal text. */
-
+/**
+ * The business data associated with a single node in the React Flow canvas.
+ */
 export type CustomNodeData = {
+  /** The human-readable name of the object. */
   label: string;
+  /** The database schema the object belongs to. */
   schema: string;
+  /** The fully qualified name (Schema.Label). */
   fullName: string;
+  /** The type of database object (table, view, etc.). */
   objectType: ObjectType;
+  /** The number of incoming edges. */
   inDegree: number;
+  /** The number of outgoing edges. */
   outDegree: number;
+  /** If true, the node is rendered with reduced opacity. */
   dimmed?: boolean;
+  /** If true or 'yellow', the node is rendered with a highlight border and glow. */
   highlighted?: boolean | 'yellow';
+  /** Specific type for external references. */
   externalType?: 'et' | 'file' | 'db';
+  /** URL for file-based external sources. */
   externalUrl?: string;
+  /** Database name for cross-database references. */
   externalDatabase?: string;
-  /** Badge chip shown on the node (top-center). Set by advanced bookmarks / AI views. */
+  /** 
+   * A small text badge displayed above the node. 
+   * Typically used for AI reasoning steps or bookmark categories.
+   */
   aiBadge?: { text: string };
-  /** Text annotation shown below the node — description of calcs, logic, business rules. */
+  /** 
+   * A descriptive note displayed below the node.
+   * Provides deep business logic or transformation context.
+   */
   aiNote?: { text: string };
-  /** AI highlight — color for border, glow/shadow for boxShadow (CSS var references). */
+  /** 
+   * Custom color and shadow configuration for AI-driven highlights.
+   */
   aiHighlight?: { color: string; glow: string; shadow: string };
-  /** When true, shows the "×" remove-from-view button (advanced bookmark mode only). */
+  /** Whether to show a 'Remove' button on the node (used in Advanced Bookmarks). */
   showRemoveButton?: boolean;
-  /** Callback fired when user clicks the "×" remove-from-view button. */
+  /** Callback to remove this node from the current view. */
   onRemoveFromView?: (nodeId: string) => void;
 };
 
+/**
+ * A highly customized React Flow node component that renders database objects.
+ * 
+ * @remarks
+ * This component handles complex visual states including:
+ * - Schema-based color coding (left border).
+ * - Object-type iconography.
+ * - Multi-layered highlights (Blue, Yellow, and AI-custom).
+ * - Toolbars for AI-generated annotations and badges.
+ * - Interactive elements like the 'Remove from View' button.
+ * - High-fidelity tooltips showing qualified names and connectivity metrics.
+ * 
+ * It utilize standard React Flow `Handle` components for edge anchoring.
+ * 
+ * @param props - Component props containing the node ID and business data.
+ */
 function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
+  const isExternal = data.objectType === 'external';
   const isVirtual = data.externalType === 'file' || data.externalType === 'db';
   // ⬢ filled = ET (real catalog object); ⬡ hollow = file/db virtual (no metadata)
   const displayIcon = isVirtual ? '⬡' : data.externalType === 'et' ? '⬢' : style.icon;
-  const schemaColor = isVirtual ? getVirtualExtColor() : getSchemaColor(data.schema);
+  const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColor(data.schema);
   const dimmed = data.dimmed === true;
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
   const isYellowHighlight = data.highlighted === 'yellow';
@@ -158,4 +194,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   );
 }
 
+/**
+ * An optimized, memoized version of the `CustomNodeComponent`.
+ */
 export const CustomNode = memo(CustomNodeComponent);

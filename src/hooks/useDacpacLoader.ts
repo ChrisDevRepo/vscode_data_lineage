@@ -3,40 +3,91 @@ import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig, ExtensionMessage } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 
+/**
+ * Represents a status notification displayed in the UI during project loading or processing.
+ */
 export type StatusMessage = {
+  /** The descriptive text of the status message. */
   text: string;
+  /** The semantic type of the message, affecting UI styling (color, icons). */
   type: 'info' | 'success' | 'warning' | 'error';
 };
 
+/**
+ * The source context currently being loaded.
+ */
 export type LoadingContext = 'dacpac' | 'database' | null;
 
+/**
+ * The full state and action set managed by the project loader hook.
+ * 
+ * @remarks
+ * This interface defines the bridge between the React frontend and the VS Code 
+ * extension host for all data extraction and project lifecycle events.
+ */
 export interface DacpacLoaderState {
+  /** The fully extracted database model (Phase 2 result). */
   model: DatabaseModel | null;
+  /** The lightweight schema preview (Phase 1 result). */
   schemaPreview: SchemaPreview | null;
+  /** The set of schemas selected by the user for extraction. */
   selectedSchemas: Set<string>;
+  /** Whether an extraction or connection process is active. */
   isLoading: boolean;
+  /** The current loading source (dacpac file or live database). */
   loadingContext: LoadingContext;
+  /** The display name of the current file or database. */
   fileName: string | null;
+  /** The absolute path to the project file on disk. */
   filePath: string | null;
+  /** The current status message to show in the UI. */
   status: StatusMessage | null;
+  /** Whether the MSSQL extension is available for live connections. */
   mssqlAvailable: boolean | null;
+  /** Whether the project should immediately visualize upon load (e.g., demo or restore). */
   pendingAutoVisualize: boolean;
+  /** Whether the UI should transition to the graph view. */
   pendingVisualize: boolean;
+  /** Whether the currently loaded model is the AdventureWorks demo. */
   isDemo: boolean;
+  /** Triggers the VS Code file picker to open a .dacpac. */
   openFile: () => void;
+  /** Resets the internal loader state to the starting screen. */
   resetToStart: () => void;
+  /** Loads an existing project by its unique ID. */
   loadProject: (id: string) => void;
+  /** Loads the built-in demo project. */
   loadDemo: () => void;
+  /** Triggers the MSSQL connection picker flow. */
   connectToDatabase: () => void;
+  /** Aborts the current loading process. */
   cancelLoading: () => void;
+  /** Clears the auto-visualize trigger flag. */
   clearAutoVisualize: () => void;
+  /** Clears the transition trigger flag. */
   clearPendingVisualize: () => void;
+  /** Starts the Phase 2 extraction for the selected schemas. */
   visualize: (selectedSchemas: Set<string>, projectName?: string) => void;
+  /** Toggles a schema's selection status. */
   toggleSchema: (name: string) => void;
+  /** Selects all available schemas in a list. */
   selectAllSchemas: (names: string[]) => void;
+  /** Deselects all available schemas in a list. */
   clearAllSchemas: (names: string[]) => void;
 }
 
+/**
+ * Orchestrates the project loading lifecycle: from file picking to full lineage extraction.
+ * 
+ * @remarks
+ * This hook handles the multi-phase extraction process used for both DACPACs and live databases.
+ * Phase 1: Rapid metadata extraction to show a schema selector.
+ * Phase 2: Full DDL parsing and graph building for the selected scope.
+ * It communicates with the VS Code extension host via `postMessage`.
+ * 
+ * @param onConfigReceived - Callback triggered when the extension host delivers updated configuration.
+ * @returns The project loader state and interactive actions.
+ */
 export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => void): DacpacLoaderState {
   const vscodeApi = useVsCode();
   const [model, setModel] = useState<DatabaseModel | null>(null);
@@ -317,4 +368,3 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     toggleSchema, selectAllSchemas, clearAllSchemas,
   };
 }
-

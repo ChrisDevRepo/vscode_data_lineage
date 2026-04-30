@@ -4,6 +4,7 @@ import { StartScreen } from './StartScreen';
 import { CreateFlow } from './CreateFlow';
 import { VisualizingScreen, type LoadingPhase } from './VisualizingScreen';
 import { GraphCanvas } from './GraphCanvas';
+import { ErrorBoundary } from './ErrorBoundary';
 import { NodeContextMenu } from './NodeContextMenu';
 import { useGraphology } from '../hooks/useGraphology';
 import { useOverviewMode } from '../hooks/useOverviewMode';
@@ -13,27 +14,46 @@ import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
-import { runAnalysis } from '../engine/graphAnalysis';
+import { runAnalysis, getNeighborSchemas } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import { escapeRegexLiteral } from '../utils/sql';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 
-/** Transient AI view — shown as a preview before the user decides to save. */
+/** 
+ * Represents a transient AI-curated view before it is saved as a permanent bookmark.
+ */
 interface AiPreview {
+  /** The name of the AI view. */
   name: string;
+  /** The set of node IDs that belong to this view. */
   nodeIds: Set<string>;
+  /** Metadata provided by the AI regarding the purpose and logic of this view. */
   aiMetadata: AIViewMetadata;
 }
 
+/**
+ * The possible top-level navigation states for the application.
+ */
 type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
+/** Timeout for dacpac file loading operations. */
 const DACPAC_TIMEOUT_MS = 20_000;
+/** Timeout for live database connection and extraction operations. */
 const DB_TIMEOUT_MS = 60_000;
+/** Minimum time to show the loading spinner to prevent visual flickering. */
 const MIN_SPINNER_MS = 1200;
 
-/** Compute all schemas that have at least one edge connecting to a node in the target schema. */
+/** 
+ * Computes the set of schemas that are immediate neighbors of a target schema.
+ * A schema is a neighbor if there is at least one edge connecting a node in the 
+ * target schema to a node in the neighbor schema.
+ * 
+ * @param model - The complete database model.
+ * @param schema - The name of the central schema.
+ * @returns A set of schema names including the target and its neighbors.
+ */
 function computeNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
   const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
   const nodeById = new Map(model.nodes.map(n => [n.id, n]));
@@ -51,18 +71,45 @@ function computeNeighborSchemas(model: DatabaseModel, schema: string): Set<strin
   return neighborSchemas;
 }
 
+/**
+ * State representing the position and target of the active context menu.
+ */
 interface ContextMenuState {
+  /** X-coordinate in pixels. */
   x: number;
+  /** Y-coordinate in pixels. */
   y: number;
+  /** ID of the node being interacted with. */
   nodeId: string;
+  /** Human-readable label of the node. */
   nodeName: string;
+  /** Schema name of the node. */
   schema: string;
+  /** Specific type for external references (e.g., file source or cross-DB). */
   externalType?: 'et' | 'file' | 'db';
+  /** URL for external resources if applicable. */
   externalUrl?: string;
+  /** Fully qualified name of the object. */
   fullName?: string;
+  /** General classification of the object (table, view, etc.). */
   objectType: ObjectType;
 }
 
+/**
+ * The root container component for the Data Lineage Viz application.
+ * 
+ * @remarks
+ * This component acts as the central orchestrator for the entire application state, 
+ * managing:
+ * 1. Navigation between screens (Start, Create, Loading, Graph).
+ * 2. Database model lifecycle (loading from DACPAC/DB).
+ * 3. Global filtering and graph layout rebuilds.
+ * 4. Integration with VS Code host via the `VsCodeContext`.
+ * 5. Advanced modes like interactive tracing, structural analysis, and AI-curated views.
+ * 
+ * It coordinates multiple hooks (`useGraphology`, `useInteractiveTrace`, `useDacpacLoader`)
+ * to provide a reactive and high-performance graph exploration experience.
+ */
 export function App() {
   const vscodeApi = useVsCode();
   const isAutoVisualize = document.body.dataset.autoVisualize === 'true';
@@ -86,9 +133,6 @@ export function App() {
   // Graph source name (for toolbar/export)
   const [sourceName, setSourceName] = useState<string | null>(isAutoVisualize ? 'AdventureWorks (demo)' : null);
 
-  // Whether source is from database (for stats panel)
-
-
   const [filter, setFilter] = useState<FilterState>({
     schemas: new Set(),
     types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
@@ -109,6 +153,9 @@ export function App() {
     resetUserChoice: () => {},
   });
 
+  /**
+   * Updates the global extension configuration.
+   */
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
     setConfig(cfg);
   }, []);
@@ -116,6 +163,15 @@ export function App() {
   const dacpacLoader = useDacpacLoader(applyConfig);
   const [, startTransition] = useTransition();
 
+  /**
+   * Triggers a graph rebuild based on the current model and filters.
+   * 
+   * @param m - The database model to use.
+   * @param f - The filters to apply.
+   * @param cfg - Optional configuration override.
+   * @param forceLayout - If true, performs a synchronous layout calculation (bypassing transition).
+   * @returns The number of nodes in the resulting graph.
+   */
   const rebuild = useCallback(
     (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false): number => {
       // When forceLayout is true (overview→full drill-down), run synchronously to avoid
@@ -129,6 +185,9 @@ export function App() {
     [buildFromModel, config]
   );
 
+  /**
+   * Generates a default filter state for a given model.
+   */
   const getResetFilter = (m: DatabaseModel): FilterState => ({
     schemas: new Set(m.schemas.map(s => s.name)),
     types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
@@ -140,7 +199,9 @@ export function App() {
     exclusionPatterns: [],
   });
 
-  // Transition from visualizing → graph
+  /**
+   * Initializes the visualization phase for a newly loaded model.
+   */
   const handleVisualize = useCallback(
     (dacpacModel: DatabaseModel, selectedSchemas: Set<string>) => {
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
@@ -250,12 +311,14 @@ export function App() {
 
   // ── Navigation handlers ─────────────────────────────────────────────────────
 
+  /** Transitions to the creation wizard screen. */
   const handleCreateNew = useCallback(() => {
     dacpacLoader.resetToStart();
     setStartScreenMessage(null);
     setView('create');
   }, [dacpacLoader.resetToStart]);
 
+  /** Loads and opens a specific saved project. */
   const handleOpenProject = useCallback((id: string) => {
     setLoadingProjectId(id);
     setLoadingPhase('load');
@@ -274,11 +337,13 @@ export function App() {
     setView('visualizing');
   }, [projects, dacpacLoader.loadProject, vscodeApi]);
 
+  /** Re-opens the most recently used project. */
   const handleOpenLatest = useCallback(() => {
     if (!lastOpenedId) return;
     handleOpenProject(lastOpenedId);
   }, [lastOpenedId, handleOpenProject]);
 
+  /** Deletes a project and its associated data. */
   const handleDeleteProject = useCallback((id: string) => {
     // Optimistic: update state immediately
     setProjects(prev => prev.filter(p => p.id !== id));
@@ -286,6 +351,7 @@ export function App() {
     vscodeApi.postMessage({ type: 'delete-project', id });
   }, [activeProjectId, vscodeApi]);
 
+  /** Deletes all saved projects. */
   const handleDeleteAllProjects = useCallback(() => {
     setProjects([]);
     setActiveProjectId(null);
@@ -293,6 +359,7 @@ export function App() {
     projects.forEach(p => vscodeApi.postMessage({ type: 'delete-project', id: p.id }));
   }, [projects, vscodeApi]);
 
+  /** Loads the sample AdventureWorks demo project. */
   const handleDemoClick = useCallback(() => {
     setLoadingPhase('load');
     setLoadingStats(null);
@@ -304,6 +371,7 @@ export function App() {
     setView('visualizing');
   }, [dacpacLoader.loadDemo]);
 
+  /** Returns to the start screen and resets exploration state. */
   const handleBack = useCallback(() => {
     dacpacLoader.resetToStart();
     setView('start');
@@ -318,6 +386,7 @@ export function App() {
     vscodeApi.postMessage({ type: 'request-projects' });
   }, [dacpacLoader.resetToStart, clearTrace, vscodeApi]);
 
+  /** Aborts an active loading or parsing operation. */
   const handleCancelVisualizing = useCallback(() => {
     dacpacLoader.cancelLoading();
     setView('start');
@@ -326,6 +395,7 @@ export function App() {
     setActiveProjectId(null);
   }, [dacpacLoader.cancelLoading]);
 
+  /** Returns to start after an error, preserving the error message. */
   const handleBackFromError = useCallback(() => {
     setStartScreenMessage(loadingError);
     dacpacLoader.resetToStart();
@@ -335,7 +405,7 @@ export function App() {
     setActiveProjectId(null);
   }, [loadingError, dacpacLoader.resetToStart]);
 
-  // CreateFlow → Visualize clicked
+  /** Finalizes project creation and starts visualization. */
   const handleCreateVisualize = useCallback((projectName: string, conn: DacpacConnection | DatabaseConnection | null) => {
     setLoadingPhase('load');
     setLoadingStats(null);
@@ -423,6 +493,7 @@ export function App() {
     }
   }, [isModeLocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Resets filters and clears any active exploration state. */
   const handleRefresh = useCallback(() => {
     if (model) {
       overviewActionsRef.current.resetUserChoice();
@@ -438,6 +509,7 @@ export function App() {
     }
   }, [model, config, rebuild, clearTrace, filter.hideIsolated, filter.exclusionPatterns]);
 
+  /** Resets everything back to the default state for the current model. */
   const handleResetAll = useCallback(() => {
     if (model) {
       overviewActionsRef.current.resetUserChoice();
@@ -450,6 +522,7 @@ export function App() {
   }, [model, config, rebuild, clearTrace]);
 
   const rebuildStartRef = useRef(0);
+  /** Forces a complete rebuild of the graph structure. */
   const handleRebuild = useCallback(() => {
     if (model) {
       setIsRebuilding(true);
@@ -459,8 +532,6 @@ export function App() {
   }, [vscodeApi, model]);
 
   // ── Derived state: effective graph and nodes matching what's rendered ──────
-  // When trace synthesizes out-of-filter nodes, the graphology graph and node set
-  // must include those nodes for interactions (neighbors, context menu, delete).
   const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
     || trace.mode === 'filtered' || trace.mode === 'analysis';
 
@@ -475,14 +546,13 @@ export function App() {
   );
 
   // Clear stale highlight when the referenced node is removed by a filter change.
-  // Uses effectiveNodes (not flowNodes) so synthesized out-of-filter nodes in
-  // trace/path mode are recognized and don't get their highlight immediately cleared.
   useEffect(() => {
     if (highlightedNodeId && effectiveNodes.length > 0 && !effectiveNodes.some(n => n.id === highlightedNodeId)) {
       setHighlightedNodeId(null);
     }
   }, [highlightedNodeId, effectiveNodes]);
 
+  /** Handles a click on a graph node to highlight it and potentially open details. */
   const handleNodeClick = useCallback(
     (nodeId: string, findQuery?: string) => {
       const toggled = highlightedNodeId === nodeId ? null : nodeId;
@@ -505,10 +575,12 @@ export function App() {
     [model, vscodeApi, isDetailOpen, highlightedNodeId]
   );
 
+  /** Applies a lineage trace from a specific node. */
   const handleTraceApply = useCallback((config: { upstreamLevels: number; downstreamLevels: number }) => {
     applyTrace(config.upstreamLevels, config.downstreamLevels);
   }, [applyTrace]);
 
+  /** Displays the context menu at the specified coordinates for a node. */
   const handleNodeContextMenu = useCallback(
     (nodeId: string, x: number, y: number) => {
       const node = effectiveNodes.find((n) => n.id === nodeId);
@@ -528,6 +600,7 @@ export function App() {
     [effectiveNodes]
   );
 
+  /** Opens the DDL/definition viewer for a specific node. */
   const handleViewDdl = useCallback(
     (nodeId: string) => {
       const node = model?.nodes.find(n => n.id === nodeId);
@@ -538,6 +611,7 @@ export function App() {
     [model, vscodeApi]
   );
 
+  /** Toggles the visibility of a specific object type (table, view, etc.). */
   const handleToggleType = useCallback(
     (type: ObjectType) => {
       setFilter((prev) => {
@@ -552,9 +626,7 @@ export function App() {
     [model, config, rebuild]
   );
 
-  // searchTerm is now local to SearchWithAutocomplete — no longer part of filter state.
-  // Keystrokes only re-render the search component, not the entire App/GraphCanvas tree.
-
+  /** Toggles whether isolated (no-edge) nodes should be hidden. */
   const handleToggleIsolated = useCallback(() => {
     setFilter((prev) => {
       const next = { ...prev, hideIsolated: !prev.hideIsolated };
@@ -563,16 +635,14 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  /** Unified star-schema handler. All three entry points (star button, overview double-click,
-   *  quick jump) route through this single function.
-   *  @param schema  Target schema, or null to unfocus.
-   *  @param options.toggle  If true, unfocus if already focused (star button behavior).
-   *  @param options.forceLayout  Bypass Guard 2 (overview→full drill-down).
-   *  @param options.includeNeighbors  If false, only include the target schema (fallback).
-   *  @returns Post-filter node count (0 when model is absent).
-   *  NOTE: Uses `{ ...filter }` spread (not functional setFilter updater) because we need
-   *  the synchronous count from rebuild() before calling setFilter. `filter` is in deps
-   *  so the closure is always current, but this does cause re-creation on every filter change. */
+  /** 
+   * Unified star-schema handler. All three entry points (star button, overview double-click,
+   * quick jump) route through this single function.
+   * 
+   * @param schema - Target schema, or null to unfocus.
+   * @param options - Logic flags: toggle, forceLayout, includeNeighbors.
+   * @returns Post-filter node count.
+   */
   const applyStarSchema = useCallback((
     schema: string | null,
     options: { toggle?: boolean; forceLayout?: boolean; includeNeighbors?: boolean } = {}
@@ -600,7 +670,6 @@ export function App() {
     return count;
   }, [model, config, rebuild, filter]);
 
-  // Star button in schema dropdown (toggle behavior)
   const handleToggleFocusSchema = useCallback(
     (schema: string) => { applyStarSchema(schema, { toggle: true }); },
     [applyStarSchema]
@@ -618,10 +687,8 @@ export function App() {
     onSetFocusSchemaOnly: (schema, forceLayout) => applyStarSchema(schema, { forceLayout, includeNeighbors: false }),
   });
 
-  // Populate ref so handleRefresh/handleResetAll (defined earlier) can reset the guard.
   overviewActionsRef.current.resetUserChoice = resetUserChoice;
 
-  // Schema-level nodes/edges — computed once when model/filter.schemas change
   const { schemaNodes, schemaEdges } = useMemo(() => {
     if (!model) return { schemaNodes: [], schemaEdges: [] };
     const visibleSchemas = filter.schemas.size > 0 ? filter.schemas : new Set(model.schemas.map(s => s.name));
@@ -629,6 +696,7 @@ export function App() {
     return { schemaNodes: nodes, schemaEdges: edges };
   }, [model, filter.schemas]);
 
+  /** Toggles whether external references (file sources, cross-DB) are visible. */
   const handleToggleExternalRefs = useCallback(() => {
     setFilter((prev) => {
       const next = { ...prev, showExternalRefs: !prev.showExternalRefs };
@@ -637,6 +705,7 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Toggles visibility of a specific sub-type of external reference. */
   const handleToggleExternalRefType = useCallback((subType: 'file' | 'db') => {
     setFilter((prev) => {
       const externalRefTypes = new Set(prev.externalRefTypes);
@@ -648,6 +717,7 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Adds a global exclusion regex pattern to filter out specific objects. */
   const handleAddExclusionPattern = useCallback((pattern: string) => {
     setFilter((prev) => {
       if (prev.exclusionPatterns.includes(pattern)) return prev;
@@ -658,6 +728,7 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Removes a previously added exclusion pattern. */
   const handleRemoveExclusionPattern = useCallback((pattern: string) => {
     setFilter((prev) => {
       const exclusionPatterns = prev.exclusionPatterns.filter(p => p !== pattern);
@@ -667,6 +738,7 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Toggles visibility of a specific schema. */
   const handleToggleSchema = useCallback((schema: string) => {
     setFilter((prev) => {
       const schemas = new Set(prev.schemas);
@@ -675,14 +747,13 @@ export function App() {
       } else {
         schemas.add(schema);
       }
-      // User is manually managing schemas — clear the star focus lock so all
-      // selected schemas show. Star button can still be used independently.
       const next = { ...prev, schemas, focusSchemas: new Set<string>() };
       if (model) rebuild(model, next, config);
       return next;
     });
   }, [model, config, rebuild]);
 
+  /** Selects multiple schemas at once. */
   const handleSelectAllSchemas = useCallback((schemas: string[]) => {
     setFilter((prev) => {
       const next = { ...prev, schemas: new Set([...prev.schemas, ...schemas]), focusSchemas: new Set<string>() };
@@ -691,6 +762,7 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Deselects multiple schemas at once. */
   const handleSelectNoneSchemas = useCallback((schemas: string[]) => {
     setFilter((prev) => {
       const nextSchemas = new Set(prev.schemas);
@@ -701,6 +773,7 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Initiates a structural analysis mode. */
   const openAnalysis = useCallback((type: AnalysisType) => {
     endTrace();
     setIsDetailSearchOpen(false);
@@ -709,9 +782,6 @@ export function App() {
 
     const currentFilter = filterRef.current;
     if (type === 'orphans' && currentFilter.hideIsolated) {
-      // Pre-save filter (with hideIsolated: true) before we change it,
-      // so the mode-lock useEffect restores the correct value on exit.
-      // When switching from another analysis type, preModFilterRef is already set — don't overwrite it.
       if (!preModFilterRef.current) preModFilterRef.current = currentFilter;
       const nextFilter = { ...currentFilter, hideIsolated: false };
       setFilter(nextFilter);
@@ -754,12 +824,13 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [highlightedNodeId, effectiveNodes, handleAddExclusionPattern]);
 
+  /** Exits analysis mode. */
   const closeAnalysis = useCallback(() => {
-    // Filter restore is handled by the isModeLocked useEffect when analysisMode → null
     endTrace();
     setAnalysisMode(null);
   }, [endTrace]);
 
+  /** Focuses the view on a specific group discovered during analysis. */
   const selectAnalysisGroup = useCallback((groupId: string) => {
     if (!analysisMode || !graph) return;
     const group = analysisMode.result.groups.find(g => g.id === groupId);
@@ -801,19 +872,38 @@ export function App() {
     applyAnalysisSubset(nodeIdSet, edgeIds, originId, analysisMode.type);
   }, [analysisMode, graph, flowNodes.length, applyAnalysisSubset]);
 
+  /** Clears the current analysis group focus. */
   const clearAnalysisGroup = useCallback(() => {
     if (!analysisMode) return;
     setAnalysisMode(prev => prev ? { ...prev, activeGroupId: null } : null);
     endTrace();
   }, [analysisMode, endTrace]);
 
-  const handleDiscardAiPreview = useCallback(() => {
-    setAiPreview(null);
-    // Mode-lock restore triggers automatically via isModeLocked → false
+  const handlePendingPositionsApplied = useCallback(() => {
+    setPendingPositions(undefined);
+    setPendingViewport(undefined);
   }, []);
 
+  /** Removes a specific node from the current bookmark view. */
+  const handleRemoveFromView = useCallback((nodeId: string) => {
+    setFilter(f => {
+      if (!f.allowlistNodeIds) return f;
+      const next: FilterState = {
+        ...f,
+        allowlistNodeIds: new Set([...f.allowlistNodeIds].filter(id => id !== nodeId)),
+      };
+      if (model) rebuild(model, next, config);
+      return next;
+    });
+  }, [model, config, rebuild]);
+
+  /** Discards the transient AI preview view. */
+  const handleDiscardAiPreview = useCallback(() => {
+    setAiPreview(null);
+  }, []);
+
+  /** Exits the active advanced bookmark view and restores previous filters. */
   const handleExitAdvancedBookmark = useCallback(() => {
-    // Filter restore is handled by the isModeLocked useEffect when activeAdvancedProfile → null
     setActiveAdvancedProfile(null);
   }, []);
 
@@ -836,6 +926,7 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [trace.mode, endTrace, analysisMode, closeAnalysis, clearAnalysisGroup, aiPreview, handleDiscardAiPreview, activeAdvancedProfile, handleExitAdvancedBookmark]);
 
+  /** Applies a saved view profile (filters and optionally positions). */
   const handleApplyView = useCallback((profile: FilterProfile) => {
     overviewActionsRef.current.resetUserChoice();
     setActiveViewId(profile.id);
@@ -845,10 +936,8 @@ export function App() {
       setPendingViewport(profile.viewport);
     }
     if (isAdvanced) {
-      // Explicitly save filter NOW (before state changes) so the mode-lock useEffect finds it set
       if (!preModFilterRef.current) preModFilterRef.current = filter;
       const restored = deserializeFilter(profile.filter);
-      // Override schemas/types to "all" so the allowlist is not pre-filtered out
       if (model) restored.schemas = new Set(model.schemas.map(s => s.name));
       restored.types = new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']);
       setFilter(restored);
@@ -882,12 +971,10 @@ export function App() {
         setLastOpenedId(msg.lastOpenedId ?? null);
         if (msg.lastWizardView) setLastWizardView(msg.lastWizardView);
         setLoadingProjectId(null);
-        // When extension saves a DB project after Phase 2, set activeProjectId
         if (view === 'visualizing' && msg.lastOpenedId) {
           setActiveProjectId(msg.lastOpenedId);
         }
       } else if (msg?.type === 'rebuild-config') {
-        // Fresh config from extension host — apply and rebuild graph with new settings
         if (msg.config) {
           const merged: ExtensionConfig = {
             ...DEFAULT_CONFIG,
@@ -901,7 +988,6 @@ export function App() {
             rebuildRef.current(modelRef.current, filterRef.current, merged);
           }
         }
-        // Ensure spinner shows for at least 2s so user sees visual feedback
         const elapsed = Date.now() - rebuildStartRef.current;
         const MIN_REBUILD_SPINNER_MS = 2000;
         if (elapsed >= MIN_REBUILD_SPINNER_MS) {
@@ -910,21 +996,17 @@ export function App() {
           setTimeout(() => setIsRebuilding(false), MIN_REBUILD_SPINNER_MS - elapsed);
         }
       } else if (msg?.type === 'ai-view-preview') {
-        // AI created a transient view — show as preview, user decides whether to save
         const preview: AiPreview = {
           name: msg.name,
           nodeIds: new Set<string>(msg.nodeIds),
           aiMetadata: msg.aiMetadata,
         };
-        // Save current filter before entering mode-lock
         if (!preModFilterRef.current) preModFilterRef.current = filterRef.current;
-        // Set allowlist filter so graph shows only preview nodes
         const allowlist = preview.nodeIds;
         setFilter(prev => {
           const next: FilterState = {
             ...prev,
             allowlistNodeIds: allowlist,
-            // Override schemas/types to "all" so allowlist is not pre-filtered
             schemas: modelRef.current ? new Set(modelRef.current.schemas.map(s => s.name)) : prev.schemas,
             types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
           };
@@ -939,16 +1021,12 @@ export function App() {
     return () => window.removeEventListener('message', handler);
   }, [view, toggleMode, handleApplyView]);
 
-  // Notify extension when graphMode changes so it can update the status bar
   useEffect(() => {
     if (view === 'graph') {
       vscodeApi.postMessage({ type: 'overview-mode-changed', mode: graphMode, enteredFocusFromOverview });
     }
   }, [graphMode, enteredFocusFromOverview, view, vscodeApi]);
 
-  // When user manually toggles overview→full (not via search drill-down) and dagre was skipped
-  // (Guard 2), trigger a full rebuild so dagre positions are computed.
-  // Skipped when enteredFocusFromOverview=true — that path already rebuilds with forceLayout=true.
   const prevGraphModeRef = useRef(graphMode);
   useEffect(() => {
     const wasOverview = prevGraphModeRef.current === 'overview';
@@ -965,9 +1043,6 @@ export function App() {
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filterProfiles = activeProject?.filterProfiles ?? [];
 
-  // Sync active filter state to extension host so AI tools (search_objects, start_exploration etc.)
-  // can report filter context correctly. Fires on structural filter changes and initial model load.
-  // Excludes searchTerm — it's client-only (autocomplete) and would spam filter-changed on every keystroke.
   const filterKeyForHost = useMemo(() => {
     const { searchTerm: _, ...rest } = serializeFilter(filter);
     return JSON.stringify(rest);
@@ -975,9 +1050,24 @@ export function App() {
   useEffect(() => {
     if (!model) return;
     const { searchTerm: _, ...filterForHost } = serializeFilter(filter);
-    vscodeApi.postMessage({ type: 'filter-changed', filter: filterForHost, savedViews: filterProfiles, filteredCount, renderLimitHit });
+    const uiState = {
+      filter: filterForHost,
+      trace: {
+        mode: trace.mode,
+        selectedNodeId: trace.selectedNodeId,
+        targetNodeId: trace.targetNodeId,
+        upstreamLevels: trace.upstreamLevels,
+        downstreamLevels: trace.downstreamLevels,
+        analysisType: trace.analysisType,
+        autoPromoted: trace.autoPromoted,
+      },
+      graphMode,
+      filteredCount,
+      renderLimitHit,
+    };
+    vscodeApi.postMessage({ type: 'filter-changed', uiState });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKeyForHost, filterProfiles, model, vscodeApi]);
+  }, [filterKeyForHost, filterProfiles, model, vscodeApi, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted, graphMode, filteredCount, renderLimitHit]);
 
   const isViewModified = useMemo(() => {
     if (!activeViewId) return false;
@@ -993,6 +1083,33 @@ export function App() {
     return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(serializeFilter(clean));
   }, [model, filter, activeViewId, isViewModified]);
 
+  /** Internal helper to persist a filter profile to the store and extension host. */
+  const persistFilterProfile = useCallback((
+    profile: FilterProfile,
+    options?: { 
+      clearAiPreview?: boolean, 
+      activateProfile?: boolean 
+    }
+  ) => {
+    if (!activeProjectId) return;
+
+    setProjects(prev => {
+      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
+      return addFilterProfile(store, activeProjectId, profile).projects;
+    });
+
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+
+    if (options?.clearAiPreview) setAiPreview(null);
+    if (options?.activateProfile) {
+      if ((profile.filter.allowlistNodeIds?.length ?? 0) > 0) {
+        setActiveAdvancedProfile(profile);
+      }
+      setActiveViewId(profile.id);
+    }
+  }, [activeProjectId, lastOpenedId, vscodeApi]);
+
+  /** Saves the current filter state as a new named view. */
   const handleSaveView = useCallback((name: string) => {
     if (!activeProjectId) {
       vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
@@ -1004,47 +1121,23 @@ export function App() {
       createdAt: new Date().toISOString(),
       filter: serializeFilter(filter),
     };
-    setActiveViewId(profile.id);
-    // Optimistic update
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { activateProfile: true });
+  }, [activeProjectId, filter, persistFilterProfile, vscodeApi]);
 
+  /** Updates an existing view profile with the current filters. */
   const handleUpdateView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
     const existing = filterProfiles.find(p => p.id === profileId);
     if (!existing) return;
+
     const updated: FilterProfile = {
       ...existing,
       filter: serializeFilter(filter),
     };
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, updated).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: updated });
-  }, [activeProjectId, filter, filterProfiles, lastOpenedId, vscodeApi]);
+    persistFilterProfile(updated);
+  }, [activeProjectId, filter, filterProfiles, persistFilterProfile]);
 
-  const handlePendingPositionsApplied = useCallback(() => {
-    setPendingPositions(undefined);
-    setPendingViewport(undefined);
-  }, []);
-
-  const handleRemoveFromView = useCallback((nodeId: string) => {
-    setFilter(f => {
-      if (!f.allowlistNodeIds) return f;
-      const next: FilterState = {
-        ...f,
-        allowlistNodeIds: new Set([...f.allowlistNodeIds].filter(id => id !== nodeId)),
-      };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
-
+  /** Saves the result of an interactive trace as a permanent bookmark. */
   const handleSaveTraceAsBookmark = useCallback((
     name: string,
     nodeIds: string[],
@@ -1052,7 +1145,6 @@ export function App() {
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
-    if (!activeProjectId) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1065,20 +1157,16 @@ export function App() {
       ...(positions ? { positions } : {}),
       ...(viewport ? { viewport } : {}),
     };
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { activateProfile: true });
+  }, [filter, persistFilterProfile]);
 
+  /** Saves the result of a structural analysis as a permanent bookmark. */
   const handleSaveAnalysisBookmark = useCallback((
     name: string,
     nodeIds: string[],
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
-    if (!activeProjectId) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1091,20 +1179,17 @@ export function App() {
       ...(positions ? { positions } : {}),
       ...(viewport ? { viewport } : {}),
     };
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-  }, [activeProjectId, filter, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { activateProfile: true });
+  }, [filter, persistFilterProfile]);
 
+  /** Saves a transient AI preview as a permanent bookmark. */
   const handleSaveAiBookmark = useCallback((
     name: string,
     withPositions: boolean,
     positions?: Record<string, { x: number; y: number }>,
     viewport?: { x: number; y: number; zoom: number },
   ) => {
-    if (!activeProjectId || !aiPreview) return;
+    if (!aiPreview) return;
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
@@ -1118,21 +1203,13 @@ export function App() {
       ...(withPositions && positions ? { positions } : {}),
       ...(withPositions && viewport ? { viewport } : {}),
     };
-    // Optimistic update + persist
-    setProjects(prev => {
-      const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
-    });
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
-    // Clear transient preview and switch to the saved profile
-    setAiPreview(null);
-    setActiveAdvancedProfile(profile);
-  }, [activeProjectId, filter, aiPreview, lastOpenedId, vscodeApi]);
+    persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
+  }, [filter, aiPreview, persistFilterProfile]);
 
+  /** Deletes a saved view profile. */
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
     if (activeViewId === profileId) setActiveViewId(null);
-    // Optimistic update
     setProjects(prev => {
       const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
       return deleteFilterProfile(store, activeProjectId, profileId).projects;
@@ -1140,8 +1217,6 @@ export function App() {
     vscodeApi.postMessage({ type: 'delete-view', projectId: activeProjectId, profileId });
   }, [activeProjectId, activeViewId, lastOpenedId, vscodeApi]);
 
-  // Object-level IDs that passed all filters — authoritative for search visibility in overview mode.
-  // Must be above early returns to satisfy Rules of Hooks.
   const filteredObjectIds = useMemo(() => new Set(flowNodes.map(n => n.id)), [flowNodes]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -1208,10 +1283,17 @@ export function App() {
     );
   }
 
-  const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : tracedNodes);
-  const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : tracedEdges);
+  const renderNodes = isTraceActive ? tracedNodes : (graphMode === 'overview' ? schemaNodes : flowNodes);
+  const renderEdges = isTraceActive ? tracedEdges : (graphMode === 'overview' ? schemaEdges : flowEdges);
 
   return (
+    <ErrorBoundary
+      fallback={
+        <div className="px-4 py-6 text-xs ln-text-muted">
+          Graph rendering failed. Sidebar and AI features remain available.
+        </div>
+      }
+    >
     <ReactFlowProvider>
       <GraphCanvas
         flowNodes={renderNodes}
@@ -1288,8 +1370,10 @@ export function App() {
         onOpenDdlViewer={() => {
           if (highlightedNodeId) {
             handleViewDdl(highlightedNodeId);
+          } else {
+            vscodeApi.postMessage({ type: 'show-detail' });
+            setIsDetailOpen(true);
           }
-          // else: no-op — user must select a node first
         }}
       />
 
@@ -1314,5 +1398,6 @@ export function App() {
         />
       )}
     </ReactFlowProvider>
+    </ErrorBoundary>
   );
 }

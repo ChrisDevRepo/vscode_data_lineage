@@ -1,10 +1,16 @@
+// MAINTENANCE: Content overlaps with docs/FEATURES.md — update both when features change
 import { memo, useState } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
+/**
+ * Props for the {@link HelpModal} component.
+ */
 interface HelpModalProps {
+  /** Whether the help modal is currently visible. */
   isOpen: boolean;
+  /** Callback fired when the user requests to close the modal. */
   onClose: () => void;
 }
 
@@ -48,7 +54,6 @@ function ExtLink({ url, openExternal, children }: {
   );
 }
 
-// ─── Feature Card ────────────────────────────────────────────────────────────
 
 function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc: string }) {
   return (
@@ -62,7 +67,6 @@ function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc:
   );
 }
 
-// ─── Tab: Overview ────────────────────────────────────────────────────────────
 
 function TabOverview({ openExternal }: { openExternal: (url: string) => void }) {
   return (
@@ -144,7 +148,6 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
   );
 }
 
-// ─── Tab: Analysis ────────────────────────────────────────────────────────────
 
 function TabAnalysis() {
   const analyses = [
@@ -208,7 +211,6 @@ function TabAnalysis() {
   );
 }
 
-// ─── Tab: Database ────────────────────────────────────────────────────────────
 
 function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) {
   return (
@@ -293,7 +295,6 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
   );
 }
 
-// ─── Tab: AI ──────────────────────────────────────────────────────────────────
 
 function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
   return (
@@ -327,7 +328,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         <FeatureCard
           icon="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.192-.14 1.743"
           title="Built-in Tools"
-          desc="Search objects, trace dependencies, get DDL, run analysis, and more."
+          desc="10 tools covering search, trace, DDL, analysis, and deep multi-hop exploration with column-level tracking."
         />
         <FeatureCard
           icon="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"
@@ -340,7 +341,9 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         <p className="text-xs font-semibold ln-text mb-1.5">Tips</p>
         <ul className="text-xs ln-text-muted space-y-1 list-disc pl-4">
           <li><span className="font-medium ln-text">AI lineage guidance.</span> Ask <code>@lineage</code> where a field comes from, then verify with your database DDL.</li>
+          <li><span className="font-medium ln-text">Trace a column.</span> Ask &quot;where does <code>TotalDue</code> on <code>Sales.SalesOrderHeader</code> come from?&quot; — triggers column-level tracing through views and procedures.</li>
           <li><span className="font-medium ln-text">Create a focused view.</span> Ask for full lineage of an object in the app to generate an annotated bookmark view.</li>
+          <li><span className="font-medium ln-text">Refine a bookmark.</span> With a view open, ask &quot;add <code>Sales.Customer</code> to this view&quot; or &quot;remove unused tables&quot; to patch the bookmark in place.</li>
           <li><span className="font-medium ln-text">Use context questions.</span> Try &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
           <li><span className="font-medium ln-text">Use exact names.</span> Prefer <code>Sales.SalesOrderDetail</code> over generic table descriptions.</li>
           <li><span className="font-medium ln-text">Customize format.</span> Command Palette → <em>Create AI Output Templates</em>. <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md" openExternal={openExternal}>Guide ↗</ExtLink></li>
@@ -354,8 +357,20 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
   );
 }
 
-// ─── Help Modal ───────────────────────────────────────────────────────────────
 
+/**
+ * A modal dialog that provides comprehensive documentation and help for the extension.
+ * 
+ * Features four main tabs:
+ * - **Overview**: Keyboard shortcuts and high-level feature summaries.
+ * - **Analysis**: Explanations of graph analysis modes (Islands, Hubs, Cycles, etc.).
+ * - **Database**: Guidance on importing data and table profiling.
+ * - **AI**: Instructions for using the @lineage AI assistant in Copilot Chat.
+ * 
+ * Architectural Note: This component uses a fixed-position overlay and manages its own
+ * tab state. It communicates with the VS Code host for external link opening and
+ * settings navigation.
+ */
 export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalProps) {
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');

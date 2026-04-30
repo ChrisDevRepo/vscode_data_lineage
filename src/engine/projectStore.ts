@@ -9,81 +9,132 @@
 
 import type { FilterState } from './types';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
+/**
+ * Represents the root persistence object for the data lineage extension.
+ * Contains all user projects and the state of the wizard.
+ */
 export interface ProjectStore {
+  /** The current schema version of the store. Used for migrations. */
   schemaVersion: 1;
+  /** The list of saved projects. */
   projects: Project[];
+  /** The ID of the last opened project, or null if none was opened. */
   lastOpenedId: string | null;
+  /** The last active view in the setup wizard. */
   lastWizardView?: 'main' | 'projects';
 }
 
-/** Serialized FilterState — Sets become arrays for JSON storage. */
+/**
+ * A JSON-serializable representation of the active filter state.
+ * Sets are converted to arrays for storage compatibility.
+ */
 export interface SerializedFilterState {
+  /** Selected schemas to include in the graph. */
   schemas: string[];
+  /** Selected node types to include (e.g., 'U', 'V', 'P'). */
   types: string[];
+  /** The current search query term, if any. */
   searchTerm?: string;
+  /** Whether to hide nodes with no connections. */
   hideIsolated: boolean;
+  /** Schemas that are explicitly focused (others might be dimmed or excluded). */
   focusSchemas: string[];
+  /** Whether to show dependencies that cross database boundaries. */
   showExternalRefs: boolean;
+  /** The types of external references to include. */
   externalRefTypes: string[];
-  exclusionPatterns?: string[];  // optional for backward compat with existing saved profiles
-  /** Allowlist: when non-empty, only these node IDs are shown. Empty/absent = no restriction. */
+  /** Optional array of regex patterns used to exclude specific nodes. */
+  exclusionPatterns?: string[];
+  /** 
+   * Allowlist: when non-empty, only these node IDs are shown. 
+   * Empty or absent means no restriction. 
+   */
   allowlistNodeIds?: string[];
 }
 
-/** Semantic highlight role. Mapped to CSS colors by resolveAiColor(). */
+/**
+ * Semantic highlight role. 
+ * Mapped to specific CSS colors by the AI view presenter.
+ */
 export type AIHighlightColor = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
-/** Metadata attached to AI-authored advanced bookmarks. */
+/** 
+ * Metadata attached to AI-authored advanced bookmarks.
+ * Defines presentation attributes for the AI-generated analysis.
+ */
 export interface AIViewMetadata {
   /** One-line graph purpose (≤120 chars) — shown in the info card. */
   summary?: string;
   /** Full analytical answer — markdown with formulas, column mappings, business logic — shown in the expandable overlay. */
   description?: string;
-  /** ISO timestamp when the view was created. Auto-populated. */
+  /** ISO 8601 timestamp when the view was created. Auto-populated. */
   createdAt: string;
   /** Display name of the model that authored the view (e.g., "Claude Sonnet 4.6"). Auto-populated. */
   modelName: string;
-  /** Up to 5 color-coded node groups shown as legend in the info card. */
+  /** Up to 5 color-coded node groups shown as a legend in the info card. */
   highlightGroups: Array<{ label: string; color: AIHighlightColor; nodeIds: string[] }>;
   /** Per-node text badges (e.g., "1 Source", "2 Load"). */
   badges: Array<{ nodeId: string; text: string }>;
   /** Per-node text annotations. First line = visible title below node; rest on hover (max 400 chars, \n for line breaks). */
   notes?: Array<{ nodeId: string; text: string }>;
-  /** Dagre layout direction hint. Default: 'TB'. */
+  /** Dagre layout direction hint. Default: 'TB' (Top-to-Bottom). */
   layoutDirection?: 'LR' | 'TB';
 }
 
+/**
+ * A saved configuration of filters, node positions, and optional AI analysis.
+ * Associated with a specific project to restore particular views.
+ */
 export interface FilterProfile {
+  /** Unique identifier for the profile. */
   id: string;
+  /** Human-readable name for the profile. */
   name: string;
+  /** ISO 8601 creation timestamp. */
   createdAt: string;
+  /** The serialized filter state applied when this profile is active. */
   filter: SerializedFilterState;
   /** How this profile was created — shown in the info card when the view is active. */
   source?: 'user' | 'trace' | 'analysis' | 'ai';
   /** Saved per-node positions (x, y) — applied after dagre as an overlay. */
   positions?: Record<string, { x: number; y: number }>;
-  /** Saved ReactFlow viewport — restored together with positions. */
+  /** Saved ReactFlow viewport configuration — restored together with positions. */
   viewport?: { x: number; y: number; zoom: number };
-  /** AI-authored view metadata — only present on profiles created by @lineage. */
+  /** AI-authored view metadata — only present on profiles created by the AI assistant. */
   aiMetadata?: AIViewMetadata;
 }
 
+/**
+ * Represents a saved data lineage workspace.
+ * Contains connection details and optional saved filter profiles.
+ */
 export interface Project {
-  id: string;         // crypto.randomUUID()
-  name: string;       // user-defined; auto-generated as default
-  createdAt: string;  // ISO 8601
-  updatedAt: string;  // refreshed on every successful open
+  /** Unique project identifier (UUID). */
+  id: string;
+  /** User-defined name, auto-generated by default. */
+  name: string;
+  /** ISO 8601 creation timestamp. */
+  createdAt: string;
+  /** ISO 8601 update timestamp, refreshed on every successful open. */
+  updatedAt: string;
+  /** The connection details (either a DACPAC file or live Database). */
   connection: DacpacConnection | DatabaseConnection;
+  /** Optional array of saved filter configurations. */
   filterProfiles?: FilterProfile[];
 }
 
+/**
+ * Defines a connection to a local DACPAC file.
+ */
 export interface DacpacConnection {
+  /** Discriminated union type identifier. */
   type: 'dacpac';
-  path: string;         // absolute path to .dacpac file
-  displayName: string;  // filename without extension (for display)
-  schemas: string[];    // positive list of schemas selected at creation time
+  /** Absolute path to the .dacpac file. */
+  path: string;
+  /** Filename without extension used for display. */
+  displayName: string;
+  /** Positive list of schemas selected at creation time. */
+  schemas: string[];
 }
 
 /**
@@ -92,38 +143,57 @@ export interface DacpacConnection {
  * Defined inline to keep this module free of mssql extension imports.
  */
 export interface StoredConnectionInfo {
+  /** SQL Server hostname or IP address. */
   server: string;
+  /** Target database name. */
   database: string;
+  /** Username for SQL Authentication (if applicable). */
   user: string;
+  /** Authentication type (e.g., 'SqlLogin', 'Integrated', etc.). */
   authenticationType: string;
+  /** Email associated with Entra ID authentication. */
   email?: string;
+  /** Entra ID account identifier. */
   accountId?: string;
+  /** Entra ID tenant identifier. */
   tenantId?: string;
+  /** Connection port. */
   port: number;
+  /** Encryption setting ('true', 'false', or boolean). */
   encrypt?: string | boolean;
+  /** Trust server certificate setting. */
   trustServerCertificate?: boolean;
 }
 
+/**
+ * Defines a connection to a live SQL Server database.
+ */
 export interface DatabaseConnection {
+  /** Discriminated union type identifier. */
   type: 'database';
+  /** Safely stored connection parameters excluding secrets. */
   connectionInfo: StoredConnectionInfo;
-  // Reconnect: extension calls connectDirect(connectionInfo as IConnectionInfo)
-  // → MSSQL extension re-auths from its own credential store. Falls back to picker.
-  sourceName: string;  // "database (server)" display name
+  /** Display name format: "database (server)". */
+  sourceName: string;
+  /** Positive list of schemas selected at creation time. */
   schemas: string[];
 }
 
-// ─── Empty Store ──────────────────────────────────────────────────────────────
-
+/**
+ * Returns an empty ProjectStore initialized to the current schema version.
+ * 
+ * @returns A fresh, empty project store instance.
+ */
 function emptyStore(): ProjectStore {
   return { schemaVersion: 1, projects: [], lastOpenedId: null };
 }
 
-// ─── Migration & Validation ───────────────────────────────────────────────────
-
 /**
- * Safe deserialization. Returns empty store on any parse failure.
- * Add version-specific transforms here when schemaVersion bumps.
+ * Safely deserializes a raw object into a ProjectStore.
+ * Validates the schema version and project shapes. Returns an empty store on any parse failure.
+ * 
+ * @param raw - The untyped data loaded from persistent storage.
+ * @returns A validated ProjectStore.
  */
 export function migrateProjectStore(raw: unknown): ProjectStore {
   if (raw === null || raw === undefined || typeof raw !== 'object') {
@@ -145,6 +215,12 @@ export function migrateProjectStore(raw: unknown): ProjectStore {
   };
 }
 
+/**
+ * Type guard to determine if a given object matches the Project interface.
+ * 
+ * @param p - The object to validate.
+ * @returns True if the object is a valid Project, false otherwise.
+ */
 export function isValidProject(p: unknown): p is Project {
   if (!p || typeof p !== 'object') return false;
   const obj = p as Record<string, unknown>;
@@ -157,6 +233,13 @@ export function isValidProject(p: unknown): p is Project {
   );
 }
 
+/**
+ * Type guard to determine if a given object matches a valid connection type
+ * (DacpacConnection or DatabaseConnection).
+ * 
+ * @param c - The object to validate.
+ * @returns True if the object is a valid connection, false otherwise.
+ */
 function isValidConnection(c: unknown): c is DacpacConnection | DatabaseConnection {
   if (!c || typeof c !== 'object') return false;
   const obj = c as Record<string, unknown>;
@@ -178,9 +261,13 @@ function isValidConnection(c: unknown): c is DacpacConnection | DatabaseConnecti
   return false;
 }
 
-// ─── CRUD ─────────────────────────────────────────────────────────────────────
-
-/** Create a new Project record with fresh id and timestamps. */
+/**
+ * Creates a new Project record with a generated UUID and current timestamps.
+ * 
+ * @param name - The user-defined or auto-generated name for the project.
+ * @param connection - The validated DACPAC or Database connection.
+ * @returns A newly instantiated Project object.
+ */
 export function createProject(
   name: string,
   connection: DacpacConnection | DatabaseConnection,
@@ -190,10 +277,12 @@ export function createProject(
 }
 
 /**
- * Upsert a project into the store and mark it as last opened.
- * If project.id already exists → replace it.
- * If project.id is new → append it.
- * Always sets lastOpenedId = project.id.
+ * Upserts a project into the store and updates the last opened identifier.
+ * If the project ID already exists, it is replaced; otherwise, it is appended.
+ * 
+ * @param store - The current project store state.
+ * @param project - The project to insert or update.
+ * @returns A new project store instance with the applied changes.
  */
 export function updateProject(store: ProjectStore, project: Project): ProjectStore {
   const exists = store.projects.some(p => p.id === project.id);
@@ -203,7 +292,14 @@ export function updateProject(store: ProjectStore, project: Project): ProjectSto
   return { ...store, projects, lastOpenedId: project.id };
 }
 
-/** Remove a project by id. Falls back lastOpenedId to next most-recent or null. */
+/**
+ * Removes a project from the store by its identifier.
+ * Automatically adjusts the last opened ID to the most recently updated project if the current active project is deleted.
+ * 
+ * @param store - The current project store state.
+ * @param id - The UUID of the project to delete.
+ * @returns A new project store instance with the project removed.
+ */
 export function deleteProject(store: ProjectStore, id: string): ProjectStore {
   const projects = store.projects.filter(p => p.id !== id);
   const lastOpenedId =
@@ -213,12 +309,12 @@ export function deleteProject(store: ProjectStore, id: string): ProjectStore {
   return { ...store, projects, lastOpenedId };
 }
 
-// ─── Auto-name ────────────────────────────────────────────────────────────────
-
 /**
- * Generate a default project name from a connection.
- * Format: "{source} YYYY-MM-DD HH:mm"  (timestamp unique to the minute)
- * User can edit this before clicking Visualize.
+ * Generates a default project name based on the connection type and current timestamp.
+ * Format: "{sourceName or displayName} YYYY-MM-DD HH:mm".
+ * 
+ * @param connection - The connection to derive the name from.
+ * @returns A formatted string representing the default project name.
  */
 export function generateProjectName(connection: DacpacConnection | DatabaseConnection): string {
   const now = new Date();
@@ -233,13 +329,25 @@ export function generateProjectName(connection: DacpacConnection | DatabaseConne
     : `${connection.sourceName} ${ts}`;
 }
 
+/**
+ * Pads a number with a leading zero if it is less than 10.
+ * 
+ * @param n - The number to pad.
+ * @returns A two-character padded string.
+ */
 function pad(n: number): string {
   return n.toString().padStart(2, '0');
 }
 
-// ─── Filter Profiles ──────────────────────────────────────────────────────────
-
-/** Add or replace a filter profile on a project (matched by profile.id). */
+/**
+ * Adds or replaces a filter profile for a specific project.
+ * Matches existing profiles based on their ID.
+ * 
+ * @param store - The current project store state.
+ * @param projectId - The UUID of the project to modify.
+ * @param profile - The new or updated filter profile to insert.
+ * @returns A new project store instance with the updated filter profiles.
+ */
 export function addFilterProfile(store: ProjectStore, projectId: string, profile: FilterProfile): ProjectStore {
   const projects = store.projects.map(p => {
     if (p.id !== projectId) return p;
@@ -252,7 +360,14 @@ export function addFilterProfile(store: ProjectStore, projectId: string, profile
   return { ...store, projects };
 }
 
-/** Remove a filter profile from a project. */
+/**
+ * Removes a filter profile from a specific project.
+ * 
+ * @param store - The current project store state.
+ * @param projectId - The UUID of the project to modify.
+ * @param profileId - The UUID of the filter profile to remove.
+ * @returns A new project store instance with the filter profile removed.
+ */
 export function deleteFilterProfile(store: ProjectStore, projectId: string, profileId: string): ProjectStore {
   const projects = store.projects.map(p => {
     if (p.id !== projectId) return p;
@@ -261,7 +376,12 @@ export function deleteFilterProfile(store: ProjectStore, projectId: string, prof
   return { ...store, projects };
 }
 
-/** Convert a live FilterState (with Sets) to a JSON-serializable form. */
+/**
+ * Converts a live FilterState containing Sets into a JSON-serializable SerializedFilterState.
+ * 
+ * @param filter - The active in-memory filter state.
+ * @returns A plain object suitable for persistent storage.
+ */
 export function serializeFilter(filter: FilterState): SerializedFilterState {
   return {
     schemas: Array.from(filter.schemas),
@@ -278,7 +398,13 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
   };
 }
 
-/** Restore a SerializedFilterState back to a live FilterState (with Sets). */
+/**
+ * Restores a SerializedFilterState from persistent storage back into a live FilterState.
+ * Reconstructs Set objects where required.
+ * 
+ * @param s - The serialized filter state object.
+ * @returns An in-memory FilterState object with fully instantiated Sets.
+ */
 export function deserializeFilter(s: SerializedFilterState): FilterState {
   return {
     schemas: new Set(s.schemas),

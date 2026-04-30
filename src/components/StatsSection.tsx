@@ -5,7 +5,6 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { CompletenessBar, UniquenessIndicator, TypeBadge } from './StatsMicroCharts';
 
-// ─── Spinner ─────────────────────────────────────────────────────────────────
 
 function Spinner() {
   return (
@@ -17,13 +16,11 @@ function Spinner() {
   );
 }
 
-// ─── Sort Arrow ──────────────────────────────────────────────────────────────
 
 function SortArrow({ dir }: { dir: 'asc' | 'desc' }) {
   return <span style={{ fontSize: '0.6rem', marginLeft: 2 }}>{dir === 'asc' ? '▲' : '▼'}</span>;
 }
 
-// ─── Chevron Icon ────────────────────────────────────────────────────────────
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {
   return (
@@ -33,7 +30,6 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
-// ─── Formatting Helpers ─────────────────────────────────────────────────────
 
 /** Format a number with thousands separators and 1 decimal place. */
 function formatDecimal(n: number): string {
@@ -63,7 +59,6 @@ function nullQualityColor(pct: number): string {
   return 'var(--ln-fg)';
 }
 
-// ─── Labeled Detail Grid (Standard mode) ────────────────────────────────────
 
 /** Check whether a column has any standard-mode detail to show. */
 function hasDetail(col: ColumnStats): boolean {
@@ -130,7 +125,6 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   );
 }
 
-// ─── Sort Logic ──────────────────────────────────────────────────────────────
 
 type SortKey = 'ordinal' | 'name' | 'null' | 'distinct';
 
@@ -156,7 +150,6 @@ function sortColumns(cols: IndexedCol[], key: SortKey, dir: 'asc' | 'desc'): Ind
   return sorted;
 }
 
-// ─── Grid Layout ─────────────────────────────────────────────────────────────
 
 const GRID_COLS = 'minmax(60px, 1fr) 38px 46px minmax(70px, auto)';
 
@@ -166,7 +159,6 @@ const cellClip: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
-// ─── Stats Results Grid ─────────────────────────────────────────────────────
 
 function StatsResults({ stats, mode }: {
   stats: TableStats;
@@ -364,14 +356,29 @@ function StatsResults({ stats, mode }: {
   );
 }
 
-// ─── Stats Section ───────────────────────────────────────────────────────────
 
+/**
+ * Props for the {@link StatsSection} component.
+ */
 interface StatsSectionProps {
+  /** The current state of table statistics (loading, error, or result). */
   statsState: TableStatsState;
+  /** Callback triggered when the user requests a specific profiling mode. */
   onRequestStats: (mode: StatsMode) => void;
+  /** Whether standard-mode profiling (deeper scan) is enabled for the current connection. */
   standardModeEnabled: boolean;
 }
 
+/**
+ * Renders the table statistics section in the detail panel.
+ *
+ * This component handles the UI for requesting and displaying column-level metrics,
+ * supporting both 'quick' (metadata-only or sampled) and 'standard' (full scan)
+ * profiling modes.
+ *
+ * @param props - Component properties.
+ * @returns A React element representing the statistics section.
+ */
 export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';
 

@@ -1,3 +1,4 @@
+
 /**
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
@@ -15,76 +16,125 @@
  * Zero VS Code imports — pure functions for testability.
  */
 
-// ─── Inline token budget (configurable via VS Code setting) ────────────────
 
 /** Default inline token budget — overridden per-request from VS Code setting `ai.inlineTokenBudget`. */
 const DEFAULT_INLINE_TOKEN_BUDGET = 10_000;
 
 /** Runtime budget — set from VS Code setting at each request start. */
-let _inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
+let inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
 
-/** Set from VS Code setting (called per-request in extension.ts). */
+/**
+ * Configures the runtime inline token budget from VS Code settings.
+ * 
+ * @remarks
+ * This value is typically set at the start of each request in `extension.ts`
+ * based on the `ai.inlineTokenBudget` configuration.
+ * 
+ * @param value - The maximum number of tokens allowed for inline (one-shot) delivery.
+ */
 export function setInlineTokenBudget(value: number): void {
-  _inlineTokenBudget = value;
+  inlineTokenBudget = value;
 }
 
-/** Returns the configured inline token budget. */
+/** 
+ * Retrieves the currently active inline token budget. 
+ * 
+ * @returns The effective token budget used for delivery mode decisions.
+ */
 export function getEffectiveBudget(): number {
-  return _inlineTokenBudget;
+  return inlineTokenBudget;
 }
 
-// ─── Estimation ─────────────────────────────────────────────────────────────
 
-/** Estimate tokens from a char count (rough: 1 token ≈ 4 chars for JSON). */
+/** 
+ * Provides a heuristic estimation of token count from a character count.
+ * 
+ * @remarks
+ * Uses a standard approximation of 1 token ≈ 4 characters for JSON/SQL payloads.
+ * 
+ * @param chars - The number of characters in the payload string.
+ * @returns An estimated token count.
+ */
 export function estimateTokens(chars: number): number {
   return Math.ceil(chars / 4);
 }
 
 /**
- * Should this payload be delivered inline (one-shot) or on-demand (follow-up tools)?
- * Used by getContext(), runBfsTrace(), start_column_trace, and start_exploration.
+ * Determines if a payload should be delivered inline (one-shot) or via on-demand tools.
+ * 
+ * @remarks
+ * Inline delivery provides the AI with all DDL at once for immediate reasoning.
+ * On-demand delivery triggers a hop-by-hop state machine for larger scopes.
+ *
+ * @param payloadChars - The character count of the payload.
+ * @param precomputedTokens - Optional pre-calculated token count to skip estimation.
+ * @returns `true` if the payload fits within the effective budget for inline delivery.
  */
 export function shouldInline(payloadChars: number, precomputedTokens?: number): boolean {
   const tokens = precomputedTokens ?? estimateTokens(payloadChars);
   return tokens <= getEffectiveBudget();
 }
 
-// ─── SM inline node cap (configurable via VS Code setting) ────────────────
 
 /** Default node cap for inline SM delivery — overridden per-request from VS Code setting `ai.inlineNodeCap`. */
 const DEFAULT_SM_INLINE_NODE_CAP = 10;
 
 /** Runtime node cap — set from VS Code setting at each request start. */
-let _smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
+let smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
 
-/** Set from VS Code setting (called per-request in extension.ts). */
-export function setSmInlineNodeCap(value: number): void {
-  _smInlineNodeCap = value;
-}
-
-/** Returns the configured inline node cap. */
-export function getSmInlineNodeCap(): number {
-  return _smInlineNodeCap;
-}
-
-/**
- * Should CT/BB use inline delivery? Checks BOTH token budget AND node count.
- * Small scopes (≤cap nodes AND under token budget) → inline (quick analysis).
- * Larger scopes → hop-by-hop with sliding memory (deep exploration for rename tracking).
+/** 
+ * Configures the runtime inline node cap from VS Code settings. 
+ * 
+ * @param value - The maximum number of nodes allowed for inline State Machine (SM) delivery.
  */
-export function shouldSmInline(payloadChars: number, scopeNodeCount: number): boolean {
-  return scopeNodeCount <= _smInlineNodeCap && shouldInline(payloadChars);
+export function setSmInlineNodeCap(value: number): void {
+  smInlineNodeCap = value;
 }
 
-// ─── Context pressure ──────────────────────────────────────────────────────
+/** 
+ * Retrieves the currently active inline node cap. 
+ * 
+ * @returns The maximum node count allowed for inline exploration.
+ */
+export function getSmInlineNodeCap(): number {
+  return smInlineNodeCap;
+}
 
 /**
- * History eviction threshold: evict oldest turns when input tokens exceed
- * this fraction of the model's maxInputTokens.
+ * Determines if a State Machine (SM) exploration should use inline delivery.
+ * 
+ * @remarks
+ * Evaluates both the node count of the scope and the estimated token budget.
+ * Small, focused Blackboard (BB) scopes use inline delivery for faster analysis, 
+ * while larger scopes or explorations with active column tracing fallback to 
+ * the sliding memory (hop-by-hop) architecture.
+ *
+ * @param isColumnAspectActive - True if specific columns are being tracked.
+ * @param payloadChars - Character count of the DDL/Metadata payload.
+ * @param scopeNodeCount - The total number of nodes in the exploration scope.
+ * @returns `true` if it is a blackboard session without column tracing, and constraints are satisfied.
+ */
+export function shouldSmInline(isColumnAspectActive: boolean, payloadChars: number, scopeNodeCount: number): boolean {
+  if (isColumnAspectActive) return false; // Column tracing is always sliding-memory for precision.
+  return scopeNodeCount <= smInlineNodeCap && shouldInline(payloadChars);
+}
+
+
+/**
+ * The threshold (0.0 to 1.0) at which context pressure triggers history eviction.
+ * 
+ * @remarks
+ * When the input token count exceeds this fraction of the model's `maxInputTokens`,
+ * the oldest conversation turns are evicted to ensure the AI remains responsive.
  */
 export const CONTEXT_PRESSURE_THRESHOLD = 0.75;
 
-// ─── Input validation (not response truncation) ────────────────────────────
 
-/** Max regex query length — prevents catastrophic backtracking. Input validation only. */
+/** 
+ * Maximum allowed length for a regular expression query. 
+ * 
+ * @remarks
+ * Used during input validation to mitigate the risk of ReDoS (Regular Expression Denial of Service)
+ * and ensure catastrophic backtracking does not occur during model searching.
+ */
 export const REGEX_MAX_LENGTH = 200;

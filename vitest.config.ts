@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    include: ['test/hooks/**/*.test.tsx', 'test/hooks/**/*.test.ts'],
+    include: ['tests/unit/hooks/**/*.test.tsx', 'tests/unit/hooks/**/*.test.ts'],
     define: {
       __APP_VERSION__: JSON.stringify('test'),
     },

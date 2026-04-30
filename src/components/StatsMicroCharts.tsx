@@ -1,8 +1,11 @@
+import React from 'react';
 import { typeBadgeLabel } from '../engine/profilingEngine';
 import { Tooltip } from './ui/Tooltip';
 
-// ─── Type Badge ──────────────────────────────────────────────────────────────
-
+/**
+ * Mapping of simplified data type labels to their respective theme-aware colors.
+ * Used by {@link TypeBadge} for visual categorization of column types.
+ */
 const BADGE_COLORS: Record<string, string> = {
   INT: 'var(--ln-analysis-icon)',      // blue
   DEC: 'var(--ln-analysis-icon)',      // blue
@@ -16,6 +19,16 @@ const BADGE_COLORS: Record<string, string> = {
   TXT: 'var(--ln-fg-dim)',             // dim
 };
 
+/**
+ * A component that renders a small, colored badge representing a SQL data type.
+ *
+ * @remarks
+ * The badge uses a simplified label (e.g., "INT" for "int", "bigint", etc.) derived from
+ * the {@link typeBadgeLabel} utility. It displays the full type string as a tooltip.
+ *
+ * @param props - Object containing `typeStr`, the raw SQL type string.
+ * @returns A {@link React.JSX.Element} displaying the type badge.
+ */
 export function TypeBadge({ typeStr }: { typeStr: string }) {
   const label = typeBadgeLabel(typeStr);
   const color = BADGE_COLORS[label] ?? 'var(--ln-fg-muted)';
@@ -36,14 +49,27 @@ export function TypeBadge({ typeStr }: { typeStr: string }) {
   );
 }
 
-// ─── Completeness Bar ─────────────────────────────────────────────────────────
-
+/**
+ * Determines a semantic color based on a quality/completeness ratio.
+ *
+ * @param value - A number between 0 and 1 representing the quality ratio.
+ * @returns A CSS color variable string.
+ */
 function qualityColor(value: number): string {
   if (value >= 0.95) return 'var(--ln-analysis-icon)';
   if (value >= 0.80) return 'var(--ln-warning-fg)';
   return 'var(--ln-validation-error-border)';
 }
 
+/**
+ * A horizontal progress bar component used to visualize data completeness (null vs. non-null).
+ *
+ * @remarks
+ * The bar's color changes dynamically based on the completeness percentage using {@link qualityColor}.
+ *
+ * @param props - Object containing `value`, a number between 0 and 1.
+ * @returns A {@link React.JSX.Element} representing the completeness bar as an SVG.
+ */
 export function CompletenessBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   return (
@@ -54,8 +80,16 @@ export function CompletenessBar({ value }: { value: number }) {
   );
 }
 
-// ─── Uniqueness Indicator ─────────────────────────────────────────────────────
-
+/**
+ * A textual indicator component for data uniqueness/cardinality.
+ *
+ * @remarks
+ * This component categorizes uniqueness into "Const", "High", "Med", or "Low" based on the ratio
+ * of distinct values to total rows, and provides semantic coloring.
+ *
+ * @param props - Object containing `value` (uniqueness ratio 0-1) and `distinctCount`.
+ * @returns A {@link React.JSX.Element} displaying the uniqueness label.
+ */
 export function UniquenessIndicator({ value, distinctCount }: { value: number; distinctCount: number }) {
   let label: string;
   let color: string;

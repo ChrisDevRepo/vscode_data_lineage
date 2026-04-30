@@ -1,217 +1,204 @@
 /**
- * Composable prompt building blocks for state-machine modes.
+ * Mode-scoped prompts for the navigation engine.
  *
- * Each SM type (BB, CT, CT_DEP) assembles its mode prompt from shared blocks.
- * Single source of truth — change a rule once, all modes inherit it.
- *
- * See ai/prompt-changelog.md for change history.
+ * @remarks
+ * Composed from shared blocks so guidance that applies to every mode stays in one place.
+ * Following a hybrid Markdown + XML strategy: Markdown headers provide structural context
+ * for GPT/Gemini, while XML tags protect high-risk dynamic data for Claude precision.
  */
 
-// ─── Shared Building Blocks ─────────────────────────────────────────────────
+import { buildColumnAspectPrompt } from './prompts';
+import type { ColumnEdge } from './smTypes';
+
 
 const BLOCK = {
-  /** Step 1 — every hop starts with DDL/column analysis */
-  readDdl:
-    'Read the focus node DDL/columns carefully.',
+  /** Node classification protocol. */
+  verdictCategories: [
+    '## Verdict Protocol',
+    '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
+    '- pass: Node is pure wire (SELECT *, synonym). No transformation. (Use analyze if ANY logic exists.)',
+    '- prune: Utility node (logging/error), or downstream consumer that is topologically adjacent but does not contribute to the stated question.',
+    '- prune_neighbors: When the DDL of the current focus node reveals adjacent tables that are filter-only (used in a JOIN ON or IN subquery, with no columns selected from them that contribute to the mission), add those table ids to `prune_neighbors` in the same submit_findings. Example: a calendar table joined only to filter by fiscal year; a region lookup joined only to restrict which rows are imported.',
+  ].join('\n'),
 
-  /** Node classification — shared concept across all SM types */
-  verdictCategories:
-    'NODE CLASSIFICATION (three categories):\n' +
-    '- relevant (BB) / trace (CT): node has ANY business logic, transforms, formulas, CASE/WHERE/JOIN, or computed columns → full analysis + badge_label. If a stored procedure modifies data, it is ALWAYS relevant — even if its connection to the question is indirect.\n' +
-    '- pass (= data passthrough, NOT "skip"): pure wire — data flows through with ZERO transformation. SELECT *, identity view, synonym. If the node has ANY logic, use relevant.\n' +
-    '- irrelevant (BB) / prune (CT): node is a utility function (logging, error handling, type conversion) or has zero data relationship to the pipeline → removed from graph',
+  /**
+   * Section-shape contract — points at the YAML capture templates as the
+   * single source of truth for body content. The capture instructions are
+   * injected separately by `templateRenderer.resolveStagePrompt(..., 'active', classification)`.
+   *
+   * Renders only the submission shape for the locked classification — no menu
+   * of inactive branches. See {@link buildSectionsShape}.
+   */
+  buildSectionsShape: (classification: 'business' | 'technical' | 'both'): string => {
+    const submitLine = classification === 'both'
+      ? 'Submit `sections[]` with two entries: one `{ angle: "business", text: "<body>" }` and one `{ angle: "technical", text: "<body>" }`.'
+      : `Submit \`sections[]\` with one entry: \`{ angle: "${classification}", text: "<body>" }\`.`;
+    return [
+      '## Section Submission',
+      submitLine,
+      'Body content is governed by the capture template above; this block specifies only the submission shape.',
+      '`summary` — one short sentence digest of the whole node.',
+    ].join('\n');
+  },
 
-  /** Step 2 — record detailed findings (→ detail memory slot) */
-  writeFindings:
-    'Write findings to detail memory — this content becomes the final document:\n' +
-    '- relevant/trace → full analysis (hard limit 8000 chars). Self-contained — written to answer the user\'s question.\n' +
-    '  CLASSIFY the question — this drives findings depth:\n' +
-    '    WHAT the data means → lead with business meaning: formulas in LaTeX math syntax, column renames as | From | To | Business meaning | table, what each value represents, which consumers are affected.\n' +
-    '    HOW the pipeline runs → lead with execution: join strategies, loading patterns, constraints, rebuild order.\n' +
-    '    For blended questions: combine both — business meaning first.\n' +
-    '  FORMAT to fit content:\n' +
-    '    Column rename or mapping → | From | To | Notes | table.\n' +
-    '    Formula → LaTeX math syntax.\n' +
-    '    Multi-step logic → ordered 1. 2. 3. list.\n' +
-    '    Risk or data quality → ⚠️ prefix.\n' +
-    '  Name every column and expression explicitly — never "various columns" or "certain conditions".\n' +
-    '  Quote key SQL as supporting evidence for your business explanation.\n' +
-    '  Write as draft section text — this content is assembled directly into the final document. Full depth, no follow-up step.\n' +
-    '  BAD: "COLUMNS: OrderID (int PK), Qty (decimal), UnitPrice (money)"\n' +
-    '  GOOD: "`spCalcRevenue` computes TotalRevenue = Qty × UnitPrice at INSERT. Reads Qty from staging (rename OrderQty → Qty), UnitPrice from price view (PriceMaster lookup).\\n| Source | Column | Transform | Output |\\n| FactOrders | OrderQty | rename | Qty |\\n| PriceMaster | ListPrice | markup formula | UnitPrice |"\n' +
-    '- pass → summary only (~100-200 chars): what passes through, from where to where.\n' +
-    '- irrelevant/prune → brief summary only.',
+  /** Metadata protocol — badge_label drives final-document section labels. */
+  badgeAndNote: [
+    '## Metadata Protocol',
+    '1. BADGE: `badge_label` is a short semantic ROLE label — prefer 1-2 words; longer phrases acceptable only when no shorter form fits the role precisely. Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "AC Reallocation", "EV Calculation", "Reference Remap".',
+    '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
+    '   - SHARED ROLE: Nodes serving the same role take the same label. Five EV Case procedures all use `"EV Calculation"`; three regional loaders all use `"Regional Upsert"`. The differing detail belongs in the section body, not the label.',
+    '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
+  ].join('\n'),
 
-  /** Step 3 — semantic badge + note caption (also used for short memory) */
-  badgeAndNote:
-    'badge_label (2-4 words): semantic ROLE label, e.g. "Source", "Transform", "Staging", "Output", "Validation", "Aggregation".\n' +
-    'SELECTIVITY: Only assign badge_label to nodes with distinct functional roles. ' +
-    'Passthrough nodes (SELECT *, simple staging, lookup joins) — skip badge_label, they will be mentioned in section text.\n' +
-    'GROUPING: Nodes that serve the same role should get the same badge_label (e.g. two source tables → both "Source").\n' +
-    'note_caption (~100-200 chars): stored in short memory, visible every future hop. ' +
-    'The SM auto-adds which neighbors you traced/pruned — do not repeat that. ' +
-    'Write your REASONING: what you learned, what it means for the question, what is still open.',
+  /** Strategic routing protocol — full text for inline mode (AI drives the agenda one-shot). */
+  routingInline: [
+    '## Routing Strategy',
+    '1. AUTO-ADD: Route neighbors only if critical to the <mission_brief>. Respect user depth and schema boundaries.',
+    '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant table/view/function branches (logging, demographics) found in DDL. See Pruning Protocol below for procedures.',
+    '3. ANCHORING: Relevance is judged against the mission, not the sub-question.',
+    '4. OUT-OF-SCOPE ROUTES: See ROUTE OUTCOMES in the Active Exploration Protocol above.',
+  ].join('\n'),
 
-  /** Self-ask — answer your own question from the previous hop */
-  selfAsk:
-    'The sub_question/current_task field contains your own question from a previous hop — answer it.',
+  /** Trimmed routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */
+  routingSm: [
+    '## Routing',
+    'Engine selects the next focus node from the agenda. For each focus node: if its function falls outside the `<mission_brief>` — not only logging/error utilities, but any node that does not contribute to the user\'s stated question — emit `verdict: "prune"`. Only add a neighbor via `route_requests` if it directly contributes to answering the user\'s stated question — topological adjacency is not sufficient justification. A downstream consumer of a source table is not itself a source. Source the id verbatim from the tool result. Otherwise emit `route_requests: []`.',
+  ].join('\n'),
 
-  /** Verdict neighbors — shared by CT and CT_DEP */
-  verdictNeighbors:
-    'Verdict each neighbor: trace (has logic, follow with columns), pass (no transforms, revisited as lightweight hop), prune (irrelevant, cut).\n' +
-    'Pass nodes appear as focus hops — verdict their neighbors to control which paths continue.\n' +
-    'Submit a verdict for every neighbor — skipped neighbors are silently lost.',
+  /**
+   * Two-kind pruning protocol: structural neighbors (direct inspection) vs. procedures (hop-based).
+   *
+   * @remarks
+   * Structural neighbors (tables, views, functions) expose their column schema and foreign keys
+   * through `lineage_get_neighbor_columns` without requiring a dedicated hop. Procedures
+   * keep their logic within a DDL body that is only accessible when the node is in focus.
+   */
+  pruningProtocol: [
+    '## Pruning — When to Prune',
+    'Prune nodes that do not contribute to the `<mission_brief>`.',
+    '- **Structural neighbors**: For tables, views, or functions, call `lineage_get_neighbor_columns({ids:["..."]})` to inspect the schema and foreign keys before deciding to prune. This tool provides metadata for direct neighbors of the focus node.',
+    '- **Procedures**: Since DDL is only visible at the hop, route to the procedure with a specific question (e.g., `question="Prune candidate — [reason]"`) to verify its relevance before pruning.',
+  ].join('\n'),
 
-  /** Column tracking — CT only */
-  columnTracking:
-    'COLUMN TRACKING: columns in verdicts must be the names AS THEY APPEAR in the neighbor, not the output alias in the current node.\n' +
-    'Read the current node DDL to find the source column reference: SELECT neighbor.SourceCol AS OutputAlias → trace SourceCol into that neighbor.\n' +
-    'Track renames across hops — each hop may use a different name for the same data.\n' +
-    'SELECTIVITY: Trace only columns relevant to the question. Prune unrelated branches.\n' +
-    'When uncertain whether a column carries value to the target: trace. When a column only controls selection: prune.',
-
-  /** Column lineage rule — CT column mode only */
-  columnLineageRule:
-    'COLUMN LINEAGE RULE: Read the SELECT expression that produces the target column in the DDL. ' +
-    'Trace every column reference in that expression — formula operands, COALESCE options, CASE WHEN result values (THEN/ELSE), JOIN value columns. ' +
-    'Prune columns that appear only in row-selection clauses (WHERE conditions, JOIN ON keys, HAVING filters) — they route which row is chosen, not what the value is. ' +
-    'Multi-input formulas: trace ALL inputs — omitting one branch produces incomplete lineage. ' +
-    'Classify each column reference: does it contribute VALUE to the output, or does it only control SELECTION ' +
-    '(which row, which branch, whether NULL)? Trace value contributors. Prune selection-only references. ' +
-    'When ALL output branches for a condition produce only literals (constants, not column references), ' +
-    'the condition column is selection-only — do not trace it upstream for value lineage.',
-
-  /** Table node guidance — CT (column + dep) */
-  tableNodes:
-    'TABLE NODES: Tables store data, not transform it — verdict the table itself as pass (no badge). Trace ALL upstream neighbors to find the writers.',
-
-  /** Revisit — CT and CT_DEP */
-  revisit:
-    'If revisitable nodes are listed: use verdict "revisit" to re-expand a previously pruned branch (max 3).',
-
-  /** Field mapping — CT only */
-  fieldMapping:
-    'FIELD MAPPING: focus_node_id = focus_node.id from the hop context. neighbor_id = id field from each neighbor.',
-
-  /** Scope tiers — BB only */
-  scopeTiers:
-    'NEIGHBOR SCOPE — evaluate ALL neighbors, then act per tier:\n' +
-    '- scope=in_scope: on your agenda — will be visited. Can prune via prune_ids.\n' +
-    '- scope=available + in_filter=true: in model but not on agenda — add via add_ids if relevant\n' +
-    '- scope=available + in_filter=false: in model but outside user filter — ask user: "Schema X has relevant objects, should I include it?"\n' +
-    '- scope=external: referenced in DDL but not in loaded model — note as external reference in findings\n' +
-    '- scope=visited/pruned: already processed\n' +
-    'prune_ids only works on scope=in_scope. add_ids only works on scope=available.\n' +
-    'SCOPE EXPANSION: If agenda is nearly empty but question is unanswered, use expand_frontier to extend BFS scope by additional hops from the current boundary.',
-
-  /** Early completion — BB only */
-  earlyComplete:
-    'Set complete:true when you can answer the question. Visit all relevant nodes — do not skip nodes to finish faster.',
-
-  /** Working memory usage — BB only */
-  workingMemory:
-    'Your working memory shows ALL summaries and ALL pending questions — use them to stay on track.\n' +
-    'INVALID NODES: working_memory.invalid_nodes lists rejected node IDs. ' +
-    'Never ask questions about not_in_model nodes. For out_of_scope nodes, use get_object_detail instead.',
-
-  /** Detail memory at synthesis — grounding contract */
-  detailMemory:
-    'SYNTHESIS GROUNDING CONTRACT:\n' +
-    'At completion, your detail memory slots are returned — one per visited node, always at full fidelity.\n' +
-    'These are your ONLY evidence for writing enrich_view. Raw DDL is NOT re-delivered.\n' +
-    'Your slots are draft section text — assemble them into enrich_view sections with minimal rewriting.\n' +
-    'Rules:\n' +
-    '- Every claim must cite a detail slot. Do not compress or re-summarize — present at full depth.\n' +
-    '- If a slot lacks evidence for a claim, omit the claim — do not invent\n' +
-    '- Group nodes by role in answering the question, not by schema\n' +
-    '- If a slot reads like a technical index (column types, raw SQL without explanation) rather than business narrative, call get_object_detail to re-read its DDL and extract the missing business interpretation\n' +
-    '- When a section groups multiple nodes, decide per-node depth by distinctness:\n' +
-    '  DISTINCT logic → cite each: node name, role, key evidence, meaning.\n' +
-    '  SIMILAR logic → summarize the group with one representative, then list variations.\n' +
-    'suggested_sections groups your badge_labels into sections ordered by dependency depth.\n' +
-    'Use suggested_sections as your section skeleton for enrich_view: keep the grouping and order, ' +
-    'adjust labels if needed, and write text per section from your detail memory findings.',
+  /** Inline batch protocol. */
+  batchCompletionContract: [
+    '## Inline Batch Protocol',
+    'Analyze the provided graph context holistically.',
+    '1. BATCH SUBMISSION: Submit your findings as a JSON ARRAY of finding objects (one per node) in a single `submit_findings` turn.',
+    '2. COMPLETION: If no further expansions (`route_requests`) are needed, set `"complete": true` inside your final finding object to finish the exploration.',
+  ].join('\n'),
 } as const;
 
-// ─── Synthesis Reminder (injected at END of SM result — highest attention zone) ──
 
-/** Build a synthesis reminder appended to the SM result at completion.
- *  Research: instructions at end of context improve quality by ~30% (Anthropic long-context guidance).
- *  The buildBbPrompt()/buildCtPrompt() instructions from 26+ rounds ago are in the attention dead zone. */
-export function buildSynthesisReminder(question: string): string {
-  return (
-    'SYNTHESIS REMINDER — re-read before generating enrich_view:\n' +
-    `- User question: "${question}"\n` +
-    '- Your detail slots are draft section text — assemble into enrich_view sections.\n' +
-    '- Every badged node: 3+ sentences with business meaning + SQL evidence.\n' +
-    '- Present at full depth — do not compress or re-summarize.\n' +
-    '- Before writing enrich_view: scan each slot. If any reads like a technical listing (column types, raw SQL) instead of business narrative, call get_object_detail to re-read its DDL.'
+/**
+ * Builds the navigation prompt delivered at the active-phase start.
+ *
+ * @remarks
+ * The engine presents nodes, the model analyzes them, the engine advances the agenda.
+ * If `targetColumns` are provided, the Column Aspect instructions are appended.
+ *
+ * @param isInline - Whether the engine is delivering the entire graph context at once.
+ * @param targetColumns - Optional columns being tracked (activates Column Aspect).
+ * @param classification - Locked classification from gate-approval; renders the section-submission shape per locked angle.
+ * @returns A formatted string containing classification rules, per-hop workflow, and routing guidance.
+ */
+export function buildModeBlock(
+  isInline: boolean = false,
+  targetColumns?: string[],
+  classification: 'business' | 'technical' | 'both' = 'business',
+): string {
+  const isColumnAspectActive = !!(targetColumns && targetColumns.length > 0);
+  const sections: string[] = [];
+
+  const mode = isInline ? 'TRUE INLINE' : 'SLIDING MEMORY';
+  sections.push(`# Exploration Mode: ${mode}`);
+
+  if (isInline) {
+    sections.push('', BLOCK.batchCompletionContract);
+  }
+
+  sections.push(
+    '',
+    BLOCK.verdictCategories,
+    '',
+    BLOCK.buildSectionsShape(classification),
+    '',
+    BLOCK.badgeAndNote,
+    '',
+    isInline ? BLOCK.routingInline : BLOCK.routingSm
   );
+
+  // Inline ships full DDL up front so the AI drives pruning decisions via the pruningProtocol block.
+  if (isInline) {
+    sections.push('', BLOCK.pruningProtocol);
+  }
+
+  if (isColumnAspectActive) {
+    sections.push('', buildColumnAspectPrompt(targetColumns!));
+  }
+
+  return sections.join('\n');
 }
 
-// ─── Mode Prompts (composed from blocks) ────────────────────────────────────
 
-/** BB — free exploration with agenda */
-export function buildBbPrompt(): string {
+/**
+ * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
+ *
+ * @remarks
+ * Anchored on the user question at the highest-attention slot (Anthropic long-context
+ * guidance). Re-asserts depth, math syntax, and per-node SQL-evidence requirements that
+ * the model otherwise drops under pressure. Restored from baseline1's proven shape.
+ *
+ * @param question - The user's original question, re-injected to anchor synthesis on intent.
+ */
+export function buildSynthesisReminder(question: string): string {
   return [
-    'EXPLORATION MODE: The state machine presents nodes one at a time with full DDL and metadata.',
-    '',
-    BLOCK.verdictCategories,
-    '',
-    'For each node:',
-    `1. ${BLOCK.readDdl}`,
-    `2. ${BLOCK.writeFindings}`,
-    `3. ${BLOCK.badgeAndNote}`,
-    `4. Generate sub-questions for neighbors you want to investigate (boosts their priority).`,
-    `5. prune_ids: remove from agenda (scope=in_scope only). add_ids: add to agenda (scope=available).`,
-    '',
-    BLOCK.scopeTiers,
-    '',
-    BLOCK.selfAsk,
-    BLOCK.earlyComplete,
-    BLOCK.workingMemory,
-    BLOCK.detailMemory,
+    '## Synthesis Reminder — re-read before calling `lineage_present_result`',
+    `- User question: "${question}"`,
+    '- `sections[]` is REQUIRED — select nodes that directly answer the user question; omit nodes orthogonal to it. Write `text` for every section: if the question names specific identifiers, focus on detail that answers the question (formulas, column transformations, SQL predicates, data flows, join keys, source tables); if broad, draw from the full captured detail. You own the text — write it.',
+    '- GROUP along two orthogonal axes: (1) keep each captured slot\'s `angle` separate — a business section and a technical section remain individual entries; under `classification = both` this yields two parallel streams. (2) Within a single angle, nodes that share `badge_label` become one section (badge → `label`, every grouped node id → `node_ids[]`).',
+    '- Every badged node deserves business meaning AND SQL evidence (predicate, formula, join key); a label without evidence is incomplete.',
+    '- Carry every formula in LaTeX math syntax (`$expr$` inline, `$$expr$$` block) and every ⚠️ risk callout from capture into the assembled section. Math captured as LaTeX renders as math; math turned into prose stays prose.',
+    '- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases write the text — do not leave sections[] without text.',
+    '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
   ].join('\n');
 }
 
-/** CT — column trace with frontier queue */
-export function buildCtPrompt(): string {
-  return [
-    'COLUMN TRACE MODE: For each hop, analyze the focus node.',
-    '',
-    BLOCK.verdictCategories,
-    '',
-    `1. ${BLOCK.readDdl}`,
-    `2. ${BLOCK.writeFindings}`,
-    `3. ${BLOCK.badgeAndNote}`,
-    `4. ${BLOCK.verdictNeighbors}`,
-    '',
-    BLOCK.columnTracking,
-    BLOCK.columnLineageRule,
-    BLOCK.tableNodes,
-    BLOCK.revisit,
-    BLOCK.fieldMapping,
-    BLOCK.selfAsk,
-    BLOCK.detailMemory,
-  ].join('\n');
-}
 
-/** CT_DEP — dependency trace (no column tracking) */
-export function buildCtDepPrompt(): string {
-  return [
-    'DEPENDENCY TRACE MODE: For each hop, analyze the focus node.',
-    '',
-    BLOCK.verdictCategories,
-    '',
-    `1. ${BLOCK.readDdl}`,
-    `2. ${BLOCK.writeFindings}`,
-    `3. ${BLOCK.badgeAndNote}`,
-    `4. ${BLOCK.verdictNeighbors}`,
-    '',
-    BLOCK.tableNodes,
-    BLOCK.revisit,
-    BLOCK.fieldMapping,
-    BLOCK.selfAsk,
-    BLOCK.detailMemory,
-  ].join('\n');
+/**
+ * Renders the accumulated column lineage chain as a synthesis context block.
+ *
+ * @remarks
+ * Appended to the synthesis reminder when CT was active and edges were recorded.
+ * Presents the directed graph in a flat edge list so the AI can structure
+ * `present_result` around the actual traced path rather than free-form prose.
+ * Overrides the standard badge_label grouping — in CT mode sections[] group by
+ * column chain role (origin / writers / terminal source) instead.
+ * Nodes that were visited but produced no edges are listed as excluded branches.
+ *
+ * @param edges - Validated edges from `ColumnAspect.edges`.
+ * @param ctPrunedNodeIds - Visited nodes that contributed no column edges.
+ * @returns Formatted markdown block anchoring synthesis to the column chain.
+ */
+export function buildCtSynthesisBlock(edges: ColumnEdge[], ctPrunedNodeIds?: string[]): string {
+  const lines = ['## Column Trace Chain'];
+  if (edges.length === 0) {
+    lines.push('No edges recorded — verify column_flow was submitted at each hop.');
+    return lines.join('\n');
+  }
+  for (const e of edges) {
+    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (${e.role}, hop ${e.hop})`);
+  }
+  if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
+    lines.push('');
+    lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
+    lines.push('- Do not include excluded branches in the column chain narrative or sections[].');
+  }
+  lines.push('');
+  lines.push('Structure present_result using this chain (CT override — use chain role, not badge_label, for grouping):');
+  lines.push('- summary: one sentence naming origin column → traced path → terminal source');
+  lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
+  lines.push('- sections[]: group by chain role: origin node | writer/transform nodes | terminal source node');
+  lines.push('- highlight_groups: source=terminal nodes, target=origin, transform=writer nodes');
+  return lines.join('\n');
 }

@@ -1,10 +1,17 @@
 # Source files (bundled into out/ and dist/)
 src/**
 test/**
+tests/**
+test-results/**
 customer-data/**
 temp-old-design/**
 tmp/**
 tmp_*
+
+# Test output emitted into out/ folder must not ship.
+# Pattern intentionally globs `out/test*/**` so orphaned timestamped dirs
+# like `out/test.stale.1777052232/` don't leak into the VSIX.
+out/test*/**
 
 # Config files
 .gitignore
@@ -25,11 +32,8 @@ node_modules/**
 docs/**
 CONTRIBUTING.md
 
-# Integration test infrastructure (internal only — never in VSIX)
-scripts/**
-
-# Internal test infrastructure (gitignored, must not leak into VSIX)
-test-internal/**
+# Internal test and documentation infrastructure (must not leak into VSIX)
+**/*internal*/**
 
 # Environment files (must never be packaged)
 .env
@@ -38,11 +42,14 @@ test-internal/**
 # Claude Code session temp files (created by Claude CLI — must not leak into VSIX)
 tmpclaude-*
 
-# Stray root-level scripts/files (not part of extension)
-manual-trace.ts
-*batch_alloc*
-bb_result.json
-*ct_hop*.json
+# Unreferenced screenshot (superseded by viz-search/viz-ai variants).
+# NOTE: logo.png IS used at runtime by src/panelProvider.ts — keep it.
+images/viz-screenshot.png
+
+# KaTeX TTF fonts — never loaded by VS Code's webview (Chromium picks
+# woff2 > woff > ttf; TTF only matters for legacy browsers). Keep woff+woff2
+# as the actual delivery formats.
+dist/assets/KaTeX_*.ttf
 
 # AI dev artifacts (eval runs, replay JSON, prompt changelogs — internal only)
 ai/**
@@ -50,6 +57,7 @@ ai/**
 # Misc
 PLAN*.md
 CLAUDE.md
+GEMINI.md
 SECURITY.md
 CODE_OF_CONDUCT.md
 *.vsix
@@ -60,4 +68,3 @@ debug.log
 .editorconfig
 .eslintrc*
 .prettierrc*
-claude.md

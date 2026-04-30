@@ -7,14 +7,44 @@ import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { SuggestionList } from './ui/SuggestionList';
 import { Tooltip } from './ui/Tooltip';
 
+/**
+ * Props for the {@link SearchWithAutocomplete} component.
+ */
 interface SearchWithAutocompleteProps {
+  /** 
+   * Callback to execute a node search/jump. 
+   * @param name The name of the object to search for.
+   * @param schema Optional schema name to disambiguate results.
+   */
   onExecuteSearch?: (name: string, schema?: string) => void;
+  /** 
+   * Optional callback to initiate a trace directly from the search result. 
+   * @param nodeId The ID of the node to trace.
+   */
   onStartTrace?: (nodeId: string) => void;
+  /** Flattened list of all nodes in the project for autocomplete suggestions. */
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
-  /** Authoritative set of node IDs currently rendered (after all filters). */
+  /** 
+   * Authoritative set of node IDs currently rendered in the graph. 
+   * Used to partition suggestions into "In View" and "Other" (filtered out).
+   */
   visibleNodeIds: Set<string>;
 }
 
+/**
+ * A search input component with real-time autocomplete suggestions for rapid graph navigation.
+ * 
+ * Capabilities:
+ * - **Quick Jump**: Instantly focus/zoom to any node by name.
+ * - **Visual Partitioning**: Separates search results into "In View" (visible nodes) and 
+ *   "Other" (nodes hidden by current filters).
+ * - **Trace Shortcut**: Provides an inline action to start an interactive trace from a result.
+ * - **Keyboard Optimization**: Supports the `/` hotkey for focus and `Enter`/`ArrowKeys` for selection.
+ * 
+ * Architectural Remark: This component is optimized for performance by managing its own 
+ * local `searchTerm` state. It only triggers expensive parent re-renders when a selection 
+ * is finalized.
+ */
 export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   onExecuteSearch,
   onStartTrace,

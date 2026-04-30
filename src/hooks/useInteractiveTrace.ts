@@ -5,25 +5,43 @@ import type { CustomNodeData } from '../components/CustomNode';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
 
+/**
+ * Return type for the useInteractiveTrace hook, providing state and control actions.
+ */
 interface UseInteractiveTraceReturn {
+  /** The current state of the trace session (mode, focal node, depths). */
   trace: TraceState;
+  /** The subset of nodes being displayed during the trace. */
   tracedNodes: FlowNode<CustomNodeData>[];
+  /** The subset of edges being displayed during the trace. */
   tracedEdges: FlowEdge[];
+  /** A graphology instance containing only the traced elements. */
   traceGraph: Graph | null;
+  /** Initiates a trace configuration phase (shows depth selectors). */
   startTraceConfig: (nodeId: string) => void;
+  /** Immediately applies a trace with default depths. */
   startTraceImmediate: (nodeId: string) => void;
+  /** Applies the current trace configuration with specific upstream/downstream depths. */
   applyTrace: (upstreamLevels: number, downstreamLevels: number) => void;
+  /** Enters pathfinding mode starting from a focal node. */
   startPathFinding: (nodeId: string) => void;
+  /** Attempts to find and render the shortest path to a target node. */
   applyPath: (targetNodeId: string) => boolean;
+  /** Manually applies a pre-computed subset of nodes and edges (used by analysis tools). */
   applyAnalysisSubset: (nodeIds: Set<string>, edgeIds: Set<string>, originId?: string, analysisType?: AnalysisType) => void;
+  /** Ends the active trace and restores the full graph view. */
   endTrace: (onComplete?: () => void) => void;
+  /** Clears the active trace (alias for endTrace). */
   clearTrace: (onComplete?: () => void) => void;
+  /** Whether the trace should traverse the full database model vs. the filtered subset. */
   useFullModel: boolean;
+  /** Toggles the full model traversal flag and re-runs the active trace. */
   toggleUseFullModel: () => void;
+  /** The number of nodes matched by the trace but hidden by the active filter. */
   filteredOutCount: number;
 }
 
-// Initial trace state factory
+/** Initial trace state factory */
 const createInitialTrace = (config: ExtensionConfig): TraceState => ({
   mode: 'none',
   selectedNodeId: null,
@@ -49,6 +67,26 @@ function resolveBfsGraph(
   return { bfsGraph: preferred, autoPromoted: false };
 }
 
+/**
+ * Custom hook for managing interactive data lineage traces and pathfinding.
+ * 
+ * @remarks
+ * This hook manages the lifecycle of "drilling into" specific nodes. It supports:
+ * 1. **Level-based Tracing**: Upstream and downstream traversal.
+ * 2. **Shortest Path**: Finding connections between two specific nodes.
+ * 3. **Analysis Subsets**: Highlighting architectural patterns (hubs, islands).
+ * 
+ * It handles the complex logic of "Auto-Promotion", where a trace on a node that is
+ * currently filtered out will automatically switch to the `fullGraph` to ensure
+ * the user can always see the requested lineage.
+ * 
+ * @param graph - The currently active (filtered) graph instance.
+ * @param flowNodes - The current set of React Flow nodes.
+ * @param flowEdges - The current set of React Flow edges.
+ * @param config - The application configuration (for default depths).
+ * @param model - The full database model (required for unfiltered pathfinding).
+ * @returns An object containing the trace state, subsets, and action handlers.
+ */
 export function useInteractiveTrace(
   graph: Graph | null,
   flowNodes: FlowNode<CustomNodeData>[],

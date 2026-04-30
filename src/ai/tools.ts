@@ -1,13 +1,14 @@
 /**
  * AI tool pure functions — zero VS Code imports.
  * 8 classic retrieval functions invoked by classic LanguageModelTools in extension.ts.
- * CT and BB tools (start_column_trace, submit_hop_analysis, start_exploration, submit_findings)
- * are handled directly by ColumnTraceState and BlackboardState in extension.ts.
+ * CT and BB tools (start_exploration, submit_findings)
+ * are handled directly by NavigationEngine in toolProvider.ts.
  *
  * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */
 import { bfsFromNode } from 'graphology-traversal';
 import type Graph from 'graphology';
+import { z } from 'zod';
 import {
   DEFAULT_CONFIG,
   type DatabaseModel,
@@ -17,6 +18,7 @@ import {
   type AnalysisType,
 } from '../engine/types';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
+import { ColumnStore } from '../engine/columnStore';
 import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
 import { normalizeBodyScript } from '../utils/sql';
 import type { SerializedFilterState, FilterProfile } from '../engine/projectStore';
@@ -25,25 +27,172 @@ import {
   presentNode, presentColumn, presentColumnCompact, presentFkCompact,
   presentSchema, presentNeighbor, presentFilter,
 } from './aiPresenter';
+import type { ColumnFlowRole } from './smTypes';
 
-// ─── Token budget (delivery mode only — no per-tool caps) ──────────────────
 
 import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
 export { shouldInline, shouldSmInline, estimateTokens, getEffectiveBudget, setInlineTokenBudget, setSmInlineNodeCap } from './tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
-const BFS_INLINE_NODE_CAP = 200;
+export const BFS_INLINE_NODE_CAP = 200;
 /** Max results returned in fallback (cross-schema) search. */
-const FALLBACK_RESULT_LIMIT = 10;
+export const FALLBACK_RESULT_LIMIT = 10;
 
-// ─── Input validation ────────────────────────────────────────────────────────
 
 type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
 
 /**
- * Lightweight runtime validation for LLM tool inputs. Returns null if valid,
- * or a structured error if any required field is missing or has the wrong type.
- * No external dependencies (not Zod) — keeps the extension lean.
+ * Zod schema for `start_exploration` tool input. Parsed at the boundary so malformed
+ * payloads (e.g. missing `origin`) produce a structured `missing_field` error instead
+ * of crashing `NavigationEngine.init` on `.toLowerCase()` of undefined.
+ *
+ * @remarks
+ * Either `origin` (fresh exploration) or `supplement.nodeIds` (post-synthesis add) must
+ * be present. Supplement mode reuses the existing `NavigationEngine` / archive: the
+ * supplied node ids are appended to the agenda, the engine is driven one-shot in inline
+ * mode, and new `DetailSlot` entries merge into the existing archive. Used by the
+ * follow-up phase (see `buildFollowUpPrompt`) for deferred-question continuation.
+ */
+export const StartExplorationInputSchema = z.object({
+  origin: z.string().min(1).optional(),
+  question: z.string().optional(),
+  targetColumns: z.array(z.string()).optional(),
+  direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
+  depth: z.number().int().positive().optional(),
+  depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
+  excludeTypes: z.array(z.string()).optional(),
+  /**
+   * Schemas to drop from the BFS scope (case-insensitive). Honored at scope-build time —
+   * any candidate node whose schema matches is excluded. REPLACE semantics: each call
+   * wipes prior filter state on the engine; accumulate across refine rounds by re-sending
+   * every prior exclusion plus the new one.
+   */
+  excludeSchemas: z.array(z.string()).optional(),
+  /**
+   * Specific node ids to drop from the BFS scope (case-insensitive). Cuts the node and
+   * its subtree reachable only through it. Use only when the user explicitly says
+   * remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}.
+   * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
+   * the call to reject with `unknown_node_ids`.
+   */
+  excludeNodeIds: z.array(z.string()).optional(),
+  /**
+   * Specific node ids the engine keeps in scope but auto-passes (no analysis written,
+   * topology preserved so descendants stay reachable). Default interpretation when the
+   * user says ignore / skip / don't analyze. REPLACE semantics — see {@link excludeSchemas}.
+   * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
+   * the call to reject with `unknown_node_ids`.
+   */
+  passNodeIds: z.array(z.string()).optional(),
+  /**
+   * Manual override for inline-vs-SM mode at gate emission. Bypasses the size+budget
+   * heuristic. Only meaningful while the gate is pending; after Approve the chosen mode
+   * locks in.
+   */
+  forceMode: z.enum(['inline', 'sm']).optional(),
+  mission_brief: z.string().optional(),
+  classification: z.enum(['business', 'technical', 'both']),
+  /**
+   * Post-synthesis supplement: extend the existing archive with analysis for these
+   * additional node ids. Runs the engine in inline one-shot mode; slots merge into
+   * the existing `AiMemoryManager`. No `origin` needed — the existing exploration is
+   * the origin. Fails if no completed engine is attached to the session.
+   */
+  supplement: z.object({
+    nodeIds: z.array(z.string().min(1)).min(1),
+  }).optional(),
+}).refine(
+  (data) => !!data.origin || !!data.supplement,
+  { message: "Either 'origin' (fresh exploration) or 'supplement.nodeIds' (post-synthesis add) must be provided." },
+);
+
+export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
+
+/**
+ * Zod schema for one captured section within `submit_findings.sections[]`.
+ *
+ * @remarks
+ * Each fired `*_capture` YAML template produces ONE entry. Angle-vs-classification
+ * conformance is enforced at the tool handler boundary
+ * (`toolProvider.validateSectionsAgainstClassification`) — the schema accepts any
+ * combination here; the handler rejects mismatches against the locked `sess.classification`.
+ */
+const CapturedSectionSchema = z.object({
+  /** Which YAML capture template produced this section. */
+  angle: z.enum(['business', 'technical']),
+  /** Pre-formatted section body. */
+  text: z.string().min(1),
+});
+
+/**
+ * Zod schema for a single finding within `submit_findings`.
+ */
+const HopFindingSchema = z.object({
+  focus_node_id: z.string(),
+  /**
+   * One section per fired `*_capture` template. Length 1 (`business` / `technical`
+   * classification) or 2 (`both`). Verdict=prune findings may submit length 0
+   * (no analysis to record).
+   */
+  sections: z.array(CapturedSectionSchema).max(2),
+  summary: z.string(),
+  verdict: z.enum(['analyze', 'pass', 'prune']),
+  /**
+   * Optional list of neighbors to queue for the next hops. Each entry's
+   * `nodeId` must already be a real id you have seen — either in the prior
+   * tool result's `next_hop` / `neighbors[]` data, in a
+   * `lineage_get_neighbor_columns` lookup, or in a `lineage_search_objects`
+   * result. Inventing an id (e.g. guessing `[s].[procFoo]` when the real
+   * name is `[s].[ProcFooDetailed]`) causes the engine to reject the
+   * submission with `route_validation_failed` — the rejected ids do not
+   * enter the agenda, so the next hop will re-present the same focus and
+   * the exploration cannot advance.
+   * `question` is the sub-question driving analysis at that hop (multi-part
+   * is fine); `columns` is optional column-trace targets for CT mode.
+   */
+  route_requests: z.array(z.object({
+    nodeId: z.string(),
+    question: z.string(),
+    columns: z.array(z.string()).optional(),
+  })).optional(),
+  prune_neighbors: z.array(z.string()).optional(),
+  complete: z.boolean().optional(),
+  badge_label: z.string().optional(),
+  note_caption: z.string().optional(),
+  column_flow: z.array(z.object({
+    out_col: z.string(),
+    writes_to: z.object({ node: z.string(), col: z.string() }).optional(),
+    contributors: z.array(z.object({
+      from_node: z.string(),
+      from_col: z.string(),
+      role: z.enum(['formula', 'rename', 'case', 'coalesce', 'join_value', 'aggregate', 'filter_only', 'source'] satisfies [ColumnFlowRole, ...ColumnFlowRole[]]),
+    })),
+  })).optional(),
+});
+
+/**
+ * Zod schema for `submit_findings` tool input. 
+ * Supports both a single finding object (Sliding Memory) 
+ * and an array of finding objects (True Inline batch).
+ */
+export const SubmitFindingsInputSchema = z.union([
+  HopFindingSchema,
+  z.array(HopFindingSchema)
+]);
+
+export type SubmitFindingsInput = z.infer<typeof SubmitFindingsInputSchema>;
+
+/**
+ * Lightweight runtime validation for LLM tool inputs.
+ *
+ * @remarks
+ * This function ensures that tool inputs provided by the language model match the
+ * expected schema. It returns a structured error if any required field is missing
+ * or has the wrong type, allowing the AI to self-correct.
+ *
+ * @param input - The raw input object provided by the language model.
+ * @param required - A map of required field names to their expected TypeScript types.
+ * @returns An error object if validation fails, otherwise `null`.
  */
 export function validateToolInput(
   input: unknown,
@@ -69,15 +218,22 @@ export function validateToolInput(
   return null;
 }
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
+/** Hard cap on `search_columns` results — prevents unbounded enumeration on wide schemas. */
 const COLUMN_SEARCH_LIMIT = 50;
-const ENRICH_VIEW_NAME_MAX_LENGTH = 60;
-const ENRICH_VIEW_SUMMARY_HARD_LIMIT = 300;
+/** Char cap on the AI-supplied `name` field in `present_result` — guards against pathological prompt injection or runaway labels. */
+const PRESENT_RESULT_NAME_MAX_LENGTH = 200;
+/** Char cap on the AI-supplied `summary` field in `present_result` — keeps the badge readable in the chat stream. */
+const PRESENT_RESULT_SUMMARY_HARD_LIMIT = 300;
 
-/** Build source→target edge type lookup for the entire model (cheap one-pass). */
+/**
+ * Builds a lookup map for edges between nodes.
+ *
+ * @param model - The full database model.
+ * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge type.
+ */
 export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const m = new Map<string, string>();
   for (const e of model.edges) {
@@ -86,14 +242,29 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   return m;
 }
 
-/** Build id→node lookup. */
+/**
+ * Builds a lookup map for nodes by their ID.
+ *
+ * @param model - The full database model.
+ * @returns A map of node IDs to their respective LineageNode objects.
+ */
 export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   const m = new Map<string, LineageNode>();
   for (const n of model.nodes) m.set(n.id, n);
   return m;
 }
 
-/** Build lowercase "Schema.Name" → unrelated refs lookup from parse stats. */
+/**
+ * Builds a map of lowercase "Schema.Name" to lists of unresolved (unrelated) references.
+ *
+ * @remarks
+ * Unresolved references are identifiers found in the DDL during parsing that do not
+ * exist in the current model. This metadata helps the AI understand potential
+ * external dependencies or missing objects.
+ *
+ * @param model - The full database model.
+ * @returns A map of object names to their unresolved reference strings.
+ */
 export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   const m = new Map<string, string[]>();
   if (!model.parseStats?.spDetails) return m;
@@ -105,31 +276,81 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   return m;
 }
 
-// ─── Shared SM helpers (used by CT, BB, and classical tools) ─────────────────
 
-/** Shared column access — used by classical tools, CT, and BB. */
-export function getNodeColumns(
-  nodeId: string, nodeMap: Map<string, LineageNode>,
-  store?: import('../engine/columnStore').ColumnStore,
-): ColumnDef[] | undefined {
-  return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
+/**
+ * Extracts `@ParamName` identifiers from a procedure/function DDL signature.
+ *
+ * @remarks
+ * Parses the parameter list between `CREATE PROCEDURE`/`CREATE FUNCTION` and the `AS` keyword.
+ *
+ * @param ddl - Raw DDL body of a procedure or function.
+ * @returns Array of parameter names (with leading `@`), or empty array if none found.
+ */
+export function parseProcParams(ddl: string): string[] {
+  // Match everything between the object header and the AS/BEGIN keyword
+  const headerMatch = ddl.match(/CREATE\s+(?:PROCEDURE|PROC|FUNCTION)\s+[^\s(]+\s*([\s\S]*?)\s+AS\b/i);
+  if (!headerMatch) return [];
+  const paramSection = headerMatch[1];
+  const params: string[] = [];
+  // Each @Param followed by a type declaration
+  const paramRe = /@(\w+)\s+\w/g;
+  let m: RegExpExecArray | null;
+  while ((m = paramRe.exec(paramSection)) !== null) {
+    params.push(`@${m[1]}`);
+  }
+  return params;
 }
 
-/** Shared DDL access — normalized. Used by classical tools, CT, and BB. */
+/**
+ * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
+ *
+ * @param nodeId - The unique identifier of the node.
+ * @param nodeMap - The ground-truth map of all nodes.
+ * @param store - Optional column store for high-fidelity metadata.
+ * @returns An array of column definitions, or `undefined` if the node is not found.
+ */
+export function getNodeColumns(
+  nodeId: string, nodeMap: Map<string, LineageNode>,
+  store?: ColumnStore,
+): ColumnDef[] | undefined {
+  return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
+}
+
+/**
+ * Retrieves the normalized DDL for a specific node.
+ *
+ * @param nodeId - The unique identifier of the node.
+ * @param nodeMap - The ground-truth map of all nodes.
+ * @param store - Optional column store for high-fidelity DDL.
+ * @returns The normalized DDL string, or `undefined` if not available.
+ */
 export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,
-  store?: import('../engine/columnStore').ColumnStore,
+  store?: ColumnStore,
 ): string | undefined {
-  const raw = store?.getDdl(nodeId) ?? nodeMap.get(nodeId)?.bodyScript;
+  const raw = (typeof store?.getDdl === 'function' ? store.getDdl(nodeId) : undefined) ?? nodeMap.get(nodeId)?.bodyScript;
   return raw ? normalizeBodyScript(raw) : undefined;
 }
 
-/** Build focus node detail for hop context — shared by CT and BB. */
+/**
+ * Constructs a detailed "Focus Node" object for use in exploration hop contexts.
+ *
+ * @remarks
+ * This function packages all pertinent metadata for a node (DDL, columns, foreign keys,
+ * and unresolved references) into a shape suitable for the AI agent to analyze during a hop.
+ *
+ * @param node - The node currently in focus.
+ * @param nodeMap - The map of all nodes.
+ * @param unrelatedMap - The map of unresolved references.
+ * @param store - Optional high-fidelity column store.
+ * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
+ * @returns A record containing the focus node's metadata.
+ */
 export function buildHopFocusNode(
   node: LineageNode,
   nodeMap: Map<string, LineageNode>,
   unrelatedMap: Map<string, string[]>,
-  store?: import('../engine/columnStore').ColumnStore,
+  store?: ColumnStore,
   ddlKey = 'ddl',
 ): Record<string, unknown> {
   const focusNode: Record<string, unknown> = {
@@ -151,8 +372,23 @@ export function buildHopFocusNode(
   return strip(focusNode) as Record<string, unknown>;
 }
 
-// ─── Tool 1: lineage_get_context ─────────────────────────────────────────────
 
+/**
+ * Retrieves the high-level context of the current project for the AI.
+ *
+ * @remarks
+ * This function builds a summary of the loaded model, including schema lists,
+ * visible node counts, and token budget estimates. If the catalog is small enough,
+ * it inlines the full object list and edges; otherwise, it provides a summary
+ * and instructs the AI to use on-demand retrieval.
+ *
+ * @param model - The database model.
+ * @param activeFilter - The current UI filter state.
+ * @param projectName - The name of the active project.
+ * @param savedViews - The list of user-saved bookmarks/views.
+ * @param store - Optional column store.
+ * @returns An object containing project metadata and potentially the full catalog.
+ */
 export function getContext(
   model: DatabaseModel,
   activeFilter: SerializedFilterState | null,
@@ -215,9 +451,13 @@ export function getContext(
   };
 }
 
-// ─── Query validation ───────────────────────────────────────────────────────
 
-/** Reject garbage queries (empty, single char, pure wildcards). */
+/**
+ * Validates a search query for sanity.
+ *
+ * @param query - The user-provided search string.
+ * @returns Success status or an error with a hint.
+ */
 export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
@@ -229,8 +469,23 @@ export function validateQuery(query: string): { ok: true } | { ok: false; error:
   return { ok: true };
 }
 
-// ─── Tool 2: lineage_search_objects ──────────────────────────────────────────
 
+/**
+ * Searches for objects in the model by name or column name.
+ *
+ * @remarks
+ * This function performs a fuzzy or regex search across object names and column names.
+ * It automatically handles schema mismatches by searching globally if a schema-restricted
+ * search yields no results.
+ *
+ * @param model - The database model.
+ * @param query - The search query.
+ * @param types - Optional filter for object types.
+ * @param schemas - Optional filter for schemas.
+ * @param mode - Search mode ('substring' or 'regex').
+ * @param activeFilter - Current UI filter state to tag results.
+ * @returns A list of matches with metadata and AI hints.
+ */
 export function searchObjects(
   model: DatabaseModel,
   query: string,
@@ -243,7 +498,6 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
-  // Validate query (reject garbage)
   if (mode !== 'regex') {
     const validation = validateQuery(query);
     if (!validation.ok) {
@@ -359,10 +613,22 @@ export function searchObjects(
   return base;
 }
 
-// ─── Tool 3: lineage_get_object_detail ───────────────────────────────────────
 
 const NEIGHBOR_CAP = 25;
 
+/**
+ * Retrieves full metadata for a specific database object, including DDL, columns, and neighbors.
+ *
+ * @remarks
+ * This is the primary "drill-down" tool for the AI. It provides a high-fidelity view of a single node,
+ * including its schema, name, type, and relationships. Upstream and downstream neighbors are capped
+ * to prevent token overflow, but DDL and column lists are always delivered in full.
+ *
+ * @param model - The full database model.
+ * @param id - The unique identifier of the object (e.g., "schema.name").
+ * @param store - Optional column store for high-fidelity metadata.
+ * @returns A detailed object representation or a "not_found" error.
+ */
 export function getObjectDetail(
   model: DatabaseModel,
   id: string,
@@ -421,13 +687,84 @@ export function getObjectDetail(
   return { ...base, ddl, unresolved_refs };
 }
 
-// ─── Tool 4: lineage_run_bfs_trace ────────────────────────────────────────────
-// Two modes:
-//   Level BFS:  origin + upstream_hops + downstream_hops → explore by depth
-//   Path BFS:   origin + target → all nodes on paths between start and end
-// shouldInline() gates delivery mode: fits → full DDL, exceeds → on_demand hint.
-// types[] and schemas[] are include-only filters (no exclude).
 
+/**
+ * Zod schema for `get_neighbor_columns` tool input.
+ *
+ * @remarks
+ * Parsed at the boundary so malformed payloads (e.g. missing `ids`, empty array)
+ * produce a structured validation error instead of crashing the handler.
+ */
+export const GetNeighborColumnsInputSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1),
+});
+
+export type GetNeighborColumnsInput = z.infer<typeof GetNeighborColumnsInputSchema>;
+
+/**
+ * Returns structural metadata (columns + foreign keys) for one or more neighbor nodes.
+ *
+ * @remarks
+ * SM ACTIVE pruning-verification affordance. When a focus procedure's DDL uses a
+ * wildcard reference (e.g. `SELECT * FROM dbo.FactSales`), the AI cannot see the
+ * neighbor's columns from the focus body alone; this tool lets it inspect them
+ * to decide whether the neighbor carries mission-relevant data (prune vs. keep).
+ *
+ * **Scope:** structural metadata only — columns with type/nullability, foreign-key
+ * definitions. Deliberately does **not** return DDL bodies; DDL is reserved for
+ * DISCOVERY (`get_object_detail`) and SYNTHESIS (`get_object_detail`) phases. In
+ * SM hop-by-hop the only DDL the AI sees is the focus node's `bb_ddl`, delivered
+ * by `buildHopFocusNode`.
+ *
+ * **Engine-side validation (caller's responsibility):** ids must be direct
+ * neighbors of the current focus node AND within the active BFS scope. See
+ * `NavigationEngine.validateNeighborIds`.
+ *
+ * @param model - Loaded database model.
+ * @param ids - Node ids to inspect (pre-validated by the engine).
+ * @param store - Optional column store for high-fidelity column data.
+ * @returns `{ results: [...], total }` — one row per input id, columns and FKs only.
+ */
+export function getNeighborColumns(
+  model: DatabaseModel,
+  ids: string[],
+  store?: ColumnStore,
+): object {
+  const nodeMap = buildNodeMap(model);
+  const results = ids.map(id => {
+    const node = nodeMap.get(id);
+    if (!node) {
+      return { id, error: 'not_found' as const };
+    }
+    const cols = getNodeColumns(id, nodeMap, store);
+    const foreignKeys = node.fks?.map(fk => ({
+      name:        fk.name,
+      columns:     fk.columns,
+      ref_schema:  fk.refSchema,
+      ref_table:   fk.refTable,
+      ref_columns: fk.refColumns,
+      on_delete:   fk.onDelete,
+    }));
+    return strip({
+      id:           node.id,
+      schema:       node.schema,
+      name:         node.name,
+      type:         node.type,
+      columns:      cols?.length ? cols.map(c => presentColumn(c)) : undefined,
+      foreign_keys: foreignKeys?.length ? foreignKeys : undefined,
+    } as Record<string, unknown>);
+  });
+  return { results, total: results.length };
+}
+
+/**
+ * Object types whose body is the source of lineage information — view / procedure / function.
+ *
+ * @remarks
+ * Drives DDL-vs-columns selection in {@link buildHopFocusNode}, search-target filtering in
+ * {@link searchDdl}, and BFS-payload shape in {@link runBfsTrace}. Tables and external
+ * references are intentionally excluded — they expose columns + foreign keys, not bodies.
+ */
 export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
 /** Find all node IDs on any path between start and end (BFS from both sides, intersect). */
@@ -450,6 +787,47 @@ function findPathNodes(
     if (fromEnd.has(nid)) pathNodes.add(nid);
   }
   return pathNodes;
+}
+
+/**
+ * Largest BFS depth from `origin` whose scope fits within `safeNodeCap`.
+ *
+ * @remarks
+ * Used by the preflight scope-vs-budget gate in `lineage_start_exploration`. Walks
+ * outwards from the origin and returns the depth just before the scope exceeds the
+ * cap, clamping at 1 (callers never recommend `depth=0`). Returns 0 only when even
+ * the origin + immediate neighbors exceed the cap, which signals an unwinnable
+ * budget and should be surfaced as-is for the AI to re-ask the user.
+ *
+ * @param graph - Loaded lineage graph.
+ * @param origin - Origin node id.
+ * @param direction - BFS direction, same enum accepted by `lineage_start_exploration`.
+ * @param safeNodeCap - Largest scope size that still leaves headroom in the round budget.
+ * @returns Suggested depth, 1 or above when feasible, 0 when the budget is too tight.
+ */
+export function suggestNarrowerDepth(
+  graph: Graph,
+  origin: string,
+  direction: 'upstream' | 'downstream' | 'bidirectional',
+  safeNodeCap: number,
+): number {
+  const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
+  const depthMap = new Map<string, number>();
+  let maxSafeDepth = 0;
+  bfsFromNode(graph, origin, (key, _attr, depth) => {
+    depthMap.set(key, depth);
+    return false;
+  }, { mode });
+  // Count nodes at each depth and accumulate — pick the largest depth whose cumulative count fits.
+  const byDepth: number[] = [];
+  for (const d of depthMap.values()) byDepth[d] = (byDepth[d] ?? 0) + 1;
+  let running = 0;
+  for (let d = 0; d < byDepth.length; d++) {
+    running += byDepth[d] ?? 0;
+    if (running > safeNodeCap) break;
+    maxSafeDepth = d;
+  }
+  return Math.max(maxSafeDepth, maxSafeDepth === 0 ? 0 : 1);
 }
 
 /** Run bidirectional BFS and return depth maps for each direction. */
@@ -519,6 +897,30 @@ function attachDdl(
   return result;
 }
 
+/**
+ * Performs a Breadth-First Search (BFS) trace to explore data lineage.
+ *
+ * @remarks
+ * This function supports two distinct modes:
+ * 1. **Level Mode**: Explores upstream and downstream from a focal node up to a specified depth.
+ * 2. **Path Mode**: Finds all nodes on all paths between an origin and a target node.
+ *
+ * It automatically manages token usage by checking if the resulting payload (including DDL)
+ * fits within the effective budget. If it exceeds the budget, it returns a structural summary
+ * and recommends the "state machine" (SM) mode for incremental exploration.
+ *
+ * @param model - The database model.
+ * @param graph - The graphology instance representing the lineage.
+ * @param id - The focal node identifier.
+ * @param upstreamHops - Maximum depth to traverse upstream (Level Mode).
+ * @param downstreamHops - Maximum depth to traverse downstream (Level Mode).
+ * @param types - Optional object type filter.
+ * @param schemas - Optional schema filter.
+ * @param includeDdl - Whether to include full DDL/column definitions in the output.
+ * @param store - Optional column store for high-fidelity data.
+ * @param target - The destination node identifier (triggers Path Mode).
+ * @returns A structured result containing nodes, edges, and delivery metadata.
+ */
 export function runBfsTrace(
   model: DatabaseModel,
   graph: Graph,
@@ -638,7 +1040,7 @@ export function runBfsTrace(
         ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
     }
 
-    // Exceeds budget — return without DDL, hint to use follow-up tools or start_trace
+    // Exceeds budget — return structure without DDL. Scope this large belongs in start_exploration.
     const nodesLight = filteredIds.map(nid =>
       attachDdl(buildNodeBase(nid), nodeMap.get(nid), false, undefined, store));
     return {
@@ -650,7 +1052,6 @@ export function runBfsTrace(
       total_edges: allEdges.length,
       scope_ddl_chars: totalChars,
       budget_tokens: getEffectiveBudget(),
-      ai_hint: 'Scope DDL exceeds token budget. DDL omitted. Use get_ddl_batch for specific nodes, or start_exploration for hop-by-hop analysis. Do NOT ask the user — pick the best approach.',
       ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }),
     };
   }
@@ -663,19 +1064,35 @@ export function runBfsTrace(
     ...(depthLimitedNodes.length > 0 && { depth_limited_nodes: depthLimitedNodes }) };
 }
 
-// ─── Tool 5: lineage_run_analysis ─────────────────────────────────────────────
 
+/**
+ * Executes a structural graph analysis to identify hubs, islands, or longest paths.
+ *
+ * @remarks
+ * This tool allows the AI to perform higher-level reasoning about the entire graph topology
+ * without retrieving every node's metadata. It uses deterministic engine logic to find
+ * architectural hotspots and change-risk areas.
+ *
+ * @param model - The database model.
+ * @param graph - The graphology instance.
+ * @param type - The type of analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
+ * @param minDegree - Minimum degree for a node to be considered a hub.
+ * @param maxSize - Maximum size for a connected component to be considered an island.
+ * @param longestPathMinNodes - Minimum number of nodes for a path to be considered "long".
+ * @returns A summary of the analysis results including grouped node IDs.
+ */
 export function runAnalysis(
   model: DatabaseModel,
   graph: Graph,
   type: AnalysisType,
   minDegree?: number,
   maxSize?: number,
+  longestPathMinNodes?: number,
 ): object {
   const analysisConfig = {
-    hubMinDegree:         minDegree ?? DEFAULT_CONFIG.analysis.hubMinDegree,
-    islandMaxSize:        maxSize   ?? DEFAULT_CONFIG.analysis.islandMaxSize,
-    longestPathMinNodes:  DEFAULT_CONFIG.analysis.longestPathMinNodes,
+    hubMinDegree:         minDegree           ?? DEFAULT_CONFIG.analysis.hubMinDegree,
+    islandMaxSize:        maxSize             ?? DEFAULT_CONFIG.analysis.islandMaxSize,
+    longestPathMinNodes:  longestPathMinNodes ?? DEFAULT_CONFIG.analysis.longestPathMinNodes,
   };
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
@@ -687,8 +1104,20 @@ export function runAnalysis(
   };
 }
 
-// ─── Tool 6: lineage_search_ddl ──────────────────────────────────────────────
-
+/**
+ * Searches for substrings or patterns within the DDL/source code of scriptable objects.
+ *
+ * @remarks
+ * This tool is essential for finding logic-level dependencies (e.g., specific business logic,
+ * hardcoded strings, or column mappings) that are not captured as formal graph edges.
+ * It searches through views, stored procedures, and functions.
+ *
+ * @param model - The database model.
+ * @param query - The search string or regex pattern.
+ * @param types - Optional filter for scriptable object types.
+ * @param store - Optional column store for high-fidelity DDL.
+ * @returns A list of matches with snippets and object metadata.
+ */
 export function searchDdl(
   model: DatabaseModel,
   query: string,
@@ -735,18 +1164,42 @@ export function searchDdl(
   return { results, total: results.length };
 }
 
-// ─── Tool 7: lineage_enrich_view ─────────────────────────────────────────────
 
+/**
+ * Semantic role tag for one of the (≤5) `highlight_groups` the AI may attach
+ * to a `present_result` view. Drives the colour swatch on the graph chip.
+ *
+ * @remarks
+ * Two consistent palettes — `source` / `transform` / `target` (lineage) or
+ * `good` / `warn` / `fail` (diagnostic). The synthesis prompt instructs the
+ * AI to pick one palette per result and not mix them. Validated by
+ * `AI_HIGHLIGHT_ROLES` in `validatePresentResult`.
+ */
 export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
-export type EnrichViewInput = {
+/**
+ * The AI's submission to `lineage_present_result`.
+ *
+ * @remarks
+ * Contract: the AI writes structured PARTS; the engine builds the rendered
+ * document deterministically via {@link orderAndAssemble}. Specifically:
+ *   - AI writes: summary, title, intro, sections[], closing, notes[], highlight_groups[]
+ *   - Engine builds: the assembled markdown blob (returned as `description`
+ *     on PresentResultRequest), section numbering, badge chips, object links.
+ *
+ * There is intentionally NO `description` field on this input — that field is
+ * engine output, not AI input. If a future change wants to re-add it, fix the
+ * template that instructs the AI to write a blob instead.
+ */
+export type PresentResultInput = {
   name: string;
   summary: string;
   title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
   intro?: string;       // 2–4 sentence paragraph before the numbered sections
   closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
-  description?: string;
   prune_node_ids?: string[];
+  add_node_ids?: string[];
+  is_update?: boolean;
   layout_direction?: 'LR' | 'TB';
   highlight_groups?: Array<{
     label: string;
@@ -762,10 +1215,18 @@ export type EnrichViewInput = {
     node_id: string;
     text: string;
   }>;
-  // node_ids fallback removed — enrich_view requires SM result graph (BB or CT)
 };
 
-export type EnrichViewRequest = {
+/**
+ * The validated, engine-assembled result ready for the UI.
+ *
+ * @remarks
+ * `description` here is the full markdown document built by {@link orderAndAssemble}
+ * from the AI's input parts (title + intro + sections[] + closing). It is NOT a
+ * passthrough of any AI-supplied field — the AI does not write the assembled
+ * document.
+ */
+export type PresentResultRequest = {
   success: true;
   name: string;
   node_ids: string[];
@@ -777,25 +1238,38 @@ export type EnrichViewRequest = {
   notes: Array<{ node_id: string; text: string }>;
 };
 
-export type EnrichViewError = { success: false; errors: string[]; hint: string };
+export type PresentResultError = { success: false; errors: string[]; hint: string };
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
- * Assign sequential numbers to sections in the AI's written order, derive badge chips
- * from sections[].node_ids, and assemble the description markdown.
+ * Builds the rendered description markdown from the AI's structured input parts.
  *
- * Guarantees badge numbers on the graph are identical to ## heading numbers in the description.
- * Sort key: AI-provided sections[] array index (narrative order).
- * Strips leading numbers from AI-supplied labels ("3 Source" → "Source") — system is the
- * single source of numbers.
+ * @remarks
+ * This is the SOLE path that produces the description blob shown in
+ * `AiDescriptionOverlay`. The AI never writes the blob directly — it writes the
+ * parts (title, intro, sections[], closing) and the engine assembles them
+ * deterministically here. Section numbering (`## N {label}`), badge chips, and
+ * the `### Objects [name](#focus-node:id)` link header are all engine-owned;
+ * they are not AI-authored fields.
  *
- * @param sections  AI-provided sections: each is a (label KEY, node_ids[] 1..N, text 1..1) tuple.
- * @param opts      Optional title/intro/closing doc wrapper blocks.
+ * Numbered badges are emitted in narrative order so chips on the graph align
+ * with `## N` headings in the description. Leading numbers in AI-supplied
+ * labels are stripped to keep numbering deterministic.
+ *
+ * @param sections - AI-authored sections containing labels, node associations, and text.
+ * @param opts - Optional wrapper blocks for the final document.
+ * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
  */
 export function orderAndAssemble(
-  sections: Array<{ label: string; node_ids?: string[]; text: string }>,
-  opts?: { title?: string; intro?: string; closing?: string },
+  sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
+  opts?: {
+    title?: string;
+    intro?: string;
+    closing?: string;
+    /** Optional node lookup for injecting clickable H3 object-name headings per section. */
+    nodeMap?: Map<string, { id: string; name: string }>;
+  },
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
   // Strip leading "N " or "N. " so AI numbers don't interfere with label matching
   const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.]?\s+/, '').trim();
@@ -834,13 +1308,29 @@ export function orderAndAssemble(
 
   // Assemble markdown: title → intro → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
+  // First-occurrence node_ids list per unique label (AI-authored order preserved).
+  const labelToNodeIds = new Map<string, string[]>();
+  for (const sec of sections) {
+    const label = stripLeadingNumber(sec.label);
+    if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, sec.node_ids ?? []);
+  }
+
   const parts: string[] = [];
-  if (opts?.title)   parts.push(`# ${opts.title}`);
-  if (opts?.intro)   parts.push(opts.intro);
+  if (opts?.title)        parts.push(`# ${opts.title}`);
+  if (opts?.intro)        parts.push(opts.intro);
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
-    parts.push(`## ${n} ${label}\n\n${text}`);
+    const nodeIds = labelToNodeIds.get(label) ?? [];
+    let objectHeadings = '';
+    if (opts?.nodeMap && nodeIds.length > 0) {
+      const links = nodeIds
+        .map(id => opts.nodeMap!.get(id))
+        .filter((node): node is { id: string; name: string } => !!node)
+        .map(node => `[${node.name}](#focus-node:${node.id})`);
+      if (links.length > 0) objectHeadings = `### Objects ${links.join(', ')}\n\n`;
+    }
+    parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
@@ -848,33 +1338,40 @@ export function orderAndAssemble(
 }
 
 /**
- * Auto-fix common issues in enrich_view input.
- * @param model — database model (only used for fallback catalog validation)
- * @param input — raw AI input
- * @param resolvedNodeIds — canonical node set from stored result graph (if available)
+ * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
+ *
+ * @remarks
+ * LLMs often produce slightly malformed outputs such as double-escaped newlines,
+ * excessive title lengths, or improper LaTeX formatting. This function applies
+ * surgical corrections (e.g., converting `$$` math blocks to markdown fences)
+ * to ensure the final UI renders perfectly without rejecting the AI's work for
+ * minor stylistic issues.
+ *
+ * @param model - The database model.
+ * @param input - The raw input from the AI.
+ * @param resolvedNodeIds - The canonical set of node IDs in the current session.
+ * @returns The fixed input object and a list of applied fixes for logging.
  */
-export function autoFixEnrichView(
+export function autoFixPresentResult(
   model: DatabaseModel,
-  input: EnrichViewInput,
+  input: PresentResultInput,
   resolvedNodeIds?: string[],
-): { input: EnrichViewInput; fixes: string[] } {
+): { input: PresentResultInput; fixes: string[] } {
   const fixes: string[] = [];
   let fixed = { ...input };
 
-  // 0. Normalize escaped newlines in description (LLMs sometimes double-escape)
-  // Protect known LaTeX macros: \text, \times, \theta, \tau, \to, \neq, \nu, \nabla, etc.
-  if (fixed.description && /\\n/.test(fixed.description)) {
-    fixed = { ...fixed, description: fixed.description
-      .replace(/\\n(?!(?:eq|eg|u|ot|abla|otin|i|mid|leq|geq)\b)/g, '\n')
-      .replace(/\\t(?!(?:ext|imes|au|heta|o|op|ilde|frac|herefore|riangle)\b)/g, '\t') };
-    fixes.push('Normalized escaped newlines in description');
-  }
+  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args)
+  const unescapeNewlines = (s: string): string => s.replace(/\\n/g, '\n');
+  if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
+  if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
+  if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
+  if (fixed.sections) fixed = { ...fixed, sections: fixed.sections.map(s => ({ ...s, text: s.text ? unescapeNewlines(s.text) : s.text })) };
 
   // 1. Auto-truncate name at word boundary if too long
-  if (fixed.name && fixed.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) {
-    const truncated = fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
-    fixed = { ...fixed, name: truncated || fixed.name.slice(0, ENRICH_VIEW_NAME_MAX_LENGTH) };
-    fixes.push(`Truncated name to ${ENRICH_VIEW_NAME_MAX_LENGTH} chars`);
+  if (fixed.name && fixed.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) {
+    const truncated = fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, name: truncated || fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH) };
+    fixes.push(`Truncated name to ${PRESENT_RESULT_NAME_MAX_LENGTH} chars`);
   }
 
   // 2. Auto-truncate title at word boundary if too long
@@ -885,46 +1382,128 @@ export function autoFixEnrichView(
   }
 
   // 3. Auto-truncate summary at sentence boundary if too long
-  if (fixed.summary && fixed.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
-    const truncated = fixed.summary.slice(0, ENRICH_VIEW_SUMMARY_HARD_LIMIT);
+  if (fixed.summary && fixed.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
+    const truncated = fixed.summary.slice(0, PRESENT_RESULT_SUMMARY_HARD_LIMIT);
     const lastPeriod = truncated.lastIndexOf('.');
     fixed = { ...fixed, summary: lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated.trimEnd() };
-    fixes.push(`Truncated summary to ${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars`);
+    fixes.push(`Truncated summary to ${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Convert LaTeX environments to $$-delimited math (remark-math handles $$ natively).
-  //    ```math fences are handled at render time by mathFenceToDelimiters().
-  //    Broken LaTeX is caught by rehype-katex throwOnError:false (renders as raw text).
+  // 4. Convert $$ block math to ```math code fences.
+  //    Code fences are CommonMark structural elements — they can't break markdown.
+  //    Block math: rendered via components.code override in AiDescriptionOverlay.
+  //    Inline math ($...$): handled by remark-math + rehype-katex (span-level, safe).
+
+  /** Detect lines that are clearly markdown, not math.
+   *  If found inside a math block, the block is force-closed before this line. */
+  const IS_MARKDOWN = /^#{1,6}\s|^```|^[-*+]\s|^>\s|`|\*\*\w/;
+
+  /** Convert $$ block math to ```math code fences.
+   *  Single-pass: normalize $$ to own lines, then convert to fences.
+   *  If markdown appears inside a math block, force-close the fence.
+   *  Auto-close unclosed \begin{env} before fence end.
+   *  Strip orphan \end{env} and trailing \\ outside fences. */
   const fixLatex = (text: string): { text: string; changed: boolean } => {
+    // Step 1: normalize $$ to own lines
+    const rawLines = text.split('\n');
+    const normalized: string[] = [];
+    for (const line of rawLines) {
+      const trimmed = line.trim();
+      if (trimmed === '$$') {
+        normalized.push('$$');
+      } else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
+        normalized.push('$$');
+        normalized.push(trimmed.slice(2, -2).trim());
+        normalized.push('$$');
+      } else if (trimmed.startsWith('$$')) {
+        normalized.push('$$');
+        normalized.push(trimmed.slice(2).trim());
+      } else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) {
+        normalized.push(trimmed.slice(0, -2).trim());
+        normalized.push('$$');
+      } else {
+        normalized.push(line);
+      }
+    }
+
+    // Step 2: convert $$ open/close to ```math / ```
     let changed = false;
-    let result = text;
+    const out: string[] = [];
+    let insideMath = false;
+    const openEnvs: string[] = []; // stack of unclosed \begin{env}
 
-    // 4a. \begin{cases}...\end{cases} → $$ block
-    result = result.replace(/\$?\$?\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\}\s*\$?\$?/g, (_match, body: string) => {
-      changed = true;
-      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, '').replace(/\\text\{([^}]+)\}/g, '$1'));
-      return '\n$$\n' + lines.join('\n') + '\n$$\n';
-    });
-    // 4b. \begin{aligned}...\end{aligned} → $$ block
-    result = result.replace(/\$?\$?\s*\\begin\{aligned\}([\s\S]*?)\\end\{aligned\}\s*\$?\$?/g, (_match, body: string) => {
-      changed = true;
-      const lines = (body as string).trim().split('\\\\').map((l: string) => l.trim().replace(/&/g, ''));
-      return '\n$$\n' + lines.join('\n') + '\n$$\n';
-    });
-    // 4c. Generic \begin{env}...\end{env} → $$ block
-    result = result.replace(/\$?\$?\s*\\begin\{(\w+)\}([\s\S]*?)\\end\{\1\}\s*\$?\$?/g, (_match, _env: string, body: string) => {
-      changed = true;
-      return '\n$$\n' + (body as string).trim() + '\n$$\n';
-    });
+    const closeFence = () => {
+      // Auto-close unclosed \begin{env} before fence end
+      while (openEnvs.length > 0) {
+        out.push('\\end{' + openEnvs.pop() + '}');
+        changed = true;
+      }
+      out.push('```');
+      insideMath = false;
+    };
 
-    return { text: result, changed };
+    for (const line of normalized) {
+      const trimmed = line.trim();
+
+      // $$ delimiter
+      if (trimmed === '$$') {
+        changed = true;
+        if (!insideMath) {
+          out.push('```math');
+          insideMath = true;
+        } else {
+          closeFence();
+        }
+        continue;
+      }
+
+      // Inside math: check for markdown lines that shouldn't be here
+      if (insideMath && IS_MARKDOWN.test(trimmed)) {
+        changed = true;
+        closeFence();
+        // Emit the markdown line (strip trailing \\ which is a LaTeX artifact)
+        out.push(line.replace(/\s*\\\\$/, ''));
+        continue;
+      }
+
+      // Inside math: track \begin/\end for auto-close
+      if (insideMath) {
+        const beginMatch = trimmed.match(/\\begin\{(\w+)\}/);
+        if (beginMatch) openEnvs.push(beginMatch[1]);
+        const endMatch = trimmed.match(/\\end\{(\w+)\}/);
+        if (endMatch && openEnvs.length > 0 && openEnvs[openEnvs.length - 1] === endMatch[1]) {
+          openEnvs.pop();
+        }
+        out.push(line);
+        continue;
+      }
+
+      // Outside math: strip orphan \end{env} on its own line
+      if (/^\\end\{\w+\}\s*$/.test(trimmed)) {
+        changed = true;
+        continue;
+      }
+
+      // Outside math: strip trailing \\ (LaTeX row separator artifact)
+      if (/\\\\\s*$/.test(trimmed)) {
+        changed = true;
+        out.push(line.replace(/\s*\\\\$/, ''));
+        continue;
+      }
+
+      out.push(line);
+    }
+
+    // EOF inside math: close fence
+    if (insideMath) {
+      changed = true;
+      closeFence();
+    }
+
+    return { text: out.join('\n'), changed };
   };
 
-  // Apply LaTeX fix to description, section text, and notes
-  if (fixed.description) {
-    const r = fixLatex(fixed.description);
-    if (r.changed) { fixed = { ...fixed, description: r.text }; fixes.push('Converted LaTeX to ```math blocks in description'); }
-  }
+  // Apply LaTeX fix to section text and notes (description is engine-built; no AI input to fix here)
   if (fixed.sections) {
     let sectionFixed = false;
     const newSections = fixed.sections.map(s => {
@@ -946,8 +1525,6 @@ export function autoFixEnrichView(
     if (noteFixed) { fixed = { ...fixed, notes: newNotes }; fixes.push('Converted LaTeX to ```math blocks in notes'); }
   }
 
-  // node_ids fallback removed — enrich_view requires SM result graph.
-  // resolvedNodeIds is always provided from SM (BB/CT).
   const nodeIdSet = new Set(resolvedNodeIds ?? []);
 
   // 5. Drop empty notes & notes for nodes not in the resolved set
@@ -973,9 +1550,17 @@ export function autoFixEnrichView(
   return { input: fixed, fixes };
 }
 
-/** Validate markdown format — returns error strings (empty = valid).
- *  LaTeX issues are handled by autofix (fixLatex) — never rejected here.
- *  Only structural breaks that corrupt all subsequent rendering are rejected. */
+/**
+ * Validates markdown structural integrity.
+ *
+ * @remarks
+ * This function performs a pass to ensure that markdown elements (specifically code fences)
+ * are properly closed. It prevents the UI from crashing or entering a broken state due to
+ * malformed markdown generated by the AI.
+ *
+ * @param md - The markdown string to validate.
+ * @returns A list of error strings, or an empty array if valid.
+ */
 export function validateMarkdownFormat(md: string): string[] {
   const errors: string[] = [];
 
@@ -991,7 +1576,7 @@ export function validateMarkdownFormat(md: string): string[] {
   }
   if (insideFence) {
     errors.push(
-      'description has an unclosed fenced block — ensure closing ``` is present',
+      'unclosed fenced block detected — a section body or assembled output is missing a closing ```',
     );
   }
 
@@ -999,90 +1584,90 @@ export function validateMarkdownFormat(md: string): string[] {
 }
 
 /**
- * Validate enrich_view input.
- * @param input — auto-fixed AI input
- * @param resolvedNodeIds — canonical node set (from stored graph or fallback)
+ * Validates the full `present_result` input against mechanical contracts only.
+ *
+ * @remarks
+ * Enforces naming length, summary length, sections[] presence, node-id resolution,
+ * and markdown-fence closure on the engine-assembled description.
+ *
+ * The `description` returned in {@link PresentResultRequest} is the engine-assembled
+ * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
+ * never read from `input`. The AI does not write the assembled document.
+ *
+ * @param input - The (possibly auto-fixed) AI input.
+ * @param resolvedNodeIds - The canonical set of node IDs.
+ * @param assembledBadges - Pre-assembled numbered badges for consistency.
+ * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
+ * @returns A successful request object or a structured error with correction hints.
  */
-export function validateEnrichView(
-  input: EnrichViewInput,
+export function validatePresentResult(
+  input: PresentResultInput,
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
-): EnrichViewRequest | EnrichViewError {
+  assembledDescription?: string,
+): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
 
   // Name validation
   if (!input.name || input.name.trim().length === 0) errors.push('name is required');
-  else if (input.name.length > ENRICH_VIEW_NAME_MAX_LENGTH) errors.push(`name exceeds ${ENRICH_VIEW_NAME_MAX_LENGTH} characters`);
+  else if (input.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) errors.push(`name exceeds ${PRESENT_RESULT_NAME_MAX_LENGTH} characters`);
 
   // Node set must be non-empty (after resolve + prune)
   if (resolvedNodeIds.length === 0) {
     errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
-  // title/intro/closing optional — validate length and no-walkthrough
   if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
-  const WALKTHROUGH_PREFIXES_DOC = ['this graph', 'this view', 'data flows', 'shows the', 'visualizes'];
-  if (input.intro && WALKTHROUGH_PREFIXES_DOC.some(p => input.intro!.trimStart().toLowerCase().startsWith(p))) {
-    errors.push('intro re-describes the graph structure — provide context: what is computed, where data originates');
-  }
-  if (input.closing && input.closing.trim().length > 400) errors.push('closing exceeds 400 characters — keep it to 1–2 sentences');
 
-  // summary required + length: soft 120 (instructed), hard 300 (rejected)
+  // summary required + length
   if (!input.summary || input.summary.trim().length === 0) {
-    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${ENRICH_VIEW_SUMMARY_HARD_LIMIT})`);
-  } else if (input.summary.length > ENRICH_VIEW_SUMMARY_HARD_LIMIT) {
-    errors.push(`summary exceeds hard limit (${ENRICH_VIEW_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
+    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${PRESENT_RESULT_SUMMARY_HARD_LIMIT})`);
+  } else if (input.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
+    errors.push(`summary exceeds hard limit (${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
   }
 
-  // description optional — if provided, validate structure + markdown format
-  if (input.description && input.description.trim().length > 0) {
-    // sections[] and description are mutually exclusive — sections is preferred
-    if (input.sections?.length) {
-      errors.push('Provide either sections[] or description — not both. Use sections[] for structured output; description is the fallback for unstructured answers only');
-    }
-    // Must have structure: ## headings or multiple paragraphs
-    if (!input.description.includes('##') && !input.description.includes('\n\n')) {
-      errors.push('description must use ## headings or multiple paragraphs — not a single block of text');
-    }
-    // Must not be a graph walkthrough
-    const descLower = input.description.trimStart().toLowerCase();
-    const WALKTHROUGH_PREFIXES = ['traces how', 'shows the', 'data flows', 'this view shows', 'visualizes'];
-    if (WALKTHROUGH_PREFIXES.some(p => descLower.startsWith(p))) {
-      errors.push('description re-describes the graph — explain what you found: formulas, column mappings, issues, patterns instead');
-    }
-    // Markdown format validation (LaTeX delimiters, math blocks)
-    errors.push(...validateMarkdownFormat(input.description));
+  const hasSections = !!(input.sections && input.sections.length > 0);
+  const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
+
+  // Either AI submitted sections[] (which the engine assembles into a description before
+  // validation) OR an engine-assembled description is supplied. Without one, there's no body.
+  if (!hasSections && !hasAssembled) {
+    errors.push('sections[] is required — provide at least one section with label, angle, and node_ids[].');
   }
 
-  // sections validation — content must be substantive; node_ids (when provided) must be valid
-  if (input.sections?.length) {
-    const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
+  // Mechanical fence-closure check on the engine-assembled blob (catches cases where
+  // a slot body had an unclosed ``` that survived the autoFix pass).
+  if (hasAssembled) {
+    errors.push(...validateMarkdownFormat(assembledDescription!));
+  }
+
+  // Sections validation — node_ids (when provided) must be valid; section text must be present.
+  if (hasSections) {
     const resolvedSet = new Set(resolvedNodeIds);
-    for (const sec of input.sections) {
-      // Validate node_ids when AI uses the embedded form
+    for (const sec of input.sections!) {
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
           errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — use IDs from the result graph`);
         }
       }
-      if (!sec.text || sec.text.trim().length < 120) {
-        errors.push(`Section "${sec.label}" is too short — write 3-8 sentences or items explaining what you found (min 120 chars)`);
+      if (!sec.text || sec.text.trim().length === 0) {
+        errors.push(`Section "${sec.label}" is missing text — ensure node_ids[] references nodes that were analyzed during the hop loop`);
       }
       if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
     }
   }
 
-  // notes validation — must be specific, not generic one-word captions
+  // Notes validation
   if (input.notes?.length) {
     for (const note of input.notes) {
-      if (!note.text || note.text.trim().length < 20) {
-        errors.push(`Note for "${note.node_id}" is too short — write a specific one-line caption (min 20 chars)`);
+      if (!note.text || note.text.trim().length === 0) {
+        errors.push(`Note for "${note.node_id}" is missing text`);
       }
     }
   }
 
-  // highlight_groups validation (structural + color validity)
+  // highlight_groups validation
   if (input.highlight_groups) {
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
@@ -1096,8 +1681,10 @@ export function validateEnrichView(
     const failedFields = new Set<string>();
     for (const e of errors) {
       if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
+      else if (e.startsWith('title ')) failedFields.add('title');
+      else if (e.startsWith('closing ')) failedFields.add('closing');
       else if (e.includes('summary')) failedFields.add('summary');
-      else if (e.includes('description')) failedFields.add('description');
+      else if (e.includes('sections')) failedFields.add('sections');
       else if (e.startsWith('Section ')) failedFields.add('sections');
       else if (e.startsWith('Note for ')) failedFields.add('notes');
       else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
@@ -1115,7 +1702,7 @@ export function validateEnrichView(
     name: input.name.trim(),
     node_ids: resolvedNodeIds,
     summary: input.summary,
-    description: input.description,
+    description: assembledDescription,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
     badges: assembledBadges ?? [],
@@ -1123,29 +1710,18 @@ export function validateEnrichView(
   };
 }
 
-// ─── Tool 8: lineage_get_ddl_batch ───────────────────────────────────────────
-
-export function getDdlBatch(
-  model: DatabaseModel,
-  ids: string[],
-  store?: import('../engine/columnStore').ColumnStore,
-): object {
-  const nodeMap = buildNodeMap(model);
-
-  // Never truncate — return full DDL for all requested IDs
-  const results = ids.map(id => {
-    const node = nodeMap.get(id);
-    if (!node) {
-      return strip({ id, error: 'not_found' } as Record<string, unknown>);
-    }
-    const rawDdl = store?.getDdl(id) ?? node.bodyScript;
-    if (!rawDdl) {
-      return strip({ id, t: node.type } as Record<string, unknown>);
-    }
-    const ddl = normalizeBodyScript(rawDdl);
-    return strip({ id, t: node.type, ddl } as Record<string, unknown>);
-  });
-
-  return { results, total: results.length };
+/**
+ * Structural summary of the final presentation result.
+ */
+export interface PresentResultResult {
+  /** True when the request passed validation and was posted to the webview. */
+  success: boolean;
+  /** Display name of the rendered AI view (≤200 chars after auto-fix). */
+  name: string;
+  /** One-line graph-card summary (≤300 chars) shown beside the view. */
+  summary: string;
+  /** Engine-assembled markdown blob from `orderAndAssemble`; absent when the AI submitted no `sections[]`. */
+  description?: string;
+  /** Count of nodes included in the rendered view after add/prune resolution. */
+  node_count: number;
 }
-

@@ -427,6 +427,20 @@ body {
   overflow-wrap: normal;
   overflow-x: auto;
 }
+/* Block math display (```math fences rendered via KaTeX) */
+.ln-ai-description-md .math-display {
+  overflow-x: auto;
+  margin: 0.5em 0;
+  text-align: center;
+}
+/* KaTeX parse errors — show as readable red text (matches VS Code behavior) */
+.ln-ai-description-md .katex-error {
+  color: var(--vscode-errorForeground, #f44747);
+  font-size: 0.85em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .ln-ai-description-md h1,
 .ln-ai-description-md h2,
 .ln-ai-description-md h3 {
@@ -487,6 +501,13 @@ body {
 }
 .ln-ai-description-md a {
   color: var(--ln-text-link);
+}
+.ln-ai-description-md .ln-ai-objects-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ln-text-muted);
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,

@@ -9,23 +9,22 @@ build/
 .cache/
 *.vsix
 
+# Python bytecode (eval harness scripts) — never tracked
+__pycache__/
+*.pyc
+*.pyo
+
 # Testing
-test-internal/
-customer-data/
+test-results/
+**/test-results/**
 .vscode-test/
 coverage/
 *.lcov
-# Only AdventureWorks dacpacs allowed in test/ (no customer dacpacs)
-test/*.dacpac
-!test/AdventureWorks*.dacpac
 
 # IDE / local
 .vscode/settings.json
 .idea/
-CLAUDE.md
-.claude/
 tmp/
-/ai/
 PLAN*.md
 
 # Environment
@@ -37,3 +36,28 @@ PLAN*.md
 .DS_Store
 Thumbs.db
 nul
+
+# AI assistant config — NEVER commit to public repo
+# These folders contain local context, prompts, credentials, and internal instructions.
+CLAUDE.md
+.claude/
+**/.claude/**
+GEMINI.md
+.gemini/
+**/.gemini/**
+.cursor/
+**/.cursor/**
+.aider*
+.continue/
+**/.continue/**
+
+# Internal Developer Docs
+*internal*/
+**/*internal*/**
+
+# Verification scripts and artifacts
+scripts/
+adventure_works_graph.json
+
+# Test dacpacs — local only, not for public repo
+tests/fixtures/*.dacpac

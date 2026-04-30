@@ -1,18 +1,31 @@
 /**
- * Webview → VS Code notification bridge.
+ * Infrastructure for routing notifications from the Webview to the VS Code Extension Host.
  *
- * The webview cannot call `vscode.window.show*Message()` directly.
- * This helper sends a `postMessage` to the extension host, which
- * forwards it to the VS Code notification API.
- *
- * Extension handler: `extension.ts` → `showWarningMessage("Data Lineage: " + text)`
- *
- * See `.claude/rules/logging.md` → "VS Code Notification Protocol".
+ * Webviews operate in a sandboxed environment and cannot directly access the
+ * `vscode.window` API. This bridge allows UI components to trigger native
+ * VS Code notification toasts by passing messages through the IPC layer.
  */
 
-/** Show a VS Code warning notification toast from the webview.
- *  Extension handler prefixes with "Data Lineage: " — pass bare text only.
- *  Use sparingly: only for user-initiated actions that failed silently. */
+/**
+ * Dispatches a warning notification to the VS Code host.
+ *
+ * Use this function for user-facing errors that require immediate attention
+ * but do not halt the entire application (e.g., "Failed to load table stats").
+ *
+ * @param text - The message body to display.
+ *
+ * @remarks
+ * Architectural Remark:
+ * The extension host automatically prefixes all notifications with "Data Lineage: ".
+ * Do not include the extension name in the `text` parameter to avoid redundancy.
+ *
+ * @example
+ * ```typescript
+ * if (error) {
+ *   notifyUser("Unable to connect to SQL Server.");
+ * }
+ * ```
+ */
 export function notifyUser(text: string): void {
   window.vscode?.postMessage({ type: 'show-warning', text });
 }

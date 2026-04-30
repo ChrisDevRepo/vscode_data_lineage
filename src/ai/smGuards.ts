@@ -2,7 +2,7 @@
  * Shared State Machine Guards — graph integrity functions for CT and BB.
  *
  * Pure graph algorithms: accept graph + sets as parameters, no SM-specific coupling.
- * Used by both columnTraceState and blackboardState for:
+ * Used by NavigationEngine for:
  * - Prune validation (orphan guard, cascade guard)
  * - Node reference validation (reject hallucinated names)
  * - Bridge node injection (reconnect orphan noted nodes in result graph)
@@ -14,20 +14,32 @@
 
 import type Graph from 'graphology';
 
-// ─── Shared types ─────────────────────────────────────────────────────────────
-
-/** Logging callback injected into state machines — 'trace' is the most verbose level. */
-export type LogFn = (level: 'info' | 'debug' | 'warn' | 'trace', msg: string) => void;
-
-// ─── BFS Reachability ────────────────────────────────────────────────────────
 
 /**
- * BFS reachability from startId — undirected (graph.neighbors) to match bfsScope/seedAgenda.
- * The scope is built with undirected traversal so reachability checks must use the same strategy:
- * upstream source tables are connected via inbound edges only and would be falsely unreachable
- * if we used directed (outbound-only) traversal.
- * Cycle-safe: reachable set guards against revisits.
- * Exported so cascadePrune can reuse — single BFS implementation for the entire SM layer.
+ * Logging callback injected into state machines for operational tracing.
+ *
+ * @remarks
+ * Per [`logging.md`](../../.claude/rules/logging.md), only `info` / `debug` / `warn` are
+ * permitted; `error` flows through dedicated channels with notification escalation.
+ */
+export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
+
+
+/**
+ * Performs a BFS reachability check from a starting node, respecting a set of removed (pruned) nodes.
+ *
+ * @remarks
+ * This function uses undirected traversal (graph.neighbors) to ensure that both upstream
+ * and downstream nodes are correctly identified within the lineage scope. This is essential
+ * because a node's relevance is often determined by its connection to source tables (inbound)
+ * as well as target views (outbound).
+ *
+ * @param graph - The graphology instance to traverse.
+ * @param startId - The ID of the node to start the BFS from.
+ * @param removedSet - A set of node IDs that have been pruned and should be treated as non-existent.
+ * @param candidateId - An optional candidate node ID to exclude from reachability (used for "what-if" analysis).
+ * @param scope - An optional set of allowed node IDs to restrict the search.
+ * @returns A set of all node IDs reachable from the start node.
  */
 export function bfsReachable(
   graph: Graph,
@@ -53,12 +65,20 @@ export function bfsReachable(
   return reachable;
 }
 
-// ─── Prune Guards ────────────────────────────────────────────────────────────
 
 /**
- * Would pruning candidateId disconnect any noted node from origin?
- * BFS from origin excluding removedSet + candidate (no Set copy — candidateId checked inline).
- * @returns first orphaned noteId, or null if all noted nodes remain reachable.
+ * Determines if pruning a candidate node would orphan any previously noted nodes from the origin.
+ *
+ * @remarks
+ * This guard prevents the AI from accidentally cutting off access to nodes it has already
+ * flagged as important ("noted") during an exploration.
+ *
+ * @param graph - The graphology instance to check.
+ * @param originId - The ID of the exploration's origin node.
+ * @param removedSet - The current set of pruned nodes.
+ * @param notedIds - The set of nodes previously noted by the AI.
+ * @param candidateId - The ID of the node being considered for pruning.
+ * @returns The ID of the first orphaned noted node found, or `null` if no orphaning occurs.
  */
 export function wouldOrphanNotedNode(
   graph: Graph,
@@ -76,141 +96,16 @@ export function wouldOrphanNotedNode(
 }
 
 /**
- * How many agenda/frontier nodes would be cascade-removed if candidateId is pruned?
- * BFS from origin excluding removedSet + candidate, scoped to scopeNodeIds.
- * Counts agenda entries that become unreachable.
- */
-export function countCascadeIfPruned(
-  graph: Graph,
-  originId: string,
-  removedSet: ReadonlySet<string>,
-  scopeNodeIds: ReadonlySet<string>,
-  agendaNodeIds: ReadonlySet<string>,
-  candidateId: string,
-): number {
-  const reachable = bfsReachable(graph, originId, removedSet, candidateId, scopeNodeIds);
-  let count = 0;
-  for (const id of agendaNodeIds) {
-    if (!reachable.has(id)) count++;
-  }
-  return count;
-}
-
-// ─── Node Validation ─────────────────────────────────────────────────────────
-
-/**
- * Validate node IDs against the model's nodeMap.
- * SM owns the model — every AI reference must be validated. Silent drops are bugs.
- * @returns valid + invalid arrays. Invalid entries include reason string.
- */
-export function validateNodeIds<T extends { nodeId: string }>(
-  nodeMap: ReadonlyMap<string, unknown>,
-  entries: T[],
-): { valid: T[]; invalid: Array<T & { reason: string }> } {
-  const valid: T[] = [];
-  const invalid: Array<T & { reason: string }> = [];
-  for (const entry of entries) {
-    if (nodeMap.has(entry.nodeId)) {
-      valid.push(entry);
-    } else {
-      invalid.push({ ...entry, reason: `"${entry.nodeId}" does not exist in the model` });
-    }
-  }
-  return { valid, invalid };
-}
-
-// ─── Bridge Node Injection ───────────────────────────────────────────────────
-
-export interface BridgeNode {
-  id: string;
-  schema: string;
-  name: string;
-  type: string;
-}
-
-export interface BridgeResult {
-  bridgeNodes: BridgeNode[];
-  bridgeEdges: Array<[string, string, string]>;
-  orphanCount: number;
-  reconnectedCount: number;
-}
-
-/**
- * Find orphan noted nodes (zero edges in result) and bridge paths to reconnect them.
- * BFS from each orphan to the nearest connected noted node through the full graph.
- * Returns intermediate bridge nodes + edges to inject into the result.
- * Diamond-safe: bridge paths respect existing graph topology.
- * Edge direction: uses edgeTypeMap to emit edges in actual directed order, not BFS traversal order.
- */
-export function findBridgeNodes(
-  graph: Graph,
-  notedIds: ReadonlySet<string>,
-  resultEdges: ReadonlyArray<[string, string, string]>,
-  edgeTypeMap: ReadonlyMap<string, string>,
-): BridgeResult {
-  // Identify nodes that participate in at least one result edge
-  const edgeParticipants = new Set<string>();
-  for (const [s, t] of resultEdges) {
-    edgeParticipants.add(s);
-    edgeParticipants.add(t);
-  }
-
-  // Orphans = noted nodes with zero edges in the result
-  const orphans = [...notedIds].filter(id => !edgeParticipants.has(id));
-  if (orphans.length === 0) return { bridgeNodes: [], bridgeEdges: [], orphanCount: 0, reconnectedCount: 0 };
-
-  const bridgeNodes: BridgeNode[] = [];
-  const bridgeEdges: Array<[string, string, string]> = [];
-  const addedBridgeIds = new Set<string>();
-  const addedEdgeKeys = new Set<string>();
-  let reconnected = 0;
-
-  for (const orphanId of orphans) {
-    // BFS from orphan to nearest node in edgeParticipants (the connected component)
-    const path = bfsShortestPath(graph, orphanId, edgeParticipants, edgeTypeMap);
-    if (!path) continue; // truly disconnected — no path exists
-    reconnected++;
-
-    // Add intermediate bridge nodes
-    for (const nodeId of path.intermediates) {
-      if (!addedBridgeIds.has(nodeId) && !notedIds.has(nodeId)) {
-        addedBridgeIds.add(nodeId);
-        if (graph.hasNode(nodeId)) {
-          const attrs = graph.getNodeAttributes(nodeId);
-          bridgeNodes.push({
-            id: nodeId,
-            schema: (attrs.schema as string) ?? '',
-            name: nodeId.replace(/^\[.*?\]\.\[/, '').replace(/\]$/, ''), // extract name from [schema].[name]
-            type: (attrs.type as string) ?? 'unknown',
-          });
-        }
-      }
-    }
-
-    // Add edges along the path — already in correct directed order from bfsShortestPath
-    for (const [s, t] of path.edgePairs) {
-      const key = `${s}→${t}`;
-      if (!addedEdgeKeys.has(key)) {
-        addedEdgeKeys.add(key);
-        const type = edgeTypeMap.get(key) ?? 'read';
-        bridgeEdges.push([s, t, type]);
-      }
-    }
-  }
-
-  return { bridgeNodes, bridgeEdges, orphanCount: orphans.length, reconnectedCount: reconnected };
-}
-
-// ─── BFS Depth Map ───────────────────────────────────────────────────────────
-
-/**
- * Directed BFS from originNodeId over a result-graph edge list.
- * Returns the minimum distance (in hops) from origin to each reachable node.
- * Used by blackboardState.ts getResult() to sort badge groups in data-flow order.
+ * Generates a depth map for a directed graph starting from an origin node.
  *
- * @param edges  Flat edge list from ResultGraph — [source, target, type].
- * @param originNodeId  The root node; gets depth 0.
- * @returns Map<nodeId, depth>. Nodes unreachable from origin are absent (treated as Infinity).
+ * @remarks
+ * This function calculates the minimum hop distance from the origin to all reachable nodes
+ * in a result subgraph. It is primarily used to sort nodes into "stages" or "tiers" for
+ * structured report generation and visualization layout.
+ *
+ * @param edges - A flat list of directed edges [source, target, type].
+ * @param originNodeId - The root node from which to calculate depths (depth 0).
+ * @returns A map of node IDs to their respective depth. Unreachable nodes are excluded.
  */
 export function bfsDepthMap(
   edges: ReadonlyArray<readonly [string, string, string]>,
@@ -240,53 +135,4 @@ export function bfsDepthMap(
   return depth;
 }
 
-// ─── Private BFS Utilities ───────────────────────────────────────────────────
 
-/**
- * BFS shortest path from startId to any node in targetSet.
- * Returns intermediate nodes + edge pairs in correct directed order (via edgeTypeMap lookup).
- * Undirected traversal via graph.neighbors — finds path regardless of edge direction.
- */
-function bfsShortestPath(
-  graph: Graph,
-  startId: string,
-  targetSet: ReadonlySet<string>,
-  edgeTypeMap: ReadonlyMap<string, string>,
-): { intermediates: string[]; edgePairs: Array<[string, string]> } | null {
-  if (targetSet.has(startId)) return { intermediates: [], edgePairs: [] };
-  if (!graph.hasNode(startId)) return null;
-
-  const parent = new Map<string, string>();
-  const queue = [startId];
-  parent.set(startId, '');
-  let idx = 0;
-
-  while (idx < queue.length) {
-    const id = queue[idx++];
-    if (!graph.hasNode(id)) continue;
-    for (const nid of graph.neighbors(id)) {
-      if (parent.has(nid)) continue;
-      parent.set(nid, id);
-      if (targetSet.has(nid)) {
-        // Reconstruct path: startId → ... → nid
-        const intermediates: string[] = [];
-        const edgePairs: Array<[string, string]> = [];
-        let cur = nid;
-        while (cur !== startId) {
-          const prev = parent.get(cur)!;
-          // Emit edge in actual directed order — not BFS traversal order
-          if (edgeTypeMap.has(`${prev}→${cur}`)) {
-            edgePairs.unshift([prev, cur]);
-          } else {
-            edgePairs.unshift([cur, prev]); // actual directed edge is cur→prev
-          }
-          if (cur !== nid && cur !== startId) intermediates.push(cur);
-          cur = prev;
-        }
-        return { intermediates, edgePairs };
-      }
-      queue.push(nid);
-    }
-  }
-  return null; // no path exists
-}

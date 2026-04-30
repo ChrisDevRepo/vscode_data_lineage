@@ -1,66 +1,185 @@
-import { memo, useMemo, useState } from 'react';
+import React, { memo, useState } from 'react';
 import Markdown from 'react-markdown';
+import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import { visit } from 'unist-util-visit';
+import { Tooltip } from './ui/Tooltip';
 
-/** Convert ```math fenced blocks to $$ delimiters that remark-math understands.
- *  Resilient: nested opens get closed, unclosed blocks get closed at EOF,
- *  empty blocks are dropped. Broken LaTeX inside $$ is handled by
- *  rehype-katex throwOnError:false (renders as raw text). */
-function mathFenceToDelimiters(md: string): string {
-  const lines = md.split('\n');
-  const result: string[] = [];
-  let insideMath = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (!insideMath && trimmed === '```math') {
-      insideMath = true;
-      result.push('$$');
-    } else if (insideMath && trimmed === '```math') {
-      // Nested ```math — close current block first, open new one
-      result.push('$$');
-      result.push('');
-      result.push('$$');
-    } else if (insideMath && trimmed === '```') {
-      insideMath = false;
-      result.push('$$');
-    } else if (!insideMath && trimmed.startsWith('```') && trimmed !== '```math') {
-      // Non-math fence (```sql, ```text, plain ```) — pass through as-is
-      result.push(line);
-    } else {
-      result.push(line);
-    }
-  }
-
-  // Unclosed math block at EOF — close it so it doesn't eat remaining text
-  if (insideMath) {
-    result.push('$$');
-  }
-
-  return result.join('\n');
+/**
+ * Sanitizes a KaTeX math string so KaTeX v0.16 can parse it without errors.
+ *
+ * @remarks
+ * KaTeX v0.16 treats `_` as a subscript operator, `#` as a parameter marker,
+ * and `%` as a comment character even inside `\text{...}`, and doesn't support
+ * backticks in text mode. Strips backticks (markdown code notation that leaked
+ * into LaTeX), escapes `_` → `\_`, `%` → `\%`, and moves `#` outside
+ * `\text{...}` as `\#`.
+ */
+function sanitizeKaTeX(math: string): string {
+  return math.replace(/\\text\{([^{}]*)\}/g, (_, inner: string) => {
+    const cleaned = inner.replace(/`/g, '');
+    const escaped = cleaned
+      .replace(/(^|[^\\])_/g, '$1\\_')
+      .replace(/(^|[^\\])%/g, '$1\\%');
+    if (!escaped.includes('#')) return `\\text{${escaped}}`;
+    return escaped.split('#').map((part: string) => (part ? `\\text{${part}}` : '')).join('\\#');
+  });
 }
 
+/** Remark plugin — sanitizes math/inlineMath node values before rehype-katex renders them. */
+function remarkSanitizeKaTeX() {
+  return (tree: import('mdast').Root) => {
+    visit(tree, ['math', 'inlineMath'], (node: any) => {
+      node.value = sanitizeKaTeX(node.value as string);
+    });
+  };
+}
+
+/**
+ * Renders a ```math code fence as a KaTeX display block.
+ *
+ * @param props - Component props containing the raw math string.
+ * @returns A div containing the rendered KaTeX HTML.
+ */
+function MathBlock({ math }: { math: string }) {
+  const html = katex.renderToString(sanitizeKaTeX(math), {
+    displayMode: true,
+    throwOnError: false,   // render error message, don't crash
+    errorColor: 'var(--vscode-errorForeground, #f44747)',
+  });
+  // SAFE: katex.renderToString with throwOnError:false returns constrained HTML; input is markdown math, not user HTML.
+  return <div className="math-display" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/**
+ * Custom code component for `react-markdown`.
+ * Intercepts ```math fences for KaTeX rendering, while passing other code blocks through.
+ *
+ * @param props - Standard markdown component props.
+ * @returns Either a MathBlock or a standard code element.
+ */
+function CodeComponent({ className, children, ...props }: React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement> & ExtraProps) {
+  if (className === 'language-math') {
+    return <MathBlock math={String(children).trim()} />;
+  }
+  return <code className={className} {...props}>{children}</code>;
+}
+
+/**
+ * Normalize block-math fences so `remark-math` can detect them.
+ *
+ * @remarks
+ * `remark-math` recognizes block math only when `$$` opens and closes on lines of
+ * their own. AI-emitted formulas often place content directly after the opener
+ * (`$$\text{X} = \begin{cases}` …) — the parser then leaves the orphan body as
+ * paragraph text. Splitting the delimiters onto their own lines restores the block.
+ * Single-line `$$expr$$` (no embedded newline) passes through unchanged.
+ *
+ * @remarks
+ * The input is expected to contain actual newline characters (from JSON parsing).
+ * No pre-processing of literal `\n` escape sequences is performed here — doing so
+ * would corrupt LaTeX commands that start with `\n` (`\not`, `\neq`, `\notin`, etc.).
+ */
+function normalizeBlockMath(src: string): string {
+  return src.replace(/\$\$([\s\S]+?)\$\$/g, (match, body: string) => {
+    if (!body.includes('\n')) return match;
+    const trimmed = body.replace(/^\n+/, '').replace(/\n+$/, '');
+    return `$$\n${trimmed}\n$$`;
+  });
+}
+
+/** 
+ * Custom pre component for `react-markdown`.
+ * Unwraps the `<pre>` wrapper for math blocks to ensure they render as display math
+ * without the standard code block container styling.
+ * 
+ * @param props - Standard markdown component props.
+ * @returns Either the raw children (for math) or a standard pre element.
+ */
+function PreComponent({ children, ...props }: React.ClassAttributes<HTMLPreElement> & React.HTMLAttributes<HTMLPreElement> & ExtraProps) {
+  const child = React.Children.toArray(children)[0] as React.ReactElement<{ className?: string }> | undefined;
+  if (child && typeof child === 'object' && 'props' in child && child.props?.className === 'language-math') {
+    return <>{children}</>;
+  }
+  return <pre {...props}>{children}</pre>;
+}
+
+/**
+ * Props for the `AiDescriptionOverlay` component.
+ */
 interface AiDescriptionOverlayProps {
+  /** The name of the AI-generated view or analysis. */
   viewName: string;
+  /** The markdown-formatted description text to display. */
   description: string;
-  /** Start expanded (e.g. text-only AI response with no graph nodes). */
+  /** Whether the overlay should be expanded by default on initial render. */
   defaultExpanded?: boolean;
+  /** Called when a `#focus-node:<nodeId>` link is clicked — zooms the graph to that node. */
+  onFocusNode?: (nodeId: string) => void;
 }
 
+/**
+ * A floating overlay component that displays AI-generated descriptions and logic summaries.
+ * 
+ * @remarks
+ * This component supports rich markdown rendering including:
+ * - GitHub Flavored Markdown (GFM) via `remark-gfm`.
+ * - Mathematical formulas via KaTeX (`remark-math` and `rehype-katex`).
+ * - Raw markdown source viewing mode.
+ * - One-click clipboard copying of the source text.
+ * 
+ * @param props - The component props.
+ */
 export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   viewName,
   description,
   defaultExpanded = false,
+  onFocusNode,
 }: AiDescriptionOverlayProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [rawMode, setRawMode] = useState(false);
   const [copied, setCopied] = useState(false);
-  const sanitized = useMemo(() => mathFenceToDelimiters(description), [description]);
 
+  function AnchorComponent({ href, children, ...props }: React.HTMLAttributes<HTMLAnchorElement> & { href?: string }) {
+    if (href?.startsWith('#focus-node:') && onFocusNode) {
+      return (
+        <a
+          href={href}
+          {...props}
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.preventDefault(); onFocusNode(decodeURIComponent(href.slice('#focus-node:'.length))); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onFocusNode(decodeURIComponent(href.slice('#focus-node:'.length))); } }}
+        >
+          {children}
+        </a>
+      );
+    }
+    return <a href={href} {...props}>{children}</a>;
+  }
+
+  function H3Component({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+    const arr = React.Children.toArray(children);
+    const first = arr[0];
+    if (typeof first === 'string' && first.startsWith('Objects ')) {
+      return (
+        <h3 {...props}>
+          <span className="ln-ai-objects-label">Objects</span>
+          {first.slice('Objects '.length)}
+          {arr.slice(1)}
+        </h3>
+      );
+    }
+    return <h3 {...props}>{children}</h3>;
+  }
+
+  /**
+   * Copies the raw markdown description to the system clipboard.
+   */
   function handleCopy() {
     navigator.clipboard.writeText(description).then(() => {
       setCopied(true);
@@ -86,26 +205,28 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             <span className="text-[10px] font-semibold ln-text-muted uppercase tracking-wide">
               {viewName}
             </span>
-            <button
-              className="ln-ai-description-action"
-              onClick={handleCopy}
-              title={copied ? 'Copied!' : 'Copy markdown'}
-              aria-label="Copy markdown"
-            >
-              {copied ? (
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
-              ) : (
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>
-              )}
-            </button>
-            <button
-              className="ln-ai-description-action"
-              onClick={() => setRawMode(v => !v)}
-              title={rawMode ? 'Show rendered' : 'Show raw markdown'}
-              aria-label="Toggle raw markdown"
-            >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h3.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-3.245a2.232 2.232 0 0 0-1.722.81.75.75 0 0 1-1.118-.042A2.23 2.23 0 0 0 6.5 13H.75a.75.75 0 0 1-.75-.75Zm7.251 9.674.001.001L7.25 12h-.001l.002-.575ZM6.5 11.5c.156 0 .31.01.462.03a3.75 3.75 0 0 1-.462-.03Zm1-.001.007.001h-.007ZM7.5 3.5A2.25 2.25 0 0 0 5.253 2.5H1.5v8h5.25c.125 0 .248.01.37.026A2.253 2.253 0 0 1 7.5 9V3.5Zm1.5 5.5a2.25 2.25 0 0 1 .38-1.266A.752.752 0 0 0 9.5 7.5V3.5A2.25 2.25 0 0 1 11.753 2.5H14.5v8h-3.244A2.242 2.242 0 0 0 9 10.5Z"/></svg>
-            </button>
+            <Tooltip content={copied ? 'Copied!' : 'Copy markdown'}>
+              <button
+                className="ln-ai-description-action"
+                onClick={handleCopy}
+                aria-label="Copy markdown"
+              >
+                {copied ? (
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>
+                )}
+              </button>
+            </Tooltip>
+            <Tooltip content={rawMode ? 'Show rendered' : 'Show raw markdown'}>
+              <button
+                className="ln-ai-description-action"
+                onClick={() => setRawMode(v => !v)}
+                aria-label="Toggle raw markdown"
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h3.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-3.245a2.232 2.232 0 0 0-1.722.81.75.75 0 0 1-1.118-.042A2.23 2.23 0 0 0 6.5 13H.75a.75.75 0 0 1-.75-.75Zm7.251 9.674.001.001L7.25 12h-.001l.002-.575ZM6.5 11.5c.156 0 .31.01.462.03a3.75 3.75 0 0 1-.462-.03Zm1-.001.007.001h-.007ZM7.5 3.5A2.25 2.25 0 0 0 5.253 2.5H1.5v8h5.25c.125 0 .248.01.37.026A2.253 2.253 0 0 1 7.5 9V3.5Zm1.5 5.5a2.25 2.25 0 0 1 .38-1.266A.752.752 0 0 0 9.5 7.5V3.5A2.25 2.25 0 0 1 11.753 2.5H14.5v8h-3.244A2.242 2.242 0 0 0 9 10.5Z"/></svg>
+              </button>
+            </Tooltip>
             <button
               className="ln-ai-description-close"
               onClick={() => setExpanded(false)}
@@ -120,9 +241,10 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             ) : (
               <div className="ln-ai-description-md">
                 <Markdown
-                  remarkPlugins={[remarkGfm, remarkMath]}
+                  remarkPlugins={[remarkGfm, remarkMath, remarkSanitizeKaTeX]}
                   rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                >{sanitized}</Markdown>
+                  components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent, h3: H3Component }}
+                >{normalizeBlockMath(description)}</Markdown>
               </div>
             )}
           </div>

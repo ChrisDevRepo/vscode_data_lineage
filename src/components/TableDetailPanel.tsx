@@ -8,33 +8,51 @@ import { ColumnTable } from './ColumnTable';
 import { ForeignKeysSection } from './ForeignKeysSection';
 import { StatsSection } from './StatsSection';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
+/**
+ * Represents the lifecycle and data state of table statistics profiling.
+ */
 export type TableStatsState =
   | { phase: 'idle' }
   | { phase: 'loading'; mode: StatsMode }
   | { phase: 'result'; stats: TableStats; mode: StatsMode }
   | { phase: 'error'; message: string };
 
+/**
+ * Props for the {@link TableDetailPanel} component.
+ */
 export interface TableDetailPanelProps {
+  /** Database schema name (e.g., 'dbo'). */
   schema: string;
+  /** Name of the table, view, or function. */
   objectName: string;
+  /** The primary classification of the object. */
   objectType: 'table' | 'external' | 'view' | 'function';
+  /** Optional subtype for external or virtual tables. */
   externalType?: 'et' | 'file' | 'db';
+  /** List of columns with their data types and primary key status. */
   columns: ColumnDef[];
+  /** Foreign key relationships where this table is the source. */
   fks: ForeignKeyInfo[];
+  /** Current state of data profiling for this table. */
   statsState: TableStatsState;
+  /** Callback to close the panel. */
   onClose: () => void;
+  /** Callback to trigger a statistics profiling run. */
   onRequestStats: (mode: StatsMode) => void;
+  /** Whether the application is connected to a live database. */
   isDbMode: boolean;
+  /** Whether the statistics feature is enabled in user settings. */
   statsEnabled: boolean;
+  /** Whether to suppress stats for external tables (polybase, etc.). */
   excludeExternalTables: boolean;
+  /** Whether deep profiling (standard mode) is permitted. */
   standardModeEnabled: boolean;
-  /** Fill parent container instead of using fixed pixel width (used in standalone detail panel) */
+  /** If true, fills the parent container width instead of using a resizable drawer. */
   fillContainer?: boolean;
-  /** Highlight this search term in column names and FK references */
+  /** Term used to highlight matches in column names or references. */
   findQuery?: string;
-  /** Hide Null/Flags columns (views/functions — meaningless metadata). */
+  /** If true, hides non-essential columns (e.g., Null/Flags) for compact views. */
   compactColumns?: boolean;
 }
 
@@ -42,8 +60,16 @@ const MIN_WIDTH = 320;
 const MAX_WIDTH = 900;
 const DEFAULT_WIDTH = 560;
 
-// ─── Main Component ───────────────────────────────────────────────────────────
 
+/**
+ * A slide-out panel that displays comprehensive details for a selected database object.
+ *
+ * This component acts as a high-density information hub, presenting column definitions,
+ * foreign key relationships, and live data statistics. It supports manual resizing
+ * and integrates with the profiling engine to fetch real-time metrics.
+ *
+ * @param props - Component properties.
+ */
 export const TableDetailPanel = memo(function TableDetailPanel({
   schema,
   objectName,

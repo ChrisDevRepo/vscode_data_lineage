@@ -1,18 +1,36 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
+import {
+  useFloating,
+  useHover,
+  useInteractions,
+  FloatingPortal,
+  offset,
+  flip,
+  shift,
+  autoUpdate,
+} from '@floating-ui/react';
 import type { CatalogEntry, NeighborIndex, ParseStats } from '../engine/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
 
+/**
+ * Props for the {@link NodeInfoBar} component.
+ */
 interface NodeInfoBarProps {
+  /** ID of the node currently under inspection. */
   nodeId: string;
+  /** Full catalog of all objects in the model. */
   catalog: Record<string, CatalogEntry>;
+  /** Index of all input/output edges in the graph. */
   neighborIndex: NeighborIndex;
+  /** Set of node IDs currently visible in the graph view. */
   visibleNodeIds: Set<string>;
+  /** Optional parsing statistics for SP dependency analysis. */
   parseStats?: ParseStats;
+  /** Callback fired when the user closes the info bar. */
   onClose: () => void;
 }
 
-// ─── Neighbor Hover List ──────────────────────────────────────────────────────
 
 /**
  * Hoverable badge showing In or Out count.
@@ -29,6 +47,23 @@ function NeighborHoverList({
   catalog: Record<string, CatalogEntry>;
   visibleNodeIds: Set<string>;
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const { refs, floatingStyles, context } = useFloating({
+    open: isOpen,
+    onOpenChange: setIsOpen,
+    placement: 'top-start',
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(6),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+    ],
+  });
+
+  const hover = useHover(context, { delay: { open: 150, close: 100 }, move: false });
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover]);
+
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
 
   // Group by schema, sorted alphabetically
@@ -46,57 +81,118 @@ function NeighborHoverList({
   }
 
   return (
-    <span className="relative group cursor-default">
-      <span className="ln-text">{label}: {count}</span>
-      <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 min-w-[260px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover">
-        {sortedSchemas.map(([schema, items]) => (
-          <div key={schema}>
-            <div className="text-[10px] uppercase tracking-wide ln-text pt-1.5 pb-0.5 first:pt-0 border-b ln-border">
-              {schema || 'External'}
-            </div>
-            {items.map(({ id, entry }) => {
-              const icon = (entry.externalType === 'file' || entry.externalType === 'db')
-                ? '⬡'
-                : entry.externalType === 'et' ? '⬢'
-                : (TYPE_COLORS[entry.type]?.icon ?? '?');
-              const hidden = !visibleNodeIds.has(id);
-              return (
-                <div key={id} className={`py-0.5 flex items-center gap-1 whitespace-nowrap ${hidden ? 'ln-text-dim' : 'ln-text'}`}>
-                  <span className="opacity-60 select-none">{icon}</span>
-                  <span className={`flex-1${hidden ? ' opacity-50' : ''}`}>{entry.name}</span>
-                  {hidden && (
-                    <Tooltip content="Not visible in current graph view">
-                      <span className="ml-2 opacity-50 text-[10px] select-none">⊘</span>
-                    </Tooltip>
-                  )}
+    <>
+      <span
+        ref={refs.setReference}
+        {...getReferenceProps()}
+        className="ln-text cursor-default"
+      >
+        {label}: {count}
+      </span>
+
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="z-50 min-w-[260px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover"
+            {...getFloatingProps()}
+          >
+            {sortedSchemas.map(([schema, items]) => (
+              <div key={schema}>
+                <div className="text-[10px] uppercase tracking-wide ln-text pt-1.5 pb-0.5 first:pt-0 border-b ln-border">
+                  {schema || 'External'}
                 </div>
-              );
-            })}
+                {items.map(({ id, entry }) => {
+                  const icon = (entry.externalType === 'file' || entry.externalType === 'db')
+                    ? '⬡'
+                    : entry.externalType === 'et' ? '⬢'
+                    : (TYPE_COLORS[entry.type]?.icon ?? '?');
+                  const hidden = !visibleNodeIds.has(id);
+                  return (
+                    <div key={id} className={`py-0.5 flex items-center gap-1 whitespace-nowrap ${hidden ? 'ln-text-dim' : 'ln-text'}`}>
+                      <span className="opacity-60 select-none">{icon}</span>
+                      <span className={`flex-1${hidden ? ' opacity-50' : ''}`}>{entry.name}</span>
+                      {hidden && (
+                        <Tooltip content="Not visible in current graph view">
+                          <span className="ml-2 opacity-50 text-[10px] select-none">⊘</span>
+                        </Tooltip>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-    </span>
+        )}
+      </FloatingPortal>
+    </>
   );
 }
 
-// ─── Simple Plain-text Hover List ─────────────────────────────────────────────
 
 function SimpleHoverList({ label, count, items }: { label: string; count: number; items: string[] }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const { refs, floatingStyles, context } = useFloating({
+    open: isOpen,
+    onOpenChange: setIsOpen,
+    placement: 'top-start',
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(6),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+    ],
+  });
+
+  const hover = useHover(context, { delay: { open: 150, close: 100 }, move: false });
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover]);
+
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
+
   return (
-    <span className="relative group cursor-default">
-      <span className="ln-text">{label}: {count}</span>
-      <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 min-w-[240px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover">
-        {items.map((item) => (
-          <div key={item} className="py-0.5 ln-text whitespace-nowrap">{item}</div>
-        ))}
-      </div>
-    </span>
+    <>
+      <span
+        ref={refs.setReference}
+        {...getReferenceProps()}
+        className="ln-text cursor-default"
+      >
+        {label}: {count}
+      </span>
+
+      <FloatingPortal>
+        {isOpen && (
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="z-50 min-w-[240px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover"
+            {...getFloatingProps()}
+          >
+            {items.map((item) => (
+              <div key={item} className="py-0.5 ln-text whitespace-nowrap">{item}</div>
+            ))}
+          </div>
+        )}
+      </FloatingPortal>
+    </>
   );
 }
 
-// ─── NodeInfoBar ──────────────────────────────────────────────────────────────
 
+/**
+ * A horizontal bar that displays detailed technical metadata for a selected node.
+ * 
+ * The bar provides:
+ * - **Identity**: Icon and qualified name (schema.object) of the node.
+ * - **Connectivity**: Interactive counts for 'In' and 'Out' neighbors with schema-grouped hover lists.
+ * - **Analysis**: Hoverable lists for unresolved references (e.g., missing tables) and excluded 
+ *   references (filtered by user patterns).
+ * 
+ * Architectural Remark: This component is designed to be highly responsive, updating 
+ * immediately as the user clicks different nodes in the graph. It uses `@floating-ui` 
+ * for the hover popovers to ensure they remain visible regardless of the bar's position.
+ */
 export const NodeInfoBar = memo(function NodeInfoBar({
   nodeId, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,
 }: NodeInfoBarProps) {
