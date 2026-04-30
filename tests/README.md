@@ -32,6 +32,7 @@ tests/
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
 │   ├── refine-loop.test.ts                # Discovery-phase refinement loop: classifier, exclusion axes, getScopeSummary, classifyForRefine, renderScopeSummaryMd
 │   ├── transient-retry.test.ts            # Transient-network classifier guarding the LM-call retry loop
+│   ├── column-flow-validation.test.ts     # CT column_flow validation: required/prune/out_col/contributor checks; shouldSmInline CT guard; supplement propagation
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
 │   └── hooks/                             # React hook unit tests (vitest)
 │

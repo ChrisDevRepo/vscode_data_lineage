@@ -336,6 +336,12 @@ export class AiSession {
       intro: prior?.intro,
       closing: prior?.closing,
       sections: prior?.sections,
+      ...(fullResult.columnAspect ? {
+        columnAspect: {
+          edges: fullResult.columnAspect.edges,
+          ctPrunedNodeIds: fullResult.ctPrunedNodeIds ?? [],
+        },
+      } : {}),
     };
   }
 

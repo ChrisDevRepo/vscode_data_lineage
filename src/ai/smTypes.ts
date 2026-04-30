@@ -408,6 +408,13 @@ export interface DiagnosticsSnapshot {
   scopeExpansions: number;
   /** Count of schemas the user has confirmed mid-session (session allowlist size). */
   allowedSchemaCount: number;
+  // --- CT fields (only present when Column Aspect is active) ---
+  /** Cumulative column edges accumulated across the session (CT only). */
+  columnEdgeCount?: number;
+  /** Number of active target columns for the current hop (CT only). */
+  activeColumnCount?: number;
+  /** Number of column_flow entries submitted this hop (CT only). */
+  columnFlowEntries?: number;
 }
 
 
@@ -480,7 +487,7 @@ export interface ResultNode {
   role?: 'origin' | 'noted' | 'bridge';
 }
 
-/** 
+/**
  * The final, immutable output of a completed State Machine exploration.
  */
 export interface SmResult {
@@ -498,6 +505,13 @@ export interface SmResult {
   detail_slots: DetailSlot[];
   /** Column lineage chain. Present when CT was active for this session; null otherwise. */
   columnAspect: ColumnAspect | null;
+  /**
+   * Node IDs visited during CT exploration that contributed no column_flow edges.
+   * Present only when `columnAspect` is non-null. Nodes that were analyzed or passed
+   * but produced no edges (validation-failed or zero column_flow entries). Synthesis
+   * should exclude these from the column chain narrative.
+   */
+  ctPrunedNodeIds?: string[];
 }
 
 

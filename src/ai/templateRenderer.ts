@@ -57,6 +57,7 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
   structural_summary:   ['active'],
   general:              ['synthesis'],
   loading_pattern:      ['synthesis'],
+  column_trace_capture: ['active'],
 };
 
 /**
@@ -77,6 +78,14 @@ const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue
   technical_capture:    ['technical', 'both'],
   loading_pattern:      ['technical', 'both'],
 };
+
+/**
+ * CT-mode-gated keys — fire only when Column Aspect (targetColumns) is active.
+ * These are additive to classification-gated templates; both gates must pass.
+ */
+const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
+  'column_trace_capture',
+]);
 
 /**
  * Assembles the stage-scoped template block for the AI system prompt.
@@ -102,7 +111,7 @@ export interface StagePromptResult {
   /** YAML keys that survived stage + classification + slot-count gating and have non-empty instructions. */
   shippedKeys: string[];
   /** Keys filtered out, with the reason they were dropped — for diagnostic logging. */
-  gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' }>;
+  gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' | 'ct_mode' }>;
 }
 
 export function resolveStagePrompt(
@@ -110,6 +119,7 @@ export function resolveStagePrompt(
   phase: TemplateStage,
   classification: ClassificationValue | undefined,
   slotCount?: number,
+  isCtMode?: boolean,
 ): StagePromptResult {
   // `closing` is only useful when the analysis spans 5+ sections (per the YAML
   // instruction itself). Skip it on small graphs to save ~140 tokens.
@@ -127,6 +137,10 @@ export function resolveStagePrompt(
     const gate = CLASSIFICATION_GATED[key];
     if (gate && classification && !gate.includes(classification)) {
       gatedOut.push({ key, reason: 'classification' });
+      continue;
+    }
+    if (CT_MODE_GATED.has(key) && !isCtMode) {
+      gatedOut.push({ key, reason: 'ct_mode' });
       continue;
     }
     if (key === 'closing' && phase === 'synthesis' && slotCount !== undefined && slotCount < CLOSING_MIN_SLOTS) {

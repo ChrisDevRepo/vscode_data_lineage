@@ -321,6 +321,59 @@ structural_summary:
 
     Scope: structure and relationships only — the surrounding procedure slots carry all transform logic.
 
+# ── Column Trace capture (active phase, CT mode only) ────────────────────────
+# Fires additively alongside business_capture / technical_capture when the
+# session has targetColumns set. Instructs the AI to fill out the column_flow
+# JSON per hop. CT-mode-gated in templateRenderer.ts → CT_MODE_GATED.
+# sections[].text (semantic channel) should cover business/technical logic only —
+# NOT re-state column flow; that belongs exclusively in column_flow.
+
+column_trace_capture:
+  stages: [active]
+  instruction: |
+    <purpose>
+    Fill out column_flow for each active target column on this node — the structural
+    provenance channel. Two channels together give the complete per-hop picture:
+      sections[].text: business/technical logic of the node (why it matters).
+      column_flow:     where each tracked column comes from on this node (provenance).
+    column_flow is validated by the engine; verdict=analyze or verdict=pass without
+    it returns column_flow_required with the active column list as a hint.
+    </purpose>
+
+    ## Verdict — choose based on how the node interacts with tracked columns
+    - `analyze`: the node transforms or is the terminal source of a target column.
+      Fill column_flow for each active column.
+      Terminal source (no upstream possible): role:"source", contributors:[].
+      Terminal sources: stored base column, @Param, hardcoded literal, system
+      function (GETDATE(), NEWID()). Empty contributors signals the branch ends here.
+    - `pass`: column flows through unchanged; the upstream writer is not yet visited.
+      Fill column_flow naming the contributor, then add route_requests to visit it.
+      The edge is recorded here; full attribution resolves at the routed node.
+    - `prune`: the node does not interact with any tracked column. Omit column_flow.
+
+    ## column_flow fields per entry
+    - out_col: column name on this node (or @Param for procedure parameters).
+    - contributors[]: upstream source(s). One entry per upstream input.
+      Formula / CASE / COALESCE with multiple inputs: list each contributor separately.
+    - writes_to: set when a writer procedure names the target table and column.
+      out_col = @Param; contributors:[] when the @Param has no upstream in graph.
+
+    ## Common patterns
+    - Rename: from_col ≠ out_col → role:"rename".
+    - Fan-out (one source → two output columns): two entries, same from_col.
+    - Computed expression from two columns: two contributor entries, role:"formula".
+
+    ## role values — assign from the transformation visible in the DDL
+    `source`     — terminal: stored base column, @Param, literal, or system function
+    `rename`     — same data, different name; no transformation
+    `formula`    — arithmetic, string concat, or other computed expression
+    `case`       — CASE expression
+    `coalesce`   — COALESCE / ISNULL fallback
+    `join_value` — value supplied by a joined table
+    `aggregate`  — SUM / COUNT / AVG / MAX / MIN or similar aggregation
+    `filter_only`— column used in WHERE / JOIN-ON only; the engine excludes it
+                   from data-flow edges automatically
+
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompts.ts. No separate per-angle templates
 # here — the lift+group+label rule is identical for both angles and lives in

@@ -1,3 +1,5 @@
+import type { ColumnEdge } from './smTypes';
+
 /**
  * Categorizes nodes based on their semantic relevance to an AI-driven lineage investigation.
  * 
@@ -58,6 +60,12 @@ export interface ResultGraph {
    * via `AiMemoryManager.getSectionText(nodeId, angle)`.
    */
   sections?: Array<{ label: string; node_ids?: string[]; angle?: 'business' | 'technical'; text?: string }>;
+  /**
+   * Column lineage chain from a CT session. Present only when the session used `targetColumns`.
+   * Forward-compatible foundation for React column-viz rendering — not yet consumed by the UI.
+   * `ctPrunedNodeIds` lists nodes visited but contributing no edges, for display filtering.
+   */
+  columnAspect?: { edges: ColumnEdge[]; ctPrunedNodeIds: string[] };
 }
 
 /** 
@@ -112,6 +120,13 @@ export interface AiOutputTemplates {
    * note. Classification-gated to `technical` and `both`.
    */
   loading_pattern: string;
+  /**
+   * Column Trace capture rules — fired at ACTIVE phase when CT mode is on (`targetColumns` set).
+   * Provides per-hop instructions for filling the `column_flow` JSON provenance record.
+   * CT-mode-gated — does not fire on Blackboard sessions without column targets.
+   * Additive alongside classification-gated templates (business_capture / technical_capture).
+   */
+  column_trace_capture: string;
 }
 
 /**
@@ -132,6 +147,7 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   structural_summary: '',
   general: '',
   loading_pattern: '',
+  column_trace_capture: '',
 };
 
 /** 

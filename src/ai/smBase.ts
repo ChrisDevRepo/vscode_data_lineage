@@ -167,6 +167,16 @@ export interface IHopStateMachine {
   /** Snapshot of per-hop diagnostics (focus, depth, routing counts, tally). */
   getHopDiagnostics(): DiagnosticsSnapshot;
 
+  /**
+   * Derives column lineage sub-questions from edges accumulated in the most recent hop (CT only).
+   *
+   * @remarks
+   * Called after a successful `submitFindings` to generate engine-side lineage questions
+   * for the next hop. Each question names a non-terminal upstream source that still needs
+   * tracing. Returns an empty array when CT is inactive or the hop produced no trackable edges.
+   */
+  getColumnLineageQuestions(): string[];
+
   /** Every captured detail slot in insertion order — diagnostics / telemetry use. */
   getDetailSlots(): DetailSlot[];
 
@@ -296,6 +306,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected lastRoutedRejected = 0;
   /** Route requests deferred during the most recent submit (SM mode), for diagnostics. */
   protected lastRoutedDeferred = 0;
+  /** column_flow entries submitted this hop (CT only — 0 when CT not active). */
+  protected lastHopColumnFlowEntries = 0;
   /**
    * Out-of-approved-scope routes captured during an SM session. Single encapsulated
    * bucket — all mutations flow through {@link deferQuestion}. Surfaced at synthesis
@@ -466,7 +478,41 @@ export class NavigationEngine implements IHopStateMachine {
       tally: this.memory.getVerdictCounts(),
       scopeExpansions: this.budgetExpansions.length,
       allowedSchemaCount: this.sessionAllowedSchemas.size,
+      ...(this._columnAspect ? {
+        columnEdgeCount: this._columnAspect.edges.length,
+        activeColumnCount: this._columnAspect.active_columns.length,
+        columnFlowEntries: this.lastHopColumnFlowEntries,
+      } : {}),
     };
+  }
+
+  /**
+   * Derives column lineage sub-questions from the most recent hop's edges (CT only).
+   *
+   * @remarks
+   * Groups edges by `from_node.from_col`; emits one question per unique non-terminal source.
+   * `role='source'` edges are skipped — they are resolved terminals, no further tracing needed.
+   * `filter_only` edges are already excluded from `_columnAspect.edges` at accumulation time.
+   */
+  public getColumnLineageQuestions(): string[] {
+    if (!this._columnAspect || !this.currentFocusNodeId) return [];
+    const focusId = this.currentFocusNodeId;
+    const hopEdges = this._columnAspect.edges.filter(
+      e => e.hop_node === focusId && e.hop === this.hopCount,
+    );
+    if (hopEdges.length === 0) return [];
+    const questions: string[] = [];
+    const seen = new Set<string>();
+    for (const edge of hopEdges) {
+      if (edge.role === 'source') continue;
+      const key = `${edge.from_node}.${edge.from_col}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      questions.push(
+        `Column \`${edge.to_col}\`: flows from \`${edge.from_node}.${edge.from_col}\` (${edge.role}) — trace its origin at \`${edge.from_node}\`.`,
+      );
+    }
+    return questions;
   }
 
   /**
@@ -989,16 +1035,22 @@ export class NavigationEngine implements IHopStateMachine {
       if (this.visited.has(id)) this.visited.delete(id);
       const existingDepth = this.depthFromOrigin.get(id);
       const depth = typeof existingDepth === 'number' ? existingDepth : 0;
-      this.enqueueHop(id, `Supplement: investigate ${id} on user follow-up`, depth, 3);
+      // CT: pass target columns so supplemented nodes are analyzed with column context.
+      const supplementColumns = this._columnAspect?.target_columns;
+      this.enqueueHop(id, `Supplement: investigate ${id} on user follow-up`, depth, 3, supplementColumns);
     }
 
     const agendaed = this.agenda.length - agendaBefore;
     const contracted = nodeIds.length - agendaed - skipped;
 
-    this._inlineMode = true;
+    // CT requires SM — never force inline when column tracing is active.
+    if (!this._columnAspect) {
+      this._inlineMode = true;
+    }
     this._status = 'awaiting_findings';
 
-    this.log('info', `[Supplement] added ${nodeIds.length} requested ids → agendaed=${agendaed} contracted=${contracted} skipped=${skipped}; inlineMode=true, status=awaiting_findings`);
+    const modeLabel = this._columnAspect ? 'sm (ct)' : 'inline';
+    this.log('info', `[Supplement] added ${nodeIds.length} requested ids → agendaed=${agendaed} contracted=${contracted} skipped=${skipped}; mode=${modeLabel}, status=awaiting_findings`);
 
     return { ok: true, agendaed, contracted, skipped };
   }
@@ -1180,6 +1232,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
     this.lastRoutedDeferred = 0;
+    this.lastHopColumnFlowEntries = 0;
     let totalCascadedCount = 0;
     let forceComplete = false;
 
@@ -1374,6 +1427,7 @@ export class NavigationEngine implements IHopStateMachine {
 
         // Accumulate validated column lineage edges (filter_only excluded — not data flow)
         if (this._columnAspect && finding.column_flow) {
+          this.lastHopColumnFlowEntries = finding.column_flow.length;
           for (const entry of finding.column_flow) {
             const toNode = entry.writes_to?.node.toLowerCase() ?? focusId;
             const toCol  = entry.writes_to?.col  ?? entry.out_col;
@@ -1390,6 +1444,7 @@ export class NavigationEngine implements IHopStateMachine {
               });
             }
           }
+          this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this._columnAspect.edges.length} active_cols=${this._columnAspect.active_columns.join(',')}`);
         }
       }
 
@@ -1729,6 +1784,12 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    let ctPrunedNodeIds: string[] | undefined;
+    if (this._columnAspect) {
+      const edgeHopNodes = new Set(this._columnAspect.edges.map(e => e.hop_node));
+      ctPrunedNodeIds = mem.detail_slots.map(s => s.nodeId).filter(id => !edgeHopNodes.has(id));
+    }
+
     return {
       status: 'complete',
       originNodeId: this.originNodeId!,
@@ -1740,6 +1801,7 @@ export class NavigationEngine implements IHopStateMachine {
       suggested_sections: sections,
       detail_slots: mem.detail_slots,
       columnAspect: this._columnAspect,
+      ...(ctPrunedNodeIds !== undefined ? { ctPrunedNodeIds } : {}),
     };
   }
 

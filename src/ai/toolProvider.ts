@@ -461,6 +461,14 @@ class ToolHandler {
 
       if ('error' in initResult) return this.logAndReturn('start_exploration', initResult, input);
 
+      // CT is always SM — reject explicit inline override before it can bypass shouldSmInline.
+      if (forceMode === 'inline' && engine.columnAspect) {
+        return this.logAndReturn('start_exploration', {
+          error: 'ct_requires_sm',
+          hint: 'Column tracing always uses sliding-memory mode. Remove forceMode or set forceMode="sm".',
+        }, input);
+      }
+
       const scopeDdlChars = engine.estimateScopeDdlChars();
       // forceMode (user/AI override) wins over the size+budget heuristic; null -> heuristic decides.
       const useInline = forceMode === 'inline'
@@ -664,11 +672,14 @@ class ToolHandler {
       }
 
       const diag = engine.getHopDiagnostics();
+      const ctSuffix = diag.columnEdgeCount !== undefined
+        ? ` ct_edges=${diag.columnEdgeCount} cols=${diag.activeColumnCount} flow=${diag.columnFlowEntries}`
+        : '';
       this.logger.debug(
         `[AI] [Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} verdict=${diag.verdict ?? 'none'} ` +
         `detail=${diag.detailChars} summary=${diag.summaryChars} archive=${diag.archiveChars} ` +
         `routed=${diag.routedNew}/${diag.routedRejected} agenda=${diag.agendaRemaining} ` +
-        `tally=R${diag.tally.analyze}/P${diag.tally.pass}/I${diag.tally.prune} expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}`
+        `tally=R${diag.tally.analyze}/P${diag.tally.pass}/I${diag.tally.prune} expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}${ctSuffix}`
       );
 
       const nextHop = engine.getHopContext();
@@ -678,7 +689,7 @@ class ToolHandler {
         if (!sess.classification) sess.setClassification('business');
         const baseReminder = buildSynthesisReminder(sess.memory.getUserQuestion());
         const ctBlock = finalResult.columnAspect && finalResult.columnAspect.edges.length > 0
-          ? '\n' + buildCtSynthesisBlock(finalResult.columnAspect.edges)
+          ? '\n' + buildCtSynthesisBlock(finalResult.columnAspect.edges, finalResult.ctPrunedNodeIds)
           : '';
         const synthesisReminder = baseReminder + ctBlock;
         const lmResult = {

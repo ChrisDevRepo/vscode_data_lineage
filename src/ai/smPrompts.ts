@@ -172,11 +172,13 @@ export function buildSynthesisReminder(question: string): string {
  * Appended to the synthesis reminder when CT was active and edges were recorded.
  * Presents the directed graph in a flat edge list so the AI can structure
  * `present_result` around the actual traced path rather than free-form prose.
+ * Nodes that were visited but produced no edges are listed as excluded branches.
  *
  * @param edges - Validated edges from `ColumnAspect.edges`.
+ * @param ctPrunedNodeIds - Visited nodes that contributed no column edges.
  * @returns Formatted markdown block anchoring synthesis to the column chain.
  */
-export function buildCtSynthesisBlock(edges: ColumnEdge[]): string {
+export function buildCtSynthesisBlock(edges: ColumnEdge[], ctPrunedNodeIds?: string[]): string {
   const lines = ['## Column Trace Chain'];
   if (edges.length === 0) {
     lines.push('No edges recorded — verify column_flow was submitted at each hop.');
@@ -184,6 +186,11 @@ export function buildCtSynthesisBlock(edges: ColumnEdge[]): string {
   }
   for (const e of edges) {
     lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (${e.role}, hop ${e.hop})`);
+  }
+  if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
+    lines.push('');
+    lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
+    lines.push('- Do not include excluded branches in the column chain narrative or sections[].');
   }
   lines.push('');
   lines.push('Structure present_result using this chain:');

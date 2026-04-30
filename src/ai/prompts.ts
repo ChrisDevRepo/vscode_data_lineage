@@ -348,39 +348,16 @@ export const ACTION_REQUIRED_PENDING_HINT =
  * @returns A formatted string containing column-specific system rules.
  */
 export function buildColumnAspectPrompt(targetColumns: string[]): string {
+  // Static per-hop rules are in the `column_trace_capture` YAML template (rendered each hop).
+  // This stable-prefix block anchors the session: names the targets and the two channels.
   return [
-    '# Column Trace Protocol',
+    '# Column Trace: active',
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    '## Two channels per hop — both required',
-    '- **column_flow** (structural): where does each active column come from on this node?',
-    '  Mechanically enforced — engine rejects verdict=analyze or verdict=pass without it.',
-    '- **sections[].text** (semantic): why does this node matter? business/technical context.',
-    '',
-    '## Per-hop verdict',
-    '- `analyze`: node transforms or is the terminal source of a target column.',
-    '  Submit column_flow for each active column.',
-    '  Terminal source (no further upstream possible): role:"source", contributors:[].',
-    '  Applies to: stored base column, procedure parameter (@Param), hardcoded literal',
-    '  (magic number / constant string), system function (GETDATE(), NEWID()).',
-    '  All four are origins — declare them explicitly. Empty contributors is not an error.',
-    '- `pass`: column flows through unchanged; upstream writer not yet visited.',
-    '  Submit column_flow naming the contributor AND route_requests to visit it.',
-    '  Records the edge here; attribution resolves at the routed node.',
-    '- `prune`: node does not interact with any target column. No column_flow needed.',
-    '',
-    '## column_flow rules',
-    '- One entry per active target column visible on this node.',
-    '- Multiple contributors (formula / CASE / COALESCE): list each as a separate contributor entry.',
-    '- Rename: from_col ≠ out_col, role:"rename".',
-    '- Fan-out (one source → two output columns): two column_flow entries, same from_col.',
-    '- Writer procedure: set writes_to:{node, col} to declare the table column being written.',
-    '  out_col = the procedure parameter (@Param). contributors:[] when no upstream in graph.',
-    '',
-    '## role values',
-    '`source` — terminal, stored here · `rename` — direct rename · `formula` — arithmetic/concat',
-    '`case` — CASE expression · `coalesce` — COALESCE/ISNULL · `join_value` — joined table value',
-    '`aggregate` — SUM/COUNT/etc · `filter_only` — WHERE/JOIN-ON only, NOT data output',
+    'Two channels per hop (both mechanically enforced on non-prune verdicts):',
+    '- **column_flow** (structural): JSON provenance — where each active column comes from.',
+    '- **sections[].text** (semantic): business/technical logic — do NOT re-state column flow here.',
+    'Full rules per hop: see the `column_trace_capture` capture template below.',
   ].join('\n');
 }
 
@@ -443,9 +420,14 @@ export function buildMissionBriefBlock(brief: string, question: string): string 
  *
  * @param currentTask - Pipe-concatenated questions from the engine agenda.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when CT is inactive.
+ * @param columnLineageQuestions - Engine-generated lineage sub-questions from the prior hop's edges (CT only).
  * @returns Structured `<current_task>` XML block, or an empty string if `currentTask` is absent.
  */
-export function buildCurrentTaskBlock(currentTask: string, columnTraceColumns?: string[]): string {
+export function buildCurrentTaskBlock(
+  currentTask: string,
+  columnTraceColumns?: string[],
+  columnLineageQuestions?: string[],
+): string {
   if (!currentTask) return '';
   const parts = currentTask.split(/\s*\|\s*/).map(p => p.trim()).filter(Boolean);
   const rootMatch = parts[0]?.match(/^Root Question:\s*(.*)$/i);
@@ -464,6 +446,13 @@ export function buildCurrentTaskBlock(currentTask: string, columnTraceColumns?: 
       `    For each: declare column_flow — from which node and column does it arrive?`,
       `    For writer procedures: declare writes_to (target table + column) and set role=source.`,
       `  </column_trace>`,
+    );
+  }
+  if (columnLineageQuestions && columnLineageQuestions.length > 0) {
+    lines.push(
+      `  <lineage_questions>`,
+      ...columnLineageQuestions.map(q => `    - ${q}`),
+      `  </lineage_questions>`,
     );
   }
   lines.push('</current_task>');

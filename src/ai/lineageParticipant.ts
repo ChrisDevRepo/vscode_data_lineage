@@ -460,7 +460,8 @@ export class LineageParticipant {
         // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
         // re-renders keep the same formatting contract.
         const templatesPhase = phase === 'completed' ? 'synthesis' : phase;
-        const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount);
+        const isCtMode = !!(engine?.columnAspect);
+        const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount, isCtMode);
         const stageBlock = stageResolved.prompt;
         const gatedSummary = stageResolved.gatedOut
           .filter(g => g.reason !== 'stage')  // stage-gated is the dominant reason; keep the line short
@@ -501,6 +502,7 @@ export class LineageParticipant {
         const currentTaskBlock = buildCurrentTaskBlock(
           engine.getCurrentTask(),
           engine.columnAspect?.active_columns,
+          engine.getColumnLineageQuestions(),
         );
         if (currentTaskBlock) dynamic.push(currentTaskBlock);
         if (phase === 'active' && !engine.inlineMode) {
