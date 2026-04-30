@@ -632,7 +632,6 @@ export class LineageParticipant {
 
         // Pre-send invariant: orphan tool_results would otherwise surface as a remote 400.
         envelope.assertWellFormed();
-        this.logger.debug(`[AI] [Envelope] pre-send ${envelope.snapshot()}`);
         // The synthesis call to the model typically takes 30–90s; emit a progress
         // chip on the first synthesis-phase round so users do not perceive a hang.
         if (activePhase === 'synthesis' && !sess.synthesisProgressEmitted) {
