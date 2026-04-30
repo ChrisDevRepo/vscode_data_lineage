@@ -251,11 +251,7 @@ export class LineageParticipant {
       }
     }
 
-    // Reset the parallel-call guard at every turn entry. `currentRoundId` is per-turn
-    // (set to roundCount in the hop loop, which restarts at 0 each turn); without this
-    // reset, a successful start_exploration in turn N parks `startExplorationRoundId`
-    // at value V, and turn N+1's first round (which gets the same V) trips
-    // parallel_call_forbidden — blocking legitimate refine rounds across turns.
+    // Reset the parallel-call guard at every turn entry.
     sess.startExplorationRoundId = null;
     this.logger.info(
       `[${sess.id}] Session start — ` +
@@ -274,7 +270,6 @@ export class LineageParticipant {
         : buildFollowUpPrompt();
       this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
     } else if (effectivePrompt === SHOW_DESCRIPTION_TRIGGER) {
-      // Short-circuit: emit the cached AI-preview description 1:1 (no LM round-trip).
       if (sess.lastPresentResultDescription) {
         writer.markdown(sess.lastPresentResultDescription);
       } else {
@@ -286,13 +281,8 @@ export class LineageParticipant {
 
     let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
     let lineageTools = filterLmTools(vscode.lm.tools, { kind: 'discover' });
-    // Tracks whether this turn started as a refine round (user clicked Refine on the
-    // confirm_sm_start gate). Read by dispatchExit to emit `[AI] [Refine]` outcome.
     let isRefineRound = false;
 
-    // /trace and /search inject discovery-phase prompts that conflict with
-    // active/synthesis system prompts. Valid only in idle / completed; the
-    // awaiting_gate branch below has its own routing.
     if ((request.command === 'trace' || request.command === 'search')
         && sess.phase.kind !== 'idle'
         && sess.phase.kind !== 'completed'
@@ -642,6 +632,7 @@ export class LineageParticipant {
 
         // Pre-send invariant: orphan tool_results would otherwise surface as a remote 400.
         envelope.assertWellFormed();
+        this.logger.debug(`[AI] [Envelope] pre-send ${envelope.snapshot()}`);
         // The synthesis call to the model typically takes 30–90s; emit a progress
         // chip on the first synthesis-phase round so users do not perceive a hang.
         if (activePhase === 'synthesis' && !sess.synthesisProgressEmitted) {
@@ -972,8 +963,18 @@ export class LineageParticipant {
       if (!writer.isOpen() && writer.status().kind === 'cancelled') {
         exit = { kind: 'cancelled' };
       } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isEnvelopeReject = msg.includes('unexpected tool_use_id');
         this.logger.error('Chat handler', err);
-        exit = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
+        if (isEnvelopeReject) {
+          this.logger.debug(`[AI] [Envelope] at-error ${envelope.snapshot()}`);
+        }
+        exit = {
+          kind: 'error',
+          message: isEnvelopeReject
+            ? 'The session message history became inconsistent. Please start a new @lineage session.'
+            : msg,
+        };
       }
     }
 

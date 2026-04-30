@@ -635,7 +635,6 @@ class ToolHandler {
 
       // Identity guard: submitted focus_node_id must match the engine's current focus.
       // SM mode only — inline batch submissions are arrays and skip this branch.
-      // Fires before engine.submitFindings() to prevent archive contamination on wrong-node submissions.
       if (!Array.isArray(parsed.data)) {
         const engineFocus = engine.currentFocus;
         if (engineFocus && parsed.data.focus_node_id.toLowerCase() !== engineFocus.toLowerCase()) {
