@@ -20,7 +20,7 @@ import { edgeApiType } from './aiPresenter';
 import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { trunc } from '../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from './memoryManager';
-import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
+import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -111,6 +111,8 @@ export interface IHopStateMachine {
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
   /** Current focus node id (node the AI must analyse this hop) — null before the first hop. */
   readonly currentFocus: string | null;
+  /** Live hop progress: completed AI hops, queued nodes, and total acknowledged nodes. */
+  readonly hopProgress: HopProgress;
 
   /**
    * Detects a slot-hijack attempt — when any captured `section.text` opens
@@ -254,6 +256,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected hopCount = 0;
   /** Count of bodied (view/proc/function) nodes in scope — maintained incrementally. */
   private _bodiedScopeSize = 0;
+  /** Total acknowledged bodied nodes: initialised to bodiedScopeSize at gate approval, +1 on out-of-scope expansion, −1 on prune. */
+  private _totalNodes = 0;
   /** Breadth-first search depth for nodes from the origin. */
   protected depthFromOrigin = new Map<string, number>();
   /** The configurable depth budget. */
@@ -568,6 +572,11 @@ export class NavigationEngine implements IHopStateMachine {
   /** Gets the count of bodied (view/proc/function) nodes in scope — the true hop denominator. */
   public get bodiedScopeSize(): number {
     return this._bodiedScopeSize;
+  }
+
+  /** Gets live hop progress: completed AI hops, queued nodes, and total acknowledged nodes. */
+  public get hopProgress(): HopProgress {
+    return { current: this.hopCount, open: this.agenda.length, total: this._totalNodes };
   }
 
   private set bodiedScopeSize(v: number) {
@@ -926,6 +935,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
     this.bodiedScopeSize = (breakdown.view ?? 0) + (breakdown.procedure ?? 0) + (breakdown.function ?? 0);
+    this._totalNodes = this._bodiedScopeSize;
     const annotateProvenance = (items: Set<string>, gui: Set<string>, nl: string[]): string => {
       if (items.size === 0) return 'none';
       const nlSet = new Set(nl.map(t => t.toLowerCase()));
@@ -1156,7 +1166,8 @@ export class NavigationEngine implements IHopStateMachine {
         if (activeColumns.length === 0) {
           this.visited.add(candidate.nodeId);
           this.memory.recordVerdict('prune');
-          this.log('debug', `[CT] auto-prune ${candidate.nodeId} — no active columns`);
+          this._totalNodes--;
+          this.log('debug', `[CT] auto-prune ${candidate.nodeId} — no active columns (total −1 → ${this._totalNodes})`);
           continue;
         }
         candidate.activeColumns = activeColumns;
@@ -1454,6 +1465,10 @@ export class NavigationEngine implements IHopStateMachine {
           const nid = nidRaw.toLowerCase();
           if (this.nodeMap.has(nid) && nid !== this.originNodeId) {
             this.removedSet.add(nid);
+            if (SCRIPT_TYPES.has(this.nodeMap.get(nid)!.type) && this.scopeNodeIds.has(nid)) {
+              this._totalNodes--;
+              this.log('debug', `[AI] [CT] prune_neighbor ${nid} — bodied scope node (total −1 → ${this._totalNodes})`);
+            }
             this.log('debug', `[AI] [CT] prune_neighbor hop=${this.hopCount}: ${nid}`);
           }
         }
@@ -1728,6 +1743,10 @@ export class NavigationEngine implements IHopStateMachine {
       }
       this.agenda.push({ nodeId: targetId, question, priority, depth, activeColumns: columns });
       this.agendaIds.add(targetId);
+      if (!this.scopeNodeIds.has(targetId)) {
+        this._totalNodes++;
+        this.log('debug', `[AI] [Agenda] enqueue ${targetId} — out-of-scope expansion (total +1 → ${this._totalNodes})`);
+      }
       return;
     }
 

@@ -8,6 +8,7 @@
 
 
 ### Changed
+- **Accurate hop progress counter** — "Hop X / Y" now initialises Y to the gate-approved bodied-node count (matching the scope shown at approval) and adjusts dynamically: −1 per CT auto-prune, −1 when AI explicitly prunes a bodied scope node, +1 on out-of-scope expansion. Progress is surfaced via a shared `hopProgress` getter on the engine, used by all modes (SM, BB, inline).
 - **Faster, more focused AI hops** — each exploration step sends a leaner context to the model by routing only the templates relevant to the locked analysis angle and removing repeated guidance the engine already enforces structurally.
 - **Starting-point table summaries** — When you ask about a table as your starting point, `@lineage` produces a clean dossier (Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys) instead of folding it into a neighbouring procedure's analysis.
 - **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both per-hop capture instructions (`business_capture`, `technical_capture`, `structural_summary`) and final report rendering (`title`, `intro`, `closing`, `notes`, `highlights`). Previously it only controlled report rendering; per-hop analysis content required source edits.

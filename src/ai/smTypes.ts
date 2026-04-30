@@ -15,6 +15,9 @@ import type { CaptureAngle, CapturedSection, DetailSlot, MemoryStateSnapshot } f
  */
 export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
 
+/** Live progress for the hop loop: completed AI hops, queued nodes, and total acknowledged nodes. */
+export type HopProgress = { current: number; open: number; total: number };
+
 /** 
  * Flags identifying structural boundaries encountered during graph traversal.
  */

@@ -793,12 +793,9 @@ export class LineageParticipant {
 
           let progressLine = getToolInvocationLabel(f.name, f.input);
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
-            const st = sess.stateMachine.toJSON() as { hopCount?: number; agendaSize?: number; currentFocusNodeId?: string | null };
-            const shortName = st.currentFocusNodeId?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
-            // Denominator tracks dynamic total: visited (hopCount) + remaining agenda. Updates after prune/route.
-            const hopCount = st.hopCount ?? 1;
-            const denom = hopCount + (st.agendaSize ?? 0);
-            progressLine = `Hop ${hopCount} / ${denom} — analyzing ${shortName}…`;
+            const { current, total } = sess.stateMachine.hopProgress;
+            const shortName = sess.stateMachine.currentFocus?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
+            progressLine = `Hop ${current} / ${total} — analyzing ${shortName}…`;
           }
           if (progressLine !== lastProgressLine) {
             writer.progress(progressLine);
