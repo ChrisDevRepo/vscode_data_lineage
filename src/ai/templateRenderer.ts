@@ -111,7 +111,7 @@ export interface StagePromptResult {
   /** YAML keys that survived stage + classification + slot-count gating and have non-empty instructions. */
   shippedKeys: string[];
   /** Keys filtered out, with the reason they were dropped — for diagnostic logging. */
-  gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' | 'ct_mode' }>;
+  gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' | 'ct_mode' | 'non_bodied_focus' }>;
 }
 
 export function resolveStagePrompt(
@@ -120,6 +120,8 @@ export function resolveStagePrompt(
   classification: ClassificationValue | undefined,
   slotCount?: number,
   isCtMode?: boolean,
+  /** True when the current focus node has no DDL body (tables). structural_summary replaces business/technical capture. */
+  focusIsNonBodied?: boolean,
 ): StagePromptResult {
   // `closing` is only useful when the analysis spans 5+ sections (per the YAML
   // instruction itself). Skip it on small graphs to save ~140 tokens.
@@ -145,6 +147,16 @@ export function resolveStagePrompt(
     }
     if (key === 'closing' && phase === 'synthesis' && slotCount !== undefined && slotCount < CLOSING_MIN_SLOTS) {
       gatedOut.push({ key, reason: 'slot_count' });
+      continue;
+    }
+    // structural_summary replaces business/technical capture for non-bodied focus nodes (tables).
+    // It fires only at those hops; bodied nodes (views, procs, functions) get the normal capture templates.
+    if (key === 'structural_summary' && !focusIsNonBodied) {
+      gatedOut.push({ key, reason: 'non_bodied_focus' });
+      continue;
+    }
+    if ((key === 'business_capture' || key === 'technical_capture') && focusIsNonBodied) {
+      gatedOut.push({ key, reason: 'non_bodied_focus' });
       continue;
     }
     if (!(templates[key] ?? '').trim()) {

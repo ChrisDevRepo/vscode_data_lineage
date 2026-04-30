@@ -651,7 +651,16 @@ class ToolHandler {
       }
 
       const result = engine.submitFindings(parsed.data);
-      if ('error' in result) return this.logAndReturn('submit_findings', result, input);
+      if ('error' in result) {
+        // Log each rejection reason untruncated — the detail array is buried past the 300-char JSON cap.
+        const detail = (result as { detail?: Array<{ id?: string; reason?: string }> }).detail;
+        if (Array.isArray(detail)) {
+          for (const d of detail) {
+            if (d.reason) this.logger.debug(`[AI] [CT] rejection: id=${d.id ?? '?'} — ${d.reason}`);
+          }
+        }
+        return this.logAndReturn('submit_findings', result, input);
+      }
 
       if ('done' in result && result.done && result.result) {
         sess.storeSmResult(result.result);

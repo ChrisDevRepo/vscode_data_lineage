@@ -19,7 +19,7 @@
 import * as vscode from 'vscode';
 import { AiSession } from './session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
-import { setInlineTokenBudget, setSmInlineNodeCap } from './tools';
+import { setInlineTokenBudget, setSmInlineNodeCap, SCRIPT_TYPES } from './tools';
 import {
   buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
@@ -434,10 +434,17 @@ export class LineageParticipant {
       }
     }
 
-      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; text: string } | null = null;
+      let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; focusIsNonBodied: boolean; text: string } | null = null;
       const buildStablePart = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
         const engine = sess.stateMachine;
-        if (cachedStablePart && cachedStablePart.phase === phase) return cachedStablePart.text;
+        // Determine whether the current focus node is non-bodied (table) so structural_summary
+        // only ships for those hops, not for every subsequent bodied (proc/view/function) hop.
+        const focusId = (engine?.toJSON() as { currentFocusNodeId?: string | null } | undefined)?.currentFocusNodeId ?? null;
+        const focusNodeType = focusId
+          ? sess.model!.nodes.find(n => n.id.toLowerCase() === focusId.toLowerCase())?.type
+          : null;
+        const focusIsNonBodied = focusNodeType != null ? !SCRIPT_TYPES.has(focusNodeType as any) : false;
+        if (cachedStablePart && cachedStablePart.phase === phase && cachedStablePart.focusIsNonBodied === focusIsNonBodied) return cachedStablePart.text;
         const dbPlatform = sess.model!.dbPlatform || 'SQL Server';
         const filterSchemas = sess.filter?.schemas || [];
         const totalSchemaCount = sess.model!.schemas.length;
@@ -461,7 +468,7 @@ export class LineageParticipant {
         // re-renders keep the same formatting contract.
         const templatesPhase = phase === 'completed' ? 'synthesis' : phase;
         const isCtMode = !!(engine?.columnAspect);
-        const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount, isCtMode);
+        const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount, isCtMode, focusIsNonBodied);
         const stageBlock = stageResolved.prompt;
         const gatedSummary = stageResolved.gatedOut
           .filter(g => g.reason !== 'stage')  // stage-gated is the dominant reason; keep the line short
@@ -487,7 +494,7 @@ export class LineageParticipant {
         }
 
         const text = parts.filter(Boolean).join('\n');
-        cachedStablePart = { phase, text };
+        cachedStablePart = { phase, focusIsNonBodied, text };
         return text;
       };
 

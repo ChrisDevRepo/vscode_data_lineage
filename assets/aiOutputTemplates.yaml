@@ -362,19 +362,27 @@ column_trace_capture:
     - `analyze`: the node transforms or is the terminal source of a target column.
       Fill column_flow for each active column.
       Terminal source (no upstream possible): role:"source", contributors:[].
-      Terminal sources: stored base column, @Param, hardcoded literal, system
+      Terminal sources: stored base column, hardcoded literal, system
       function (GETDATE(), NEWID()). Empty contributors signals the branch ends here.
     - `pass`: column flows through unchanged; the upstream writer is not yet visited.
       Fill column_flow naming the contributor, then add route_requests to visit it.
       The edge is recorded here; full attribution resolves at the routed node.
     - `prune`: the node does not interact with any tracked column. Omit column_flow.
 
+    ## Non-bodied table focus (TABLE written by a procedure)
+    When the focus node is a TABLE (no DDL — only schema metadata), the procedure that
+    writes to it is upstream. Use verdict='pass'; use the column name as it appears in the table.
+    column_flow: [{ out_col: "TotalRevenue", contributors: [{ from_node: "[schema].[spWriter]", from_col: "TotalRevenue", role: "rename" }] }]
+    Add route_requests to visit the procedure next. Do NOT use verdict='prune' just
+    because you cannot see DDL — if the writer procedure is in scope, route to it.
+
     ## column_flow fields per entry
-    - out_col: column name on this node (or @Param for procedure parameters).
+    - out_col: column name being produced. For PROCEDURE focus: the column name in the target table (same as writes_to.col).
     - contributors[]: upstream source(s). One entry per upstream input.
       Formula / CASE / COALESCE with multiple inputs: list each contributor separately.
-    - writes_to: set when a writer procedure names the target table and column.
-      out_col = @Param; contributors:[] when the @Param has no upstream in graph.
+    - writes_to: set when the focus node is a PROCEDURE that writes to a table.
+      Must be an OBJECT: { node: "[schema].[TargetTable]", col: "ColumnName" }.
+      NOT a string. out_col = the column name being written; contributors = upstream inputs.
 
     ## Common patterns
     - Rename: from_col ≠ out_col → role:"rename".
@@ -382,7 +390,7 @@ column_trace_capture:
     - Computed expression from two columns: two contributor entries, role:"formula".
 
     ## role values — assign from the transformation visible in the DDL
-    `source`     — terminal: stored base column, @Param, literal, or system function
+    `source`     — terminal: stored base column, literal, or system function (GETDATE(), NEWID())
     `rename`     — same data, different name; no transformation
     `formula`    — arithmetic, string concat, or other computed expression
     `case`       — CASE expression

@@ -58,7 +58,7 @@ Together these implement the per-template gate:
 |---|---|---|
 | `business_capture` | active | `business`, `both` |
 | `technical_capture` | active | `technical`, `both` |
-| `structural_summary` | active | (always — no classification gate) |
+| `structural_summary` | active | (no classification gate; fires only when focus node is non-bodied — a table) |
 | `summary`, `title`, `intro`, `highlights`, `notes` | synthesis | (always) |
 | `closing` | synthesis | (always, but only when `slotCount >= 5`) |
 
@@ -73,7 +73,7 @@ Net effect per active hop, given the locked classification:
 | `both` | procedure / function / view | `business_capture` + `technical_capture` | **2** peer |
 | `both` | table / external | `structural_summary` only | **1** (structural) |
 
-`structural_summary` always fires alongside the classification-gated capture keys at active phase — `STAGE_BY_KEY` only routes it to active, and the AI emits it instead of `*_capture` text when the focus node has no body (a table or external reference). When classification is unresolved during early hops the gate falls open and every classification-gated key fires; once `sess.classification` is locked at gate-emit it filters as above.
+`structural_summary` fires only when the focus node is non-bodied (a table — no DDL). At those hops it replaces `business_capture` / `technical_capture` entirely; those two keys are gated out via the `focusIsNonBodied` flag passed from `lineageParticipant.ts` to `resolveStagePrompt`. On all other hops (view, procedure, function focus) `structural_summary` is gated out and the normal capture templates fire. The `focusIsNonBodied` flag is computed from the current focus node type using `SCRIPT_TYPES`.
 
 The contract is locked mechanically at the tool handler boundary: each `submit_findings` call must carry exactly the `sections[]` shape implied by the locked classification. Mismatches reject with `classification_lock_violation` (e.g., a `business`-mission slot carrying a `technical` angle, or a `both` slot missing one angle). At synthesis, `present_result.sections[]` carries one peer entry per captured angle per node — the two angles never nest as `#### Technical` subheadings; they are independent peer sections.
 
@@ -95,17 +95,19 @@ There is no third path. `column_flow` is the **PRIMARY deliverable**. The engine
 `business_capture` / `technical_capture` templates fire exactly as in BB mode. The AI writes `sections[].text` explaining the business/technical context — WHY the column flows this way. This is secondary to `column_flow`, which declares WHERE it comes from. `sections[]` is not a substitute for `column_flow`.
 
 **`column_flow` shape per entry:**
-- `out_col` — column on this node, or `@Param` for procedures.
+- `out_col` — column being produced. For procedure focus: the column name in the target table (same as `writes_to.col`).
 - `writes_to?` — for writer procedures: `{ node, col }` naming the table column being written. Resolves edge direction: `from_node=proc, to_node=table` rather than `to_node=focusId`.
 - `contributors[]` — upstream sources: `{ from_node, from_col, role }`.
 
 **`role` values:** `source` (terminal — no further upstream), `rename`, `formula`, `case`, `coalesce`, `join_value`, `aggregate`, `filter_only` (excluded from edge accumulation — WHERE/JOIN-ON predicate only, not data output).
 
-Terminal source (`role="source"`, `contributors:[]`) applies to: stored base column, procedure `@Param`, magic number/literal, system function (e.g. `GETDATE()`). Empty `contributors` is not an error.
+Terminal source (`role="source"`, `contributors:[]`) applies to: stored base column, magic number/literal, system function (e.g. `GETDATE()`). Empty `contributors` is not an error. Execution parameters (`@StartDate`, `@Mode`, etc.) are never column lineage sources — they belong in `sections[].text` only.
 
 Validated edges accumulate in `ColumnAspect.edges[]` and are exposed via `SmResult.columnAspect`. Branch termination is structural — a branch is closed when its last edge carries `role="source"`. No completion flag is used.
 
 Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
+
+**Column validation gates (smBase.ts).** `out_col` existence is not validated for procedure focus nodes — procedures write to target tables and their DDL body does not expose those column names as owned metadata. `from_col` is not validated when the contributor is a procedure or function — `parseProcParams` returns execution parameters (@StartDate, @Mode, etc.), not data-column names; checking against that set always produces false negatives. Tables and views are readers with verifiable column schemas and are always validated. `validateNeighborIds` lowercases input IDs before checking internal engine sets (which use lowercase keys).
 
 **Upstream column inspection.** Before declaring `from_col` in `contributors`, the AI can call `lineage_get_neighbor_columns` to inspect upstream column schemas — avoids guessing column names on nodes not yet visited.
 

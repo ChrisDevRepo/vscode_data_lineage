@@ -741,7 +741,7 @@ export class NavigationEngine implements IHopStateMachine {
     const focusId = this.currentFocusNodeId ?? '';
     const neighborIndex = this.model.neighborIndex[focusId] ?? { in: [], out: [] };
     const directNeighbors = new Set<string>([...neighborIndex.in, ...neighborIndex.out]);
-    return ids.filter(id => !this.scopeNodeIds.has(id) || !directNeighbors.has(id));
+    return ids.filter(id => !this.scopeNodeIds.has(id.toLowerCase()) || !directNeighbors.has(id.toLowerCase()));
   }
 
   /**
@@ -1375,7 +1375,11 @@ export class NavigationEngine implements IHopStateMachine {
             continue;
           }
 
-          if (!validFocusCols.has(entry.out_col.toLowerCase())) {
+          // Procedures write columns to tables; their @params (from parseProcParams) are INPUT parameters,
+          // not the output column names they produce. Skip the column-existence check for proc focus nodes.
+          // Views, tables, and functions have verifiable column schemas — validate those normally.
+          const focusIsProc = focusNode.type === 'procedure';
+          if (!focusIsProc && !validFocusCols.has(entry.out_col.toLowerCase())) {
             allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='prune'.` });
             continue;
           }
@@ -1386,7 +1390,13 @@ export class NavigationEngine implements IHopStateMachine {
               allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor node "${cont.from_node}" not found in graph.` });
               continue;
             }
-            const validNeighborCols = new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+            // Skip from_col check when contributor is a proc/function: @params from parseProcParams
+            // are inputs to the routine, not the column names that flow out of it.
+            // Tables and views are readers — their columns are verifiable metadata.
+            const neighborIsProcOrFunc = neighbor.type === 'procedure' || neighbor.type === 'function';
+            const validNeighborCols = neighborIsProcOrFunc
+              ? new Set<string>()
+              : new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
             if (validNeighborCols.size > 0 && !validNeighborCols.has(cont.from_col.toLowerCase())) {
               allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
             }
@@ -1410,6 +1420,7 @@ export class NavigationEngine implements IHopStateMachine {
           const nid = nidRaw.toLowerCase();
           if (this.nodeMap.has(nid) && nid !== this.originNodeId) {
             this.removedSet.add(nid);
+            this.log('debug', `[AI] [CT] prune_neighbor hop=${this.hopCount}: ${nid}`);
           }
         }
       }
