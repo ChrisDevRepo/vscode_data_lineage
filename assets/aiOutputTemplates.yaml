@@ -332,13 +332,31 @@ column_trace_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Fill out column_flow for each active target column on this node — the structural
-    provenance channel. Two channels together give the complete per-hop picture:
-      sections[].text: business/technical logic of the node (why it matters).
-      column_flow:     where each tracked column comes from on this node (provenance).
-    column_flow is validated by the engine; verdict=analyze or verdict=pass without
-    it returns column_flow_required with the active column list as a hint.
+    Per active column — one binary decision:
+      → Column interacts with this node  →  fill column_flow (map to upstream source) + route upstream.
+      → Column does NOT interact         →  verdict=prune. No column_flow needed.
+
+    No third path. column_flow is engine-validated; missing it on a non-prune verdict returns
+    column_flow_required with the active column list.
     </purpose>
+
+    ## Before submitting — verify
+    □ Per active column: column_flow filled OR verdict=prune. No middle ground.
+    □ column_flow[] has one entry per active column that interacts with this node.
+    □ sections[].text (from business/technical capture) explains the context of the flow.
+
+    ## Example — column interacts (Revenue computed at vw_Sales)
+    column_flow: [
+      { out_col: "Revenue",
+        contributors: [
+          { from_node: "fact_orders", from_col: "Qty",       role: "formula" },
+          { from_node: "fact_orders", from_col: "UnitPrice", role: "formula" }
+        ]}
+    ]
+    verdict: "analyze"
+
+    ## Example — column does not interact with this node
+    verdict: "prune"    ← omit column_flow entirely
 
     ## Verdict — choose based on how the node interacts with tracked columns
     - `analyze`: the node transforms or is the terminal source of a target column.

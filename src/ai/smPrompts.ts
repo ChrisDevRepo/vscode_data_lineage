@@ -172,6 +172,8 @@ export function buildSynthesisReminder(question: string): string {
  * Appended to the synthesis reminder when CT was active and edges were recorded.
  * Presents the directed graph in a flat edge list so the AI can structure
  * `present_result` around the actual traced path rather than free-form prose.
+ * Overrides the standard badge_label grouping — in CT mode sections[] group by
+ * column chain role (origin / writers / terminal source) instead.
  * Nodes that were visited but produced no edges are listed as excluded branches.
  *
  * @param edges - Validated edges from `ColumnAspect.edges`.
@@ -193,10 +195,10 @@ export function buildCtSynthesisBlock(edges: ColumnEdge[], ctPrunedNodeIds?: str
     lines.push('- Do not include excluded branches in the column chain narrative or sections[].');
   }
   lines.push('');
-  lines.push('Structure present_result using this chain:');
-  lines.push('- summary: one sentence naming origin → source path');
-  lines.push('- intro: anchor to chain — name start, writers, terminal source');
-  lines.push('- sections[]: group by chain role (origin / writers / source)');
-  lines.push('- highlight_groups: source=terminal nodes, target=origin, transform=writers');
+  lines.push('Structure present_result using this chain (CT override — use chain role, not badge_label, for grouping):');
+  lines.push('- summary: one sentence naming origin column → traced path → terminal source');
+  lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
+  lines.push('- sections[]: group by chain role: origin node | writer/transform nodes | terminal source node');
+  lines.push('- highlight_groups: source=terminal nodes, target=origin, transform=writer nodes');
   return lines.join('\n');
 }

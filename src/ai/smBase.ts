@@ -1252,10 +1252,6 @@ export class NavigationEngine implements IHopStateMachine {
       if (!focusId || !this.nodeMap.has(focusId)) {
         return { error: 'invalid_focus_node', got: focusId };
       }
-      if (this._columnAspect && finding.verdict === 'analyze' && !finding.column_flow?.length) {
-        return { error: 'column_flow_required', hint: "Column trace is active. Emit `column_flow` for every node with verdict='analyze'. If the node does not interact with the traced columns, use verdict='prune' instead." };
-      }
-
       const acceptedNids = new Set<string>();
       if (finding.route_requests) {
         const depthCap = this.computeDepthCap();
@@ -1348,12 +1344,19 @@ export class NavigationEngine implements IHopStateMachine {
         }
       }
 
-      // CT contract: column_flow required for all non-prune verdicts when CT is active
+      // CT contract: column_flow required for all non-prune verdicts when CT is active.
+      // Echo-back pattern: name what was received + what is missing + binary decision gate + example.
       if (this._columnAspect && finding.verdict !== 'prune') {
         if (!finding.column_flow || finding.column_flow.length === 0) {
+          const cols = this._columnAspect.active_columns;
+          const exCol = cols[0] ?? '<col>';
           return {
             error: 'column_flow_required',
-            hint: `CT active — verdict=${finding.verdict} requires column_flow for [${this._columnAspect.active_columns.join(', ')}]. Submit column_flow declaring how each active column flows through this node, or use verdict=prune if this node does not interact with the traced columns.`,
+            hint:
+              `CT active — column_flow (PRIMARY task) is missing for [${cols.join(', ')}].\n` +
+              `Your sections/summary/verdict were received and are correct — ADD column_flow alongside them.\n` +
+              `Binary decision: map the column to its upstream source, OR use verdict=prune.\n` +
+              `Required format: column_flow:[{out_col:"${exCol}",contributors:[{from_node:"<node>",from_col:"<col>",role:"formula|rename|source|..."}]}]`,
           };
         }
       }
@@ -1828,6 +1831,15 @@ export class NavigationEngine implements IHopStateMachine {
       })),
       currentFocusNodeId: this.currentFocusNodeId,
       memory: this.memory.toJSON(),
+      ...(this._columnAspect ? {
+        lineageQuestionsLastHop: this.getColumnLineageQuestions(),
+        ctPrunedNodeIds: (() => {
+          const edgeHopNodes = new Set(this._columnAspect.edges.map(e => e.hop_node));
+          return this.memory.toJSON().detailSlots
+            ? Object.keys(this.memory.toJSON().detailSlots).filter(id => !edgeHopNodes.has(id))
+            : [];
+        })(),
+      } : {}),
     };
   }
 }

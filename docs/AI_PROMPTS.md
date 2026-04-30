@@ -81,20 +81,25 @@ The contract is locked mechanically at the tool handler boundary: each `submit_f
 
 ### Column trace mode
 
-Column trace is activated when `start_exploration` is called with `targetColumns`. Every CT hop has two obligations:
+Column trace is activated when `start_exploration` is called with `targetColumns`. CT forces SM regardless of scope size.
 
-**1. Narrative — `sections[].text` (same as BB)**
-`business_capture` / `technical_capture` templates fire exactly as in BB mode. The AI writes `sections[].text` describing the business purpose, data flow, formulas, and SQL evidence for the node. This is not a CT addition — it is the base hop obligation in all modes.
+**Per-hop binary gate — map or prune**
 
-**2. Structural provenance — `column_flow` (CT addition)**
-The AI additionally declares how each active target column flows through the node. This is mechanically enforced — the engine rejects every non-prune verdict without `column_flow` (`column_flow_required`). Outside CT the field is accepted but ignored.
+On every CT hop, the AI makes one binary decision per tracked column:
+- **Map** → fill `column_flow` (declare upstream contributors + role) and route upstream. Use `verdict=analyze` or `verdict=pass`.
+- **Prune** → `verdict=prune`. Omit `column_flow`. Use when the node has no interaction with any tracked column.
 
-`column_flow` shape per entry:
+There is no third path. `column_flow` is the **PRIMARY deliverable**. The engine rejects every non-prune verdict without `column_flow` (`column_flow_required`). Outside CT the field is accepted but ignored.
+
+**SUPPORTING obligation — `sections[].text`**
+`business_capture` / `technical_capture` templates fire exactly as in BB mode. The AI writes `sections[].text` explaining the business/technical context — WHY the column flows this way. This is secondary to `column_flow`, which declares WHERE it comes from. `sections[]` is not a substitute for `column_flow`.
+
+**`column_flow` shape per entry:**
 - `out_col` — column on this node, or `@Param` for procedures.
-- `writes_to?` — for writer procedures: `{ node, col }` naming the table column being written. Resolves the edge direction: `from_node=proc, to_node=Employee` rather than `to_node=focusId`.
+- `writes_to?` — for writer procedures: `{ node, col }` naming the table column being written. Resolves edge direction: `from_node=proc, to_node=table` rather than `to_node=focusId`.
 - `contributors[]` — upstream sources: `{ from_node, from_col, role }`.
 
-`role` values: `source` (terminal — no further upstream), `rename`, `formula`, `case`, `coalesce`, `join_value`, `aggregate`, `filter_only` (excluded from edge accumulation — WHERE/JOIN-ON predicate only, not data output).
+**`role` values:** `source` (terminal — no further upstream), `rename`, `formula`, `case`, `coalesce`, `join_value`, `aggregate`, `filter_only` (excluded from edge accumulation — WHERE/JOIN-ON predicate only, not data output).
 
 Terminal source (`role="source"`, `contributors:[]`) applies to: stored base column, procedure `@Param`, magic number/literal, system function (e.g. `GETDATE()`). Empty `contributors` is not an error.
 
@@ -102,13 +107,15 @@ Validated edges accumulate in `ColumnAspect.edges[]` and are exposed via `SmResu
 
 Column-level validation on `route_requests` — the AI cannot route to a non-existent column.
 
-**Per-hop injection.** `buildCurrentTaskBlock` appends a `<column_trace>` XML block to `<current_task>` listing the active columns and the structural sub-question for the hop. `buildColumnAspectPrompt` injects the full CT protocol (two-channel contract, role table, terminal source rules) into the stable system prompt.
+**Upstream column inspection.** Before declaring `from_col` in `contributors`, the AI can call `lineage_get_neighbor_columns` to inspect upstream column schemas — avoids guessing column names on nodes not yet visited.
+
+**Per-hop injection.** `buildColumnAspectPrompt` (stable prefix) establishes the PRIMARY/SUPPORTING hierarchy before templates render — one canonical surface. `buildCurrentTaskBlock` appends a `<column_trace>` XML block with the binary map-or-prune decision gate and, when prior edges exist, a `<lineage_questions>` block labeled as PRIMARY follow-up (more important than the AI's own sub_question).
 
 **Gate.** `scopeSummaryRenderer` shows `Column-Trace — columns: [X, Y]` in the consent gate so the user sees which columns are traced before approving.
 
-**Synthesis.** When the agenda drains, `buildCtSynthesisBlock` renders the accumulated edge chain and appends it to the synthesis reminder. `present_result` is anchored to the traced path rather than free-form prose.
+**Synthesis.** When the agenda drains, `buildCtSynthesisBlock` renders the accumulated edge chain and appends it to the synthesis reminder. `present_result` is anchored to the traced path. CT overrides the standard badge_label grouping — sections group by chain role (origin / writers / terminal source) instead.
 
-**Follow-up column traces from `completed` phase.** When the user asks a follow-up column question after a completed trace, the AI calls `start_exploration` with the same origin node and new `targetColumns`. If the origin matches the prior result (`sess.resultGraph.originNodeId`), `toolProvider.ts` auto-routes to the supplement path: `supplementAgenda(visitedIds)` re-queues all previously visited nodes, `setColumnTargets(targetColumns)` updates the engine's column-trace context, and the session re-enters `exploring` without a gate or archive wipe. Different-origin follow-ups still trigger a fresh start with gate confirmation.
+**Follow-up column traces from `completed` phase.** When the user asks a follow-up column question after a completed trace, the AI calls `start_exploration` with the same origin node and new `targetColumns`. If the origin matches the prior result (`sess.resultGraph.originNodeId`), `toolProvider.ts` auto-routes to the supplement path: `supplementAgenda(visitedIds)` re-queues all previously visited nodes in SM, `setColumnTargets(targetColumns)` updates the engine's column-trace context, and the session re-enters `exploring` without a gate or archive wipe. Different-origin follow-ups still trigger a fresh start with gate confirmation.
 
 ## Key inventory — purpose & maintenance
 

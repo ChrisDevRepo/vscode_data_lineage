@@ -598,6 +598,18 @@ export interface SmState {
   currentFocusNodeId: string | null;
   /** Serialized snapshot of the associated memory manager. */
   memory: MemoryStateSnapshot;
+  /**
+   * Engine-generated lineage sub-questions from the last successful hop (CT only).
+   * Populated from `getColumnLineageQuestions()` at dump time — shows what questions
+   * would be fed to the next hop, critical for diagnosing CT tracking failures.
+   */
+  lineageQuestionsLastHop?: string[];
+  /**
+   * Node IDs visited during CT exploration that contributed no column_flow edges.
+   * Computed at dump time from `columnAspect.edges` vs visited detail slots.
+   * Present only when `columnAspect` is non-null.
+   */
+  ctPrunedNodeIds?: string[];
 }
 
 /**

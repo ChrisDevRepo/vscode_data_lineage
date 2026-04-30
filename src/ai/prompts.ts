@@ -338,26 +338,31 @@ export const ACTION_REQUIRED_PENDING_HINT =
 
 
 /**
- * Constructs the system instructions for the Column Trace aspect.
+ * Renders the CT stable-prefix anchor — injected into the active-phase system prompt when
+ * `targetColumns` are set.
  *
  * @remarks
- * Injected into the active phase when `targetColumns` are provided. Focuses strictly on
- * routing mechanics, rename tracking, and structured metadata emission.
+ * Establishes the PRIMARY (`column_flow`) / SUPPORTING (`sections[]`) hierarchy before any
+ * capture template renders, and explicitly disambiguates the two fields so the misleading
+ * capture-rules header ("submit these as sections[]") does not confuse the model into putting
+ * column_flow entries into sections[]. One canonical surface for the CT field hierarchy.
  *
- * @param targetColumns - The initial set of columns requested by the user.
- * @returns A formatted string containing column-specific system rules.
+ * @param targetColumns - The columns being traced, as confirmed at gate-approval.
+ * @returns Stable-prefix markdown block anchoring the CT session contract.
  */
 export function buildColumnAspectPrompt(targetColumns: string[]): string {
-  // Static per-hop rules are in the `column_trace_capture` YAML template (rendered each hop).
-  // This stable-prefix block anchors the session: names the targets and the two channels.
+  // Stable-prefix anchor: establishes PRIMARY/SUPPORTING hierarchy and disambiguates fields
+  // before any capture template renders. One canonical surface for the hierarchy statement.
   return [
     '# Column Trace: active',
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    'Two channels per hop (both mechanically enforced on non-prune verdicts):',
-    '- **column_flow** (structural): JSON provenance — where each active column comes from.',
-    '- **sections[].text** (semantic): business/technical logic — do NOT re-state column flow here.',
-    'Full rules per hop: see the `column_trace_capture` capture template below.',
+    'PRIMARY job this hop: fill the `column_flow` field — structural provenance for each active column.',
+    'SUPPORTING job: fill `sections[].text` — business/technical context explaining WHY the column flows this way.',
+    '',
+    'Fields are separate: `column_flow` ≠ `sections[]`.',
+    'The capture-rules header below applies to sections[] only (business_capture / technical_capture).',
+    '`column_trace_capture` → fills the `column_flow` field, not sections[].',
   ].join('\n');
 }
 
@@ -414,9 +419,10 @@ export function buildMissionBriefBlock(brief: string, question: string): string 
  * distinguish the invariant root question from the sub-question to answer
  * THIS hop — removing ambiguity about which segment is active.
  *
- * When CT is active, a `<column_trace>` block is appended injecting the
- * structural lineage sub-question from the engine (SM-side) alongside the
- * AI's semantic `<sub_question>`.
+ * When CT is active, a `<column_trace>` block is appended with the binary
+ * map-or-prune decision gate and a tip to call `lineage_get_neighbor_columns`
+ * for upstream column inspection. When prior-hop edges exist, a `<lineage_questions>`
+ * block follows labelled as PRIMARY follow-up (more important than the AI's own sub_question).
  *
  * @param currentTask - Pipe-concatenated questions from the engine agenda.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when CT is inactive.
@@ -443,14 +449,18 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
-      `    For each: declare column_flow — from which node and column does it arrive?`,
-      `    For writer procedures: declare writes_to (target table + column) and set role=source.`,
+      `    Per column — binary decision:`,
+      `      → Interacts with this node: fill column_flow (out_col + contributors + role). Route upstream.`,
+      `      → Does not interact:        verdict=prune. Omit column_flow.`,
+      `    To inspect upstream column schemas before declaring contributors: call lineage_get_neighbor_columns.`,
+      `    Writer procedures: set writes_to. Role=source for passthrough @Params; formula/case/etc for computed expressions.`,
       `  </column_trace>`,
     );
   }
   if (columnLineageQuestions && columnLineageQuestions.length > 0) {
     lines.push(
       `  <lineage_questions>`,
+      `    PRIMARY follow-up — column chain continuation (more important than your own sub_question):`,
       ...columnLineageQuestions.map(q => `    - ${q}`),
       `  </lineage_questions>`,
     );
