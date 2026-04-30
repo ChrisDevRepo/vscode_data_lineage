@@ -203,7 +203,7 @@ export function buildSynthesisPrompt(): string {
     '- `label`: the shared `badge_label` from the captures (pick the shortest accurate one if the captures gave verbose per-node variants).',
     '- `angle`: `"business"` or `"technical"` — which capture angle this section represents.',
     '- `node_ids[]`: every grouped slot id within this angle.',
-    '- `text`: **omit**. The engine injects verbatim captured body from the archive for each `node_ids[]` entry.',
+    '- `text`: write the section body. Draw from the captured detail in `detail_slots[]` for each `node_ids[]` entry — you own the text.',
     '',
     'Pass / Prune slots: mention in one line inside a `### Passthrough / Pruned` subsection of the relevant section — add this subsection as plain text in `closing`, not as a separate section.',
     '',

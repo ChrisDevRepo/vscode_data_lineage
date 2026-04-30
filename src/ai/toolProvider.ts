@@ -118,24 +118,6 @@ function validateSectionsAgainstClassification(
   return null;
 }
 
-/**
- * Strips verbatim section text and `reason_for_visit` from detail slots before they
- * are serialised into the LM-bound `submit_findings` tool result.
- *
- * @remarks
- * Keeps the LM context lean: the synthesis model only needs node metadata
- * (id, name, type, badge_label, summary, note_caption, angle list) to make
- * structural grouping decisions. Verbatim content is injected engine-side
- * in `presentResult` from the in-memory archive via `AiMemoryManager.getSectionText`.
- */
-function stripDetailSlotBodies(
-  slots: Array<{ nodeId: string; schema: string; name: string; type: string; sections: Array<{ angle: CaptureAngle; text: string }>; summary: string; badge_label?: string; note_caption?: string; reason_for_visit?: string }>,
-): Array<{ nodeId: string; schema: string; name: string; type: string; sections: Array<{ angle: CaptureAngle }>; summary: string; badge_label?: string; note_caption?: string }> {
-  return slots.map(({ reason_for_visit: _rv, sections, ...rest }) => ({
-    ...rest,
-    sections: sections.map(s => ({ angle: s.angle })),
-  }));
-}
 
 /**
  * Private handler for AI tool execution.
@@ -661,18 +643,12 @@ class ToolHandler {
 
       if ('done' in result && result.done && result.result) {
         sess.storeSmResult(result.result);
-        // Slim the LM-bound payload: fullNodes[] and edges[] are routing context for
-        // active-phase decisions, not synthesis. Section bodies are stripped here —
-        // the synthesis model receives only structural metadata (id, name, badge, angle)
-        // and provides grouping decisions; the engine re-injects verbatim text in
-        // presentResult from the in-memory archive. The webview/engine still hold the
-        // full graph and text via storeSmResult above.
         const lmResult = {
           status: result.result.status,
           originNodeId: result.result.originNodeId,
           scope: { nodes: result.result.fullNodes.length, edges: result.result.edges.length },
           suggested_sections: result.result.suggested_sections,
-          detail_slots: stripDetailSlotBodies(result.result.detail_slots),
+          detail_slots: result.result.detail_slots,
         };
         return this.logAndReturn('submit_findings', { ...result, result: lmResult }, input);
       }
@@ -703,7 +679,7 @@ class ToolHandler {
           originNodeId: finalResult.originNodeId,
           scope: { nodes: finalResult.fullNodes.length, edges: finalResult.edges.length },
           suggested_sections: finalResult.suggested_sections,
-          detail_slots: stripDetailSlotBodies(finalResult.detail_slots),
+          detail_slots: finalResult.detail_slots,
         };
         return this.logAndReturn('submit_findings', {
           ok: true,
@@ -786,28 +762,7 @@ class ToolHandler {
         }
       }
 
-      // Inject verbatim archive text for any section where the model omitted `text`.
-      // Synthesis protocol: model provides structural decisions (label, angle, node_ids);
-      // engine supplies section bodies from the in-memory archive.
-      if (input.sections?.length) {
-        input.sections = input.sections.map(sec => {
-          if (sec.text?.trim()) return sec;
-          const angle: CaptureAngle = (sec as { angle?: CaptureAngle }).angle
-            ?? (sess.classification === 'technical' ? 'technical' : 'business');
-          const texts = (sec.node_ids ?? [])
-            .map(id => {
-              const t = sess.memory.getSectionText(id, angle);
-              if (!t) return '';
-              return (sec.node_ids!.length > 1)
-                ? `### ${id.split('].').pop() ?? id}\n\n${t}`
-                : t;
-            })
-            .filter(Boolean);
-          return { ...sec, text: texts.join('\n\n---\n\n') };
-        });
-      }
-
-      this.logger.debug(`presentResult archive inject — section[0] preview: ${trunc(input.sections?.[0]?.text ?? '(empty)', 200)}`);
+      this.logger.debug(`presentResult section[0] preview: ${trunc(input.sections?.[0]?.text ?? '(empty)', 200)}`);
 
       // Fix LaTeX before assembly so fixLatex()'s $$→```math conversion reaches the description.
       const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);

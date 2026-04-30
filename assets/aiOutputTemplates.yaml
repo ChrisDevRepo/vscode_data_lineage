@@ -344,6 +344,7 @@ column_trace_capture:
     □ Per active column: column_flow filled OR verdict=prune. No middle ground.
     □ column_flow[] has one entry per active column that interacts with this node.
     □ sections[].text (from business/technical capture) explains the context of the flow.
+    □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
 
     ## Example — column interacts (Revenue computed at vw_Sales)
     column_flow: [
@@ -373,8 +374,8 @@ column_trace_capture:
     When the focus node is a TABLE (no DDL — only schema metadata), the procedure that
     writes to it is upstream. Use verdict='pass'; use the column name as it appears in the table.
     column_flow: [{ out_col: "TotalRevenue", contributors: [{ from_node: "[schema].[spWriter]", from_col: "TotalRevenue", role: "rename" }] }]
-    Add route_requests to visit the procedure next. Do NOT use verdict='prune' just
-    because you cannot see DDL — if the writer procedure is in scope, route to it.
+    Leave route_requests empty — the CT engine queues contributors[] automatically.
+    Do NOT use verdict='prune' just because there is no DDL.
 
     ## column_flow fields per entry
     - out_col: column name being produced. For PROCEDURE focus: the column name in the target table (same as writes_to.col).

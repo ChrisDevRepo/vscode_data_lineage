@@ -54,11 +54,7 @@ export interface ResultGraph {
   intro?: string;
   /** AI-supplied closing note from `present_result.input.closing`. */
   closing?: string;
-  /**
-   * AI-supplied report sections from `present_result.input.sections[]`.
-   * When `text` is absent the engine injects verbatim body from the in-memory archive
-   * via `AiMemoryManager.getSectionText(nodeId, angle)`.
-   */
+  /** AI-supplied report sections from `present_result.input.sections[]`. */
   sections?: Array<{ label: string; node_ids?: string[]; angle?: 'business' | 'technical'; text?: string }>;
   /**
    * Column lineage chain from a CT session. Present only when the session used `targetColumns`.
