@@ -1830,10 +1830,19 @@ export class NavigationEngine implements IHopStateMachine {
     const mem = this.memory.getResult();
     const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
     
-    // The final graph consists of all nodes in the background scope that are still
-    // reachable from the origin after pruning. This naturally includes passive
-    // tables that the engine contracted over.
-    const finalNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
+    // CT mode: restrict BFS scope to only nodes that appear in a column_flow edge.
+    // Non-CT scope nodes are excluded by limiting traversal, not by mutating removedSet.
+    let scopeForBfs = this.scopeNodeIds;
+    if (this._columnAspect) {
+      const ctNodes = new Set<string>([this.originNodeId!]);
+      for (const e of this._columnAspect.edges) {
+        ctNodes.add(e.hop_node);
+        ctNodes.add(e.from_node);
+        ctNodes.add(e.to_node);
+      }
+      scopeForBfs = ctNodes;
+    }
+    const finalNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, scopeForBfs);
 
     const finalEdges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
