@@ -307,7 +307,7 @@ class ToolHandler {
       // DRY helper: propagates follow-up context updates shared by supplement + same-origin retrace.
       const applyFollowUpContext = (engine: NavigationEngine): void => {
         if (data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
-        if (data.classification) sess.setClassification(data.classification);
+        sess.setClassification(data.classification);
         if (typeof data.mission_brief === 'string') sess.memory.setMissionBrief(data.mission_brief);
         if (data.question) sess.memory.setUserQuestion(data.question);
       };

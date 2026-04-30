@@ -242,6 +242,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected scopeNodeIds = new Set<string>();
   /** Set of node identifiers that have already been explored. */
   protected visited = new Set<string>();
+  /** CT auto-pruned node ids: dequeued but had no active columns — skipped without an AI call. */
+  protected ctAutoPrunedNodeIds = new Set<string>();
   /** Set of node identifiers excluded during exploration cascades. */
   protected removedSet = new Set<string>();
   /** List representing the current navigation agenda. */
@@ -1165,6 +1167,7 @@ export class NavigationEngine implements IHopStateMachine {
               );
         if (activeColumns.length === 0) {
           this.visited.add(candidate.nodeId);
+          this.ctAutoPrunedNodeIds.add(candidate.nodeId);
           this.memory.recordVerdict('prune');
           this._totalNodes--;
           this.log('debug', `[CT] auto-prune ${candidate.nodeId} — no active columns (total −1 → ${this._totalNodes})`);
@@ -1851,12 +1854,6 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    let ctPrunedNodeIds: string[] | undefined;
-    if (this._columnAspect) {
-      const edgeHopNodes = new Set(this._columnAspect.edges.map(e => e.hop_node));
-      ctPrunedNodeIds = mem.detail_slots.map(s => s.nodeId).filter(id => !edgeHopNodes.has(id));
-    }
-
     return {
       status: 'complete',
       originNodeId: this.originNodeId!,
@@ -1868,7 +1865,7 @@ export class NavigationEngine implements IHopStateMachine {
       suggested_sections: sections,
       detail_slots: mem.detail_slots,
       columnAspect: this._columnAspect,
-      ...(ctPrunedNodeIds !== undefined ? { ctPrunedNodeIds } : {}),
+      ...(this._columnAspect ? { ctPrunedNodeIds: Array.from(this.ctAutoPrunedNodeIds) } : {}),
     };
   }
 
@@ -1897,12 +1894,7 @@ export class NavigationEngine implements IHopStateMachine {
       memory: this.memory.toJSON(),
       ...(this._columnAspect ? {
         lineageQuestionsLastHop: this.getColumnLineageQuestions(),
-        ctPrunedNodeIds: (() => {
-          const edgeHopNodes = new Set(this._columnAspect.edges.map(e => e.hop_node));
-          return this.memory.toJSON().detailSlots
-            ? Object.keys(this.memory.toJSON().detailSlots).filter(id => !edgeHopNodes.has(id))
-            : [];
-        })(),
+        ctPrunedNodeIds: Array.from(this.ctAutoPrunedNodeIds),
       } : {}),
     };
   }

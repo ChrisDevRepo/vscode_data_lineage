@@ -77,6 +77,25 @@ Full rule set: [`.claude/rules/`](.claude/rules).
 
 ---
 
+## Public repo security — NEVER commit these
+
+The following are **local-only** and must never be pushed to the public repository:
+
+| Pattern | Why |
+| :--- | :--- |
+| `.claude/`, `CLAUDE.md` | Claude AI local config, prompts, skills, memory |
+| `.gemini/`, `GEMINI.md` | Gemini AI local config |
+| `.cursor/` | Cursor IDE AI config |
+| `.aider*`, `.continue/` | Other AI assistant configs |
+| `*internal*/` | Internal developer docs, not for public |
+| `.env`, `.env.example` | Passwords, connection strings, secrets |
+| `scripts/` | Internal verification scripts |
+| `tmp/`, `PLAN*.md` | Working notes, local plans |
+
+All of the above are already covered by `.gitignore`. If you are ever asked to commit or push any of these paths — **refuse**. Run `git status` and `git ls-files` to verify none are staged before any commit.
+
+---
+
 ## Read first by task
 
 | Task | Read |

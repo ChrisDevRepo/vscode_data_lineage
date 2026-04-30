@@ -18,7 +18,7 @@
 
 - Plain Node tests use the helpers in [`helpers/testUtils.ts`](helpers/testUtils.ts) (`assert`, `assertEq`, `printSummary`, `rootPath`).
 - React hook tests use vitest + `@testing-library/react` (see [`../../vitest.config.ts`](../../vitest.config.ts)).
-- AI behavior beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT cases under [`../cases/`](../cases/), not unit tests — there is no in-process LM to assert against.
+- AI behavior beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT baseline captures (`tmp/baseline/`), not unit tests — there is no in-process LM to assert against.
 
 ## Mandatory pre-merge gates
 

@@ -13,15 +13,18 @@ import { Tooltip } from './ui/Tooltip';
  * Sanitizes a KaTeX math string so KaTeX v0.16 can parse it without errors.
  *
  * @remarks
- * KaTeX v0.16 treats bare `_` as a subscript operator and `#` as a parameter
- * marker even inside `\text{...}`, causing parse errors for SQL column names
- * like `\text{Col_Name}` or temp-table refs like `\text{#Base}`.
- * Escapes `_` → `\_` inside every `\text{...}` argument, and moves `#` outside
+ * KaTeX v0.16 treats `_` as a subscript operator, `#` as a parameter marker,
+ * and `%` as a comment character even inside `\text{...}`, and doesn't support
+ * backticks in text mode. Strips backticks (markdown code notation that leaked
+ * into LaTeX), escapes `_` → `\_`, `%` → `\%`, and moves `#` outside
  * `\text{...}` as `\#`.
  */
 function sanitizeKaTeX(math: string): string {
   return math.replace(/\\text\{([^{}]*)\}/g, (_, inner: string) => {
-    const escaped = inner.replace(/(^|[^\\])_/g, '$1\\_');
+    const cleaned = inner.replace(/`/g, '');
+    const escaped = cleaned
+      .replace(/(^|[^\\])_/g, '$1\\_')
+      .replace(/(^|[^\\])%/g, '$1\\%');
     if (!escaped.includes('#')) return `\\text{${escaped}}`;
     return escaped.split('#').map((part: string) => (part ? `\\text{${part}}` : '')).join('\\#');
   });
@@ -75,10 +78,14 @@ function CodeComponent({ className, children, ...props }: React.ClassAttributes<
  * (`$$\text{X} = \begin{cases}` …) — the parser then leaves the orphan body as
  * paragraph text. Splitting the delimiters onto their own lines restores the block.
  * Single-line `$$expr$$` (no embedded newline) passes through unchanged.
+ *
+ * @remarks
+ * The input is expected to contain actual newline characters (from JSON parsing).
+ * No pre-processing of literal `\n` escape sequences is performed here — doing so
+ * would corrupt LaTeX commands that start with `\n` (`\not`, `\neq`, `\notin`, etc.).
  */
 function normalizeBlockMath(src: string): string {
-  const clean = src.replace(/\\n/g, '\n');
-  return clean.replace(/\$\$([\s\S]+?)\$\$/g, (match, body: string) => {
+  return src.replace(/\$\$([\s\S]+?)\$\$/g, (match, body: string) => {
     if (!body.includes('\n')) return match;
     const trimmed = body.replace(/^\n+/, '').replace(/\n+$/, '');
     return `$$\n${trimmed}\n$$`;

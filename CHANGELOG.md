@@ -8,14 +8,9 @@
 
 
 ### Changed
-- **Accurate hop progress counter** — "Hop X / Y" now initialises Y to the gate-approved bodied-node count (matching the scope shown at approval) and adjusts dynamically: −1 per CT auto-prune, −1 when AI explicitly prunes a bodied scope node, +1 on out-of-scope expansion. Progress is surfaced via a shared `hopProgress` getter on the engine, used by all modes (SM, BB, inline).
-- **Faster, more focused AI hops** — each exploration step sends a leaner context to the model by routing only the templates relevant to the locked analysis angle and removing repeated guidance the engine already enforces structurally.
-- **Starting-point table summaries** — When you ask about a table as your starting point, `@lineage` produces a clean dossier (Purpose, Columns, Upstream sources, Downstream consumers, Grain / keys) instead of folding it into a neighbouring procedure's analysis.
-- **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both per-hop capture instructions (`business_capture`, `technical_capture`, `structural_summary`) and final report rendering (`title`, `intro`, `closing`, `notes`, `highlights`). Previously it only controlled report rendering; per-hop analysis content required source edits.
+- **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both per-hop capture instructions (`business_capture`, `technical_capture`, `structural_summary`) and final report rendering (`title`, `intro`, `closing`, `notes`, `highlights`).
 - **Unified exploration engine** — the three separate state-machine classes (Blackboard, Column Trace, and their abstract base) are merged into a single `NavigationEngine` with mode variants (Inline, SM-Blackboard, SM-Column-Trace). Classification locking, scope approval gate, and the Detail Archive memory model are shared across all modes.
 - **Typed extension-webview messaging contract** — all messages between the extension host and the graph UI are now defined in a single Zod-validated schema; replaces untyped `postMessage` calls so malformed messages are caught at the boundary instead of causing silent UI failures.
-- **Full conversation history retained** — `@lineage` no longer drops older turns from active context; the assistant remembers the whole session.
-- **Cleaner cancellation** — Pressing Stop mid-response exits cleanly — no "stream closed" error.
 
 ## [0.9.8] - 2026-04-12
 
