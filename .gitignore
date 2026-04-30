@@ -24,9 +24,6 @@ coverage/
 # IDE / local
 .vscode/settings.json
 .idea/
-CLAUDE.md
-.claude/
-**/.claude/**
 tmp/
 PLAN*.md
 
@@ -40,8 +37,19 @@ PLAN*.md
 Thumbs.db
 nul
 
-# Gemini CLI context
+# AI assistant config — NEVER commit to public repo
+# These folders contain local context, prompts, credentials, and internal instructions.
+CLAUDE.md
+.claude/
+**/.claude/**
 GEMINI.md
+.gemini/
+**/.gemini/**
+.cursor/
+**/.cursor/**
+.aider*
+.continue/
+**/.continue/**
 
 # Internal Developer Docs
 *internal*/
