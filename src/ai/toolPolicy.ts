@@ -11,10 +11,15 @@
  * | Stage                     | Tools                                                                                            |
  * |---------------------------|--------------------------------------------------------------------------------------------------|
  * | `discover`                | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, start_exploration |
- * | `active` (inline_bb)      | submit_findings                                                                                  |
+ * | `active` (inline_bb)      | submit_findings, present_result                                                                  |
  * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | present_result                                                                                    |
  * | `completed`               | present_result, get_object_detail, search_ddl, search_objects, start_exploration (supplement-only) |
+ *
+ * Inline BB exposes both `submit_findings` and `present_result` in the same
+ * active stage so the AI can drain the batch and author the report inside one
+ * agent loop — no second-turn synthesis prompt swap. SM modes keep
+ * `present_result` synthesis-only because the agenda drains across many hops.
  *
  * Deliberately excluded from every LM phase: `lineage_get_neighborhood` — it
  * overlaps `start_exploration` (BFS + DDL without engine supervision) and
@@ -101,6 +106,13 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
       // SM BB/CT expose get_neighbor_columns for structural-metadata pruning decisions (no DDL).
       if (stage.mode !== 'inline_bb') {
         tools.push('lineage_get_neighbor_columns');
+      }
+      // Inline BB also exposes present_result in the same active stage: the AI
+      // calls submit_findings (one batched drain) followed by present_result in
+      // the same agent loop. The submit_findings tool_result carries the
+      // `synthesis_reminder` cue that orders these two calls.
+      if (stage.mode === 'inline_bb') {
+        tools.push('lineage_present_result');
       }
       return new Set(tools);
     }

@@ -459,6 +459,15 @@ export class LineageParticipant {
         const isCtMode = !!(engine?.columnAspect);
         const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount, isCtMode, focusIsNonBodied);
         const stageBlock = stageResolved.prompt;
+        // Inline mode collapses Active + Synthesis into one turn, so the
+        // synthesis-stage YAML keys (summary/title/intro/closing/highlights/notes)
+        // ride alongside the active capture rules. Resolved against the same
+        // classification + slot-count gates; `focusIsNonBodied` is irrelevant for
+        // synthesis keys (the gate only fires on capture-vs-structural choice).
+        const isInlineActive = phase === 'active' && (engine?.inlineMode ?? false);
+        const inlineSynthesisStage = isInlineActive
+          ? resolveStagePrompt(sess.outputTemplates, 'synthesis', sess.classification, sess.memory.slotCount, isCtMode, /* focusIsNonBodied */ false)
+          : null;
         const gatedSummary = stageResolved.gatedOut
           .filter(g => g.reason !== 'stage')  // stage-gated is the dominant reason; keep the line short
           .map(g => `${g.key}(${g.reason})`)
@@ -466,7 +475,8 @@ export class LineageParticipant {
         this.logger.debug(
           `[AI] [Template] phase=${templatesPhase} classification=${sess.classification ?? 'unset'} slot_count=${sess.memory.slotCount} ` +
           `shipped_keys=[${stageResolved.shippedKeys.join(', ')}]` +
-          (gatedSummary ? ` gated_out=[${gatedSummary}]` : '')
+          (gatedSummary ? ` gated_out=[${gatedSummary}]` : '') +
+          (inlineSynthesisStage ? ` inline_synthesis_keys=[${inlineSynthesisStage.shippedKeys.join(', ')}]` : '')
         );
         const parts: string[] = [base, phaseSpecific];
 
@@ -476,6 +486,7 @@ export class LineageParticipant {
         }
 
         parts.push(stageBlock);
+        if (inlineSynthesisStage?.prompt) parts.push(inlineSynthesisStage.prompt);
 
         if ((phase === 'active' || phase === 'synthesis' || phase === 'completed') && engine) {
           const missionBriefBlock = buildMissionBriefBlock(sess.memory.getMissionBrief(), sess.memory.getUserQuestion() || '');
@@ -873,8 +884,15 @@ export class LineageParticipant {
             writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification]}\n\n`);
           }
           invalidateStablePart();
-          systemPrompt = buildStageSystemPrompt('synthesis');
+          // SM mode: rebuild and wipe to a synthesis-only prompt; the archive ships via the
+          // preserved tool-pair so the AI synthesizes with closed memory.
+          // Inline mode: the active-phase prompt already bundles the synthesis contract and
+          // synthesis-stage YAML keys (see `buildModeBlock(isInline=true)` and the
+          // `inlineSynthesisStage` block in `buildStablePart`). Keep the bundled prompt in
+          // place — the AI continues straight to `present_result` in the same turn using
+          // the `synthesis_reminder` cue from the last tool_result. No wipe, no rebuild.
           if (!sess.stateMachine.inlineMode) {
+            systemPrompt = buildStageSystemPrompt('synthesis');
             const archive = sess.memory.getResult();
             const deferred = sess.stateMachine.deferredQuestions;
 

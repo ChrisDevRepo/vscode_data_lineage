@@ -167,9 +167,10 @@ The `@lineage` assistant goes further by analysing the available metadata (DDL, 
 
 For small scopes (≤ `inlineNodeCap` nodes and within `inlineTokenBudget`).
 
-- The AI receives all SQL at once and reasons about everything in a single pass.
+- The AI receives **all SQL plus the full instruction set in one brief** after the consent gate is approved — verdict / prune / label / sections / routing rules **and** the synthesis contract (so the AI knows the report shape upfront).
+- Active capture and Synthesis collapse into a single agent-loop turn: `submit_findings` (batched across all scope nodes) then `present_result` back-to-back, no second-turn prompt swap.
 - Best for direct questions like *"what reads from the Employee table?"*.
-- Same Map & Router contract as deep mode, just without the round-trip overhead.
+- Column tracing is excluded — any session with a Column Aspect uses Deep exploration regardless of size.
 
 #### 2. Deep exploration (Sliding-Memory mode)
 

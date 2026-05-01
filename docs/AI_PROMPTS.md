@@ -43,6 +43,18 @@ The lift+group+label rule for `sections[]` lives in `buildSynthesisPrompt()` in 
 
 When `classification === 'both'`, captured sections come in pairs per node (one business, one technical). Each angle becomes its own peer entry in `present_result.sections[]` — never nested as `#### Technical` subheadings.
 
+### Inline mode bundles the synthesis cue into the active brief
+
+Inline mode collapses the Active capture turn and the Synthesis turn into a single agent-loop turn (see [`ARCHITECTURE.md`](ARCHITECTURE.md#inline-vs-sm-execution)). Practically, the system prompt at the active-phase start ships every YAML key the AI needs for both calls:
+
+- The **active-stage** keys (`business_capture` / `technical_capture` / `structural_summary`) gate by classification and focus-node-bodied as in SM mode.
+- The **synthesis-stage** keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) ride alongside in the same brief — same `resolveStagePrompt` gate, same classification + slot-count rules.
+- The **synthesis assembly contract** from `buildSynthesisPrompt()` is embedded verbatim in `buildModeBlock(isInline=true)` (single source of truth — the synthesis-phase prompt and the inline brief reuse the same builder).
+
+Result: after the consent gate is approved, the AI receives one prompt with the full SM instruction set (verdicts, prune, label, sections, routing) and the full synthesis contract. It calls `submit_findings` (one batched call across all scope nodes) and then `lineage_present_result` back-to-back in the same turn, ordered by the `synthesis_reminder` cue carried in the `submit_findings` tool_result. SM mode is unchanged: the synthesis contract ships at the synthesis-phase boundary after the agenda drains, because the SM agenda is many hops long and shipping synthesis upfront would burn tokens with every hop wipe.
+
+CT mode is always SM (column tracing forces SM regardless of scope size), so the inline bundling does not apply to CT.
+
 ## Template gate — what fires when
 
 The AI declares the mission classification at `start_exploration` via the **required** `classification` parameter (`business` | `technical` | `both`). The Zod schema in [`src/ai/tools.ts`](../src/ai/tools.ts) is `z.enum([...])` — missing or invalid values are hard-rejected at the boundary; there is no engine fallback. The tool-param description in [`package.json`](../package.json) biases the AI toward `business` when user intent is ambiguous (lineage / origin / impact / column-trace are `business` even when a column is named); `technical` is only for explicit performance / index / tuning asks; `both` is only for explicit "both angles" asks. The locked value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.

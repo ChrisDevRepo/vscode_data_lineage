@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Inline mode collapses Active + Synthesis into one turn** — after gate approval, the AI receives one unified brief covering the full SM instruction set (verdicts, prune, label, sections, routing) **plus** the synthesis assembly contract and synthesis-stage YAML keys. The AI calls `submit_findings` (batched across all scope nodes) and `lineage_present_result` back-to-back inside the same agent loop, ordered by the `synthesis_reminder` cue carried in the `submit_findings` tool_result. No second-turn synthesis prompt swap, no hop-by-hop drip of instructions for inline-eligible scopes. SM mode and Column Trace mode are unchanged.
+
 ## [0.9.9] - 2026-04-26
 
 ### Added

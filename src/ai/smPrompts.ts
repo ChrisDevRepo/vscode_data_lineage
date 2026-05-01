@@ -7,7 +7,7 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for Claude precision.
  */
 
-import { buildColumnAspectPrompt } from './prompts';
+import { buildColumnAspectPrompt, buildSynthesisPrompt } from './prompts';
 import type { ColumnEdge } from './smTypes';
 
 
@@ -87,6 +87,23 @@ const BLOCK = {
     '1. BATCH SUBMISSION: Submit your findings as a JSON ARRAY of finding objects (one per node) in a single `submit_findings` turn.',
     '2. COMPLETION: If no further expansions (`route_requests`) are needed, set `"complete": true` inside your final finding object to finish the exploration.',
   ].join('\n'),
+
+  /**
+   * Inline turn flow — the unified two-call sequence inside one agent loop.
+   *
+   * @remarks
+   * Inline collapses Phase 2 (Active capture) and Phase 3 (Synthesis) into one
+   * AI turn. The system prompt for inline ships every instruction the AI needs
+   * for both calls upfront — no second-turn prompt swap. This block names the
+   * sequence so the AI does not stop after `submit_findings`.
+   */
+  inlineTurnFlow: [
+    '## Inline Turn Flow — one turn, two tool calls',
+    'After the consent gate is approved, you receive every instruction needed for both Active capture and Synthesis in this one prompt. Execute them in sequence inside this single turn:',
+    '1. **`lineage_submit_findings`** — one call, batched across all scope nodes (per the Inline Batch Protocol below).',
+    '2. **`lineage_present_result`** — call immediately after `submit_findings` succeeds. The tool_result for `submit_findings` carries a `synthesis_reminder` cue with the user question; obey it. Do not wait for a new turn.',
+    'Both tools are available in the active stage. The Synthesis Contract section near the end of this prompt governs the `present_result` payload shape.',
+  ].join('\n'),
 } as const;
 
 
@@ -96,6 +113,13 @@ const BLOCK = {
  * @remarks
  * The engine presents nodes, the model analyzes them, the engine advances the agenda.
  * If `targetColumns` are provided, the Column Aspect instructions are appended.
+ *
+ * Inline mode bundles every instruction the AI needs for both Active capture
+ * and Synthesis into one upfront brief: turn flow, batch protocol, verdicts,
+ * sections, badges, routing, pruning, and the {@link buildSynthesisPrompt}
+ * contract for the trailing `present_result` call. SM mode emits only the
+ * per-hop scope; synthesis instructions ship at the synthesis-phase boundary
+ * because the SM agenda drains across many hops.
  *
  * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @param targetColumns - Optional columns being tracked (activates Column Aspect).
@@ -114,7 +138,7 @@ export function buildModeBlock(
   sections.push(`# Exploration Mode: ${mode}`);
 
   if (isInline) {
-    sections.push('', BLOCK.batchCompletionContract);
+    sections.push('', BLOCK.inlineTurnFlow, '', BLOCK.batchCompletionContract);
   }
 
   sections.push(
@@ -135,6 +159,14 @@ export function buildModeBlock(
 
   if (isColumnAspectActive) {
     sections.push('', buildColumnAspectPrompt(targetColumns!));
+  }
+
+  // Inline collapses Active + Synthesis into one turn, so ship the synthesis
+  // assembly contract here rather than waiting for the synthesis phase.
+  // `buildSynthesisPrompt()` is the single source of truth for the
+  // `present_result` payload shape — reused verbatim, no duplication.
+  if (isInline) {
+    sections.push('', '# Synthesis Contract — for the trailing `present_result` call', '', buildSynthesisPrompt());
   }
 
   return sections.join('\n');

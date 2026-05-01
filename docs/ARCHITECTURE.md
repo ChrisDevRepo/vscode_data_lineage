@@ -36,7 +36,7 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 | **Discovery** | AI | Searches the catalog and classifies the question. **Class D** = single object or graph-wide metadata, answered directly. **Class S** = relationships spanning ≥2 connected objects, hands off to the engine via `start_exploration`. |
 | **Gate** | Engine | Emits `action_required: confirm_sm_start` for every Class-S exploration. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. Mode (Inline / Sliding-Memory) is decided at lock-in based on the post-filter scope size + DDL cost (≤10 nodes ∧ ≤10k tokens → Inline) — refining can flip the mode. |
 | **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
-| **Inline run** | AI | One-shot analysis; AI sees the full scope's DDL at once and self-terminates with `complete: true`. |
+| **Inline run** | AI | One-shot analysis collapsing Active capture and Synthesis into a single agent-loop turn. After gate approval the engine ships one unified brief (full DDL + verdict/sections/badge/routing/pruning + synthesis contract + synthesis-stage YAML keys); the AI calls `submit_findings` (batched), reads the `synthesis_reminder` from its tool_result, and calls `lineage_present_result` in the same turn. Self-terminates with `complete: true` on the final finding. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |
 | **Completed** | User | Holds the result graph. Three convergent operations (no gate, no wipe): (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes inline; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). |
@@ -126,7 +126,7 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 | `detect_graph_patterns` | ✓ | — | — | — | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
 | `start_exploration` | ✓ | — | — | — | ✓ (supplement) | Hand off to the state machine |
 | `submit_findings` | — | ✓ | ✓ | — | — | Submit hop analysis + route + prune. Required mode. |
-| `present_result` | — | — | — | ✓ | ✓ | Author the final report (sections, summary, highlights) |
+| `present_result` | — | ✓ | — | ✓ | ✓ | Author the final report (sections, summary, highlights). Inline BB exposes it in ACTIVE so the AI can call it back-to-back with `submit_findings` in the same turn (Active + Synthesis collapsed). |
 
 ## Class D / Class S routing contract
 
@@ -140,11 +140,13 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 |-----------|-------------|--------------------------|
 | **Trigger** | Scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`, no column tracing | Scope exceeds either threshold, or column tracing active |
 | **Context** | Full DDL + columns for ALL scope nodes shipped at once | Focus DDL + sliding window of last 3 node summaries |
+| **Brief delivery** | One unified brief at the active-phase start: verdict / sections / badge / routing / pruning / column-aspect (if any) **plus the full Synthesis Contract and synthesis-stage YAML keys**. AI calls `submit_findings` (batched) then `lineage_present_result` back-to-back inside the same agent loop — no second-turn synthesis prompt swap. | Per-hop SM brief: same verdict/sections/badge/routing/pruning every hop, focus DDL rotates. Synthesis contract ships at the synthesis-phase boundary after the agenda drains. |
+| **Tools in ACTIVE** | `submit_findings` + `present_result` (both in the same stage) | `submit_findings` + `get_neighbor_columns` |
 | **History** | Not wiped | Wiped every hop |
-| **Termination** | AI sets `complete: true` | Engine drains agenda; `complete: true` silently ignored |
+| **Termination** | AI sets `complete: true`; `submit_findings` tool_result carries the `synthesis_reminder` cue that orders the trailing `present_result` call | Engine drains agenda; `complete: true` silently ignored |
 | **Mid-session out-of-scope route** | Engine emits `action_required` consent gate | Engine `deferQuestion(...)`; surfaced at synthesis |
 
-True Inline runs Blackboard only; any session with a Column Aspect is forced to SM regardless of scope size.
+True Inline runs Blackboard only; any session with a Column Aspect is forced to SM regardless of scope size. The synthesis contract for inline is **reused verbatim** from `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts) — single source of truth, embedded inside `buildModeBlock(isInline=true)` in [`src/ai/smPrompts.ts`](../src/ai/smPrompts.ts). The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) ride alongside the active-stage keys in the same brief; both go through the same `resolveStagePrompt` gate so classification + slot-count rules apply identically.
 
 ## Memory model
 

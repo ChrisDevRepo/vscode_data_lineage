@@ -142,10 +142,17 @@ export function buildDiscoveryPrompt(): string {
 
 /**
  * Constructs the prompt for the Active (Hop-by-Hop or Full Run) phase.
- * 
+ *
  * @remarks
  * Dynamically switches instructions based on whether the engine is in True Inline mode
  * or Sliding Memory mode, while sharing the core heuristic rules for node analysis.
+ *
+ * Scope: this builder owns only the per-call `submit_findings` rules (sections,
+ * anchoring, math, routing). The two-call inline turn flow ("after
+ * submit_findings, call present_result") and the synthesis assembly contract
+ * for inline live in `buildModeBlock` in `smPrompts.ts` — kept there to stay
+ * adjacent to the inline batch protocol and to reuse {@link buildSynthesisPrompt}
+ * verbatim (single source of truth).
  *
  * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @returns A formatted system instruction for the active phase.

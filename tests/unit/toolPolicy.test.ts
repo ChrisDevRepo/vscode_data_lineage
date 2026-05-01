@@ -39,8 +39,9 @@ async function runTests() {
   {
     const tools = getAllowedLmToolNames({ kind: 'active', mode: 'inline_bb' });
     assert(tools.has('lineage_submit_findings'),       'submit_findings present');
+    assert(tools.has('lineage_present_result'),        'present_result present (inline collapses Active+Synthesis into one turn)');
     assert(!tools.has('lineage_get_neighbor_columns'), 'get_neighbor_columns absent (no DDL fetch in inline)');
-    assertEq(tools.size, 1, 'inline_bb: exactly 1 tool');
+    assertEq(tools.size, 2, 'inline_bb: exactly 2 tools (submit_findings + present_result)');
   }
 
   console.log('\n── active / sm_bb ──');
