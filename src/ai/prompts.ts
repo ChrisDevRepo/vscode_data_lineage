@@ -456,9 +456,6 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
-      `    Per column — binary decision:`,
-      `      → Interacts with this node: fill column_flow (out_col + contributors + role). Route upstream.`,
-      `      → Does not interact:        verdict=prune. Omit column_flow.`,
       `    To inspect upstream column schemas before declaring contributors: call lineage_get_neighbor_columns.`,
       `    Writer procedures: out_col = column name in the target table (same as writes_to.col). Set writes_to. Role: formula/case/etc for computed expressions; rename for direct pass-through.`,
       `  </column_trace>`,
