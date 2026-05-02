@@ -548,7 +548,7 @@ class ToolHandler {
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) return this.logAndReturn('submit_findings', {
         error: 'no_active_session',
-        hint: 'No active state machine. Call start_exploration first to begin a hop-by-hop investigation.',
+        hint: 'No active state machine. Call start_exploration first to begin an investigation.',
         next_action: 'start_exploration',
       }, input);
 

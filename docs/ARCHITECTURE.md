@@ -359,7 +359,7 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Class S** | State-machine exploration via `start_exploration` — anything spanning ≥ 2 connected objects. |
 | **BB** (Blackboard) | Default nav mode. Used when no target columns are specified. |
 | **CT** (Column Trace) | Nav mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus the CT addition: `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every non-prune verdict; engine rejects with `column_flow_required` if omitted. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
-| **Inline mode** | One-shot execution for scopes within `inlineNodeCap` and `inlineTokenBudget`. AI may self-terminate. |
+| **Inline mode** | Single-turn execution for scopes within `inlineNodeCap` and `inlineTokenBudget`. After gate approval the AI receives one brief (full DDL + synthesis contract); calls `submit_findings` (batched across all scope nodes) then `present_result` back-to-back inside the same agent loop, ordered by the `synthesis_reminder` cue. AI sets `complete: true` in the final finding to end the batch. |
 | **SM mode** | Hop-by-hop execution for larger scopes. Memory wiped each hop; engine owns termination. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |
 | **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours. |

@@ -1389,140 +1389,50 @@ export function autoFixPresentResult(
     fixes.push(`Truncated summary to ${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Convert $$ block math to ```math code fences.
-  //    Code fences are CommonMark structural elements — they can't break markdown.
-  //    Block math: rendered via components.code override in AiDescriptionOverlay.
-  //    Inline math ($...$): handled by remark-math + rehype-katex (span-level, safe).
-
-  /** Detect lines that are clearly markdown, not math.
-   *  If found inside a math block, the block is force-closed before this line. */
-  const IS_MARKDOWN = /^#{1,6}\s|^```|^[-*+]\s|^>\s|`|\*\*\w/;
-
-  /** Convert $$ block math to ```math code fences.
-   *  Single-pass: normalize $$ to own lines, then convert to fences.
-   *  If markdown appears inside a math block, force-close the fence.
-   *  Auto-close unclosed \begin{env} before fence end.
-   *  Strip orphan \end{env} and trailing \\ outside fences. */
-  const fixLatex = (text: string): { text: string; changed: boolean } => {
-    // Step 1: normalize $$ to own lines
-    const rawLines = text.split('\n');
-    const normalized: string[] = [];
-    for (const line of rawLines) {
-      const trimmed = line.trim();
-      if (trimmed === '$$') {
-        normalized.push('$$');
-      } else if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
-        normalized.push('$$');
-        normalized.push(trimmed.slice(2, -2).trim());
-        normalized.push('$$');
-      } else if (trimmed.startsWith('$$')) {
-        normalized.push('$$');
-        normalized.push(trimmed.slice(2).trim());
-      } else if (trimmed.endsWith('$$') && !trimmed.startsWith('|')) {
-        normalized.push(trimmed.slice(0, -2).trim());
-        normalized.push('$$');
-      } else {
-        normalized.push(line);
-      }
-    }
-
-    // Step 2: convert $$ open/close to ```math / ```
-    let changed = false;
+  // 4. Convert any legacy $$ block math to ```math code fences.
+  //    The AI is now instructed to emit ```math fences directly; this pass is
+  //    a defensive conversion for descriptions stored before that instruction took effect.
+  const fixLegacyBlockMath = (text: string): { text: string; changed: boolean } => {
+    const lines = text.split('\n');
     const out: string[] = [];
-    let insideMath = false;
-    const openEnvs: string[] = []; // stack of unclosed \begin{env}
-
-    const closeFence = () => {
-      // Auto-close unclosed \begin{env} before fence end
-      while (openEnvs.length > 0) {
-        out.push('\\end{' + openEnvs.pop() + '}');
+    let inMath = false;
+    let changed = false;
+    for (const line of lines) {
+      const t = line.trim();
+      if (t === '$$') {
+        out.push(inMath ? '```' : '```math');
+        inMath = !inMath;
         changed = true;
-      }
-      out.push('```');
-      insideMath = false;
-    };
-
-    for (const line of normalized) {
-      const trimmed = line.trim();
-
-      // $$ delimiter
-      if (trimmed === '$$') {
+      } else if (!inMath && t.startsWith('$$') && t.endsWith('$$') && t.length > 4) {
+        out.push('```math', t.slice(2, -2).trim(), '```');
         changed = true;
-        if (!insideMath) {
-          out.push('```math');
-          insideMath = true;
-        } else {
-          closeFence();
-        }
-        continue;
-      }
-
-      // Inside math: check for markdown lines that shouldn't be here
-      if (insideMath && IS_MARKDOWN.test(trimmed)) {
-        changed = true;
-        closeFence();
-        // Emit the markdown line (strip trailing \\ which is a LaTeX artifact)
-        out.push(line.replace(/\s*\\\\$/, ''));
-        continue;
-      }
-
-      // Inside math: track \begin/\end for auto-close
-      if (insideMath) {
-        const beginMatch = trimmed.match(/\\begin\{(\w+)\}/);
-        if (beginMatch) openEnvs.push(beginMatch[1]);
-        const endMatch = trimmed.match(/\\end\{(\w+)\}/);
-        if (endMatch && openEnvs.length > 0 && openEnvs[openEnvs.length - 1] === endMatch[1]) {
-          openEnvs.pop();
-        }
+      } else {
         out.push(line);
-        continue;
       }
-
-      // Outside math: strip orphan \end{env} on its own line
-      if (/^\\end\{\w+\}\s*$/.test(trimmed)) {
-        changed = true;
-        continue;
-      }
-
-      // Outside math: strip trailing \\ (LaTeX row separator artifact)
-      if (/\\\\\s*$/.test(trimmed)) {
-        changed = true;
-        out.push(line.replace(/\s*\\\\$/, ''));
-        continue;
-      }
-
-      out.push(line);
     }
-
-    // EOF inside math: close fence
-    if (insideMath) {
-      changed = true;
-      closeFence();
-    }
-
+    if (inMath) { out.push('```'); changed = true; }
     return { text: out.join('\n'), changed };
   };
 
-  // Apply LaTeX fix to section text and notes (description is engine-built; no AI input to fix here)
   if (fixed.sections) {
     let sectionFixed = false;
     const newSections = fixed.sections.map(s => {
       if (!s.text) return s;
-      const r = fixLatex(s.text);
+      const r = fixLegacyBlockMath(s.text);
       if (r.changed) { sectionFixed = true; return { ...s, text: r.text }; }
       return s;
     });
-    if (sectionFixed) { fixed = { ...fixed, sections: newSections }; fixes.push('Converted LaTeX to ```math blocks in sections'); }
+    if (sectionFixed) { fixed = { ...fixed, sections: newSections }; fixes.push('Converted legacy $$ math to ```math fences in sections'); }
   }
   if (fixed.notes) {
     let noteFixed = false;
     const newNotes = fixed.notes.map(n => {
       if (!n.text) return n;
-      const r = fixLatex(n.text);
+      const r = fixLegacyBlockMath(n.text);
       if (r.changed) { noteFixed = true; return { ...n, text: r.text }; }
       return n;
     });
-    if (noteFixed) { fixed = { ...fixed, notes: newNotes }; fixes.push('Converted LaTeX to ```math blocks in notes'); }
+    if (noteFixed) { fixed = { ...fixed, notes: newNotes }; fixes.push('Converted legacy $$ math to ```math fences in notes'); }
   }
 
   const nodeIdSet = new Set(resolvedNodeIds ?? []);

@@ -253,7 +253,7 @@ Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
 |---------|---------|---------|
 | `dataLineageViz.ai.enabled` | `true` | Enable / disable the `@lineage` participant and tools. |
 | `dataLineageViz.ai.maxRounds` | `50` | Safety cap on tool turns per investigation (5–100). |
-| `dataLineageViz.ai.inlineTokenBudget` | `10000` | Max estimated token budget for one-shot DDL delivery before switching to hop-by-hop (1000–100000). |
+| `dataLineageViz.ai.inlineTokenBudget` | `10000` | Max estimated token budget for single-turn DDL delivery before switching to Sliding Memory (SM) mode (1000–100000). |
 | `dataLineageViz.ai.inlineNodeCap` | `10` | Max scope nodes for one-shot delivery (1–100). |
 | `dataLineageViz.ai.outputTemplateFile` | `""` | Path to custom YAML output templates. See [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 | `dataLineageViz.ai.showToolInvocations` | `false` | Show each tool call as an expandable chat part with input JSON (developer debugging). |

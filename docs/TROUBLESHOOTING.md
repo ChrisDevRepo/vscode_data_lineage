@@ -28,13 +28,15 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **"Scope exceeds budget".** The exploration would exceed `dataLineageViz.ai.maxRounds`. Narrow the question, accept the `safe_depth_hint`, or raise the setting.
 
-**"Confirm SM start" gate.** Sliding-memory mode asks once before burning hops. For inline one-shot, the scope must sit under `dataLineageViz.ai.inlineNodeCap` and `dataLineageViz.ai.inlineTokenBudget`.
+**"Confirm SM start" gate.** Sliding-memory mode asks once before burning hops. For single-turn inline mode, the scope must sit under `dataLineageViz.ai.inlineNodeCap` and `dataLineageViz.ai.inlineTokenBudget`.
 
 **"Unanswered (out of approved scope)".** By design — SM locks the border at confirmation. The **Show deferred questions** button pre-fills them for a new run.
 
 **"Exploration incomplete — N rounds pending".** The hop cap was reached before the agenda drained. The partial archive is discarded on purpose — incomplete lineage can invert the picture. Narrow the scope or raise `ai.maxRounds`.
 
 **Tool-call clutter in chat.** Turn off `dataLineageViz.ai.showToolInvocations`.
+
+**Formulas or math artifacts in the AI description panel.** Formulas render as display math in the result panel. In the VS Code chat stream, the same formula source appears as a labeled code block (VS Code chat does not render math natively). If you see raw formula text (`\begin{cases}…`) or dollar-sign artifacts in the result panel, the stored description was generated before the current format was enforced — re-run the `@lineage` query to regenerate it.
 
 ## Export and profiling
 

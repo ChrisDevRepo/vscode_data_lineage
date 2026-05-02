@@ -366,9 +366,11 @@ export class LineageParticipant {
           sess.enterExploring();
           const focusId = engine?.currentFocus;
           const hopNumber = (engine?.currentHop ?? 0) + 1;
-          effectivePrompt = focusId
-            ? `User approved. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
-            : 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
+          effectivePrompt = engine?.inlineMode
+            ? 'User approved. Call `submit_findings` with a batched JSON array of findings for all scope nodes, then `present_result` in the same turn per the Inline Turn Flow.'
+            : focusId
+              ? `User approved. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
+              : 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
           const engine = sess.stateMachine as NavigationEngine | null;
           if (engine) {
@@ -459,11 +461,7 @@ export class LineageParticipant {
         const isCtMode = !!(engine?.columnAspect);
         const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount, isCtMode, focusIsNonBodied);
         const stageBlock = stageResolved.prompt;
-        // Inline mode collapses Active + Synthesis into one turn, so the
-        // synthesis-stage YAML keys (summary/title/intro/closing/highlights/notes)
-        // ride alongside the active capture rules. Resolved against the same
-        // classification + slot-count gates; `focusIsNonBodied` is irrelevant for
-        // synthesis keys (the gate only fires on capture-vs-structural choice).
+        // Inline collapses Active+Synthesis into one turn; synthesis YAML keys ride alongside capture keys, same classification + slot-count gates.
         const isInlineActive = phase === 'active' && (engine?.inlineMode ?? false);
         const inlineSynthesisStage = isInlineActive
           ? resolveStagePrompt(sess.outputTemplates, 'synthesis', sess.classification, sess.memory.slotCount, isCtMode, /* focusIsNonBodied */ false)
@@ -714,16 +712,7 @@ export class LineageParticipant {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
         if (!toolCalls.length) {
-          // ACK/WAIT protocol guard: in active mode while the engine is still awaiting
-          // findings, a toolless response violates the session contract (`toolMode.Required`
-          // can fall back to Auto when tools.length > 1, so the API cannot enforce this on
-          // its own). Inject a corrective user message and continue the loop; the existing
-          // MAX_ROUNDS cap is the safety net for repeated drift.
-          //
-          // Inline mode falls back to Auto because its active toolset now exposes both
-          // `submit_findings` and `present_result` (Active + Synthesis collapsed into one
-          // turn). SM modes also have ≥2 tools (`submit_findings` + `get_neighbor_columns`).
-          // Both are covered here.
+          // toolMode.Required falls back to Auto (both ACTIVE toolsets expose ≥2 tools); corrective blocks drift in inline and SM alike.
           const engine = sess.stateMachine;
           const engineAwaiting =
             !!engine && (engine.toJSON() as { status?: string }).status === 'awaiting_findings';
@@ -892,13 +881,7 @@ export class LineageParticipant {
             writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification]}\n\n`);
           }
           invalidateStablePart();
-          // SM mode: rebuild and wipe to a synthesis-only prompt; the archive ships via the
-          // preserved tool-pair so the AI synthesizes with closed memory.
-          // Inline mode: the active-phase prompt already bundles the synthesis contract and
-          // synthesis-stage YAML keys (see `buildModeBlock(isInline=true)` and the
-          // `inlineSynthesisStage` block in `buildStablePart`). Keep the bundled prompt in
-          // place — the AI continues straight to `present_result` in the same turn using
-          // the `synthesis_reminder` cue from the last tool_result. No wipe, no rebuild.
+          // Inline: synthesis contract was bundled in the active-phase brief — no rebuild or wipe needed.
           if (!sess.stateMachine.inlineMode) {
             systemPrompt = buildStageSystemPrompt('synthesis');
             const archive = sess.memory.getResult();

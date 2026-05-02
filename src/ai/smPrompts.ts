@@ -191,8 +191,8 @@ export function buildModeBlock(
  *
  * @remarks
  * Anchored on the user question at the highest-attention slot (Anthropic long-context
- * guidance). Re-asserts depth, math syntax, and per-node SQL-evidence requirements that
- * the model otherwise drops under pressure. Restored from baseline1's proven shape.
+ * guidance). Re-asserts depth, formula carry-through, and per-node SQL-evidence
+ * requirements that the model otherwise drops under pressure.
  *
  * @param question - The user's original question, re-injected to anchor synthesis on intent.
  */
@@ -203,7 +203,7 @@ export function buildSynthesisReminder(question: string): string {
     '- `sections[]` is REQUIRED — select nodes that directly answer the user question; omit nodes orthogonal to it. Write `text` for every section: if the question names specific identifiers, focus on detail that answers the question (formulas, column transformations, SQL predicates, data flows, join keys, source tables); if broad, draw from the full captured detail. You own the text — write it.',
     '- GROUP along two orthogonal axes: (1) keep each captured slot\'s `angle` separate — a business section and a technical section remain individual entries; under `classification = both` this yields two parallel streams. (2) Within a single angle, nodes that share `badge_label` become one section (badge → `label`, every grouped node id → `node_ids[]`).',
     '- Every badged node deserves business meaning AND SQL evidence (predicate, formula, join key); a label without evidence is incomplete.',
-    '- Carry every formula in LaTeX math syntax (`$expr$` inline, `$$expr$$` block) and every ⚠️ risk callout from capture into the assembled section. Math captured as LaTeX renders as math; math turned into prose stays prose.',
+    '- Carry every formula (math code fence from the captured body) and every ⚠️ risk callout into the assembled section unchanged. Math fences render in the result panel; prose does not.',
     '- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases write the text — do not leave sections[] without text.',
     '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
   ].join('\n');

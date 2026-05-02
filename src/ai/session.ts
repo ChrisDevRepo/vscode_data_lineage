@@ -68,7 +68,7 @@ export class AiSession {
   public columnStore: ColumnStore;
 
   // ── AI reasoning State ──
-  /** The active state machine controlling the hop-by-hop exploration loop. */
+  /** The active state machine controlling the exploration loop (Inline batch or hop-by-hop). */
   public stateMachine: IHopStateMachine | null = null;
   /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
