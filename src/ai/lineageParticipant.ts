@@ -36,7 +36,7 @@ import { RepeatRejectGuard } from './repeatRejectGuard';
 import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
 import { renderScopeSummaryMd } from './scopeSummaryRenderer';
 import { CLASSIFICATION_BANNER } from './classification';
-import { filterLmTools, activeModeOf, getAllowedLmToolNames } from './toolPolicy';
+import { filterLmTools, activeModeOf } from './toolPolicy';
 import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
 import { PerformanceCollector } from './diagnostics';
