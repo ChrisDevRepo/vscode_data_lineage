@@ -886,7 +886,8 @@ export class LineageParticipant {
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
           activePhase = 'synthesis';
           lineageTools = filterLmTools(vscode.lm.tools, { kind: 'synthesis' });
-          this.logger.info(`[Phase] active → synthesis — SM complete, restored ${lineageTools.length} tools including presentation`);
+          const completedMode = sess.stateMachine.inlineMode ? 'inline' : 'sm';
+          this.logger.info(`[Phase] active → synthesis — ${completedMode} complete, restored ${lineageTools.length} tools including presentation`);
           if (sess.stateMachine.inlineMode && sess.classification) {
             writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification]}\n\n`);
           }

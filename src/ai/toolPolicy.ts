@@ -102,17 +102,17 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
       return new Set(COMPLETED_TOOLS);
     case 'active': {
       const tools: string[] = ['lineage_submit_findings'];
-      // Inline BB ships full scope DDL up front via start_exploration → no DDL-fetch tool needed.
-      // SM BB/CT expose get_neighbor_columns for structural-metadata pruning decisions (no DDL).
-      if (stage.mode !== 'inline_bb') {
-        tools.push('lineage_get_neighbor_columns');
-      }
-      // Inline BB also exposes present_result in the same active stage: the AI
-      // calls submit_findings (one batched drain) followed by present_result in
-      // the same agent loop. The submit_findings tool_result carries the
-      // `synthesis_reminder` cue that orders these two calls.
       if (stage.mode === 'inline_bb') {
+        // Inline BB ships full scope DDL up front via start_exploration (no DDL-fetch
+        // tool needed) and collapses Active + Synthesis into one agent-loop turn, so
+        // it also exposes `present_result`. The `submit_findings` tool_result carries
+        // the `synthesis_reminder` cue that orders the two calls.
         tools.push('lineage_present_result');
+      } else {
+        // SM BB/CT expose get_neighbor_columns for structural-metadata pruning
+        // decisions (no DDL); `present_result` waits for the synthesis stage because
+        // the agenda drains across many hops.
+        tools.push('lineage_get_neighbor_columns');
       }
       return new Set(tools);
     }
