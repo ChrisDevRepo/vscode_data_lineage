@@ -47,6 +47,7 @@ const BLOCK = {
     '1. BADGE: `badge_label` is a short semantic ROLE label — prefer 1-2 words; longer phrases acceptable only when no shorter form fits the role precisely. Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "AC Reallocation", "EV Calculation", "Reference Remap".',
     '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
     '   - SHARED ROLE: Nodes serving the same role take the same label. Five EV Case procedures all use `"EV Calculation"`; three regional loaders all use `"Regional Upsert"`. The differing detail belongs in the section body, not the label.',
+    '   ❌ Step-count labels ("Step 1", "Step A", "Transform Step") — sections are auto-numbered; role labels only.',
     '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
   ].join('\n'),
 
