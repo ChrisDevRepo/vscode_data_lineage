@@ -44,9 +44,9 @@ const BLOCK = {
   /** Metadata protocol — badge_label drives final-document section labels. */
   badgeAndNote: [
     '## Metadata Protocol',
-    '1. BADGE: `badge_label` is a short semantic ROLE label — prefer 1-2 words; longer phrases acceptable only when no shorter form fits the role precisely. Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "AC Reallocation", "EV Calculation", "Reference Remap".',
+    '1. BADGE: `badge_label` is a short semantic ROLE label — prefer 1-2 words; longer phrases acceptable only when no shorter form fits the role precisely. Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "Revenue Calc", "Price Adjustment", "Territory Load".',
     '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
-    '   - SHARED ROLE: Nodes serving the same role take the same label. Five EV Case procedures all use `"EV Calculation"`; three regional loaders all use `"Regional Upsert"`. The differing detail belongs in the section body, not the label.',
+    '   - SHARED ROLE: Nodes serving the same role take the same label. Five discount procedures all use `"Price Adjustment"`; three territory loaders all use `"Territory Load"`. The differing detail belongs in the section body, not the label.',
     '   ❌ Step-count labels ("Step 1", "Step A", "Transform Step") — sections are auto-numbered; role labels only.',
     '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
   ].join('\n'),
