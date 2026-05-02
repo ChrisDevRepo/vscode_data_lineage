@@ -114,7 +114,7 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 
 ## Tools per phase
 
-[`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) is the single source of truth. The narrow ACTIVE palette is what keeps `toolMode.Required` effective: providers may downgrade `Required` to `Auto` when more than one tool is visible.
+[`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) is the single source of truth. Every ACTIVE-mode toolset has ≥ 2 tools (inline BB: `submit_findings + present_result`; SM BB/CT: `submit_findings + get_neighbor_columns`), so `toolMode.Required` always falls back to `Auto` per VS Code LM rules. The toolless-drift corrective in `lineageParticipant.runHopLoop` (gate on `engine.status === 'awaiting_findings'`) is what actually enforces the contract — for both inline and SM, with mode-specific corrective text.
 
 | Tool | Discovery | ACTIVE inline BB | ACTIVE SM (BB+CT) | Synthesis | Completed | Purpose |
 |------|:---------:|:----------------:|:-----------------:|:---------:|:---------:|---------|

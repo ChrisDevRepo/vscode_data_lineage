@@ -714,21 +714,28 @@ export class LineageParticipant {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
         if (!toolCalls.length) {
-          // SM-ACK/WAIT protocol guard: in SM active mode while the engine is still awaiting
+          // ACK/WAIT protocol guard: in active mode while the engine is still awaiting
           // findings, a toolless response violates the session contract (`toolMode.Required`
           // can fall back to Auto when tools.length > 1, so the API cannot enforce this on
           // its own). Inject a corrective user message and continue the loop; the existing
           // MAX_ROUNDS cap is the safety net for repeated drift.
+          //
+          // Inline mode falls back to Auto because its active toolset now exposes both
+          // `submit_findings` and `present_result` (Active + Synthesis collapsed into one
+          // turn). SM modes also have ≥2 tools (`submit_findings` + `get_neighbor_columns`).
+          // Both are covered here.
           const engine = sess.stateMachine;
           const engineAwaiting =
-            !!engine && !engine.inlineMode && (engine.toJSON() as { status?: string }).status === 'awaiting_findings';
+            !!engine && (engine.toJSON() as { status?: string }).status === 'awaiting_findings';
           if (activePhase === 'active' && engineAwaiting) {
-            this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — SM self-terminate blocked; injecting corrective prompt`);
+            this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — self-terminate blocked (mode=${engine!.inlineMode ? 'inline' : 'sm'}); injecting corrective prompt`);
             if (assistantParts.length > 0) {
               envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
             }
             envelope.pushUserText(
-              'Free-form responses are outside protocol in SLIDING MEMORY mode. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
+              engine!.inlineMode
+                ? 'Free-form responses are outside protocol in TRUE INLINE mode. Call `lineage_submit_findings` now with one batched JSON array of findings (one entry per scope node), then `lineage_present_result` in the same turn per the Inline Turn Flow.'
+                : 'Free-form responses are outside protocol in SLIDING MEMORY mode. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
             );
             continue;
           }
