@@ -66,14 +66,30 @@ const BLOCK = {
   ].join('\n'),
 
   /**
-   * Two-kind pruning protocol: structural neighbors (direct inspection) vs. procedures (hop-based).
+   * Inline pruning protocol — full DDL is already in context; no tool call needed.
    *
    * @remarks
-   * Structural neighbors (tables, views, functions) expose their column schema and foreign keys
-   * through `lineage_get_neighbor_columns` without requiring a dedicated hop. Procedures
-   * keep their logic within a DDL body that is only accessible when the node is in focus.
+   * In True Inline mode the entire scope DDL is delivered upfront via the
+   * `start_exploration` result. The AI reads DDL directly to assess relevance;
+   * `lineage_get_neighbor_columns` is not in the inline_bb tool set.
    */
-  pruningProtocol: [
+  pruningProtocolInline: [
+    '## Pruning — When to Prune',
+    'Prune nodes that do not contribute to the `<mission_brief>`.',
+    '- **Structural neighbors**: Read the DDL and schema context already provided to assess relevance — full scope DDL is in the `start_exploration` result, no tool call needed.',
+    '- **Procedures**: Read the procedure DDL in scope to verify its relevance before pruning.',
+  ].join('\n'),
+
+  /**
+   * SM pruning protocol — lightweight metadata via `lineage_get_neighbor_columns`.
+   *
+   * @remarks
+   * In Sliding Memory mode only the focus node's DDL is delivered per hop.
+   * `lineage_get_neighbor_columns` is available (sm_bb / sm_ct tool sets) and
+   * provides structural metadata for direct neighbors without requiring a full hop.
+   * Procedures are the exception — their logic is only accessible at the hop.
+   */
+  pruningProtocolSm: [
     '## Pruning — When to Prune',
     'Prune nodes that do not contribute to the `<mission_brief>`.',
     '- **Structural neighbors**: For tables, views, or functions, call `lineage_get_neighbor_columns({ids:["..."]})` to inspect the schema and foreign keys before deciding to prune. This tool provides metadata for direct neighbors of the focus node.',
@@ -152,19 +168,15 @@ export function buildModeBlock(
     isInline ? BLOCK.routingInline : BLOCK.routingSm
   );
 
-  // Inline ships full DDL up front so the AI drives pruning decisions via the pruningProtocol block.
-  if (isInline) {
-    sections.push('', BLOCK.pruningProtocol);
-  }
+  // Inline has full DDL upfront — prune from context (pruningProtocolInline, no tool call).
+  // SM uses get_neighbor_columns for lightweight metadata inspection (pruningProtocolSm).
+  sections.push('', isInline ? BLOCK.pruningProtocolInline : BLOCK.pruningProtocolSm);
 
   if (isColumnAspectActive) {
     sections.push('', buildColumnAspectPrompt(targetColumns!));
   }
 
-  // Inline collapses Active + Synthesis into one turn, so ship the synthesis
-  // assembly contract here rather than waiting for the synthesis phase.
-  // `buildSynthesisPrompt()` is the single source of truth for the
-  // `present_result` payload shape — reused verbatim, no duplication.
+  // Inline bundles synthesis contract here to avoid a second-turn prompt swap; buildSynthesisPrompt() is the single source of truth.
   if (isInline) {
     sections.push('', '# Synthesis Contract — for the trailing `present_result` call', '', buildSynthesisPrompt());
   }
