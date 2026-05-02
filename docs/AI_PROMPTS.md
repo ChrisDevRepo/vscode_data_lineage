@@ -25,10 +25,12 @@ Two responsibilities, two owners:
 So the rendering pipeline reads:
 
 ```
-hop 1, hop 2, …, hop N         →  N archive slots  (capture keys)
+SM:     hop 1, hop 2, …, hop N    →  N archive slots  (capture keys)
+inline: one batched submit_findings →  N archive slots  (capture keys)
                                           ↓
-                            synthesis turn lifts each
-                          slot.text into present_result
+                       lift slot.text into present_result
+                  (SM = synthesis-phase turn after agenda drains;
+                   inline = same agent-loop turn as submit_findings)
                                           ↓
               AI sends parts: title + intro + sections[] + closing
                                           ↓

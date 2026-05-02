@@ -198,7 +198,7 @@ flowchart LR
 
 The dotted reverse arrows are **reads back from the archive into the next hop's prompt**. The window stays at 3 entries — past hop 3 the oldest summary slides off. Only at synthesis does the *full* archive get lifted (double arrow), regardless of length.
 
-**Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` at synthesis only.
+**Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` once the agenda is drained — for SM that is the synthesis-phase turn; for inline that is the trailing `present_result` call in the same agent loop.
 
 **WM fields.** Three accessors on `AiMemoryManager` produce the inputs the prompt builder needs each hop:
 
@@ -250,7 +250,7 @@ None of these WM fields are stored — they are computed from the archive (or th
 
 | Mode | Trigger | What happens |
 |------|---------|--------------|
-| Inline | AI sets `complete: true` on `submit_findings` | Tool returns `{ ok: true, done: true, result }`; AI produces chat answer + `present_result` |
+| Inline | AI sets `complete: true` on `submit_findings` | Tool returns `{ ok: true, done: true, result }` with a `synthesis_reminder` cue; AI calls `present_result` back-to-back inside the same agent loop. |
 | SM | Engine drains the agenda — every item gets `analyze`, `pass`, or `prune` | Engine emits the synthesis trigger; AI produces chat answer + `present_result`. `complete: true` is silently ignored. |
 | MAX_ROUNDS cap | `ai.maxRounds` reached without completion | Partial archive discarded (`sess.memory.reset()`); actionable rerun message rendered. **All-or-nothing by design** — missing nodes can invert the picture. |
 
@@ -264,10 +264,10 @@ The orphan guard (`wouldOrphanNotedNode`) is content-blind. Engine guards are to
 
 ## Mechanical enforcement
 
-The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`. The AI cannot emit free-form text during the hop loop — it must call `submit_findings`.
+The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`, but every ACTIVE-mode toolset has ≥ 2 tools (inline BB: `submit_findings + present_result`; SM BB/CT: `submit_findings + get_neighbor_columns`), so per VS Code LM rules `Required` always falls back to `Auto`. The contract is enforced in `lineageParticipant.runHopLoop` by a toolless-drift corrective: when the engine is `awaiting_findings` and the AI emits free-form text instead of a tool call, a mode-specific corrective user message is pushed onto the envelope and the loop continues. `MAX_ROUNDS` is the safety net for repeated drift.
 
 - **Speed via verbs, not adjectives.** `verdict: "prune"` drains the agenda quickly → synthesis fires. No silent text bail.
-- **ACTIVE tool palette is narrow** — `submit_findings` only in inline BB; `+ get_neighbor_columns` in SM. Multi-tool would force `Required` to downgrade to `Auto` on some providers; the policy is enforced by [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts).
+- **ACTIVE tool palette by mode** — inline BB exposes `submit_findings + present_result` (Active + Synthesis collapsed into one agent loop); SM BB/CT exposes `submit_findings + get_neighbor_columns` (synthesis is a separate later turn after the agenda drains). Single source: [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts).
 - **Repeat-Reject Guard** — [`src/ai/repeatRejectGuard.ts`](../src/ai/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
 - **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here" — `complete: true` is silently ignored in SM mode.
 - **Classification gate at session lock-in.** `start_exploration` requires `classification` (`business` | `technical` | `both`); missing or invalid values are rejected at the Zod boundary — there is no engine fallback. The tool-param description in `package.json` biases the AI toward `business` for ambiguous intent (`technical` only for explicit perf/index/tuning asks; `both` only for explicit "both angles" requests). The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification at the tool handler boundary (`toolProvider.validateSectionsAgainstClassification`); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.

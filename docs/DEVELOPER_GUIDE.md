@@ -105,13 +105,22 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
      discover    → buildDiscoveryPrompt
      active      → buildActivePhasePrompt
                    + buildToolUsageBlock
-                   + buildModeBlock(BB|CT)
-                   + buildColumnAspectPrompt        (CT only)
+                   + buildModeBlock(isInline, targetColumns?, classification)
+                       — for isInline=true also embeds buildSynthesisPrompt() as
+                         the trailing "Synthesis Contract" so the AI can call
+                         present_result back-to-back with submit_findings in the
+                         same agent loop (Active + Synthesis collapsed)
+                       — buildColumnAspectPrompt is folded in when targetColumns set (CT)
      synthesis   → buildSynthesisPrompt
      completed   → buildDeferredQuestionsPrompt (when deferred questions exist)
                | buildFollowUpPrompt (otherwise)
-3. resolveStagePrompt                 (always — YAML *_capture (active) + per-field synthesis instructions; classification-gated; closing gated on slotCount ≥ 5)
-4. buildMissionBriefBlock                  (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
+3. resolveStagePrompt                 (always — YAML keys gated by stage + classification + slotCount; `closing` requires slotCount ≥ 5)
+                                      For inline-active it runs twice: once for `active` (capture keys
+                                      business_capture / technical_capture / structural_summary) and once
+                                      for `synthesis` (summary / title / intro / closing / highlights /
+                                      notes / general / loading_pattern). Both blocks ship in the same
+                                      bundled brief.
+4. buildMissionBriefBlock             (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
 5. buildMemoryBlock                   (SM active only — <short_term_memory> + tally)
 ```
 
@@ -125,7 +134,7 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | `buildSynthesisPrompt` | `prompts.ts` | Archive lift + assembly + intro/closing anchoring. |
 | `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
 | `buildToolUsageBlock` | `prompts.ts` | `submit_findings` / pruning usage. |
-| `buildModeBlock(isInline, targetColumns?)` | `smPrompts.ts` | BB verdict + analysis + routing; CT = BB + column protocol. |
+| `buildModeBlock(isInline, targetColumns?, classification)` | `smPrompts.ts` | Mode header + verdict + sections + badges + routing + pruning; CT adds column protocol. For `isInline=true` also prepends the Inline Turn Flow (two-call sequence: submit_findings → present_result) and appends the Synthesis Contract via `buildSynthesisPrompt()` (single source of truth, no duplication). |
 | `buildColumnAspectPrompt` | `prompts.ts` | CT protocol block — two-channel contract, role table, terminal source rules. Injected into stable system prompt when CT is active. |
 | `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. Renders accumulated `ColumnEdge[]` as a directed edge list so `present_result` anchors to the traced path. |
 | `buildCurrentTaskBlock(task, columns?)` | `prompts.ts` | `<current_task>` XML block; when `columns` are passed (CT active), appends `<column_trace>` sub-block with the structural lineage sub-question. |
