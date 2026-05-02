@@ -60,11 +60,10 @@ async function runTests() {
     'invalid depth_enforcement rejected',
   );
 
-  console.log('\n── depth type rejections ──');
-  assert(
-    !StartExplorationInputSchema.safeParse({ origin: '[s].[t]', classification: 'business', depth: '2' as any }).success,
-    'string depth rejected (must be number)',
-  );
+  console.log('\n── depth type coercion / rejections ──');
+  // String numerics are coerced to numbers (LLMs frequently emit "10" instead of 10).
+  const coercedDepth = StartExplorationInputSchema.safeParse({ origin: '[s].[t]', classification: 'business', depth: '2' as any });
+  assert(coercedDepth.success && coercedDepth.data.depth === 2, 'string "2" coerced to number 2');
   assert(
     !StartExplorationInputSchema.safeParse({ origin: '[s].[t]', classification: 'business', depth: 0 }).success,
     'zero depth rejected (must be positive)',

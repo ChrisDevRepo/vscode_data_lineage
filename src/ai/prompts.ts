@@ -70,7 +70,7 @@ export function buildGeneralSystemPrompt(
     '',
     `Current phase: ${phaseLabel}.`,
     '',
-    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
+    '**Grounding rule:** Every fact you state must come directly from data in the provided context — `focus_node` fields (`bb_ddl`, `cols[]`, `in[]`, `out[]`, `fks[]`), tool results, or prior captured slots. Never infer, construct, or invent object names, columns, neighbors, relationships, or SQL logic. If a field is absent or empty, state that explicitly ("None found in graph", "No downstream consumers") — do not guess based on naming conventions or assumed patterns.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,

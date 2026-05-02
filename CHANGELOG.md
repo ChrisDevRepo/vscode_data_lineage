@@ -6,6 +6,7 @@
 - **Inline mode delivers results in one turn** — small-scope traces now complete with a single AI round-trip (Active capture and Synthesis combined). Deep exploration and Column Tracing are unchanged.
 - **Formulas render reliably in the result panel** — mathematical expressions in AI descriptions now render consistently. Dollar signs in SQL and business text (amounts, column names) no longer produce rendering artifacts in the result panel.
 
+
 ## [0.9.x] - 2026-02 to 2026-04
 
 ### Added

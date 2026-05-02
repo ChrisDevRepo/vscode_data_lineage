@@ -224,7 +224,7 @@ None of these WM fields are stored — they are computed from the archive (or th
 | `sm_status` | `'awaiting_findings'` while draining — explicit "you are mid-loop" signal that survives sliding wipes |
 | `hop` | 1-based hop number |
 | `agenda_remaining` | Nodes still on the agenda |
-| `focus_node` | `{id, schema, name, type, bb_ddl, cols, fks, unresolved_refs}` for the current node — single object in SM mode, array in inline (batch) mode |
+| `focus_node` | `{id, schema, name, type, bb_ddl, cols, fks, unresolved_refs}` for bodied nodes; `{id, schema, name, type, cols, fks, in[], out[], unresolved_refs}` for non-bodied nodes (tables) — `in[]` lists upstream writers, `out[]` lists downstream readers; both are always present (empty array = confirmed zero neighbors). Single object in SM mode, array in inline batch. |
 | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, depth_from_origin, in_budget, in_approved_scope, would_trigger_action_required}` |
 | `current_task` | Sub-question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
 | `mission_brief` | AI-composed mission statement — set once at `start_exploration`, delivered verbatim every hop, survives sliding-memory wipes |

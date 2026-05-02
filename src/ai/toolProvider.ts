@@ -275,6 +275,25 @@ class ToolHandler {
       const m = this.requireModel();
       const g = this.requireGraph();
 
+      // Pre-Zod already_started guard: when an engine is live for this session
+      // and we're not in a refine-ratchet, any further start_exploration call is
+      // a duplicate — reject immediately before Zod can surface bad-param errors
+      // that cause the AI to retry with different params instead of submitting.
+      {
+        const preCheckPrior = sess.stateMachine as NavigationEngine | null;
+        const preCheckLive  = !!preCheckPrior && preCheckPrior.status !== 'complete';
+        const preCheckRefining = preCheckLive
+          && sess.phase.kind === 'awaiting_gate'
+          && sess.phase.gate.gate === 'confirm_sm_start';
+        if (preCheckLive && preCheckPrior!.sessionId === sess.id && !preCheckRefining) {
+          return this.logAndReturn('start_exploration', {
+            error: 'already_started',
+            hint: 'start_exploration is one-shot per turn. Use submit_findings to continue the current agenda. After complete_rejected, the unvisited neighbors are already queued at priority 3 — the next submit_findings will present one of them.',
+            next_action: 'submit_findings',
+          }, input);
+        }
+      }
+
       const parsed = StartExplorationInputSchema.safeParse(input);
       if (!parsed.success) {
         const issue = parsed.error.issues[0];

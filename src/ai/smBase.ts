@@ -1099,7 +1099,10 @@ export class NavigationEngine implements IHopStateMachine {
 
       const nodes = batchEntries.map(e => {
         const n = this.nodeMap.get(e.nodeId)!;
-        const fn = buildHopFocusNode(n, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
+        const fn = buildHopFocusNode(
+          n, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl',
+          this.model.neighborIndex, this.edgeTypeMap,
+        );
         if (this.depthBudget !== null) {
           const d = this.depthFromOrigin.get(e.nodeId);
           if (d !== undefined) fn.depth_from_origin = d;
@@ -1197,7 +1200,10 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const node = this.nodeMap.get(entry.nodeId)!;
-    const focusNode = buildHopFocusNode(node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl');
+    const focusNode = buildHopFocusNode(
+      node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl',
+      this.model.neighborIndex, this.edgeTypeMap,
+    );
 
     if (this.depthBudget !== null) {
       const d = this.depthFromOrigin.get(entry.nodeId);

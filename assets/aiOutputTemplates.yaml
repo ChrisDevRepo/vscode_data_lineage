@@ -150,6 +150,11 @@ business_capture:
     downstream, why each rule matters to the domain.
     </purpose>
 
+    ⛔ STRICT GROUNDING — analyze ONLY what is present in `bb_ddl` from the
+    focus_node. Do not invent business rules, formulas, thresholds, or
+    relationships that are not explicitly written in the DDL body. If a
+    construct is absent from the DDL, it does not exist in this analysis.
+
     Submit one section: `{ angle: "business", text: "<body>" }`. The
     archive has no length cap and synthesis lifts your text verbatim —
     write at the depth the node's role in answering the user's question
@@ -232,6 +237,13 @@ technical_capture:
     pattern, performance affordances and traps.
     </purpose>
 
+    ⛔ STRICT GROUNDING — analyze ONLY what is present in `bb_ddl` from the
+    focus_node. Do not invent indexes, partitioning strategies, performance
+    concerns, or object references that are not explicitly in the DDL body.
+    Performance observations must be traceable to actual SQL constructs in the
+    DDL (JOIN types, WHERE predicates, DISTINCT, subqueries). Do not speculate
+    about what "probably" exists. If it is not in the DDL, it is not in scope.
+
     Submit one section: `{ angle: "technical", text: "<body>" }`. The
     archive has no length cap; synthesis lifts your text verbatim. Write
     as deeply as the node's implementation warrants.
@@ -300,26 +312,37 @@ structural_summary:
     Describe what this node **is**; point to the surrounding procedures for
     what it **does**. Non-bodied nodes carry structure, not behaviour.
 
+    ⛔ STRICT GROUNDING — every section must be populated from the focus_node
+    data delivered in the context. Do NOT infer, assume, or invent any column
+    names, object names, neighbors, or relationships.
+    If a field is empty or absent in the focus_node, write the explicit
+    empty-case text shown below — never a guess.
+
     Required sections (use these headings exactly):
 
     ## Purpose
     One short sentence naming the role of this node in the pipeline.
+    Source: node id / type from focus_node.
 
     ## Columns
-    Render the columns list as a `| Column | Type | Role / ⚠️ |` table. Role
-    is a short phrase (key / dim / metric / audit / computed). Flag
-    nullability risks with ⚠️ inline. Factual metadata only.
+    Render ONLY columns present in `cols[]` from focus_node as a
+    `| Column | Type | Role / ⚠️ |` table. Role is a short phrase
+    (key / dim / metric / audit / computed). Flag nullable columns with ⚠️.
+    If `cols[]` is absent: write "Column metadata not available in current model."
 
     ## Upstream sources
-    Bulleted list of adjacent bodied nodes that **write to** this node. One
-    line per source: node id + one-sentence role.
+    Populate from `in[]` in focus_node — these are the nodes that write TO
+    this table. One line per entry: node id + one-sentence role.
+    If `in[]` is empty or absent: write "No upstream sources found in graph."
 
     ## Downstream consumers
-    Bulleted list of adjacent bodied nodes that **read from** this node. One
-    line per consumer: node id + one-sentence role.
+    Populate from `out[]` in focus_node — these are the nodes that read FROM
+    this table. One line per entry: node id + one-sentence role.
+    If `out[]` is empty or absent: write "No downstream consumers found in graph."
 
     ## Grain / keys
-    Primary key + common join keys from foreign keys. One short paragraph.
+    Derive from PK-flagged columns in `cols[]` and `fks[]` in focus_node only.
+    If neither is present: write "Key information not available in current model."
 
     Scope: structure and relationships only — the surrounding procedure slots carry all transform logic.
 

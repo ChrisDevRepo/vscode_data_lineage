@@ -16,6 +16,7 @@ import {
   type ColumnDef,
   type ObjectType,
   type AnalysisType,
+  type NeighborIndex,
 } from '../engine/types';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
 import { ColumnStore } from '../engine/columnStore';
@@ -58,7 +59,7 @@ export const StartExplorationInputSchema = z.object({
   question: z.string().optional(),
   targetColumns: z.array(z.string()).optional(),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
-  depth: z.number().int().positive().optional(),
+  depth: z.coerce.number().int().positive().optional(),
   depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
   excludeTypes: z.array(z.string()).optional(),
   /**
@@ -352,6 +353,8 @@ export function buildHopFocusNode(
   unrelatedMap: Map<string, string[]>,
   store?: ColumnStore,
   ddlKey = 'ddl',
+  neighborIndex?: NeighborIndex,
+  edgeTypeMap?: Map<string, string>,
 ): Record<string, unknown> {
   const focusNode: Record<string, unknown> = {
     id: node.id, s: node.schema, n: node.name, t: node.type,
@@ -369,7 +372,19 @@ export function buildHopFocusNode(
   const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
   const unrel = unrelatedMap.get(unrelKey);
   if (unrel?.length) focusNode.unresolved_refs = unrel;
-  return strip(focusNode) as Record<string, unknown>;
+
+  const result = strip(focusNode) as Record<string, unknown>;
+
+  // Non-bodied nodes (tables) carry no DDL body — the AI must ground structural_summary
+  // sections (Upstream sources / Downstream consumers) in actual graph edges, not guesses.
+  // Always emit in/out even when empty so the AI sees "zero neighbors" rather than absence.
+  if (!SCRIPT_TYPES.has(node.type) && neighborIndex && edgeTypeMap) {
+    const entry = neighborIndex[node.id] ?? { in: [], out: [] };
+    result.in  = entry.in.map(nid  => presentNeighbor(nid, node.id, nodeMap, edgeTypeMap, true));
+    result.out = entry.out.map(nid => presentNeighbor(nid, node.id, nodeMap, edgeTypeMap, false));
+  }
+
+  return result;
 }
 
 
