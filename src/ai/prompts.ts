@@ -383,7 +383,7 @@ export function buildToolUsageBlock(): string {
   return [
     '## Tool Constraints',
     '',
-    '1. Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth.',
+    '1. Use `lineage_submit_findings` to process focus nodes.',
     '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
   ].join('\n');
 }
