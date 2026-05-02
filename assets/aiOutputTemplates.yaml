@@ -98,15 +98,14 @@ closing:
     `| Risk | Scope |`. Draw from ⚠️ markers visible in the node
     summaries and note_captions; do not invent new risks.
   example: |
-    The CadenceWorker pipeline reloads from staging each run, applies a
-    nine-stage rule cascade (init → OOS gate → AC reallocation → integrity
-    correction → EV computation → exception overrides → reconciliation →
-    publish), and lands USD-converted facts in FactCadenceDetails.
+    The spBuildSalesReport pipeline reloads from staging each run, applies a
+    four-stage cascade (order staging → price calculation → discount
+    application → fact write), and lands USD-converted totals in FactSalesReport.
 
     | Risk | Scope |
     |---|---|
-    | ⚠️ Missing `vDataFilters` config NULLs `PctEVDirect` | All EV cases |
-    | ⚠️ Missing `LkpCurrencyRate` rows produce NULL KPIs | Final fact load |
+    | ⚠️ NULL UnitPrice in SalesOrderDetail collapses TotalRevenue | All revenue rows |
+    | ⚠️ Missing DimCurrency rows produce NULL CurrencyTotal | Final fact load |
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools.ts
 # from title + intro + sections[] + closing) — NOT an AI-writeable field.
@@ -160,9 +159,9 @@ business_capture:
 
     <emphasis>
     Highest-value content, in order:
-    1. **Formulas in LaTeX** — computed expressions (weights, thresholds,
+    1. **Formulas** — computed expressions (weights, thresholds,
        allocations, proportions, ratios, CASE branches, fallback values)
-       are clearest as math (`$expr$` inline, `$$expr$$` block).
+       expressed in math code fences (```math … ```).
     2. **Eligibility predicates** — which records qualify (status,
        country, flag, threshold). Quote the predicate values verbatim.
     3. **Allocation / decision rules** — what value each rule produces
@@ -183,7 +182,7 @@ business_capture:
        values, status transitions, audit-trail business events. Name
        what changes for the business when the rule fires; do not
        describe how SQL implements it.
-    3. Express formulas in LaTeX (`$expr$` inline, `$$expr$$` block) —
+    3. Express formulas in math code fences (```math … ```) —
        the math is the rule, no need to paraphrase it.
     4. Quote short SQL predicate VALUES inline as proof (the literal
        `'PENDING'`, `'Global'`, `> 0`, the column names being compared)
@@ -201,14 +200,17 @@ business_capture:
     9. Wrap column and object names in `\`backticks\``.
     </body_recipe>
   example: |
-    `spCalcRevenue` computes `TotalRevenue = $Qty \times UnitPrice$` at the
-    final INSERT into `FactSalesReport`, only for rows with
-    `Status = 'CONFIRMED'`.
+    `spCalcRevenue` computes `TotalRevenue` at the final INSERT into
+    `FactSalesReport`, only for rows with `Status = 'CONFIRMED'`.
+
+    ```math
+    TotalRevenue = Qty \times UnitPrice
+    ```
 
     1. `Qty` is line-item quantity sold, renamed from `OrderQty` in
        `CTE_Orders`.
     2. `UnitPrice` is list price after markup:
-       $UnitPrice = CostPrice \times (1 + MarkupPct)$.
+       `UnitPrice = CostPrice × (1 + MarkupPct)`.
     3. The fact row is INSERTed with `TotalRevenue` populated.
 
     | From | To | Business meaning |
@@ -418,12 +420,10 @@ general:
     Apply this rendering set across every assembled section so the document
     reads consistently end-to-end:
 
-    - **Formulas**: write as LaTeX `$expr$` whenever the captured body has a
-      computation (e.g. `$Revenue = Qty \times Price$`). For block math
-      (`$$…$$`) — multi-line CASE expressions, matrices, multi-step
-      derivations — put the opening `$$` and the closing `$$` on lines of
-      their own, with the body on the lines between. Inline content on the
-      opener line breaks the renderer.
+    - **Formulas**: write in a math code fence (```math … ```) whenever the
+      captured body has a computation — CASE expressions, multi-step
+      derivations, allocation formulas. Carry the formula verbatim from
+      the captured section body; do not re-express in prose.
     - **Column renames**: render as a `| From | To | Business meaning |`
       table whenever 3+ sibling columns share the rename shape. For 1–2
       renames, prose with backticks is enough.
@@ -438,7 +438,9 @@ general:
     These rules apply only when the captured body has the underlying material.
     Do not invent tables, formulas, or fences without source.
   example: >
-    Formula: $TotalRevenue = Qty \times UnitPrice \times (1 - Discount)$
+    ```math
+    TotalRevenue = Qty \times UnitPrice \times (1 - Discount)
+    ```
 
     | From | To | Business meaning |
     | --- | --- | --- |
