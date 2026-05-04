@@ -134,7 +134,7 @@ const HopFindingSchema = z.object({
    * (no analysis to record).
    */
   sections: z.array(CapturedSectionSchema).max(2),
-  summary: z.string(),
+  summary: z.string().max(500),
   verdict: z.enum(['analyze', 'pass', 'prune']),
   /**
    * Optional list of neighbors to queue for the next hops. Each entry's
@@ -156,8 +156,8 @@ const HopFindingSchema = z.object({
   })).optional(),
   prune_neighbors: z.array(z.string()).optional(),
   complete: z.boolean().optional(),
-  badge_label: z.string().optional(),
-  note_caption: z.string().optional(),
+  badge_label: z.string().max(50).optional(),
+  note_caption: z.string().max(200).optional(),
   column_flow: z.array(z.object({
     out_col: z.string(),
     writes_to: z.object({ node: z.string(), col: z.string() }).optional(),
