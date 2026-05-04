@@ -148,25 +148,18 @@ export function buildDiscoveryPrompt(): string {
 
 
 /**
- * Constructs the prompt for the Active (Hop-by-Hop or Full Run) phase.
+ * Constructs the prompt for the Active (Hop-by-Hop) phase.
  *
  * @remarks
- * Dynamically switches instructions based on whether the engine is in True Inline mode
- * or Sliding Memory mode, while sharing the core heuristic rules for node analysis.
- *
- * Scope: this builder owns only the per-call `submit_findings` rules (sections,
- * anchoring, math, routing). The two-call inline turn flow ("after
- * submit_findings, call present_result") and the synthesis assembly contract
- * for inline live in `buildModeBlock` in `smPrompts.ts` — kept there to stay
- * adjacent to the inline batch protocol and to reuse {@link buildSynthesisPrompt}
- * verbatim (single source of truth).
+ * Owns only the per-call `submit_findings` rules (sections, anchoring, math, routing).
+ * The mode block lives in `buildModeBlock` in `smPrompts.ts` to reuse
+ * {@link buildSynthesisPrompt} verbatim (single source of truth).
  *
  * @returns A formatted system instruction for the active phase.
  */
 export function buildActivePhasePrompt(): string {
   return [
     '# Active Exploration Protocol',
-    'Mode: SLIDING MEMORY — analyze nodes sequentially as presented.',
     '',
     '1. SECTIONS: **The archive is unbounded** — write as deeply as the focus node\'s role warrants. Capture every business rule the DDL exposes: each CASE branch, threshold, allocation formula, special-case predicate. Synthesis lifts your body verbatim, so depth here is depth in the final document.',
     '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
@@ -509,8 +502,7 @@ export function buildMemoryBlock(
  * via `LanguageModelChatToolMode.Required` and `toolPolicy`, so restating them in
  * prose is dead weight (per CLAUDE.md *"Per-hop prompts are rendered, not configured"*).
  *
- * Included only in SM active hops (inline-BB is one-shot; DISCOVERY and SYNTHESIS
- * use their own protocols).
+ * Included only in SM active hops (DISCOVERY and SYNTHESIS use their own protocols).
  *
  * @param hop - Current 1-based hop index.
  * @param total - Total nodes in the BFS scope.
