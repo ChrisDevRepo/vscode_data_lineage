@@ -19,18 +19,23 @@ Two responsibilities, two owners:
 
 | Owner | What they produce | Where it lives |
 |-------|-------------------|----------------|
-| **AI** writes structured PARTS | Per-hop: `business_capture` / `technical_capture` / `structural_summary` produces the section body bodies stored in `detail_slots[].sections[].text`. <br>Synthesis: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a slot), `closing`, `notes[]`, `highlight_groups[]`. | YAML templates in this file describe what the AI writes. |
+| **AI** writes structured PARTS | Discovery: chat prose styled by `discovery_chat`. <br>Per-hop active capture: `business_capture` / `technical_capture` / `structural_summary` produces the section bodies stored in `detail_slots[].sections[].text`. <br>Synthesis: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a slot), `closing`, `notes[]`, `highlight_groups[]`. | YAML templates in this file describe what the AI writes. |
 | **Engine** builds DETERMINISTIC outputs | The full markdown document shown in `AiDescriptionOverlay` (the description blob), section numbering (`## N {label}`), badge chips on the graph, `### Objects [name](#focus-node:id)` link headers. | `orderAndAssemble()` in [`src/ai/tools.ts`](../src/ai/tools.ts). No YAML template — there is intentionally no `description` instruction; if you find one in an old overlay, it is dead. |
+
+There are exactly **two user states** in the runtime:
+
+1. **Discovery** — the default chat state. AI uses catalog tools (search / get_object_detail / search_ddl / get_neighborhood / detect_graph_patterns) and answers in chat. `discovery_chat` from the YAML governs the prose style. No graph render.
+2. **SM** — gate-approved when the user wants a graph in the GUI, a deep multi-object analysis, or column tracing. SM has internal phases (active hops, then synthesis); both are governed by the active + synthesis YAML keys below.
 
 So the rendering pipeline reads:
 
 ```
-SM:     hop 1, hop 2, …, hop N    →  N archive slots  (capture keys)
-inline: one batched submit_findings →  N archive slots  (capture keys)
+DISCOVERY (chat-only): catalog tools → chat prose styled by discovery_chat. Done.
+
+SM (gate-approved): hop 1, hop 2, …, hop N  →  N archive slots  (capture keys)
                                           ↓
                        lift slot.text into present_result
-                  (SM = synthesis-phase turn after agenda drains;
-                   inline = same agent-loop turn as submit_findings)
+                       (synthesis-phase turn after agenda drains)
                                           ↓
               AI sends parts: title + intro + sections[] + closing
                                           ↓
@@ -44,18 +49,6 @@ inline: one batched submit_findings →  N archive slots  (capture keys)
 The lift+group+label rule for `sections[]` lives in `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts), not in the YAML — kept there to avoid duplication with the synthesis cue. Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
 
 When `classification === 'both'`, captured sections come in pairs per node (one business, one technical). Each angle becomes its own peer entry in `present_result.sections[]` — never nested as `#### Technical` subheadings.
-
-### Inline mode bundles the synthesis cue into the active brief
-
-Inline mode collapses the Active capture turn and the Synthesis turn into a single agent-loop turn (see [`ARCHITECTURE.md`](ARCHITECTURE.md#inline-vs-sm-execution)). Practically, the system prompt at the active-phase start ships every YAML key the AI needs for both calls:
-
-- The **active-stage** keys (`business_capture` / `technical_capture` / `structural_summary`) gate by classification and focus-node-bodied as in SM mode.
-- The **synthesis-stage** keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) ride alongside in the same brief — same `resolveStagePrompt` gate, same classification + slot-count rules.
-- The **synthesis assembly contract** from `buildSynthesisPrompt()` is embedded verbatim in `buildModeBlock(isInline=true)` (single source of truth — the synthesis-phase prompt and the inline brief reuse the same builder).
-
-Result: after the consent gate is approved, the AI receives one prompt with the full SM instruction set (verdicts, prune, label, sections, routing) and the full synthesis contract. It calls `submit_findings` (one batched call across all scope nodes) and then `lineage_present_result` back-to-back in the same turn, ordered by the `synthesis_reminder` cue carried in the `submit_findings` tool_result. SM mode is unchanged: the synthesis contract ships at the synthesis-phase boundary after the agenda drains, because the SM agenda is many hops long and shipping synthesis upfront would burn tokens with every hop wipe.
-
-CT mode is always SM (column tracing forces SM regardless of scope size), so the inline bundling does not apply to CT.
 
 ## Template gate — what fires when
 
@@ -95,7 +88,7 @@ The contract is locked mechanically at the tool handler boundary: each `submit_f
 
 ### Column trace mode
 
-Column trace is activated when `start_exploration` is called with `targetColumns`. CT forces SM regardless of scope size.
+Column trace is activated when `start_exploration` is called with `targetColumns`. CT runs as part of SM (it is one of the three gate triggers).
 
 **Per-hop binary gate — map or prune**
 
@@ -134,6 +127,14 @@ Column-level validation on `route_requests` — the AI cannot route to a non-exi
 **Follow-up column traces from `completed` phase.** When the user asks a follow-up column question after a completed trace, the AI calls `start_exploration` with the same origin node and new `targetColumns`. If the origin matches the prior result (`sess.resultGraph.originNodeId`), `toolProvider.ts` auto-routes to the supplement path: `supplementAgenda(visitedIds)` re-queues all previously visited nodes in SM, `setColumnTargets(targetColumns)` updates the engine's column-trace context, and the session re-enters `exploring` without a gate or archive wipe. Different-origin follow-ups still trigger a fresh start with gate confirmation.
 
 ## Key inventory — purpose & maintenance
+
+### Discovery — chat output style
+
+| Key | Purpose | Edit this when |
+|-----|---------|----------------|
+| `discovery_chat` | Discovery-phase chat output guidance: answer length, citation discipline, single-vs-balanced format, no-padding rule, plus the biz / tech / math reference shapes used when writing chat prose. NOT a capture template; full angle templates ship only after SM gate approval. | Tightening or loosening the chat answer style; changing whether single-fact answers stay short vs. balanced summaries kick in for general questions; adjusting the framing references the AI uses when describing an object in chat. |
+
+This single key is the canonical surface for tuning what discovery answers look like. The routing logic itself (when discovery answers in chat vs. when AI escalates to SM via `lineage_start_exploration`) lives in code (`buildDiscoveryPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts)) because it is mechanically paired with the state machine — editing routing in YAML could break the FSM. Editing the YAML never breaks routing.
 
 ### Synthesis — fields the AI writes from scratch
 

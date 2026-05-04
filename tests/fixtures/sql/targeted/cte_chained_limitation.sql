@@ -4,7 +4,7 @@
 -- Paren-balanced body detection finds exact CTE boundaries (no magic-number window).
 --
 -- Previously a by-design limitation; resolved after 10 real-world SPs hit this pattern
--- (CadenceWorker EV/exception rules using UPDATE alias SET ... FROM cte_chain).
+-- (UPDATE alias SET ... FROM cte_chain over chained CTEs).
 --
 -- EXPECT  sources:[dbo].[SalesOrder]  targets:[dbo].[SalesOrder]
 

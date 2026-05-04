@@ -32,10 +32,10 @@ The assistant can trace dependencies, build bookmarked graph views, and analyse 
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
-`@lineage` adapts to the size of the question:
+`@lineage` has two modes of operation:
 
-- **Small scopes run inline** — the AI sees all relevant DDL at once and answers directly. If a relevant dependency falls outside your filter schemas, it pauses and asks you to approve extending the scope for this session.
-- **Large scopes run hop-by-hop** — before the first hop the assistant shows you the planned scope (nodes, schemas, depth, budget) and asks for confirmation. Once approved the contract is locked.
+- **Discovery (chat)** — most ad-hoc questions are answered directly in chat. The AI uses catalog tools to look up DDL, columns, and direct neighbours, then writes a grounded answer.
+- **Sliding-Memory (graph render + deep analysis)** — when you ask for a graph rendered in the GUI, a detailed multi-object analysis, or a column trace, the assistant first shows you the planned scope (nodes, schemas, depth, budget) and asks for confirmation. Once approved, it walks the graph hop-by-hop and renders the result.
 
 Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
 

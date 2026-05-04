@@ -35,15 +35,6 @@ async function runTests() {
     assertEq(tools.size, 6, 'discover: exactly 6 tools');
   }
 
-  console.log('\n── active / inline_bb ──');
-  {
-    const tools = getAllowedLmToolNames({ kind: 'active', mode: 'inline_bb' });
-    assert(tools.has('lineage_submit_findings'),       'submit_findings present');
-    assert(tools.has('lineage_present_result'),        'present_result present (inline collapses Active+Synthesis into one turn)');
-    assert(!tools.has('lineage_get_neighbor_columns'), 'get_neighbor_columns absent (no DDL fetch in inline)');
-    assertEq(tools.size, 2, 'inline_bb: exactly 2 tools (submit_findings + present_result)');
-  }
-
   console.log('\n── active / sm_bb ──');
   {
     const tools = getAllowedLmToolNames({ kind: 'active', mode: 'sm_bb' });
@@ -83,12 +74,8 @@ async function runTests() {
   // ── activeModeOf ─────────────────────────────────────────────────────────
 
   console.log('\n── activeModeOf ──');
-  assertEq(activeModeOf(true, false),  'inline_bb', 'inlineMode=true → inline_bb');
-  assertEq(activeModeOf(false, false), 'sm_bb',     'inlineMode=false, no CT → sm_bb');
-  assertEq(activeModeOf(false, true),  'sm_ct',     'inlineMode=false, CT → sm_ct');
-  // inlineMode wins even when CT flag is set — CT forces SM at a higher gate, so this
-  // combination should not occur in practice, but the function still returns inline_bb.
-  assertEq(activeModeOf(true, true), 'inline_bb', 'inlineMode wins over CT flag');
+  assertEq(activeModeOf(false), 'sm_bb', 'no CT → sm_bb');
+  assertEq(activeModeOf(true),  'sm_ct', 'CT active → sm_ct');
 
   // ── filterLmTools ────────────────────────────────────────────────────────
 

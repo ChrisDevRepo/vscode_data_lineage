@@ -166,13 +166,11 @@ export interface ActionRequiredGate {
    * The gate sub-type — drives the cache key used for "don't ask again this session".
    *
    * @remarks
-   * - `confirm_sm_start` — session-entry consent (SM mode).
-   * - `schema_out_of_filter` / `depth_cap_exceeded` / `schema_and_depth` — inline-mode mid-session expansion.
-   *
-   * SM-mode out-of-scope exploration is surfaced as a post-synthesis button
-   * (`dataLineageViz.showDeferredQuestions`), not as a gate.
+   * `confirm_sm_start` is session-entry consent. SM-mode out-of-scope exploration
+   * is surfaced as a post-synthesis button (`dataLineageViz.showDeferredQuestions`),
+   * not as a gate.
    */
-  gate: 'schema_out_of_filter' | 'depth_cap_exceeded' | 'schema_and_depth' | 'confirm_sm_start';
+  gate: 'confirm_sm_start';
   /** The specific class being requested (e.g. "schema:dbo" or "depth:+1"). Confirmations cache per-class. */
   classes: string[];
   /** Human-readable question rendered in chat, ready for yes/no reply. */
@@ -194,13 +192,10 @@ export type HopFocusNode = Record<string, unknown>;
  * Encapsulates all information delivered to the AI for a single navigation hop.
  *
  * @remarks
- * `mode` is stamped once at `start_exploration` based on the two metrics (scope node
- * count + token budget) and never flips. CT is always `sm`. Consumers can narrow
- * `focus_node` by reading `mode` (or by `Array.isArray(focus_node)`).
+ * SM ships one focus node per hop. CT activates when `targetColumns` is provided
+ * at `start_exploration` and operates within the same SM hop loop.
  */
 export interface HopContext {
-  /** Execution mode — decided once at engine init. `inline` ships a batch; `sm` ships one node per hop. */
-  mode?: 'inline' | 'sm';
   /** Set to `true` if there are no more nodes to visit in the agenda. */
   done?: boolean;
   /** Explicit engine status, delivered every hop. */
@@ -209,8 +204,8 @@ export interface HopContext {
   hop?: number;
   /** Count of nodes still on the agenda. */
   agenda_remaining?: number;
-  /** The node(s) currently being analyzed. Single object in SM mode; array in inline (batch) mode. */
-  focus_node?: HopFocusNode | HopFocusNode[];
+  /** The node currently being analyzed. */
+  focus_node?: HopFocusNode;
   /** List of immediate neighbors available for further exploration. */
   neighbors?: HopNeighbor[];
   /** The specific sub-goal guiding this hop. */
@@ -268,9 +263,8 @@ export interface HopFinding {
 
 /**
  * Data structure used by the AI to submit its findings after analyzing a hop.
- * In True Inline Mode, this can be an array of findings for batch processing.
  */
-export type HopSubmission = HopFinding | HopFinding[];
+export type HopSubmission = HopFinding;
 
 /** 
  * A request to add a specific node to the navigation agenda.
@@ -324,16 +318,11 @@ export type SubmitResult =
       cascaded_count?: number;
       /** Per-route disposition for every entry in the submitted `route_requests` (accepted vs deferred). */
       route_outcomes?: RouteOutcome[];
-      /**
-       * Signals the engine has auto-completed. Present when:
-       * (a) the session is in inline mode and `complete=true` was submitted, or
-       * (b) the session is in SM sliding-memory mode and this verdict just drained the agenda.
-       */
+      /** Signals the engine has auto-completed because this verdict drained the agenda. */
       done?: true;
       /** Final synthesized result. Present iff `done: true`. */
       result?: SmResult;
     }
-  | ActionRequiredGate
   | {
       /** Human-readable error code for AI feedback. */
       error: string;
@@ -462,8 +451,6 @@ export interface ScopeSummary {
   depth: number | null;
   /** Exploration direction set at `start_exploration`. */
   direction: 'upstream' | 'downstream' | 'bidirectional';
-  /** True when the gate proposes inline (one-shot) mode; false for sliding-memory. */
-  inlineMode: boolean;
   /** True when the session has `targetColumns` (column-trace aspect). */
   columnAspectActive: boolean;
   /** Target columns being traced, present when `columnAspectActive` is true. */
@@ -583,8 +570,6 @@ export interface SmState {
   scopeSize: number;
   /** List of all node IDs currently in the exploration scope. */
   scopeNodeIds: string[];
-  /** Whether the session is operating in True Inline mode. */
-  inlineMode: boolean;
   /** Set of node IDs already visited by the engine. */
   visited: string[];
   /** Set of node IDs explicitly pruned from the exploration. */

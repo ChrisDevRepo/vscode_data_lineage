@@ -46,6 +46,7 @@ export type TemplateStage = 'discover' | 'active' | 'synthesis';
  * `buildSynthesisPrompt()` to avoid duplication with the synthesis cue.
  */
 export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
+  discovery_chat:       ['discover'],
   summary:              ['synthesis'],
   title:                ['synthesis'],
   intro:                ['synthesis'],

@@ -85,29 +85,9 @@ const graph = makeGraph(nodes, edges);
   assert(ctx2.working_memory.topological_map.navigation_path === 'origin → child_a', 'path 2');
 }
 
-// Inline mode completion contract
+// SM mode completion contract: AI's complete:true is silently ignored — engine owns termination
 {
   const engine = new NavigationEngine(model, graph, () => {}, {});
-  engine.setInlineMode(true);
-  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
-
-  engine.getHopContext();
-  const result = engine.submitFindings({
-    focus_node_id: 'origin',
-    sections: [{ angle: 'business' as const, text: 'ok' }],
-    summary: 'ok',
-    verdict: 'analyze',
-    complete: true,
-  });
-
-  assert('done' in result && result.done === true, 'Inline mode should allow AI-driven completion');
-  assert(engine.status === 'complete', 'status complete');
-}
-
-// SM mode completion contract: reject complete=true
-{
-  const engine = new NavigationEngine(model, graph, () => {}, {});
-  engine.setInlineMode(false);
   engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
 
   engine.getHopContext();
@@ -119,7 +99,7 @@ const graph = makeGraph(nodes, edges);
     complete: true,
   } as any);
 
-  assert(!('done' in result), 'SM mode should ignore or reject complete:true');
+  assert(!('done' in result), 'SM should ignore complete:true — engine owns termination');
   assert(engine.status === 'exploring', 'status exploring');
 }
 

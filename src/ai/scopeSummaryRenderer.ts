@@ -33,14 +33,13 @@ export function renderScopeSummaryMd(s: ScopeSummary): string {
   const lines: string[] = [];
   const dirLabel = s.direction === 'bidirectional' ? 'bidirectional' : s.direction;
   const depthLabel = s.depth !== null ? `depth ${s.depth}` : 'unbounded depth';
-  const modeLabel = s.inlineMode ? 'Inline (one-shot)' : 'Sliding-Memory (multi-hop)';
   const colLabel = s.targetColumns?.length ? ` — columns: [${s.targetColumns.join(', ')}]` : '';
   const traceLabel = s.columnAspectActive ? `Column-Trace${colLabel}` : 'Blackboard';
 
   lines.push('### Exploration plan (proposed)');
   lines.push('');
   lines.push(`- **${plural(s.hopCount, 'hop')}** · **${plural(s.scopeCount, 'node')} in scope** · ${depthLabel}, ${dirLabel}`);
-  lines.push(`- **Mode:** ${modeLabel} · **Tracing:** ${traceLabel}`);
+  lines.push(`- **Tracing:** ${traceLabel}`);
   lines.push('');
 
   const passSet = new Set(s.activeFilters.passNodeIds.map(n => n.toLowerCase()));

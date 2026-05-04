@@ -9,16 +9,13 @@ One turn of a `@lineage` question. The diagram encodes **ownership** (who termin
 ```mermaid
 flowchart LR
     U([User question]):::user --> D[Discovery]:::ai
-    D -->|Class D| R1[Direct answer]:::ai
+    D -->|chat answer| R1[Direct answer in chat]:::ai
     R1 --> EX(((End))):::done
-    D -->|Class S| GG[/Gate: confirm_sm_start<br/>tree + 3 buttons/]:::engine
-    GG -->|approve| MD{Mode at lock-in<br/>≤10 nodes &amp; ≤10k tokens?}:::engine
-    MD -->|yes| IN[Inline run]:::ai
-    MD -->|no| SM[SM hop loop]:::engine
+    D -->|graph / detail / CT / over-budget| GG[/Gate: confirm_sm_start<br/>tree + 3 buttons/]:::engine
+    GG -->|approve| SM[SM hop loop]:::engine
     GG -->|refine| GG
     GG -->|cancel| EX
-    IN --> SY[Synthesis]:::ai
-    SM --> SY
+    SM --> SY[Synthesis]:::ai
     SY --> C{{Completed}}:::done
     C -.->|fresh question| U
     C -.->|supplement| SM
@@ -29,17 +26,16 @@ flowchart LR
     classDef done stroke:#388e3c,stroke-width:2px,stroke-dasharray:4 2
 ```
 
-Legend (border colour only — interior follows light/dark theme): purple = user-driven · blue = AI-driven · orange = engine-driven · green dashed = terminator. Termination authority is therefore: AI in Discovery / Inline / Synthesis, Engine in SM hop loop and the consent gate.
+Legend (border colour only — interior follows light/dark theme): purple = user-driven · blue = AI-driven · orange = engine-driven · green dashed = terminator. Termination authority is therefore: AI in Discovery / Synthesis, Engine in SM hop loop and the consent gate.
 
 | Phase | Owner | Behaviour |
 |-------|-------|-----------|
-| **Discovery** | AI | Searches the catalog and classifies the question. **Class D** = single object or graph-wide metadata, answered directly. **Class S** = relationships spanning ≥2 connected objects, hands off to the engine via `start_exploration`. |
-| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every Class-S exploration. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. Mode (Inline / Sliding-Memory) is decided at lock-in based on the post-filter scope size + DDL cost (≤10 nodes ∧ ≤10k tokens → Inline) — refining can flip the mode. |
-| **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
-| **Inline run** | AI | One-shot analysis collapsing Active capture and Synthesis into a single agent-loop turn. After gate approval the engine ships one unified brief (full DDL + verdict/sections/badge/routing/pruning + synthesis contract + synthesis-stage YAML keys); the AI calls `submit_findings` (batched), reads the `synthesis_reminder` from its tool_result, and calls `lineage_present_result` in the same turn. Self-terminates with `complete: true` on the final finding. |
+| **Discovery** | AI | Default chat state. Uses catalog tools (`search_objects`, `get_object_detail`, `search_ddl`, `get_neighborhood`, `detect_graph_patterns`) and answers in chat. Escalates via `lineage_start_exploration` only when the user wants a graph rendered, a detailed multi-object analysis, column tracing, or when the engine has rejected an over-budget catalog request. |
+| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every escalation. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. |
+| **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |
-| **Completed** | User | Holds the result graph. Three convergent operations (no gate, no wipe): (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes inline; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). |
+| **Completed** | User | Holds the result graph. Three convergent operations (no gate, no wipe): (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes via SM; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). |
 
 ## Component map
 
@@ -79,7 +75,7 @@ The webview never talks to the engine directly. **Map** (engine, deterministic) 
 | Chat surface | `vscode.lm` / `ChatResponseStream` | VS Code chat API — `sendRequest`, tool results, stream writer |
 | `lineageParticipant` | [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) | Turn handler, phase dispatch, system-prompt assembly (`buildStageSystemPrompt`), gate finalizer (`dispatchExit`) |
 | `toolProvider` | [`src/ai/toolProvider.ts`](../src/ai/toolProvider.ts) | Tool registration, Zod boundary, classification-locked `submit_findings` validation, scope-budget preflight |
-| `toolPolicy` | [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) | Phase × mode tool filter — single source of truth for which LM tools are exposed in discover / active-inline / active-SM / synthesis / completed |
+| `toolPolicy` | [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) | Phase × mode tool filter — single source of truth for which LM tools are exposed in discover / active-SM (BB or CT) / synthesis / completed |
 | `NavigationEngine` | [`src/ai/smBase.ts`](../src/ai/smBase.ts) | Map owner — agenda, visited set, route validation, scope summary, deferred-question bucket |
 | `scopeSummaryRenderer` | [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) | Pure markdown renderer for the `confirm_sm_start` gate detail (Schema → Type → Node tree + active filters), driven by `ScopeSummary` from the engine |
 | `templateRenderer` | [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) | Two-stage gate on YAML keys: `STAGE_BY_KEY` (phase routing) then `CLASSIFICATION_GATED` (per-classification filter) |
@@ -114,39 +110,46 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 
 ## Tools per phase
 
-[`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) is the single source of truth. Every ACTIVE-mode toolset has ≥ 2 tools (inline BB: `submit_findings + present_result`; SM BB/CT: `submit_findings + get_neighbor_columns`), so `toolMode.Required` always falls back to `Auto` per VS Code LM rules. The toolless-drift corrective in `lineageParticipant.runHopLoop` (gate on `engine.status === 'awaiting_findings'`) is what actually enforces the contract — for both inline and SM, with mode-specific corrective text.
+[`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) is the single source of truth. The ACTIVE toolset (`submit_findings + get_neighbor_columns`) has 2 tools so `toolMode.Required` falls back to `Auto` per VS Code LM rules. The toolless-drift corrective in `lineageParticipant.runHopLoop` (gate on `engine.status === 'awaiting_findings'`) is what actually enforces the contract.
 
-| Tool | Discovery | ACTIVE inline BB | ACTIVE SM (BB+CT) | Synthesis | Completed | Purpose |
-|------|:---------:|:----------------:|:-----------------:|:---------:|:---------:|---------|
-| `get_context` | ✓ | — | — | — | — | Schemas, stats, active filter |
-| `search_objects` | ✓ | — | — | — | ✓ | Resolve name / column → ID |
-| `search_ddl` | ✓ | — | — | — | ✓ | Regex over SP / view / function bodies |
-| `get_object_detail` | ✓ | — | — | — | ✓ | Full metadata + DDL + neighbours for one object |
-| `get_neighbor_columns` | — | — | ✓ | — | — | Columns + types + FKs for direct neighbours (no DDL); used for prune decisions |
-| `detect_graph_patterns` | ✓ | — | — | — | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
-| `start_exploration` | ✓ | — | — | — | ✓ (supplement) | Hand off to the state machine |
-| `submit_findings` | — | ✓ | ✓ | — | — | Submit hop analysis + route + prune. Required mode. |
-| `present_result` | — | ✓ | — | ✓ | ✓ | Author the final report (sections, summary, highlights). Inline BB exposes it in ACTIVE so the AI can call it back-to-back with `submit_findings` in the same turn (Active + Synthesis collapsed). |
+| Tool | Discovery | ACTIVE SM (BB+CT) | Synthesis | Completed | Purpose |
+|------|:---------:|:-----------------:|:---------:|:---------:|---------|
+| `get_context` | ✓ | — | — | — | Schemas, stats, active filter |
+| `search_objects` | ✓ | — | — | ✓ | Resolve name / column → ID |
+| `search_ddl` | ✓ | — | — | ✓ | Regex over SP / view / function bodies |
+| `get_object_detail` | ✓ | — | — | ✓ | Full metadata + DDL + neighbours for one object |
+| `get_neighbor_columns` | — | ✓ | — | — | Columns + types + FKs for direct neighbours (no DDL); used for prune decisions |
+| `detect_graph_patterns` | ✓ | — | — | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
+| `start_exploration` | ✓ | — | — | ✓ (supplement) | Hand off to the state machine |
+| `submit_findings` | — | ✓ | — | — | Submit hop analysis + route + prune. Required mode. |
+| `present_result` | — | — | ✓ | ✓ | Author the final report (sections, summary, highlights). |
 
-## Class D / Class S routing contract
+## Discovery escalation contract
 
-- **Class D — Direct.** One named object in isolation OR graph-wide metadata. Answered directly via chat using discovery tools. Never used to narrate "flow", "lineage", or "join path" across multiple neighbours.
-- **Class S — State machine.** Analysis or visualisation of relationships spanning ≥ 2 connected objects. Routes to `start_exploration`. Any "lineage graph", "annotated trace", or "explain the joins / pipeline" request must use Class S.
-- **Tiebreaker.** Prefer Class S when ambiguous.
+Discovery is the default chat state. The AI escalates to SM via `lineage_start_exploration` (which emits `confirm_sm_start`) only when:
 
-## Inline vs SM execution
+- (a) The user asks for a **graph / visualization / diagram / picture** in the GUI.
+- (b) The user asks for a **detailed analysis** spanning multiple objects — verbs like "analyze / explain / walk through / trace / track", nouns like "lineage / dependencies / pipeline / impact", scope qualifiers like "direct neighbours / between A and B".
+- (c) The user requests **column tracing** (`targetColumns`).
+- (d) The engine has rejected a catalog request as `over_discovery_budget` — the rejection's `hint` names `lineage_start_exploration` as the next action.
 
-| Dimension | Inline mode | SM (sliding-memory) mode |
-|-----------|-------------|--------------------------|
-| **Trigger** | Scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`, no column tracing | Scope exceeds either threshold, or column tracing active |
-| **Context** | Full DDL + columns for ALL scope nodes shipped at once | Focus DDL + sliding window of last 3 node summaries |
-| **Brief delivery** | One unified brief at the active-phase start: verdict / sections / badge / routing / pruning / column-aspect (if any) **plus the full Synthesis Contract and synthesis-stage YAML keys**. AI calls `submit_findings` (batched) then `lineage_present_result` back-to-back inside the same agent loop — no second-turn synthesis prompt swap. | Per-hop SM brief: same verdict/sections/badge/routing/pruning every hop, focus DDL rotates. Synthesis contract ships at the synthesis-phase boundary after the agenda drains. |
-| **Tools in ACTIVE** | `submit_findings` + `present_result` (both in the same stage) | `submit_findings` + `get_neighbor_columns` |
-| **History** | Not wiped | Wiped every hop |
-| **Termination** | AI sets `complete: true`; `submit_findings` tool_result carries the `synthesis_reminder` cue that orders the trailing `present_result` call | Engine drains agenda; `complete: true` silently ignored |
-| **Mid-session out-of-scope route** | Engine emits `action_required` consent gate | Engine `deferQuestion(...)`; surfaced at synthesis |
+If the user's intent is ambiguous, the AI asks one clarifying question and calls no tool that turn.
 
-True Inline runs Blackboard only; any session with a Column Aspect is forced to SM regardless of scope size. The synthesis contract for inline is **reused verbatim** from `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts) — single source of truth, embedded inside `buildModeBlock(isInline=true)` in [`src/ai/smPrompts.ts`](../src/ai/smPrompts.ts). The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) ride alongside the active-stage keys in the same brief; both go through the same `resolveStagePrompt` gate so classification + slot-count rules apply identically.
+## SM execution
+
+There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) when `targetColumns` is set. SM is gate-approved before the first hop runs.
+
+| Dimension | SM (sliding-memory) |
+|-----------|---------------------|
+| **Trigger** | User explicitly requests a graph, a detailed multi-object analysis, or column tracing; OR engine rejects an over-budget discovery catalog request |
+| **Context** | Focus DDL + sliding window of last 3 node summaries |
+| **Brief delivery** | Per-hop brief: verdict / sections / badge / routing / pruning every hop, focus DDL rotates. Synthesis contract ships at the synthesis-phase boundary after the agenda drains. |
+| **Tools in ACTIVE** | `submit_findings` + `get_neighbor_columns` |
+| **History** | Wiped every hop |
+| **Termination** | Engine drains agenda; `complete: true` silently ignored |
+| **Mid-session out-of-scope route** | Engine `deferQuestion(...)`; surfaced at synthesis |
+
+The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompts.ts`](../src/ai/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
 ## Memory model
 
@@ -248,13 +251,12 @@ None of these WM fields are stored — they are computed from the archive (or th
 
 ## Completion contract
 
-| Mode | Trigger | What happens |
-|------|---------|--------------|
-| Inline | AI sets `complete: true` on `submit_findings` | Tool returns `{ ok: true, done: true, result }` with a `synthesis_reminder` cue; AI calls `present_result` back-to-back inside the same agent loop. |
-| SM | Engine drains the agenda — every item gets `analyze`, `pass`, or `prune` | Engine emits the synthesis trigger; AI produces chat answer + `present_result`. `complete: true` is silently ignored. |
-| MAX_ROUNDS cap | `ai.maxRounds` reached without completion | Partial archive discarded (`sess.memory.reset()`); actionable rerun message rendered. **All-or-nothing by design** — missing nodes can invert the picture. |
+| Trigger | What happens |
+|---------|--------------|
+| Engine drains the agenda — every item gets `analyze`, `pass`, or `prune` | Engine emits the synthesis trigger; AI produces chat answer + `present_result`. `complete: true` is silently ignored. |
+| `ai.maxRounds` reached without completion | Partial archive discarded (`sess.memory.reset()`); actionable rerun message rendered. **All-or-nothing by design** — missing nodes can invert the picture. |
 
-Three verdicts (SM mode):
+Three verdicts:
 
 - `analyze` — full analysis stored; drives badges and notes.
 - `pass` — visited, no analysis stored. Intended for variant siblings of an already-analysed archetype.
@@ -282,7 +284,7 @@ These are observed in production logs; the mitigations are real code paths, not 
 
 | Mode | Symptom | Mitigation |
 |------|---------|------------|
-| **Parallel `start_exploration` storm** | After a `complete_rejected`, the AI emits N parallel `start_exploration` calls (one per unvisited neighbour) and wipes the accumulated archive. | Hard guard in `toolProvider.ts`: rejects calls 2..N within one LM round with `{error:'parallel_call_forbidden', hint}`. Prose hints alone are not binding. |
+| **Multiple `start_exploration` storm** | After a `complete_rejected`, the AI emits multiple `start_exploration` calls in one LM round and wipes the accumulated archive. | Hard guard in `toolProvider.ts`: rejects calls 2..N within one LM round with `{error:'parallel_call_forbidden', hint}`. Prose hints alone are not binding. |
 | **DDL overflow** | One hop returns a 50K-char tool result (verbose log SP) and the next hop's input jumps from ~7K to ~17K tokens. | Full DDL is shipped per hop (no truncation, no refetch — simpler contract). On a > 500K-char mega-proc the provider's token limit surfaces naturally; the user prunes via `prune_neighbors` or refines the start scope. |
 | **Synthesis on empty archive** | Final round receives the synthesis prompt but no archive slots — output is truncated with no `present_result`. | Detect empty-archive synthesis and emit a user-facing warning + re-run suggestion. |
 
@@ -347,7 +349,7 @@ One `AiSession` per extension instance.
 Two complementary guards keep the loop inside the user's declared scope:
 
 1. **Preflight gate** — at `start_exploration`, SM sessions whose initial BFS scope exceeds `ai.maxRounds × 0.7` are rejected with `scope_exceeds_budget`. The AI receives a `safe_depth_hint` and asks the user to narrow the question.
-2. **Per-hop consent gate** — during ACTIVE, any route leaving the schema filter or exceeding the depth cap returns an `action_required` envelope. Inline mode pauses for yes/no; SM mode silently defers (deferred questions surface at synthesis).
+2. **Per-hop deferral** — during ACTIVE, any route leaving the schema filter or exceeding the depth cap is silently deferred via `engine.deferQuestion(...)`. The deferred questions surface at synthesis (rendered as the "Unanswered" section) and to the user post-turn via the `dataLineageViz.showDeferredQuestions` button.
 
 ## Glossary
 
@@ -355,12 +357,10 @@ Two complementary guards keep the loop inside the user's declared scope:
 |------|---------|
 | **Map** | Deterministic state owned by `NavigationEngine`: agenda, visited set, neighbour metadata, gates. |
 | **Router** | Semantic decisions made by the AI: sub-question, verdict, route requests, prune judgements. |
-| **Class D** | Direct answer via discovery tools — one isolated object or graph-wide metadata. No "flow" narration. |
-| **Class S** | State-machine exploration via `start_exploration` — anything spanning ≥ 2 connected objects. |
-| **BB** (Blackboard) | Default nav mode. Used when no target columns are specified. |
-| **CT** (Column Trace) | Nav mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus the CT addition: `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every non-prune verdict; engine rejects with `column_flow_required` if omitted. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
-| **Inline mode** | Single-turn execution for scopes within `inlineNodeCap` and `inlineTokenBudget`. After gate approval the AI receives one brief (full DDL + synthesis contract); calls `submit_findings` (batched across all scope nodes) then `present_result` back-to-back inside the same agent loop, ordered by the `synthesis_reminder` cue. AI sets `complete: true` in the final finding to end the batch. |
-| **SM mode** | Hop-by-hop execution for larger scopes. Memory wiped each hop; engine owns termination. |
+| **Discovery** | Default chat state — AI uses catalog tools and answers in chat. Cannot render a graph or sustain large-BFS analysis; both require SM. |
+| **SM (Sliding-Memory)** | Gate-approved hop-by-hop execution. Triggered by graph-render request, detailed multi-object analysis, column tracing, or engine `over_discovery_budget` rejection. Memory wiped each hop; engine owns termination. |
+| **BB** (Blackboard) | Default SM analysis mode. Used when no target columns are specified. |
+| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus the CT addition: `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every non-prune verdict; engine rejects with `column_flow_required` if omitted. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |
 | **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours. |
 | **Detail Archive** | Per-node full `analysis` text, written each hop, shipped only at synthesis. |

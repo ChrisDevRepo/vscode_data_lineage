@@ -11,15 +11,11 @@
  * | Stage                     | Tools                                                                                            |
  * |---------------------------|--------------------------------------------------------------------------------------------------|
  * | `discover`                | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, start_exploration |
- * | `active` (inline_bb)      | submit_findings, present_result                                                                  |
  * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | present_result                                                                                    |
  * | `completed`               | present_result, get_object_detail, search_ddl, search_objects, start_exploration (supplement-only) |
  *
- * Inline BB exposes both `submit_findings` and `present_result` in the same
- * active stage so the AI can drain the batch and author the report inside one
- * agent loop — no second-turn synthesis prompt swap. SM modes keep
- * `present_result` synthesis-only because the agenda drains across many hops.
+ * SM keeps `present_result` synthesis-only because the agenda drains across many hops.
  *
  * Deliberately excluded from every LM phase: `lineage_get_neighborhood` — it
  * overlaps `start_exploration` (BFS + DDL without engine supervision) and
@@ -28,7 +24,7 @@
  */
 
 /** Mode variant of the ACTIVE phase. */
-export type ActiveMode = 'inline_bb' | 'sm_bb' | 'sm_ct';
+export type ActiveMode = 'sm_bb' | 'sm_ct';
 
 /**
  * Discriminated stage descriptor passed to {@link getAllowedLmToolNames} /
@@ -101,15 +97,8 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
     case 'completed':
       return new Set(COMPLETED_TOOLS);
     case 'active': {
-      const tools: string[] = ['lineage_submit_findings'];
-      if (stage.mode === 'inline_bb') {
-        // Active + Synthesis collapsed into one turn — present_result available for the back-to-back sequence.
-        tools.push('lineage_present_result');
-      } else {
-        // present_result deferred to synthesis — SM agenda drains across many hops.
-        tools.push('lineage_get_neighbor_columns');
-      }
-      return new Set(tools);
+      // SM hop loop. present_result deferred to synthesis — agenda drains across many hops.
+      return new Set(['lineage_submit_findings', 'lineage_get_neighbor_columns']);
     }
     default:
       return assertNever(stage);
@@ -119,11 +108,9 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
 /**
  * Derives the ACTIVE-mode tag from the navigation engine's state flags.
  *
- * @param inlineMode - `engine.inlineMode` — true iff the engine is in True Inline mode.
  * @param hasColumnAspect - Whether `engine.columnAspect !== null` (column-trace mode).
  */
-export function activeModeOf(inlineMode: boolean, hasColumnAspect: boolean): ActiveMode {
-  if (inlineMode) return 'inline_bb';
+export function activeModeOf(hasColumnAspect: boolean): ActiveMode {
   return hasColumnAspect ? 'sm_ct' : 'sm_bb';
 }
 

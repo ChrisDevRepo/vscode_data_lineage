@@ -32,7 +32,7 @@ import type { ColumnFlowRole } from './smTypes';
 
 
 import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from './tokenBudget';
-export { shouldInline, shouldSmInline, estimateTokens, getEffectiveBudget, setInlineTokenBudget, setSmInlineNodeCap } from './tokenBudget';
+export { shouldInline, estimateTokens, getEffectiveBudget, setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, checkScopeBudget, getDiscoveryLimits } from './tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
 export const BFS_INLINE_NODE_CAP = 200;
@@ -50,9 +50,9 @@ type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
  * @remarks
  * Either `origin` (fresh exploration) or `supplement.nodeIds` (post-synthesis add) must
  * be present. Supplement mode reuses the existing `NavigationEngine` / archive: the
- * supplied node ids are appended to the agenda, the engine is driven one-shot in inline
- * mode, and new `DetailSlot` entries merge into the existing archive. Used by the
- * follow-up phase (see `buildFollowUpPrompt`) for deferred-question continuation.
+ * supplied node ids are appended to the agenda, run through the SM hop loop, and new
+ * `DetailSlot` entries merge into the existing archive. Used by the follow-up phase
+ * (see `buildFollowUpPrompt`) for deferred-question continuation.
  */
 export const StartExplorationInputSchema = z.object({
   origin: z.string().min(1).optional(),
@@ -60,6 +60,10 @@ export const StartExplorationInputSchema = z.object({
   targetColumns: z.array(z.string()).optional(),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
   depth: z.coerce.number().int().positive().optional(),
+  /** Asymmetric override for upstream traversal depth — only honored when `direction='bidirectional'`. */
+  upstream_depth: z.coerce.number().int().min(0).optional(),
+  /** Asymmetric override for downstream traversal depth — only honored when `direction='bidirectional'`. */
+  downstream_depth: z.coerce.number().int().min(0).optional(),
   depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
   excludeTypes: z.array(z.string()).optional(),
   /**
@@ -85,19 +89,13 @@ export const StartExplorationInputSchema = z.object({
    * the call to reject with `unknown_node_ids`.
    */
   passNodeIds: z.array(z.string()).optional(),
-  /**
-   * Manual override for inline-vs-SM mode at gate emission. Bypasses the size+budget
-   * heuristic. Only meaningful while the gate is pending; after Approve the chosen mode
-   * locks in.
-   */
-  forceMode: z.enum(['inline', 'sm']).optional(),
   mission_brief: z.string().optional(),
   classification: z.enum(['business', 'technical', 'both']),
   /**
    * Post-synthesis supplement: extend the existing archive with analysis for these
-   * additional node ids. Runs the engine in inline one-shot mode; slots merge into
-   * the existing `AiMemoryManager`. No `origin` needed — the existing exploration is
-   * the origin. Fails if no completed engine is attached to the session.
+   * additional node ids. Runs through the SM hop loop; slots merge into the existing
+   * `AiMemoryManager`. No `origin` needed — the existing exploration is the origin.
+   * Fails if no completed engine is attached to the session.
    */
   supplement: z.object({
     nodeIds: z.array(z.string().min(1)).min(1),
@@ -172,14 +170,9 @@ const HopFindingSchema = z.object({
 });
 
 /**
- * Zod schema for `submit_findings` tool input. 
- * Supports both a single finding object (Sliding Memory) 
- * and an array of finding objects (True Inline batch).
+ * Zod schema for `submit_findings` tool input — one finding per SM hop.
  */
-export const SubmitFindingsInputSchema = z.union([
-  HopFindingSchema,
-  z.array(HopFindingSchema)
-]);
+export const SubmitFindingsInputSchema = HopFindingSchema;
 
 export type SubmitFindingsInput = z.infer<typeof SubmitFindingsInputSchema>;
 
@@ -1003,7 +996,7 @@ export function runBfsTrace(
       total_nodes: filteredIds.length,
       total_edges: allEdges.length,
       schemas: schemaBreakdown,
-      hint: `BFS result has ${filteredIds.length} nodes (>${BFS_INLINE_NODE_CAP}). Use start_exploration for hop-by-hop analysis with verdicts, or narrow with schema/type filters.`,
+      hint: `BFS result has ${filteredIds.length} nodes (>${BFS_INLINE_NODE_CAP}). Discovery cannot deliver this size — call lineage_start_exploration to begin SM mode (the user must approve via the gate), or narrow with schema/type filters.`,
     };
   }
 

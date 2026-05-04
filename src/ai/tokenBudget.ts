@@ -1,57 +1,57 @@
-
 /**
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
- * Two guards drive the system:
- *   1. ai.inlineTokenBudget (VS Code setting, default 10K) — delivery mode gate:
- *      - Below budget → inline: AI gets all DDL at once, reasons in one pass (no sliding memory)
- *      - Above budget → hop-by-hop: state machine with short_memory + detail_slots
- *      Applies to: CT, BB, getContext(), runBfsTrace()
- *   2. ai.maxRounds (VS Code setting)  — hard stop on tool rounds (user-configurable)
+ * Two budgets in play:
+ *   1. ai.discoveryNodeCap (default 8) — max nodes the AI may pull during a single
+ *      discovery-phase catalog request before the engine forces SM via the gate.
+ *   2. ai.discoveryTokenBudget (default 8000) — max DDL token estimate for the
+ *      same. Either cap exceeded → request rejected at the tool boundary with
+ *      a structured `over_discovery_budget` envelope pointing the AI at
+ *      `lineage_start_exploration`.
+ *
+ * Plus catalog payload sizing for `lineage_get_context`:
+ *   - `shouldInline` decides catalog inline-vs-summary delivery for the
+ *     get_context call. Different concept from SM execution mode (which is
+ *     gone) — this is about whether the catalog full payload fits.
  *
  * ZERO-TRUNCATION GUARANTEE:
  *   No tool response is ever truncated, capped, or sliced.
- *   No data is ever lost. Only delivery mode changes.
+ *   No data is ever lost. Over-budget requests are HARD-REJECTED with a hint;
+ *   the AI escalates to SM via the gate.
  *
  * Zero VS Code imports — pure functions for testability.
  */
 
 
-/** Default inline token budget — overridden per-request from VS Code setting `ai.inlineTokenBudget`. */
-const DEFAULT_INLINE_TOKEN_BUDGET = 10_000;
+/** Default catalog-inline token budget — overridden per-request via `ai.contextPayloadBudget` (legacy `ai.inlineTokenBudget`). */
+const DEFAULT_CATALOG_INLINE_TOKEN_BUDGET = 10_000;
 
-/** Runtime budget — set from VS Code setting at each request start. */
-let inlineTokenBudget = DEFAULT_INLINE_TOKEN_BUDGET;
+/** Runtime budget for `lineage_get_context` catalog inline-vs-summary delivery. */
+let catalogInlineTokenBudget = DEFAULT_CATALOG_INLINE_TOKEN_BUDGET;
 
 /**
- * Configures the runtime inline token budget from VS Code settings.
- * 
- * @remarks
- * This value is typically set at the start of each request in `extension.ts`
- * based on the `ai.inlineTokenBudget` configuration.
- * 
- * @param value - The maximum number of tokens allowed for inline (one-shot) delivery.
+ * Configures the catalog inline budget from VS Code settings.
+ *
+ * @param value - Token budget for catalog full-payload-vs-summary decision.
  */
-export function setInlineTokenBudget(value: number): void {
-  inlineTokenBudget = value;
+export function setCatalogInlineTokenBudget(value: number): void {
+  catalogInlineTokenBudget = value;
 }
 
-/** 
- * Retrieves the currently active inline token budget. 
- * 
- * @returns The effective token budget used for delivery mode decisions.
+/**
+ * Retrieves the catalog inline budget — used by `shouldInline` for catalog delivery decisions.
  */
 export function getEffectiveBudget(): number {
-  return inlineTokenBudget;
+  return catalogInlineTokenBudget;
 }
 
 
-/** 
+/**
  * Provides a heuristic estimation of token count from a character count.
- * 
+ *
  * @remarks
  * Uses a standard approximation of 1 token ≈ 4 characters for JSON/SQL payloads.
- * 
+ *
  * @param chars - The number of characters in the payload string.
  * @returns An estimated token count.
  */
@@ -60,15 +60,15 @@ export function estimateTokens(chars: number): number {
 }
 
 /**
- * Determines if a payload should be delivered inline (one-shot) or via on-demand tools.
- * 
+ * Determines if a catalog payload should be delivered inline (full) or via on-demand summary.
+ *
  * @remarks
- * Inline delivery provides the AI with all DDL at once for immediate reasoning.
- * On-demand delivery triggers a hop-by-hop state machine for larger scopes.
+ * Used only by `lineage_get_context` for full-catalog vs. summary-only delivery.
+ * Has nothing to do with the (removed) SM inline execution mode.
  *
  * @param payloadChars - The character count of the payload.
  * @param precomputedTokens - Optional pre-calculated token count to skip estimation.
- * @returns `true` if the payload fits within the effective budget for inline delivery.
+ * @returns `true` if the payload fits within the effective budget for full delivery.
  */
 export function shouldInline(payloadChars: number, precomputedTokens?: number): boolean {
   const tokens = precomputedTokens ?? estimateTokens(payloadChars);
@@ -76,53 +76,68 @@ export function shouldInline(payloadChars: number, precomputedTokens?: number): 
 }
 
 
-/** Default node cap for inline SM delivery — overridden per-request from VS Code setting `ai.inlineNodeCap`. */
-const DEFAULT_SM_INLINE_NODE_CAP = 10;
+// ─── Discovery-phase budget guard ────────────────────────────────────────────
 
-/** Runtime node cap — set from VS Code setting at each request start. */
-let smInlineNodeCap = DEFAULT_SM_INLINE_NODE_CAP;
+/** Default node cap for discovery-phase catalog requests — overridden via VS Code `ai.discoveryNodeCap`. */
+const DEFAULT_DISCOVERY_NODE_CAP = 8;
 
-/** 
- * Configures the runtime inline node cap from VS Code settings. 
- * 
- * @param value - The maximum number of nodes allowed for inline State Machine (SM) delivery.
- */
-export function setSmInlineNodeCap(value: number): void {
-  smInlineNodeCap = value;
+/** Default DDL-token budget for discovery-phase catalog requests — overridden via `ai.discoveryTokenBudget`. */
+const DEFAULT_DISCOVERY_TOKEN_BUDGET = 8_000;
+
+let discoveryNodeCap = DEFAULT_DISCOVERY_NODE_CAP;
+let discoveryTokenBudget = DEFAULT_DISCOVERY_TOKEN_BUDGET;
+
+/** Configures the runtime discovery node cap from VS Code settings. */
+export function setDiscoveryNodeCap(value: number): void {
+  discoveryNodeCap = Math.max(1, value | 0);
 }
 
-/** 
- * Retrieves the currently active inline node cap. 
- * 
- * @returns The maximum node count allowed for inline exploration.
- */
-export function getSmInlineNodeCap(): number {
-  return smInlineNodeCap;
+/** Configures the runtime discovery token budget from VS Code settings. */
+export function setDiscoveryTokenBudget(value: number): void {
+  discoveryTokenBudget = Math.max(1000, value | 0);
+}
+
+/** Retrieves the active discovery caps for diagnostics + the rejection envelope. */
+export function getDiscoveryLimits(): { node_cap: number; token_budget: number } {
+  return { node_cap: discoveryNodeCap, token_budget: discoveryTokenBudget };
 }
 
 /**
- * Determines if a State Machine (SM) exploration should use inline delivery.
- * 
- * @remarks
- * Evaluates both the node count of the scope and the estimated token budget.
- * Small, focused Blackboard (BB) scopes use inline delivery for faster analysis, 
- * while larger scopes or explorations with active column tracing fallback to 
- * the sliding memory (hop-by-hop) architecture.
+ * Discovery scope budget check — fires per scope-expanding catalog request.
  *
- * @param isColumnAspectActive - True if specific columns are being tracked.
- * @param payloadChars - Character count of the DDL/Metadata payload.
- * @param scopeNodeCount - The total number of nodes in the exploration scope.
- * @returns `true` if it is a blackboard session without column tracing, and constraints are satisfied.
+ * @remarks
+ * Run BEFORE executing the underlying catalog handler. On overflow, the caller
+ * returns the structured rejection envelope (with `hint` pointing at
+ * `lineage_start_exploration`) instead of running the handler. No fallback —
+ * over-budget requests are hard rejections per the project's "no fallback paths"
+ * rule.
+ *
+ * @param requestedNodes - Number of nodes the request would load (e.g. BFS result size).
+ * @param requestedDdlBytes - Total DDL bytes that would be returned.
+ * @returns `{ ok: true }` when the request fits both caps; otherwise `{ ok: false, ... }`
+ *          with the counts, limits, and AI-facing hint.
  */
-export function shouldSmInline(isColumnAspectActive: boolean, payloadChars: number, scopeNodeCount: number): boolean {
-  if (isColumnAspectActive) return false; // Column tracing is always sliding-memory for precision.
-  return scopeNodeCount <= smInlineNodeCap && shouldInline(payloadChars);
+export function checkScopeBudget(
+  requestedNodes: number,
+  requestedDdlBytes: number,
+): { ok: true } | { ok: false; reason: 'over_discovery_budget'; counts: { nodes: number; ddl_bytes: number }; limits: { node_cap: number; token_budget: number }; hint: string } {
+  const tokens = estimateTokens(requestedDdlBytes);
+  const overNodes = requestedNodes > discoveryNodeCap;
+  const overTokens = tokens > discoveryTokenBudget;
+  if (!overNodes && !overTokens) return { ok: true };
+  return {
+    ok: false,
+    reason: 'over_discovery_budget',
+    counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
+    limits: { node_cap: discoveryNodeCap, token_budget: discoveryTokenBudget },
+    hint: 'Scope exceeds discovery budget. Call lineage_start_exploration to begin SM mode; the user must approve via the gate before the engine will load this scope.',
+  };
 }
 
 
 /**
  * The threshold (0.0 to 1.0) at which context pressure triggers history eviction.
- * 
+ *
  * @remarks
  * When the input token count exceeds this fraction of the model's `maxInputTokens`,
  * the oldest conversation turns are evicted to ensure the AI remains responsive.
@@ -130,9 +145,9 @@ export function shouldSmInline(isColumnAspectActive: boolean, payloadChars: numb
 export const CONTEXT_PRESSURE_THRESHOLD = 0.75;
 
 
-/** 
- * Maximum allowed length for a regular expression query. 
- * 
+/**
+ * Maximum allowed length for a regular expression query.
+ *
  * @remarks
  * Used during input validation to mitigate the risk of ReDoS (Regular Expression Denial of Service)
  * and ensure catastrophic backtracking does not occur during model searching.

@@ -84,58 +84,65 @@ export function buildGeneralSystemPrompt(
  * Constructs the prompt for the Discovery/Idle phase.
  *
  * @remarks
- * Two blocks: Class D vs Class S routing (with tiebreaker + worked examples),
- * and a one-line response-format constraint. Tool parameter routing and
- * filter-boundary semantics live in each tool's modelDescription — not here.
+ * Discovery is the default chat state. Most user questions are answered in chat
+ * directly using catalog tools (search, get_object_detail, search_ddl). When
+ * the user wants a graph rendered in the GUI, a deep multi-object analysis, or
+ * column tracing, the AI escalates to SM via `lineage_start_exploration` — the
+ * engine emits the `confirm_sm_start` gate, the user approves, then SM runs.
  *
  * @returns The assembled discovery-phase prompt string.
  */
 export function buildDiscoveryPrompt(): string {
   return [
-    '## Routing — classify the question first',
+    '## Discovery — the default chat state',
     '',
-    "Every question lands in exactly one class. Classify first, then use only that class's tools.",
+    'You are a data-grounded discovery agent. Every fact you state must come from the loaded lineage tool results (`lineage_get_object_detail`, `lineage_search_objects`, `lineage_search_ddl`, `lineage_get_context`, `lineage_detect_graph_patterns`). If the loaded data does not answer the question, reply: "The loaded model does not contain that information" and stop. Never substitute general SQL knowledge or naming guesses.',
     '',
-    '### Class D — Direct (chat answer)',
-    'Use ONLY when the question concerns **one named object in isolation** OR **graph-wide metadata**. Signals — one object name + any of: "what does X do", "show DDL of X", "list columns of X", "find objects named/matching Y", "which objects reference pattern P", "does X exist", "count of X in schema S", "what schemas are loaded", hubs / orphans / cycles / longest paths.',
+    'Open your reply with one short sentence stating what you are about to do (which tool, which node, why).',
     '',
-    'Pick the tool from the available discovery set based on its own description. Cross-tool cue: `lineage_get_object_detail.up[]` / `dn[]` answers "who are X\'s direct neighbors" for simple identification. Narration, lineage traces, pipeline explanations, and join-path walkthroughs spanning those neighbors are Class S tasks even when you have the DDL — reply as chat text for the single-object question only.',
+    '## When to answer in chat (stay in discovery)',
     '',
-    '### Class S — State machine (call `lineage_start_exploration`)',
-    'Use when the question asks for **analysis, narrative, or visualization of a relationship** spanning two or more connected objects.',
+    'Use the discovery tools and reply in Markdown when the question can be answered from the loaded model — single-object questions ("what does X do", "show DDL of X", "list columns of X"), graph-wide metadata ("which objects match Y", "what schemas are loaded", hubs / orphans / cycles), and direct-neighbor identifications.',
     '',
-    'Signals — verbs "analyze / explain / walk through / trace / track / follow / document / compare"; nouns "lineage / dependencies / graph / relationship / impact / blast radius / pipeline / flow / path / join path"; scope qualifiers "direct neighbours / one hop up / upstream only / downstream of X / between A and B"; NL filters that only make sense over a scope ("ignore UDFs", "only tables", "exclude schema X", name-based exclusions); any column name tied to an object (set `targetColumns`).',
+    'Cross-tool cue: `lineage_get_object_detail.up[]` / `dn[]` answers "who are X\'s direct neighbors" for simple identification.',
     '',
-    '**Column Trace selection:** if the user names a specific column (`[Object].[Column]` or "the X column"), extract it directly as `targetColumns`. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its column list, then select the 2–4 columns that match the intent. Pass all selected columns to `lineage_start_exploration` as `targetColumns`.',
+    '## When to escalate to SM (call `lineage_start_exploration`)',
     '',
-    '**Rule:** When the user asks for a "lineage graph", "annotated trace", or to "explain the joins/pipeline" of an object, use Class S — a prior detail lookup that found the neighbors does not substitute for a full exploration.',
+    'Discovery is chat-only. It cannot render a graph in the GUI and cannot sustain a deep, multi-hop analysis. When the user wants either, you must call `lineage_start_exploration`. The engine emits a `confirm_sm_start` consent gate; the user approves, then SM runs hop-by-hop and renders the graph + report. That is expected control flow, not an error to retry around.',
     '',
-    'Resolve every user-named identifier — both the origin and any names the user said to ignore / exclude / drop / skip — with `lineage_search_objects` BEFORE calling `lineage_start_exploration`. The model has many schemas; user-shorthand names ("RECON", "EXCP2") often live in a non-default schema. Inventing an id like `[dbo].[recon]` causes `lineage_start_exploration` to reject with `unknown_node_ids`. If multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
+    'Trigger `lineage_start_exploration` when:',
+    '- (a) The user asks for a **graph / visualization / diagram / picture** of the lineage in the GUI.',
+    '- (b) The user asks for a **detailed analysis** spanning multiple objects — verbs like "analyze / explain / walk through / trace / track / follow / document / compare", nouns like "lineage / dependencies / pipeline / flow / impact / blast radius / join path", scope qualifiers like "direct neighbours / one hop up / upstream only / between A and B", or NL filters that only make sense over a scope ("ignore UDFs", "only tables", "exclude schema X").',
+    '- (c) The user requests **column tracing**: any column name tied to an object — set `targetColumns`. If the user names a specific column (`[Object].[Column]`), extract it directly. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its column list, then select the 2–4 matching columns.',
+    '- (d) The engine has rejected your direct catalog request as `over_discovery_budget` — the rejection\'s `hint` will tell you to escalate.',
     '',
-    'The engine emits a `confirm_sm_start` consent gate on every exploration so the user can review scope (nodes, schemas, excluded types, mode) before analysis runs. Present it to the user; that is expected control flow, not an error to retry around.',
+    'If the user\'s intent is ambiguous between "quick answer" and "detailed analysis" or "graph view", ask one short clarifying question and call no tool this turn.',
     '',
-    'When a `confirm_sm_start` gate is pending and the user replies with anything other than approval/cancel, treat their message as refinement intent (scope, mode, classification, or column tracing): re-call `lineage_start_exploration` with the same `origin` and `depth` plus updated `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. Each call is a full re-spec — keep all prior filters and add the new one. The engine re-emits the gate; the loop continues until the user approves or cancels. Analysis tools are not available during this loop.',
+    'Before calling `lineage_start_exploration`, resolve every user-named identifier with `lineage_search_objects` — both the origin and any names the user said to ignore / exclude / drop / skip. Inventing an id like `[dbo].[someName]` causes the call to reject with `unknown_node_ids`. The tool\'s parameter descriptions carry the full input contract (scope mapping, NL-filter handling, `mission_brief`, `classification`).',
     '',
-    '### Tiebreaker',
-    'When a question could plausibly fit either class, prefer Class S. Shallow multi-object metadata summaries are the primary failure mode on this extension.',
+    'When a `confirm_sm_start` gate is pending and the user replies with anything other than approval/cancel, treat their message as refinement intent: re-call `lineage_start_exploration` with the same `origin` and `depth` plus updated `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Each call is a full re-spec — keep all prior filters and add the new one. The engine re-emits the gate; the loop continues until the user approves or cancels. Analysis tools are not available during this loop.',
     '',
-    '### Examples',
+    '_(Chat-output style and framing reference are injected from `aiOutputTemplates.yaml → discovery_chat` and can be customized via the YAML overlay.)_',
+    '',
+    '## Examples',
     '',
     '<example>',
     'User: "what does spProcA do"',
-    'Class: D',
-    "Action: `lineage_get_object_detail(id:'[dbo].[spProcA]')` → chat answer.",
+    'Stay in discovery. Open with: "Reading DDL for [dbo].[spProcA] to summarize what it does."',
+    "Action: `lineage_get_object_detail(id:'[dbo].[spProcA]')` → chat answer with balanced business + technical summary.",
     '</example>',
     '',
     '<example>',
-    'User: "analyze the tableZ pipeline with its direct neighbours, ignore UDFs and views"',
-    'Class: S',
-    "Action: `lineage_start_exploration(origin:'[dbo].[tableZ]', depth:1, direction:'bidirectional', depth_enforcement:'strict', excludeTypes:['function','view'], excludeSchemas:['staging'], classification:'business', mission_brief:'User wants the business logic of tableZ with its direct neighbours only. Scope: depth 1, bidirectional. NL filter excludes UDFs, views, and the staging schema (excludeTypes + excludeSchemas set structurally).')`.",
+    'User: "show me the lineage graph for tableZ ignoring UDFs"',
+    'Escalate (graph requested → trigger a). Open with: "Starting an SM exploration so the lineage graph can be rendered in the side panel."',
+    "Action: `lineage_start_exploration(origin:'[dbo].[tableZ]', direction:'bidirectional', excludeTypes:['function'], classification:'business', mission_brief:'User wants the lineage graph of tableZ rendered in the GUI, UDFs excluded.')`.",
     '</example>',
     '',
-    '## Response format',
-    '',
-    'Markdown only. Match response length to the question.',
+    '<example>',
+    'User: "trace the salary column from EmployeePayHistory through every consumer"',
+    'Escalate (column trace → trigger c). Open with: "Inspecting EmployeePayHistory columns to confirm the salary column id, then starting an SM column trace."',
+    'Action: `lineage_get_object_detail` first (resolve the column), then `lineage_start_exploration(origin:..., targetColumns:[\'<resolved>\'], classification:\'technical\', mission_brief:\'...\')`.',
+    '</example>',
   ].join('\n');
 }
 
@@ -154,17 +161,12 @@ export function buildDiscoveryPrompt(): string {
  * adjacent to the inline batch protocol and to reuse {@link buildSynthesisPrompt}
  * verbatim (single source of truth).
  *
- * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @returns A formatted system instruction for the active phase.
  */
-export function buildActivePhasePrompt(isInline: boolean): string {
-  const mode = isInline
-    ? 'TRUE INLINE: Analyze all nodes holistically in a single turn.'
-    : 'SLIDING MEMORY: Analyze nodes sequentially as presented.';
-
+export function buildActivePhasePrompt(): string {
   return [
     '# Active Exploration Protocol',
-    `Mode: ${mode}`,
+    'Mode: SLIDING MEMORY — analyze nodes sequentially as presented.',
     '',
     '1. SECTIONS: **The archive is unbounded** — write as deeply as the focus node\'s role warrants. Capture every business rule the DDL exposes: each CASE branch, threshold, allocation formula, special-case predicate. Synthesis lifts your body verbatim, so depth here is depth in the final document.',
     '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',

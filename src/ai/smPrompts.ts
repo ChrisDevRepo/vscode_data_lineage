@@ -7,7 +7,7 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for Claude precision.
  */
 
-import { buildColumnAspectPrompt, buildSynthesisPrompt } from './prompts';
+import { buildColumnAspectPrompt } from './prompts';
 import type { ColumnEdge } from './smTypes';
 
 
@@ -51,75 +51,26 @@ const BLOCK = {
     '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
   ].join('\n'),
 
-  /** Strategic routing protocol — full text for inline mode (AI drives the agenda one-shot). */
-  routingInline: [
-    '## Routing Strategy',
-    '1. AUTO-ADD: Route neighbors only if critical to the <mission_brief>. Respect user depth and schema boundaries.',
-    '2. AUTO-PRUNE: Use `prune_neighbors` to eliminate irrelevant table/view/function branches (logging, demographics) found in DDL. See Pruning Protocol below for procedures.',
-    '3. ANCHORING: Relevance is judged against the mission, not the sub-question.',
-    '4. OUT-OF-SCOPE ROUTES: See ROUTE OUTCOMES in the Active Exploration Protocol above.',
-  ].join('\n'),
-
-  /** Trimmed routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */
+  /** Routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */
   routingSm: [
     '## Routing',
     'Engine selects the next focus node from the agenda. For each focus node: if its function falls outside the `<mission_brief>` — not only logging/error utilities, but any node that does not contribute to the user\'s stated question — emit `verdict: "prune"`. Only add a neighbor via `route_requests` if it directly contributes to answering the user\'s stated question — topological adjacency is not sufficient justification. A downstream consumer of a source table is not itself a source. Source the id verbatim from the tool result. Otherwise emit `route_requests: []`.',
   ].join('\n'),
 
   /**
-   * Inline pruning protocol — full DDL is already in context; no tool call needed.
-   *
-   * @remarks
-   * In True Inline mode the entire scope DDL is delivered upfront via the
-   * `start_exploration` result. The AI reads DDL directly to assess relevance;
-   * `lineage_get_neighbor_columns` is not in the inline_bb tool set.
-   */
-  pruningProtocolInline: [
-    '## Pruning — When to Prune',
-    'Prune nodes that do not contribute to the `<mission_brief>`.',
-    '- **Structural neighbors**: Read the DDL and schema context already provided to assess relevance — full scope DDL is in the `start_exploration` result, no tool call needed.',
-    '- **Procedures**: Read the procedure DDL in scope to verify its relevance before pruning.',
-  ].join('\n'),
-
-  /**
    * SM pruning protocol — lightweight metadata via `lineage_get_neighbor_columns`.
    *
    * @remarks
-   * In Sliding Memory mode only the focus node's DDL is delivered per hop.
-   * `lineage_get_neighbor_columns` is available (sm_bb / sm_ct tool sets) and
-   * provides structural metadata for direct neighbors without requiring a full hop.
-   * Procedures are the exception — their logic is only accessible at the hop.
+   * Only the focus node's DDL is delivered per hop. `lineage_get_neighbor_columns`
+   * is available (sm_bb / sm_ct tool sets) and provides structural metadata for
+   * direct neighbors without requiring a full hop. Procedures are the exception —
+   * their logic is only accessible at the hop.
    */
   pruningProtocolSm: [
     '## Pruning — When to Prune',
     'Prune nodes that do not contribute to the `<mission_brief>`.',
     '- **Structural neighbors**: For tables, views, or functions, call `lineage_get_neighbor_columns({ids:["..."]})` to inspect the schema and foreign keys before deciding to prune. This tool provides metadata for direct neighbors of the focus node.',
     '- **Procedures**: Since DDL is only visible at the hop, route to the procedure with a specific question (e.g., `question="Prune candidate — [reason]"`) to verify its relevance before pruning.',
-  ].join('\n'),
-
-  /** Inline batch protocol. */
-  batchCompletionContract: [
-    '## Inline Batch Protocol',
-    'Analyze the provided graph context holistically.',
-    '1. BATCH SUBMISSION: Submit your findings as a JSON ARRAY of finding objects (one per node) in a single `submit_findings` turn.',
-    '2. COMPLETION: If no further expansions (`route_requests`) are needed, set `"complete": true` inside your final finding object to finish the exploration.',
-  ].join('\n'),
-
-  /**
-   * Inline turn flow — the unified two-call sequence inside one agent loop.
-   *
-   * @remarks
-   * Inline collapses Phase 2 (Active capture) and Phase 3 (Synthesis) into one
-   * AI turn. The system prompt for inline ships every instruction the AI needs
-   * for both calls upfront — no second-turn prompt swap. This block names the
-   * sequence so the AI does not stop after `submit_findings`.
-   */
-  inlineTurnFlow: [
-    '## Inline Turn Flow — one turn, two tool calls',
-    'After the consent gate is approved, you receive every instruction needed for both Active capture and Synthesis in this one prompt. Execute them in sequence inside this single turn:',
-    '1. **`lineage_submit_findings`** — one call, batched across all scope nodes (per the Inline Batch Protocol below).',
-    '2. **`lineage_present_result`** — call immediately after `submit_findings` succeeds. The tool_result for `submit_findings` carries a `synthesis_reminder` cue with the user question; obey it. Do not wait for a new turn.',
-    'Both tools are available in the active stage. The Synthesis Contract section near the end of this prompt governs the `present_result` payload shape.',
   ].join('\n'),
 } as const;
 
@@ -128,36 +79,23 @@ const BLOCK = {
  * Builds the navigation prompt delivered at the active-phase start.
  *
  * @remarks
- * The engine presents nodes, the model analyzes them, the engine advances the agenda.
- * If `targetColumns` are provided, the Column Aspect instructions are appended.
+ * The engine presents one focus node per hop, the model analyzes it, the engine
+ * advances the agenda. If `targetColumns` are provided, the Column Aspect
+ * instructions are appended. Synthesis instructions ship at the synthesis-phase
+ * boundary because the agenda drains across many hops.
  *
- * Inline mode bundles every instruction the AI needs for both Active capture
- * and Synthesis into one upfront brief: turn flow, batch protocol, verdicts,
- * sections, badges, routing, pruning, and the {@link buildSynthesisPrompt}
- * contract for the trailing `present_result` call. SM mode emits only the
- * per-hop scope; synthesis instructions ship at the synthesis-phase boundary
- * because the SM agenda drains across many hops.
- *
- * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @param targetColumns - Optional columns being tracked (activates Column Aspect).
  * @param classification - Locked classification from gate-approval; renders the section-submission shape per locked angle.
  * @returns A formatted string containing classification rules, per-hop workflow, and routing guidance.
  */
 export function buildModeBlock(
-  isInline: boolean = false,
   targetColumns?: string[],
   classification: 'business' | 'technical' | 'both' = 'business',
 ): string {
   const isColumnAspectActive = !!(targetColumns && targetColumns.length > 0);
   const sections: string[] = [];
 
-  const mode = isInline ? 'TRUE INLINE' : 'SLIDING MEMORY';
-  sections.push(`# Exploration Mode: ${mode}`);
-
-  if (isInline) {
-    sections.push('', BLOCK.inlineTurnFlow, '', BLOCK.batchCompletionContract);
-  }
-
+  sections.push('# Exploration Mode: SLIDING MEMORY');
   sections.push(
     '',
     BLOCK.verdictCategories,
@@ -166,20 +104,13 @@ export function buildModeBlock(
     '',
     BLOCK.badgeAndNote,
     '',
-    isInline ? BLOCK.routingInline : BLOCK.routingSm
+    BLOCK.routingSm,
+    '',
+    BLOCK.pruningProtocolSm,
   );
-
-  // Inline has full DDL upfront — prune from context (pruningProtocolInline, no tool call).
-  // SM uses get_neighbor_columns for lightweight metadata inspection (pruningProtocolSm).
-  sections.push('', isInline ? BLOCK.pruningProtocolInline : BLOCK.pruningProtocolSm);
 
   if (isColumnAspectActive) {
     sections.push('', buildColumnAspectPrompt(targetColumns!));
-  }
-
-  // Inline bundles synthesis contract here to avoid a second-turn prompt swap; buildSynthesisPrompt() is the single source of truth.
-  if (isInline) {
-    sections.push('', '# Synthesis Contract — for the trailing `present_result` call', '', buildSynthesisPrompt());
   }
 
   return sections.join('\n');

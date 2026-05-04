@@ -81,7 +81,7 @@ flowchart LR
     SUP --> CAP[Normalised captures<br/>object refs + edge direction]
 ```
 
-`src/engine/sqlBodyParser.ts` is a generic rule-runner — every rule lives in [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). The full power-user reference is [`PARSE_RULES.md`](PARSE_RULES.md). Metadata suppression centralises CLR-method filtering in `src/engine/sqlMetadata.ts`; bracket-quoted identifiers bypass it (intent signal).
+`src/engine/sqlBodyParser.ts` is a generic rule-runner — every rule lives in [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). The full reference is [`PARSE_RULES.md`](PARSE_RULES.md). Metadata suppression centralises CLR-method filtering in `src/engine/sqlMetadata.ts`; bracket-quoted identifiers bypass it (intent signal).
 
 ## The bridge — IPC & Zod validation
 
@@ -105,23 +105,14 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
      discover    → buildDiscoveryPrompt
      active      → buildActivePhasePrompt
                    + buildToolUsageBlock
-                   + buildModeBlock(isInline, targetColumns?, classification)
-                       — for isInline=true also embeds buildSynthesisPrompt() as
-                         the trailing "Synthesis Contract" so the AI can call
-                         present_result back-to-back with submit_findings in the
-                         same agent loop (Active + Synthesis collapsed)
+                   + buildModeBlock(targetColumns?, classification)
                        — buildColumnAspectPrompt is folded in when targetColumns set (CT)
      synthesis   → buildSynthesisPrompt
      completed   → buildDeferredQuestionsPrompt (when deferred questions exist)
                | buildFollowUpPrompt (otherwise)
-3. resolveStagePrompt                 (always — YAML keys gated by stage + classification + slotCount; `closing` requires slotCount ≥ 5)
-                                      For inline-active it runs twice: once for `active` (capture keys
-                                      business_capture / technical_capture / structural_summary) and once
-                                      for `synthesis` (summary / title / intro / closing / highlights /
-                                      notes / general / loading_pattern). Both blocks ship in the same
-                                      bundled brief.
+3. resolveStagePrompt                 (always — YAML keys gated by stage + classification + slotCount; `closing` requires slotCount ≥ 5; `discovery_chat` fires only at discover stage)
 4. buildMissionBriefBlock             (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
-5. buildMemoryBlock                   (SM active only — <short_term_memory> + tally)
+5. buildMemoryBlock                   (active only — <short_term_memory> + tally)
 ```
 
 **Synthesis output contract.** The AI submits `present_result` with structured parts: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a captured slot body), `closing`, `notes[]`, `highlight_groups[]`. The engine, via `orderAndAssemble()` ([`tools.ts`](../src/ai/tools.ts)), assembles those parts into the rendered description shown in `AiDescriptionOverlay`: section numbering (`## N {label}`), object link headers (`### Objects [name](#focus-node:id)`), badge chips on the graph. The AI never writes the assembled blob; there is no AI-input `description` field. This is enforced mechanically — `PresentResultInput` omits the field — and documented across the YAML header, `buildSynthesisPrompt()`, and `STAGE_BY_KEY`.
@@ -130,11 +121,11 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 |----------|------|---------|
 | `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
 | `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules. |
-| `buildActivePhasePrompt(isInline)` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract. |
+| `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract. |
 | `buildSynthesisPrompt` | `prompts.ts` | Archive lift + assembly + intro/closing anchoring. |
 | `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
 | `buildToolUsageBlock` | `prompts.ts` | `submit_findings` / pruning usage. |
-| `buildModeBlock(isInline, targetColumns?, classification)` | `smPrompts.ts` | Mode header + verdict + sections + badges + routing + pruning; CT adds column protocol. For `isInline=true` also prepends the Inline Turn Flow (two-call sequence: submit_findings → present_result) and appends the Synthesis Contract via `buildSynthesisPrompt()` (single source of truth, no duplication). **Pruning protocol is mode-split**: inline receives DDL-context-only guidance (full scope DDL is already in context, no tool call); SM receives `get_neighbor_columns`-based guidance. |
+| `buildModeBlock(targetColumns?, classification)` | `smPrompts.ts` | SM mode header + verdict + sections + badges + routing + pruning; CT adds column protocol. Pruning uses `get_neighbor_columns` for lightweight neighbor inspection before deciding to prune. |
 | `buildColumnAspectPrompt` | `prompts.ts` | CT protocol block — two-channel contract, role table, terminal source rules. Injected into stable system prompt when CT is active. |
 | `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. Renders accumulated `ColumnEdge[]` as a directed edge list so `present_result` anchors to the traced path. |
 | `buildCurrentTaskBlock(task, columns?)` | `prompts.ts` | `<current_task>` XML block; when `columns` are passed (CT active), appends `<column_trace>` sub-block with the structural lineage sub-question. |
@@ -152,7 +143,7 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | **Unit** | `npm test` | Parser, dacpac, graph, AI tool registration, SM robustness. |
 | **AI heavy** | `npm run test:unit:ai` | State machine, memory management, prompt assembly. |
 | **Snapshot** | `npm run test:snapshot` | Parser regression vs `tests/fixtures/aw-baseline.tsv`. Refresh: `npm run test:snapshot:update`. |
-| **Integration** | `npm run test:integration` | Live SQL Server. Requires `.env` with `DB_SERVER`, `DB_USER`, `DB_PASSWORD`, `DB_DATABASE_AW`, `DB_DATABASE_AW_DW`. |
+| **Hooks** | `npm run test:hooks` | React hook tests (jsdom via vitest). |
 
 `tsc --noEmit` after every structural change; the type system is the first line of defence.
 

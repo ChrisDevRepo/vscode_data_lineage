@@ -20,7 +20,7 @@ import { edgeApiType } from './aiPresenter';
 import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { trunc } from '../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from './memoryManager';
-import type { ActionRequiredGate, ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
+import type { ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -103,11 +103,9 @@ export interface IHopStateMachine {
   readonly bodiedScopeSize: number;
   /** The percentage of nodes in scope that have been covered. */
   readonly coveragePct: number;
-  /** Indicates whether the state machine is operating in inline mode. */
-  readonly inlineMode: boolean;
   /** The active column-tracing aspect, if any. */
   readonly columnAspect: ColumnAspect | null;
-  /** Out-of-approved-scope routes deferred during the SM session (empty in inline mode). */
+  /** Out-of-approved-scope routes deferred during the SM session. */
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
   /** Current focus node id (node the AI must analyse this hop) — null before the first hop. */
   readonly currentFocus: string | null;
@@ -123,13 +121,6 @@ export interface IHopStateMachine {
    * @returns The mismatched scope-node id, or `null` when no mismatch is detected.
    */
   detectFocusSubjectMismatch(focusNodeId: string, sections: ReadonlyArray<{ text: string }>): string | null;
-
-  /**
-   * Toggles the inline operating mode.
-   *
-   * @param val - Boolean flag indicating inline mode status.
-   */
-  setInlineMode(val: boolean): void;
 
   /**
    * Retrieves the current hop context for the engine.
@@ -191,8 +182,7 @@ export interface IHopStateMachine {
    * @remarks
    * Used by the follow-up phase (post-synthesis). Only callable when
    * `status === 'complete'` and at least one bodied id is supplied. The engine
-   * re-enters `awaiting_findings`, `inlineMode` is forced to `true` so the
-   * subsequent loop runs one-shot, and new `DetailSlot` entries merge into the
+   * re-enters `awaiting_findings` and new `DetailSlot` entries merge into the
    * existing `AiMemoryManager` without resetting prior analysis.
    *
    * @param nodeIds - Node ids to append to the agenda. Non-bodied (table, external)
@@ -232,8 +222,6 @@ export class NavigationEngine implements IHopStateMachine {
   public sessionId?: string;
   /** The operational status of the state machine. */
   protected _status: SmStatus = 'created';
-  /** Indicator for whether inline mode is active. */
-  protected _inlineMode = false;
   /** The active column-tracing aspect, initialized if targetColumns are provided. */
   protected _columnAspect: ColumnAspect | null = null;
   /** ID of the initial or root node for navigation. */
@@ -292,10 +280,8 @@ export class NavigationEngine implements IHopStateMachine {
    * is preserved so descendants stay reachable.
    */
   protected passNodeIds: Set<string> = new Set();
-  /** AI/user override for inline-vs-SM mode at gate emission; bypasses the size+budget heuristic. */
-  protected forceMode: 'inline' | 'sm' | null = null;
   /** Last `init` params kept for refine re-run — origin/direction/depth/etc survive across the gate cycle. */
-  protected initSnapshot: { question: string; origin: string; targetColumns?: string[]; direction: 'upstream' | 'downstream' | 'bidirectional'; depth?: number; depth_enforcement?: 'strict' | 'soft' | 'silent'; mission_brief?: string } | null = null;
+  protected initSnapshot: { question: string; origin: string; targetColumns?: string[]; direction: 'upstream' | 'downstream' | 'bidirectional'; depth?: number; upstream_depth?: number; downstream_depth?: number; depth_enforcement?: 'strict' | 'soft' | 'silent'; mission_brief?: string } | null = null;
   /** Extra depth levels the user has confirmed mid-session beyond the mode-cap. 0 = no extension. */
   protected extendedDepthCap = 0;
   /** Last per-hop snapshot of detail/summary chars, used for diagnostics. */
@@ -590,16 +576,6 @@ export class NavigationEngine implements IHopStateMachine {
     return this.scopeNodeIds.size > 0 ? Math.round((this.memory.slotCount / this.scopeNodeIds.size) * 100) : 0;
   }
 
-  /** Gets the inline mode toggle flag. */
-  public get inlineMode(): boolean {
-    return this._inlineMode;
-  }
-
-  /** Gets the AI/user force-mode override (null when the heuristic decides). */
-  public get forceModeOverride(): 'inline' | 'sm' | null {
-    return this.forceMode;
-  }
-
   /** Origin id captured at the most recent {@link init}. Used by the refine path to re-init without re-asking the AI. */
   public get currentOrigin(): string | null {
     return this.initSnapshot?.origin ?? null;
@@ -613,6 +589,16 @@ export class NavigationEngine implements IHopStateMachine {
   /** Depth budget captured at {@link init} (null when unbounded). */
   public get currentDepth(): number | null {
     return this.depthBudget;
+  }
+
+  /** Asymmetric upstream depth captured at {@link init}, when set; otherwise null. */
+  public get currentUpstreamDepth(): number | null {
+    return this.initSnapshot?.upstream_depth ?? null;
+  }
+
+  /** Asymmetric downstream depth captured at {@link init}, when set; otherwise null. */
+  public get currentDownstreamDepth(): number | null {
+    return this.initSnapshot?.downstream_depth ?? null;
   }
 
   /** Depth-enforcement mode captured at {@link init}. */
@@ -683,7 +669,6 @@ export class NavigationEngine implements IHopStateMachine {
       origin: this.originNodeId ?? '',
       depth: this.depthBudget,
       direction: this._direction,
-      inlineMode: this._inlineMode,
       columnAspectActive: !!this._columnAspect,
       targetColumns: this._columnAspect?.target_columns,
       bySchema,
@@ -824,15 +809,6 @@ export class NavigationEngine implements IHopStateMachine {
   private _lastCurrentTask = '';
 
   /**
-   * Toggles the inline operating mode.
-   *
-   * @param val - Boolean flag to activate inline mode.
-   */
-  public setInlineMode(val: boolean): void {
-    this._inlineMode = val;
-  }
-
-  /**
    * Sets up the navigation map to prepare for traversal.
    *
    * @param params - Initialization parameters like question, origin, depth.
@@ -844,12 +820,13 @@ export class NavigationEngine implements IHopStateMachine {
     targetColumns?: string[];
     direction?: 'upstream' | 'downstream' | 'bidirectional';
     depth?: number;
+    upstream_depth?: number;
+    downstream_depth?: number;
     depth_enforcement?: 'strict' | 'soft' | 'silent';
     excludeTypes?: string[];
     excludeSchemas?: string[];
     excludeNodeIds?: string[];
     passNodeIds?: string[];
-    forceMode?: 'inline' | 'sm';
     mission_brief?: string;
   }): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | { error: string; hint?: string; unresolved_excludeNodeIds?: string[]; unresolved_passNodeIds?: string[] } {
     // Refine detection: initSnapshot is null on first init, populated thereafter — survives status transitions.
@@ -886,7 +863,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[AI] [NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
       return {
         error: 'unknown_node_ids',
-        hint: "These ids don't exist in the loaded model. Call lineage_search_objects with each user-named identifier (e.g. 'RECON', 'EXCP2') to resolve the real schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
+        hint: "These ids don't exist in the loaded model. Call lineage_search_objects with each user-named identifier to resolve the real schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
         unresolved_excludeNodeIds: excludeIds.unresolved,
         unresolved_passNodeIds: passIds.unresolved,
       };
@@ -899,7 +876,6 @@ export class NavigationEngine implements IHopStateMachine {
     this.excludedSchemas = new Set((params.excludeSchemas ?? []).map(s => s.toLowerCase()));
     this.excludedNodeIds = new Set(excludeIds.resolved.map(s => s.toLowerCase()));
     this.passNodeIds = new Set(passIds.resolved.map(s => s.toLowerCase()));
-    this.forceMode = params.forceMode ?? null;
 
     const originNode = this.nodeMap.get(params.origin.toLowerCase());
     if (!originNode) {
@@ -913,7 +889,13 @@ export class NavigationEngine implements IHopStateMachine {
     this.depthBudget = typeof params.depth === 'number' ? params.depth : null;
     this.depthEnforcement = params.depth_enforcement ?? 'silent';
     this.budgetExpansions = [];
-    this.scopeNodeIds = this.computeBfsScope(originNode.id, params.direction || 'bidirectional', params.depth || 5);
+    this.scopeNodeIds = this.computeBfsScope(
+      originNode.id,
+      params.direction || 'bidirectional',
+      params.depth || 5,
+      params.upstream_depth,
+      params.downstream_depth,
+    );
 
     // Initialize column aspect if target columns are provided
     if (params.targetColumns && params.targetColumns.length > 0) {
@@ -987,6 +969,8 @@ export class NavigationEngine implements IHopStateMachine {
       targetColumns: params.targetColumns,
       direction: this._direction,
       depth: params.depth,
+      upstream_depth: params.upstream_depth,
+      downstream_depth: params.downstream_depth,
       depth_enforcement: params.depth_enforcement,
       mission_brief: params.mission_brief,
     };
@@ -1055,13 +1039,9 @@ export class NavigationEngine implements IHopStateMachine {
     const agendaed = this.agenda.length - agendaBefore;
     const contracted = nodeIds.length - agendaed - skipped;
 
-    // CT requires SM — never force inline when column tracing is active.
-    if (!this._columnAspect) {
-      this._inlineMode = true;
-    }
     this._status = 'awaiting_findings';
 
-    const modeLabel = this._columnAspect ? 'sm (ct)' : 'inline';
+    const modeLabel = this._columnAspect ? 'sm (ct)' : 'sm';
     this.log('info', `[Supplement] added ${nodeIds.length} requested ids → agendaed=${agendaed} contracted=${contracted} skipped=${skipped}; mode=${modeLabel}, status=awaiting_findings`);
 
     return { ok: true, agendaed, contracted, skipped };
@@ -1073,66 +1053,6 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns Context data mapped for the AI router.
    */
   public getHopContext(): HopContext {
-    if (this._inlineMode) {
-      // TRUE INLINE MODE: Drain the entire agenda into a single batch delivery.
-      const batchEntries: AgendaEntry[] = [];
-      while (this.agenda.length > 0) {
-        const candidate = this.agenda.shift()!;
-        this.agendaIds.delete(candidate.nodeId);
-        if (!this.visited.has(candidate.nodeId)) {
-          batchEntries.push(candidate);
-          this.visited.add(candidate.nodeId);
-        }
-      }
-
-      if (batchEntries.length === 0) {
-        this._status = 'complete';
-        this.logLabelDiversity();
-        return { done: true };
-      }
-
-      this.hopCount++;
-      // In inline mode, focus is the batch of nodes. We pick the first as the primary "focus" for state-machine
-      // consistency, but the AI receives the full list.
-      this.currentFocusNodeId = batchEntries[0].nodeId;
-      this.currentFocusQuestion = batchEntries[0].question ?? null;
-
-      const nodes = batchEntries.map(e => {
-        const n = this.nodeMap.get(e.nodeId)!;
-        const fn = buildHopFocusNode(
-          n, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl',
-          this.model.neighborIndex, this.edgeTypeMap,
-        );
-        if (this.depthBudget !== null) {
-          const d = this.depthFromOrigin.get(e.nodeId);
-          if (d !== undefined) fn.depth_from_origin = d;
-        }
-        return fn;
-      });
-
-      const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.bodiedScopeSize, {
-        rounds_used: this.hopCount,
-        scope_growth: this.budgetExpansions.length,
-        active_schemas: Array.from(this.sessionAllowedSchemas),
-      }) as NavigationWorkingMemory;
-      
-      workingMemory.topological_map = {
-        navigation_path: 'Full Graph (Inline)',
-        current_focus: 'batch_delivery',
-      };
-
-      this._status = 'awaiting_findings';
-      return {
-        mode: 'inline' as const,
-        sm_status: 'awaiting_findings' as const,
-        hop: this.hopCount,
-        agenda_remaining: 0,
-        focus_node: nodes,
-        working_memory: workingMemory,
-      };
-    }
-
-    // SLIDING MEMORY MODE (Isolated Hop)
     let entry: AgendaEntry | undefined;
     while (this.agenda.length > 0) {
       const nextIdx = this.agenda.reduce((best, curr, i, arr) => curr.priority > arr[best].priority ? i : best, 0);
@@ -1232,21 +1152,18 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    if (!this._inlineMode) {
-      workingMemory.approved_border = {
-        schemas: Array.from(this.sessionAllowedSchemas).sort(),
-        depth_cap: this.computeDepthCap(),
-      };
-      workingMemory.deferred_count = this._deferredQuestions.length;
-      if (this._columnAspect) {
-        workingMemory.column_aspect = this._columnAspect;
-      }
+    workingMemory.approved_border = {
+      schemas: Array.from(this.sessionAllowedSchemas).sort(),
+      depth_cap: this.computeDepthCap(),
+    };
+    workingMemory.deferred_count = this._deferredQuestions.length;
+    if (this._columnAspect) {
+      workingMemory.column_aspect = this._columnAspect;
     }
 
     this._lastCurrentTask = entry.question;
     this._status = 'awaiting_findings';
     return {
-      mode: 'sm' as const,
       sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
       agenda_remaining: this.agenda.length,
@@ -1260,7 +1177,6 @@ export class NavigationEngine implements IHopStateMachine {
    * Processes the findings from a completed hop and adjusts the agenda.
    *
    * @param params - Submission details including focus, verdict, and routing data.
-   * In True Inline Mode, this can be an array of findings for batch processing.
    * @returns Information summarizing the operation's outcome.
    */
   public submitFindings(params: HopSubmission): SubmitResult {
@@ -1273,27 +1189,20 @@ export class NavigationEngine implements IHopStateMachine {
       return { error: 'invalid_status', current_status: this._status, hint };
     }
 
-    const findings = Array.isArray(params) ? params : [params];
-    if (findings.length === 0) return { error: 'empty_submission' };
+    const findings = [params];
 
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
     this.lastRoutedDeferred = 0;
     this.lastHopColumnFlowEntries = 0;
     let totalCascadedCount = 0;
-    let forceComplete = false;
 
     const allInvalidRoutes: Array<{ id: string; reason: string; available_columns?: string[] }> = [];
-    const gateNodeIds: string[] = [];
-    const gateClasses = new Set<string>();
-    const gateDetails: string[] = [];
-    let gateHasSchema = false;
-    let gateHasDepth = false;
     const routeOutcomes: RouteOutcome[] = [];
 
     for (const finding of findings) {
       const focusId = finding.focus_node_id?.toLowerCase();
-      if (!this._inlineMode && focusId !== this.currentFocusNodeId) {
+      if (focusId !== this.currentFocusNodeId) {
         return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
       }
       if (!focusId || !this.nodeMap.has(focusId)) {
@@ -1330,39 +1239,19 @@ export class NavigationEngine implements IHopStateMachine {
 
           if (schemaBlocked || depthBlocked || strictScopeBlocked) {
             const scopeReason = depthBlocked || strictScopeBlocked;
-            if (this._inlineMode) {
-              gateNodeIds.push(req.nodeId);
-              if (schemaBlocked) {
-                gateHasSchema = true;
-                gateClasses.add(`schema:${schemaLower}`);
-                gateDetails.push(`\`${req.nodeId}\` is in schema \`${nNode.schema}\`, outside the active filter`);
-              }
-              if (scopeReason) {
-                gateHasDepth = true;
-                if (depthBlocked) {
-                  const extraOffset = candidateDepth! - depthCap!;
-                  gateClasses.add(`depth:+${extraOffset}`);
-                  gateDetails.push(`\`${req.nodeId}\` is at depth ${candidateDepth}, beyond the current cap ${depthCap}`);
-                } else {
-                  gateClasses.add('scope:strict');
-                  gateDetails.push(`\`${req.nodeId}\` is outside the initial approved scope (strict mode)`);
-                }
-              }
-            } else {
-              const deferReason: 'schema' | 'depth' | 'schema_and_depth' =
-                schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth';
-              this.deferQuestion({
-                nodeId: req.nodeId,
-                schema: nNode.schema,
-                fromFocusNodeId: focusId,
-                question: req.question ?? '',
-                reason: deferReason,
-                depth: candidateDepth,
-                atHop: this.hopCount,
-              });
-              this.lastRoutedDeferred++;
-              routeOutcomes.push({ nodeId: req.nodeId, accepted: false, deferred: true, reason: deferReason });
-            }
+            const deferReason: 'schema' | 'depth' | 'schema_and_depth' =
+              schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth';
+            this.deferQuestion({
+              nodeId: req.nodeId,
+              schema: nNode.schema,
+              fromFocusNodeId: focusId,
+              question: req.question ?? '',
+              reason: deferReason,
+              depth: candidateDepth,
+              atHop: this.hopCount,
+            });
+            this.lastRoutedDeferred++;
+            routeOutcomes.push({ nodeId: req.nodeId, accepted: false, deferred: true, reason: deferReason });
             continue;
           }
 
@@ -1491,7 +1380,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.memory.storeDetail(this.nodeMap.get(focusId)!, sections, finding.summary, {
           badge_label: finding.badge_label,
           note_caption: finding.note_caption,
-          reason_for_visit: this._inlineMode ? 'True Inline Analysis' : (this.currentFocusQuestion || 'Historical path investigation')
+          reason_for_visit: this.currentFocusQuestion || 'Historical path investigation',
         });
         this.lastHopDetailChars = sections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
         this.lastHopSummaryChars = finding.summary?.length ?? 0;
@@ -1566,7 +1455,6 @@ export class NavigationEngine implements IHopStateMachine {
         }
       }
 
-      if (finding.complete && this._inlineMode) forceComplete = true;
     }
 
     if (allInvalidRoutes.length > 0) {
@@ -1593,27 +1481,8 @@ export class NavigationEngine implements IHopStateMachine {
       };
     }
 
-    if (gateNodeIds.length > 0) {
-      this.lastRoutedRejected = gateNodeIds.length;
-      for (const id of gateNodeIds) this.memory.recordRejection(id, 'blocked by user-confirmation gate', this.hopCount);
-      const gate: ActionRequiredGate = {
-        error: 'action_required',
-        gate: gateHasSchema && gateHasDepth ? 'schema_and_depth' : gateHasSchema ? 'schema_out_of_filter' : 'depth_cap_exceeded',
-        classes: Array.from(gateClasses),
-        nodeIds: gateNodeIds,
-        detail: `Route requires user confirmation: ${gateDetails.slice(0, 3).join('; ')}${gateDetails.length > 3 ? ` (+${gateDetails.length - 3} more)` : ''}. Reply 'yes' to allow for this session or 'no' to pause and refine the question.`,
-        hint: 'Wait for the user to reply. Do not re-submit the same route until the gate is resolved.',
-      };
-      return gate;
-    }
-
     this._status = 'exploring';
     const outcomes = routeOutcomes.length > 0 ? { route_outcomes: routeOutcomes } : {};
-    if (forceComplete) {
-      this._status = 'complete';
-      this.logLabelDiversity();
-      return { ok: true, done: true, result: this.getResult(), ...outcomes };
-    }
 
     return totalCascadedCount > 0
       ? { ok: true, cascaded_count: totalCascadedCount, ...outcomes }
@@ -1641,21 +1510,50 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param startId - Starting node identifier.
    * @param direction - Direction of graph traversal ('upstream', 'downstream', 'bidirectional').
-   * @param maxDepth - The bounding maximum depth.
+   * @param maxDepth - The bounding maximum depth (used as the symmetric default).
+   * @param upstreamDepth - Optional override for upstream direction (only honored when `direction='bidirectional'`).
+   * @param downstreamDepth - Optional override for downstream direction (only honored when `direction='bidirectional'`).
    * @returns A set of valid node identifiers reachable within the depth parameters.
    */
-  private computeBfsScope(startId: string, direction: string, maxDepth: number): Set<string> {
-    const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
+  private computeBfsScope(
+    startId: string,
+    direction: string,
+    maxDepth: number,
+    upstreamDepth?: number,
+    downstreamDepth?: number,
+  ): Set<string> {
     const seen = new Set<string>();
-
     this.depthFromOrigin.clear();
-    bfsFromNode(this.graph, startId, (key, _attr, depth) => {
-      seen.add(key);
-      if (!this.depthFromOrigin.has(key)) {
-        this.depthFromOrigin.set(key, depth);
+
+    const hasAsymmetric = direction === 'bidirectional' && (upstreamDepth !== undefined || downstreamDepth !== undefined);
+    if (hasAsymmetric) {
+      const upCap = upstreamDepth ?? maxDepth;
+      const downCap = downstreamDepth ?? maxDepth;
+      if (upCap > 0) {
+        bfsFromNode(this.graph, startId, (key, _attr, depth) => {
+          seen.add(key);
+          if (!this.depthFromOrigin.has(key)) this.depthFromOrigin.set(key, depth);
+          return depth >= upCap;
+        }, { mode: 'inbound' });
       }
-      return depth >= maxDepth;
-    }, { mode });
+      if (downCap > 0) {
+        bfsFromNode(this.graph, startId, (key, _attr, depth) => {
+          seen.add(key);
+          if (!this.depthFromOrigin.has(key)) this.depthFromOrigin.set(key, depth);
+          return depth >= downCap;
+        }, { mode: 'outbound' });
+      }
+      // Origin is always anchored even when both depth caps are 0.
+      seen.add(startId);
+      if (!this.depthFromOrigin.has(startId)) this.depthFromOrigin.set(startId, 0);
+    } else {
+      const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
+      bfsFromNode(this.graph, startId, (key, _attr, depth) => {
+        seen.add(key);
+        if (!this.depthFromOrigin.has(key)) this.depthFromOrigin.set(key, depth);
+        return depth >= maxDepth;
+      }, { mode });
+    }
 
     // Three orthogonal exclusion axes — origin is never dropped (it anchors the trace).
     const hasFilters = this.excludedTypes.size > 0 || this.excludedSchemas.size > 0 || this.excludedNodeIds.size > 0;
@@ -1896,7 +1794,6 @@ export class NavigationEngine implements IHopStateMachine {
       hopCount: this.hopCount,
       scopeSize: this.scopeNodeIds.size,
       scopeNodeIds: Array.from(this.scopeNodeIds),
-      inlineMode: this._inlineMode,
       visited: Array.from(this.visited),
       removedSet: Array.from(this.removedSet),
       agendaSize: this.agenda.length,

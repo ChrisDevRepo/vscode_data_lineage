@@ -72,6 +72,14 @@ export interface ResultGraph {
  * and guide the AI in synthesizing its findings into a structured, user-friendly report.
  */
 export interface AiOutputTemplates {
+  /**
+   * Discovery-phase chat output — editable via the YAML overlay for tuning
+   * answer length, citation discipline, single-vs-balanced format, no-padding
+   * rule, and the biz / tech / math reference shapes used when writing chat
+   * prose. NOT a capture template; full angle templates ship only after SM
+   * gate approval.
+   */
+  discovery_chat: string;
   /** Instructions for generating the high-level summary. */
   summary: string;
   /** Instructions for the document heading rendered as `# …` above sections. */
@@ -132,6 +140,7 @@ export interface AiOutputTemplates {
  * Prevents runtime errors if template loading fails or is delayed.
  */
 export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
+  discovery_chat: '',
   summary: '',
   title: '',
   intro: '',

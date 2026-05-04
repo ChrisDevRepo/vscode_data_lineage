@@ -33,7 +33,7 @@ tests/
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
 │   ├── refine-loop.test.ts                # Discovery-phase refinement loop: classifier, exclusion axes, getScopeSummary, classifyForRefine, renderScopeSummaryMd
 │   ├── transient-retry.test.ts            # Transient-network classifier guarding the LM-call retry loop
-│   ├── column-flow-validation.test.ts     # CT column_flow validation: required/prune/out_col/contributor checks; shouldSmInline CT guard; supplement propagation
+│   ├── column-flow-validation.test.ts     # CT column_flow validation: required/prune/out_col/contributor checks; supplement propagation
 │   ├── toolPolicy.test.ts                 # Tool × phase policy: getAllowedLmToolNames, activeModeOf, filterLmTools
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
 │   └── hooks/                             # React hook unit tests (vitest)
@@ -48,13 +48,9 @@ tests/
 │   ├── AdventureWorks_sdk-style.dacpac    # SDK-style fixture (Fabric DW target platform)
 │   ├── graph-baseline-aw.json             # Frozen ground-truth graph
 │   ├── aw-baseline.tsv                    # Parser snapshot baseline
-│   └── sql/targeted/                      # 54 targeted SQL fixture files for parser edge-case tests
-│                                          # (ANSI joins, CTEs, MERGE, INSERT-EXEC, APPLY, OUTPUT INTO,
-│                                          #  dynamic SQL, cursors, temp tables, UDFs, try/catch, etc.)
-│
-└── integration/                           # Live SQL Server tests (.env required)
-    ├── helpers/dbAdapter.ts               # DB connection helper for integration tests
-    └── integration-db.test.ts             # DB pipeline tests
+    └── sql/targeted/                      # 54 targeted SQL fixture files for parser edge-case tests
+                                            # (ANSI joins, CTEs, MERGE, INSERT-EXEC, APPLY, OUTPUT INTO,
+                                            #  dynamic SQL, cursors, temp tables, UDFs, try/catch, etc.)
 ```
 
 ## Snapshot baseline pattern

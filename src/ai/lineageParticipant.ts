@@ -19,7 +19,7 @@
 import * as vscode from 'vscode';
 import { AiSession } from './session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
-import { setInlineTokenBudget, setSmInlineNodeCap, SCRIPT_TYPES } from './tools';
+import { setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, SCRIPT_TYPES } from './tools';
 import {
   buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
@@ -228,8 +228,9 @@ export class LineageParticipant {
 
     const aiConfig = vscode.workspace.getConfiguration('dataLineageViz');
     const MAX_ROUNDS = aiConfig.get<number>('ai.maxRounds', 50);
-    setInlineTokenBudget(aiConfig.get<number>('ai.inlineTokenBudget', 10_000));
-    setSmInlineNodeCap(aiConfig.get<number>('ai.inlineNodeCap', 10));
+    setCatalogInlineTokenBudget(aiConfig.get<number>('ai.contextPayloadBudget', 10_000));
+    setDiscoveryNodeCap(aiConfig.get<number>('ai.discoveryNodeCap', 8));
+    setDiscoveryTokenBudget(aiConfig.get<number>('ai.discoveryTokenBudget', 8000));
     const showToolInvocations = aiConfig.get<boolean>('ai.showToolInvocations', false);
 
     if (!sess.model) {
@@ -344,7 +345,7 @@ export class LineageParticipant {
           'Translate the feedback into a full re-spec — send the complete final filter set',
           '(not a delta). Call lineage_start_exploration with the same origin / direction /',
           'depth and your updated excludeTypes / excludeSchemas / excludeNodeIds / passNodeIds /',
-          'forceMode / classification / targetColumns. The engine will recompute the scope and',
+          'classification / targetColumns. The engine will recompute the scope and',
           're-emit the gate so the user can review or refine again.',
           '',
           'If the user\'s intent is genuinely ambiguous, ask one short clarifying question and',
@@ -366,11 +367,9 @@ export class LineageParticipant {
           sess.enterExploring();
           const focusId = engine?.currentFocus;
           const hopNumber = (engine?.currentHop ?? 0) + 1;
-          effectivePrompt = engine?.inlineMode
-            ? 'User approved. Call `submit_findings` with a batched JSON array of findings for all scope nodes, then `present_result` in the same turn per the Inline Turn Flow.'
-            : focusId
-              ? `User approved. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
-              : 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
+          effectivePrompt = focusId
+            ? `User approved. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
+            : 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
         } else {
           const engine = sess.stateMachine as NavigationEngine | null;
           if (engine) {
@@ -448,10 +447,7 @@ export class LineageParticipant {
 
         let phaseSpecific = '';
         if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
-        else if (phase === 'active') {
-          const isInline = engine?.inlineMode ?? false;
-          phaseSpecific = buildActivePhasePrompt(isInline);
-        }
+        else if (phase === 'active') phaseSpecific = buildActivePhasePrompt();
         else if (phase === 'synthesis') phaseSpecific = buildSynthesisPrompt();
         else if (phase === 'completed') phaseSpecific = buildFollowUpPrompt();
 
@@ -461,11 +457,6 @@ export class LineageParticipant {
         const isCtMode = !!(engine?.columnAspect);
         const stageResolved = resolveStagePrompt(sess.outputTemplates, templatesPhase, sess.classification, sess.memory.slotCount, isCtMode, focusIsNonBodied);
         const stageBlock = stageResolved.prompt;
-        // Inline collapses Active+Synthesis into one turn; synthesis YAML keys ride alongside capture keys, same classification + slot-count gates.
-        const isInlineActive = phase === 'active' && (engine?.inlineMode ?? false);
-        const inlineSynthesisStage = isInlineActive
-          ? resolveStagePrompt(sess.outputTemplates, 'synthesis', sess.classification, sess.memory.slotCount, isCtMode, /* focusIsNonBodied */ false)
-          : null;
         const gatedSummary = stageResolved.gatedOut
           .filter(g => g.reason !== 'stage')  // stage-gated is the dominant reason; keep the line short
           .map(g => `${g.key}(${g.reason})`)
@@ -473,18 +464,16 @@ export class LineageParticipant {
         this.logger.debug(
           `[AI] [Template] phase=${templatesPhase} classification=${sess.classification ?? 'unset'} slot_count=${sess.memory.slotCount} ` +
           `shipped_keys=[${stageResolved.shippedKeys.join(', ')}]` +
-          (gatedSummary ? ` gated_out=[${gatedSummary}]` : '') +
-          (inlineSynthesisStage ? ` inline_synthesis_keys=[${inlineSynthesisStage.shippedKeys.join(', ')}]` : '')
+          (gatedSummary ? ` gated_out=[${gatedSummary}]` : '')
         );
         const parts: string[] = [base, phaseSpecific];
 
         if (phase === 'active' && engine) {
           parts.push(buildToolUsageBlock());
-          parts.push(buildModeBlock(engine.inlineMode, engine.columnAspect?.target_columns, sess.classification));
+          parts.push(buildModeBlock(engine.columnAspect?.target_columns, sess.classification));
         }
 
         parts.push(stageBlock);
-        if (inlineSynthesisStage?.prompt) parts.push(inlineSynthesisStage.prompt);
 
         if ((phase === 'active' || phase === 'synthesis' || phase === 'completed') && engine) {
           const missionBriefBlock = buildMissionBriefBlock(sess.memory.getMissionBrief(), sess.memory.getUserQuestion() || '');
@@ -510,7 +499,7 @@ export class LineageParticipant {
           engine.getColumnLineageQuestions(),
         );
         if (currentTaskBlock) dynamic.push(currentTaskBlock);
-        if (phase === 'active' && !engine.inlineMode) {
+        if (phase === 'active') {
           // Mission state first — anchors focus_node_id before the model reads STM content.
           // (mechanically enforced via toolMode.Required + toolPolicy).
           const agendaRemaining = Math.max(0, engine.bodiedScopeSize - engine.currentHop);
@@ -537,7 +526,7 @@ export class LineageParticipant {
     if (resumingInActive) {
       activePhase = 'active';
       const engine = sess.stateMachine!;
-      const mode = activeModeOf(engine.inlineMode === true, engine.columnAspect !== null);
+      const mode = activeModeOf(engine.columnAspect !== null);
       lineageTools = filterLmTools(vscode.lm.tools, { kind: 'active', mode });
       this.logger.info(`[Phase] idle → active (gate-resume) — mode=${mode} tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
     } else if (resumingInCompleted) {
@@ -717,14 +706,12 @@ export class LineageParticipant {
           const engineAwaiting =
             !!engine && (engine.toJSON() as { status?: string }).status === 'awaiting_findings';
           if (activePhase === 'active' && engineAwaiting) {
-            this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — self-terminate blocked (mode=${engine!.inlineMode ? 'inline' : 'sm'}); injecting corrective prompt`);
+            this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — self-terminate blocked; injecting corrective prompt`);
             if (assistantParts.length > 0) {
               envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
             }
             envelope.pushUserText(
-              engine!.inlineMode
-                ? 'Free-form responses are outside protocol in TRUE INLINE mode. Call `lineage_submit_findings` now with one batched JSON array of findings (one entry per scope node), then `lineage_present_result` in the same turn per the Inline Turn Flow.'
-                : 'Free-form responses are outside protocol in SLIDING MEMORY mode. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
+              'Free-form responses are outside protocol in the SM hop loop. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
             );
             continue;
           }
@@ -864,7 +851,7 @@ export class LineageParticipant {
         if (hasStart && activePhase === 'discover') {
           activePhase = 'active';
           const engine = sess.stateMachine!;
-          const mode = activeModeOf(engine.inlineMode === true, engine.columnAspect !== null);
+          const mode = activeModeOf(engine.columnAspect !== null);
           lineageTools = filterLmTools(vscode.lm.tools, { kind: 'active', mode });
           this.logger.info(`[Phase] discover → active — mode=${mode} tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
           invalidateStablePart();
@@ -875,14 +862,9 @@ export class LineageParticipant {
         if (sess.stateMachine?.status === 'complete' && activePhase === 'active') {
           activePhase = 'synthesis';
           lineageTools = filterLmTools(vscode.lm.tools, { kind: 'synthesis' });
-          const completedMode = sess.stateMachine.inlineMode ? 'inline' : 'sm';
-          this.logger.info(`[Phase] active → synthesis — ${completedMode} complete, restored ${lineageTools.length} tools including presentation`);
-          if (sess.stateMachine.inlineMode && sess.classification) {
-            writer.markdown(`\n\n${CLASSIFICATION_BANNER[sess.classification]}\n\n`);
-          }
+          this.logger.info(`[Phase] active → synthesis — SM complete, restored ${lineageTools.length} tools including presentation`);
           invalidateStablePart();
-          // Inline: synthesis contract was bundled in the active-phase brief — no rebuild or wipe needed.
-          if (!sess.stateMachine.inlineMode) {
+          {
             systemPrompt = buildStageSystemPrompt('synthesis');
             const archive = sess.memory.getResult();
             const deferred = sess.stateMachine.deferredQuestions;
@@ -917,7 +899,7 @@ export class LineageParticipant {
         }
 
         const submitParts = toolCalls.filter(tc => tc.name === 'lineage_submit_findings');
-        if (submitParts.length > 0 && activePhase === 'active' && sess.stateMachine && !sess.stateMachine.inlineMode) {
+        if (submitParts.length > 0 && activePhase === 'active' && sess.stateMachine) {
           let anyError = false;
           let errorSample = '';
           for (const sp of submitParts) {

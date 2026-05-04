@@ -404,11 +404,11 @@ function testCteExclusion() {
   // Pass 1.6 rewrites FROM cte → FROM [schema].[table], enabling extract_update_alias_target
   {
     const r = parseSqlBody(`
-      WITH cte_Result AS (SELECT * FROM [TRANSFORMATION_FINANCEHUB].[CadenceWorker])
+      WITH cte_Result AS (SELECT * FROM [staging].[OrderWorker])
       UPDATE w SET w.Col = 1 FROM cte_Result w
     `);
-    assert(hasName(r.targets, 'CadenceWorker'), 'CTE UPDATE alias-FROM: CadenceWorker in targets');
-    assert(hasName(r.sources, 'CadenceWorker'), 'CTE UPDATE alias-FROM: CadenceWorker also in sources');
+    assert(hasName(r.targets, 'OrderWorker'), 'CTE UPDATE alias-FROM: OrderWorker in targets');
+    assert(hasName(r.sources, 'OrderWorker'), 'CTE UPDATE alias-FROM: OrderWorker also in sources');
     assert(!r.targets.some(s => s.toLowerCase().includes('cte_result')), 'CTE UPDATE alias-FROM: cte_Result NOT in targets');
   }
 

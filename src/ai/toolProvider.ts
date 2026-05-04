@@ -20,7 +20,6 @@ import type { AiSession } from './session';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import {
   suggestNarrowerDepth,
-  shouldSmInline,
   getContext, searchObjects, getObjectDetail,
   runBfsTrace, runAnalysis, searchDdl,
   getNeighborColumns,
@@ -218,7 +217,7 @@ class ToolHandler {
     const phase = sess.phase.kind;
     const engine = sess.stateMachine;
     if (phase === 'exploring' && engine) {
-      const mode = activeModeOf(engine.inlineMode === true, engine.columnAspect !== null);
+      const mode = activeModeOf(engine.columnAspect !== null);
       return { kind: 'active', mode };
     }
     if (phase === 'synthesis') return { kind: 'synthesis' };
@@ -432,12 +431,13 @@ class ToolHandler {
       const excludeSchemas: string[] = stringArray(data.excludeSchemas);
       const excludeNodeIds: string[] = stringArray(data.excludeNodeIds);
       const passNodeIds:    string[] = stringArray(data.passNodeIds);
-      const forceMode: 'inline' | 'sm' | undefined = data.forceMode;
 
       // On refine, fall back to the prior init snapshot for fields the AI didn't re-send.
       const refineOrigin = isRefining ? (data.origin ?? prior!.currentOrigin ?? '') : (data.origin ?? '');
       const refineDirection = data.direction ?? (isRefining ? prior!.currentDirection : 'bidirectional');
       const refineDepth = data.depth ?? (isRefining ? (prior!.currentDepth ?? undefined) : undefined);
+      const refineUpstreamDepth = data.upstream_depth ?? (isRefining ? (prior!.currentUpstreamDepth ?? undefined) : undefined);
+      const refineDownstreamDepth = data.downstream_depth ?? (isRefining ? (prior!.currentDownstreamDepth ?? undefined) : undefined);
       const refineEnforcement = data.depth_enforcement ?? (isRefining ? prior!.currentDepthEnforcement : undefined);
       const refineQuestion = data.question ?? (isRefining ? prior!.currentQuestion : 'Explore lineage');
       const refineMissionBrief = typeof data.mission_brief === 'string' ? data.mission_brief : (isRefining ? (prior!.currentMissionBrief ?? undefined) : undefined);
@@ -449,68 +449,47 @@ class ToolHandler {
         targetColumns: refineTargetColumns,
         direction: refineDirection,
         depth: refineDepth,
+        upstream_depth: refineUpstreamDepth,
+        downstream_depth: refineDownstreamDepth,
         depth_enforcement: refineEnforcement,
         excludeTypes,
         excludeSchemas,
         excludeNodeIds,
         passNodeIds,
-        forceMode,
         mission_brief: refineMissionBrief,
       });
 
       if ('error' in initResult) return this.logAndReturn('start_exploration', initResult, input);
 
-      // CT is always SM — reject explicit inline override before it can bypass shouldSmInline.
-      if (forceMode === 'inline' && engine.columnAspect) {
+      const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
+      const maxRounds = aiCfg.get<number>('maxRounds', 50);
+      const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
+      if (initResult.scopeSize > safeMax) {
+        const safeDepth = suggestNarrowerDepth(g, data.origin, data.direction || 'bidirectional', safeMax);
+        sess.resetExploration();
         return this.logAndReturn('start_exploration', {
-          error: 'ct_requires_sm',
-          hint: 'Column tracing always uses sliding-memory mode. Remove forceMode or set forceMode="sm".',
+          error: 'scope_exceeds_budget',
+          scope_size: initResult.scopeSize,
+          max_rounds: maxRounds,
+          safe_max_hops: safeMax,
+          safe_depth_hint: safeDepth,
+          hint: `Scope has ${initResult.scopeSize} nodes; sliding-memory budget allows ~${safeMax} hops (of ${maxRounds} with 30% reserve). Restart with depth=${safeDepth || 1}, narrow the direction, or raise 'dataLineageViz.ai.maxRounds'.`,
+          next_action: 'retry_with_smaller_depth',
         }, input);
-      }
-
-      const scopeDdlChars = engine.estimateScopeDdlChars();
-      // forceMode (user/AI override) wins over the size+budget heuristic; null -> heuristic decides.
-      const useInline = forceMode === 'inline'
-        ? true
-        : forceMode === 'sm'
-          ? false
-          : shouldSmInline(!!engine.columnAspect, scopeDdlChars, initResult.scopeSize);
-
-      if (useInline) {
-        engine.setInlineMode(true);
-      } else {
-        const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-        const maxRounds = aiCfg.get<number>('maxRounds', 50);
-        const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
-        if (initResult.scopeSize > safeMax) {
-          const safeDepth = suggestNarrowerDepth(g, data.origin, data.direction || 'bidirectional', safeMax);
-          sess.resetExploration();
-          return this.logAndReturn('start_exploration', {
-            error: 'scope_exceeds_budget',
-            scope_size: initResult.scopeSize,
-            max_rounds: maxRounds,
-            safe_max_hops: safeMax,
-            safe_depth_hint: safeDepth,
-            hint: `Scope has ${initResult.scopeSize} nodes; sliding-memory budget allows ~${safeMax} hops (of ${maxRounds} with 30% reserve). Restart with depth=${safeDepth || 1}, narrow the direction, or raise 'dataLineageViz.ai.maxRounds'.`,
-            next_action: 'retry_with_smaller_depth',
-          }, input);
-        }
       }
 
       if (!sess.classification) {
         // Zod hard-required `classification` at the schema boundary; data.classification is
         // already a valid enum value here. No fallback path — invalid input was rejected earlier.
         sess.setClassification(data.classification);
-        this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (${useInline ? 'inline' : 'SM'} mode, AI-declared)`);
+        this.logger.info(`[${sess.id}] [Classification] fired=${sess.classification} (SM mode, AI-declared)`);
       } else if (data.classification && data.classification !== sess.classification) {
         // Refine round: the AI may re-issue a classification override; honour it.
         sess.setClassification(data.classification);
         this.logger.info(`[${sess.id}] [Classification] refine-override → ${sess.classification}`);
       }
 
-      // Discovery is content-blind: always gate before any analysis runs, regardless of mode.
-      // Inline mode (≤10 nodes) used to fall straight through to the hop loop without consent —
-      // that hid wrong NL-filter interpretations (e.g. "ignore SPs A,B" → excludeTypes:['procedure']).
+      // Discovery is content-blind: always gate before any analysis runs.
       // Refine path: re-emit the gate with the new tree so the loop continues.
       if (sess.phase.kind === 'idle' || isRefining) {
         const hopCtx = engine.getHopContext();
@@ -530,8 +509,6 @@ class ToolHandler {
         const tree = renderScopeSummaryMd(summary);
         const classLabel = CLASSIFICATION_LABEL[sess.classification!] + (isCt ? ' (Column Trace)' : '');
         const detail = `${tree}\n\n_Analysis: ${classLabel}_`;
-
-        engine.setInlineMode(useInline);
 
         const gate = PendingGateSchema.parse({
           gate: 'confirm_sm_start',

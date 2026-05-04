@@ -436,19 +436,26 @@
             "maximum": 100,
             "markdownDescription": "Maximum tool-call rounds per `@lineage` request. Increase for complex explorations on deep graphs. Each round is one AI reasoning step + tool call."
           },
-          "dataLineageViz.ai.inlineTokenBudget": {
+          "dataLineageViz.ai.discoveryNodeCap": {
+            "type": "integer",
+            "default": 8,
+            "minimum": 1,
+            "maximum": 30,
+            "markdownDescription": "Maximum scope nodes the AI may pull during a single discovery-phase catalog request before the engine forces an SM escalation via the gate. Discovery answers small ad-hoc questions in chat; over-budget requests are rejected with a hint to call `lineage_start_exploration`."
+          },
+          "dataLineageViz.ai.discoveryTokenBudget": {
+            "type": "integer",
+            "default": 8000,
+            "minimum": 1000,
+            "maximum": 32000,
+            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request. Exceeding either this or the node cap forces an SM escalation via the consent gate."
+          },
+          "dataLineageViz.ai.contextPayloadBudget": {
             "type": "integer",
             "default": 10000,
             "minimum": 1000,
             "maximum": 100000,
-            "markdownDescription": "Maximum estimated tokens for inline (quick) delivery. When a trace or exploration scope fits within **both** this token budget and the node cap, the AI receives all SQL at once for faster analysis. Exceeding either threshold switches to hop-by-hop deep exploration with persistent memory. Lower values favor accuracy; higher values favor speed."
-          },
-          "dataLineageViz.ai.inlineNodeCap": {
-            "type": "integer",
-            "default": 10,
-            "minimum": 1,
-            "maximum": 100,
-            "markdownDescription": "Maximum scope nodes for inline (quick) delivery. When a trace or exploration scope has more nodes than this, the AI explores hop-by-hop with persistent memory for deeper analysis. Deep mode tracks column renames and transformations across many dependency stages. Lower values favor accuracy; higher values favor speed."
+            "markdownDescription": "Token budget for `lineage_get_context` deciding whether to inline the full catalog or return a summary. Unrelated to the discovery scope budget above."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
@@ -488,7 +495,7 @@
               "Where does revenue come from",
               "Trace the data flow for orders",
               "What tables does this procedure read from",
-              "Show me the lineage for the financehub schema",
+              "Show me the lineage for the sales schema",
               "What are the upstream sources of this table"
             ]
           }
@@ -955,7 +962,15 @@
             },
             "depth": {
               "type": "number",
-              "description": "Initial BFS depth from origin (default 5)."
+              "description": "Symmetric BFS depth from origin (default 5). Overridden per-direction by upstream_depth / downstream_depth when those are provided."
+            },
+            "upstream_depth": {
+              "type": "number",
+              "description": "Optional. BFS depth for upstream (inbound/input) traversal. Overrides 'depth' for the upstream direction when direction='bidirectional'. Use when the user requests asymmetric levels, e.g. 'all upstream, 2 downstream'."
+            },
+            "downstream_depth": {
+              "type": "number",
+              "description": "Optional. BFS depth for downstream (outbound/output) traversal. Overrides 'depth' for the downstream direction when direction='bidirectional'. Use when the user requests asymmetric levels."
             },
             "depth_enforcement": {
               "type": "string",
@@ -1186,7 +1201,6 @@
     "test:dmv": "tsx tests/unit/dmvExtractor.test.ts",
     "test:sql": "tsx tests/unit/tsql-complex.test.ts",
     "test:project": "tsx tests/unit/projectStore.test.ts",
-    "test:integration": "tsx tests/integration/integration-db.test.ts",
     "test:hooks": "vitest run --config vitest.config.ts",
     "test:snapshot": "tsx tests/unit/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx tests/unit/snapshot-aw-baseline.ts --update",
@@ -1218,17 +1232,14 @@
     "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4.0.9",
     "@types/jsdom": "^28.0.1",
-    "@types/mssql": "^9",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.95.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.20",
-    "dotenv": "^16",
     "esbuild": "^0.25.0",
     "jsdom": "^29.0.1",
-    "mssql": "^11",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
