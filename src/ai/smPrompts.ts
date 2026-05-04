@@ -48,7 +48,7 @@ const BLOCK = {
     '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
     '   - SHARED ROLE: Nodes serving the same role take the same label. Five discount procedures all use `"Price Adjustment"`; three territory loaders all use `"Territory Load"`. The differing detail belongs in the section body, not the label.',
     '   ❌ Step-count labels ("Step 1", "Step A", "Transform Step") — sections are auto-numbered; role labels only.',
-    '2. NOTE: `note_caption` (≤200 chars) — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
+    '2. NOTE: `note_caption` — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
   ].join('\n'),
 
   /** Routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */

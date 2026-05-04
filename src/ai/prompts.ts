@@ -214,7 +214,7 @@ export function buildSynthesisPrompt(): string {
     '- `title`: "[Subject] — [key finding]" shape.',
     '- `intro`: 2–4 sentences, anchored to the user\'s question and the locked Mission type. Headline-level only — no walkthrough, no formulas (those belong in sections).',
     '- `closing`: optional cross-cutting risk or through-line, prefixed ⚠️ for risks. Omit if nothing material to add.',
-    '- `notes[]`: per-node captions (≤200 chars). Use `note_caption` from each captured slot.',
+    '- `notes[]`: per-node captions. Use `note_caption` from each captured slot.',
     '- `highlight_groups[]`: optional color glow on 2-3 critical nodes.',
     '',
     'Use `suggested_sections` from the completion result as a starting skeleton when present. Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
