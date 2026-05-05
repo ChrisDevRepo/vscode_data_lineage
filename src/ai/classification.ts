@@ -38,7 +38,7 @@ export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
  *
  * @remarks
  * Rendered via `stream.markdown()` in the chat participant the moment
- * classification resolves (inline mode only). Format: markdown blockquote.
+ * classification resolves. Format: markdown blockquote.
  */
 export const CLASSIFICATION_BANNER: Record<ClassificationValue, string> = {
   business: `> Starting analyze phase — ${CLASSIFICATION_LABEL.business}.`,

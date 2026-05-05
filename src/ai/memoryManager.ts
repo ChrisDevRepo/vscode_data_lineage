@@ -219,11 +219,10 @@ export class AiMemoryManager {
    * @param meta - Optional UI metadata — `badge_label`, `note_caption`, `reason_for_visit`.
    *
    * @remarks
-   * Sections are stored verbatim regardless of inline vs SM mode — uniform
-   * downstream shape simplifies eval extraction and synthesis lift.
+   * Sections are stored verbatim — uniform downstream shape simplifies eval
+   * extraction and synthesis lift.
    */
-  public storeDetail(
-    node: LineageNode,
+   public storeDetail(    node: LineageNode,
     sections: CapturedSection[],
     summary: string,
     meta?: { badge_label?: string; note_caption?: string; reason_for_visit?: string },

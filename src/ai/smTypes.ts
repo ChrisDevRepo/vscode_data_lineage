@@ -139,14 +139,12 @@ export interface HopNeighbor {
    *
    * @remarks
    * In SM sessions the approved scope is locked at `confirm_sm_start`; routes to out-of-scope
-   * neighbors are deferred (not rejected) and surfaced at synthesis. In inline sessions the flag
-   * still drives the `schema_out_of_filter` consent gate.
+   * neighbors are deferred (not rejected) and surfaced at synthesis.
    */
   in_approved_scope?: boolean;
   /**
    * True when routing here would trigger engine-level handling:
-   * inline sessions raise an `action_required` gate; SM sessions record the route as a deferred
-   * question for post-session review.
+   * out-of-scope routes are recorded as a deferred question for post-session review.
    */
   would_trigger_action_required?: boolean;
 }

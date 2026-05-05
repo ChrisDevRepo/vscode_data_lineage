@@ -332,7 +332,7 @@ export function buildStartDeeperAnalysisTriggerPrompt(
     '## Inputs to lineage_start_exploration',
     '',
     `- **origin**: ${JSON.stringify(origin)} (the node walked during discovery).`,
-    '- **direction**: "bidirectional".',
+    '- **direction**: "upstream" | "downstream" | "bidirectional". Rule: Select based on <original_question>. Use "upstream" for source/input questions, "downstream" for usage/impact questions, or "bidirectional" only if the intent is broad (e.g., "trace all lineage of X").',
     '- **classification**: "business" (the user did not name a technical lens).',
     '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. Resolve those names to node ids with `lineage_search_objects` first if needed, then list them here. If the user named no exclusions, pass `[]`.',
     '- **mission_brief**: a 1-sentence placeholder citing the user\'s original question — the post-approval discovery-summary round will replace it with the full compressed memo, so keep this brief.',

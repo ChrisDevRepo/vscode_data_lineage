@@ -787,7 +787,7 @@ export class LineageParticipant {
           this.logger.debug(`Output countTokens failed: ${err instanceof Error ? err.message : err}`);
         }
         if (!toolCalls.length) {
-          // toolMode.Required falls back to Auto (both ACTIVE toolsets expose ≥2 tools); corrective blocks drift in inline and SM alike.
+          // toolMode.Required falls back to Auto (both ACTIVE toolsets expose ≥2 tools); corrective blocks drift.
           const engine = sess.stateMachine;
           const engineAwaiting =
             !!engine && (engine.toJSON() as { status?: string }).status === 'awaiting_findings';

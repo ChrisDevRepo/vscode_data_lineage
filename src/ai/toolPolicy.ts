@@ -34,7 +34,7 @@ export type ActiveMode = 'sm_bb' | 'sm_ct';
 export type LmStage =
   /** Idle / ad-hoc question answering. No state machine active. */
   | { kind: 'discover' }
-  /** Hop loop. `mode` scopes the tool set to inline BB, SM BB, or SM CT. */
+  /** Hop loop. `mode` scopes the tool set to SM BB, or SM CT. */
   | { kind: 'active'; mode: ActiveMode }
   /** Post-agenda-drain report authoring. */
   | { kind: 'synthesis' }
@@ -85,8 +85,7 @@ function assertNever(x: never): never {
 /**
  * Returns the set of LM tool names allowed in the given stage.
  *
- * @param stage - Discriminated stage descriptor. For ACTIVE, `mode` selects
- *   the tool scope (inline BB vs SM BB/CT).
+ * @param stage - Discriminated stage descriptor.
  */
 export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
   switch (stage.kind) {

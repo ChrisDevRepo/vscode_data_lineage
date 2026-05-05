@@ -583,12 +583,6 @@ class ToolHandler {
 
       // The agreement-phase gate locks `sess.classification`. Each finding's
       // sections[] must match the lock; verdict=prune may submit length 0.
-      // Section text non-emptiness is enforced by the Zod schema (`z.string().min(1)`)
-      // in `CapturedSectionSchema`. No upper or lower length floor beyond that —
-      // structurally simple DDL (a SELECT-with-JOIN view, a 4-line UPDATE proc)
-      // cannot produce long captures without inventing content. The capture
-      // template extracts every structural element the DDL contains; the
-      // boundary's job is only to reject hollow submissions.
       const findings = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
       for (const f of findings) {
         const violation = validateSectionsAgainstClassification(f.sections, f.verdict, sess.classification);
@@ -600,29 +594,24 @@ class ToolHandler {
         }
       }
 
-      // Identifier-match guard: detect slot-hijack where any captured section opens by naming a different scope node than the declared focus. SM mode only (single-entry) — inline batch arrays skip this check.
-      if (!Array.isArray(parsed.data)) {
-        const hijackedBy = engine.detectFocusSubjectMismatch(parsed.data.focus_node_id, parsed.data.sections ?? []);
-        if (hijackedBy) {
-          return this.logAndReturn('submit_findings', {
-            error: 'focus_subject_mismatch',
-            hint: `A captured section opens by naming \`${hijackedBy}\`, but focus_node_id is ${parsed.data.focus_node_id}. Rewrite each section so it describes the focus node.`,
-          }, input);
-        }
+      // Identifier-match guard: detect slot-hijack where any captured section opens by naming a different scope node than the declared focus.
+      const hijackedBy = engine.detectFocusSubjectMismatch(parsed.data.focus_node_id, parsed.data.sections ?? []);
+      if (hijackedBy) {
+        return this.logAndReturn('submit_findings', {
+          error: 'focus_subject_mismatch',
+          hint: `A captured section opens by naming \`${hijackedBy}\`, but focus_node_id is ${parsed.data.focus_node_id}. Rewrite each section so it describes the focus node.`,
+        }, input);
       }
 
       // Identity guard: submitted focus_node_id must match the engine's current focus.
-      // SM mode only — inline batch submissions are arrays and skip this branch.
-      if (!Array.isArray(parsed.data)) {
-        const engineFocus = engine.currentFocus;
-        if (engineFocus && parsed.data.focus_node_id.toLowerCase() !== engineFocus.toLowerCase()) {
-          return this.logAndReturn('submit_findings', {
-            error: 'focus_node_id_mismatch',
-            expected: engineFocus,
-            got: parsed.data.focus_node_id,
-            hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${engineFocus}. Resubmit with the correct focus_node_id.`,
-          }, input);
-        }
+      const engineFocus = engine.currentFocus;
+      if (engineFocus && parsed.data.focus_node_id.toLowerCase() !== engineFocus.toLowerCase()) {
+        return this.logAndReturn('submit_findings', {
+          error: 'focus_node_id_mismatch',
+          expected: engineFocus,
+          got: parsed.data.focus_node_id,
+          hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${engineFocus}. Resubmit with the correct focus_node_id.`,
+        }, input);
       }
 
       const result = engine.submitFindings(parsed.data);

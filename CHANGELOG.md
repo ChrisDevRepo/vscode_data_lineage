@@ -6,14 +6,11 @@
 - **Chat is the default — graphs only when you ask.** Most lineage questions get a quick chat answer summarizing the loaded model. The side-panel graph and consent gate now fire only when you ask for a visual render, request column tracing, or open a scope too large for chat.
 - **Discovery answers read like a structured memory of what was inspected.** Multi-object dependency questions ("trace upstream from X two levels", "what feeds Y") return as Markdown with one heading per node visited — business meaning, technical execution, formulas in math fences, column-rename tables, and ⚠️ data-quality flags inline.
 - **Trace any direction depth combination.** Ask for "all upstream, 2 downstream" or any other up/down combination — both bounds are honoured independently in one request.
-- **Reliable colouring on the rendered graph.** Origin, intermediate transformer, and terminal output nodes now consistently render with coloured glow rings on every SM result.
-- **Formula rendering fixed.** Math expressions in AI descriptions render consistently; dollar amounts and SQL `@params` no longer interfere with the result panel.
 
 ### Added
 - **One-click "deeper analysis" path.** After the chat answers a multi-object dependency question, a follow-up "Start deeper hop-by-hop analysis" pill appears under the answer. Clicking it walks the same graph through the structured renderer with consent gate, scope preview, and the rendered detail panel — no need to re-type the question.
 - **The walkthrough remembers what you said in chat.** Once you approve the structured walkthrough, the AI composes a short memo of the chat question, what was already found, and any "ignore X / focus on Y / be careful with Z" you mentioned during the chat. That memo rides every hop of the walkthrough so the analysis stays anchored to your intent — even when the AI reaches a node that wasn't on the original ignore list.
 - **Customizable chat-answer style.** Tune the discovery chat output (length, structure, framing references, rendering primitives like math fences and rename tables) via `aiOutputTemplates.yaml` — the same template surface that drives the rendered SM detail, so chat and graph share consistent formatting.
-- **Scope-size guard.** Catalog requests that would load too much data are intercepted automatically — the AI offers to switch to the structured walkthrough rather than hitting context limits.
 
 ### Removed
 - **Inline mode** — superseded by the chat-vs-walkthrough split. One execution path now: chat for ad-hoc and dependency questions, the structured walkthrough for visual renders, column traces, and over-budget scopes.

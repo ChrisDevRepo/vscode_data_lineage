@@ -537,11 +537,9 @@ export class NavigationEngine implements IHopStateMachine {
    * Diagnostics accessor for telemetry / eval extraction. Mirrors
    * `getResult().detail_slots` but is callable mid-exploration without
    * forcing the synthesis-phase shape. Slot count equals the number of
-   * nodes that produced at least one `submit_findings.sections[]` entry —
-   * NOT the hop count (a single hop can submit multiple findings in inline batch).
+   * nodes that produced at least one `submit_findings.sections[]` entry.
    */
-  public getDetailSlots(): DetailSlot[] {
-    return this.memory.getResult().detail_slots;
+   public getDetailSlots(): DetailSlot[] {    return this.memory.getResult().detail_slots;
   }
 
   /**
@@ -1041,17 +1039,11 @@ export class NavigationEngine implements IHopStateMachine {
    * Extends a completed exploration with additional nodes for analysis.
    *
    * @remarks
-   * Only callable when `status === 'complete'`. Re-enters `awaiting_findings`, forces
-   * inline mode (supplements are small by construction), and appends ids via
-   * {@link enqueueHop} so the bipartite rule still holds: bodied nodes land on the
-   * agenda, non-bodied contract through to their bodied neighbors in the exploration
-   * direction. Prior `DetailSlot` entries survive — new slots merge in.
-   *
-   * Unknown ids are reported in the `skipped` count, not raised as errors, so a
-   * partial supplement still proceeds.
-   *
-   * @param nodeIds - Ids to append to the agenda.
-   * @returns Counts of agendaed / contracted / skipped, or a structured error.
+   * Only callable when `status === 'complete'`. Re-enters `awaiting_findings`,
+   * and appends ids via {@link enqueueHop} so the bipartite rule still holds:
+   * bodied nodes land on the agenda, non-bodied contract through to their
+   * bodied neighbors in the exploration direction. Prior `DetailSlot` entries
+   * survive — new slots merge in.
    */
   public supplementAgenda(nodeIds: string[]): { ok: true; agendaed: number; contracted: number; skipped: number } | { error: string; hint?: string } {
     if (this._status !== 'complete') {
