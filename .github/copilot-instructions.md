@@ -36,11 +36,16 @@ A VS Code extension for visualizing SQL dependencies. Key technologies:
 
 ## Testing & Verification
 
-- **Snapshot Testing**: Any change to `assets/defaultParseRules.yaml` requires `npm run test:snapshot`. Zero lost dependencies allowed.
+The regression net rests on three high-priority categories — **parsing, BFS/graph, baseline**. Other tests are narrower guards (Zod boundaries, tool policy, idempotency, classifiers); add to them only when an invariant they protect changes.
+
+- **Snapshot testing**: Any change to `assets/defaultParseRules.yaml` requires `npm run test:snapshot`. Zero lost dependencies allowed.
 - **Tiers**:
-  - `npm run test:unit`: Core logic.
-  - `npm run test:unit:ai`: AI state machine and memory management.
-  - `npm run test:hooks`: React hook tests.
+  - `npm test` — full unit suite (parser, graph, baseline, NavigationEngine + cascade + bipartite + supplement, boundary guards).
+  - `npm run test:parser` — SQL parser edge cases + 55 real-world SQL fixtures.
+  - `npm run test:graph` — graph construction, BFS, analysis algorithms.
+  - `npm run test:baseline` — parser TSV + graph-analysis JSON regression net.
+  - `npm run test:hooks` — React hooks (vitest jsdom).
+- **AI quality** beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT baseline captures (`tmp/baseline/`), not unit tests — there is no in-process LM to assert against.
 
 ## Guidelines for AI Generation
 - **Logic**: Use explicit composition and delegation over complex inheritance.

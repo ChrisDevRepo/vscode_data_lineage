@@ -3,11 +3,11 @@
  *
  * Covers: column_flow_required, prune exemption, out_col/from_node/from_col
  * structural rejection, edge accumulation, filter_only exclusion,
- * shouldSmInline CT invariant, and supplementAgenda CT propagation.
+ * activeModeOf CT discriminator, and supplementAgenda CT propagation.
  */
 
 import { NavigationEngine } from '../../src/ai/smBase';
-import { shouldSmInline } from '../../src/ai/tokenBudget';
+import { activeModeOf } from '../../src/ai/toolPolicy';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 
@@ -195,17 +195,16 @@ function ctEngine(targetColumns = ['amount']) {
   assert(edges[0]?.to_col === 'amount', 'accumulated edge to_col is amount');
 }
 
-// ── Test 9: shouldSmInline always returns false when CT is active ──
+// ── Test 9: activeModeOf — CT presence selects the SM-CT tool scope ──
+// Replaces the deleted shouldSmInline check. The two-state model has no inline
+// execution mode; CT activation is now expressed mechanically via the ActiveMode
+// discriminator (sm_ct), which gates the per-hop tool set in toolPolicy.
 {
-  // Payload and scope that would normally qualify for inline
-  assert(shouldSmInline(true, 100, 3) === false, 'shouldSmInline(ct=true, small payload, small scope) = false');
-  assert(shouldSmInline(true, 0, 0) === false, 'shouldSmInline(ct=true, 0, 0) = false');
-  assert(shouldSmInline(true, 999999, 999) === false, 'shouldSmInline(ct=true, large payload) = false');
-  // Verify non-CT with small payload returns true (confirms the guard is CT-specific)
-  assert(shouldSmInline(false, 100, 3) === true, 'shouldSmInline(ct=false, small payload) = true');
+  assert(activeModeOf(true) === 'sm_ct', 'activeModeOf(hasColumnAspect=true) === sm_ct');
+  assert(activeModeOf(false) === 'sm_bb', 'activeModeOf(hasColumnAspect=false) === sm_bb');
 }
 
-// ── Test 10: supplementAgenda with CT — inlineMode stays false; nodes get target_columns ──
+// ── Test 10: supplementAgenda with CT — supplemented node inherits target_columns ──
 {
   // Graph: origin_view (view) upstream of another view
   const secondView: LineageNode = {
@@ -247,7 +246,6 @@ function ctEngine(targetColumns = ['amount']) {
   // Supplement with second_view
   const suppResult = engine.supplementAgenda(['second_view']);
   assert('ok' in suppResult && suppResult.ok === true, 'supplementAgenda ok');
-  assert(engine.inlineMode === false, 'inlineMode stays false after supplementAgenda with CT');
 
   // Advance to second_view hop and verify active_columns = target_columns
   engine.getHopContext();

@@ -2,6 +2,18 @@
 
 **Full testing strategy, tier commands, fixture policy, and snapshot-baseline protocol live in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).** This README covers only folder-specific notes.
 
+## High-priority regression net
+
+Three categories carry the suite. Everything else is a narrower guard.
+
+| Category | Files | Run with |
+|---|---|---|
+| **Parsing** | `parser-edge-cases.test.ts`, `tsql-complex.test.ts` | `npm run test:parser` |
+| **BFS / graph** | `graphBuilder.test.ts`, `graphAnalysis.test.ts` | `npm run test:graph` |
+| **Baseline** | `snapshot-aw-baseline.ts` (parser TSV), `graph-analysis-aw.test.ts` (NetworkX-verified graph JSON) | `npm run test:baseline` |
+
+`npm test` runs every file below. `npm run test:hooks` runs the vitest jsdom suite for React hooks.
+
 ## Folder layout
 
 ```
@@ -11,30 +23,40 @@ tests/
 ├── unit/                                  # Plain Node.js tests (CI-safe)
 │   ├── README.md                          # Tier commands and pre-merge gates
 │   ├── tsconfig.json                      # TypeScript config for unit tests
+│   │
+│   │  — Parsing & extraction —
+│   ├── parser-edge-cases.test.ts          # SQL parser regex edge cases
+│   ├── tsql-complex.test.ts               # Real-world SQL patterns (55 fixture files)
 │   ├── dacpacExtractor.test.ts            # ZIP/XML extraction, edge integrity
+│   ├── dmvExtractor.test.ts               # DMV → model building
+│   │
+│   │  — Graph engine & BFS —
 │   ├── graphBuilder.test.ts               # Graph construction, synthetic BFS traces
 │   ├── graphAnalysis.test.ts              # Algorithmic edge cases (maxSize, cycles)
-│   ├── graph-analysis-aw.test.ts          # AW baseline verification (Snapshot Pattern)
-│   ├── parser-edge-cases.test.ts          # SQL parser regex edge cases
-│   ├── tsql-complex.test.ts               # Real-world SQL patterns
-│   ├── dmvExtractor.test.ts               # DMV → model building
-│   ├── projectStore.test.ts               # Migration, serialization
+│   │
+│   │  — Baseline regression —
 │   ├── snapshot-aw-baseline.ts            # Parser regression baseline (TSV)
-│   ├── ai-tool-registration.test.ts       # manifest ↔ registration guard (bi-directional)
-│   ├── repeat-reject-guard.test.ts        # Idempotency counter — abort on 3 identical failures
-│   ├── classification.test.ts             # Classification axis lock + sections[] validation
-│   ├── start-exploration-schema.test.ts   # Zod boundary for start_exploration
-│   ├── messageEnvelope.test.ts            # Sliding-wipe envelope contract
-│   ├── navigation-engine.test.ts          # NavigationEngine lifecycle + memory
-│   ├── navigation-engine-cascade.test.ts  # Cascade-prune guard logic
+│   ├── graph-analysis-aw.test.ts          # AW graph-analysis baseline (Snapshot Pattern)
+│   │
+│   │  — SM / NavigationEngine invariants —
+│   ├── navigation-engine.test.ts          # Lifecycle, tally, route rejection, archive counter, complete-flag contract
+│   ├── navigation-engine-cascade.test.ts  # Cascade-prune + viewPrune.prunePreserveOnly
 │   ├── navigation-engine-bipartite.test.ts # Bipartite agenda rule
 │   ├── navigation-engine-supplement.test.ts # Supplement-agenda flow
-│   ├── sm-robustness.test.ts              # SM scope robustness + present_result prune regression
+│   ├── column-flow-validation.test.ts     # CT column_flow validation
+│   │
+│   │  — Boundary guards (Zod / policy / state) —
+│   ├── classification.test.ts             # Classification axis lock + AiSession setter
+│   ├── start-exploration-schema.test.ts   # Zod boundary for start_exploration
+│   ├── messageEnvelope.test.ts            # Sliding-wipe envelope contract
+│   ├── toolPolicy.test.ts                 # Tool × phase policy
+│   ├── ai-tool-registration.test.ts       # Manifest ↔ registration guard
+│   ├── repeat-reject-guard.test.ts        # Idempotency counter (abort on 3 identical failures)
+│   ├── transient-retry.test.ts            # Transient-network classifier
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
-│   ├── refine-loop.test.ts                # Discovery-phase refinement loop: classifier, exclusion axes, getScopeSummary, classifyForRefine, renderScopeSummaryMd
-│   ├── transient-retry.test.ts            # Transient-network classifier guarding the LM-call retry loop
-│   ├── column-flow-validation.test.ts     # CT column_flow validation: required/prune/out_col/contributor checks; supplement propagation
-│   ├── toolPolicy.test.ts                 # Tool × phase policy: getAllowedLmToolNames, activeModeOf, filterLmTools
+│   ├── refine-loop.test.ts                # Discovery-phase refinement loop
+│   ├── projectStore.test.ts               # Migration, serialization
+│   │
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader
 │   └── hooks/                             # React hook unit tests (vitest)
 │       ├── save-project.test.tsx
@@ -43,12 +65,12 @@ tests/
 │       ├── useInteractiveTrace.test.ts
 │       └── useOverviewMode.test.ts
 │
-├── fixtures/                              # Static test data (committed)
-│   ├── AdventureWorks2025_AI.dacpac       # Primary test fixture (classic, Azure SQL)
-│   ├── AdventureWorks_sdk-style.dacpac    # SDK-style fixture (Fabric DW target platform)
+├── fixtures/                              # Static test data
+│   ├── AdventureWorks2025_AI.dacpac       # Primary test fixture (classic, Azure SQL) — gitignored exception
+│   ├── AdventureWorks_sdk-style.dacpac    # SDK-style fixture (Fabric DW) — gitignored exception
 │   ├── graph-baseline-aw.json             # Frozen ground-truth graph
 │   ├── aw-baseline.tsv                    # Parser snapshot baseline
-    └── sql/targeted/                      # 54 targeted SQL fixture files for parser edge-case tests
+│   └── sql/targeted/                      # 55 targeted SQL fixture files for parser edge-case tests
                                             # (ANSI joins, CTEs, MERGE, INSERT-EXEC, APPLY, OUTPUT INTO,
                                             #  dynamic SQL, cursors, temp tables, UDFs, try/catch, etc.)
 ```

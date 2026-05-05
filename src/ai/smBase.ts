@@ -1572,6 +1572,13 @@ export class NavigationEngine implements IHopStateMachine {
     return seen;
   }
 
+  /** Returns directional graph neighbors based on the active exploration direction. */
+  private directionalNeighbors(nodeId: string, direction: 'upstream' | 'downstream' | 'bidirectional'): string[] {
+    if (direction === 'upstream') return this.graph.inNeighbors(nodeId) as string[];
+    if (direction === 'downstream') return this.graph.outNeighbors(nodeId) as string[];
+    return this.graph.neighbors(nodeId) as string[];
+  }
+
   /**
    * Seeds the initial agenda based on the requested traversal parameters.
    *
@@ -1579,9 +1586,8 @@ export class NavigationEngine implements IHopStateMachine {
    * @param direction - Edge traversal direction.
    * @param targetCols - Array of target column names for detailed tracking.
    */
-  private seedAgenda(originId: string, direction: string, targetCols?: string[]): void {
-    const neighbors = direction === 'upstream' ? this.graph.inNeighbors(originId) : direction === 'downstream' ? this.graph.outNeighbors(originId) : this.graph.neighbors(originId);
-    for (const nid of neighbors as string[]) {
+  private seedAgenda(originId: string, direction: 'upstream' | 'downstream' | 'bidirectional', targetCols?: string[]): void {
+    for (const nid of this.directionalNeighbors(originId, direction)) {
       this.enqueueHop(nid, `Analyze relationship to ${originId}`, 1, 0, targetCols);
     }
   }
@@ -1596,13 +1602,7 @@ export class NavigationEngine implements IHopStateMachine {
    * `enqueueHop` (which respects scope, visited, and the bipartite rule).
    */
   private contractThroughPassNode(entry: AgendaEntry): void {
-    const dir = this._direction;
-    const neighbours = dir === 'upstream'
-      ? (this.graph.inNeighbors(entry.nodeId) as string[])
-      : dir === 'downstream'
-        ? (this.graph.outNeighbors(entry.nodeId) as string[])
-        : (this.graph.neighbors(entry.nodeId) as string[]);
-    for (const nid of neighbours) {
+    for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
       this.enqueueHop(nid, entry.question, entry.depth + 1, entry.priority, entry.activeColumns);
     }
   }
@@ -1672,13 +1672,7 @@ export class NavigationEngine implements IHopStateMachine {
     // question to the target's bodied neighbors in the exploration direction.
     if (visitedRefs.has(targetId)) return;
     visitedRefs.add(targetId);
-    const dir = this._direction;
-    const next = dir === 'upstream'
-      ? (this.graph.inNeighbors(targetId) as string[])
-      : dir === 'downstream'
-        ? (this.graph.outNeighbors(targetId) as string[])
-        : (this.graph.neighbors(targetId) as string[]);
-    for (const nid of next) {
+    for (const nid of this.directionalNeighbors(targetId, this._direction)) {
       this.enqueueHop(nid, question, depth + 1, priority, columns, visitedRefs);
     }
   }
@@ -1690,7 +1684,9 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns Array of metadata structures matching neighbor hop properties.
    */
   private buildNeighborList(focusId: string): HopNeighbor[] {
-    const ids = Array.from(new Set([...(this.graph.inNeighbors(focusId) as string[]), ...(this.graph.outNeighbors(focusId) as string[])])) as string[];
+    const inSet = new Set(this.graph.inNeighbors(focusId) as string[]);
+    const outSet = new Set(this.graph.outNeighbors(focusId) as string[]);
+    const ids = Array.from(new Set([...inSet, ...outSet]));
     const depthCap = this.computeDepthCap();
     const hasSchemaFilter = this.sessionAllowedSchemas.size > 0;
     return ids.map(nid => {
@@ -1702,7 +1698,7 @@ export class NavigationEngine implements IHopStateMachine {
         : undefined;
       const neighbor: HopNeighbor = {
         id: nid, s: n.schema, n: n.name, t: n.type,
-        edge_direction: (this.graph.inNeighbors(focusId) as string[]).includes(nid) ? 'upstream' : 'downstream',
+        edge_direction: inSet.has(nid) ? 'upstream' : 'downstream',
         edge_type: 'read', boundary, ...(cols?.length ? { cols } : {}),
       };
 

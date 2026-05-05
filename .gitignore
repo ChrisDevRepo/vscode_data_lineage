@@ -59,5 +59,3 @@ GEMINI.md
 scripts/
 adventure_works_graph.json
 
-# Test dacpacs — local only, not for public repo
-tests/fixtures/*.dacpac

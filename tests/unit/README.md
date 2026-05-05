@@ -8,11 +8,12 @@
 
 | Tier | Command | What runs |
 |------|---------|-----------|
-| Core | `npm test` | Parser, dacpac, graph, DMV, snapshot, AI tool registration, repeat-reject guard, classification, schema-boundary, message envelope, SM robustness, refine loop |
-| AI-heavy | `npm run test:unit:ai` | NavigationEngine + cascade + bipartite + supplement |
+| Full unit | `npm test` | Every `.test.ts` under `tests/unit/` (parser, graph, baseline, NavigationEngine + cascade + bipartite + supplement, boundary guards) |
+| Parsing | `npm run test:parser` | `parser-edge-cases.test.ts` + `tsql-complex.test.ts` |
+| BFS / graph | `npm run test:graph` | `graphBuilder.test.ts` + `graphAnalysis.test.ts` |
+| Baseline | `npm run test:baseline` | Parser TSV + graph-analysis JSON regression net |
 | Hooks (vitest) | `npm run test:hooks` | React hook tests under `tests/unit/hooks/` |
 | Snapshot | `npm run test:snapshot` | Parser baseline TSV (refresh: `:update`) |
-| Integration | `npm run test:integration` | Live SQL Server (requires `.env`) |
 
 ## Conventions
 

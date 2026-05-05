@@ -1,23 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] - 2026-05-05
 
 ### Changed
 - **Discovery is now the primary state, SM is opt-in.** Most ad-hoc questions are answered directly in chat using catalog tools. The `confirm_sm_start` consent gate is triggered only when the user asks for a graph render, a detailed multi-object analysis, or column tracing — or when the engine rejects an over-budget catalog request. SM internal phases (active hops + synthesis) only fire after gate approval.
 - **Discovery chat output is YAML-tunable.** The new `discovery_chat` key in `aiOutputTemplates.yaml` controls answer length, citation discipline, single-vs-balanced format, and the biz/tech/math reference shapes used in chat prose.
 - **BFS asymmetric depth.** `lineage_start_exploration` now accepts `upstream_depth` and `downstream_depth` overrides for `direction='bidirectional'` — e.g. "all upstream, 2 downstream".
+- **Formulas render reliably in the result panel** — mathematical expressions in AI descriptions now render consistently. Dollar signs in SQL and business text (amounts, column names) no longer produce rendering artifacts in the result panel.
 
 ### Removed
 - **Inline mode** — replaced by the discovery-vs-SM split above. The `dataLineageViz.ai.inlineTokenBudget` and `inlineNodeCap` settings are removed; small-scope answers stay in discovery, larger scopes go through SM after the consent gate. Single execution path = simpler contract.
-- **Live SQL Server integration tests.** `tests/integration/`, `npm run test:integration`, and the `mssql` / `dotenv` dev dependencies are gone; the `.env` requirement no longer applies. Parser snapshot baseline + unit suite remain the regression net.
 
 ### Added
 - **Discovery budget guard.** Per-tool boundary check at `lineage_get_neighborhood` / `lineage_search_ddl`: over-budget catalog requests (default `dataLineageViz.ai.discoveryNodeCap=8` / `discoveryTokenBudget=8000`) are hard-rejected with a structured `over_discovery_budget` envelope pointing the AI at `lineage_start_exploration`.
-
-## [1.0.0] - 2026-05-02
-
-### Changed
-- **Formulas render reliably in the result panel** — mathematical expressions in AI descriptions now render consistently. Dollar signs in SQL and business text (amounts, column names) no longer produce rendering artifacts in the result panel.
 
 
 ## [0.9.x] - 2026-02 to 2026-04

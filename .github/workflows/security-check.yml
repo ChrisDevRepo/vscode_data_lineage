@@ -40,8 +40,8 @@ jobs:
           # Allowed dacpac files (demo + AdventureWorks test data only)
           ALLOWED_DACPACS=(
             "assets/demo.dacpac"
-            "test/AdventureWorks.dacpac"
-            "test/AdventureWorks_sdk-style.dacpac"
+            "tests/fixtures/AdventureWorks2025_AI.dacpac"
+            "tests/fixtures/AdventureWorks_sdk-style.dacpac"
           )
 
           FOUND_FILES=""

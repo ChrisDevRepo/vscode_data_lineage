@@ -5,7 +5,7 @@
  *  - `supplementAgenda` rejects when the engine is not in `status === 'complete'`.
  *  - After a completed run, supplementing with an unknown id reports it as `skipped`.
  *  - After a completed run, supplementing with a bodied id enqueues it and flips
- *    status back to `awaiting_findings` with inline mode forced on.
+ *    status back to `awaiting_findings`.
  *  - New `submit_findings` for the supplemented id merges a slot into the existing
  *    memory archive (prior slots survive, not reset).
  *  - After the supplement drains, status returns to `complete` and `getResult`
@@ -45,24 +45,19 @@ const model: DatabaseModel = {
 };
 const graph = makeGraph(nodes, edges);
 
-// Helper: drain the engine by submitting trivial findings for every focus.
-// Handles both SM mode (single focus_node) and inline mode (batch of focus nodes).
+// Helper: drain the engine by submitting trivial findings for the single focus per hop.
 function drain(engine: NavigationEngine, tag: string): void {
   let safety = 20;
   while (safety-- > 0) {
     const ctx = engine.getHopContext() as any;
     if (ctx.done) break;
     if (!ctx.focus_node) break;
-    const targets: Array<{ id: string }> = Array.isArray(ctx.focus_node) ? ctx.focus_node : [ctx.focus_node];
-    if (targets.length === 0) break;
-    for (const t of targets) {
-      engine.submitFindings({
-        focus_node_id: t.id,
-        sections: [{ angle: 'business' as const, text: `${tag}: analysis for ${t.id}` }],
-        summary: `${tag}: ${t.id}`,
-        verdict: 'analyze',
-      });
-    }
+    engine.submitFindings({
+      focus_node_id: ctx.focus_node.id,
+      sections: [{ angle: 'business' as const, text: `${tag}: analysis for ${ctx.focus_node.id}` }],
+      summary: `${tag}: ${ctx.focus_node.id}`,
+      verdict: 'analyze',
+    });
   }
 }
 
@@ -94,7 +89,6 @@ function drain(engine: NavigationEngine, tag: string): void {
   }
   // After an all-skipped supplement we still flip status back because the caller
   // expected to resume; the next getHopContext will re-drain immediately to 'complete'.
-  assert(engine.inlineMode === true, 'inline mode forced after supplement');
   drain(engine, 'no-op-supplement');
   assert(engine.status === 'complete', 'engine returns to complete after empty-supplement drain');
   const slotsAfter = (engine.toJSON() as { slotCount?: number }).slotCount ?? -1;
@@ -119,7 +113,6 @@ function drain(engine: NavigationEngine, tag: string): void {
     assert(r.skipped === 0, 'no ids skipped for valid bodied id');
   }
   assert(engine.status === 'awaiting_findings', 'status returns to awaiting_findings after supplement');
-  assert(engine.inlineMode === true, 'inline mode forced on for supplement');
 
   drain(engine, 'supplement');
   assert(engine.status === 'complete', 'engine completes again after supplement drain');

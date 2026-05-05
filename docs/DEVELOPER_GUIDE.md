@@ -138,12 +138,18 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 
 ## Testing
 
+High-priority regression net: **parsing, BFS, baseline**. Other tests are narrower guards.
+
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Unit** | `npm test` | Parser, dacpac, graph, AI tool registration, SM robustness. |
-| **AI heavy** | `npm run test:unit:ai` | State machine, memory management, prompt assembly. |
-| **Snapshot** | `npm run test:snapshot` | Parser regression vs `tests/fixtures/aw-baseline.tsv`. Refresh: `npm run test:snapshot:update`. |
+| **Unit** | `npm test` | All `tests/unit/*.test.ts` — parser, graph, baseline, NavigationEngine + cascade + bipartite + supplement, boundary guards. |
+| **Parsing** | `npm run test:parser` | `parser-edge-cases.test.ts` + `tsql-complex.test.ts` (55 SQL fixtures). |
+| **Graph / BFS** | `npm run test:graph` | `graphBuilder.test.ts` + `graphAnalysis.test.ts`. |
+| **Baseline** | `npm run test:baseline` | Parser TSV (`aw-baseline.tsv`) + graph-analysis JSON (`graph-baseline-aw.json`) regression. |
+| **Snapshot** | `npm run test:snapshot` | Parser baseline only. Refresh: `npm run test:snapshot:update`. |
 | **Hooks** | `npm run test:hooks` | React hook tests (jsdom via vitest). |
+
+AI behaviour beyond pure-function surface is verified via UAT baseline captures (`tmp/baseline/`), not unit tests.
 
 `tsc --noEmit` after every structural change; the type system is the first line of defence.
 

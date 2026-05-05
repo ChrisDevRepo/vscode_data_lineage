@@ -141,4 +141,20 @@ const graph = makeGraph(nodes, edges);
   assert(final.fullNodes.some(n => n.id === 'origin'), 'Origin must still be present');
 }
 
+// Test 3: prunePreserveOnly (present_result prune)
+{
+  const { prunePreserveOnly } = require('../../src/ai/viewPrune');
+  const nodeIds = ['A', 'B', 'C'];
+  const edgesPP: Array<[string, string, string]> = [['A', 'B', 'read'], ['B', 'C', 'read']];
+  const pruneIds = ['B'];
+
+  const result = prunePreserveOnly(nodeIds, edgesPP, pruneIds);
+
+  assert(result.nodeIds.length === 2 && result.nodeIds.includes('A') && result.nodeIds.includes('C'), 'pruned nodeIds');
+  assert(result.edges.length === 0, 'pruned edges');
+
+  const result2 = prunePreserveOnly(nodeIds, edgesPP, []);
+  assert(result2.nodeIds.length === 3, 'no-op nodeIds');
+}
+
 printSummary('Navigation Engine Cascade (Prune)');
