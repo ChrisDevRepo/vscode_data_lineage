@@ -150,6 +150,12 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     }).catch(err => window.vscode?.postMessage({ type: 'error', error: `Clipboard write failed: ${err instanceof Error ? err.message : String(err)}` }));
   }
 
+  // Pre-process description: convert standard $$ delimiters back into ```math fences
+  // so the react-markdown CodeComponent can intercept them without adding remark-math.
+  const processedDescription = description.replace(/\$\$\s*([\s\S]*?)\s*\$\$/g, (_match, p1) => {
+    return `\n\`\`\`math\n${p1.trim()}\n\`\`\`\n`;
+  });
+
   return (
     <div className="ln-ai-description-anchor">
       {!expanded ? (
@@ -206,7 +212,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                 <Markdown
                   remarkPlugins={[remarkGfm]}
                   components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent, h3: H3Component }}
-                >{description}</Markdown>
+                >{processedDescription}</Markdown>
               </div>
             )}
           </div>

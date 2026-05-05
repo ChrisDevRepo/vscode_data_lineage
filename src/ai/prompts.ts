@@ -171,7 +171,7 @@ export function buildActivePhasePrompt(): string {
     '',
     '1. SECTIONS: **The archive is unbounded** — write as deeply as the focus node\'s role warrants. Capture every business rule the DDL exposes: each CASE branch, threshold, allocation formula, special-case predicate. Synthesis lifts your body verbatim, so depth here is depth in the final document.',
     '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
-    '3. MATHEMATICS: Write every formula in a math code fence (```math … ```) — transforms, allocations, thresholds, proportions, CASE expressions. For a short inline symbol, use inline code (`expr`). Do not use `$` or `$$` delimiters — they conflict with dollar amounts and SQL parameter names in the result panel and render as raw text in VS Code chat.',
+    '3. MATHEMATICS: Write every formula in a block math fence (`$$ … $$`) — transforms, allocations, thresholds, proportions, CASE expressions. For a short inline symbol, use inline code (`expr`). Do not use ````math` fences because they render as code blocks in VS Code chat. Do not use inline `$` because it conflicts with SQL parameter names.',
     '4. ROUTE_REQUESTS: Source every `nodeId` verbatim from a prior tool result — `next_hop` / `neighbors[]` from a previous `submit_findings`, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Reconstructed ids from question text fail validation. On `route_validation_failed`, the rejection envelope returns `route_target_candidates` (up to 3 fuzzy matches per unresolved id) — pick a candidate verbatim or call `lineage_search_objects` to find the right id, then re-submit.',
     `5. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');

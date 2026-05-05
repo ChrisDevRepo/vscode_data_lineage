@@ -1397,51 +1397,7 @@ export function autoFixPresentResult(
     fixes.push(`Truncated summary to ${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars`);
   }
 
-  // 4. Convert any legacy $$ block math to ```math code fences.
-  //    The AI is now instructed to emit ```math fences directly; this pass is
-  //    a defensive conversion for descriptions stored before that instruction took effect.
-  const fixLegacyBlockMath = (text: string): { text: string; changed: boolean } => {
-    const lines = text.split('\n');
-    const out: string[] = [];
-    let inMath = false;
-    let changed = false;
-    for (const line of lines) {
-      const t = line.trim();
-      if (t === '$$') {
-        out.push(inMath ? '```' : '```math');
-        inMath = !inMath;
-        changed = true;
-      } else if (!inMath && t.startsWith('$$') && t.endsWith('$$') && t.length > 4) {
-        out.push('```math', t.slice(2, -2).trim(), '```');
-        changed = true;
-      } else {
-        out.push(line);
-      }
-    }
-    if (inMath) { out.push('```'); changed = true; }
-    return { text: out.join('\n'), changed };
-  };
-
-  if (fixed.sections) {
-    let sectionFixed = false;
-    const newSections = fixed.sections.map(s => {
-      if (!s.text) return s;
-      const r = fixLegacyBlockMath(s.text);
-      if (r.changed) { sectionFixed = true; return { ...s, text: r.text }; }
-      return s;
-    });
-    if (sectionFixed) { fixed = { ...fixed, sections: newSections }; fixes.push('Converted legacy $$ math to ```math fences in sections'); }
-  }
-  if (fixed.notes) {
-    let noteFixed = false;
-    const newNotes = fixed.notes.map(n => {
-      if (!n.text) return n;
-      const r = fixLegacyBlockMath(n.text);
-      if (r.changed) { noteFixed = true; return { ...n, text: r.text }; }
-      return n;
-    });
-    if (noteFixed) { fixed = { ...fixed, notes: newNotes }; fixes.push('Converted legacy $$ math to ```math fences in notes'); }
-  }
+  // 4. (Removed legacy block math converter - we now natively support $$)
 
   const nodeIdSet = new Set(resolvedNodeIds ?? []);
 
