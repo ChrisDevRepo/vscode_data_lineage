@@ -108,15 +108,17 @@ export function buildDiscoveryPrompt(): string {
     '',
     '## When to escalate to SM (call `lineage_start_exploration`)',
     '',
-    'Discovery is chat-only. It cannot render a graph in the GUI and cannot sustain a deep, multi-hop analysis. When the user wants either, you must call `lineage_start_exploration`. The engine emits a `confirm_sm_start` consent gate; the user approves, then SM runs hop-by-hop and renders the graph + report. That is expected control flow, not an error to retry around.',
+    'Discovery answers from the catalog and writes Markdown. SM renders the lineage as a graph in the side panel with a consent gate. Default to discovery. Pick SM only when one of these is true:',
     '',
-    'Trigger `lineage_start_exploration` when:',
-    '- (a) The user asks for a **graph / visualization / diagram / picture** of the lineage in the GUI.',
-    '- (b) The user asks for a **detailed analysis** spanning multiple objects — verbs like "analyze / explain / walk through / trace / track / follow / document / compare", nouns like "lineage / dependencies / pipeline / flow / impact / blast radius / join path", scope qualifiers like "direct neighbours / one hop up / upstream only / between A and B", or NL filters that only make sense over a scope ("ignore UDFs", "only tables", "exclude schema X").',
+    '- (a) The user explicitly asks for the lineage **rendered visually** — words like "graph", "diagram", "visualization", "picture", "show me on the canvas", "draw it", "render it", "in the panel", "highlight in the graph".',
     '- (c) The user requests **column tracing**: any column name tied to an object — set `targetColumns`. If the user names a specific column (`[Object].[Column]`), extract it directly. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its column list, then select the 2–4 matching columns.',
-    '- (d) The engine has rejected your direct catalog request as `over_discovery_budget` — the rejection\'s `hint` will tell you to escalate.',
+    '- (d) A discovery catalog call returns `over_discovery_budget` — the engine has measured that the requested scope exceeds `discoveryNodeCap` or `discoveryTokenBudget`. Follow the rejection\'s `hint` and call `lineage_start_exploration`.',
     '',
-    'If the user\'s intent is ambiguous between "quick answer" and "detailed analysis" or "graph view", ask one short clarifying question and call no tool this turn.',
+    'Size is decided by the engine. Treat verbs like "trace", "lineage", "dependencies", "upstream", "follow", "all levels" as ordinary catalog questions: start with `lineage_get_object_detail` on the named origin, then walk neighbors from `up[]` and `dn[]`. Wait for the engine to return `over_discovery_budget` before escalating — that round-trip is the intended control flow, not a failure.',
+    '',
+    'Multi-object dependency questions are normal discovery work. "Trace upstream from X", "what feeds X", "list dependencies of X N levels up and M down", "explain the lineage of X" — chain `lineage_get_object_detail` calls, walk `up[]`/`dn[]`, summarize each node from its DDL, write the result as Markdown.',
+    '',
+    'If the user\'s intent is unclear between chat and graph, answer in chat. After a multi-object chat answer the extension surfaces a "Start deeper hop-by-hop analysis" button — that gives the user a one-click path to SM if they want it. The host emits the button; you do not.',
     '',
     'Before calling `lineage_start_exploration`, resolve every user-named identifier with `lineage_search_objects` — both the origin and any names the user said to ignore / exclude / drop / skip. Inventing an id like `[dbo].[someName]` causes the call to reject with `unknown_node_ids`. The tool\'s parameter descriptions carry the full input contract (scope mapping, NL-filter handling, `mission_brief`, `classification`).',
     '',
@@ -130,6 +132,12 @@ export function buildDiscoveryPrompt(): string {
     'User: "what does spProcA do"',
     'Stay in discovery. Open with: "Reading DDL for [dbo].[spProcA] to summarize what it does."',
     "Action: `lineage_get_object_detail(id:'[dbo].[spProcA]')` → chat answer with balanced business + technical summary.",
+    '</example>',
+    '',
+    '<example>',
+    'User: "trace all dependencies upstream from [dbo].[spProcA] all levels up and one level down"',
+    'Stay in discovery. Open with: "Walking the upstream chain from [dbo].[spProcA] via get_object_detail and summarizing each node."',
+    "Action: `lineage_get_object_detail(id:'[dbo].[spProcA]')` → read `up[]` and `dn[]`; for each upstream id call `lineage_get_object_detail` again until no new upstream nodes appear; summarize each node\'s DDL in chat. The user did not ask for a graph render, so stay in chat.",
     '</example>',
     '',
     '<example>',
@@ -215,7 +223,7 @@ export function buildSynthesisPrompt(): string {
     '- `intro`: 2–4 sentences, anchored to the user\'s question and the locked Mission type. Headline-level only — no walkthrough, no formulas (those belong in sections).',
     '- `closing`: optional cross-cutting risk or through-line, prefixed ⚠️ for risks. Omit if nothing material to add.',
     '- `notes[]`: per-node captions. Use `note_caption` from each captured slot.',
-    '- `highlight_groups[]`: optional color glow on 2-3 critical nodes.',
+    '- `highlight_groups[]` (REQUIRED for any rendered analysis): emit one entry per role using the Lineage scheme — `source` for the origin node(s), `target` for the terminal output node(s), and `transform` for the 1–2 most material intermediate transformers. The role enum is `source | transform | target | good | warn | fail`; pick exactly one scheme (Lineage `source/transform/target` OR Diagnostic `good/warn/fail`) and stay consistent across the whole result. Each entry shape: `{ label: \'<role label>\', color: \'<role>\', node_ids: [...] }`. The engine drives the colored glow ring and node tint from these entries — without them every node renders unstyled. Source every node id verbatim from the captured archive.',
     '',
     'Use `suggested_sections` from the completion result as a starting skeleton when present. Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
   ].join('\n');
@@ -283,6 +291,61 @@ export const RECOMMEND_FOLLOWUPS_TRIGGER = 'Follow-up: Explore related objects�
  * chat — replaying the rendered description without re-invoking the model.
  */
 export const SHOW_DESCRIPTION_TRIGGER = 'Show the full description';
+
+/**
+ * Magic prompt fired by the post-discovery "Start deeper hop-by-hop
+ * analysis" follow-up pill. Surfaces only after a multi-object discovery
+ * walk (≥2 distinct `lineage_get_object_detail` calls). Detected verbatim
+ * by `lineageParticipant.handleChatRequest`, which routes the AI directly
+ * into a forced `lineage_start_exploration` call seeded with the captured
+ * discovery context — see {@link buildStartDeeperAnalysisTriggerPrompt}.
+ */
+export const START_DEEPER_ANALYSIS_TRIGGER = 'Start deeper hop-by-hop analysis';
+
+/**
+ * Builds the User-message envelope that drives a forced
+ * `lineage_start_exploration` after the user clicks the post-discovery
+ * deeper-analysis pill. The structural fields (origin, direction,
+ * classification) are passed directly; the AI's job is to extract any
+ * "ignore / exclude / skip / drop" the user expressed during discovery
+ * into `excludeNodeIds`, then call the tool once. Mission-brief
+ * composition is deferred to the post-approval discovery-summary round
+ * so the AI summarizes against the user-confirmed scope, not a guess.
+ *
+ * @param question - The user's verbatim discovery question.
+ * @param answer - The AI's discovery chat answer (Markdown), truncated to 2000 chars to keep the synthesized prompt bounded; the headline finding lives in the opening paragraphs.
+ * @param origin - The first walked node id from the discovery turn.
+ * @returns Effective-prompt text fed into the next LM round.
+ */
+export function buildStartDeeperAnalysisTriggerPrompt(
+  question: string,
+  answer: string,
+  origin: string,
+): string {
+  const truncatedAnswer = answer.length > 2000
+    ? `${answer.slice(0, 2000)}\n\n…[answer truncated; ${answer.length - 2000} chars omitted]`
+    : answer;
+  return [
+    'The user clicked the post-discovery "Start deeper hop-by-hop analysis" link.',
+    'Call `lineage_start_exploration` once this turn — the tool call is the only valid action; no prose, no other tools.',
+    '',
+    '## Inputs to lineage_start_exploration',
+    '',
+    `- **origin**: ${JSON.stringify(origin)} (the node walked during discovery).`,
+    '- **direction**: "bidirectional".',
+    '- **classification**: "business" (the user did not name a technical lens).',
+    '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. Resolve those names to node ids with `lineage_search_objects` first if needed, then list them here. If the user named no exclusions, pass `[]`.',
+    '- **mission_brief**: a 1-sentence placeholder citing the user\'s original question — the post-approval discovery-summary round will replace it with the full compressed memo, so keep this brief.',
+    '',
+    '## Discovery context',
+    '',
+    `<original_question>${question}</original_question>`,
+    '',
+    '<discovery_answer>',
+    truncatedAnswer,
+    '</discovery_answer>',
+  ].join('\n');
+}
 
 /**
  * Builds the chat-input pre-fill used when the user clicks the post-synthesis
@@ -380,6 +443,91 @@ export function buildToolUsageBlock(): string {
     '',
     '1. Use `lineage_submit_findings` to process focus nodes.',
     '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
+  ].join('\n');
+}
+
+
+/**
+ * Builds the User-message envelope that drives the post-approval discovery-
+ * summary composition round (Wave 3 — Surface A).
+ *
+ * @remarks
+ * Fires exactly once per SM session, immediately after the user approves the
+ * `confirm_sm_start` gate and before the first `submit_findings` hop. The AI
+ * receives the captured discovery question + chat answer + approved gate
+ * parameters and returns a 2–4 sentence compressed memo that is then sealed
+ * into the engine's stable prefix as `<discovery_summary>` — surviving every
+ * sliding-memory wipe for the rest of the SM session.
+ *
+ * The memo carries the user-stated **semantic** intent that cannot be
+ * expressed in the structural approval fields (origin, direction,
+ * excludeNodeIds, etc.): things like *"ignore audit-related processing"*,
+ * *"focus on the revenue computation chain"*, *"the report must answer how X
+ * impacts Y"*. These constraints need to ride with the AI across every hop
+ * because the AI may meet a relevant node mid-walk that wasn't pre-listable.
+ *
+ * The discovery answer is truncated to 2000 chars at the tail to keep the
+ * synthesized prompt bounded; the headline finding lives in the opening
+ * paragraphs.
+ *
+ * @param question - The user's verbatim discovery question.
+ * @param answer - The AI's discovery chat answer (Markdown), truncated to 2000 chars.
+ * @param contractSummary - One-line digest of the approved gate parameters (origin / direction / classification / excludeNodeIds) — included so the AI summarizes against the user-confirmed scope, not a guess.
+ * @returns Effective-prompt text fed into the one-shot composition round.
+ */
+export function buildDiscoverySummaryComposePrompt(
+  question: string,
+  answer: string,
+  contractSummary: string,
+): string {
+  const truncatedAnswer = answer.length > 2000
+    ? `${answer.slice(0, 2000)}\n\n…[answer truncated; ${answer.length - 2000} chars omitted]`
+    : answer;
+  return [
+    'The user approved the SM exploration. Compose a 2–4 sentence discovery summary that will ride in every hop\'s stable prefix as `<discovery_summary>` — your one chance to lock in what SM must remember beyond the structural scope.',
+    'Reply with text only this turn — the tool call comes later. Output the memo as a single paragraph, 2–4 sentences total. No preamble, no headers, no bullets.',
+    '',
+    '## Composition contract',
+    '',
+    'Include in order: (1) the user\'s original question, kept close to verbatim; (2) the headline finding from the discovery answer in one sentence (origin → key intermediate → terminal sink, or whatever the walk surfaced); (3) any user-stated semantic constraint the structural fields cannot capture — verbs like "ignore", "exclude", "skip", "focus on", "be careful with", "the answer must address". Name the constraint explicitly so SM hops honour it when reaching nodes that match the rule but are not pre-listed.',
+    '',
+    '## Approved SM contract (already locked — do not re-state)',
+    '',
+    contractSummary,
+    '',
+    '## Discovery context',
+    '',
+    `<original_question>${question}</original_question>`,
+    '',
+    '<discovery_answer>',
+    truncatedAnswer,
+    '</discovery_answer>',
+  ].join('\n');
+}
+
+
+/**
+ * Renders the `<discovery_summary>` XML block — **session-stable** content
+ * for SM hops (Wave 3 — Surface B).
+ *
+ * @remarks
+ * Sits in the stable-prefix region of every SM hop's system prompt, next to
+ * `buildMissionBriefBlock`'s output. Cleared only when a fresh engine is
+ * constructed; survives every sliding-memory wipe. When the engine has no
+ * discovery summary set (e.g. SM started without a prior multi-object
+ * discovery walk), the renderer returns an empty string and the block is
+ * omitted entirely.
+ *
+ * @param summary - The AI-composed memo from `engine.getDiscoverySummary()`, or `null` when unavailable.
+ * @returns Filled `<discovery_summary>` XML block, or an empty string when `summary` is `null` / empty.
+ */
+export function buildDiscoverySummaryBlock(summary: string | null): string {
+  if (!summary || summary.trim().length === 0) return '';
+  return [
+    '## Discovery Summary',
+    '<discovery_summary>',
+    summary.trim(),
+    '</discovery_summary>',
   ].join('\n');
 }
 

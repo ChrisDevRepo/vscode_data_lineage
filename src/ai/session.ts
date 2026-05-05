@@ -108,6 +108,41 @@ export class AiSession {
    * typically takes 30–90s; without a progress signal users perceive a hang.
    */
   public synthesisProgressEmitted = false;
+
+  /**
+   * Origin node id walked during the most recent discovery turn.
+   *
+   * @remarks
+   * Captured after `runHopLoop` returns in `discover` phase when the AI
+   * made ≥2 distinct `lineage_get_object_detail` calls. Read by the
+   * post-discovery SM-offer follow-up pill to seed
+   * `lineage_start_exploration` without re-asking the user. Cleared in
+   * {@link resetExploration}.
+   */
+  public lastDiscoveryOrigin: string | null = null;
+
+  /**
+   * Number of distinct nodes inspected via `lineage_get_object_detail`
+   * in the most recent discovery turn. The SM-offer follow-up pill renders
+   * only when this count is ≥ 2 — a multi-object walk worth deepening.
+   */
+  public lastDiscoveryWalkCount = 0;
+
+  /**
+   * The user's verbatim discovery-turn prompt — stored so the
+   * post-approval discovery-summary composition round (Wave 3) can lift it
+   * into `mission_brief` / `discoverySummary`. Cleared in {@link resetExploration}.
+   */
+  public lastDiscoveryQuestion: string | null = null;
+
+  /**
+   * The AI's discovery-turn final chat answer (Markdown). Captured from
+   * the last `toolCallRound.response` after the discover loop ends. Read
+   * by the post-approval discovery-summary composition round so the
+   * compressed memo can cite the headline finding the AI already wrote.
+   * Cleared in {@link resetExploration}.
+   */
+  public lastDiscoveryAnswer: string | null = null;
   /**
    * Mission-type classification inferred at end of discovery.
    *
@@ -187,6 +222,10 @@ export class AiSession {
     this.startExplorationRoundId = null;
     this.phase = { kind: 'idle' };
     this.classification = undefined;
+    this.lastDiscoveryOrigin = null;
+    this.lastDiscoveryWalkCount = 0;
+    this.lastDiscoveryQuestion = null;
+    this.lastDiscoveryAnswer = null;
   }
 
   /**
@@ -212,6 +251,11 @@ export class AiSession {
    */
   public enterGate(gate: PendingGate): void {
     this.phase = { kind: 'awaiting_gate', gate };
+    // Discovery context is intentionally preserved here — the post-approval
+    // discovery-summary composition round (Wave 3) reads it after the user
+    // approves the gate. The SM-offer pill is gated by `phase.kind === 'idle'`
+    // in the followup provider, so it disappears as soon as the gate is
+    // pending; on cancel, `resetExploration()` runs and clears these fields.
   }
 
   /**

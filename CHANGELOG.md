@@ -3,16 +3,20 @@
 ## [1.0.0] - 2026-05-05
 
 ### Changed
-- **Discovery is now the primary state, SM is opt-in.** Most ad-hoc questions are answered directly in chat using catalog tools. The `confirm_sm_start` consent gate is triggered only when the user asks for a graph render, a detailed multi-object analysis, or column tracing — or when the engine rejects an over-budget catalog request. SM internal phases (active hops + synthesis) only fire after gate approval.
-- **Discovery chat output is YAML-tunable.** The new `discovery_chat` key in `aiOutputTemplates.yaml` controls answer length, citation discipline, single-vs-balanced format, and the biz/tech/math reference shapes used in chat prose.
-- **BFS asymmetric depth.** `lineage_start_exploration` now accepts `upstream_depth` and `downstream_depth` overrides for `direction='bidirectional'` — e.g. "all upstream, 2 downstream".
-- **Formulas render reliably in the result panel** — mathematical expressions in AI descriptions now render consistently. Dollar signs in SQL and business text (amounts, column names) no longer produce rendering artifacts in the result panel.
-
-### Removed
-- **Inline mode** — replaced by the discovery-vs-SM split above. The `dataLineageViz.ai.inlineTokenBudget` and `inlineNodeCap` settings are removed; small-scope answers stay in discovery, larger scopes go through SM after the consent gate. Single execution path = simpler contract.
+- **Chat is the default — graphs only when you ask.** Most lineage questions get a quick chat answer summarizing the loaded model. The side-panel graph and consent gate now fire only when you ask for a visual render, request column tracing, or open a scope too large for chat.
+- **Discovery answers read like a structured memory of what was inspected.** Multi-object dependency questions ("trace upstream from X two levels", "what feeds Y") return as Markdown with one heading per node visited — business meaning, technical execution, formulas in math fences, column-rename tables, and ⚠️ data-quality flags inline.
+- **Trace any direction depth combination.** Ask for "all upstream, 2 downstream" or any other up/down combination — both bounds are honoured independently in one request.
+- **Reliable colouring on the rendered graph.** Origin, intermediate transformer, and terminal output nodes now consistently render with coloured glow rings on every SM result.
+- **Formula rendering fixed.** Math expressions in AI descriptions render consistently; dollar amounts and SQL `@params` no longer interfere with the result panel.
 
 ### Added
-- **Discovery budget guard.** Per-tool boundary check at `lineage_get_neighborhood` / `lineage_search_ddl`: over-budget catalog requests (default `dataLineageViz.ai.discoveryNodeCap=8` / `discoveryTokenBudget=8000`) are hard-rejected with a structured `over_discovery_budget` envelope pointing the AI at `lineage_start_exploration`.
+- **One-click "deeper analysis" path.** After the chat answers a multi-object dependency question, a follow-up "Start deeper hop-by-hop analysis" pill appears under the answer. Clicking it walks the same graph through the structured renderer with consent gate, scope preview, and the rendered detail panel — no need to re-type the question.
+- **The walkthrough remembers what you said in chat.** Once you approve the structured walkthrough, the AI composes a short memo of the chat question, what was already found, and any "ignore X / focus on Y / be careful with Z" you mentioned during the chat. That memo rides every hop of the walkthrough so the analysis stays anchored to your intent — even when the AI reaches a node that wasn't on the original ignore list.
+- **Customizable chat-answer style.** Tune the discovery chat output (length, structure, framing references, rendering primitives like math fences and rename tables) via `aiOutputTemplates.yaml` — the same template surface that drives the rendered SM detail, so chat and graph share consistent formatting.
+- **Scope-size guard.** Catalog requests that would load too much data are intercepted automatically — the AI offers to switch to the structured walkthrough rather than hitting context limits.
+
+### Removed
+- **Inline mode** — superseded by the chat-vs-walkthrough split. One execution path now: chat for ad-hoc and dependency questions, the structured walkthrough for visual renders, column traces, and over-budget scopes.
 
 
 ## [0.9.x] - 2026-02 to 2026-04

@@ -25,6 +25,8 @@ import {
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
   buildDeferredQuestionsPrompt, RECOMMEND_FOLLOWUPS_TRIGGER, SHOW_DESCRIPTION_TRIGGER,
+  START_DEEPER_ANALYSIS_TRIGGER, buildStartDeeperAnalysisTriggerPrompt,
+  buildDiscoverySummaryBlock, buildDiscoverySummaryComposePrompt,
   ACTION_REQUIRED_PENDING_HINT
 } from './prompts';
 import { getToolInvocationLabel } from './toolLabels';
@@ -190,6 +192,22 @@ export class LineageParticipant {
           });
         }
 
+        // Post-discovery SM-offer pill — surfaces only after a multi-object
+        // discovery walk (≥2 distinct lineage_get_object_detail calls) AND
+        // only while the session is still `idle`. Once a gate is pending or
+        // SM has started, enterGate() clears the captured fields so the pill
+        // disappears and cannot resurface.
+        if (
+          sess.phase.kind === 'idle' &&
+          sess.lastDiscoveryWalkCount >= 2 &&
+          sess.lastDiscoveryOrigin
+        ) {
+          followups.push({
+            prompt: START_DEEPER_ANALYSIS_TRIGGER,
+            label: vscode.l10n.t('Start deeper hop-by-hop analysis')
+          });
+        }
+
         return followups;
       }
     };
@@ -278,6 +296,18 @@ export class LineageParticipant {
       }
       this.logger.info(`[Trigger] Show full description — ${sess.lastPresentResultDescription?.length ?? 0} chars`);
       return {};
+    } else if (effectivePrompt === START_DEEPER_ANALYSIS_TRIGGER) {
+      if (!sess.lastDiscoveryOrigin || !sess.lastDiscoveryQuestion || !sess.lastDiscoveryAnswer) {
+        writer.markdown('_The deeper-analysis link expired (no recent discovery walk). Ask the question again to enable it._');
+        this.logger.warn(`[Trigger] Start deeper — discovery context missing (origin=${sess.lastDiscoveryOrigin}, q=${!!sess.lastDiscoveryQuestion}, a=${!!sess.lastDiscoveryAnswer})`);
+        return {};
+      }
+      effectivePrompt = buildStartDeeperAnalysisTriggerPrompt(
+        sess.lastDiscoveryQuestion,
+        sess.lastDiscoveryAnswer,
+        sess.lastDiscoveryOrigin,
+      );
+      this.logger.info(`[Trigger] Start deeper — origin=${sess.lastDiscoveryOrigin} q_len=${sess.lastDiscoveryQuestion.length} a_len=${sess.lastDiscoveryAnswer.length}`);
     }
 
     let activePhase: 'discover' | 'active' | 'synthesis' | 'completed' = 'discover';
@@ -365,6 +395,55 @@ export class LineageParticipant {
             }
           }
           sess.enterExploring();
+          // Wave 3 — post-approval discovery-summary composition (one-shot LM
+          // call, no tools). Composes the user's semantic intent (ignore /
+          // focus / be careful / must-address) into a 2–4 sentence memo that
+          // rides in every hop's stable prefix as <discovery_summary>.
+          // Captured discovery context survives because enterGate does not
+          // clear the lastDiscovery* fields; resetExploration clears them on
+          // cancel / new session. Skip when discovery context is missing
+          // (e.g. SM started directly without a prior multi-object walk).
+          if (engine && sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer) {
+            try {
+              const scope = engine.getScopeSummary();
+              const filters = scope.activeFilters;
+              const contractSummary = [
+                `- origin: ${engine.currentFocus ?? '(unset)'}`,
+                `- scope: ${scope.scopeCount} nodes`,
+                `- excludeTypes: ${filters.types.length ? filters.types.join(', ') : '(none)'}`,
+                `- excludeSchemas: ${filters.schemas.length ? filters.schemas.join(', ') : '(none)'}`,
+                `- excludeNodeIds: ${filters.nodeIds.length ? filters.nodeIds.join(', ') : '(none)'}`,
+                `- passNodeIds: ${filters.passNodeIds.length ? filters.passNodeIds.join(', ') : '(none)'}`,
+                `- classification: ${sess.classification ?? 'unset'}`,
+              ].join('\n');
+              const composePrompt = buildDiscoverySummaryComposePrompt(
+                sess.lastDiscoveryQuestion,
+                sess.lastDiscoveryAnswer,
+                contractSummary,
+              );
+              const composeStart = Date.now();
+              const composeResponse = await model.sendRequest(
+                [vscode.LanguageModelChatMessage.User(composePrompt)],
+                {},
+                token,
+              );
+              let composedText = '';
+              for await (const part of composeResponse.stream) {
+                if (part instanceof vscode.LanguageModelTextPart) {
+                  composedText += part.value;
+                }
+              }
+              const trimmed = composedText.trim();
+              if (trimmed.length > 0) {
+                engine.setDiscoverySummary(trimmed);
+                this.logger.info(`[Discovery] Memo composed — len=${trimmed.length} elapsed=${Date.now() - composeStart}ms`);
+              } else {
+                this.logger.warn(`[Discovery] Memo composition returned empty response — discoverySummary not set`);
+              }
+            } catch (err) {
+              this.logger.error('Discovery memo composition', err);
+            }
+          }
           const focusId = engine?.currentFocus;
           const hopNumber = (engine?.currentHop ?? 0) + 1;
           effectivePrompt = focusId
@@ -478,6 +557,13 @@ export class LineageParticipant {
         if ((phase === 'active' || phase === 'synthesis' || phase === 'completed') && engine) {
           const missionBriefBlock = buildMissionBriefBlock(sess.memory.getMissionBrief(), sess.memory.getUserQuestion() || '');
           if (missionBriefBlock) parts.push(missionBriefBlock);
+          // Wave 3 — persistent discovery memory pillar. The AI-composed memo
+          // rides in every hop's stable prefix alongside <mission_brief>; the
+          // engine returns null when SM started without a prior multi-object
+          // discovery walk, which omits the block cleanly.
+          const discoverySummary = (engine as NavigationEngine).getDiscoverySummary?.() ?? null;
+          const discoverySummaryBlock = buildDiscoverySummaryBlock(discoverySummary);
+          if (discoverySummaryBlock) parts.push(discoverySummaryBlock);
         }
 
         const text = parts.filter(Boolean).join('\n');
@@ -971,6 +1057,38 @@ export class LineageParticipant {
     const smStatus = sess.stateMachine ? (sess.stateMachine.columnAspect ? 'Column' : 'BB') : '—';
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
     this.logger.info(`Summary — model: ${sess.modelName}, SM: ${smStatus}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
+
+    // Post-discovery walk capture: when discovery just inspected ≥2 distinct
+    // nodes via lineage_get_object_detail, store the question + chat answer +
+    // first walked id so the post-discovery SM-offer pill (and the eventual
+    // discovery-summary composition round) can recover the context. Cleared
+    // in enterGate so a stale pill never crosses into SM.
+    if (activePhase === 'discover' && exit.kind === 'final_answer' && sess.phase.kind === 'idle') {
+      const walkedIds = new Set<string>();
+      let firstWalkedId: string | null = null;
+      let lastResponseText = '';
+      for (const round of toolCallRounds) {
+        if (round.response) lastResponseText = round.response;
+        for (const tc of round.toolCalls ?? []) {
+          const fields = extractToolCallFields(tc);
+          if (fields.name === 'lineage_get_object_detail') {
+            const id = (fields.input as { id?: unknown } | null)?.id;
+            if (typeof id === 'string' && id.length > 0 && !walkedIds.has(id)) {
+              walkedIds.add(id);
+              if (firstWalkedId === null) firstWalkedId = id;
+            }
+          }
+        }
+      }
+      if (walkedIds.size >= 2 && firstWalkedId !== null) {
+        sess.lastDiscoveryWalkCount = walkedIds.size;
+        sess.lastDiscoveryOrigin = firstWalkedId;
+        sess.lastDiscoveryQuestion = request.prompt;
+        sess.lastDiscoveryAnswer = lastResponseText;
+        this.logger.info(`[Discovery] Multi-object walk recorded — origin=${firstWalkedId} walk_count=${walkedIds.size} q_len=${request.prompt.length} a_len=${lastResponseText.length}`);
+      }
+    }
+
     this.dispatchExit(exit, sess, writer, request.prompt, roundCount, MAX_ROUNDS, isRefineRound);
 
     return {

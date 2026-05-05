@@ -282,6 +282,29 @@ export class NavigationEngine implements IHopStateMachine {
   protected passNodeIds: Set<string> = new Set();
   /** Last `init` params kept for refine re-run — origin/direction/depth/etc survive across the gate cycle. */
   protected initSnapshot: { question: string; origin: string; targetColumns?: string[]; direction: 'upstream' | 'downstream' | 'bidirectional'; depth?: number; upstream_depth?: number; downstream_depth?: number; depth_enforcement?: 'strict' | 'soft' | 'silent'; mission_brief?: string } | null = null;
+
+  /**
+   * Compressed AI-composed memo of the discovery walk's findings + user-stated
+   * semantic constraints, composed once after gate approval and rendered into
+   * every hop's stable prefix as `<discovery_summary>` (alongside
+   * `<mission_brief>` and the sliding `<short_term_memory>`).
+   *
+   * @remarks
+   * Captures the user-stated intent that **cannot** be expressed in the
+   * structural approval fields (origin / direction / excludeNodeIds /
+   * excludeSchemas / excludeTypes / passNodeIds / classification): things like
+   * *"ignore audit-related processing"*, *"focus on the revenue computation
+   * chain"*, *"the report must answer how X impacts Y"*. These are semantic
+   * constraints that need to ride with the AI across every hop because the
+   * AI may meet a relevant node mid-walk that wasn't pre-listable.
+   *
+   * Set once by the post-approval composition round in
+   * {@link lineageParticipant.ts}; never wiped by sliding-memory rotations.
+   * Cleared only when a fresh engine is constructed (i.e. a new
+   * `start_exploration` from `idle`). Read by the prompt assembler via
+   * {@link getDiscoverySummary}.
+   */
+  protected _discoverySummary: string | null = null;
   /** Extra depth levels the user has confirmed mid-session beyond the mode-cap. 0 = no extension. */
   protected extendedDepthCap = 0;
   /** Last per-hop snapshot of detail/summary chars, used for diagnostics. */
@@ -766,6 +789,31 @@ export class NavigationEngine implements IHopStateMachine {
   /** Current focus node id exposed for prompt builders — populates the `focus_node_id` line in `<mission_state>` so the AI sees its target in prose, not only in tool-result JSON. `null` before the first hop. */
   public get currentFocus(): string | null {
     return this.currentFocusNodeId;
+  }
+
+  /**
+   * Returns the compressed discovery-summary memo composed at the post-approval
+   * round, or `null` when none has been set (e.g. SM started without a prior
+   * discovery walk because the user's first prompt asked directly for a graph
+   * render). Read by the prompt assembler to render `<discovery_summary>` in
+   * every hop's stable prefix.
+   */
+  public getDiscoverySummary(): string | null {
+    return this._discoverySummary;
+  }
+
+  /**
+   * Stores the AI-composed discovery summary. Called once by the participant
+   * after gate approval and a single LM round produces the memo text. Empty /
+   * whitespace-only inputs are coerced to `null` so the renderer can short-
+   * circuit cleanly. The memo persists across all sliding-memory wipes inside
+   * this engine's lifetime.
+   *
+   * @param text - The 2–4 sentence memo composed by the AI.
+   */
+  public setDiscoverySummary(text: string): void {
+    const trimmed = text.trim();
+    this._discoverySummary = trimmed.length > 0 ? trimmed : null;
   }
 
   /**

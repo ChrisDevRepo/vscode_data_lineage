@@ -56,7 +56,7 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
   business_capture:     ['active'],
   technical_capture:    ['active'],
   structural_summary:   ['active'],
-  general:              ['synthesis'],
+  general:              ['discover', 'synthesis'],
   loading_pattern:      ['synthesis'],
   column_trace_capture: ['active'],
 };

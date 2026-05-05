@@ -34,8 +34,8 @@ The assistant can trace dependencies, build bookmarked graph views, and analyse 
 
 `@lineage` has two modes of operation:
 
-- **Discovery (chat)** — most ad-hoc questions are answered directly in chat. The AI uses catalog tools to look up DDL, columns, and direct neighbours, then writes a grounded answer.
-- **Sliding-Memory (graph render + deep analysis)** — when you ask for a graph rendered in the GUI, a detailed multi-object analysis, or a column trace, the assistant first shows you the planned scope (nodes, schemas, depth, budget) and asks for confirmation. Once approved, it walks the graph hop-by-hop and renders the result.
+- **Discovery (chat)** — the default. Most lineage questions are answered directly in chat, including multi-object dependency questions like "trace upstream from X two levels" or "what feeds Y". Each visited node gets its own heading with business meaning, technical execution, formulas in math fences, column-rename tables, and ⚠️ data-quality flags inline.
+- **Structured walkthrough (graph render + column tracing)** — when you ask for a graph rendered in the side panel, request a column trace, or open a scope too large for chat, the assistant first shows you the planned scope (nodes, schemas, depth) and asks for confirmation. Once approved, it walks the graph hop-by-hop and renders the result with origin / transformer / terminal nodes coloured.
 
 Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
 

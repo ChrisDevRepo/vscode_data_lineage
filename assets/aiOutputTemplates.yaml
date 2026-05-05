@@ -53,32 +53,36 @@
 discovery_chat:
   stages: [discovery]
   instruction: >
-    Markdown. Fully fulfill what the user asked — do not truncate, do not pad.
-    Cite the node and field you are reading from. Stay strictly factual: only
-    state what is present in the loaded `bb_ddl`, the `cols[]` / `in[]` /
-    `out[]` / `fks[]` fields, and tool results. Do not infer behavior from
-    naming conventions, do not apply general SQL knowledge to fill gaps. If a
-    field is empty, say so plainly.
+    Markdown. Fully fulfill what the user asked. Cite the node and field
+    you are reading from. State only what is present in the loaded
+    `bb_ddl`, the `cols[]` / `in[]` / `out[]` / `fks[]` fields, and tool
+    results — when a field is empty, say so plainly. Ground every claim
+    in the loaded data; leave general SQL knowledge and naming conventions
+    aside.
 
 
-    When the user names what they want (specific column, single rule, one
-    direction), answer that. When the user's question is general or open-ended
-    ("what does X do", "explain X"), produce a balanced summary covering BOTH
-    the business meaning AND the technical execution. Keep both short — one
-    paragraph per side — unless the loaded data warrants more.
+    Scale the answer to the question:
+
+    - **Single-object question** ("what does X do", "show DDL of X", "list
+      columns of X") — one focused answer. Open with the direct answer,
+      then a balanced summary covering BOTH the business meaning AND the
+      technical execution. One paragraph per side unless the loaded data
+      warrants more.
+
+    - **Multi-object walk** (dependency trace, lineage walk, "N levels
+      up/down", "what feeds X", "list dependencies of X") — one Markdown
+      heading per node visited. Under each heading: a short business
+      paragraph (what the node represents in domain terms) and a short
+      technical paragraph (how it executes). Cover every node you loaded
+      and use only nodes that appeared in your tool-call results. Order
+      the headings to match the lineage flow (origin first, then upstream,
+      then downstream — or the order the user named).
 
 
-    Reference shapes for chat answers (not capture templates, just shape cues
-    for the prose; full angle templates ship only after SM gate approval):
-
-    - Business framing: what the object represents in domain terms, who
-      consumes it, what decision it supports.
-
-    - Technical framing: how it executes — joins, predicates, aggregations,
-      materialization, refresh frequency.
-
-    - Mathematics: write every formula in a ```math … ``` fence. Never `$` or
-      `$$` (collide with dollar values and SQL `@params`).
+    Output rendering (math fences, rename tables, source-guard SQL fences,
+    status-enum lifecycles, ⚠️ markers) is governed by the `general`
+    template — apply its rules whenever the loaded data carries the
+    underlying material.
 
 # ── Card + top of the document ───────────────────────────────────────────────
 
@@ -470,7 +474,7 @@ column_trace_capture:
 # material; the AI does NOT invent tables / formulas / fences without source.
 
 general:
-  stages: [synthesis]
+  stages: [discovery, synthesis]
   instruction: >
     Apply this rendering set across every assembled section so the document
     reads consistently end-to-end:

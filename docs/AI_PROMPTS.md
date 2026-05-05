@@ -24,8 +24,26 @@ Two responsibilities, two owners:
 
 There are exactly **two user states** in the runtime:
 
-1. **Discovery** — the default chat state. AI uses catalog tools (search / get_object_detail / search_ddl / get_neighborhood / detect_graph_patterns) and answers in chat. `discovery_chat` from the YAML governs the prose style. No graph render.
-2. **SM** — gate-approved when the user wants a graph in the GUI, a deep multi-object analysis, or column tracing. SM has internal phases (active hops, then synthesis); both are governed by the active + synthesis YAML keys below.
+1. **Discovery** — the default chat state. AI uses catalog tools (search / get_object_detail / search_ddl / get_neighborhood / detect_graph_patterns) and answers in chat — including multi-object dependency questions (chained `get_object_detail` walks). `discovery_chat` governs the chat structure (scale-to-question depth, single-vs-multi-object headings); the `general` template carries rendering primitives (math fences, rename tables, ⚠️ markers) and fires at both discovery and synthesis. No graph render.
+2. **SM** — gate-approved on three triggers: (a) the user explicitly asks for a visual graph render, (c) column tracing is requested, (d) the engine returns `over_discovery_budget`. A fourth user-driven path (the post-discovery SM-offer pill) feeds back through (a) by firing `start_exploration` programmatically with the captured discovery origin. SM has internal phases (active hops → synthesis); both are governed by the active + synthesis YAML keys below.
+
+### Discovery → SM transition (Wave 2 + Wave 3)
+
+After a multi-object discovery walk (≥2 distinct `get_object_detail` calls in a single `idle`-phase turn), the participant emits a "Start deeper hop-by-hop analysis" follow-up pill via `followupProvider`. The pill is gated by `phase.kind === 'idle'`, so it disappears the moment a gate is pending or SM has started. Clicking the pill:
+
+1. Routes the AI through `buildStartDeeperAnalysisTriggerPrompt` (in [`src/ai/prompts.ts`](../src/ai/prompts.ts)) — a synthesized User message carrying the captured discovery question + answer.
+2. The AI calls `lineage_start_exploration` once with the captured origin + parsed `excludeNodeIds` (extracted from any "ignore X / exclude Y / skip Z" the user stated during discovery).
+3. The standard `confirm_sm_start` gate fires.
+4. **On user approval**, a one-shot post-approval composition LM round runs (no tools) using `buildDiscoverySummaryComposePrompt`. The AI composes a 2–4 sentence memo carrying user-stated semantic intent the structural fields cannot capture ("focus on the revenue chain", "be careful with the conversion logic"). The memo is sealed into `engine._discoverySummary` and rides every hop's stable prefix as `<discovery_summary>` via `buildDiscoverySummaryBlock`.
+5. SM proceeds normally — but every hop now sees the discovery summary alongside `<mission_brief>` and the sliding `<short_term_memory>`.
+
+### Magic trigger constants
+
+Three trigger strings are detected verbatim by `lineageParticipant.handleChatRequest` to route specific user-driven actions without a normal LM round. All live in [`src/ai/prompts.ts`](../src/ai/prompts.ts):
+
+- `RECOMMEND_FOLLOWUPS_TRIGGER` — post-synthesis "Explore related objects" pill. Expands to `buildDeferredQuestionsPrompt`.
+- `SHOW_DESCRIPTION_TRIGGER` — "Show full description" pill. Short-circuits with `writer.markdown(sess.lastPresentResultDescription)` — no LM round.
+- `START_DEEPER_ANALYSIS_TRIGGER` — post-discovery SM-offer pill. Expands to `buildStartDeeperAnalysisTriggerPrompt(question, answer, origin)`.
 
 So the rendering pipeline reads:
 
@@ -132,9 +150,12 @@ Column-level validation on `route_requests` — the AI cannot route to a non-exi
 
 | Key | Purpose | Edit this when |
 |-----|---------|----------------|
-| `discovery_chat` | Discovery-phase chat output guidance: answer length, citation discipline, single-vs-balanced format, no-padding rule, plus the biz / tech / math reference shapes used when writing chat prose. NOT a capture template; full angle templates ship only after SM gate approval. | Tightening or loosening the chat answer style; changing whether single-fact answers stay short vs. balanced summaries kick in for general questions; adjusting the framing references the AI uses when describing an object in chat. |
+| `discovery_chat` | Discovery-phase chat output framing: factual grounding, scale-to-the-question depth (single-object → focused paragraph; multi-object walk → per-node Markdown headings with business + technical paragraphs). References the `general` template for rendering primitives (math fences, rename tables, source guards, ⚠️ markers). NOT a capture template — `discovery_chat` fires only at `'discover'` stage. | Tightening or loosening the chat answer style; changing how single-vs-multi-object answers scale; adjusting the framing references the AI uses when describing an object in chat. |
+| `general` | Cross-section rendering primitives — math fences, column-rename tables, source-guard SQL fences, status-enum lifecycles, ⚠️ risk markers. **Single canonical home for rendering rules**, fires at both `'discover'` and `'synthesis'` stages so chat output and rendered SM detail share the same primitives. | Changing what triggers a math fence vs. inline; relaxing/tightening the rename-table threshold; adjusting how ⚠️ markers render. |
 
-This single key is the canonical surface for tuning what discovery answers look like. The routing logic itself (when discovery answers in chat vs. when AI escalates to SM via `lineage_start_exploration`) lives in code (`buildDiscoveryPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts)) because it is mechanically paired with the state machine — editing routing in YAML could break the FSM. Editing the YAML never breaks routing.
+**Discovery chat output structure.** Single-object questions get one focused answer (one short paragraph per business / technical angle). Multi-object walks (dependency traces, lineage walks, "N levels up/down") get one Markdown heading per visited node, with short business + technical paragraphs under each. Length scales with the question — the budget guard (`checkScopeBudget`) hard-rejects requests that exceed `discoveryNodeCap` / `discoveryTokenBudget` so chat answers stay bounded.
+
+The routing logic (when discovery answers in chat vs. when the AI escalates to SM via `lineage_start_exploration`) lives in code (`buildDiscoveryPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts)) — escalation triggers (a) explicit visual graph render, (c) column tracing, (d) `over_discovery_budget` rejection. Editing YAML never breaks routing.
 
 ### Synthesis — fields the AI writes from scratch
 
@@ -146,7 +167,7 @@ The AI writes these per-field instructions; the engine builds the rendered docum
 | `title` | The `# …` document heading (≤ 80 chars) naming the analysis subject and key finding. | Changing how the title balances subject vs. finding; banning step counts. |
 | `intro` | 2–4 sentence narrative opener before the sections. | Changing tone, what the intro is allowed to mention (e.g. ban schema dumps), or how it anchors to the user's question. |
 | `closing` | Optional `---` divider + cross-cutting through-line / risk. Gated on archive size ≥ 5. | Changing the threshold (in `templateRenderer.ts`) or what cross-cutting issues warrant it. |
-| `highlights` | 2–3 critical-node glows on the graph (Lineage or Diagnostic scheme). | Changing how aggressively to highlight or the colour scheme. |
+| `highlights` | 2–3 critical-node glows on the graph (Lineage or Diagnostic scheme). The `present_result.highlight_groups[]` field is **required** for any rendered SM analysis — every SM result must emit highlights so origin / terminal / transform nodes render with colored glow rings (Lineage scheme) or good / warn / fail (Diagnostic scheme). The synthesis prompt at [src/ai/prompts.ts](../src/ai/prompts.ts) enforces this in prose; without populated `highlight_groups[]` the rendered nodes appear unstyled. | Changing how aggressively to highlight or the colour scheme. |
 | `notes` | Per-node graph captions — one-line, what the node does specifically in this flow. | Changing caption length or style (e.g. always lead with the formula vs. the role). |
 
 **No template for `sections[]` here.** The lift-verbatim + group-siblings + label-by-role rule is owned by `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts). Editing that function is the single source of truth for how synthesis assembles the per-node captured bodies into the final report.
