@@ -181,6 +181,16 @@ export class LmTracer {
     this.write('WIPE', sid, rid, { trigger, msgsBefore });
   }
 
+  /**
+   * Emitted once for the final text response of a session — the round that returns
+   * no tool calls and exits `final_answer`. This is the only round whose text never
+   * appears in a subsequent REQ message history, so it must be captured explicitly.
+   */
+  static finalAnswer(sid: string, rid: number, text: string): void {
+    if (!ENABLED) return;
+    this.write('ANSWER_TEXT', sid, rid, { chars: text.length, text });
+  }
+
   /** Emitted once after runHopLoop returns, before dispatchExit. */
   static sessionEnd(
     sid: string,

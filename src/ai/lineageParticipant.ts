@@ -841,6 +841,7 @@ export class LineageParticipant {
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
+          LmTracer.finalAnswer(sess.id, roundCount, responseText);
           LmTracer.round(sess.id, roundCount, activePhase, msFinal, roundInputTokens, roundOutputTokens, 0);
           drainPendingUserNotices();
           toolCallRounds.push({ response: responseText, toolCalls: [] });
