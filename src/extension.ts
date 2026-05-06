@@ -9,6 +9,7 @@ import { Logger, testLogCapture } from './utils/log';
 import { migrateProjectStore, type ProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
 import { LineageParticipant } from './ai/lineageParticipant';
+import { LmTracer } from './ai/lmTracer';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules, type ParseRulesConfig } from './engine/sqlBodyParser';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -33,6 +34,7 @@ let outputChannel: vscode.LogOutputChannel;
 export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
+  LmTracer.init(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd());
   const logger = Logger.create(outputChannel, 'Config');
 
   const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
@@ -145,7 +147,7 @@ export async function activate(context: vscode.ExtensionContext) {
  * handler, again outside this function's responsibility.
  */
 export function deactivate() {
-  // no-op
+  LmTracer.flush();
 }
 
 /**

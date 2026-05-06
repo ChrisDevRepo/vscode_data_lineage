@@ -44,6 +44,7 @@ import { ChatResponseWriter } from './chatResponseWriter';
 import { PerformanceCollector } from './diagnostics';
 import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from './messageEnvelope';
 import { matchesTransientNetPattern } from './transientErrors';
+import { LmTracer } from './lmTracer';
 export { classifyGateReply } from './sessionPhase';
 
 /**
@@ -238,8 +239,9 @@ export class LineageParticipant {
 
     // Use the model selected by the user in the Chat UI directly.
     const model = request.model;
-    sess.maxInputTokens = model.maxInputTokens ?? 32768; 
+    sess.maxInputTokens = model.maxInputTokens ?? 32768;
     sess.modelName = model.name || model.id;
+    LmTracer.sessionStart(sess.id, model.id, sess.maxInputTokens);
 
     const writer = new ChatResponseWriter(stream, token, this.logger, sess.id);
     const collector = new PerformanceCollector(this.logger);
@@ -422,6 +424,7 @@ export class LineageParticipant {
                 contractSummary,
               );
               const composeStart = Date.now();
+              LmTracer.request(sess.id, 0, 'compose', [vscode.LanguageModelChatMessage.User(composePrompt)], [], 'auto');
               const composeResponse = await model.sendRequest(
                 [vscode.LanguageModelChatMessage.User(composePrompt)],
                 {},
@@ -433,6 +436,7 @@ export class LineageParticipant {
                   composedText += part.value;
                 }
               }
+              LmTracer.round(sess.id, 0, 'compose', Date.now() - composeStart, 0, composedText.length, 0);
               const trimmed = composedText.trim();
               if (trimmed.length > 0) {
                 engine.setDiscoverySummary(trimmed);
@@ -734,6 +738,7 @@ export class LineageParticipant {
         let attempt = 0;
         while (true) {
           try {
+            LmTracer.request(sess.id, roundCount, activePhase, envelope.toArray() as vscode.LanguageModelChatMessage[], tools.map(t => t.name), toolMode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto');
             response = await model.sendRequest(envelope.toArray() as vscode.LanguageModelChatMessage[], { tools, toolMode }, token);
             break;
           } catch (err) {
@@ -777,6 +782,7 @@ export class LineageParticipant {
             assistantParts.push(part);
             toolCalls.push(part);
             proseGate.observeToolCall();
+            LmTracer.toolCall(sess.id, roundCount, part.name, part.callId, part.input as Record<string, unknown>);
           }
         }
         if (!writer.isOpen()) return { kind: 'cancelled' };
@@ -835,6 +841,7 @@ export class LineageParticipant {
           const msFinal = Date.now() - tRoundStart;
           const pctFinal = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
           this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — final answer (${msFinal}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pctFinal}%)`);
+          LmTracer.round(sess.id, roundCount, activePhase, msFinal, roundInputTokens, roundOutputTokens, 0);
           drainPendingUserNotices();
           toolCallRounds.push({ response: responseText, toolCalls: [] });
           return { kind: 'final_answer' };
@@ -851,6 +858,7 @@ export class LineageParticipant {
           if (toolCallCache.has(cacheKey)) {
             const cached = toolCallCache.get(cacheKey)!;
             if (extractToolErrorCode(cached) === null) {
+              LmTracer.toolInvoke(sess.id, roundCount, f.name, f.callId, true);
               resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(JSON.stringify({ _dedup: true }))]));
               roundHadCacheHit = true;
               continue;
@@ -873,8 +881,11 @@ export class LineageParticipant {
             lastProgressLine = progressLine;
           }
           totalToolCallsMade++;
+          const tInvoke = Date.now();
+          LmTracer.toolInvoke(sess.id, roundCount, f.name, f.callId, false);
           try {
             const result = await vscode.lm.invokeTool(f.name, { input: f.input, toolInvocationToken: showToolInvocations ? request.toolInvocationToken : undefined }, token);
+            LmTracer.toolResult(sess.id, roundCount, f.name, f.callId, result, Date.now() - tInvoke);
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, result.content));
             accumulatedToolResults[f.callId] = result;
             toolCallCache.set(cacheKey, result);
@@ -933,6 +944,7 @@ export class LineageParticipant {
         const roundResultChars = resultParts.reduce((acc, p) => { try { return acc + JSON.stringify((p as any).content).length; } catch { return acc; } }, 0);
         const pct = roundInputTokens > 0 ? ((roundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
         this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — ${toolCalls.length} tool(s): ${toolNames.join(', ')} (${roundMs}ms, ${roundInputTokens} in / ${roundOutputTokens} out tokens, ${pct}%, ${roundResultChars} result chars${roundHadCacheHit ? ', cache-hit' : ''})`);
+        LmTracer.round(sess.id, roundCount, activePhase, roundMs, roundInputTokens, roundOutputTokens, toolCalls.length);
 
         const hasStart = toolCalls.some(tc => tc.name === 'lineage_start_exploration');
         if (hasStart && activePhase === 'discover') {
@@ -980,6 +992,7 @@ export class LineageParticipant {
             }
 
             const beforeCount = envelope.length;
+            LmTracer.wipe(sess.id, roundCount, 'synthesis_transition', beforeCount);
             envelope.wipeAndSeed(systemPrompt, effectivePrompt, synthesisPair);
             this.logger.info(`[Synthesis] Context cleaned: ${beforeCount} → ${envelope.length} messages; envelope preserved (${archive.detail_slots.length} slots, ${deferred.length} deferred)`);
           }
@@ -1009,6 +1022,7 @@ export class LineageParticipant {
             // Refresh per-hop directive to match the engine's advanced state — avoids the User-msg slot
             // freezing on the gate-approval text ("hop 1 is X") for the rest of the session.
             effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
+            LmTracer.wipe(sess.id, roundCount, 'submit_ok', envelope.length);
             envelope.wipeAndSeed(systemPrompt, effectivePrompt);
             const hopCount = sess.stateMachine?.getHopDiagnostics().hop ?? 0;
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
@@ -1021,6 +1035,7 @@ export class LineageParticipant {
               // but the history does not grow unbounded within MAX_ROUNDS.
               systemPrompt = buildStageSystemPrompt('active');
               effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
+              LmTracer.wipe(sess.id, roundCount, 'forced_error_3', envelope.length);
               envelope.wipeAndSeed(systemPrompt, effectivePrompt);
               this.logger.debug(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
               consecutiveErrorRounds = 0;
@@ -1055,6 +1070,7 @@ export class LineageParticipant {
       }
     }
 
+    LmTracer.sessionEnd(sess.id, totalRoundInputTokens, totalOutputTokens, peakRoundInputTokens, roundCount, totalToolCallsMade, exit.kind);
     const smStatus = sess.stateMachine ? (sess.stateMachine.columnAspect ? 'Column' : 'BB') : '—';
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
     this.logger.info(`Summary — model: ${sess.modelName}, SM: ${smStatus}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
