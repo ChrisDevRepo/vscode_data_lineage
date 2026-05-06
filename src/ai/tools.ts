@@ -1541,8 +1541,12 @@ export function validatePresentResult(
     }
   }
 
-  // highlight_groups validation
-  if (input.highlight_groups) {
+  // highlight_groups validation — required for new renders; optional for is_update text edits
+  if (!input.highlight_groups || input.highlight_groups.length === 0) {
+    if (!input.is_update) {
+      errors.push('highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)');
+    }
+  } else {
     if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
     for (const g of input.highlight_groups) {
       if (!g.label) errors.push('Group label is required');

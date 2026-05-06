@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
-![Status](https://img.shields.io/badge/status-preview-orange.svg)
+![Status](https://img.shields.io/badge/status-stable-green.svg)
 
 Visualise SQL dependencies right inside VS Code. Ask `@lineage` in Copilot Chat to explore your lineage graph in natural language — or browse interactively with search, trace, and schema overview.
 

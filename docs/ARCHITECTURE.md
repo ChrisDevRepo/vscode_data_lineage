@@ -144,7 +144,7 @@ Discovery is the default chat state and handles every multi-object dependency qu
 
 The escalation contract removed the legacy "detailed analysis verbs" trigger after commit `d27caa9` deleted inline mode. With inline gone, "detailed analysis" no longer has a low-cost path; routing those requests through gate-approved SM was costly and unnecessary for small scopes that fit the catalog.
 
-If the user's intent is unclear between chat and graph, discovery answers in chat. The post-discovery SM-offer follow-up pill (Wave 2 — pending) gives the user a one-click path to SM if the chat answer made them want a deeper hop-by-hop walk.
+If the user's intent is unclear between chat and graph, discovery answers in chat. The post-discovery SM-offer follow-up pill (Wave 2, shipped in 1.0.0) gives the user a one-click path to SM if the chat answer made them want a deeper hop-by-hop walk.
 
 ## SM execution
 
@@ -212,7 +212,7 @@ flowchart LR
 
 The dotted reverse arrows are **reads back from the archive into the next hop's prompt**. The window stays at 3 entries — past hop 3 the oldest summary slides off. Only at synthesis does the *full* archive get lifted (double arrow), regardless of length.
 
-**Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` once the agenda is drained — for SM that is the synthesis-phase turn; for inline that is the trailing `present_result` call in the same agent loop.
+**Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` once the agenda is drained — that is the synthesis-phase turn after the hop loop completes.
 
 **WM fields.** Three accessors on `AiMemoryManager` produce the inputs the prompt builder needs each hop:
 
@@ -234,11 +234,11 @@ None of these WM fields are stored — they are computed from the archive (or th
 
 | Field | Purpose |
 |-------|---------|
-| `mode` | `'inline'` or `'sm'` — stamped once at `start_exploration` from the size+budget heuristic; never flips. |
+| `mode` | `'sm'` — always SM; set once at `start_exploration`. |
 | `sm_status` | `'awaiting_findings'` while draining — explicit "you are mid-loop" signal that survives sliding wipes |
 | `hop` | 1-based hop number |
 | `agenda_remaining` | Nodes still on the agenda |
-| `focus_node` | `{id, schema, name, type, bb_ddl, cols, fks, unresolved_refs}` for bodied nodes; `{id, schema, name, type, cols, fks, in[], out[], unresolved_refs}` for non-bodied nodes (tables) — `in[]` lists upstream writers, `out[]` lists downstream readers; both are always present (empty array = confirmed zero neighbors). Single object in SM mode, array in inline batch. |
+| `focus_node` | `{id, schema, name, type, bb_ddl, cols, fks, unresolved_refs}` for bodied nodes; `{id, schema, name, type, cols, fks, in[], out[], unresolved_refs}` for non-bodied nodes (tables) — `in[]` lists upstream writers, `out[]` lists downstream readers; both are always present (empty array = confirmed zero neighbors). One object per hop. |
 | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, depth_from_origin, in_budget, in_approved_scope, would_trigger_action_required}` |
 | `current_task` | Sub-question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
 | `mission_brief` | AI-composed mission statement — set once at `start_exploration`, delivered verbatim every hop, survives sliding-memory wipes |
@@ -277,10 +277,10 @@ The orphan guard (`wouldOrphanNotedNode`) is content-blind. Engine guards are to
 
 ## Mechanical enforcement
 
-The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`, but every ACTIVE-mode toolset has ≥ 2 tools (inline BB: `submit_findings + present_result`; SM BB/CT: `submit_findings + get_neighbor_columns`), so per VS Code LM rules `Required` always falls back to `Auto`. The contract is enforced in `lineageParticipant.runHopLoop` by a toolless-drift corrective: when the engine is `awaiting_findings` and the AI emits free-form text instead of a tool call, a mode-specific corrective user message is pushed onto the envelope and the loop continues. `MAX_ROUNDS` is the safety net for repeated drift.
+The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`, but the ACTIVE-mode toolset has ≥ 2 tools (`submit_findings + get_neighbor_columns`), so per VS Code LM rules `Required` always falls back to `Auto`. The contract is enforced in `lineageParticipant.runHopLoop` by a toolless-drift corrective: when the engine is `awaiting_findings` and the AI emits free-form text instead of a tool call, a mode-specific corrective user message is pushed onto the envelope and the loop continues. `MAX_ROUNDS` is the safety net for repeated drift.
 
 - **Speed via verbs, not adjectives.** `verdict: "prune"` drains the agenda quickly → synthesis fires. No silent text bail.
-- **ACTIVE tool palette by mode** — inline BB exposes `submit_findings + present_result` (Active + Synthesis collapsed into one agent loop); SM BB/CT exposes `submit_findings + get_neighbor_columns` (synthesis is a separate later turn after the agenda drains). Single source: [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts).
+- **ACTIVE tool palette** — BB/CT exposes `submit_findings + get_neighbor_columns`; synthesis is a separate later turn after the agenda drains. Single source: [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts).
 - **Repeat-Reject Guard** — [`src/ai/repeatRejectGuard.ts`](../src/ai/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
 - **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here" — `complete: true` is silently ignored in SM mode.
 - **Classification gate at session lock-in.** `start_exploration` requires `classification` (`business` | `technical` | `both`); missing or invalid values are rejected at the Zod boundary — there is no engine fallback. The tool-param description in `package.json` biases the AI toward `business` for ambiguous intent (`technical` only for explicit perf/index/tuning asks; `both` only for explicit "both angles" requests). The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification at the tool handler boundary (`toolProvider.validateSectionsAgainstClassification`); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.
@@ -308,8 +308,8 @@ Two zoom levels. The top-level FSM shows phase transitions; the Analysis loop is
 ```mermaid
 stateDiagram-v2
     [*] --> Discovery
-    Discovery --> Discovery: Class D direct answer
-    Discovery --> Analysis: Class S — start_exploration
+    Discovery --> Discovery: direct answer (chat)
+    Discovery --> Analysis: escalation (start_exploration)
     Analysis --> Synthesis: agenda drained
     Synthesis --> Completed: present_result
     Completed --> Analysis: supplement / extend scope
@@ -332,7 +332,7 @@ stateDiagram-v2
     EvaluateAgenda --> [*]: agenda empty → Synthesis
 ```
 
-Discovery sub-states (`ClassifyQuestion → ClassD | ClassS → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. The Completed phase branches on the user's follow-up action — see the cross-phase transitions above.
+Discovery sub-states (`ClassifyQuestion → direct | escalation → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. The Completed phase branches on the user's follow-up action — see the cross-phase transitions above.
 
 ## Session FSM & typed exit dispatch
 

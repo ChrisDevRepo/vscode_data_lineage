@@ -9,7 +9,6 @@
 import { assert, printSummary } from './helpers/testUtils';
 import {
   ClassificationSchema,
-  CLASSIFICATION_BANNER,
 } from '../../src/ai/classification';
 import { AiSession } from '../../src/ai/session';
 
@@ -24,12 +23,6 @@ async function runTests() {
   assert(!ClassificationSchema.safeParse('other').success, 'invalid value rejected');
   assert(!ClassificationSchema.safeParse('').success, 'empty string rejected');
   assert(!ClassificationSchema.safeParse(undefined as any).success, 'undefined rejected');
-
-  // Banner text
-  console.log('\n── CLASSIFICATION_BANNER ──');
-  assert(CLASSIFICATION_BANNER.business.includes('business-driven'), 'business banner text');
-  assert(CLASSIFICATION_BANNER.technical.includes('technical-driven'), 'technical banner text');
-  assert(CLASSIFICATION_BANNER.both.includes('business + technical'), 'both banner text');
 
   // AiSession integration
   console.log('\n── AiSession.setClassification ──');

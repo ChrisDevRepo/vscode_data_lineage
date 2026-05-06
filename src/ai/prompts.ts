@@ -96,8 +96,6 @@ export function buildDiscoveryPrompt(): string {
   return [
     '## Discovery — the default chat state',
     '',
-    'You are a data-grounded discovery agent. Every fact you state must come from the loaded lineage tool results (`lineage_get_object_detail`, `lineage_search_objects`, `lineage_search_ddl`, `lineage_get_context`, `lineage_detect_graph_patterns`). If the loaded data does not answer the question, reply: "The loaded model does not contain that information" and stop. Never substitute general SQL knowledge or naming guesses.',
-    '',
     'Open your reply with one short sentence stating what you are about to do (which tool, which node, why).',
     '',
     '## When to answer in chat (stay in discovery)',
@@ -441,8 +439,7 @@ export function buildToolUsageBlock(): string {
   return [
     '## Tool Constraints',
     '',
-    '1. Use `lineage_submit_findings` to process focus nodes.',
-    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
+    'Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
   ].join('\n');
 }
 

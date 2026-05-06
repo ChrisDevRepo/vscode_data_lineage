@@ -33,16 +33,4 @@ export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
   both: 'business + technical driven',
 };
 
-/**
- * Inline chat banner shown at synthesis start for each classification value.
- *
- * @remarks
- * Rendered via `stream.markdown()` in the chat participant the moment
- * classification resolves. Format: markdown blockquote.
- */
-export const CLASSIFICATION_BANNER: Record<ClassificationValue, string> = {
-  business: `> Starting analyze phase — ${CLASSIFICATION_LABEL.business}.`,
-  technical: `> Starting analyze phase — ${CLASSIFICATION_LABEL.technical}.`,
-  both: `> Starting analyze phase — ${CLASSIFICATION_LABEL.both}.`,
-};
 

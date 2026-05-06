@@ -37,7 +37,7 @@ import { NavigationEngine } from './smBase';
 import { RepeatRejectGuard } from './repeatRejectGuard';
 import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from './sessionPhase';
 import { renderScopeSummaryMd } from './scopeSummaryRenderer';
-import { CLASSIFICATION_BANNER } from './classification';
+
 import { filterLmTools, activeModeOf } from './toolPolicy';
 import { resolveStagePrompt } from './templateRenderer';
 import { ChatResponseWriter } from './chatResponseWriter';
@@ -442,6 +442,8 @@ export class LineageParticipant {
               }
             } catch (err) {
               this.logger.error('Discovery memo composition', err);
+              // _discoverySummary stays null (never set) — absence is clean.
+              writer.markdown(`\n\n> ⚠ Could not compose discovery summary — analysis will proceed without it.\n\n`);
             }
           }
           const focusId = engine?.currentFocus;
@@ -922,9 +924,8 @@ export class LineageParticipant {
           }
         }
         if (actionRequiredPending) envelope.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, buildActionRequiredGate(['analyze_and_respond'])));
-        if (consentGate) return { kind: 'gate', gate: consentGate };
-
         toolCallRounds.push({ response: responseText, toolCalls });
+        if (consentGate) return { kind: 'gate', gate: consentGate };
         const roundMs = Date.now() - tRoundStart;
         const toolNames = toolCalls.map(tc => tc.name.replace('lineage_', ''));
         const focusNode = (toolCalls[0]?.input as any)?.focus_node_id;

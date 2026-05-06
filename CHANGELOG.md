@@ -14,6 +14,11 @@
 
 ### Removed
 - **Inline mode** — superseded by the chat-vs-walkthrough split. One execution path now: chat for ad-hoc and dependency questions, the structured walkthrough for visual renders, column traces, and over-budget scopes.
+- **Integration-DB test suite** — `integration-db.test.ts` (1111 lines) removed; replaced by `navigation-engine.test.ts` and `navigation-engine-cascade.test.ts` unit coverage.
+
+### Migration notes
+- Settings `dataLineageViz.ai.inlineNodeCap` and `dataLineageViz.ai.inlineTokenBudget` have been renamed to `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`. If you customised these values in your VS Code settings, update the key names — the old keys are not read and values will silently fall back to defaults (8 nodes / 8000 tokens).
+- Custom `aiOutputTemplates.yaml` overlays using `$$` math syntax must migrate to ` ```math ` fences — `$` and `$$` are now blocked in prompts.
 
 
 ## [0.9.x] - 2026-02 to 2026-04

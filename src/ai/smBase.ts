@@ -564,7 +564,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this._columnAspect;
   }
 
-  /** Updates column-trace targets in place — mirrors setInlineMode / extendAllowedSchemas pattern. */
+  /** Updates column-trace target columns for the current session. */
   public setColumnTargets(targetColumns: string[]): void {
     this._columnAspect = {
       target_columns: targetColumns,
