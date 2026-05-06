@@ -179,7 +179,7 @@ export function resolveStagePrompt(
 
   const headerByPhase: Record<TemplateStage, string> = {
     discover:  '### Output templates (discovery)',
-    active:    '### Capture rules — submit these as `sections[]` in submit_findings',
+    active:    '### Active-phase templates (write each key to its target field)',
     synthesis: '### Output templates (synthesis)',
   };
 

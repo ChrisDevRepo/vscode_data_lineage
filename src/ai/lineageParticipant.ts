@@ -579,7 +579,7 @@ export class LineageParticipant {
         // memory, no protocol envelope. The closed archive is the substance; per-hop
         // state is active-phase only. Without this guard, a stale <current_task>
         // from the last hop leaks into the synthesis prompt.
-        if (!engine || phase === 'discover' || phase === 'synthesis') return '';
+        if (!engine || phase === 'discover' || phase === 'synthesis' || phase === 'completed') return '';
         const dynamic: string[] = [];
         const currentTaskBlock = buildCurrentTaskBlock(
           engine.getCurrentTask(),

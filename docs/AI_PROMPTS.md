@@ -68,6 +68,19 @@ The lift+group+label rule for `sections[]` lives in `buildSynthesisPrompt()` in 
 
 When `classification === 'both'`, captured sections come in pairs per node (one business, one technical). Each angle becomes its own peer entry in `present_result.sections[]` — never nested as `#### Technical` subheadings.
 
+## Prompt assembly + cache boundaries
+
+Prompt assembly is code-owned in [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) via `buildStageSystemPrompt(phase)`:
+
+- **Stable part** (cacheable): general prompt + phase protocol + tool/mode blocks + stage-scoped YAML instruction bullets + mission brief.
+- **Dynamic part** (per-hop): current task / focus / short-term-memory fields used during active SM hops.
+
+To reduce repeated prompt construction cost, the participant memoizes the stable text in `cachedStablePart` keyed by `(phase, focusIsNonBodied)`.
+
+- Cache invalidates on phase transitions (`discover -> active -> synthesis`) and when focus-bodiedness flips (table vs view/proc/function).
+- This is **compute caching only** (reusing a prompt string build), not archive persistence.
+- It does **not** change memory retention rules; it only avoids rebuilding identical stable prompt segments.
+
 ## Template gate — what fires when
 
 The AI declares the mission classification at `start_exploration` via the **required** `classification` parameter (`business` | `technical` | `both`). The Zod schema in [`src/ai/tools.ts`](../src/ai/tools.ts) is `z.enum([...])` — missing or invalid values are hard-rejected at the boundary; there is no engine fallback. The tool-param description in [`package.json`](../package.json) biases the AI toward `business` when user intent is ambiguous (lineage / origin / impact / column-trace are `business` even when a column is named); `technical` is only for explicit performance / index / tuning asks; `both` is only for explicit "both angles" asks. The locked value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
@@ -143,6 +156,22 @@ Column-level validation on `route_requests` — the AI cannot route to a non-exi
 **Synthesis.** When the agenda drains, `buildCtSynthesisBlock` renders the accumulated edge chain and appends it to the synthesis reminder. `present_result` is anchored to the traced path. CT overrides the standard badge_label grouping — sections group by chain role (origin / writers / terminal source) instead.
 
 **Follow-up column traces from `completed` phase.** When the user asks a follow-up column question after a completed trace, the AI calls `start_exploration` with the same origin node and new `targetColumns`. If the origin matches the prior result (`sess.resultGraph.originNodeId`), `toolProvider.ts` auto-routes to the supplement path: `supplementAgenda(visitedIds)` re-queues all previously visited nodes in SM, `setColumnTargets(targetColumns)` updates the engine's column-trace context, and the session re-enters `exploring` without a gate or archive wipe. Different-origin follow-ups still trigger a fresh start with gate confirmation.
+
+## Sliding-memory wipes vs long-memory persistence
+
+There are two different "memory" layers; only one is wiped hop-to-hop:
+
+1. **Conversation envelope (short-lived message context)**
+   - Rebuilt with `MessageEnvelope.wipeAndSeed(...)` after successful `submit_findings` rounds in SM mode.
+   - Rebuilt again at active -> synthesis transition to remove stale hop context while preserving tool-use/tool-result adjacency.
+   - After 3 consecutive `submit_findings` error rounds, a bounded wipe is forced to prevent unbounded message growth.
+
+2. **Session archive (long-lived analysis memory)**
+   - `AiMemoryManager.detailSlots` persists across all envelope wipes.
+   - Mission brief, user question, verdict tallies, and deferred questions also persist across those wipes.
+   - `getShortTermMemory()` is a derived sliding view (`last 3 summaries`) computed from persisted `detailSlots`; it is not a separate persisted store.
+
+Long memory resets only on exploration reset paths (e.g., `sess.resetExploration()`), such as new chat session rotation, gate cancel/redirect, or divergent fresh-start exploration.
 
 ## Key inventory — purpose & maintenance
 
