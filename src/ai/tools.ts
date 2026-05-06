@@ -18,6 +18,7 @@ import {
   type AnalysisType,
   type NeighborIndex,
 } from '../engine/types';
+import { normalizeName } from '../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../engine/graphAnalysis';
 import { ColumnStore } from '../engine/columnStore';
 import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../utils/modelSearch';
@@ -642,19 +643,22 @@ export function getObjectDetail(
   id: string,
   store?: import('../engine/columnStore').ColumnStore,
 ): object {
+  // AI may send bracket-qualified or mixed-case names; normalize to the
+  // canonical [schema].[name] lowercase form used by the model's node map.
+  const normalizedId = normalizeName(id);
   const nodeMap   = buildNodeMap(model);
-  const node      = nodeMap.get(id);
+  const node      = nodeMap.get(normalizedId);
   if (!node) {
     return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
 
-  const neighbors = model.neighborIndex[id] ?? { in: [], out: [] };
+  const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
   const edgeMap   = buildEdgeTypeMap(model);
 
   const upRaw  = neighbors.in;
   const dnRaw  = neighbors.out;
-  const up     = upRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, id, nodeMap, edgeMap, true));
-  const dn     = dnRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, id, nodeMap, edgeMap, false));
+  const up     = upRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, true));
+  const dn     = dnRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, false));
   const upMore = Math.max(0, upRaw.length - NEIGHBOR_CAP);
   const dnMore = Math.max(0, dnRaw.length - NEIGHBOR_CAP);
 
