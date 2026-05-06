@@ -123,6 +123,11 @@
   - `getHopContext()` emits one focus node per SM hop (or batch in inline).
   - `submitFindings()` validates routes/columns/classification contracts and drives agenda progression.
   - `enqueueHop()` is the only agenda-write funnel (bipartite contraction invariant).
+- Active-hop loop contract (message/process semantics):
+  - One hop = one focus node.
+  - Allowed sequence per hop: inspect focus context -> optional `lineage_get_neighbor_columns` -> `lineage_submit_findings` for that focus.
+  - There is no dedicated "wait" tool/message. "Wait" means ending the hop after `submit_findings` and letting the engine provide the next `getHopContext()` on the next round.
+  - Do not emit pipeline-wide conclusions during active hops; reserve cross-node conclusions for synthesis.
 - Memory model: single persistent archive + derived working memory.
   - Persistent detail archive: `AiMemoryManager.detailSlots` in `src/ai/memoryManager.ts`.
   - Sliding short-term view: `getShortTermMemory()` -> last 3 summaries (`slice(-3)`).

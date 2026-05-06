@@ -169,6 +169,8 @@ export function buildActivePhasePrompt(): string {
   return [
     '# Active Exploration Protocol',
     '',
+    'Data view in this hop: current focus DDL + immediate tool returns for this node. Do not claim cross-graph conclusions yet; synthesis assembles those from the full archive.',
+    '',
     '1. SECTIONS: **The archive is unbounded** — write as deeply as the focus node\'s role warrants. Capture every business rule the DDL exposes: each CASE branch, threshold, allocation formula, special-case predicate. Synthesis lifts your body verbatim, so depth here is depth in the final document.',
     '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
     '3. MATHEMATICS: Write every formula in a block math fence (`$$ … $$`) — transforms, allocations, thresholds, proportions, CASE expressions. For a short inline symbol, use inline code (`expr`). Do not use ````math` fences because they render as code blocks in VS Code chat. Do not use inline `$` because it conflicts with SQL parameter names.',
@@ -197,6 +199,8 @@ export function buildActivePhasePrompt(): string {
 export function buildSynthesisPrompt(): string {
   return [
     '# Synthesis Protocol',
+    'Data view in synthesis: the full closed archive (`detail_slots[]`). Cross-node conclusions belong here; do not invent facts beyond captured slots.',
+    '',
     'The archive is closed. Each slot in the last `tool_result.detail_slots[]` carries',
     '`slot.sections: [{ angle }]` — one entry per fired `*_capture` template at capture time.',
     '',
@@ -598,6 +602,7 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
+      `    Apply the binary map-or-prune contract from column_trace_capture for each active column.`,
       `    To inspect upstream column schemas before declaring contributors: call lineage_get_neighbor_columns.`,
       `    Writer procedures: out_col = column name in the target table (same as writes_to.col). Set writes_to. Role: formula/case/etc for computed expressions; rename for direct pass-through.`,
       `  </column_trace>`,

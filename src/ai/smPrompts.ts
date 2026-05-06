@@ -36,6 +36,7 @@ const BLOCK = {
     return [
       '## Section Submission',
       submitLine,
+      'This is the canonical active-phase `sections[]` shape contract. If neighboring prompt text conflicts, follow this block.',
       'Body content is governed by the capture template above; this block specifies only the submission shape.',
       '`summary` — one short sentence digest of the whole node.',
     ].join('\n');
