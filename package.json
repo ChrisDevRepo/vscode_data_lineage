@@ -581,7 +581,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Use for single-object questions where you need the full DDL, columns, or foreign keys for one specific object. For dependency traversal or questions spanning multiple objects or levels, use lineage_get_neighborhood instead. DISCOVERY and SYNTHESIS phases only — during active SM exploration, use lineage_get_neighbor_columns instead.",
+        "modelDescription": "Use ONLY for single-object questions about one object's own properties: 'what does X do', 'show DDL of X', 'list columns of X'. If the question asks about relationships, sources, upstream, downstream, dependencies, or anything spanning multiple objects — even phrased as 'review [X] and its sources' — that is a BFS question: use lineage_start_exploration instead. DISCOVERY and SYNTHESIS phases only — during active SM exploration, use lineage_get_neighbor_columns instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -635,7 +635,7 @@
         "toolReferenceName": "lineage_get_neighborhood",
         "displayName": "Get Neighborhood",
         "userDescription": "Fetch the surrounding dependency graph for an object.",
-        "modelDescription": "Use for dependency traversal and any question spanning multiple objects or levels — returns all matching nodes with their DDL and edge relationships in one BFS call. Prefer this over lineage_get_object_detail for multi-object scope.",
+        "modelDescription": "Returns the upstream and/or downstream neighbors for a starting object within a specified depth.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

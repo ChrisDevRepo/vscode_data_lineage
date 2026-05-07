@@ -1076,11 +1076,11 @@ export class LineageParticipant {
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
     this.logger.info(`Summary — model: ${sess.modelName}, SM: ${smStatus}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
 
-    // Post-discovery walk capture: when discovery just inspected ≥2 distinct
-    // nodes via lineage_get_object_detail, store the question + chat answer +
-    // first walked id so the post-discovery SM-offer pill (and the eventual
-    // discovery-summary composition round) can recover the context. Cleared
-    // in enterGate so a stale pill never crosses into SM.
+    // Post-discovery walk capture: store the question + chat answer + origin so
+    // the post-discovery SM-offer pill (and the eventual discovery-summary
+    // composition round) can recover the context. Cleared in enterGate so a
+    // stale pill never crosses into SM.
+    // Multi-object criteria: ≥2 distinct lineage_get_object_detail calls.
     if (activePhase === 'discover' && exit.kind === 'final_answer' && sess.phase.kind === 'idle') {
       const walkedIds = new Set<string>();
       let firstWalkedId: string | null = null;
@@ -1103,7 +1103,7 @@ export class LineageParticipant {
         sess.lastDiscoveryOrigin = firstWalkedId;
         sess.lastDiscoveryQuestion = request.prompt;
         sess.lastDiscoveryAnswer = lastResponseText;
-        this.logger.info(`[Discovery] Multi-object walk recorded — origin=${firstWalkedId} walk_count=${walkedIds.size} q_len=${request.prompt.length} a_len=${lastResponseText.length}`);
+        this.logger.info(`[Discovery] Multi-object walk recorded — origin=${firstWalkedId} walk_count=${sess.lastDiscoveryWalkCount} q_len=${request.prompt.length} a_len=${lastResponseText.length}`);
       }
     }
 
