@@ -70,7 +70,7 @@ export function buildGeneralSystemPrompt(
     '',
     `Current phase: ${phaseLabel}.`,
     '',
-    '**Grounding rule:** Every fact you state must come directly from data in the provided context — `focus_node` fields (`bb_ddl`, `cols[]`, `in[]`, `out[]`, `fks[]`), tool results, or prior captured slots. Never infer, construct, or invent object names, columns, neighbors, relationships, or SQL logic. If a field is absent or empty, state that explicitly ("None found in graph", "No downstream consumers") — do not guess based on naming conventions or assumed patterns.',
+    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
@@ -84,96 +84,91 @@ export function buildGeneralSystemPrompt(
  * Constructs the prompt for the Discovery/Idle phase.
  *
  * @remarks
- * Discovery is the default chat state. Most user questions are answered in chat
- * directly using catalog tools (search, get_object_detail, search_ddl). When
- * the user wants a graph rendered in the GUI, a deep multi-object analysis, or
- * column tracing, the AI escalates to SM via `lineage_start_exploration` — the
- * engine emits the `confirm_sm_start` gate, the user approves, then SM runs.
+ * Two blocks: Class D vs Class S routing (with tiebreaker + worked examples),
+ * and a one-line response-format constraint. Tool parameter routing and
+ * filter-boundary semantics live in each tool's modelDescription — not here.
  *
  * @returns The assembled discovery-phase prompt string.
  */
 export function buildDiscoveryPrompt(): string {
   return [
-    '## Discovery — the default chat state',
+    '## Routing — classify the question first',
     '',
-    'Open your reply with one short sentence stating what you are about to do (which tool, which node, why).',
+    "Every question lands in exactly one class. Classify first, then use only that class's tools.",
     '',
-    '## When to answer in chat (stay in discovery)',
+    '### Class D — Direct (chat answer)',
+    'Use ONLY when the question concerns **one named object in isolation** OR **graph-wide metadata**. Signals — one object name + any of: "what does X do", "show DDL of X", "list columns of X", "find objects named/matching Y", "which objects reference pattern P", "does X exist", "count of X in schema S", "what schemas are loaded", hubs / orphans / cycles / longest paths.',
     '',
-    'Use the discovery tools and reply in Markdown when the question can be answered from the loaded model — single-object questions ("what does X do", "show DDL of X", "list columns of X"), graph-wide metadata ("which objects match Y", "what schemas are loaded", hubs / orphans / cycles), and direct-neighbor identifications.',
+    'Pick the tool from the available discovery set based on its own description. Cross-tool cue: `lineage_get_object_detail.up[]` / `dn[]` answers "who are X\'s direct neighbors" for simple identification. **CRITICAL:** Do NOT use Class D to narrate a "flow", "lineage", "pipeline", or "join path" across those neighbors — even if you have the DDL, those are Class S tasks. Reply as chat text.',
     '',
-    'Cross-tool cue: `lineage_get_object_detail.up[]` / `dn[]` answers "who are X\'s direct neighbors" for simple identification.',
+    '### Class S — State machine (call `lineage_start_exploration`)',
+    'Use when the question asks for **analysis, narrative, or visualization of a relationship** spanning two or more connected objects.',
     '',
-    '## When to escalate to SM (call `lineage_start_exploration`)',
+    'Signals — verbs "analyze / explain / walk through / trace / track / follow / document / compare"; nouns "lineage / dependencies / graph / relationship / impact / blast radius / pipeline / flow / path / join path / sources / what feeds X / what supplies X"; scope qualifiers "direct neighbours / one hop up / upstream only / downstream of X / between A and B"; NL filters that only make sense over a scope ("ignore UDFs", "only tables", "exclude schema X", name-based exclusions); any column name tied to an object (set `targetColumns`).',
     '',
-    'Discovery answers from the catalog and writes Markdown. SM renders the lineage as a graph in the side panel with a consent gate. Default to discovery. Pick SM only when one of these is true:',
+    '**Column Trace selection:** if the user names a specific column (`[Object].[Column]` or "the X column"), extract it directly as `targetColumns`. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its column list, then select the 2–4 columns that match the intent. Pass all selected columns to `lineage_start_exploration` as `targetColumns`.',
     '',
-    '- (a) The user explicitly asks for the lineage **rendered visually** — words like "graph", "diagram", "visualization", "picture", "show me on the canvas", "draw it", "render it", "in the panel", "highlight in the graph".',
-    '- (b) The user requests **column tracing**: any column name tied to an object — set `targetColumns`. If the user names a specific column (`[Object].[Column]`), extract it directly. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its column list, then select the 2–4 matching columns.',
-    '- (c) A discovery catalog call returns `over_discovery_budget` — the engine has measured that the requested scope exceeds `discoveryNodeCap` or `discoveryTokenBudget`. Follow the rejection\'s `hint` and call `lineage_start_exploration`.',
+    '**Rule:** If the user asks for a "lineage graph", "annotated trace", or to "explain the joins/pipeline" of an object, you MUST use Class S. Do not short-circuit to Class D prose just because you found the neighbors in a detail lookup.',
     '',
-    'Size is decided by the engine. Treat verbs like "trace", "lineage", "dependencies", "upstream", "follow", "all levels" as ordinary catalog questions: call `lineage_get_neighborhood` on the named origin — it returns all nodes with their DDL in one BFS call. Wait for the engine to return `over_discovery_budget` before escalating — that round-trip is the intended control flow, not a failure.',
+    'Resolve every user-named identifier — both the origin and any names the user said to ignore / exclude / drop / skip — with `lineage_search_objects` BEFORE calling `lineage_start_exploration`. The model has many schemas; user-shorthand names ("RECON", "EXCP2") often live in a non-default schema. Inventing an id like `[dbo].[recon]` causes `lineage_start_exploration` to reject with `unknown_node_ids`. If multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
     '',
-    'If `lineage_start_exploration` returns `scope_exceeds_budget`, do not retry with near-identical arguments. Surface the returned `hint` and `safe_depth_hint`, ask the user to narrow depth/direction/exclusions (or approve expansion), then re-call `lineage_start_exploration` with the updated scope.',
+    'The engine emits a `confirm_sm_start` consent gate on every exploration so the user can review scope (nodes, schemas, excluded types, mode) before analysis runs. Present it to the user; that is expected control flow, not an error to retry around.',
     '',
-    'Multi-object dependency questions are normal discovery work. "Trace upstream from X", "what feeds X", "list dependencies of X N levels up and M down", "explain the lineage of X" — call `lineage_get_neighborhood` on the origin; it returns all nodes with DDL in one BFS call. Use `lineage_get_object_detail` for single-object questions only ("what does X do", "show columns of X").',
+    'When a `confirm_sm_start` gate is pending and the user replies with anything other than approval/cancel, treat their message as refinement intent (scope, mode, classification, or column tracing): re-call `lineage_start_exploration` with the same `origin` and `depth` plus updated `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. Each call is a full re-spec — keep all prior filters and add the new one. The engine re-emits the gate; the loop continues until the user approves or cancels. Analysis tools are not available during this loop.',
     '',
-    'If the user\'s intent is unclear between chat and graph, answer in chat. After a multi-object chat answer the extension surfaces a "Start deeper hop-by-hop analysis" button — that gives the user a one-click path to SM if they want it. The host emits the button; you do not.',
+    '### Tiebreaker',
+    'When a question could plausibly fit either class, prefer Class S. Shallow multi-object metadata summaries are the primary failure mode on this extension.',
     '',
-    '`lineage_search_objects` is an ID-resolution tool: use it to resolve canonical node ids (`[schema].[name]`) from user shorthand before `lineage_start_exploration` — including origin plus names the user said to ignore/exclude/drop/skip. It reduces `unknown_node_ids` failures. It is not a substitute for hop orchestration on large scopes.',
-    '',
-    'When a `confirm_sm_start` gate is pending and the user replies with anything other than approval/cancel, treat their message as refinement intent: re-call `lineage_start_exploration` with the same `origin` and `depth` plus updated `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Each call is a full re-spec — keep all prior filters and add the new one. The engine re-emits the gate; the loop continues until the user approves or cancels. Analysis tools are not available during this loop.',
-    '',
-    '_(Chat-output style and framing reference are injected from `aiOutputTemplates.yaml → discovery_chat` and can be customized via the YAML overlay.)_',
-    '',
-    '## Examples',
+    '### Examples',
     '',
     '<example>',
     'User: "what does spProcA do"',
-    'Stay in discovery. Open with: "Reading DDL for [dbo].[spProcA] to summarize what it does."',
-    "Action: `lineage_get_object_detail(id:'[dbo].[spProcA]')` → chat answer with balanced business + technical summary.",
+    'Class: D',
+    "Action: `lineage_get_object_detail(id:'[dbo].[spProcA]')` → chat answer.",
     '</example>',
     '',
     '<example>',
-    'User: "trace all dependencies upstream from [dbo].[spProcA] all levels up and one level down"',
-    'Stay in discovery. Open with: "Loading the upstream chain from [dbo].[spProcA] via get_neighborhood."',
-    "Action: `lineage_get_neighborhood(id:'[dbo].[spProcA]', upstream_hops:99, downstream_hops:1)` → returns all nodes with DDL in one BFS call; summarize each node in chat. The user did not ask for a graph render, so stay in chat.",
+    'User: "analyze the tableZ pipeline with its direct neighbours, ignore UDFs and views"',
+    'Class: S',
+    "Action: `lineage_start_exploration(origin:'[dbo].[tableZ]', depth:1, direction:'bidirectional', depth_enforcement:'strict', excludeTypes:['function','view'], excludeSchemas:['staging'], classification:'business', mission_brief:'User wants the business logic of tableZ with its direct neighbours only. Scope: depth 1, bidirectional. NL filter excludes UDFs, views, and the staging schema (excludeTypes + excludeSchemas set structurally).')`.",
     '</example>',
     '',
     '<example>',
-    'User: "show me the lineage graph for tableZ ignoring UDFs"',
-    'Escalate (graph requested → trigger a). Open with: "Starting an SM exploration so the lineage graph can be rendered in the side panel."',
-    "Action: `lineage_start_exploration(origin:'[dbo].[tableZ]', direction:'bidirectional', excludeTypes:['function'], classification:'business', mission_brief:'User wants the lineage graph of tableZ rendered in the GUI, UDFs excluded.')`.",
+    'User: "review the obj. [schemaA].[FactOutput] the way up what sources and explain business logic"',
+    'Class: S ("way up" = upstream scope qualifier; "sources" + "explain" = Class S signals)',
+    "Action: `lineage_start_exploration(origin:'[schemaA].[FactOutput]', direction:'upstream', classification:'business', mission_brief:'Upstream sources of FactOutput + business logic.')`",
+    '→ confirm_sm_start gate fires; expected control flow.',
     '</example>',
     '',
-    '<example>',
-    'User: "trace the salary column from EmployeePayHistory through every consumer"',
-    'Escalate (column trace → trigger c). Open with: "Inspecting EmployeePayHistory columns to confirm the salary column id, then starting an SM column trace."',
-    'Action: `lineage_get_object_detail` first (resolve the column), then `lineage_start_exploration(origin:..., targetColumns:[\'<resolved>\'], classification:\'technical\', mission_brief:\'...\')`.',
-    '</example>',
+    '## Response format',
+    '',
+    'Markdown only. Match response length to the question.',
   ].join('\n');
 }
 
 
 /**
- * Constructs the prompt for the Active (Hop-by-Hop) phase.
- *
+ * Constructs the prompt for the Active (Hop-by-Hop or Full Run) phase.
+ * 
  * @remarks
- * Owns only the per-call `submit_findings` rules (sections, anchoring, math, routing).
- * The mode block lives in `buildModeBlock` in `smPrompts.ts` to reuse
- * {@link buildSynthesisPrompt} verbatim (single source of truth).
+ * Dynamically switches instructions based on whether the engine is in True Inline mode
+ * or Sliding Memory mode, while sharing the core heuristic rules for node analysis.
  *
+ * @param isInline - Whether the engine is delivering the entire graph context at once.
  * @returns A formatted system instruction for the active phase.
  */
-export function buildActivePhasePrompt(): string {
+export function buildActivePhasePrompt(isInline = false): string {
+  const mode = isInline
+    ? 'TRUE INLINE: Analyze all nodes holistically in a single turn.'
+    : 'SLIDING MEMORY: Analyze nodes sequentially as presented.';
+
   return [
     '# Active Exploration Protocol',
+    `Mode: ${mode}`,
     '',
-    'Data view in this hop: current focus DDL + immediate tool returns for this node. Do not claim cross-graph conclusions yet; synthesis assembles those from the full archive.',
-    '',
-    '1. SECTIONS: **The archive is unbounded** — write as deeply as the focus node\'s role warrants. Capture every business rule the DDL exposes: each CASE branch, threshold, allocation formula, special-case predicate. Synthesis lifts your body verbatim, so depth here is depth in the final document.',
+    '1. SECTIONS: Submit `sections[]` with one entry per fired `*_capture` template for the locked classification — `business` → 1 business section; `technical` → 1 technical section; `both` → 2 sections (one of each). **The archive is unbounded** — write as deeply as the focus node\'s role warrants. Capture every business rule the DDL exposes: each CASE branch, threshold, allocation formula, special-case predicate. Synthesis lifts your body verbatim, so depth here is depth in the final document.',
     '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
-    '3. MATHEMATICS: Write every formula in a block math fence (`$$ … $$`) — transforms, allocations, thresholds, proportions, CASE expressions. For a short inline symbol, use inline code (`expr`). Do not use ````math` fences because they render as code blocks in VS Code chat. Do not use inline `$` because it conflicts with SQL parameter names.',
+    '3. MATHEMATICS: Wrap every formula in LaTeX math delimiters — $expr$ inline, $$expr$$ block — transforms, allocations, thresholds, proportions, CASE expressions. Never use backticks for formulas. Correct: $\\text{Ratio} = \\frac{A}{B}$. Wrong: `\\text{Ratio} = \\frac{A}{B}`. Math delimited this way reaches the final document; math in backticks or plain prose does not.',
     '4. ROUTE_REQUESTS: Source every `nodeId` verbatim from a prior tool result — `next_hop` / `neighbors[]` from a previous `submit_findings`, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Reconstructed ids from question text fail validation. On `route_validation_failed`, the rejection envelope returns `route_target_candidates` (up to 3 fuzzy matches per unresolved id) — pick a candidate verbatim or call `lineage_search_objects` to find the right id, then re-submit.',
     `5. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');
@@ -199,8 +194,6 @@ export function buildActivePhasePrompt(): string {
 export function buildSynthesisPrompt(): string {
   return [
     '# Synthesis Protocol',
-    'Data view in synthesis: the full closed archive (`detail_slots[]`). Cross-node conclusions belong here; do not invent facts beyond captured slots.',
-    '',
     'The archive is closed. Each slot in the last `tool_result.detail_slots[]` carries',
     '`slot.sections: [{ angle }]` — one entry per fired `*_capture` template at capture time.',
     '',
@@ -222,12 +215,12 @@ export function buildSynthesisPrompt(): string {
     'Pass / Prune slots: mention in one line inside a `### Passthrough / Pruned` subsection of the relevant section — add this subsection as plain text in `closing`, not as a separate section.',
     '',
     '## Other parts',
-    '- `summary` (REQUIRED): one line, the headline of the analysis.',
-    '- `title`: "[Subject] — [key finding]" shape.',
+    '- `summary` (REQUIRED): one line, ≤300 chars, the headline of the analysis.',
+    '- `title`: ≤80 chars, "[Subject] — [key finding]" shape.',
     '- `intro`: 2–4 sentences, anchored to the user\'s question and the locked Mission type. Headline-level only — no walkthrough, no formulas (those belong in sections).',
     '- `closing`: optional cross-cutting risk or through-line, prefixed ⚠️ for risks. Omit if nothing material to add.',
-    '- `notes[]`: per-node captions. Use `note_caption` from each captured slot.',
-    '- `highlight_groups[]` (REQUIRED for any rendered analysis): emit one entry per role using the Lineage scheme — `source` for the origin node(s), `target` for the terminal output node(s), and `transform` for the 1–2 most material intermediate transformers. The role enum is `source | transform | target | good | warn | fail`; pick exactly one scheme (Lineage `source/transform/target` OR Diagnostic `good/warn/fail`) and stay consistent across the whole result. Each entry shape: `{ label: \'<role label>\', color: \'<role>\', node_ids: [...] }`. The engine drives the colored glow ring and node tint from these entries — without them every node renders unstyled. Source every node id verbatim from the captured archive.',
+    '- `notes[]`: per-node captions (≤200 chars). Use `note_caption` from each captured slot.',
+    '- `highlight_groups[]`: optional color glow on 2-3 critical nodes.',
     '',
     'Use `suggested_sections` from the completion result as a starting skeleton when present. Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
   ].join('\n');
@@ -257,7 +250,7 @@ export function buildFollowUpPrompt(): string {
     '- Text changes, relabels, section reorders → re-call `lineage_present_result` with',
     '  the modified `sections[]`, `highlights`, or `notes`. No new analysis is needed.',
     '- Prune a node from the visualization → re-render via `lineage_present_result`',
-    '  with `prune_node_ids` containing the node ids to remove. The archive slot is preserved.',
+    '  with the node removed from `nodes[]`. The archive slot is preserved.',
     '- Add a node from `deferred_questions` → `lineage_start_exploration` with the',
     '  `supplement` flag (see tool description) for a targeted pass; the result merges',
     '  into the archive; then re-render.',
@@ -298,9 +291,9 @@ export const SHOW_DESCRIPTION_TRIGGER = 'Show the full description';
 
 /**
  * Magic prompt fired by the post-discovery "Start deeper hop-by-hop
- * analysis" follow-up pill. Surfaces only after a multi-object discovery
- * walk (≥2 distinct `lineage_get_object_detail` calls). Detected verbatim
- * by `lineageParticipant.handleChatRequest`, which routes the AI directly
+ * analysis" follow-up pill. Surfaces only after ≥2 distinct
+ * `lineage_get_object_detail` calls. Detected verbatim by
+ * `lineageParticipant.handleChatRequest`, which routes the AI directly
  * into a forced `lineage_start_exploration` call seeded with the captured
  * discovery context — see {@link buildStartDeeperAnalysisTriggerPrompt}.
  */
@@ -309,15 +302,10 @@ export const START_DEEPER_ANALYSIS_TRIGGER = 'Start deeper hop-by-hop analysis';
 /**
  * Builds the User-message envelope that drives a forced
  * `lineage_start_exploration` after the user clicks the post-discovery
- * deeper-analysis pill. The structural fields (origin, direction,
- * classification) are passed directly; the AI's job is to extract any
- * "ignore / exclude / skip / drop" the user expressed during discovery
- * into `excludeNodeIds`, then call the tool once. Mission-brief
- * composition is deferred to the post-approval discovery-summary round
- * so the AI summarizes against the user-confirmed scope, not a guess.
+ * deeper-analysis pill.
  *
  * @param question - The user's verbatim discovery question.
- * @param answer - The AI's discovery chat answer (Markdown), truncated to 2000 chars to keep the synthesized prompt bounded; the headline finding lives in the opening paragraphs.
+ * @param answer - The AI's discovery chat answer (Markdown).
  * @param origin - The first walked node id from the discovery turn.
  * @returns Effective-prompt text fed into the next LM round.
  */
@@ -336,10 +324,10 @@ export function buildStartDeeperAnalysisTriggerPrompt(
     '## Inputs to lineage_start_exploration',
     '',
     `- **origin**: ${JSON.stringify(origin)} (the node walked during discovery).`,
-    '- **direction**: "upstream" | "downstream" | "bidirectional". Rule: Select based on <original_question>. Use "upstream" for source/input questions, "downstream" for usage/impact questions, or "bidirectional" only if the intent is broad (e.g., "trace all lineage of X").',
+    '- **direction**: "upstream" | "downstream" | "bidirectional". Rule: Select based on <original_question>. Use "upstream" for source/input questions, "downstream" for usage/impact questions, or "bidirectional" only if the intent is broad.',
     '- **classification**: "business" (the user did not name a technical lens).',
-    '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. Resolve those names to node ids with `lineage_search_objects` first if needed, then list them here. If the user named no exclusions, pass `[]`.',
-    '- **mission_brief**: a 1-sentence placeholder citing the user\'s original question — the post-approval discovery-summary round will replace it with the full compressed memo, so keep this brief.',
+    '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. If none, pass `[]`.',
+    '- **mission_brief**: a 1-sentence placeholder citing the user\'s original question.',
     '',
     '## Discovery context',
     '',
@@ -348,6 +336,62 @@ export function buildStartDeeperAnalysisTriggerPrompt(
     '<discovery_answer>',
     truncatedAnswer,
     '</discovery_answer>',
+  ].join('\n');
+}
+
+/**
+ * Builds the one-shot prompt for the post-approval discovery-summary
+ * composition round (fires once per SM session after gate approval).
+ *
+ * @param question - The user's verbatim discovery question.
+ * @param answer - The AI's discovery chat answer (Markdown).
+ * @param contractSummary - One-line digest of the approved gate parameters.
+ * @returns Effective-prompt text fed into the one-shot composition round.
+ */
+export function buildDiscoverySummaryComposePrompt(
+  question: string,
+  answer: string,
+  contractSummary: string,
+): string {
+  const truncatedAnswer = answer.length > 2000
+    ? `${answer.slice(0, 2000)}\n\n…[answer truncated; ${answer.length - 2000} chars omitted]`
+    : answer;
+  return [
+    'The user approved the SM exploration. Compose a 2–4 sentence discovery summary that will ride in every hop\'s stable prefix as `<discovery_summary>`.',
+    'Reply with text only this turn. Output the memo as a single paragraph, 2–4 sentences total. No preamble, no headers, no bullets.',
+    '',
+    '## Composition contract',
+    '',
+    'Include: (1) the user\'s original question, close to verbatim; (2) the headline finding from the discovery answer; (3) any user-stated semantic constraint the structural fields cannot capture.',
+    '',
+    '## Approved SM contract (already locked — do not re-state)',
+    '',
+    contractSummary,
+    '',
+    '## Discovery context',
+    '',
+    `<original_question>${question}</original_question>`,
+    '',
+    '<discovery_answer>',
+    truncatedAnswer,
+    '</discovery_answer>',
+  ].join('\n');
+}
+
+/**
+ * Renders the `<discovery_summary>` XML block for SM hop stable prefix.
+ * Returns empty string when summary is null or empty.
+ *
+ * @param summary - The AI-composed memo, or `null` when unavailable.
+ * @returns Filled block, or empty string.
+ */
+export function buildDiscoverySummaryBlock(summary: string | null): string {
+  if (!summary || summary.trim().length === 0) return '';
+  return [
+    '## Discovery Summary',
+    '<discovery_summary>',
+    summary.trim(),
+    '</discovery_summary>',
   ].join('\n');
 }
 
@@ -445,92 +489,8 @@ export function buildToolUsageBlock(): string {
   return [
     '## Tool Constraints',
     '',
-    'Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
-  ].join('\n');
-}
-
-
-/**
- * Builds the User-message envelope that drives the post-approval discovery-
- * summary composition round (Wave 3 — Surface A).
- *
- * @remarks
- * Fires exactly once per SM session, immediately after the user approves the
- * `confirm_sm_start` gate and before the first `submit_findings` hop. The AI
- * receives the captured discovery question + chat answer + approved gate
- * parameters and returns a 2–4 sentence compressed memo that is then sealed
- * into the engine's stable prefix as `<discovery_summary>` — surviving every
- * sliding-memory wipe for the rest of the SM session.
- *
- * The memo carries the user-stated **semantic** intent that cannot be
- * expressed in the structural approval fields (origin, direction,
- * excludeNodeIds, etc.): things like *"ignore audit-related processing"*,
- * *"focus on the revenue computation chain"*, *"the report must answer how X
- * impacts Y"*. These constraints need to ride with the AI across every hop
- * because the AI may meet a relevant node mid-walk that wasn't pre-listable.
- *
- * The discovery answer is truncated to 2000 chars at the tail to keep the
- * synthesized prompt bounded; the headline finding lives in the opening
- * paragraphs.
- *
- * @param question - The user's verbatim discovery question.
- * @param answer - The AI's discovery chat answer (Markdown), truncated to 2000 chars.
- * @param contractSummary - One-line digest of the approved gate parameters (origin / direction / classification / excludeNodeIds) — included so the AI summarizes against the user-confirmed scope, not a guess.
- * @returns Effective-prompt text fed into the one-shot composition round.
- */
-export function buildDiscoverySummaryComposePrompt(
-  question: string,
-  answer: string,
-  contractSummary: string,
-): string {
-  const truncatedAnswer = answer.length > 2000
-    ? `${answer.slice(0, 2000)}\n\n…[answer truncated; ${answer.length - 2000} chars omitted]`
-    : answer;
-  return [
-    'The user approved the SM exploration. Compose a 2–4 sentence discovery summary that will ride in every hop\'s stable prefix as `<discovery_summary>` — your one chance to lock in what SM must remember beyond the structural scope.',
-    'Reply with text only this turn — the tool call comes later. Output the memo as a single paragraph, 2–4 sentences total. No preamble, no headers, no bullets.',
-    '',
-    '## Composition contract',
-    '',
-    'Include in order: (1) the user\'s original question, kept close to verbatim; (2) the headline finding from the discovery answer in one sentence (origin → key intermediate → terminal sink, or whatever the walk surfaced); (3) any user-stated semantic constraint the structural fields cannot capture — verbs like "ignore", "exclude", "skip", "focus on", "be careful with", "the answer must address". Name the constraint explicitly so SM hops honour it when reaching nodes that match the rule but are not pre-listed.',
-    '',
-    '## Approved SM contract (already locked — do not re-state)',
-    '',
-    contractSummary,
-    '',
-    '## Discovery context',
-    '',
-    `<original_question>${question}</original_question>`,
-    '',
-    '<discovery_answer>',
-    truncatedAnswer,
-    '</discovery_answer>',
-  ].join('\n');
-}
-
-
-/**
- * Renders the `<discovery_summary>` XML block — **session-stable** content
- * for SM hops (Wave 3 — Surface B).
- *
- * @remarks
- * Sits in the stable-prefix region of every SM hop's system prompt, next to
- * `buildMissionBriefBlock`'s output. Cleared only when a fresh engine is
- * constructed; survives every sliding-memory wipe. When the engine has no
- * discovery summary set (e.g. SM started without a prior multi-object
- * discovery walk), the renderer returns an empty string and the block is
- * omitted entirely.
- *
- * @param summary - The AI-composed memo from `engine.getDiscoverySummary()`, or `null` when unavailable.
- * @returns Filled `<discovery_summary>` XML block, or an empty string when `summary` is `null` / empty.
- */
-export function buildDiscoverySummaryBlock(summary: string | null): string {
-  if (!summary || summary.trim().length === 0) return '';
-  return [
-    '## Discovery Summary',
-    '<discovery_summary>',
-    summary.trim(),
-    '</discovery_summary>',
+    '1. Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth.',
+    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
   ].join('\n');
 }
 
@@ -602,7 +562,9 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
-      `    Apply the binary map-or-prune contract from column_trace_capture for each active column.`,
+      `    Per column — binary decision:`,
+      `      → Interacts with this node: fill column_flow (out_col + contributors + role). Route upstream.`,
+      `      → Does not interact:        verdict=prune. Omit column_flow.`,
       `    To inspect upstream column schemas before declaring contributors: call lineage_get_neighbor_columns.`,
       `    Writer procedures: out_col = column name in the target table (same as writes_to.col). Set writes_to. Role: formula/case/etc for computed expressions; rename for direct pass-through.`,
       `  </column_trace>`,
@@ -654,7 +616,8 @@ export function buildMemoryBlock(
  * via `LanguageModelChatToolMode.Required` and `toolPolicy`, so restating them in
  * prose is dead weight (per CLAUDE.md *"Per-hop prompts are rendered, not configured"*).
  *
- * Included only in SM active hops (DISCOVERY and SYNTHESIS use their own protocols).
+ * Included only in SM active hops (inline-BB is one-shot; DISCOVERY and SYNTHESIS
+ * use their own protocols).
  *
  * @param hop - Current 1-based hop index.
  * @param total - Total nodes in the BFS scope.

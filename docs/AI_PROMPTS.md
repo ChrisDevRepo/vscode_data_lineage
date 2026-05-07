@@ -19,41 +19,16 @@ Two responsibilities, two owners:
 
 | Owner | What they produce | Where it lives |
 |-------|-------------------|----------------|
-| **AI** writes structured PARTS | Discovery: chat prose styled by `discovery_chat`. <br>Per-hop active capture: `business_capture` / `technical_capture` / `structural_summary` produces the section bodies stored in `detail_slots[].sections[].text`. <br>Synthesis: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a slot), `closing`, `notes[]`, `highlight_groups[]`. | YAML templates in this file describe what the AI writes. |
+| **AI** writes structured PARTS | Per-hop: `business_capture` / `technical_capture` / `structural_summary` produces the section body bodies stored in `detail_slots[].sections[].text`. <br>Synthesis: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a slot), `closing`, `notes[]`, `highlight_groups[]`. | YAML templates in this file describe what the AI writes. |
 | **Engine** builds DETERMINISTIC outputs | The full markdown document shown in `AiDescriptionOverlay` (the description blob), section numbering (`## N {label}`), badge chips on the graph, `### Objects [name](#focus-node:id)` link headers. | `orderAndAssemble()` in [`src/ai/tools.ts`](../src/ai/tools.ts). No YAML template — there is intentionally no `description` instruction; if you find one in an old overlay, it is dead. |
-
-There are exactly **two user states** in the runtime:
-
-1. **Discovery** — the default chat state. AI uses catalog tools (search / get_object_detail / search_ddl / get_neighborhood / detect_graph_patterns) and answers in chat — including multi-object dependency questions (chained `get_object_detail` walks). `discovery_chat` governs the chat structure (scale-to-question depth, single-vs-multi-object headings); the `general` template carries rendering primitives (math fences, rename tables, ⚠️ markers) and fires at both discovery and synthesis. No graph render.
-2. **SM** — gate-approved on three triggers: (a) the user explicitly asks for a visual graph render, (c) column tracing is requested, (d) the engine returns `over_discovery_budget`. A fourth user-driven path (the post-discovery SM-offer pill) feeds back through (a) by firing `start_exploration` programmatically with the captured discovery origin. SM has internal phases (active hops → synthesis); both are governed by the active + synthesis YAML keys below.
-
-### Discovery → SM transition (Wave 2 + Wave 3)
-
-After a multi-object discovery walk (≥2 distinct `get_object_detail` calls in a single `idle`-phase turn), the participant emits a "Start deeper hop-by-hop analysis" follow-up pill via `followupProvider`. The pill is gated by `phase.kind === 'idle'`, so it disappears the moment a gate is pending or SM has started. Clicking the pill:
-
-1. Routes the AI through `buildStartDeeperAnalysisTriggerPrompt` (in [`src/ai/prompts.ts`](../src/ai/prompts.ts)) — a synthesized User message carrying the captured discovery question + answer.
-2. The AI calls `lineage_start_exploration` once with the captured origin + parsed `excludeNodeIds` (extracted from any "ignore X / exclude Y / skip Z" the user stated during discovery).
-3. The standard `confirm_sm_start` gate fires.
-4. **On user approval**, a one-shot post-approval composition LM round runs (no tools) using `buildDiscoverySummaryComposePrompt`. The AI composes a 2–4 sentence memo carrying user-stated semantic intent the structural fields cannot capture ("focus on the revenue chain", "be careful with the conversion logic"). The memo is sealed into `engine._discoverySummary` and rides every hop's stable prefix as `<discovery_summary>` via `buildDiscoverySummaryBlock`.
-5. SM proceeds normally — but every hop now sees the discovery summary alongside `<mission_brief>` and the sliding `<short_term_memory>`.
-
-### Magic trigger constants
-
-Three trigger strings are detected verbatim by `lineageParticipant.handleChatRequest` to route specific user-driven actions without a normal LM round. All live in [`src/ai/prompts.ts`](../src/ai/prompts.ts):
-
-- `RECOMMEND_FOLLOWUPS_TRIGGER` — post-synthesis "Explore related objects" pill. Expands to `buildDeferredQuestionsPrompt`.
-- `SHOW_DESCRIPTION_TRIGGER` — "Show full description" pill. Short-circuits with `writer.markdown(sess.lastPresentResultDescription)` — no LM round.
-- `START_DEEPER_ANALYSIS_TRIGGER` — post-discovery SM-offer pill. Expands to `buildStartDeeperAnalysisTriggerPrompt(question, answer, origin)`.
 
 So the rendering pipeline reads:
 
 ```
-DISCOVERY (chat-only): catalog tools → chat prose styled by discovery_chat. Done.
-
-SM (gate-approved): hop 1, hop 2, …, hop N  →  N archive slots  (capture keys)
+hop 1, hop 2, …, hop N         →  N archive slots  (capture keys)
                                           ↓
-                       lift slot.text into present_result
-                       (synthesis-phase turn after agenda drains)
+                            synthesis turn lifts each
+                          slot.text into present_result
                                           ↓
               AI sends parts: title + intro + sections[] + closing
                                           ↓
@@ -67,19 +42,6 @@ SM (gate-approved): hop 1, hop 2, …, hop N  →  N archive slots  (capture key
 The lift+group+label rule for `sections[]` lives in `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts), not in the YAML — kept there to avoid duplication with the synthesis cue. Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
 
 When `classification === 'both'`, captured sections come in pairs per node (one business, one technical). Each angle becomes its own peer entry in `present_result.sections[]` — never nested as `#### Technical` subheadings.
-
-## Prompt assembly + cache boundaries
-
-Prompt assembly is code-owned in [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) via `buildStageSystemPrompt(phase)`:
-
-- **Stable part** (cacheable): general prompt + phase protocol + tool/mode blocks + stage-scoped YAML instruction bullets + mission brief.
-- **Dynamic part** (per-hop): current task / focus / short-term-memory fields used during active SM hops.
-
-To reduce repeated prompt construction cost, the participant memoizes the stable text in `cachedStablePart` keyed by `(phase, focusIsNonBodied)`.
-
-- Cache invalidates on phase transitions (`discover -> active -> synthesis`) and when focus-bodiedness flips (table vs view/proc/function).
-- This is **compute caching only** (reusing a prompt string build), not archive persistence.
-- It does **not** change memory retention rules; it only avoids rebuilding identical stable prompt segments.
 
 ## Template gate — what fires when
 
@@ -119,7 +81,7 @@ The contract is locked mechanically at the tool handler boundary: each `submit_f
 
 ### Column trace mode
 
-Column trace is activated when `start_exploration` is called with `targetColumns`. CT runs as part of SM (it is one of the three gate triggers).
+Column trace is activated when `start_exploration` is called with `targetColumns`. CT forces SM regardless of scope size.
 
 **Per-hop binary gate — map or prune**
 
@@ -157,34 +119,7 @@ Column-level validation on `route_requests` — the AI cannot route to a non-exi
 
 **Follow-up column traces from `completed` phase.** When the user asks a follow-up column question after a completed trace, the AI calls `start_exploration` with the same origin node and new `targetColumns`. If the origin matches the prior result (`sess.resultGraph.originNodeId`), `toolProvider.ts` auto-routes to the supplement path: `supplementAgenda(visitedIds)` re-queues all previously visited nodes in SM, `setColumnTargets(targetColumns)` updates the engine's column-trace context, and the session re-enters `exploring` without a gate or archive wipe. Different-origin follow-ups still trigger a fresh start with gate confirmation.
 
-## Sliding-memory wipes vs long-memory persistence
-
-There are two different "memory" layers; only one is wiped hop-to-hop:
-
-1. **Conversation envelope (short-lived message context)**
-   - Rebuilt with `MessageEnvelope.wipeAndSeed(...)` after successful `submit_findings` rounds in SM mode.
-   - Rebuilt again at active -> synthesis transition to remove stale hop context while preserving tool-use/tool-result adjacency.
-   - After 3 consecutive `submit_findings` error rounds, a bounded wipe is forced to prevent unbounded message growth.
-
-2. **Session archive (long-lived analysis memory)**
-   - `AiMemoryManager.detailSlots` persists across all envelope wipes.
-   - Mission brief, user question, verdict tallies, and deferred questions also persist across those wipes.
-   - `getShortTermMemory()` is a derived sliding view (`last 3 summaries`) computed from persisted `detailSlots`; it is not a separate persisted store.
-
-Long memory resets only on exploration reset paths (e.g., `sess.resetExploration()`), such as new chat session rotation, gate cancel/redirect, or divergent fresh-start exploration.
-
 ## Key inventory — purpose & maintenance
-
-### Discovery — chat output style
-
-| Key | Purpose | Edit this when |
-|-----|---------|----------------|
-| `discovery_chat` | Discovery-phase chat output framing: factual grounding, scale-to-the-question depth (single-object → focused paragraph; multi-object walk → per-node Markdown headings with business + technical paragraphs). References the `general` template for rendering primitives (math fences, rename tables, source guards, ⚠️ markers). NOT a capture template — `discovery_chat` fires only at `'discover'` stage. | Tightening or loosening the chat answer style; changing how single-vs-multi-object answers scale; adjusting the framing references the AI uses when describing an object in chat. |
-| `general` | Cross-section rendering primitives — math fences, column-rename tables, source-guard SQL fences, status-enum lifecycles, ⚠️ risk markers. **Single canonical home for rendering rules**, fires at both `'discover'` and `'synthesis'` stages so chat output and rendered SM detail share the same primitives. | Changing what triggers a math fence vs. inline; relaxing/tightening the rename-table threshold; adjusting how ⚠️ markers render. |
-
-**Discovery chat output structure.** Single-object questions get one focused answer (one short paragraph per business / technical angle). Multi-object walks (dependency traces, lineage walks, "N levels up/down") get one Markdown heading per visited node, with short business + technical paragraphs under each. Length scales with the question — the budget guard (`checkScopeBudget`) hard-rejects requests that exceed `discoveryNodeCap` / `discoveryTokenBudget` so chat answers stay bounded.
-
-The routing logic (when discovery answers in chat vs. when the AI escalates to SM via `lineage_start_exploration`) lives in code (`buildDiscoveryPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts)) — escalation triggers (a) explicit visual graph render, (c) column tracing, (d) `over_discovery_budget` rejection. Editing YAML never breaks routing.
 
 ### Synthesis — fields the AI writes from scratch
 
@@ -196,7 +131,7 @@ The AI writes these per-field instructions; the engine builds the rendered docum
 | `title` | The `# …` document heading (≤ 80 chars) naming the analysis subject and key finding. | Changing how the title balances subject vs. finding; banning step counts. |
 | `intro` | 2–4 sentence narrative opener before the sections. | Changing tone, what the intro is allowed to mention (e.g. ban schema dumps), or how it anchors to the user's question. |
 | `closing` | Optional `---` divider + cross-cutting through-line / risk. Gated on archive size ≥ 5. | Changing the threshold (in `templateRenderer.ts`) or what cross-cutting issues warrant it. |
-| `highlights` | 2–3 critical-node glows on the graph (Lineage or Diagnostic scheme). The `present_result.highlight_groups[]` field is **required** for any rendered SM analysis — every SM result must emit highlights so origin / terminal / transform nodes render with colored glow rings (Lineage scheme) or good / warn / fail (Diagnostic scheme). The synthesis prompt at [src/ai/prompts.ts](../src/ai/prompts.ts) enforces this in prose; without populated `highlight_groups[]` the rendered nodes appear unstyled. | Changing how aggressively to highlight or the colour scheme. |
+| `highlights` | 2–3 critical-node glows on the graph (Lineage or Diagnostic scheme). | Changing how aggressively to highlight or the colour scheme. |
 | `notes` | Per-node graph captions — one-line, what the node does specifically in this flow. | Changing caption length or style (e.g. always lead with the formula vs. the role). |
 
 **No template for `sections[]` here.** The lift-verbatim + group-siblings + label-by-role rule is owned by `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts). Editing that function is the single source of truth for how synthesis assembles the per-node captured bodies into the final report.
@@ -209,11 +144,10 @@ The AI writes these per-field instructions; the engine builds the rendered docum
 |-----|---------|----------------|
 | `business_capture` | The body of the section the AI submits with `angle: 'business'` per hop (one entry in `submit_findings.sections[]`): business meaning, formulas, column renames, ⚠️ invariants, question-relevance evidence. Fires when classification ∈ {business, both}. | Adding a per-hop business-content requirement (e.g. "always list affected consumers"). Each capture template is independent — no cross-references to other capture templates. |
 | `technical_capture` | What the AI writes for the technical angle: verbatim SQL, loading pattern, joins, antipatterns, distribution hints. | Adding a per-hop technical-content requirement (e.g. "always note hash-distribution column"). |
-| `structural_summary` | Reduced active-phase template fired only when the user's starting point is a non-bodied node (a table). Replaces `business_capture` / `technical_capture` for that one hop with a Purpose / Columns / Upstream / Downstream / Grain skeleton. Each section is grounded in a specific focus_node field: `cols[]` → Columns, `in[]` → Upstream sources, `out[]` → Downstream consumers, `fks[]` → Grain/keys. Empty fields produce explicit "None found in graph" text — not invented content. | Changing the table-origin slot shape — e.g. adding an FK / index sub-section. Don't put transform formulas here; those belong in the procedure slots. |
+| `structural_summary` | Reduced active-phase template fired only when the user's starting point is a non-bodied node (a table). Replaces `business_capture` / `technical_capture` for that one hop with a Purpose / Columns / Upstream / Downstream / Grain skeleton. | Changing the table-origin slot shape — e.g. adding an FK / index sub-section. Don't put transform formulas here; those belong in the procedure slots. |
 
 ## Maintenance rules
 
-- **Grounding is the highest constraint.** Every capture template enforces a strict grounding rule: facts must come from data in `focus_node` (`bb_ddl`, `cols[]`, `in[]`, `out[]`, `fks[]`). The AI must not infer, assume, or invent columns, neighbors, or SQL logic absent from the provided context. This constraint is stated explicitly in every capture template (`⛔ STRICT GROUNDING`) and is reinforced by the base system prompt (`buildGeneralSystemPrompt`). When adding new content requirements to a template, always specify the source field in `focus_node` the AI should read from.
 - **Capture must cover what synthesis lifts.** `business_capture` and `technical_capture` write the bodies that `buildSynthesisPrompt()` instructs the AI to lift verbatim into `present_result.sections[]`. If the capture instruction does not require a fact, synthesis cannot mention it — there is no second pass.
 - **Edit the `instruction:` field, not the examples.** Only `instruction` is injected into the prompt. The example fields exist for the human reader.
 - **Avoid character ceilings on archive fields.** The archive is unbounded; capping section text per slot pushes the model to pre-compress, which starves synthesis for detail. Describe quality criteria ("cover every business rule and SQL evidence point"), not character counts. Per the design rule: AI does grouping/order, system does numbers.
