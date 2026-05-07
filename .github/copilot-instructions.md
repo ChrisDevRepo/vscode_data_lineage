@@ -47,6 +47,28 @@ The regression net rests on three high-priority categories — **parsing, BFS/gr
   - `npm run test:hooks` — React hooks (vitest jsdom).
 - **AI quality** beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT baseline captures (`tmp/baseline/`), not unit tests — there is no in-process LM to assert against.
 
+## Dev: LM Traffic Tracer
+
+`src/ai/lmTracer.ts` is a **built-in observability tool** — not part of the extension API. It is disabled by default (`ENABLED = false`) and enabled on demand during development or troubleshooting. It is not removed after use.
+
+It captures every `vscode.lm.sendRequest` call (messages, tool calls, results, wipes, token counts) as NDJSON to `tmp/lm-trace/` for post-session analysis. Trace files are gitignored.
+
+**Enable:** set `ENABLED = true` at line ~20 of `src/ai/lmTracer.ts`, rebuild, run a `@lineage` chat session.
+
+**Analyse (manual workflow — run in terminal):**
+```
+node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson \
+  --summary --phase --patterns --rejected --loops --wipes \
+  --waste --tools --growth --tool-bloat --detail-metrics --ct
+```
+
+**Generate performance baseline:**
+```
+node tests/tools/generate-ideal.js assets/demo.dacpac
+```
+
+Full flag reference, journal workflow, and ideal-vs-actual comparison: see the **LM traffic tracer** section in [`docs/DEVELOPER_GUIDE.md`](../docs/DEVELOPER_GUIDE.md).
+
 ## Guidelines for AI Generation
 - **Logic**: Use explicit composition and delegation over complex inheritance.
 - **Accuracy**: Ensure generated code aligns strictly with the Orchestrator-Worker pattern for AI and the Bipartite model for graph traversal.

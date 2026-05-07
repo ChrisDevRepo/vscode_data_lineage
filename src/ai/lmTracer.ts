@@ -1,24 +1,37 @@
 /**
- * Dev-only LM traffic tracer.
+ * LM traffic tracer — built-in observability tool for diagnosing AI session behavior.
  *
+ * @internal
  * @remarks
- * Captures the full content of every `vscode.lm.sendRequest` call — messages,
- * tool calls, tool results, memory wipes, token counts, and round durations —
- * as NDJSON to `tmp/lm-trace/trace-{iso}.ndjson`.
+ * Development observability tool — not part of the extension's public API and never
+ * active in release builds (ENABLED defaults to false).
  *
- * Toggle: flip `ENABLED` to `true` to start capturing, `false` to disable.
- * When disabled every method is a no-op and no file is created.
+ * Captures the full traffic of every `vscode.lm.sendRequest` call as NDJSON to
+ * `tmp/lm-trace/trace-{iso}.ndjson` for post-session diagnostic analysis:
+ * token spend per phase, tool call patterns, context wipes, rejections, and
+ * response quality metrics.
  *
- * Removal: delete this file + remove the import and ~12 call sites in
- * `lineageParticipant.ts` + the two lines in `extension.ts`.
+ * Lifecycle:
+ * - `ENABLED = true`  → trace file is created on {@link LmTracer.init}, all events written.
+ * - `ENABLED = false` → every method is a no-op; no file is created (default for releases).
+ *
+ * Analyse a captured trace:
+ * ```
+ * node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson --summary
+ * ```
+ *
+ * Full reference: the **LM traffic tracer** section in `docs/DEVELOPER_GUIDE.md`.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-// DEV-TRACE: flip to false to disable — no file is created when false
-const ENABLED = true;
+// DEV TRACE — set true to capture LM traffic to tmp/lm-trace/ for diagnostic analysis.
+// Default is false for release builds. Flip to true only during active diagnosis.
+// See docs/LM_TRACING.md for the full analysis workflow.
+const ENABLED = true; // ← flip to false to disable
 
+/** JSON-safe snapshot of one content part from a serialized LM message; written to the trace file only. */
 interface TracePart {
   type: 'text' | 'tool_call' | 'tool_result' | 'unknown';
   value?: string;
@@ -28,6 +41,7 @@ interface TracePart {
   content?: string[];
 }
 
+/** Serialized form of a `vscode.LanguageModelChatMessage` as recorded in the NDJSON trace. */
 interface TraceMessage {
   role: 'user' | 'assistant';
   parts: TracePart[];

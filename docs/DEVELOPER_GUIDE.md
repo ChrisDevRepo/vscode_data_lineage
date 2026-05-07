@@ -153,6 +153,104 @@ AI behaviour beyond pure-function surface is verified via UAT baseline captures 
 
 `tsc --noEmit` after every structural change; the type system is the first line of defence.
 
+## LM traffic tracer
+
+`src/ai/lmTracer.ts` is a built-in observability tool that captures the full content of every `vscode.lm.sendRequest` call as NDJSON for post-session diagnostic analysis. It is a **permanent feature** of the extension — **disabled by default** (`ENABLED = false`) and enabled on demand during development or troubleshooting.
+
+### What it captures
+
+Each event is one JSON line (`_: "TX"`) in `tmp/lm-trace/trace-{iso}.ndjson`:
+
+| Event | When emitted | Key fields |
+|---|---|---|
+| `SESSION_START` | Once per chat turn | `modelId`, `maxTokens` |
+| `REQ` | Before every `vscode.lm.sendRequest` | `phase`, `tools`, `mode`, `messages[]` (full serialized) |
+| `TOOL_CALL` | Per tool call part in the response stream | `tool`, `callId`, `input` |
+| `TOOL_INVOKE` | Before `vscode.lm.invokeTool` | `tool`, `callId`, `cached` |
+| `TOOL_RESULT` | After `vscode.lm.invokeTool` returns | `tool`, `result[]`, `ms`, `errCode?`, `hint?` |
+| `ROUND` | After each round drains | `phase`, `ms`, `inTok`, `outTok`, `toolCount` |
+| `WIPE` | Before every `envelope.wipeAndSeed` | `trigger`, `msgsBefore` |
+| `ANSWER_TEXT` | Once for the final text response | `text`, `chars` |
+| `SESSION_END` | After `runHopLoop` returns | `cumInTok`, `cumOutTok`, `peakTok`, `rounds`, `exitKind` |
+
+Token counts (`inTok`, `outTok`) come from `model.countTokens()` — a local estimate; no LLM-side prompt cache instrumentation is available via the VS Code LM API.
+
+### How to enable
+
+Open `src/ai/lmTracer.ts` and set the flag at the top of the file:
+
+```typescript
+const ENABLED = true; // ← flip to true to start capturing
+```
+
+Rebuild the extension and run a `@lineage` chat session. Trace files land at `tmp/lm-trace/` (gitignored). Flip back to `false` to disable — all `LmTracer` methods become no-ops.
+
+### Analyzing a trace
+
+Analysis scripts live in [`tests/tools/`](../tests/tools/) (excluded from VSIX via `.vscodeignore`).
+
+**Quick summary:**
+```bash
+node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson --summary
+```
+
+**Full diagnostic (all flags):**
+```bash
+node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson \
+  --summary --phase --patterns --redundancy \
+  --rejected --loops --wipes --waste \
+  --tools --growth --tool-bloat --detail-metrics --ct
+```
+
+**All flags:**
+
+| Flag | Purpose |
+|---|---|
+| `--summary` | Per-session totals — rounds, tokens, tools, rejections (default) |
+| `--phase` | Token spend per phase (discover / active / synthesis / completed) |
+| `--patterns` | Prompt block presence per phase; flags cross-phase anomalies |
+| `--redundancy` | Duplicate content within and across requests |
+| `--rejected` | Tool rejections with error codes and hints |
+| `--loops` | Same-input tool calls called consecutively |
+| `--wipes` | Context wipe events with triggers and message counts |
+| `--waste` | Tokens present at wipe time vs total sent |
+| `--tools` | Tool frequency, duration, cache hits, rejection rate |
+| `--growth` | Per-round context size + growth % (flags runaway rounds >50%) |
+| `--tool-bloat` | Tool result payload sizes — avg/max chars |
+| `--detail-metrics` | Badge/caption Zod limit scan, math violations, response length |
+| `--ct` | Column tracing session analysis: per-hop flow coverage, CT-specific rejections (`column_flow_required`, `ct_requires_sm`), column propagation edges |
+| `--report` | Full round-by-round narrative including prompt excerpts |
+| `--sizes` | Per-round message composition: system / history / tool_results / prompt |
+| `--timeline` | Chronological event dump |
+| `--journal-metrics` | One compact JSON line to stdout — pipe to `>> tmp/lm-journal/journal.jsonl` |
+
+### Performance baseline and journal
+
+Generate calibrated metric targets from the demo dacpac:
+```bash
+node tests/tools/generate-ideal.js assets/demo.dacpac
+# → writes tmp/lm-ideal/ideal-run.md (commit after a representative session)
+```
+
+Append session metrics to the journal:
+```bash
+node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson --journal-metrics >> tmp/lm-journal/journal.jsonl
+```
+
+### Output locations
+
+| Path | Contents | Gitignored? |
+|---|---|---|
+| `tmp/lm-trace/` | Raw NDJSON trace files | Yes — never commit |
+| `tmp/lm-journal/` | `journal.jsonl` + `journal.md` | Yes — never commit |
+| `tmp/lm-ideal/` | `ideal-run.md` — performance targets | No — commit after baseline run |
+
+### Known limitations
+
+- `SESSION_END.cumInTok` covers only the primary discover-phase invocation. SM phases (active / synthesis / completed) run in subsequent turns; the analysis scripts reconstruct full session totals by summing all ROUND events across all phases.
+- Analysis is always post-session — no real-time streaming.
+- `dedup=hit` in logs = `toolCallCache` in `lineageParticipant.ts`, not Anthropic prompt caching (VS Code LM API does not expose `cached_tokens`).
+
 ## Where to look first
 
 | Changing… | Read these |
