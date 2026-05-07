@@ -594,15 +594,6 @@ class ToolHandler {
         }
       }
 
-      // Identifier-match guard: detect slot-hijack where any captured section opens by naming a different scope node than the declared focus.
-      const hijackedBy = engine.detectFocusSubjectMismatch(parsed.data.focus_node_id, parsed.data.sections ?? []);
-      if (hijackedBy) {
-        return this.logAndReturn('submit_findings', {
-          error: 'focus_subject_mismatch',
-          hint: `A captured section opens by naming \`${hijackedBy}\`, but focus_node_id is ${parsed.data.focus_node_id}. Rewrite each section so it describes the focus node.`,
-        }, input);
-      }
-
       // Identity guard: submitted focus_node_id must match the engine's current focus.
       const engineFocus = engine.currentFocus;
       if (engineFocus && parsed.data.focus_node_id.toLowerCase() !== engineFocus.toLowerCase()) {
@@ -749,7 +740,8 @@ class ToolHandler {
 
       this.logger.debug(`presentResult section[0] preview: ${trunc(input.sections?.[0]?.text ?? '(empty)', 200)}`);
 
-      // Fix LaTeX before assembly so fixLatex()'s $$→```math conversion reaches the description.
+      // Auto-fix AI output artifacts (newline unescaping, length truncation) before assembly.
+      // $$ math is no longer converted here — AiDescriptionOverlay.tsx handles it client-side.
       const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];

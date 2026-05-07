@@ -113,16 +113,6 @@ export interface IHopStateMachine {
   readonly hopProgress: HopProgress;
 
   /**
-   * Detects a slot-hijack attempt — when any captured `section.text` opens
-   * by naming a different scope node than the declared `focus_node_id`.
-   *
-   * @param focusNodeId - The declared focus from `submit_findings`.
-   * @param detailAnalysis - The authored markdown analysis.
-   * @returns The mismatched scope-node id, or `null` when no mismatch is detected.
-   */
-  detectFocusSubjectMismatch(focusNodeId: string, sections: ReadonlyArray<{ text: string }>): string | null;
-
-  /**
    * Retrieves the current hop context for the engine.
    *
    * @returns The contextual data needed for the next exploration step.
@@ -831,26 +821,6 @@ export class NavigationEngine implements IHopStateMachine {
    * @param sections - The authored capture sections (may be empty for verdict=prune).
    * @returns The mismatched scope node id, or `null` when no mismatch.
    */
-  public detectFocusSubjectMismatch(focusNodeId: string, sections: ReadonlyArray<{ text: string }>): string | null {
-    const norm = (s: string): string => {
-      const tail = s.replace(/[\[\]]/g, '').split('.').pop();
-      return tail ? tail.trim().toLowerCase() : '';
-    };
-    const focusNorm = norm(focusNodeId);
-    for (const section of sections) {
-      const opening = (section.text ?? '').slice(0, 200);
-      const m = opening.match(/`([^`\n]+)`/);
-      if (!m) continue;
-      const mentioned = norm(m[1]);
-      if (!mentioned) continue;
-      if (mentioned === focusNorm) continue;
-      for (const id of this.scopeNodeIds) {
-        if (norm(id) === mentioned) return id;
-      }
-    }
-    return null;
-  }
-
   /** Stores the current-task question at the moment a hop context is delivered. */
   private _lastCurrentTask = '';
 

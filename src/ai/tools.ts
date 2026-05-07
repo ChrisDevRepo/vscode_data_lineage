@@ -1353,11 +1353,10 @@ export function orderAndAssemble(
  * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
  *
  * @remarks
- * LLMs often produce slightly malformed outputs such as double-escaped newlines,
- * excessive title lengths, or improper LaTeX formatting. This function applies
- * surgical corrections (e.g., converting `$$` math blocks to markdown fences)
- * to ensure the final UI renders perfectly without rejecting the AI's work for
- * minor stylistic issues.
+ * LLMs often produce slightly malformed outputs such as double-escaped newlines
+ * or excessive title lengths. This function applies surgical corrections to ensure
+ * the final UI renders correctly. Step 4 (`$$`→`` ```math `` conversion) was removed —
+ * `AiDescriptionOverlay.tsx` handles `$$` client-side.
  *
  * @param model - The database model.
  * @param input - The raw input from the AI.
