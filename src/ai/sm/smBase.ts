@@ -21,7 +21,7 @@ import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from '../
 import { trunc } from '../../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../memoryManager';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../inputNormalization';
-import type { ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from '../smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from '../smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -1202,8 +1202,6 @@ export class NavigationEngine implements IHopStateMachine {
       return { error: 'invalid_status', current_status: this._status, hint };
     }
 
-    const findings = [params];
-
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
     this.lastRoutedDeferred = 0;
@@ -1212,279 +1210,225 @@ export class NavigationEngine implements IHopStateMachine {
 
     const allInvalidRoutes: Array<{ id: string; reason: string; available_columns?: string[] }> = [];
     const routeOutcomes: RouteOutcome[] = [];
+    const finding = params;
+    const focusId = finding.focus_node_id?.toLowerCase();
+    if (focusId !== this.currentFocusNodeId) {
+      return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
+    }
+    if (!focusId || !this.nodeMap.has(focusId)) {
+      return { error: 'invalid_focus_node', got: focusId };
+    }
 
-    for (const finding of findings) {
-      const focusId = finding.focus_node_id?.toLowerCase();
-      if (focusId !== this.currentFocusNodeId) {
-        return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
-      }
-      if (!focusId || !this.nodeMap.has(focusId)) {
-        return { error: 'invalid_focus_node', got: focusId };
-      }
-      const acceptedNids = new Set<string>();
-      if (finding.route_requests) {
-        const depthCap = this.computeDepthCap();
+    const acceptedNids = new Set<string>();
+    const scopeAddNids = new Set<string>();
+    const deferredRoutes: Array<{
+      nodeId: string;
+      schema: string;
+      question: string;
+      reason: 'schema' | 'depth' | 'schema_and_depth';
+      depth: number | undefined;
+    }> = [];
+    const prunedNeighborNids = new Set<string>();
+    let stagedSections: Parameters<AiMemoryManager['storeDetail']>[1] = [];
+    let stagedDetailChars = 0;
+    let stagedSummaryChars = 0;
+    const stagedColumnEdges: ColumnEdge[] = [];
 
-        for (const req of finding.route_requests) {
-          const nid = req.nodeId?.trim().toLowerCase();
-          const nNode = nid ? this.nodeMap.get(nid) : null;
-          if (!nNode || !nid) {
-            allInvalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
-            continue;
-          }
+    if (finding.route_requests) {
+      const depthCap = this.computeDepthCap();
 
-          const schemaLower = nNode.schema.toLowerCase();
-          const schemaBlocked = this.sessionAllowedSchemas.size > 0 && !this.sessionAllowedSchemas.has(schemaLower);
+      for (const req of finding.route_requests) {
+        const nid = req.nodeId?.trim().toLowerCase();
+        const nNode = nid ? this.nodeMap.get(nid) : null;
+        if (!nNode || !nid) {
+          allInvalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
+          continue;
+        }
 
-          let candidateDepth = this.depthFromOrigin.get(nid);
-          if (candidateDepth === undefined && this.originNodeId) {
-            const path = bidirectional(this.graph, this.originNodeId, nid);
-            candidateDepth = Array.isArray(path) ? path.length - 1 : undefined;
-          }
-          if (candidateDepth === undefined) {
-            const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
-            candidateDepth = focusDepth + 1;
-          }
-          if (candidateDepth !== undefined) this.depthFromOrigin.set(nid, candidateDepth);
-          
-          const depthBlocked = depthCap !== null && candidateDepth !== undefined && candidateDepth > depthCap;
-          const strictScopeBlocked = this.depthEnforcement === 'strict' && !this.scopeNodeIds.has(nid);
+        const schemaLower = nNode.schema.toLowerCase();
+        const schemaBlocked = this.sessionAllowedSchemas.size > 0 && !this.sessionAllowedSchemas.has(schemaLower);
 
-          if (schemaBlocked || depthBlocked || strictScopeBlocked) {
-            const scopeReason = depthBlocked || strictScopeBlocked;
-            const deferReason: 'schema' | 'depth' | 'schema_and_depth' =
-              schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth';
-            this.deferQuestion({
-              nodeId: req.nodeId,
-              schema: nNode.schema,
-              fromFocusNodeId: focusId,
-              question: req.question ?? '',
-              reason: deferReason,
-              depth: candidateDepth,
-              atHop: this.hopCount,
+        let candidateDepth = this.depthFromOrigin.get(nid);
+        if (candidateDepth === undefined && this.originNodeId) {
+          const path = bidirectional(this.graph, this.originNodeId, nid);
+          candidateDepth = Array.isArray(path) ? path.length - 1 : undefined;
+        }
+        if (candidateDepth === undefined) {
+          const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
+          candidateDepth = focusDepth + 1;
+        }
+
+        const depthBlocked = depthCap !== null && candidateDepth !== undefined && candidateDepth > depthCap;
+        const strictScopeBlocked = this.depthEnforcement === 'strict' && !this.scopeNodeIds.has(nid);
+
+        if (schemaBlocked || depthBlocked || strictScopeBlocked) {
+          const scopeReason = depthBlocked || strictScopeBlocked;
+          const deferReason: 'schema' | 'depth' | 'schema_and_depth' =
+            schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth';
+          deferredRoutes.push({
+            nodeId: req.nodeId,
+            schema: nNode.schema,
+            question: req.question ?? '',
+            reason: deferReason,
+            depth: candidateDepth,
+          });
+          routeOutcomes.push({ nodeId: req.nodeId, accepted: false, deferred: true, reason: deferReason });
+          continue;
+        }
+
+        acceptedNids.add(nid);
+        routeOutcomes.push({ nodeId: req.nodeId, accepted: true });
+        if (!this.scopeNodeIds.has(nid)) scopeAddNids.add(nid);
+
+        if (req.columns && this._columnAspect) {
+          const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+          const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
+          if (invalidCols.length > 0) {
+            const available = Array.from(validCols).sort();
+            allInvalidRoutes.push({
+              id: req.nodeId,
+              reason: `Columns not found: ${invalidCols.join(', ')}`,
+              available_columns: available.length > 0 ? available : undefined,
             });
-            this.lastRoutedDeferred++;
-            routeOutcomes.push({ nodeId: req.nodeId, accepted: false, deferred: true, reason: deferReason });
+          }
+        }
+      }
+    }
+
+    // CT contract: column_flow required for all non-prune verdicts when CT is active.
+    // Echo-back pattern: name what was received + what is missing + binary decision gate + example.
+    if (this._columnAspect && finding.verdict !== 'prune') {
+      if (!finding.column_flow || finding.column_flow.length === 0) {
+        const cols = this._columnAspect.active_columns;
+        const exCol = cols[0] ?? '<col>';
+        return {
+          error: 'column_flow_required',
+          hint:
+            `CT active — column_flow (PRIMARY task) is missing for [${cols.join(', ')}].\n` +
+            `Your sections/summary/verdict were received and are correct — ADD column_flow alongside them.\n` +
+            `Binary decision: map the column to its upstream source, OR use verdict=prune.\n` +
+            `Required format: column_flow:[{out_col:"${exCol}",contributors:[{from_node:"<node>",from_col:"<col>",role:"formula|rename|source|..."}]}]`,
+        };
+      }
+    }
+
+    // Column Aspect Validation: column_flow structured JSON
+    if (this._columnAspect && finding.column_flow) {
+      const focusNode = this.nodeMap.get(focusId)!;
+      const validFocusCols = new Set(getNodeColumns(focusNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+
+      const activeLower = this._columnAspect.active_columns.map(c => c.toLowerCase());
+
+      for (const entry of finding.column_flow) {
+        // out_col must be one of the active CT columns
+        if (!activeLower.includes(entry.out_col.toLowerCase())) {
+          allInvalidRoutes.push({ id: focusId, reason: `column_flow_invalid: out_col "${entry.out_col}" is not in active_columns [${this._columnAspect.active_columns.join(', ')}]. Only declare column_flow for the tracked columns.` });
+          continue;
+        }
+
+        // out_col must exist on the focus node when column metadata is available.
+        // Procedures have no output-column metadata; size=0 skips the check.
+        if (validFocusCols.size > 0 && !validFocusCols.has(entry.out_col.toLowerCase())) {
+          allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='prune'.` });
+          continue;
+        }
+
+        for (const cont of entry.contributors) {
+          const neighbor = this.nodeMap.get(cont.from_node.toLowerCase());
+          if (!neighbor) {
+            allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor node "${cont.from_node}" not found in graph.` });
             continue;
           }
-
-          acceptedNids.add(nid);
-          routeOutcomes.push({ nodeId: req.nodeId, accepted: true });
-          if (!this.scopeNodeIds.has(nid)) {
-            this.scopeNodeIds.add(nid);
-            const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
-            if (!this.depthFromOrigin.has(nid)) this.depthFromOrigin.set(nid, focusDepth + 1);
-            if (this.depthBudget !== null && this.depthEnforcement !== 'strict') {
-              this.budgetExpansions.push({ nodeId: nid, depth: focusDepth + 1, atHop: this.hopCount });
+          if (neighbor.type === 'procedure') {
+            // Procedures have no output-column metadata. Validate from_col against the procedure's
+            // inbound source node columns instead (one-to-one: the column entering the SP must exist
+            // on at least one of its data sources — the table or view that feeds it).
+            const spInbound = this.model.neighborIndex[neighbor.id.toLowerCase()]?.in ?? [];
+            const inboundCols = new Set<string>();
+            for (const inId of spInbound) {
+              getNodeColumns(inId, this.nodeMap, this.store ?? undefined)?.forEach(c => inboundCols.add(c.name.toLowerCase()));
             }
-          }
-          if (req.columns && this._columnAspect) {
-            const validCols = new Set(getNodeColumns(nNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-            const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
-            if (invalidCols.length > 0) {
-              const available = Array.from(validCols).sort();
-              allInvalidRoutes.push({
-                id: req.nodeId,
-                reason: `Columns not found: ${invalidCols.join(', ')}`,
-                available_columns: available.length > 0 ? available : undefined,
-              });
+            if (inboundCols.size > 0 && !inboundCols.has(cont.from_col.toLowerCase())) {
+              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist in any inbound source of procedure "${cont.from_node}".` });
+            }
+          } else {
+            // Tables, views, functions: validate from_col directly against their own column schemas.
+            const validNeighborCols = new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
+            if (validNeighborCols.size > 0 && !validNeighborCols.has(cont.from_col.toLowerCase())) {
+              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
             }
           }
         }
       }
+    }
 
-      // CT contract: column_flow required for all non-prune verdicts when CT is active.
-      // Echo-back pattern: name what was received + what is missing + binary decision gate + example.
-      if (this._columnAspect && finding.verdict !== 'prune') {
-        if (!finding.column_flow || finding.column_flow.length === 0) {
-          const cols = this._columnAspect.active_columns;
-          const exCol = cols[0] ?? '<col>';
-          return {
-            error: 'column_flow_required',
-            hint:
-              `CT active — column_flow (PRIMARY task) is missing for [${cols.join(', ')}].\n` +
-              `Your sections/summary/verdict were received and are correct — ADD column_flow alongside them.\n` +
-              `Binary decision: map the column to its upstream source, OR use verdict=prune.\n` +
-              `Required format: column_flow:[{out_col:"${exCol}",contributors:[{from_node:"<node>",from_col:"<col>",role:"formula|rename|source|..."}]}]`,
-          };
+    const isPrune = finding.verdict === 'prune';
+    const prunable = isPrune && focusId !== this.originNodeId;
+    if (prunable) {
+      const notedIds = new Set<string>(this.memory.notedNodeIds);
+      const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, focusId);
+      if (orphan) {
+        return { error: 'prune_would_orphan_noted', detail: `Marking ${focusId} prune would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
+      }
+    }
+
+    // Explicitly prune adjacent neighbors requested by the AI.
+    // Guardrail: never prune already-analyzed/visited nodes; synthesis must keep
+    // slot node_ids grounded in the final result graph.
+    if (finding.prune_neighbors && finding.prune_neighbors.length > 0) {
+      const notedIds = new Set<string>(this.memory.notedNodeIds);
+      for (const nidRaw of finding.prune_neighbors) {
+        const nid = nidRaw.toLowerCase();
+        if (!this.nodeMap.has(nid)) {
+          this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nidRaw} reason=unknown_node`);
+          continue;
+        }
+        if (nid === this.originNodeId) {
+          this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=origin_forbidden`);
+          continue;
+        }
+        if (this.visited.has(nid)) {
+          this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=already_visited`);
+          continue;
+        }
+        if (notedIds.has(nid)) {
+          this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=already_analyzed`);
+          continue;
+        }
+        if (!prunedNeighborNids.has(nid)) {
+          prunedNeighborNids.add(nid);
         }
       }
+    }
 
-      // Column Aspect Validation: column_flow structured JSON
+    if (!isPrune) {
+      stagedSections = (finding.sections ?? []).map(s => ({
+        ...s,
+        text: s.text.replace(/\\n/g, '\n'),
+      }));
+      stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
+      stagedSummaryChars = finding.summary?.length ?? 0;
+
+      // Stage validated column lineage edges (filter_only excluded — not data flow)
       if (this._columnAspect && finding.column_flow) {
-        const focusNode = this.nodeMap.get(focusId)!;
-        const validFocusCols = new Set(getNodeColumns(focusNode.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-
-        const activeLower = this._columnAspect.active_columns.map(c => c.toLowerCase());
-
+        this.lastHopColumnFlowEntries = finding.column_flow.length;
         for (const entry of finding.column_flow) {
-          // out_col must be one of the active CT columns
-          if (!activeLower.includes(entry.out_col.toLowerCase())) {
-            allInvalidRoutes.push({ id: focusId, reason: `column_flow_invalid: out_col "${entry.out_col}" is not in active_columns [${this._columnAspect.active_columns.join(', ')}]. Only declare column_flow for the tracked columns.` });
-            continue;
-          }
-
-          // out_col must exist on the focus node when column metadata is available.
-          // Procedures have no output-column metadata; size=0 skips the check.
-          if (validFocusCols.size > 0 && !validFocusCols.has(entry.out_col.toLowerCase())) {
-            allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='prune'.` });
-            continue;
-          }
-
+          const toNode = entry.writes_to?.node.toLowerCase() ?? focusId;
+          const toCol  = entry.writes_to?.col  ?? entry.out_col;
           for (const cont of entry.contributors) {
-            const neighbor = this.nodeMap.get(cont.from_node.toLowerCase());
-            if (!neighbor) {
-              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor node "${cont.from_node}" not found in graph.` });
-              continue;
-            }
-            if (neighbor.type === 'procedure') {
-              // Procedures have no output-column metadata. Validate from_col against the procedure's
-              // inbound source node columns instead (one-to-one: the column entering the SP must exist
-              // on at least one of its data sources — the table or view that feeds it).
-              const spInbound = this.model.neighborIndex[neighbor.id.toLowerCase()]?.in ?? [];
-              const inboundCols = new Set<string>();
-              for (const inId of spInbound) {
-                getNodeColumns(inId, this.nodeMap, this.store ?? undefined)?.forEach(c => inboundCols.add(c.name.toLowerCase()));
-              }
-              if (inboundCols.size > 0 && !inboundCols.has(cont.from_col.toLowerCase())) {
-                allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist in any inbound source of procedure "${cont.from_node}".` });
-              }
-            } else {
-              // Tables, views, functions: validate from_col directly against their own column schemas.
-              const validNeighborCols = new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
-              if (validNeighborCols.size > 0 && !validNeighborCols.has(cont.from_col.toLowerCase())) {
-                allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
-              }
-            }
+            if (cont.role === 'filter_only') continue;
+            stagedColumnEdges.push({
+              hop_node:  focusId,
+              hop:       this.hopCount,
+              from_node: cont.from_node.toLowerCase(),
+              from_col:  cont.from_col,
+              to_node:   toNode,
+              to_col:    toCol,
+              role:      cont.role,
+            });
           }
         }
       }
-
-      const isPrune = finding.verdict === 'prune';
-      const prunable = isPrune && focusId !== this.originNodeId;
-      if (prunable) {
-        const notedIds = new Set<string>(this.memory.notedNodeIds);
-        const orphan = wouldOrphanNotedNode(this.graph, this.originNodeId!, this.removedSet, notedIds, focusId);
-        if (orphan) {
-          return { error: 'prune_would_orphan_noted', detail: `Marking ${focusId} prune would orphan already-analyzed node "${orphan}". Use verdict='pass' to skip without pruning.` };
-        }
-      }
-
-      // Explicitly prune adjacent neighbors requested by the AI.
-      // Guardrail: never prune already-analyzed/visited nodes; synthesis must keep
-      // slot node_ids grounded in the final result graph.
-      if (finding.prune_neighbors && finding.prune_neighbors.length > 0) {
-        const notedIds = new Set<string>(this.memory.notedNodeIds);
-        for (const nidRaw of finding.prune_neighbors) {
-          const nid = nidRaw.toLowerCase();
-          if (!this.nodeMap.has(nid)) {
-            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nidRaw} reason=unknown_node`);
-            continue;
-          }
-          if (nid === this.originNodeId) {
-            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=origin_forbidden`);
-            continue;
-          }
-          if (this.visited.has(nid)) {
-            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=already_visited`);
-            continue;
-          }
-          if (notedIds.has(nid)) {
-            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=already_analyzed`);
-            continue;
-          }
-          this.removedSet.add(nid);
-          if (SCRIPT_TYPES.has(this.nodeMap.get(nid)!.type) && this.scopeNodeIds.has(nid)) {
-            this._totalNodes--;
-            this.log('debug', `[AI] [CT] prune_neighbor ${nid} — bodied scope node (total −1 → ${this._totalNodes})`);
-          }
-          this.log('debug', `[AI] [CT] prune_neighbor hop=${this.hopCount}: ${nid}`);
-        }
-      }
-
-      if (!isPrune) {
-        const sections = (finding.sections ?? []).map(s => ({
-          ...s,
-          text: s.text.replace(/\\n/g, '\n'),
-        }));
-        this.memory.storeDetail(this.nodeMap.get(focusId)!, sections, finding.summary, {
-          badge_label: finding.badge_label,
-          note_caption: finding.note_caption,
-          reason_for_visit: this.currentFocusQuestion || 'Historical path investigation',
-        });
-        this.lastHopDetailChars = sections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
-        this.lastHopSummaryChars = finding.summary?.length ?? 0;
-        this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
-
-        // Accumulate validated column lineage edges (filter_only excluded — not data flow)
-        if (this._columnAspect && finding.column_flow) {
-          this.lastHopColumnFlowEntries = finding.column_flow.length;
-          for (const entry of finding.column_flow) {
-            const toNode = entry.writes_to?.node.toLowerCase() ?? focusId;
-            const toCol  = entry.writes_to?.col  ?? entry.out_col;
-            for (const cont of entry.contributors) {
-              if (cont.role === 'filter_only') continue;
-              this._columnAspect.edges.push({
-                hop_node:  focusId,
-                hop:       this.hopCount,
-                from_node: cont.from_node.toLowerCase(),
-                from_col:  cont.from_col,
-                to_node:   toNode,
-                to_col:    toCol,
-                role:      cont.role,
-              });
-            }
-          }
-          this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this._columnAspect.edges.length} active_cols=${this._columnAspect.active_columns.join(',')}`);
-        }
-      }
-
-      this.memory.recordVerdict(finding.verdict);
-      this.lastHopVerdict = finding.verdict;
-
-      if (prunable || (finding.prune_neighbors && finding.prune_neighbors.length > 0)) {
-        if (prunable) this.removedSet.add(focusId);
-        const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
-        const before = this.agenda.length;
-        this.agenda = this.agenda.filter(e => reachable.has(e.nodeId));
-        this.agendaIds = new Set(this.agenda.map(e => e.nodeId));
-        totalCascadedCount += (before - this.agenda.length);
-      }
-
-      if (finding.route_requests) {
-        for (const req of finding.route_requests) {
-          const nid = req.nodeId.toLowerCase();
-          if (!acceptedNids.has(nid)) continue;
-
-          // Route enqueue funnels through the bipartite rule. For bodied targets
-          // the funnel merges into existing entries (task aggregation) or pushes
-          // a new entry. For non-bodied targets (tables, externals) it contracts
-          // the edge and forwards the proc's authored question to the target's
-          // bodied neighbors in the exploration direction.
-          const agendaSizeBefore = this.agenda.length;
-          const targetNode = this.nodeMap.get(nid);
-          const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
-          const wasAlreadyVisited = this.visited.has(nid);
-          this.enqueueHop(nid, req.question, 0, 2, req.columns);
-          const added = this.agenda.length - agendaSizeBefore;
-          this.lastRoutedNew += Math.max(0, added);
-
-          // Transparency: if the route passed acceptance checks but contraction
-          // dropped the forward (non-bodied target with no bodied neighbour in
-          // scope), downgrade the previously-pushed `accepted: true` to a
-          // deferred outcome so the AI can distinguish "accepted and routed"
-          // from "accepted but no new hop enqueued".
-          if (added === 0 && !targetIsBodied && !wasAlreadyVisited) {
-            for (let i = routeOutcomes.length - 1; i >= 0; i--) {
-              if (routeOutcomes[i].nodeId === req.nodeId && routeOutcomes[i].accepted) {
-                routeOutcomes[i] = { nodeId: req.nodeId, accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' };
-                break;
-              }
-            }
-          }
-        }
-      }
-
     }
 
     if (allInvalidRoutes.length > 0) {
@@ -1509,6 +1453,98 @@ export class NavigationEngine implements IHopStateMachine {
         unresolved_route_target_ids: unknownIds,
         detail: otherReasons.length > 0 ? otherReasons : allInvalidRoutes,
       };
+    }
+
+    // Commit route deferrals + scope growth only after full validation passes.
+    for (const deferred of deferredRoutes) {
+      this.deferQuestion({
+        nodeId: deferred.nodeId,
+        schema: deferred.schema,
+        fromFocusNodeId: focusId,
+        question: deferred.question,
+        reason: deferred.reason,
+        depth: deferred.depth,
+        atHop: this.hopCount,
+      });
+      this.lastRoutedDeferred++;
+    }
+    for (const nid of scopeAddNids) {
+      this.scopeNodeIds.add(nid);
+      const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
+      if (!this.depthFromOrigin.has(nid)) this.depthFromOrigin.set(nid, focusDepth + 1);
+      if (this.depthBudget !== null && this.depthEnforcement !== 'strict') {
+        this.budgetExpansions.push({ nodeId: nid, depth: focusDepth + 1, atHop: this.hopCount });
+      }
+    }
+
+    for (const nid of prunedNeighborNids) {
+      this.removedSet.add(nid);
+      if (SCRIPT_TYPES.has(this.nodeMap.get(nid)!.type) && this.scopeNodeIds.has(nid)) {
+        this._totalNodes--;
+        this.log('debug', `[AI] [CT] prune_neighbor ${nid} — bodied scope node (total −1 → ${this._totalNodes})`);
+      }
+      this.log('debug', `[AI] [CT] prune_neighbor hop=${this.hopCount}: ${nid}`);
+    }
+    if (!isPrune) {
+      this.memory.storeDetail(this.nodeMap.get(focusId)!, stagedSections, finding.summary, {
+        badge_label: finding.badge_label,
+        note_caption: finding.note_caption,
+        reason_for_visit: this.currentFocusQuestion || 'Historical path investigation',
+      });
+      this.lastHopDetailChars = stagedDetailChars;
+      this.lastHopSummaryChars = stagedSummaryChars;
+      this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
+
+      if (this._columnAspect && stagedColumnEdges.length > 0) {
+        this._columnAspect.edges.push(...stagedColumnEdges);
+        this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this._columnAspect.edges.length} active_cols=${this._columnAspect.active_columns.join(',')}`);
+      }
+    }
+
+    this.memory.recordVerdict(finding.verdict);
+    this.lastHopVerdict = finding.verdict;
+
+    if (prunable || prunedNeighborNids.size > 0) {
+      if (prunable) this.removedSet.add(focusId);
+      const reachable = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
+      const before = this.agenda.length;
+      this.agenda = this.agenda.filter(e => reachable.has(e.nodeId));
+      this.agendaIds = new Set(this.agenda.map(e => e.nodeId));
+      totalCascadedCount += (before - this.agenda.length);
+    }
+
+    if (finding.route_requests) {
+      for (const req of finding.route_requests) {
+        const nid = req.nodeId.toLowerCase();
+        if (!acceptedNids.has(nid)) continue;
+
+        // Route enqueue funnels through the bipartite rule. For bodied targets
+        // the funnel merges into existing entries (task aggregation) or pushes
+        // a new entry. For non-bodied targets (tables, externals) it contracts
+        // the edge and forwards the proc's authored question to the target's
+        // bodied neighbors in the exploration direction.
+        const agendaSizeBefore = this.agenda.length;
+        const targetNode = this.nodeMap.get(nid);
+        const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
+        const wasAlreadyVisited = this.visited.has(nid);
+        this.enqueueHop(nid, req.question, 0, 2, req.columns);
+        const added = this.agenda.length - agendaSizeBefore;
+        this.lastRoutedNew += Math.max(0, added);
+
+        // Transparency: if the route passed acceptance checks but contraction
+        // dropped the forward (non-bodied target with no bodied neighbour in
+        // scope), downgrade the previously-pushed `accepted: true` to a
+        // deferred outcome so the AI can distinguish "accepted and routed"
+        // from "accepted but no new hop enqueued".
+        if (added === 0 && !targetIsBodied && !wasAlreadyVisited) {
+          for (let i = routeOutcomes.length - 1; i >= 0; i--) {
+            if (routeOutcomes[i].nodeId === req.nodeId && routeOutcomes[i].accepted) {
+              routeOutcomes[i] = { nodeId: req.nodeId, accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' };
+              break;
+            }
+          }
+        }
+      }
     }
 
     this._status = 'exploring';

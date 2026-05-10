@@ -217,6 +217,8 @@ The dotted reverse arrows are **reads back from the archive into the next hop's 
 
 **Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` once the agenda is drained — that is the synthesis-phase turn after the hop loop completes.
 
+**Submit Atomicity** — `submit_findings` is all-or-nothing. Route/column validation runs before commit; if the call returns a rejection envelope (for example `route_validation_failed`), the engine does not persist detail slots, CT edges, verdict tallies, prune/removal changes, or agenda mutations for that attempt.
+
 **WM fields.** Three accessors on `AiMemoryManager` produce the inputs the prompt builder needs each hop:
 
 | Field | Source | Purpose |

@@ -116,6 +116,7 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 - Verdict enum fixed: `analyze | pass | prune`.
 - `sections[]` count/angles are locked by classification (`submitFindingsRules.ts`).
 - For CT, non-prune findings require `column_flow` (`column_flow_required` on violation).
+- Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.
 
 ### `lineage_present_result`
 

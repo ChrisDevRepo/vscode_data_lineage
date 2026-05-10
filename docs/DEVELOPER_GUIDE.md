@@ -250,6 +250,7 @@ node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson --journal-metrics >
 - `SESSION_END.cumInTok` covers only the primary discover-phase invocation. SM phases (active / synthesis / completed) run in subsequent turns; the analysis scripts reconstruct full session totals by summing all ROUND events across all phases.
 - Analysis is always post-session — no real-time streaming.
 - `dedup=hit` in logs = `toolCallCache` in `lineageParticipant.ts`, not Anthropic prompt caching (VS Code LM API does not expose `cached_tokens`).
+- `submit_findings` rejects are now no-op for hop state: a `route_validation_failed` (or other validation reject) requires resubmission and does not persist partial detail/edge/prune mutations from the failed attempt.
 
 ## Where to look first
 
