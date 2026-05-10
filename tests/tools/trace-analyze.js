@@ -83,6 +83,26 @@ const bar   = (ratio, width=20) => {
   return '[' + '█'.repeat(n) + '░'.repeat(width - n) + ']';
 };
 
+function parseToolResultPayload(ev) {
+  if (!ev || !Array.isArray(ev.result) || !ev.result[0]) return null;
+  try { return JSON.parse(ev.result[0]); } catch { return null; }
+}
+
+function countRegexMatches(text, regex) {
+  if (!text) return 0;
+  const m = text.match(regex);
+  return m ? m.length : 0;
+}
+
+function isGenericRouteQuestion(q) {
+  if (!q) return true;
+  const t = String(q).trim().toLowerCase();
+  if (t.length < 35) return true;
+  if (/^(analy[sz]e|review|check|inspect|look at|investigate)\s+(this|the)?\s*(node|object|procedure|table)\b/.test(t)) return true;
+  const specificSignal = /(predicate|where|join|formula|case|threshold|column|field|rule|allocation|status|filter|derive|computed|verify|decision|because)/;
+  return !specificSignal.test(t);
+}
+
 // Extract all text strings from serialized messages for analysis
 function extractTexts(messages) {
   const results = []; // { msgIdx, partIdx, role, type, text }
@@ -311,12 +331,20 @@ if (flags.size === 0 || flags.has('--summary')) {
     const nRound = end ? end.rounds    : rounds.length;
     const nTools = end ? end.tools     : invocs.length;
     const exit   = end ? end.exitKind  : '(no SESSION_END)';
+    const roundMs = rounds.reduce((s, r) => s + (r.ms || 0), 0);
+    const toolMs = evs
+      .filter(e => e.ev === 'TOOL_RESULT')
+      .reduce((s, r) => s + (r.ms || 0), 0);
+    const modelMs = Math.max(0, roundMs - toolMs);
+    const toolPct = roundMs > 0 ? ((toolMs / roundMs) * 100).toFixed(2) : '0.00';
+    const modelPct = roundMs > 0 ? ((modelMs / roundMs) * 100).toFixed(2) : '0.00';
 
     console.log(`sid: ${sid}`);
     console.log(`  exit:     ${exit}`);
     console.log(`  rounds:   ${nRound}   invocations: ${nTools}   cache_hits: ${cached.length}`);
     console.log(`  tokens:   in=${cumIn}  out=${cumOut}  peak_round=${peak}`);
     console.log(`  rejected: ${rejects.length}   wipes: ${wipes.length}`);
+    console.log(`  latency:  total=${roundMs}ms  model≈${modelMs}ms (${modelPct}%)  tools=${toolMs}ms (${toolPct}%)`);
     if (rejects.length > 0) {
       const byTool = {};
       for (const r of rejects) byTool[r.tool] = (byTool[r.tool] || 0) + 1;
@@ -784,6 +812,18 @@ if (flags.has('--rejected')) {
   console.log('\n═══ REJECTIONS ═══\n');
   const rejected = events.filter(e => e.ev === 'TOOL_RESULT' && e.errCode);
   if (rejected.length === 0) { console.log('No rejections found.\n'); }
+  const byField = {};
+  for (const ev of rejected) {
+    const hint = String(ev.hint || '');
+    const m = hint.match(/Invalid [^—]+—\s*([a-zA-Z0-9_.\[\]-]+)\s*:/);
+    if (m?.[1]) byField[m[1]] = (byField[m[1]] || 0) + 1;
+    else if (hint.toLowerCase().includes('route')) byField.route_requests = (byField.route_requests || 0) + 1;
+    else if (hint.toLowerCase().includes('focus_node_id')) byField.focus_node_id = (byField.focus_node_id || 0) + 1;
+  }
+  if (Object.keys(byField).length > 0) {
+    const fieldSummary = Object.entries(byField).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join(', ');
+    console.log(`reject_by_field: ${fieldSummary}\n`);
+  }
   for (const ev of rejected) {
     console.log(`[${ts(ev.t)}] sid=${ev.sid} rid=${ev.rid} tool=${short(ev.tool)}`);
     console.log(`  errCode: ${ev.errCode}`);
@@ -1027,6 +1067,8 @@ if (flags.has('--detail-metrics')) {
   const CHAT_SHORT  = 80;   // chars below which a chat response is suspiciously short
   // Detect bare single-$ inline math only. $$ block math is correct (webview converts it).
   const MATH_RE_DM  = /(?<!\$)\$(?!\$)[A-Za-z@_\\][^$\n]{0,100}\$(?!\$)/g;
+  const MATH_BLOCK_DOLLAR_RE = /\$\$[\s\S]*?\$\$/g;
+  const MATH_FENCE_RE = /```math[\s\S]*?```/g;
 
   // Per-round stats from TOOL_CALL events (each call recorded once, no history duplication)
   const ridStats = {};
@@ -1072,6 +1114,8 @@ if (flags.has('--detail-metrics')) {
   // STM + chat output + math violations from REQ message diffs
   const dmReqs = events.filter(e => e.ev === 'REQ');
   const allMathViolations = [];
+  const mathFormatCounts = { block_dollar: 0, math_fence: 0 };
+  const routeQuestionStats = { total: 0, generic: 0, concrete: 0 };
 
   for (let i = 0; i < dmReqs.length; i++) {
     const req  = dmReqs[i];
@@ -1097,9 +1141,11 @@ if (flags.has('--detail-metrics')) {
       for (const p of (msg.parts || [])) {
         if (p.type !== 'text') continue;
         if (msg.role === 'assistant') s.chatOutputChars += (p.value || '').length;
+        const text = p.value || '';
+        mathFormatCounts.block_dollar += countRegexMatches(text, MATH_BLOCK_DOLLAR_RE);
+        mathFormatCounts.math_fence += countRegexMatches(text, MATH_FENCE_RE);
 
         // Math violation: scan all new text parts (system prompt on round 0, assistant responses)
-        const text    = p.value || '';
         const cleaned = text.replace(/```math[\s\S]*?```/g, '');
         MATH_RE_DM.lastIndex = 0;
         let m;
@@ -1113,7 +1159,10 @@ if (flags.has('--detail-metrics')) {
     if (i === 0) {
       const sysParts = (msgs[0]?.parts || []).filter(p => p.type === 'text');
       for (const p of sysParts) {
-        const cleaned = (p.value || '').replace(/```math[\s\S]*?```/g, '');
+        const text = p.value || '';
+        mathFormatCounts.block_dollar += countRegexMatches(text, MATH_BLOCK_DOLLAR_RE);
+        mathFormatCounts.math_fence += countRegexMatches(text, MATH_FENCE_RE);
+        const cleaned = text.replace(/```math[\s\S]*?```/g, '');
         MATH_RE_DM.lastIndex = 0;
         let m;
         while ((m = MATH_RE_DM.exec(cleaned)) !== null) {
@@ -1130,11 +1179,26 @@ if (flags.has('--detail-metrics')) {
     const chars = ev.chars || (ev.text || '').length;
     s.chatOutputChars = Math.max(s.chatOutputChars, chars);
     s.finalAnswerExcerpt = (ev.text || '').slice(0, 300).replace(/\n/g, '↵');
-    const cleaned = (ev.text || '').replace(/```math[\s\S]*?```/g, '');
+    const text = ev.text || '';
+    mathFormatCounts.block_dollar += countRegexMatches(text, MATH_BLOCK_DOLLAR_RE);
+    mathFormatCounts.math_fence += countRegexMatches(text, MATH_FENCE_RE);
+    const cleaned = text.replace(/```math[\s\S]*?```/g, '');
     MATH_RE_DM.lastIndex = 0;
     let mf;
     while ((mf = MATH_RE_DM.exec(cleaned)) !== null) {
       allMathViolations.push({ rid: ev.rid, role: 'assistant (final answer)', excerpt: mf[0].slice(0, 100).replace(/\n/g, '↵') });
+    }
+  }
+
+  for (const tc of events.filter(e => e.ev === 'TOOL_CALL' && (e.tool || '').includes('submit_findings'))) {
+    const routes = tc.input?.route_requests;
+    if (!Array.isArray(routes)) continue;
+    for (const r of routes) {
+      const q = r?.question;
+      if (typeof q !== 'string') continue;
+      routeQuestionStats.total++;
+      if (isGenericRouteQuestion(q)) routeQuestionStats.generic++;
+      else routeQuestionStats.concrete++;
     }
   }
 
@@ -1190,6 +1254,12 @@ if (flags.has('--detail-metrics')) {
     }
   } else {
     console.log('MATH FORMULA VIOLATIONS: none found ✓');
+  }
+  console.log(`MATH FORMAT COUNTS: $$ blocks=${mathFormatCounts.block_dollar}  \`\`\`math\`\`\` fences=${mathFormatCounts.math_fence}  bare-$ violations=${allMathViolations.length}`);
+  if (routeQuestionStats.total > 0) {
+    console.log(`ROUTE QUESTION QUALITY: concrete=${routeQuestionStats.concrete}/${routeQuestionStats.total}  generic=${routeQuestionStats.generic}/${routeQuestionStats.total}`);
+  } else {
+    console.log('ROUTE QUESTION QUALITY: no route_requests questions found');
   }
   console.log('');
 }

@@ -491,7 +491,7 @@ export function buildToolUsageBlock(): string {
     '## Tool Constraints',
     '',
     '1. Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth.',
-    '2. Routing: propose next hops via `route_requests`. Honor `in_budget` and `in_approved_scope` neighbor tags. (For out-of-scope routes, see ROUTE OUTCOMES in the Active Exploration Protocol above.)',
+    '2. Routing: explicitly adjudicate neighbors for the current focus — route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s), and mark non-relevant neighbors with `prune_neighbors` when justified by the current evidence.',
   ].join('\n');
 }
 

@@ -481,10 +481,9 @@ general:
     Apply this rendering set across every assembled section so the document
     reads consistently end-to-end:
 
-    - **Formulas**: write in a math code fence (```math … ```) whenever the
-      captured body has a computation — CASE expressions, multi-step
-      derivations, allocation formulas. Carry the formula verbatim from
-      the captured section body; do not re-express in prose.
+    - **Formulas**: when the captured body has a computation — CASE expressions,
+      multi-step derivations, allocation formulas — carry the formula verbatim;
+      do not re-express it in prose.
     - **Column renames**: render as a `| From | To | Business meaning |`
       table whenever 3+ sibling columns share the rename shape. For 1–2
       renames, prose with backticks is enough.

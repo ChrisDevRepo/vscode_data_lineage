@@ -49,13 +49,13 @@ const BLOCK = {
     '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
     '   - SHARED ROLE: Nodes serving the same role take the same label. Five discount procedures all use `"Price Adjustment"`; three territory loaders all use `"Territory Load"`. The differing detail belongs in the section body, not the label.',
     '   ❌ Step-count labels ("Step 1", "Step A", "Transform Step") — sections are auto-numbered; role labels only.',
-    '2. NOTE: `note_caption` — cross-hop REASONING delta. `summary` captures WHAT the node does; `note_caption` carries the new insight or open question for future hops.',
+    '2. NOTE: `note_caption` — quick user-facing preview sentence for this node. Keep it short and plain-language; put deep reasoning in `sections[].text`.',
   ].join('\n'),
 
   /** Routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */
   routingSm: [
     '## Routing',
-    'Engine selects the next focus node from the agenda. For each focus node: if its function falls outside the `<mission_brief>` — not only logging/error utilities, but any node that does not contribute to the user\'s stated question — emit `verdict: "prune"`. Only add a neighbor via `route_requests` if it directly contributes to answering the user\'s stated question — topological adjacency is not sufficient justification. A downstream consumer of a source table is not itself a source. Source the id verbatim from the tool result. Otherwise emit `route_requests: []`.',
+    'Treat the provided mission/task metadata as the source of truth for intent, scope position, and next-hop task; do not re-derive mission context from memory or prose. For the current focus node, always emit an explicit `verdict`. For neighbors, make an explicit decision: route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s), and list non-relevant neighbors in `prune_neighbors` when the current DDL proves they are out of mission scope. Generic sub-questions like "analyze this node" are invalid. Every routed sub-question must state exactly what to verify next (rule/predicate/columns/formula) and what decision this verification resolves for the mission. Source every routed id verbatim from tool results.',
   ].join('\n'),
 
   /**
