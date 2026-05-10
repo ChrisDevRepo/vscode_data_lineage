@@ -49,11 +49,11 @@ The regression net rests on three high-priority categories — **parsing, BFS/gr
 
 ## Dev: LM Traffic Tracer
 
-`src/ai/lmTracer.ts` is a **built-in observability tool** — not part of the extension API. It is disabled by default (`ENABLED = false`) and enabled on demand during development or troubleshooting. It is not removed after use.
+`src/ai/lmTracer.ts` is a **built-in observability tool** — not part of the extension API. It is an internal developer backdoor for testing only, controlled by a hardcoded code flag. It is not removed after use.
 
 It captures every `vscode.lm.sendRequest` call (messages, tool calls, results, wipes, token counts) as NDJSON to `tmp/lm-trace/` for post-session analysis. Trace files are gitignored.
 
-**Enable:** set `ENABLED = true` at line ~20 of `src/ai/lmTracer.ts`, rebuild, run a `@lineage` chat session.
+**Enable (test/dev only):** set the hardcoded trace flag to `true` in code, rebuild/run the extension, then run a `@lineage` chat session. Disable it again before production packaging. Do not add a VS Code setting or command for this toggle.
 
 **Analyse (manual workflow — run in terminal):**
 ```

@@ -156,7 +156,7 @@ AI behaviour beyond pure-function surface is verified via UAT baseline captures 
 
 ## LM traffic tracer
 
-`src/ai/infra/lmTracer.ts` is a built-in observability tool that captures the full content of every `vscode.lm.sendRequest` call as NDJSON for post-session diagnostic analysis. In this internal development branch, tracing is currently hardcoded ON in `src/extension.ts`.
+`src/ai/infra/lmTracer.ts` is a built-in observability tool that captures the full content of every `vscode.lm.sendRequest` call as NDJSON for post-session diagnostic analysis. It is an internal developer backdoor for testing only, controlled by a hardcoded flag in code.
 
 ### What it captures
 
@@ -178,9 +178,7 @@ Token counts (`inTok`, `outTok`) come from `model.countTokens()` — a local est
 
 ### How to enable
 
-Tracing is enabled by default via a hardcoded flag during extension activation. Run a `@lineage` chat session and trace files will be written to `tmp/lm-trace/` (gitignored).
-
-To disable later for production, change the activation flag in `src/extension.ts` from `true` to `false` before packaging.
+Enable tracing only for local test/dev sessions by setting the hardcoded trace flag to `true` before launching the extension host. Run a `@lineage` chat session and trace files will be written to `tmp/lm-trace/` (gitignored). Disable the flag before production packaging.
 
 ### Analyzing a trace
 
