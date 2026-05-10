@@ -102,14 +102,12 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 ```
 1. buildGeneralSystemPrompt          (always — role, platform, schemas, global invariants)
 2. one phase-specific block:
-     discover    → buildDiscoveryPrompt
-     active      → buildActivePhasePrompt
-                   + buildToolUsageBlock
-                   + buildModeBlock(targetColumns?, classification)
+     discover    → buildPhasePrompt('discover')
+     active      → buildPhasePrompt('active')
+                   + buildSmProtocol(targetColumns?, classification)
                        — buildColumnAspectPrompt is folded in when targetColumns set (CT)
-     synthesis   → buildSynthesisPrompt
-     completed   → buildDeferredQuestionsPrompt (when deferred questions exist)
-               | buildFollowUpPrompt (otherwise)
+     synthesis   → buildPhasePrompt('synthesis')
+     completed   → buildPhasePrompt('completed')
 3. resolveStagePrompt                 (always — YAML keys gated by stage + classification + slotCount; `closing` requires slotCount ≥ 5; `discovery_chat` fires only at discover stage)
 4. buildMissionBriefBlock             (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
 5. buildMemoryBlock                   (active only — <short_term_memory> + tally)
@@ -120,12 +118,13 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | Function | File | Concern |
 |----------|------|---------|
 | `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
+| `buildPhasePrompt(phase, ctx?)` | `prompts.ts` | Canonical static phase protocol entrypoint (discover/active/synthesis/completed). |
 | `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules. |
 | `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract. |
 | `buildSynthesisPrompt` | `prompts.ts` | Archive lift + assembly + intro/closing anchoring. |
 | `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
-| `buildToolUsageBlock` | `prompts.ts` | `submit_findings` / pruning usage. |
-| `buildModeBlock(targetColumns?, classification)` | `smPrompts.ts` | SM mode header + verdict + sections + badges + routing + pruning; CT adds column protocol. Pruning uses `get_neighbor_columns` for lightweight neighbor inspection before deciding to prune. |
+| `buildSmProtocol(targetColumns?, classification)` | `smPrompts.ts` | Active SM protocol (verdict + sections + badges + routing + pruning); CT adds column protocol. Pruning uses `get_neighbor_columns` for lightweight neighbor inspection before deciding to prune. |
+| `buildModeBlock(targetColumns?, classification)` | `smPrompts.ts` | Compatibility wrapper delegating to `buildSmProtocol(...)`. |
 | `buildColumnAspectPrompt` | `prompts.ts` | CT protocol block — two-channel contract, role table, terminal source rules. Injected into stable system prompt when CT is active. |
 | `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. Renders accumulated `ColumnEdge[]` as a directed edge list so `present_result` anchors to the traced path. |
 | `buildCurrentTaskBlock(task, columns?)` | `prompts.ts` | `<current_task>` XML block; when `columns` are passed (CT active), appends `<column_trace>` sub-block with the structural lineage sub-question. |

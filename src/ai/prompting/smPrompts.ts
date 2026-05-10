@@ -93,6 +93,24 @@ export function buildModeBlock(
   targetColumns?: string[],
   classification: 'business' | 'technical' | 'both' = 'business',
 ): string {
+  return buildSmProtocol({ targetColumns, classification });
+}
+
+/**
+ * Builds the static active-phase SM protocol block.
+ *
+ * @remarks
+ * This is the canonical SM-mode protocol builder used by active-phase prompt
+ * composition. It consolidates verdict/category guidance, section-shape
+ * submission, routing/pruning, and optional CT anchor text.
+ */
+export function buildSmProtocol({
+  targetColumns,
+  classification = 'business',
+}: {
+  targetColumns?: string[];
+  classification?: 'business' | 'technical' | 'both';
+}): string {
   const isColumnAspectActive = !!(targetColumns && targetColumns.length > 0);
   const sections: string[] = [];
 

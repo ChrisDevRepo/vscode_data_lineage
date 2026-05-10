@@ -1,6 +1,10 @@
 import type { PendingGate } from '../../sessionPhase';
 
-export type GateTransitionDecision =
+/**
+ * Represents the discrete actions the engine can take when transitioning
+ * out of a pending human-in-the-loop gate.
+ */
+type GateTransitionDecision =
   | { action: 'cancel' }
   | { action: 'approve_confirm_sm' }
   | { action: 'approve_scope_expansion' }

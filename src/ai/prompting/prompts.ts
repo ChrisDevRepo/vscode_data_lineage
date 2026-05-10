@@ -9,6 +9,9 @@
 import type { DeferredQuestion } from '../smTypes';
 import { sanitizeMissionBrief } from '../inputNormalization';
 
+/** Phase key used by the TS prompt protocol builders. */
+export type PromptPhase = 'discover' | 'active' | 'synthesis' | 'completed';
+
 
 /**
  * Single-source contract describing how the AI must treat neighbors that fall
@@ -31,6 +34,10 @@ import { sanitizeMissionBrief } from '../inputNormalization';
 export const OUT_OF_SCOPE_CONTRACT: string =
   'Out-of-scope routes (schema or depth beyond the approved border) are encouraged when mission-relevant. The engine defers them and surfaces them to the user post-synthesis via the follow-up pill. Each `submit_findings` tool result reports `route_outcomes[]`; reference only nodes with `accepted: true` inside your captured `sections[]`. Do not enumerate deferred nodes in the report — the follow-up pill handles that surface.';
 
+/** Canonical source-id routing constraint for `route_requests`. */
+export const ROUTE_REQUESTS_VERBATIM_CONTRACT =
+  'Source every `nodeId` verbatim from a prior tool result — `next_hop` / `neighbors[]` from a previous `submit_findings`, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Reconstructed ids from question text fail validation. On `route_validation_failed`, the rejection envelope returns `route_target_candidates` (up to 3 fuzzy matches per unresolved id) — pick a candidate verbatim or call `lineage_search_objects` to find the right id, then re-submit.';
+
 
 /**
  * Constructs the base system prompt used to govern AI behavior across all phases.
@@ -49,7 +56,7 @@ export const OUT_OF_SCOPE_CONTRACT: string =
  * @returns The assembled base system prompt string.
  */
 export function buildGeneralSystemPrompt(
-  phase: 'discover' | 'active' | 'synthesis' | 'completed',
+  phase: PromptPhase,
   dbPlatform: string,
   filterSchemas: string[],
   totalSchemaCount: number,
@@ -78,6 +85,24 @@ export function buildGeneralSystemPrompt(
     schemasLine,
     `- Visible objects: ${visibleNodes} of ${totalNodes}`,
   ].join('\n');
+}
+
+/**
+ * Builds the phase-specific TS protocol block (non-YAML).
+ *
+ * @remarks
+ * This is the single phase-first entrypoint for static TS prompt content.
+ * YAML template guidance is injected separately by `resolveStagePrompt`.
+ */
+export function buildPhasePrompt(
+  phase: PromptPhase,
+  opts?: { isInline?: boolean },
+): string {
+  const isInline = !!opts?.isInline;
+  if (phase === 'discover') return buildDiscoveryPrompt();
+  if (phase === 'active') return buildActivePhasePrompt(isInline);
+  if (phase === 'synthesis') return buildSynthesisPrompt();
+  return buildFollowUpPrompt();
 }
 
 
@@ -167,10 +192,10 @@ export function buildActivePhasePrompt(isInline = false): string {
     '# Active Exploration Protocol',
     `Mode: ${mode}`,
     '',
-    '1. SECTIONS: Submit `sections[]` with one entry per fired `*_capture` template for the locked classification — `business` → 1 business section; `technical` → 1 technical section; `both` → 2 sections (one of each). **The archive is unbounded** — write as deeply as the focus node\'s role warrants. Capture every business rule the DDL exposes: each CASE branch, threshold, allocation formula, special-case predicate. Synthesis lifts your body verbatim, so depth here is depth in the final document.',
-    '2. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
-    '3. MATHEMATICS: Wrap every formula in LaTeX math delimiters — $expr$ inline, $$expr$$ block — transforms, allocations, thresholds, proportions, CASE expressions. Never use backticks for formulas. Correct: $\\text{Ratio} = \\frac{A}{B}$. Wrong: `\\text{Ratio} = \\frac{A}{B}`. Math delimited this way reaches the final document; math in backticks or plain prose does not.',
-    '4. ROUTE_REQUESTS: Source every `nodeId` verbatim from a prior tool result — `next_hop` / `neighbors[]` from a previous `submit_findings`, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Reconstructed ids from question text fail validation. On `route_validation_failed`, the rejection envelope returns `route_target_candidates` (up to 3 fuzzy matches per unresolved id) — pick a candidate verbatim or call `lineage_search_objects` to find the right id, then re-submit.',
+    '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
+    '2. MATHEMATICS: Wrap every formula in LaTeX math delimiters — $expr$ inline, $$expr$$ block — transforms, allocations, thresholds, proportions, CASE expressions. Never use backticks for formulas. Correct: $\\text{Ratio} = \\frac{A}{B}$. Wrong: `\\text{Ratio} = \\frac{A}{B}`. Math delimited this way reaches the final document; math in backticks or plain prose does not.',
+    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth. Routing: explicitly adjudicate neighbors for the current focus — route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s), and mark non-relevant neighbors with `prune_neighbors` when justified by the current evidence.',
+    `4. ROUTE_REQUESTS: ${ROUTE_REQUESTS_VERBATIM_CONTRACT}`,
     `5. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');
 }
@@ -487,11 +512,12 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
  * @returns A string containing the mechanical `submit_findings` routing and pruning constraints.
  */
 export function buildToolUsageBlock(): string {
+  // Compatibility shim for older callsites; canonical text now lives in buildActivePhasePrompt.
   return [
     '## Tool Constraints',
     '',
-    '1. Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth.',
-    '2. Routing: explicitly adjudicate neighbors for the current focus — route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s), and mark non-relevant neighbors with `prune_neighbors` when justified by the current evidence.',
+    'Use `lineage_submit_findings` for active hops with classification-locked sections.',
+    'Route mission-relevant neighbors via `route_requests`; use `prune_neighbors` for proven out-of-scope neighbors.',
   ].join('\n');
 }
 

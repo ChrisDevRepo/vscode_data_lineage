@@ -21,16 +21,16 @@ import { AiSession } from '../session';
 import { Logger, trunc, sanitizeForLog } from '../../utils/log';
 import { setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, SCRIPT_TYPES } from '../tools';
 import {
-  buildGeneralSystemPrompt, buildDiscoveryPrompt, buildActivePhasePrompt, buildSynthesisPrompt, buildFollowUpPrompt,
+  buildGeneralSystemPrompt, buildPhasePrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
-  buildToolUsageBlock, buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
+  buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
   buildDeferredQuestionsPrompt, RECOMMEND_FOLLOWUPS_TRIGGER, SHOW_DESCRIPTION_TRIGGER,
   START_DEEPER_ANALYSIS_TRIGGER, buildStartDeeperAnalysisTriggerPrompt,
   buildDiscoverySummaryBlock, buildDiscoverySummaryComposePrompt,
   ACTION_REQUIRED_PENDING_HINT
 } from '../prompts';
 import { getToolInvocationLabel } from '../toolLabels';
-import { buildModeBlock } from '../smPrompts';
+import { buildSmProtocol } from '../smPrompts';
 import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from '../historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from '../tokenBudget';
 import { NavigationEngine } from '../smBase';
@@ -530,11 +530,7 @@ export class LineageParticipant {
           : totalNodes;
         const base = buildGeneralSystemPrompt(phase, dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes);
 
-        let phaseSpecific = '';
-        if (phase === 'discover') phaseSpecific = buildDiscoveryPrompt();
-        else if (phase === 'active') phaseSpecific = buildActivePhasePrompt();
-        else if (phase === 'synthesis') phaseSpecific = buildSynthesisPrompt();
-        else if (phase === 'completed') phaseSpecific = buildFollowUpPrompt();
+        const phaseSpecific = buildPhasePrompt(phase, { isInline: false });
 
         // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
         // re-renders keep the same formatting contract.
@@ -554,8 +550,7 @@ export class LineageParticipant {
         const parts: string[] = [base, phaseSpecific];
 
         if (phase === 'active' && engine) {
-          parts.push(buildToolUsageBlock());
-          parts.push(buildModeBlock(engine.columnAspect?.target_columns, sess.classification));
+          parts.push(buildSmProtocol({ targetColumns: engine.columnAspect?.target_columns, classification: sess.classification }));
         }
 
         parts.push(stageBlock);
