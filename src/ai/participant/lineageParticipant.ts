@@ -67,6 +67,112 @@ export function extractToolCallFields(tc: vscode.LanguageModelToolCallPart): { c
 }
 
 /**
+ * Returns true when the message contains at least one tool-result part.
+ */
+function hasToolResultParts(msg: vscode.LanguageModelChatMessage): boolean {
+  return (msg.content as readonly unknown[]).some(p => p instanceof vscode.LanguageModelToolResultPart);
+}
+
+/**
+ * Returns true when the message contains at least one tool-call part.
+ */
+function hasToolCallParts(msg: vscode.LanguageModelChatMessage): boolean {
+  return (msg.content as readonly unknown[]).some(p => p instanceof vscode.LanguageModelToolCallPart);
+}
+
+/**
+ * Finds the trailing assistant(tool_call) -> user(tool_result) pair in rebuilt
+ * history messages.
+ */
+function findLastToolPairInHistory(
+  history: readonly vscode.LanguageModelChatMessage[],
+): ToolPair | undefined {
+  for (let i = history.length - 1; i > 0; i--) {
+    const result = history[i];
+    const assistant = history[i - 1];
+    if (result.role !== vscode.LanguageModelChatMessageRole.User) continue;
+    if (assistant.role !== vscode.LanguageModelChatMessageRole.Assistant) continue;
+    if (!hasToolResultParts(result) || !hasToolCallParts(assistant)) continue;
+    return { assistant, result };
+  }
+  return undefined;
+}
+
+/**
+ * Minimizes replayed tool-result payload for ACTIVE phase.
+ *
+ * @remarks
+ * Keeps only hop-driving fields needed for the next step. Drops archived
+ * narrative payload from prior hops.
+ */
+function minimizeActiveToolResultPayload(payload: any): any {
+  if (!payload || typeof payload !== 'object') return payload;
+  const out: Record<string, unknown> = {};
+  if (typeof payload.sm_status === 'string') out.sm_status = payload.sm_status;
+  if (typeof payload.hop === 'number') out.hop = payload.hop;
+  if (typeof payload.agenda_remaining === 'number') out.agenda_remaining = payload.agenda_remaining;
+  if (payload.focus_node && typeof payload.focus_node === 'object') out.focus_node = payload.focus_node;
+  if (Array.isArray(payload.neighbors)) out.neighbors = payload.neighbors;
+  if (payload.working_memory && typeof payload.working_memory === 'object') out.working_memory = payload.working_memory;
+  if (Object.keys(out).length > 0) return out;
+  return payload;
+}
+
+/**
+ * Builds an ACTIVE-safe minimal replay pair from a full tool pair.
+ */
+function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | undefined {
+  if (!pair) return undefined;
+
+  const toolCallParts = (pair.assistant.content as readonly unknown[])
+    .filter((p): p is vscode.LanguageModelToolCallPart => p instanceof vscode.LanguageModelToolCallPart);
+  const firstCall = toolCallParts[0];
+  if (!firstCall) return undefined;
+
+  const rawInput = (firstCall.input as Record<string, unknown>) || {};
+  let compactInput: Record<string, unknown> = {};
+  if (firstCall.name === 'lineage_submit_findings') {
+    compactInput = {
+      focus_node_id: rawInput.focus_node_id,
+      verdict: rawInput.verdict,
+    };
+  } else if (firstCall.name === 'lineage_start_exploration') {
+    compactInput = {
+      origin: rawInput.origin,
+      direction: rawInput.direction,
+      classification: rawInput.classification,
+    };
+  }
+
+  const assistant = new vscode.LanguageModelChatMessage(
+    vscode.LanguageModelChatMessageRole.Assistant,
+    [new vscode.LanguageModelToolCallPart(firstCall.callId, firstCall.name, compactInput)],
+  );
+
+  const compactResults: vscode.LanguageModelToolResultPart[] = [];
+  for (const part of (pair.result.content as readonly unknown[])) {
+    if (!(part instanceof vscode.LanguageModelToolResultPart)) continue;
+    const textPart = part.content.find(c => c instanceof vscode.LanguageModelTextPart) as vscode.LanguageModelTextPart | undefined;
+    if (!textPart) {
+      compactResults.push(part);
+      continue;
+    }
+    try {
+      const payload = JSON.parse(textPart.value);
+      const compact = minimizeActiveToolResultPayload(payload);
+      compactResults.push(new vscode.LanguageModelToolResultPart(
+        part.callId,
+        [new vscode.LanguageModelTextPart(JSON.stringify(compact))],
+      ));
+    } catch {
+      compactResults.push(part);
+    }
+  }
+  const result = new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, compactResults);
+  return { assistant, result };
+}
+
+/**
  * Extracts the error code from a tool result's JSON envelope.
  *
  * @remarks
@@ -97,7 +203,7 @@ export function extractToolErrorCode(result: vscode.LanguageModelToolResult | un
  */
 function renderHopDirective(engine: NavigationEngine | null): string {
   const focusId = engine?.currentFocus;
-  const hopNumber = (engine?.currentHop ?? 0) + 1;
+  const hopNumber = engine?.hopProgress.current ?? 0;
   return focusId
     ? `Continue. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
     : 'Continue the hop-by-hop analysis — call submit_findings for the current focus node.';
@@ -451,7 +557,7 @@ export class LineageParticipant {
             }
           }
           const focusId = engine?.currentFocus;
-          const hopNumber = (engine?.currentHop ?? 0) + 1;
+          const hopNumber = engine?.hopProgress.current ?? 0;
           effectivePrompt = focusId
             ? `User approved. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
             : 'User approved. Begin the hop-by-hop analysis — call submit_findings for the current focus node.';
@@ -471,10 +577,10 @@ export class LineageParticipant {
       }
     }
 
-    const historyMessages: vscode.LanguageModelChatMessage[] = [];
+    const rebuiltHistoryMessages: vscode.LanguageModelChatMessage[] = [];
     for (const turn of chatContext.history) {
       if (turn instanceof vscode.ChatRequestTurn) {
-        historyMessages.push(vscode.LanguageModelChatMessage.User(turn.prompt));
+        rebuiltHistoryMessages.push(vscode.LanguageModelChatMessage.User(turn.prompt));
       } else if (turn instanceof vscode.ChatResponseTurn) {
         const meta = (turn.result.metadata as any)?.toolCallsMetadata as any;
         if (meta?.toolCallRounds?.length) {
@@ -485,7 +591,7 @@ export class LineageParticipant {
               const f = extractToolCallFields(tc);
               if (meta.toolCallResults[f.callId]) assistantParts.push(new vscode.LanguageModelToolCallPart(f.callId, f.name, f.input));
             }
-            if (assistantParts.length) historyMessages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
+            if (assistantParts.length) rebuiltHistoryMessages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, assistantParts));
 
             const resultParts: vscode.LanguageModelToolResultPart[] = [];
             for (const tc of round.toolCalls) {
@@ -500,14 +606,26 @@ export class LineageParticipant {
                 resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, [new vscode.LanguageModelTextPart(compact || contentStr)]));
               }
             }
-            if (resultParts.length) historyMessages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
+            if (resultParts.length) rebuiltHistoryMessages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, resultParts));
           }
         } else {
           const text = turn.response.filter(p => p instanceof vscode.ChatResponseMarkdownPart).map(p => (p as vscode.ChatResponseMarkdownPart).value.value).join('');
-          if (text) historyMessages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, text));
+          if (text) rebuiltHistoryMessages.push(new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.Assistant, text));
         }
       }
     }
+    // ACTIVE mode is strict sliding-memory hop-by-hop: no broad chat replay.
+    // Use session phase (not per-round local phase) because this runs before
+    // round-loop transitions. Keep only the latest tool pair (assistant
+    // tool_call + user tool_result), minimized to hop-driving fields.
+    const isStrictActiveReplay = sess.phase.kind === 'exploring';
+    const historyMessages: vscode.LanguageModelChatMessage[] =
+      isStrictActiveReplay
+        ? (() => {
+            const pair = buildActiveMinimalToolPair(findLastToolPairInHistory(rebuiltHistoryMessages));
+            return pair ? [pair.assistant, pair.result] : [];
+          })()
+        : rebuiltHistoryMessages;
 
       let cachedStablePart: { phase: 'discover' | 'active' | 'synthesis' | 'completed'; focusIsNonBodied: boolean; text: string } | null = null;
       const buildStablePart = (phase: 'discover' | 'active' | 'synthesis' | 'completed'): string => {
@@ -589,8 +707,8 @@ export class LineageParticipant {
         if (phase === 'active') {
           // Mission state first — anchors focus_node_id before the model reads STM content.
           // (mechanically enforced via toolMode.Required + toolPolicy).
-          const agendaRemaining = Math.max(0, engine.bodiedScopeSize - engine.currentHop);
-          dynamic.push(buildMissionStateBlock(engine.currentHop, engine.bodiedScopeSize, agendaRemaining, engine.currentFocus));
+          const progress = engine.hopProgress;
+          dynamic.push(buildMissionStateBlock(progress.current, progress.total, progress.open, engine.currentFocus));
           const stm = sess.memory.getShortTermMemory();
           dynamic.push(buildMemoryBlock(stm, engine.currentHop, engine.scopeSize));
         }
@@ -1022,7 +1140,7 @@ export class LineageParticipant {
             // freezing on the gate-approval text ("hop 1 is X") for the rest of the session.
             effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
             LmTracer.wipe(sess.id, roundCount, 'submit_ok', envelope.length);
-            envelope.wipeAndSeed(systemPrompt, effectivePrompt);
+            envelope.wipeAndSeed(systemPrompt, effectivePrompt, buildActiveMinimalToolPair(envelope.findLastToolPair()));
             const hopCount = sess.stateMachine?.getHopDiagnostics().hop ?? 0;
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
             this.logger.debug(`[AI] [PromptBudget] hop=${hopCount} system=${systemPrompt.length} dynamic=${effectivePrompt.length} envelope_msgs=${envelope.length}`);
@@ -1035,7 +1153,7 @@ export class LineageParticipant {
               systemPrompt = buildStageSystemPrompt('active');
               effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
               LmTracer.wipe(sess.id, roundCount, 'forced_error_3', envelope.length);
-              envelope.wipeAndSeed(systemPrompt, effectivePrompt);
+              envelope.wipeAndSeed(systemPrompt, effectivePrompt, buildActiveMinimalToolPair(envelope.findLastToolPair()));
               this.logger.debug(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
               consecutiveErrorRounds = 0;
             } else {

@@ -190,6 +190,8 @@ flowchart LR
 
 The dashed orange WM boxes are not stored anywhere — they are computed on demand by `getWorkingMemory()` and `getShortTermMemory()`, then serialised into the prompt. The next hop rebuilds WM from the *now-larger* archive. This is what makes the loop bounded: WM stays small even as the archive grows.
 
+**ACTIVE isolation contract.** In `active` phase, the participant runs a strict sliding-memory loop: broad chat-history replay is disabled. Each hop request is composed from the current system prompt + current directive, with at most one minimal trailing tool pair (assistant `tool_call` + user `tool_result`) preserved only for protocol continuity. The full archived analysis remains in `AiMemoryManager` and is lifted at synthesis; it is not replayed verbatim each hop.
+
 **Archive growth across hops.** Each successful `submit_findings` appends one `DetailSlot` to the archive. The sliding window every hop reads is `archive.slice(-3)` — so as the archive grows, the *content* of `short_term_memory` slides forward.
 
 ```mermaid
@@ -238,7 +240,7 @@ None of these WM fields are stored — they are computed from the archive (or th
 | `mode` | `'sm'` — always SM; set once at `start_exploration`. |
 | `sm_status` | `'awaiting_findings'` while draining — explicit "you are mid-loop" signal that survives sliding wipes |
 | `hop` | 1-based hop number |
-| `agenda_remaining` | Nodes still on the agenda |
+| `agenda_remaining` | Nodes still on the agenda (`hopProgress.open`) |
 | `focus_node` | `{id, schema, name, type, bb_ddl, cols, fks, unresolved_refs}` for bodied nodes; `{id, schema, name, type, cols, fks, in[], out[], unresolved_refs}` for non-bodied nodes (tables) — `in[]` lists upstream writers, `out[]` lists downstream readers; both are always present (empty array = confirmed zero neighbors). One object per hop. |
 | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, depth_from_origin, in_budget, in_approved_scope, would_trigger_action_required}` |
 | `current_task` | Sub-question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
@@ -257,7 +259,7 @@ None of these WM fields are stored — they are computed from the archive (or th
 `buildStageSystemPrompt(phase)` in [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) composes the prompt in two parts:
 
 - **`buildStablePart(phase)`** is byte-stable across hops within a phase and is cached on `cachedStablePart`. It assembles, in order: `buildGeneralSystemPrompt` (role + platform + filter context + phase label) → `buildPhasePrompt(phase)` (phase protocol) → in active phase only, `buildSmProtocol(BB|CT)` → `resolveStagePrompt` (the YAML-driven capture or render templates filtered by `STAGE_BY_KEY` and `CLASSIFICATION_GATED`) → `buildMissionBriefBlock` for active / synthesis / completed.
-- **`buildDynamicPart(phase)`** is rebuilt each hop. In active SM mode it carries `buildCurrentTaskBlock`, `buildMemoryBlock` (`<short_term_memory>` + tally), and `buildMissionStateBlock` (the ACK/WAIT protocol envelope). Synthesis emits no dynamic suffix — the closed archive is the substance, and a stale `<current_task>` from the last hop must not leak into the synthesis prompt.
+- **`buildDynamicPart(phase)`** is rebuilt each hop. In active SM mode it carries `buildCurrentTaskBlock`, `buildMemoryBlock` (`<short_term_memory>` + tally), and `buildMissionStateBlock` (the ACK/WAIT protocol envelope). Mission-state progress values are sourced from `NavigationEngine.hopProgress` (`current`, `total`, `open`) so hop denominator updates follow prune/expansion changes. Synthesis emits no dynamic suffix — the closed archive is the substance, and a stale `<current_task>` from the last hop must not leak into the synthesis prompt.
 
 `invalidateStablePart()` is called when the participant flips phase (discover → active, active → synthesis), and the next prompt rebuilds the stable part once for the new phase. The mission brief and the YAML capture instructions live inside the stable part so the prefix stays cacheable across hops within a phase.
 

@@ -24,7 +24,7 @@ node tests/tools/trace-analyze.js <file.ndjson> [flags] [--sid <id>]
 | `--phase` | Token breakdown per phase (compose / discover / active / synthesis / completed). |
 | `--patterns` | Which prompt structural blocks appear in which phase; flags cross-phase anomalies. |
 | `--redundancy` | Duplicate content across message parts in the same request. |
-| `--rejected` | All tool result rejections with error codes and hints. |
+| `--rejected` | All tool result rejections with error codes and hints; marks expected gate rejects (`start_exploration` + `confirm_sm_start`) separately. |
 | `--loops` | Same tool called consecutively with identical input (≥2×). |
 | `--wipes` | All context wipe events with triggers and message counts. |
 | `--waste` | Tokens in-flight at wipe time vs total sent. |
@@ -36,7 +36,7 @@ node tests/tools/trace-analyze.js <file.ndjson> [flags] [--sid <id>]
 | `--report` | Full round-by-round narrative: prompt excerpts, tool calls, results. |
 | `--sizes` | Per-round message composition breakdown: system / history / tool_results / prompt. |
 | `--timeline` | Chronological event dump from SESSION_START to SESSION_END. |
-| `--journal-metrics` | Emits ONE compact JSON line to stdout. Pipe to `>> tmp/lm-journal/journal.jsonl`. |
+| `--journal-metrics` | Emits ONE compact JSON line to stdout. Includes `expected_gate_rejects`, `unexpected_rejects`, and prune metrics (`prune_verdict_count`, `prune_neighbors_count`, `ct_auto_prune_count`). Pipe to `>> tmp/lm-journal/journal.jsonl`. |
 | `--sid <id>` | Filter all output to one session ID. |
 
 **Full diagnostic run (all flags):**

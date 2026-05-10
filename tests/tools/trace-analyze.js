@@ -88,6 +88,14 @@ function parseToolResultPayload(ev) {
   try { return JSON.parse(ev.result[0]); } catch { return null; }
 }
 
+function isExpectedGateReject(ev) {
+  if (!ev || ev.ev !== 'TOOL_RESULT' || !ev.errCode) return false;
+  if (!String(ev.tool || '').includes('start_exploration')) return false;
+  if (String(ev.errCode) !== 'action_required') return false;
+  const payload = parseToolResultPayload(ev);
+  return !!(payload && payload.gate === 'confirm_sm_start');
+}
+
 function countRegexMatches(text, regex) {
   if (!text) return 0;
   const m = text.match(regex);
@@ -179,6 +187,8 @@ if (flags.has('--journal-metrics')) {
     const end     = evs.find(e => e.ev === 'SESSION_END');
     const rounds  = evs.filter(e => e.ev === 'ROUND');
     const rejects = evs.filter(e => e.ev === 'TOOL_RESULT' && e.errCode);
+    const expectedGateRejects = rejects.filter(isExpectedGateReject);
+    const unexpectedRejects = rejects.filter(r => !isExpectedGateReject(r));
     const wipes   = evs.filter(e => e.ev === 'WIPE');
     const cached  = evs.filter(e => e.ev === 'TOOL_INVOKE' && e.cached);
     const toolInv = evs.filter(e => e.ev === 'TOOL_INVOKE' && !e.cached);
@@ -204,6 +214,7 @@ if (flags.has('--journal-metrics')) {
       .sort((a, b) => b.avg_chars - a.avg_chars).slice(0, 3);
 
     let mathViolations = 0, badgeLabelViolations = 0, noteCaptionViolations = 0;
+    let pruneVerdictCount = 0, pruneNeighborsCount = 0, ctAutoPruneCount = 0;
     let maxStm = 0, maxSections = 0, presentResultChars = 0, minChatOut = Infinity;
     const jmReqs = evs.filter(e => e.ev === 'REQ');
     for (let i = 0; i < jmReqs.length; i++) {
@@ -241,6 +252,8 @@ if (flags.has('--journal-metrics')) {
     for (const tc of evs.filter(e => e.ev === 'TOOL_CALL')) {
       const name = tc.tool || '', inp = tc.input || {};
       if (name.includes('submit_findings')) {
+        if (inp.verdict === 'prune') pruneVerdictCount++;
+        if (Array.isArray(inp.prune_neighbors)) pruneNeighborsCount += inp.prune_neighbors.length;
         let sc = 0;
         for (const sec of (inp.sections || [])) sc += (sec.text || '').length;
         if (sc > maxSections) maxSections = sc;
@@ -253,6 +266,13 @@ if (flags.has('--journal-metrics')) {
         if (c > presentResultChars) presentResultChars = c;
       }
     }
+    for (const tr of evs.filter(e => e.ev === 'TOOL_RESULT')) {
+      const payload = parseToolResultPayload(tr);
+      const ctCount = payload?.ctPrunedNodeIds?.length
+        ?? payload?.result?.ctPrunedNodeIds?.length
+        ?? 0;
+      if (ctCount > 0) ctAutoPruneCount += ctCount;
+    }
 
     let loops = 0;
     let prevSig = null;
@@ -263,7 +283,8 @@ if (flags.has('--journal-metrics')) {
     }
 
     const jmFlags = [
-      ...new Set(rejects.map(r => `reject:${r.errCode}`)),
+      ...new Set(unexpectedRejects.map(r => `reject:${r.errCode}`)),
+      ...(expectedGateRejects.length > 0 ? [`reject_expected_gate:${expectedGateRejects.length}`] : []),
       ...wipes.map(w => `wipe:${w.trigger}`),
       ...(mathViolations   > 0 ? [`math_violation:${mathViolations}`]       : []),
       ...(badgeLabelViolations > 0 ? [`badge_violation:${badgeLabelViolations}`] : []),
@@ -291,6 +312,8 @@ if (flags.has('--journal-metrics')) {
       out_tok:    cumOut,
       peak_tok:   peak,
       rejects:    rejects.length,
+      expected_gate_rejects: expectedGateRejects.length,
+      unexpected_rejects: unexpectedRejects.length,
       loops,
       wipes:      wipes.length,
       cache_hits: cached.length,
@@ -306,6 +329,9 @@ if (flags.has('--journal-metrics')) {
         math_violations:             mathViolations,
         badge_label_violations:      badgeLabelViolations,
         note_caption_violations:     noteCaptionViolations,
+        prune_verdict_count:         pruneVerdictCount,
+        prune_neighbors_count:       pruneNeighborsCount,
+        ct_auto_prune_count:         ctAutoPruneCount,
       },
       flags: jmFlags,
     }) + '\n');
@@ -323,6 +349,8 @@ if (flags.size === 0 || flags.has('--summary')) {
     const invocs = evs.filter(e => e.ev === 'TOOL_INVOKE' && !e.cached);
     const cached = evs.filter(e => e.ev === 'TOOL_INVOKE' && e.cached);
     const rejects= evs.filter(e => e.ev === 'TOOL_RESULT' && e.errCode);
+    const expectedGateRejects = rejects.filter(isExpectedGateReject);
+    const unexpectedRejects = rejects.filter(r => !isExpectedGateReject(r));
     const wipes  = evs.filter(e => e.ev === 'WIPE');
 
     const cumIn  = end ? end.cumInTok  : rounds.reduce((s, r) => s + (r.inTok  || 0), 0);
@@ -343,7 +371,7 @@ if (flags.size === 0 || flags.has('--summary')) {
     console.log(`  exit:     ${exit}`);
     console.log(`  rounds:   ${nRound}   invocations: ${nTools}   cache_hits: ${cached.length}`);
     console.log(`  tokens:   in=${cumIn}  out=${cumOut}  peak_round=${peak}`);
-    console.log(`  rejected: ${rejects.length}   wipes: ${wipes.length}`);
+    console.log(`  rejected: ${rejects.length} (expected_gate=${expectedGateRejects.length}, unexpected=${unexpectedRejects.length})   wipes: ${wipes.length}`);
     console.log(`  latency:  total=${roundMs}ms  model≈${modelMs}ms (${modelPct}%)  tools=${toolMs}ms (${toolPct}%)`);
     if (rejects.length > 0) {
       const byTool = {};
@@ -825,8 +853,9 @@ if (flags.has('--rejected')) {
     console.log(`reject_by_field: ${fieldSummary}\n`);
   }
   for (const ev of rejected) {
+    const expected = isExpectedGateReject(ev);
     console.log(`[${ts(ev.t)}] sid=${ev.sid} rid=${ev.rid} tool=${short(ev.tool)}`);
-    console.log(`  errCode: ${ev.errCode}`);
+    console.log(`  errCode: ${ev.errCode}${expected ? '  (expected_gate)' : ''}`);
     if (ev.hint) {
       const h = String(ev.hint);
       console.log(`  hint:    ${h.length > 400 ? h.slice(0, 400) + '…' : h}`);
