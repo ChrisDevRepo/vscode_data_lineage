@@ -190,3 +190,4 @@ This ensures every column with a profilable base type is correctly classified, r
 - Engine: [`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts)
 - Connection / query execution: [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts)
 - Microsoft aggregate-functions reference: <https://learn.microsoft.com/sql/t-sql/functions/aggregate-functions-transact-sql>
+

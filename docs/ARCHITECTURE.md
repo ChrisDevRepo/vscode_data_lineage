@@ -38,8 +38,8 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 
 | Phase | Owner | Behaviour |
 |-------|-------|-----------|
-| **Discovery** | AI | Default chat state — handles every multi-object dependency question that fits the budget by chaining `lineage_get_object_detail` calls. Uses catalog tools (`search_objects`, `get_object_detail`, `search_ddl`, `get_neighborhood`, `detect_graph_patterns`). Escalates via `lineage_start_exploration` only on three triggers: (a) explicit visual graph render, (c) column tracing, or (d) engine `over_discovery_budget` rejection. Verbs like "trace / lineage / dependencies / upstream" are ordinary catalog questions; size is decided by the engine, not the AI. |
-| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every escalation. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. |
+| **Discovery** | AI | Default chat state — handles every multi-object dependency question that fits the budget by chaining `lineage_get_object_detail` calls. Uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`). Escalates via `lineage_start_exploration` only on three triggers: (a) explicit visual graph render, (c) column tracing, or (d) engine `over_discovery_budget` rejection. Verbs like "trace / lineage / dependencies / upstream" are ordinary catalog questions; size is decided by the engine, not the AI. |
+| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every escalation. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/prompting/scopeSummaryRenderer.ts`](../src/ai/prompting/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. |
 | **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |
@@ -81,15 +81,16 @@ The webview never talks to the engine directly. **Map** (engine, deterministic) 
 | Module | File | Role |
 |--------|------|------|
 | Chat surface | `vscode.lm` / `ChatResponseStream` | VS Code chat API — `sendRequest`, tool results, stream writer |
-| `lineageParticipant` | [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) | Turn handler, phase dispatch, system-prompt assembly (`buildStageSystemPrompt`), gate finalizer (`dispatchExit`) |
-| `toolProvider` | [`src/ai/toolProvider.ts`](../src/ai/toolProvider.ts) | Tool registration, Zod boundary, classification-locked `submit_findings` validation, scope-budget preflight |
-| `toolPolicy` | [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) | Phase × mode tool filter — single source of truth for which LM tools are exposed in discover / active-SM (BB or CT) / synthesis / completed |
-| `NavigationEngine` | [`src/ai/smBase.ts`](../src/ai/smBase.ts) | Map owner — agenda, visited set, route validation, scope summary, deferred-question bucket |
-| `scopeSummaryRenderer` | [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) | Pure markdown renderer for the `confirm_sm_start` gate detail (Schema → Type → Node tree + active filters), driven by `ScopeSummary` from the engine |
-| `templateRenderer` | [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) | Two-stage gate on YAML keys: `STAGE_BY_KEY` (phase routing) then `CLASSIFICATION_GATED` (per-classification filter) |
-| `prompts` / `smPrompts` | [`src/ai/prompts.ts`](../src/ai/prompts.ts), [`src/ai/smPrompts.ts`](../src/ai/smPrompts.ts) | Phase-specific prompt builders (`buildDiscoveryPrompt`, `buildActivePhasePrompt`, `buildSynthesisPrompt`, `buildModeBlock`, `buildMissionBriefBlock`, `buildCurrentTaskBlock`, `buildMemoryBlock`, `buildMissionStateBlock`) |
-| `messageEnvelope` | [`src/ai/messageEnvelope.ts`](../src/ai/messageEnvelope.ts) | Owner of the chat-message array; enforces tool_use/tool_result pairing invariant; sliding-memory wipe via `wipeAndSeed` |
-| `memoryManager` | [`src/ai/memoryManager.ts`](../src/ai/memoryManager.ts) | Detail archive + sliding working memory |
+| `lineageParticipant` | [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) | Turn handler, phase dispatch, system-prompt assembly (`buildStageSystemPrompt`), gate finalizer (`dispatchExit`) |
+| `toolProvider` | [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts) | Tool registration, Zod boundary, classification-locked `submit_findings` validation, scope-budget preflight |
+| `interaction/rules` | [`src/ai/interaction/rules/`](../src/ai/interaction/rules/) | Central non-Zod process rules: phase-policy gating, start/submit/present guards, gate-transition decision matrix |
+| `toolPolicy` | [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) | Phase × mode tool filter — single source of truth for which LM tools are exposed in discover / active-SM (BB or CT) / synthesis / completed |
+| `NavigationEngine` | [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) | Map owner — agenda, visited set, route validation, scope summary, deferred-question bucket |
+| `scopeSummaryRenderer` | [`src/ai/prompting/scopeSummaryRenderer.ts`](../src/ai/prompting/scopeSummaryRenderer.ts) | Pure markdown renderer for the `confirm_sm_start` gate detail (Schema → Type → Node tree + active filters), driven by `ScopeSummary` from the engine |
+| `templateRenderer` | [`src/ai/prompting/templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts) | Two-stage gate on YAML keys: `STAGE_BY_KEY` (phase routing) then `CLASSIFICATION_GATED` (per-classification filter) |
+| `prompts` / `smPrompts` | [`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts), [`src/ai/prompting/smPrompts.ts`](../src/ai/prompting/smPrompts.ts) | Phase-specific prompt builders (`buildDiscoveryPrompt`, `buildActivePhasePrompt`, `buildSynthesisPrompt`, `buildModeBlock`, `buildMissionBriefBlock`, `buildCurrentTaskBlock`, `buildMemoryBlock`, `buildMissionStateBlock`) |
+| `messageEnvelope` | [`src/ai/participant/messageEnvelope.ts`](../src/ai/participant/messageEnvelope.ts) | Owner of the chat-message array; enforces tool_use/tool_result pairing invariant; sliding-memory wipe via `wipeAndSeed` |
+| `memoryManager` | [`src/ai/session/memoryManager.ts`](../src/ai/session/memoryManager.ts) | Detail archive + sliding working memory |
 | `panelProvider` | [`src/panelProvider.ts`](../src/panelProvider.ts) | Webview bridge — Zod validation against [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) |
 | Webview | React UI | Graph rendering, filter UI, user actions |
 
@@ -112,13 +113,13 @@ graph LR
     T -.->|edge contraction| VB
 ```
 
-Rounded boxes are bodied (agenda-eligible); the square box is the passive table. Dashed arrows are the contraction path — the AI never sees a "table hop". The invariant is enforced by a single funnel in [`src/ai/smBase.ts`](../src/ai/smBase.ts): `enqueueHop` is the only code path that writes to the agenda.
+Rounded boxes are bodied (agenda-eligible); the square box is the passive table. Dashed arrows are the contraction path — the AI never sees a "table hop". The invariant is enforced by a single funnel in [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts): `enqueueHop` is the only code path that writes to the agenda.
 
 **Origin exception.** When the user starts a trace at a non-bodied node (typically a table), `enqueueHop` lifts the contraction *for the origin push only*: the starting point gets its own agenda slot and runs the standard `business_capture` / `technical_capture` templates. Middle-graph tables remain contracted.
 
 ## Tools per phase
 
-[`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) is the single source of truth. The ACTIVE toolset (`submit_findings + get_neighbor_columns`) has 2 tools so `toolMode.Required` falls back to `Auto` per VS Code LM rules. The toolless-drift corrective in `lineageParticipant.runHopLoop` (gate on `engine.status === 'awaiting_findings'`) is what actually enforces the contract.
+[`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) is the single source of truth. The ACTIVE toolset (`submit_findings + get_neighbor_columns`) has 2 tools so `toolMode.Required` falls back to `Auto` per VS Code LM rules. The toolless-drift corrective in `lineageParticipant.runHopLoop` (gate on `engine.status === 'awaiting_findings'`) is what actually enforces the contract.
 
 | Tool | Discovery | ACTIVE SM (BB+CT) | Synthesis | Completed | Purpose |
 |------|:---------:|:-----------------:|:---------:|:---------:|---------|
@@ -140,7 +141,7 @@ Discovery is the default chat state and handles every multi-object dependency qu
 - (c) The user requests **column tracing** (`targetColumns`).
 - (d) The engine returns `over_discovery_budget` — the rejection's `hint` names `lineage_start_exploration` as the next action.
 
-**Size is decided by the engine, not by the AI.** Verbs like "trace / lineage / dependencies / upstream / follow / all levels" are ordinary catalog questions — discovery answers them by chaining `lineage_get_object_detail` calls and writing Markdown. The budget guard at [src/ai/tokenBudget.ts](../src/ai/tokenBudget.ts) (`checkScopeBudget`) is the only mechanical size discriminator: it counts nodes and DDL bytes against `discoveryNodeCap` (default 8) / `discoveryTokenBudget` (default 8000). Over-budget catalog requests hard-reject with `over_discovery_budget`, which routes to trigger (d).
+**Size is decided by the engine, not by the AI.** Verbs like "trace / lineage / dependencies / upstream / follow / all levels" are ordinary catalog questions — discovery answers them by chaining `lineage_get_object_detail` calls and writing Markdown. The budget guard at [src/ai/infra/tokenBudget.ts](../src/ai/infra/tokenBudget.ts) (`checkScopeBudget`) is the only mechanical size discriminator: it counts nodes and DDL bytes against `discoveryNodeCap` (default 8) / `discoveryTokenBudget` (default 8000). Over-budget catalog requests hard-reject with `over_discovery_budget`, which routes to trigger (d).
 
 The escalation contract removed the legacy "detailed analysis verbs" trigger after commit `d27caa9` deleted inline mode. With inline gone, "detailed analysis" no longer has a low-cost path; routing those requests through gate-approved SM was costly and unnecessary for small scopes that fit the catalog.
 
@@ -160,7 +161,7 @@ There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) w
 | **Termination** | Engine drains agenda; `complete: true` silently ignored |
 | **Mid-session out-of-scope route** | Engine `deferQuestion(...)`; surfaced at synthesis |
 
-The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompts.ts`](../src/ai/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
+The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
 ## Memory model
 
@@ -253,7 +254,7 @@ None of these WM fields are stored — they are computed from the archive (or th
 
 ## The system prompt builder
 
-`buildStageSystemPrompt(phase)` in [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) composes the prompt in two parts:
+`buildStageSystemPrompt(phase)` in [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) composes the prompt in two parts:
 
 - **`buildStablePart(phase)`** is byte-stable across hops within a phase and is cached on `cachedStablePart`. It assembles, in order: `buildGeneralSystemPrompt` (role + platform + filter context + phase label) → the phase-specific block (`buildDiscoveryPrompt` / `buildActivePhasePrompt` / `buildSynthesisPrompt` / `buildFollowUpPrompt`) → in active phase only, `buildToolUsageBlock` + `buildModeBlock(BB|CT)` → `resolveStagePrompt` (the YAML-driven capture or render templates filtered by `STAGE_BY_KEY` and `CLASSIFICATION_GATED`) → `buildMissionBriefBlock` for active / synthesis / completed.
 - **`buildDynamicPart(phase)`** is rebuilt each hop. In active SM mode it carries `buildCurrentTaskBlock`, `buildMemoryBlock` (`<short_term_memory>` + tally), and `buildMissionStateBlock` (the ACK/WAIT protocol envelope). Synthesis emits no dynamic suffix — the closed archive is the substance, and a stale `<current_task>` from the last hop must not leak into the synthesis prompt.
@@ -280,11 +281,11 @@ The orphan guard (`wouldOrphanNotedNode`) is content-blind. Engine guards are to
 The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`, but the ACTIVE-mode toolset has ≥ 2 tools (`submit_findings + get_neighbor_columns`), so per VS Code LM rules `Required` always falls back to `Auto`. The contract is enforced in `lineageParticipant.runHopLoop` by a toolless-drift corrective: when the engine is `awaiting_findings` and the AI emits free-form text instead of a tool call, a mode-specific corrective user message is pushed onto the envelope and the loop continues. `MAX_ROUNDS` is the safety net for repeated drift.
 
 - **Speed via verbs, not adjectives.** `verdict: "prune"` drains the agenda quickly → synthesis fires. No silent text bail.
-- **ACTIVE tool palette** — BB/CT exposes `submit_findings + get_neighbor_columns`; synthesis is a separate later turn after the agenda drains. Single source: [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts).
-- **Repeat-Reject Guard** — [`src/ai/repeatRejectGuard.ts`](../src/ai/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
+- **ACTIVE tool palette** — BB/CT exposes `submit_findings + get_neighbor_columns`; synthesis is a separate later turn after the agenda drains. Single source: [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
+- **Repeat-Reject Guard** — [`src/ai/participant/repeatRejectGuard.ts`](../src/ai/participant/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
 - **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here" — `complete: true` is silently ignored in SM mode.
-- **Classification gate at session lock-in.** `start_exploration` requires `classification` (`business` | `technical` | `both`); missing or invalid values are rejected at the Zod boundary — there is no engine fallback. The tool-param description in `package.json` biases the AI toward `business` for ambiguous intent (`technical` only for explicit perf/index/tuning asks; `both` only for explicit "both angles" requests). The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification at the tool handler boundary (`toolProvider.validateSectionsAgainstClassification`); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.
-- **Two-stage template gate** — `STAGE_BY_KEY` (phase routing) and `CLASSIFICATION_GATED` (per-classification filter) in [`templateRenderer.ts`](../src/ai/templateRenderer.ts) decide which YAML keys ship per stage. `closing` carries an additional `slotCount >= 5` gate. No template body for an un-fired stage / classification ever reaches the model.
+- **Classification gate at session lock-in.** `start_exploration` requires `classification` (`business` | `technical` | `both`); missing or invalid values are rejected at the Zod boundary — there is no engine fallback. The tool-param description in `package.json` biases the AI toward `business` for ambiguous intent (`technical` only for explicit perf/index/tuning asks; `both` only for explicit "both angles" requests). The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification by [`src/ai/interaction/rules/submitFindingsRules.ts`](../src/ai/interaction/rules/submitFindingsRules.ts); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.
+- **Two-stage template gate** — `STAGE_BY_KEY` (phase routing) and `CLASSIFICATION_GATED` (per-classification filter) in [`templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts) decide which YAML keys ship per stage. `closing` carries an additional `slotCount >= 5` gate. No template body for an un-fired stage / classification ever reaches the model.
 - **Identifier-match contract on capture.** `submit_findings` rejects with `focus_subject_mismatch` when any captured `section.text` opens by naming a different scope node than the declared `focus_node_id`. Mechanical scan of the first 200 chars; not a content-quality judgement.
 - **Gate detail always rendered** — when the session is `awaiting_gate` at finalizer time, `dispatchExit` rebuilds the detail from `engine.getScopeSummary()` (rendered through `renderScopeSummaryMd`) if no `gate`-exit fired this turn. Refine narration ("I'll remove the views…") with no tool call still shows the current scope tree above the buttons.
 - **Synthesis pre-tool prose is shape-bounded.** The streamer's prose-gate (in `lineageParticipant.handleChatRequest`) surfaces synthesis prose only after the first `tool_use` part is observed; pre-tool prose is suppressed because the rendered chat narrative comes after the `present_result` call. A `## ` heading-slice on synthesis prose strips the model's planning preamble ("Now I have all slots. Assembling the final report.") so it never welds onto the synthesised answer.
@@ -336,7 +337,7 @@ Discovery sub-states (`ClassifyQuestion → direct | escalation → SeedAgenda`)
 
 ## Session FSM & typed exit dispatch
 
-`SessionPhase` ([`src/ai/sessionPhase.ts`](../src/ai/sessionPhase.ts)) is a typed discriminated union; every hop-loop exit is typed; one `dispatchExit` switch owns all post-loop cleanup. TypeScript exhaustiveness prevents "paused gate rendered as incomplete" regressions structurally.
+`SessionPhase` ([`src/ai/session/sessionPhase.ts`](../src/ai/session/sessionPhase.ts)) is a typed discriminated union; every hop-loop exit is typed; one `dispatchExit` switch owns all post-loop cleanup. TypeScript exhaustiveness prevents "paused gate rendered as incomplete" regressions structurally.
 
 | `HopLoopExit.kind` | Triggered by | Cleanup |
 |--------------------|--------------|---------|
@@ -378,3 +379,4 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Working Memory** (WM) | Per-hop snapshot the prompt builder assembles from the archive plus constants — `user_question`, `checklist`, `recent_rejections`, `active_schemas`, optional `budget_pressure`; `short_term_memory` (last 3 summaries) is a sibling sliding view from `getShortTermMemory()`. Not stored — recomputed every hop. |
 | **`action_required`** | Engine envelope that emits a consent gate. Turn ends; user reply resumes or aborts. |
 | **Deferred question** | In SM, an out-of-border route collected silently and surfaced at synthesis. |
+

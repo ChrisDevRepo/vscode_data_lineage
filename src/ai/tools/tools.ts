@@ -1,0 +1,1362 @@
+/**
+ * AI tool pure functions — zero VS Code imports.
+ * 8 classic retrieval functions invoked by classic LanguageModelTools in extension.ts.
+ * CT and BB tools (start_exploration, submit_findings)
+ * are handled directly by NavigationEngine in toolProvider.ts.
+ *
+ * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
+ */
+import { bfsFromNode } from 'graphology-traversal';
+import type Graph from 'graphology';
+import { z } from 'zod';
+import {
+  DEFAULT_CONFIG,
+  type DatabaseModel,
+  type LineageNode,
+  type ColumnDef,
+  type ObjectType,
+  type AnalysisType,
+  type NeighborIndex,
+} from '../../engine/types';
+import { normalizeName } from '../../engine/modelBuilder';
+import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
+import { ColumnStore } from '../../engine/columnStore';
+import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
+import { normalizeBodyScript } from '../../utils/sql';
+import { normalizeSearchQueryInput } from '../inputNormalization';
+import type { SerializedFilterState, FilterProfile } from '../../engine/projectStore';
+import {
+  strip, edgeApiType,
+  presentNode, presentColumn, presentColumnCompact, presentFkCompact,
+  presentSchema, presentNeighbor, presentFilter,
+} from '../aiPresenter';
+import type { ColumnFlowRole } from '../smTypes';
+
+
+import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from '../tokenBudget';
+export { shouldInline, estimateTokens, getEffectiveBudget, setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, checkScopeBudget, getDiscoveryLimits } from '../tokenBudget';
+
+/** Max nodes for inline BFS delivery — above this, recommend state machine. */
+export const BFS_INLINE_NODE_CAP = 200;
+/** Max results returned in fallback (cross-schema) search. */
+export const FALLBACK_RESULT_LIMIT = 10;
+
+
+type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
+
+/**
+ * Zod schema for `start_exploration` tool input. Parsed at the boundary so malformed
+ * payloads (e.g. missing `origin`) produce a structured `missing_field` error instead
+ * of crashing `NavigationEngine.init` on `.toLowerCase()` of undefined.
+ *
+ * @remarks
+ * Either `origin` (fresh exploration) or `supplement.nodeIds` (post-synthesis add) must
+ * be present. Supplement mode reuses the existing `NavigationEngine` / archive: the
+ * supplied node ids are appended to the agenda, run through the SM hop loop, and new
+ * `DetailSlot` entries merge into the existing archive. Used by the follow-up phase
+ * (see `buildFollowUpPrompt`) for deferred-question continuation.
+ */
+export const StartExplorationInputSchema = z.object({
+  origin: z.string().min(1).optional(),
+  question: z.string().optional(),
+  targetColumns: z.array(z.string()).optional(),
+  direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
+  depth: z.coerce.number().int().positive().optional(),
+  /** Asymmetric override for upstream traversal depth — only honored when `direction='bidirectional'`. */
+  upstream_depth: z.coerce.number().int().min(0).optional(),
+  /** Asymmetric override for downstream traversal depth — only honored when `direction='bidirectional'`. */
+  downstream_depth: z.coerce.number().int().min(0).optional(),
+  depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
+  excludeTypes: z.array(z.string()).optional(),
+  /**
+   * Schemas to drop from the BFS scope (case-insensitive). Honored at scope-build time —
+   * any candidate node whose schema matches is excluded. REPLACE semantics: each call
+   * wipes prior filter state on the engine; accumulate across refine rounds by re-sending
+   * every prior exclusion plus the new one.
+   */
+  excludeSchemas: z.array(z.string()).optional(),
+  /**
+   * Specific node ids to drop from the BFS scope (case-insensitive). Cuts the node and
+   * its subtree reachable only through it. Use only when the user explicitly says
+   * remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}.
+   * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
+   * the call to reject with `unknown_node_ids`.
+   */
+  excludeNodeIds: z.array(z.string()).optional(),
+  /**
+   * Specific node ids the engine keeps in scope but auto-passes (no analysis written,
+   * topology preserved so descendants stay reachable). Default interpretation when the
+   * user says ignore / skip / don't analyze. REPLACE semantics — see {@link excludeSchemas}.
+   * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
+   * the call to reject with `unknown_node_ids`.
+   */
+  passNodeIds: z.array(z.string()).optional(),
+  mission_brief: z.string().optional(),
+  classification: z.enum(['business', 'technical', 'both']),
+  /**
+   * Post-synthesis supplement: extend the existing archive with analysis for these
+   * additional node ids. Runs through the SM hop loop; slots merge into the existing
+   * `AiMemoryManager`. No `origin` needed — the existing exploration is the origin.
+   * Fails if no completed engine is attached to the session.
+   */
+  supplement: z.object({
+    nodeIds: z.array(z.string().min(1)).min(1),
+  }).optional(),
+}).refine(
+  (data) => !!data.origin || !!data.supplement,
+  { message: "Either 'origin' (fresh exploration) or 'supplement.nodeIds' (post-synthesis add) must be provided." },
+);
+
+export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
+
+/**
+ * Zod schema for one captured section within `submit_findings.sections[]`.
+ *
+ * @remarks
+ * Each fired `*_capture` YAML template produces ONE entry. Angle-vs-classification
+ * conformance is enforced at the tool handler boundary
+ * (`toolProvider.validateSectionsAgainstClassification`) — the schema accepts any
+ * combination here; the handler rejects mismatches against the locked `sess.classification`.
+ */
+const CapturedSectionSchema = z.object({
+  /** Which YAML capture template produced this section. */
+  angle: z.enum(['business', 'technical']),
+  /** Pre-formatted section body. */
+  text: z.string().min(1),
+});
+
+/**
+ * Zod schema for a single finding within `submit_findings`.
+ */
+const HopFindingSchema = z.object({
+  focus_node_id: z.string(),
+  /**
+   * One section per fired `*_capture` template. Length 1 (`business` / `technical`
+   * classification) or 2 (`both`). Verdict=prune findings may submit length 0
+   * (no analysis to record).
+   */
+  sections: z.array(CapturedSectionSchema).max(2),
+  summary: z.string().max(500),
+  verdict: z.enum(['analyze', 'pass', 'prune']),
+  /**
+   * Optional list of neighbors to queue for the next hops. Each entry's
+   * `nodeId` must already be a real id you have seen — either in the prior
+   * tool result's `next_hop` / `neighbors[]` data, in a
+   * `lineage_get_neighbor_columns` lookup, or in a `lineage_search_objects`
+   * result. Inventing an id (e.g. guessing `[s].[procFoo]` when the real
+   * name is `[s].[ProcFooDetailed]`) causes the engine to reject the
+   * submission with `route_validation_failed` — the rejected ids do not
+   * enter the agenda, so the next hop will re-present the same focus and
+   * the exploration cannot advance.
+   * `question` is the sub-question driving analysis at that hop (multi-part
+   * is fine); `columns` is optional column-trace targets for CT mode.
+   */
+  route_requests: z.array(z.object({
+    nodeId: z.string(),
+    question: z.string(),
+    columns: z.array(z.string()).optional(),
+  })).optional(),
+  prune_neighbors: z.array(z.string()).optional(),
+  complete: z.boolean().optional(),
+  badge_label: z.string().max(50).optional(),
+  note_caption: z.string().max(200).optional(),
+  column_flow: z.array(z.object({
+    out_col: z.string(),
+    writes_to: z.object({ node: z.string(), col: z.string() }).optional(),
+    contributors: z.array(z.object({
+      from_node: z.string(),
+      from_col: z.string(),
+      role: z.enum(['formula', 'rename', 'case', 'coalesce', 'join_value', 'aggregate', 'filter_only', 'source'] satisfies [ColumnFlowRole, ...ColumnFlowRole[]]),
+    })),
+  })).optional(),
+});
+
+/**
+ * Zod schema for `submit_findings` tool input — one finding per SM hop.
+ */
+export const SubmitFindingsInputSchema = HopFindingSchema;
+
+export type SubmitFindingsInput = z.infer<typeof SubmitFindingsInputSchema>;
+
+/**
+ * Lightweight runtime validation for LLM tool inputs.
+ *
+ * @remarks
+ * This function ensures that tool inputs provided by the language model match the
+ * expected schema. It returns a structured error if any required field is missing
+ * or has the wrong type, allowing the AI to self-correct.
+ *
+ * @param input - The raw input object provided by the language model.
+ * @param required - A map of required field names to their expected TypeScript types.
+ * @returns An error object if validation fails, otherwise `null`.
+ */
+export function validateToolInput(
+  input: unknown,
+  required: Record<string, FieldType>,
+): { error: string; hint: string } | null {
+  if (input === null || input === undefined || typeof input !== 'object') {
+    return { error: 'invalid_input', hint: 'Tool input must be an object.' };
+  }
+  const obj = input as Record<string, unknown>;
+  for (const [field, expectedType] of Object.entries(required)) {
+    const val = obj[field];
+    if (val === undefined || val === null) {
+      return { error: 'missing_field', hint: `Required field "${field}" is missing.` };
+    }
+    if (expectedType === 'array') {
+      if (!Array.isArray(val)) {
+        return { error: 'wrong_type', hint: `Field "${field}" must be an array, got ${typeof val}.` };
+      }
+    } else if (typeof val !== expectedType) {
+      return { error: 'wrong_type', hint: `Field "${field}" must be ${expectedType}, got ${typeof val}.` };
+    }
+  }
+  return null;
+}
+
+
+/** Number of context lines shown in DDL/body search snippets. */
+const SNIPPET_CONTEXT_LINES = 2;
+/** Hard cap on `search_columns` results — prevents unbounded enumeration on wide schemas. */
+const COLUMN_SEARCH_LIMIT = 50;
+/** Char cap on the AI-supplied `name` field in `present_result` — guards against pathological prompt injection or runaway labels. */
+const PRESENT_RESULT_NAME_MAX_LENGTH = 200;
+/** Char cap on the AI-supplied `summary` field in `present_result` — keeps the badge readable in the chat stream. */
+const PRESENT_RESULT_SUMMARY_HARD_LIMIT = 300;
+
+/**
+ * Builds a lookup map for edges between nodes.
+ *
+ * @param model - The full database model.
+ * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge type.
+ */
+export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const e of model.edges) {
+    m.set(`${e.source}→${e.target}`, edgeApiType(e.type));
+  }
+  return m;
+}
+
+/**
+ * Builds a lookup map for nodes by their ID.
+ *
+ * @param model - The full database model.
+ * @returns A map of node IDs to their respective LineageNode objects.
+ */
+export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
+  const m = new Map<string, LineageNode>();
+  for (const n of model.nodes) m.set(n.id, n);
+  return m;
+}
+
+/**
+ * Builds a map of lowercase "Schema.Name" to lists of unresolved (unrelated) references.
+ *
+ * @remarks
+ * Unresolved references are identifiers found in the DDL during parsing that do not
+ * exist in the current model. This metadata helps the AI understand potential
+ * external dependencies or missing objects.
+ *
+ * @param model - The full database model.
+ * @returns A map of object names to their unresolved reference strings.
+ */
+export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  if (!model.parseStats?.spDetails) return m;
+  for (const d of model.parseStats.spDetails) {
+    if (d.unrelated?.length) {
+      m.set(d.name.toLowerCase(), d.unrelated.map(r => r.replace(/ \(exec\)$/, '')));
+    }
+  }
+  return m;
+}
+
+
+/**
+ * Extracts `@ParamName` identifiers from a procedure/function DDL signature.
+ *
+ * @remarks
+ * Parses the parameter list between `CREATE PROCEDURE`/`CREATE FUNCTION` and the `AS` keyword.
+ *
+ * @param ddl - Raw DDL body of a procedure or function.
+ * @returns Array of parameter names (with leading `@`), or empty array if none found.
+ */
+export function parseProcParams(ddl: string): string[] {
+  // Match everything between the object header and the AS/BEGIN keyword
+  const headerMatch = ddl.match(/CREATE\s+(?:PROCEDURE|PROC|FUNCTION)\s+[^\s(]+\s*([\s\S]*?)\s+AS\b/i);
+  if (!headerMatch) return [];
+  const paramSection = headerMatch[1];
+  const params: string[] = [];
+  // Each @Param followed by a type declaration
+  const paramRe = /@(\w+)\s+\w/g;
+  let m: RegExpExecArray | null;
+  while ((m = paramRe.exec(paramSection)) !== null) {
+    params.push(`@${m[1]}`);
+  }
+  return params;
+}
+
+/**
+ * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
+ *
+ * @param nodeId - The unique identifier of the node.
+ * @param nodeMap - The ground-truth map of all nodes.
+ * @param store - Optional column store for high-fidelity metadata.
+ * @returns An array of column definitions, or `undefined` if the node is not found.
+ */
+export function getNodeColumns(
+  nodeId: string, nodeMap: Map<string, LineageNode>,
+  store?: ColumnStore,
+): ColumnDef[] | undefined {
+  return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
+}
+
+/**
+ * Retrieves the normalized DDL for a specific node.
+ *
+ * @param nodeId - The unique identifier of the node.
+ * @param nodeMap - The ground-truth map of all nodes.
+ * @param store - Optional column store for high-fidelity DDL.
+ * @returns The normalized DDL string, or `undefined` if not available.
+ */
+export function getNodeDdl(
+  nodeId: string, nodeMap: Map<string, LineageNode>,
+  store?: ColumnStore,
+): string | undefined {
+  const raw = (typeof store?.getDdl === 'function' ? store.getDdl(nodeId) : undefined) ?? nodeMap.get(nodeId)?.bodyScript;
+  return raw ? normalizeBodyScript(raw) : undefined;
+}
+
+/**
+ * Constructs a detailed "Focus Node" object for use in exploration hop contexts.
+ *
+ * @remarks
+ * This function packages all pertinent metadata for a node (DDL, columns, foreign keys,
+ * and unresolved references) into a shape suitable for the AI agent to analyze during a hop.
+ *
+ * @param node - The node currently in focus.
+ * @param nodeMap - The map of all nodes.
+ * @param unrelatedMap - The map of unresolved references.
+ * @param store - Optional high-fidelity column store.
+ * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
+ * @returns A record containing the focus node's metadata.
+ */
+export function buildHopFocusNode(
+  node: LineageNode,
+  nodeMap: Map<string, LineageNode>,
+  unrelatedMap: Map<string, string[]>,
+  store?: ColumnStore,
+  ddlKey = 'ddl',
+  neighborIndex?: NeighborIndex,
+  edgeTypeMap?: Map<string, string>,
+): Record<string, unknown> {
+  const focusNode: Record<string, unknown> = {
+    id: node.id, s: node.schema, n: node.name, t: node.type,
+  };
+  const ddl = getNodeDdl(node.id, nodeMap, store);
+  const cols = getNodeColumns(node.id, nodeMap, store);
+  if (SCRIPT_TYPES.has(node.type) && ddl) {
+    focusNode[ddlKey] = ddl;
+  } else if (cols?.length) {
+    focusNode.cols = cols.map(c => presentColumnCompact(c));
+  }
+  if (node.fks?.length) {
+    focusNode.fks = node.fks.map(fk => presentFkCompact(fk));
+  }
+  const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
+  const unrel = unrelatedMap.get(unrelKey);
+  if (unrel?.length) focusNode.unresolved_refs = unrel;
+
+  const result = strip(focusNode) as Record<string, unknown>;
+
+  // Non-bodied nodes (tables) carry no DDL body — the AI must ground structural_summary
+  // sections (Upstream sources / Downstream consumers) in actual graph edges, not guesses.
+  // Always emit in/out even when empty so the AI sees "zero neighbors" rather than absence.
+  if (!SCRIPT_TYPES.has(node.type) && neighborIndex && edgeTypeMap) {
+    const entry = neighborIndex[node.id] ?? { in: [], out: [] };
+    result.in  = entry.in.map(nid  => presentNeighbor(nid, node.id, nodeMap, edgeTypeMap, true));
+    result.out = entry.out.map(nid => presentNeighbor(nid, node.id, nodeMap, edgeTypeMap, false));
+  }
+
+  return result;
+}
+
+
+/**
+ * Retrieves the high-level context of the current project for the AI.
+ *
+ * @remarks
+ * This function builds a summary of the loaded model, including schema lists,
+ * visible node counts, and token budget estimates. If the catalog is small enough,
+ * it inlines the full object list and edges; otherwise, it provides a summary
+ * and instructs the AI to use on-demand retrieval.
+ *
+ * @param model - The database model.
+ * @param activeFilter - The current UI filter state.
+ * @param projectName - The name of the active project.
+ * @param savedViews - The list of user-saved bookmarks/views.
+ * @param store - Optional column store.
+ * @returns An object containing project metadata and potentially the full catalog.
+ */
+export function getContext(
+  model: DatabaseModel,
+  activeFilter: SerializedFilterState | null,
+  projectName: string | null,
+  savedViews: FilterProfile[],
+  store?: import('../../engine/columnStore').ColumnStore,
+) {
+  const visibleNodes = activeFilter
+    ? model.nodes.filter(n => {
+        const schemas = new Set(activeFilter.schemas);
+        const types   = new Set(activeFilter.types);
+        if (schemas.size > 0 && !schemas.has(n.schema)) return false;
+        if (types.size > 0 && !types.has(n.type)) return false;
+        return true;
+      }).length
+    : model.nodes.length;
+
+  // Build full catalog payload, then measure — token budget decides inline vs on-demand
+  const catalog = model.nodes.map(n => {
+    const base = presentNode(n, model.neighborIndex);
+    const ddlBody = store?.getDdl(n.id) ?? n.bodyScript;
+    if (SCRIPT_TYPES.has(n.type) && ddlBody) {
+      const ddl = normalizeBodyScript(ddlBody);
+      return { ...base, ddl };
+    }
+    const cols = store?.getColumns(n.id) ?? n.columns;
+    if (cols && cols.length > 0) {
+      const enriched: Record<string, unknown> = { ...base, cols: cols.map(c => presentColumn(c)) };
+      if (n.fks && n.fks.length > 0) {
+        enriched.fks = n.fks.map(fk => ({
+          name: fk.name, columns: fk.columns,
+          ref_schema: fk.refSchema, ref_table: fk.refTable,
+          ref_columns: fk.refColumns, on_delete: fk.onDelete,
+        }));
+      }
+      return strip(enriched);
+    }
+    return base;
+  });
+  const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]);
+  const catalogChars = JSON.stringify(catalog).length + JSON.stringify(edges).length;
+  const isInline = shouldInline(catalogChars);
+
+  return {
+    project_name:  projectName,
+    source_type:   model.dbPlatform ? 'database' : 'dacpac',
+    db_platform:   model.dbPlatform ?? null,
+    model_size:    isInline ? 'small' as const : 'large' as const,
+    model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
+    schemas:       model.schemas.map(s => presentSchema(s)),
+    visible_nodes: visibleNodes,
+    filter:        activeFilter ? presentFilter(activeFilter) : null,
+    saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
+    // Token budget check: inline full catalog when payload fits, otherwise summary only
+    ...(isInline && { objects: catalog, edges }),
+    ...(!isInline && model.parseStats && {
+      unresolved_ref_count: model.parseStats.droppedRefs?.length ?? 0,
+    }),
+    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars), budget: getEffectiveBudget(), decision: isInline ? 'inline' : 'on_demand' },
+  };
+}
+
+
+/**
+ * Validates a search query for sanity.
+ *
+ * @param query - The user-provided search string.
+ * @returns Success status or an error with a hint.
+ */
+export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters.' };
+  }
+  if (/^[.*?+^$]+$/.test(trimmed)) {
+    return { ok: false, error: 'query_too_broad', hint: 'Query matches everything. Be more specific or use schemas[] to narrow scope.' };
+  }
+  return { ok: true };
+}
+
+
+/**
+ * Searches for objects in the model by name or column name.
+ *
+ * @remarks
+ * This function performs a fuzzy or regex search across object names and column names.
+ * It automatically handles schema mismatches by searching globally if a schema-restricted
+ * search yields no results.
+ *
+ * @param model - The database model.
+ * @param query - The search query.
+ * @param types - Optional filter for object types.
+ * @param schemas - Optional filter for schemas.
+ * @param mode - Search mode ('substring' or 'regex').
+ * @param activeFilter - Current UI filter state to tag results.
+ * @returns A list of matches with metadata and AI hints.
+ */
+export function searchObjects(
+  model: DatabaseModel,
+  query: string,
+  types?: ObjectType[],
+  schemas?: string[],
+  mode: 'substring' | 'regex' = 'substring',
+  activeFilter?: SerializedFilterState | null,
+) {
+  const normalizedQuery = normalizeSearchQueryInput(query);
+  const normalizedSchemas =
+    schemas && schemas.length > 0
+      ? schemas
+      : (normalizedQuery.schemaHint ? [normalizedQuery.schemaHint] : undefined);
+
+  if (normalizedQuery.query.length > REGEX_MAX_LENGTH) {
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
+  }
+
+  if (mode !== 'regex') {
+    const validation = validateQuery(normalizedQuery.query);
+    if (!validation.ok) {
+      return { error: validation.error, hint: validation.hint };
+    }
+  }
+
+  const effectiveQuery = normalizedQuery.query.trim();
+  const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
+  const typeSet   = types   ? new Set<ObjectType>(types)   : undefined;
+  const schemaSet = appliedSchemaFilter ? new Set<string>(normalizedSchemas!) : undefined;
+
+  const nameHits = searchCatalog(
+    model.nodes as SearchableNode[],
+    effectiveQuery,
+    typeSet,
+    schemaSet,
+    Number.MAX_SAFE_INTEGER,
+    mode,
+  );
+
+  // Column name search (tables/external only, always-on, respects schema/type filters)
+  let columnNodes = model.nodes as SearchableNode[];
+  if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
+  if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
+  const columnHits = mode === 'substring'
+    ? searchColumns(columnNodes, effectiveQuery, COLUMN_SEARCH_LIMIT)
+    : [];
+  const seenIds = new Set(nameHits.map(n => n.id));
+
+  const results = [
+    ...nameHits.map(n => ({
+      ...presentNode(n, model.neighborIndex),
+      match: 'name' as const,
+    })),
+    ...columnHits
+      .filter(h => !seenIds.has(h.node.id))
+      .map(h => ({
+        ...presentNode(h.node, model.neighborIndex),
+        match: 'column' as const,
+        matched_columns: h.snippet,
+      })),
+  ];
+
+  // Tag each result with in_user_filter so AI knows what the user currently sees
+  const filterSchemaSet = activeFilter?.schemas?.length
+    ? new Set(activeFilter.schemas.map(s => s.toLowerCase()))
+    : null;
+  const taggedResults = results.map(r => ({
+    ...r,
+    in_user_filter: filterSchemaSet ? filterSchemaSet.has((((r as Record<string, unknown>).s as string) ?? '').toLowerCase()) : true,
+  }));
+
+  const visibleNodeCount = activeFilter
+    ? model.nodes.filter(n => {
+        const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => s.toLowerCase() === n.schema.toLowerCase());
+        const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type as ObjectType);
+        return schemaOk && typeOk;
+      }).length
+    : model.nodes.length;
+  const filterContext = {
+    active_schemas: activeFilter?.schemas?.length ? activeFilter.schemas : null,
+    active_types: activeFilter?.types?.length ? activeFilter.types : null,
+    focus_schemas: activeFilter?.focusSchemas?.length ? activeFilter.focusSchemas : null,
+    hide_isolated: activeFilter?.hideIsolated ?? false,
+    visible_node_count: visibleNodeCount,
+    total_node_count: model.nodes.length,
+    all_schemas: [...new Set(model.nodes.map(n => n.schema))],
+  };
+
+  const base = {
+    results: taggedResults,
+    total: taggedResults.length,
+    filter_context: filterContext,
+  };
+
+  if (taggedResults.length === 0) {
+    // Schema mismatch detection: schema-filtered search empty, but name exists elsewhere?
+    if (appliedSchemaFilter) {
+      const fallbackHits = searchCatalog(
+        model.nodes as SearchableNode[],
+        effectiveQuery,
+        typeSet,
+        undefined, // no schema filter
+        FALLBACK_RESULT_LIMIT,
+        mode,
+      );
+      if (fallbackHits.length > 0) {
+        const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
+        // Return fallback results as primary — AI can proceed immediately
+        const fallbackResults = fallbackHits.slice(0, FALLBACK_RESULT_LIMIT).map(n => ({
+          ...presentNode(n, model.neighborIndex),
+          match: 'name' as const,
+          in_user_filter: filterSchemaSet ? filterSchemaSet.has(n.schema.toLowerCase()) : true,
+        }));
+        return {
+          results: fallbackResults,
+          total: fallbackResults.length,
+          filter_context: filterContext,
+          ai_hint: `0 results in schemas [${appliedSchemaFilter.join(', ')}]. Found "${effectiveQuery}" in [${foundSchemas.join(', ')}]. Results shown from matched schemas.`,
+          schema_correction: {
+            requested_schemas: appliedSchemaFilter,
+            actual_schemas: foundSchemas,
+          },
+        };
+      }
+    }
+    return {
+      ...base,
+      ai_hint: `No results for "${effectiveQuery}". Try search_ddl for DDL body matches, try regex mode, or broaden with fewer filters.`,
+    };
+  }
+  return base;
+}
+
+
+const NEIGHBOR_CAP = 25;
+
+/**
+ * Retrieves full metadata for a specific database object, including DDL, columns, and neighbors.
+ *
+ * @remarks
+ * This is the primary "drill-down" tool for the AI. It provides a high-fidelity view of a single node,
+ * including its schema, name, type, and relationships. Upstream and downstream neighbors are capped
+ * to prevent token overflow, but DDL and column lists are always delivered in full.
+ *
+ * @param model - The full database model.
+ * @param id - The unique identifier of the object (e.g., "schema.name").
+ * @param store - Optional column store for high-fidelity metadata.
+ * @returns A detailed object representation or a "not_found" error.
+ */
+export function getObjectDetail(
+  model: DatabaseModel,
+  id: string,
+  store?: import('../../engine/columnStore').ColumnStore,
+): object {
+  // AI may send bracket-qualified or mixed-case names; normalize to the
+  // canonical [schema].[name] lowercase form used by the model's node map.
+  const normalizedId = normalizeName(id);
+  const nodeMap   = buildNodeMap(model);
+  const node      = nodeMap.get(normalizedId);
+  if (!node) {
+    return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
+  }
+
+  const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
+  const edgeMap   = buildEdgeTypeMap(model);
+
+  const upRaw  = neighbors.in;
+  const dnRaw  = neighbors.out;
+  const up     = upRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, true));
+  const dn     = dnRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, false));
+  const upMore = Math.max(0, upRaw.length - NEIGHBOR_CAP);
+  const dnMore = Math.max(0, dnRaw.length - NEIGHBOR_CAP);
+
+  const cols = getNodeColumns(node.id, nodeMap, store);
+  const columns    = cols?.map(c => presentColumn(c)) ?? undefined;
+  const foreignKeys = node.fks?.map(fk => ({
+    name:        fk.name,
+    columns:     fk.columns,
+    ref_schema:  fk.refSchema,
+    ref_table:   fk.refTable,
+    ref_columns: fk.refColumns,
+    on_delete:   fk.onDelete,
+  })) ?? null;
+
+  const base: Record<string, unknown> = strip({
+    id:           node.id,
+    schema:       node.schema,
+    name:         node.name,
+    type:         node.type,
+    external_type: node.externalType || undefined,
+    external_url:  node.externalUrl  || undefined,
+    columns,
+    foreign_keys:  foreignKeys || undefined,
+    up:            up.length > 0 ? up : undefined,
+    dn:            dn.length > 0 ? dn : undefined,
+    up_more:       upMore > 0 ? upMore : undefined,
+    dn_more:       dnMore > 0 ? dnMore : undefined,
+  } as Record<string, unknown>);
+
+  const ddl = getNodeDdl(node.id, nodeMap, store) ?? null;
+
+  // Attach unresolved refs for scriptable nodes
+  const unrelMap = buildUnrelatedMap(model);
+  const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
+  const unresolved_refs = unrelMap.get(unrelKey) ?? undefined;
+
+  // Never truncate DDL — zero-truncation guarantee
+  return { ...base, ddl, unresolved_refs };
+}
+
+
+/**
+ * Zod schema for `get_neighbor_columns` tool input.
+ *
+ * @remarks
+ * Parsed at the boundary so malformed payloads (e.g. missing `ids`, empty array)
+ * produce a structured validation error instead of crashing the handler.
+ */
+export const GetNeighborColumnsInputSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1),
+});
+
+export type GetNeighborColumnsInput = z.infer<typeof GetNeighborColumnsInputSchema>;
+
+/**
+ * Returns structural metadata (columns + foreign keys) for one or more neighbor nodes.
+ *
+ * @remarks
+ * SM ACTIVE pruning-verification affordance. When a focus procedure's DDL uses a
+ * wildcard reference (e.g. `SELECT * FROM dbo.FactSales`), the AI cannot see the
+ * neighbor's columns from the focus body alone; this tool lets it inspect them
+ * to decide whether the neighbor carries mission-relevant data (prune vs. keep).
+ *
+ * **Scope:** structural metadata only — columns with type/nullability, foreign-key
+ * definitions. Deliberately does **not** return DDL bodies; DDL is reserved for
+ * DISCOVERY (`get_object_detail`) and SYNTHESIS (`get_object_detail`) phases. In
+ * SM hop-by-hop the only DDL the AI sees is the focus node's `bb_ddl`, delivered
+ * by `buildHopFocusNode`.
+ *
+ * **Engine-side validation (caller's responsibility):** ids must be direct
+ * neighbors of the current focus node AND within the active BFS scope. See
+ * `NavigationEngine.validateNeighborIds`.
+ *
+ * @param model - Loaded database model.
+ * @param ids - Node ids to inspect (pre-validated by the engine).
+ * @param store - Optional column store for high-fidelity column data.
+ * @returns `{ results: [...], total }` — one row per input id, columns and FKs only.
+ */
+export function getNeighborColumns(
+  model: DatabaseModel,
+  ids: string[],
+  store?: ColumnStore,
+): object {
+  const nodeMap = buildNodeMap(model);
+  const results = ids.map(id => {
+    const node = nodeMap.get(id);
+    if (!node) {
+      return { id, error: 'not_found' as const };
+    }
+    const cols = getNodeColumns(id, nodeMap, store);
+    const foreignKeys = node.fks?.map(fk => ({
+      name:        fk.name,
+      columns:     fk.columns,
+      ref_schema:  fk.refSchema,
+      ref_table:   fk.refTable,
+      ref_columns: fk.refColumns,
+      on_delete:   fk.onDelete,
+    }));
+    return strip({
+      id:           node.id,
+      schema:       node.schema,
+      name:         node.name,
+      type:         node.type,
+      columns:      cols?.length ? cols.map(c => presentColumn(c)) : undefined,
+      foreign_keys: foreignKeys?.length ? foreignKeys : undefined,
+    } as Record<string, unknown>);
+  });
+  return { results, total: results.length };
+}
+
+/**
+ * Object types whose body is the source of lineage information — view / procedure / function.
+ *
+ * @remarks
+ * Drives DDL-vs-columns selection in {@link buildHopFocusNode} and search-target
+ * filtering in {@link searchDdl}. Tables and external references are intentionally
+ * excluded — they expose columns + foreign keys, not bodies.
+ */
+export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
+
+/**
+ * Largest BFS depth from `origin` whose scope fits within `safeNodeCap`.
+ *
+ * @remarks
+ * Used by the preflight scope-vs-budget gate in `lineage_start_exploration`. Walks
+ * outwards from the origin and returns the depth just before the scope exceeds the
+ * cap, clamping at 1 (callers never recommend `depth=0`). Returns 0 only when even
+ * the origin + immediate neighbors exceed the cap, which signals an unwinnable
+ * budget and should be surfaced as-is for the AI to re-ask the user.
+ *
+ * @param graph - Loaded lineage graph.
+ * @param origin - Origin node id.
+ * @param direction - BFS direction, same enum accepted by `lineage_start_exploration`.
+ * @param safeNodeCap - Largest scope size that still leaves headroom in the round budget.
+ * @returns Suggested depth, 1 or above when feasible, 0 when the budget is too tight.
+ */
+export function suggestNarrowerDepth(
+  graph: Graph,
+  origin: string,
+  direction: 'upstream' | 'downstream' | 'bidirectional',
+  safeNodeCap: number,
+): number {
+  const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
+  const depthMap = new Map<string, number>();
+  let maxSafeDepth = 0;
+  bfsFromNode(graph, origin, (key, _attr, depth) => {
+    depthMap.set(key, depth);
+    return false;
+  }, { mode });
+  // Count nodes at each depth and accumulate — pick the largest depth whose cumulative count fits.
+  const byDepth: number[] = [];
+  for (const d of depthMap.values()) byDepth[d] = (byDepth[d] ?? 0) + 1;
+  let running = 0;
+  for (let d = 0; d < byDepth.length; d++) {
+    running += byDepth[d] ?? 0;
+    if (running > safeNodeCap) break;
+    maxSafeDepth = d;
+  }
+  return Math.max(maxSafeDepth, maxSafeDepth === 0 ? 0 : 1);
+}
+
+
+
+/**
+ * Executes a structural graph analysis to identify hubs, islands, or longest paths.
+ *
+ * @remarks
+ * This tool allows the AI to perform higher-level reasoning about the entire graph topology
+ * without retrieving every node's metadata. It uses deterministic engine logic to find
+ * architectural hotspots and change-risk areas.
+ *
+ * @param model - The database model.
+ * @param graph - The graphology instance.
+ * @param type - The type of analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
+ * @param minDegree - Minimum degree for a node to be considered a hub.
+ * @param maxSize - Maximum size for a connected component to be considered an island.
+ * @param longestPathMinNodes - Minimum number of nodes for a path to be considered "long".
+ * @returns A summary of the analysis results including grouped node IDs.
+ */
+export function runAnalysis(
+  model: DatabaseModel,
+  graph: Graph,
+  type: AnalysisType,
+  minDegree?: number,
+  maxSize?: number,
+  longestPathMinNodes?: number,
+): object {
+  const analysisConfig = {
+    hubMinDegree:         minDegree           ?? DEFAULT_CONFIG.analysis.hubMinDegree,
+    islandMaxSize:        maxSize             ?? DEFAULT_CONFIG.analysis.islandMaxSize,
+    longestPathMinNodes:  longestPathMinNodes ?? DEFAULT_CONFIG.analysis.longestPathMinNodes,
+  };
+
+  const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
+  return {
+    type:         result.type,
+    summary:      result.summary,
+    groups:       result.groups,
+    total_groups: result.groups.length,
+  };
+}
+
+/**
+ * Searches for substrings or patterns within the DDL/source code of scriptable objects.
+ *
+ * @remarks
+ * This tool is essential for finding logic-level dependencies (e.g., specific business logic,
+ * hardcoded strings, or column mappings) that are not captured as formal graph edges.
+ * It searches through views, stored procedures, and functions.
+ *
+ * @param model - The database model.
+ * @param query - The search string or regex pattern.
+ * @param types - Optional filter for scriptable object types.
+ * @param store - Optional column store for high-fidelity DDL.
+ * @returns A list of matches with snippets and object metadata.
+ */
+export function searchDdl(
+  model: DatabaseModel,
+  query: string,
+  types?: ('view' | 'procedure' | 'function')[],
+  store?: import('../../engine/columnStore').ColumnStore,
+): object {
+  if (query.length > REGEX_MAX_LENGTH) {
+    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
+  }
+
+  // Reject invalid / catastrophically slow regex
+  if (safeRegex(query) === null) {
+    return { error: 'invalid_regex' as const, hint: 'Simplify the pattern — avoid nested quantifiers.' };
+  }
+
+  const ddlTypes: ObjectType[] = types
+    ? (types as ObjectType[])
+    : [...SCRIPT_TYPES];
+  const typeSet = new Set<ObjectType>(ddlTypes);
+
+  // Build searchable nodes with DDL from ColumnStore (or inline fallback for tests)
+  const searchableNodes: SearchableNode[] = model.nodes.map(n => ({
+    ...n,
+    bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
+  }));
+  const matches = searchBodyScripts(
+    searchableNodes,
+    query,
+    typeSet,
+    SNIPPET_CONTEXT_LINES,
+    Number.MAX_SAFE_INTEGER,
+  );
+
+  const results = matches.map(m => ({
+    id:      m.node.id,
+    name:    m.node.name,
+    type:    m.node.type,
+    matches: [m.snippet],
+  }));
+
+  if (results.length === 0) {
+    return { results, total: 0, hint: 'No matches. Try a shorter substring, check spelling, or call lineage_search_objects to confirm object names.' };
+  }
+  return { results, total: results.length };
+}
+
+
+/**
+ * Semantic role tag for one of the (≤5) `highlight_groups` the AI may attach
+ * to a `present_result` view. Drives the colour swatch on the graph chip.
+ *
+ * @remarks
+ * Two consistent palettes — `source` / `transform` / `target` (lineage) or
+ * `good` / `warn` / `fail` (diagnostic). The synthesis prompt instructs the
+ * AI to pick one palette per result and not mix them. Validated by
+ * `AI_HIGHLIGHT_ROLES` in `validatePresentResult`.
+ */
+export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
+
+/**
+ * The AI's submission to `lineage_present_result`.
+ *
+ * @remarks
+ * Contract: the AI writes structured PARTS; the engine builds the rendered
+ * document deterministically via {@link orderAndAssemble}. Specifically:
+ *   - AI writes: summary, title, intro, sections[], closing, notes[], highlight_groups[]
+ *   - Engine builds: the assembled markdown blob (returned as `description`
+ *     on PresentResultRequest), section numbering, badge chips, object links.
+ *
+ * There is intentionally NO `description` field on this input — that field is
+ * engine output, not AI input. If a future change wants to re-add it, fix the
+ * template that instructs the AI to write a blob instead.
+ */
+export type PresentResultInput = {
+  name: string;
+  summary: string;
+  title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
+  intro?: string;       // 2–4 sentence paragraph before the numbered sections
+  closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
+  prune_node_ids?: string[];
+  add_node_ids?: string[];
+  is_update?: boolean;
+  layout_direction?: 'LR' | 'TB';
+  highlight_groups?: Array<{
+    label: string;
+    color: AIHighlightRole;
+    node_ids: string[];
+  }>;
+  sections?: Array<{
+    label: string;       // PRIMARY KEY for document grouping — unique per section
+    node_ids?: string[]; // nodes that display this label as a badge chip (1..N)
+    text: string;        // markdown description for this label group (1..1 per label)
+  }>;
+  notes?: Array<{
+    node_id: string;
+    text: string;
+  }>;
+};
+
+/**
+ * The validated, engine-assembled result ready for the UI.
+ *
+ * @remarks
+ * `description` here is the full markdown document built by {@link orderAndAssemble}
+ * from the AI's input parts (title + intro + sections[] + closing). It is NOT a
+ * passthrough of any AI-supplied field — the AI does not write the assembled
+ * document.
+ */
+export type PresentResultRequest = {
+  success: true;
+  name: string;
+  node_ids: string[];
+  summary: string;
+  description?: string;
+  layout_direction: 'LR' | 'TB';
+  highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
+  badges: Array<{ node_id: string; text: string }>;
+  notes: Array<{ node_id: string; text: string }>;
+};
+
+export type PresentResultError = { success: false; errors: string[]; hint: string };
+
+const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
+
+/**
+ * Builds the rendered description markdown from the AI's structured input parts.
+ *
+ * @remarks
+ * This is the SOLE path that produces the description blob shown in
+ * `AiDescriptionOverlay`. The AI never writes the blob directly — it writes the
+ * parts (title, intro, sections[], closing) and the engine assembles them
+ * deterministically here. Section numbering (`## N {label}`), badge chips, and
+ * the `### Objects [name](#focus-node:id)` link header are all engine-owned;
+ * they are not AI-authored fields.
+ *
+ * Numbered badges are emitted in narrative order so chips on the graph align
+ * with `## N` headings in the description. Leading numbers in AI-supplied
+ * labels are stripped to keep numbering deterministic.
+ *
+ * @param sections - AI-authored sections containing labels, node associations, and text.
+ * @param opts - Optional wrapper blocks for the final document.
+ * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
+ */
+export function orderAndAssemble(
+  sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
+  opts?: {
+    title?: string;
+    intro?: string;
+    closing?: string;
+    /** Optional node lookup for injecting clickable H3 object-name headings per section. */
+    nodeMap?: Map<string, { id: string; name: string }>;
+  },
+): { badges: Array<{ node_id: string; text: string }>; description: string } {
+  // Strip leading "N " or "N. " so AI numbers don't interfere with label matching
+  const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.]?\s+/, '').trim();
+
+  // First occurrence index per label — preserves AI's narrative order
+  const labelToAiIndex = new Map<string, number>();
+  sections.forEach((sec, i) => {
+    const norm = stripLeadingNumber(sec.label);
+    if (!labelToAiIndex.has(norm)) labelToAiIndex.set(norm, i);
+  });
+
+  // Unique labels in AI's sections[] order
+  const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
+  uniqueLabels.sort((a, b) => (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0));
+
+  // Assign step number N per unique label (1-based, in AI's narrative order)
+  const labelToNumber = new Map<string, number>();
+  uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
+
+  // Build (node_id → label) map from sections[].node_ids
+  const nodeToLabel = new Map<string, string>();
+  for (const sec of sections) {
+    const label = stripLeadingNumber(sec.label);
+    for (const id of sec.node_ids ?? []) nodeToLabel.set(id, label);
+  }
+
+  // Emit numbered badge chips, dropping any node whose label has no matching section.
+  const numberedBadges = [...nodeToLabel.entries()]
+    .map(([node_id, label]) => {
+      const n = labelToNumber.get(label);
+      return n !== undefined ? { node_id, text: `${n} ${label}`, _n: n } : null;
+    })
+    .filter((b): b is { node_id: string; text: string; _n: number } => b !== null)
+    .sort((a, b) => a._n - b._n)
+    .map(({ node_id, text }) => ({ node_id, text }));
+
+  // Assemble markdown: title → intro → ## sections → closing
+  const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
+  // First-occurrence node_ids list per unique label (AI-authored order preserved).
+  const labelToNodeIds = new Map<string, string[]>();
+  for (const sec of sections) {
+    const label = stripLeadingNumber(sec.label);
+    if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, sec.node_ids ?? []);
+  }
+
+  const parts: string[] = [];
+  if (opts?.title)        parts.push(`# ${opts.title}`);
+  if (opts?.intro)        parts.push(opts.intro);
+  for (const label of uniqueLabels) {
+    const n = labelToNumber.get(label)!;
+    const text = sectionMap.get(label) ?? '';
+    const nodeIds = labelToNodeIds.get(label) ?? [];
+    let objectHeadings = '';
+    if (opts?.nodeMap && nodeIds.length > 0) {
+      const links = nodeIds
+        .map(id => opts.nodeMap!.get(id))
+        .filter((node): node is { id: string; name: string } => !!node)
+        .map(node => `[${node.name}](#focus-node:${node.id})`);
+      if (links.length > 0) objectHeadings = `### Objects ${links.join(', ')}\n\n`;
+    }
+    parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);
+  }
+  if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
+
+  return { badges: numberedBadges, description: parts.join('\n\n') };
+}
+
+/**
+ * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
+ *
+ * @remarks
+ * LLMs often produce slightly malformed outputs such as double-escaped newlines
+ * or excessive title lengths. This function applies surgical corrections to ensure
+ * the final UI renders correctly. Step 4 (`$$`→`` ```math `` conversion) was removed —
+ * `AiDescriptionOverlay.tsx` handles `$$` client-side.
+ *
+ * @param model - The database model.
+ * @param input - The raw input from the AI.
+ * @param resolvedNodeIds - The canonical set of node IDs in the current session.
+ * @returns The fixed input object and a list of applied fixes for logging.
+ */
+export function autoFixPresentResult(
+  model: DatabaseModel,
+  input: PresentResultInput,
+  resolvedNodeIds?: string[],
+): { input: PresentResultInput; fixes: string[] } {
+  const fixes: string[] = [];
+  let fixed = { ...input };
+
+  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args)
+  const unescapeNewlines = (s: string): string => s.replace(/\\n/g, '\n');
+  if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
+  if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
+  if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
+  if (fixed.sections) fixed = { ...fixed, sections: fixed.sections.map(s => ({ ...s, text: s.text ? unescapeNewlines(s.text) : s.text })) };
+
+  // 1. Auto-truncate name at word boundary if too long
+  if (fixed.name && fixed.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) {
+    const truncated = fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, name: truncated || fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH) };
+    fixes.push(`Truncated name to ${PRESENT_RESULT_NAME_MAX_LENGTH} chars`);
+  }
+
+  // 2. Auto-truncate title at word boundary if too long
+  if (fixed.title && fixed.title.trim().length > 80) {
+    const truncated = fixed.title.slice(0, 80).replace(/\s+\S*$/, '').trimEnd();
+    fixed = { ...fixed, title: truncated || fixed.title.slice(0, 80) };
+    fixes.push('Truncated title to 80 chars');
+  }
+
+  // 3. Auto-truncate summary at sentence boundary if too long
+  if (fixed.summary && fixed.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
+    const truncated = fixed.summary.slice(0, PRESENT_RESULT_SUMMARY_HARD_LIMIT);
+    const lastPeriod = truncated.lastIndexOf('.');
+    fixed = { ...fixed, summary: lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated.trimEnd() };
+    fixes.push(`Truncated summary to ${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars`);
+  }
+
+  // 4. (Removed legacy block math converter - we now natively support $$)
+
+  const nodeIdSet = new Set(resolvedNodeIds ?? []);
+
+  // 5. Drop empty notes & notes for nodes not in the resolved set
+  if (fixed.notes) {
+    const before = fixed.notes.length;
+    const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
+    fixed = { ...fixed, notes: filtered };
+    const dropped = before - filtered.length;
+    if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
+  }
+
+  // 6. Prune highlight_groups referencing nodes not in the resolved set
+  if (fixed.highlight_groups) {
+    const before = fixed.highlight_groups.length;
+    const pruned = fixed.highlight_groups
+      .map(g => ({ ...g, node_ids: g.node_ids.filter(id => nodeIdSet.has(id)) }))
+      .filter(g => g.node_ids.length > 0);
+    fixed = { ...fixed, highlight_groups: pruned };
+    const dropped = before - pruned.length;
+    if (dropped > 0) fixes.push(`Dropped ${dropped} orphaned highlight group(s)`);
+  }
+
+  return { input: fixed, fixes };
+}
+
+/**
+ * Validates markdown structural integrity.
+ *
+ * @remarks
+ * This function performs a pass to ensure that markdown elements (specifically code fences)
+ * are properly closed. It prevents the UI from crashing or entering a broken state due to
+ * malformed markdown generated by the AI.
+ *
+ * @param md - The markdown string to validate.
+ * @returns A list of error strings, or an empty array if valid.
+ */
+export function validateMarkdownFormat(md: string): string[] {
+  const errors: string[] = [];
+
+  // Reject unclosed fenced blocks (walk lines, track open/close state)
+  let insideFence = false;
+  for (const line of md.split('\n')) {
+    const trimmed = line.trim();
+    if (!insideFence && trimmed.startsWith('```')) {
+      insideFence = true;
+    } else if (insideFence && trimmed === '```') {
+      insideFence = false;
+    }
+  }
+  if (insideFence) {
+    errors.push(
+      'unclosed fenced block detected — a section body or assembled output is missing a closing ```',
+    );
+  }
+
+  return errors;
+}
+
+/**
+ * Validates the full `present_result` input against mechanical contracts only.
+ *
+ * @remarks
+ * Enforces naming length, summary length, sections[] presence, node-id resolution,
+ * and markdown-fence closure on the engine-assembled description.
+ *
+ * The `description` returned in {@link PresentResultRequest} is the engine-assembled
+ * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
+ * never read from `input`. The AI does not write the assembled document.
+ *
+ * @param input - The (possibly auto-fixed) AI input.
+ * @param resolvedNodeIds - The canonical set of node IDs.
+ * @param assembledBadges - Pre-assembled numbered badges for consistency.
+ * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
+ * @returns A successful request object or a structured error with correction hints.
+ */
+export function validatePresentResult(
+  input: PresentResultInput,
+  resolvedNodeIds: string[],
+  assembledBadges?: Array<{ node_id: string; text: string }>,
+  assembledDescription?: string,
+): PresentResultRequest | PresentResultError {
+  const errors: string[] = [];
+
+  // Name validation
+  if (!input.name || input.name.trim().length === 0) errors.push('name is required');
+  else if (input.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) errors.push(`name exceeds ${PRESENT_RESULT_NAME_MAX_LENGTH} characters`);
+
+  // Node set must be non-empty (after resolve + prune)
+  if (resolvedNodeIds.length === 0) {
+    errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
+  }
+
+  if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
+
+  // summary required + length
+  if (!input.summary || input.summary.trim().length === 0) {
+    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${PRESENT_RESULT_SUMMARY_HARD_LIMIT})`);
+  } else if (input.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
+    errors.push(`summary exceeds hard limit (${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
+  }
+
+  const hasSections = !!(input.sections && input.sections.length > 0);
+  const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
+
+  // Either AI submitted sections[] (which the engine assembles into a description before
+  // validation) OR an engine-assembled description is supplied. Without one, there's no body.
+  if (!hasSections && !hasAssembled) {
+    errors.push('sections[] is required — provide at least one section with label, angle, and node_ids[].');
+  }
+
+  // Mechanical fence-closure check on the engine-assembled blob (catches cases where
+  // a slot body had an unclosed ``` that survived the autoFix pass).
+  if (hasAssembled) {
+    errors.push(...validateMarkdownFormat(assembledDescription!));
+  }
+
+  // Sections validation — node_ids (when provided) must be valid; section text must be present.
+  if (hasSections) {
+    const resolvedSet = new Set(resolvedNodeIds);
+    for (const sec of input.sections!) {
+      if (sec.node_ids?.length) {
+        const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
+        if (unknownIds.length > 0) {
+          errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — use IDs from the result graph`);
+        }
+      }
+      if (!sec.text || sec.text.trim().length === 0) {
+        errors.push(`Section "${sec.label}" is missing text — ensure node_ids[] references nodes that were analyzed during the hop loop`);
+      }
+      if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
+    }
+  }
+
+  // Notes validation
+  if (input.notes?.length) {
+    for (const note of input.notes) {
+      if (!note.text || note.text.trim().length === 0) {
+        errors.push(`Note for "${note.node_id}" is missing text`);
+      }
+    }
+  }
+
+  // highlight_groups validation — required for new renders; optional for is_update text edits
+  if (!input.highlight_groups || input.highlight_groups.length === 0) {
+    if (!input.is_update) {
+      errors.push('highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)');
+    }
+  } else {
+    if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
+    for (const g of input.highlight_groups) {
+      if (!g.label) errors.push('Group label is required');
+      if (!AI_HIGHLIGHT_ROLES.has(g.color)) errors.push(`Group "${g.label}" has invalid role "${g.color}"`);
+    }
+  }
+
+  if (errors.length > 0) {
+    // Identify which fields failed so the hint tells the AI exactly what to fix
+    const failedFields = new Set<string>();
+    for (const e of errors) {
+      if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
+      else if (e.startsWith('title ')) failedFields.add('title');
+      else if (e.startsWith('closing ')) failedFields.add('closing');
+      else if (e.includes('summary')) failedFields.add('summary');
+      else if (e.includes('sections')) failedFields.add('sections');
+      else if (e.startsWith('Section ')) failedFields.add('sections');
+      else if (e.startsWith('Note for ')) failedFields.add('notes');
+      else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
+      else if (e.includes('No nodes')) failedFields.add('nodes');
+    }
+    const fieldList = [...failedFields];
+    const hint = fieldList.length === 1
+      ? `Fix ${fieldList[0]} only. Keep all other fields (notes, summary, highlight_groups) exactly as submitted.`
+      : `Fix these fields: ${fieldList.join(', ')}. Keep all other fields exactly as submitted.`;
+    return { success: false, errors, hint };
+  }
+
+  return {
+    success: true,
+    name: input.name.trim(),
+    node_ids: resolvedNodeIds,
+    summary: input.summary,
+    description: assembledDescription,
+    layout_direction: input.layout_direction ?? 'TB',
+    highlight_groups: input.highlight_groups ?? [],
+    badges: assembledBadges ?? [],
+    notes: input.notes ?? [],
+  };
+}
+
+/**
+ * Structural summary of the final presentation result.
+ */
+export interface PresentResultResult {
+  /** True when the request passed validation and was posted to the webview. */
+  success: boolean;
+  /** Display name of the rendered AI view (≤200 chars after auto-fix). */
+  name: string;
+  /** One-line graph-card summary (≤300 chars) shown beside the view. */
+  summary: string;
+  /** Engine-assembled markdown blob from `orderAndAssemble`; absent when the AI submitted no `sections[]`. */
+  description?: string;
+  /** Count of nodes included in the rendered view after add/prune resolution. */
+  node_count: number;
+}
+
+

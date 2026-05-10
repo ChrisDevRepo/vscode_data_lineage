@@ -945,7 +945,6 @@ if (flags.has('--growth')) {
 
   const TOOL_SHORT = t => t
     .replace('lineage_get_object_detail',   'detail')
-    .replace('lineage_get_neighborhood',    'neighborhood')
     .replace('lineage_get_neighbor_columns','neighbor_cols')
     .replace('lineage_search_objects',      'search')
     .replace('lineage_search_ddl',          'search_ddl')
@@ -990,19 +989,12 @@ if (flags.has('--growth')) {
       const roundCalls = toolCalls.filter(tc => tc.rid === req.rid);
       if (roundCalls.length > 0) {
         const counts = {};
-        const hopsLines = [];
         for (const tc of roundCalls) {
           const short = TOOL_SHORT(tc.tool || 'unknown');
           counts[short] = (counts[short] || 0) + 1;
-          if (tc.tool === 'lineage_get_neighborhood' && tc.input) {
-            const up = tc.input.upstream_hops  ?? 3;
-            const dn = tc.input.downstream_hops ?? 3;
-            hopsLines.push(`↑${up}/↓${dn} on ${tc.input.id || '?'}`);
-          }
         }
         const toolSummary = Object.entries(counts).map(([t, n]) => `${t}×${n}`).join('  ');
         console.log(`             tools: ${toolSummary}`);
-        for (const h of hopsLines) console.log(`             neighborhood: ${h}`);
 
         // Column counts from get_object_detail results in this round
         const detailColCounts = [];

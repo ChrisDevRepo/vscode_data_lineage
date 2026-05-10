@@ -165,7 +165,7 @@ The `@lineage` assistant goes further by analysing the available metadata (DDL, 
 
 #### 1. Discovery (chat answers, no graph)
 
-The default state. The AI uses catalog tools (search, get_object_detail, search_ddl, get_neighborhood, detect_graph_patterns) to look up DDL, columns, and direct neighbours, then answers in chat.
+The default state. The AI uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`) to look up loaded scope, DDL, columns, and neighbours, then answers in chat.
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
 - Bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` — over-budget catalog requests are rejected and the AI is told to escalate to SM via the consent gate.
@@ -270,3 +270,4 @@ Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
 | `dataLineageViz.tableStatistics.sampleSize` | `10000` | Number of rows in the TABLESAMPLE when sampling is triggered. |
 | `dataLineageViz.tableStatistics.useApproxDistinct` | `true` | Use `APPROX_COUNT_DISTINCT` for faster (±2%) distinct counts. |
 | `dataLineageViz.tableStatistics.maxColumns` | `50` | Maximum columns profiled per table; wider tables are truncated. |
+

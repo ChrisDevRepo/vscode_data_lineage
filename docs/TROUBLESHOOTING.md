@@ -46,3 +46,4 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 ## Bug reports
 
 Run **Data Lineage: Copy Debug Info** and paste the output into the issue along with the relevant section from **Output → Data Lineage Viz**. Do not attach customer dacpacs — reproduce with **Data Lineage: Open Demo** wherever possible.
+

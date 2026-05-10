@@ -3,7 +3,7 @@
  *
  * Enforces invariant: every tool declared in package.json's
  * contributes.languageModelTools manifest MUST have a matching
- * `vscode.lm.registerTool('<name>', ...)` call in src/ai/toolProvider.ts.
+ * `vscode.lm.registerTool('<name>', ...)` call in src/ai/tools/toolProvider.ts.
  *
  * Fails loudly when they drift so the regression in commit bf51fa9 (4 tools
  * declared but never registered) cannot recur silently.
@@ -21,7 +21,7 @@ const pkg = JSON.parse(readFileSync(rootPath('package.json'), 'utf-8')) as {
 };
 const manifestTools = (pkg.contributes.languageModelTools ?? []).map(t => t.name).sort();
 
-const providerSrc = readFileSync(rootPath('src', 'ai', 'toolProvider.ts'), 'utf-8');
+const providerSrc = readFileSync(rootPath('src', 'ai', 'tools', 'toolProvider.ts'), 'utf-8');
 const registrationPattern = /vscode\.lm\.registerTool\(\s*['"]([^'"]+)['"]/g;
 const registeredTools: string[] = [];
 let match: RegExpExecArray | null;

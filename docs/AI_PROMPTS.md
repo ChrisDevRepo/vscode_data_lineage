@@ -20,7 +20,7 @@ Two responsibilities, two owners:
 | Owner | What they produce | Where it lives |
 |-------|-------------------|----------------|
 | **AI** writes structured PARTS | Per-hop: `business_capture` / `technical_capture` / `structural_summary` produces the section body bodies stored in `detail_slots[].sections[].text`. <br>Synthesis: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a slot), `closing`, `notes[]`, `highlight_groups[]`. | YAML templates in this file describe what the AI writes. |
-| **Engine** builds DETERMINISTIC outputs | The full markdown document shown in `AiDescriptionOverlay` (the description blob), section numbering (`## N {label}`), badge chips on the graph, `### Objects [name](#focus-node:id)` link headers. | `orderAndAssemble()` in [`src/ai/tools.ts`](../src/ai/tools.ts). No YAML template — there is intentionally no `description` instruction; if you find one in an old overlay, it is dead. |
+| **Engine** builds DETERMINISTIC outputs | The full markdown document shown in `AiDescriptionOverlay` (the description blob), section numbering (`## N {label}`), badge chips on the graph, `### Objects [name](#focus-node:id)` link headers. | `orderAndAssemble()` in [`src/ai/tools/tools.ts`](../src/ai/tools/tools.ts). No YAML template — there is intentionally no `description` instruction; if you find one in an old overlay, it is dead. |
 
 So the rendering pipeline reads:
 
@@ -39,15 +39,15 @@ hop 1, hop 2, …, hop N         →  N archive slots  (capture keys)
                             full description blob
 ```
 
-The lift+group+label rule for `sections[]` lives in `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts), not in the YAML — kept there to avoid duplication with the synthesis cue. Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
+The lift+group+label rule for `sections[]` lives in `buildSynthesisPrompt()` in [`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts), not in the YAML — kept there to avoid duplication with the synthesis cue. Synthesis assembles, groups, frames — it does not rewrite. If the archive does not contain a fact, the final document cannot mention it. Capture must be exhaustive.
 
 When `classification === 'both'`, captured sections come in pairs per node (one business, one technical). Each angle becomes its own peer entry in `present_result.sections[]` — never nested as `#### Technical` subheadings.
 
 ## Template gate — what fires when
 
-The AI declares the mission classification at `start_exploration` via the **required** `classification` parameter (`business` | `technical` | `both`). The Zod schema in [`src/ai/tools.ts`](../src/ai/tools.ts) is `z.enum([...])` — missing or invalid values are hard-rejected at the boundary; there is no engine fallback. The tool-param description in [`package.json`](../package.json) biases the AI toward `business` when user intent is ambiguous (lineage / origin / impact / column-trace are `business` even when a column is named); `technical` is only for explicit performance / index / tuning asks; `both` is only for explicit "both angles" asks. The locked value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
+The AI declares the mission classification at `start_exploration` via the **required** `classification` parameter (`business` | `technical` | `both`). The Zod schema in [`src/ai/tools/tools.ts`](../src/ai/tools/tools.ts) is `z.enum([...])` — missing or invalid values are hard-rejected at the boundary; there is no engine fallback. The tool-param description in [`package.json`](../package.json) biases the AI toward `business` when user intent is ambiguous (lineage / origin / impact / column-trace are `business` even when a column is named); `technical` is only for explicit performance / index / tuning asks; `both` is only for explicit "both angles" asks. The locked value is shown in the `confirm_sm_start` gate as `**Analysis:** <label>` so you can see what will be captured before approving.
 
-Active-phase and synthesis-phase templates are routed by two stacked maps in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts):
+Active-phase and synthesis-phase templates are routed by two stacked maps in [`src/ai/prompting/templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts):
 
 1. **`STAGE_BY_KEY`** routes each YAML key to one phase (`active` | `synthesis`). It is the authoritative phase router — a `stages:` field in YAML is informational and ignored on conflict.
 2. **`CLASSIFICATION_GATED`** subsequently filters active-phase keys by classification value. Keys absent from this map fire on every classification.
@@ -75,7 +75,7 @@ Net effect per active hop, given the locked classification:
 
 `structural_summary` fires only when the focus node is non-bodied (a table — no DDL). At those hops it replaces `business_capture` / `technical_capture` entirely; those two keys are gated out via the `focusIsNonBodied` flag passed from `lineageParticipant.ts` to `resolveStagePrompt`. On all other hops (view, procedure, function focus) `structural_summary` is gated out and the normal capture templates fire. The `focusIsNonBodied` flag is computed from the current focus node type using `SCRIPT_TYPES`.
 
-The contract is locked mechanically at the tool handler boundary: each `submit_findings` call must carry exactly the `sections[]` shape implied by the locked classification. Mismatches reject with `classification_lock_violation` (e.g., a `business`-mission slot carrying a `technical` angle, or a `both` slot missing one angle). At synthesis, `present_result.sections[]` carries one peer entry per captured angle per node — the two angles never nest as `#### Technical` subheadings; they are independent peer sections.
+The contract is locked mechanically at the tool handler boundary: each `submit_findings` call must carry exactly the `sections[]` shape implied by the locked classification. The non-Zod process rule lives in [`src/ai/interaction/rules/submitFindingsRules.ts`](../src/ai/interaction/rules/submitFindingsRules.ts). Mismatches reject with `classification_lock_violation` (e.g., a `business`-mission slot carrying a `technical` angle, or a `both` slot missing one angle). At synthesis, `present_result.sections[]` carries one peer entry per captured angle per node — the two angles never nest as `#### Technical` subheadings; they are independent peer sections.
 
 `closing` is additionally gated on archive size (`slotCount >= 5`) — small graphs skip it to save prompt tokens.
 
@@ -134,7 +134,7 @@ The AI writes these per-field instructions; the engine builds the rendered docum
 | `highlights` | 2–3 critical-node glows on the graph (Lineage or Diagnostic scheme). | Changing how aggressively to highlight or the colour scheme. |
 | `notes` | Per-node graph captions — one-line, what the node does specifically in this flow. | Changing caption length or style (e.g. always lead with the formula vs. the role). |
 
-**No template for `sections[]` here.** The lift-verbatim + group-siblings + label-by-role rule is owned by `buildSynthesisPrompt()` in [`src/ai/prompts.ts`](../src/ai/prompts.ts). Editing that function is the single source of truth for how synthesis assembles the per-node captured bodies into the final report.
+**No template for `sections[]` here.** The lift-verbatim + group-siblings + label-by-role rule is owned by `buildSynthesisPrompt()` in [`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts). Editing that function is the single source of truth for how synthesis assembles the per-node captured bodies into the final report.
 
 **No template for `description`.** The description blob shown in the overlay is engine output, built deterministically by `orderAndAssemble()` from `title + intro + sections[] + closing`. There is no AI-writeable `description` field — adding one would conflict with the deterministic assembly.
 
@@ -152,7 +152,7 @@ The AI writes these per-field instructions; the engine builds the rendered docum
 - **Edit the `instruction:` field, not the examples.** Only `instruction` is injected into the prompt. The example fields exist for the human reader.
 - **Avoid character ceilings on archive fields.** The archive is unbounded; capping section text per slot pushes the model to pre-compress, which starves synthesis for detail. Describe quality criteria ("cover every business rule and SQL evidence point"), not character counts. Per the design rule: AI does grouping/order, system does numbers.
 - **Verdict names are locked.** `analyze` / `pass` / `prune` are enforced by a Zod enum on `submit_findings.verdict`. Only the YAML descriptions can change, not the names.
-- **Don't hand-edit the stage routing.** `STAGE_BY_KEY` and `CLASSIFICATION_GATED` in [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) are the authoritative routing. Adding a new active-phase capture template requires a YAML entry plus a `STAGE_BY_KEY` registration; if it is classification-specific, also add it to `CLASSIFICATION_GATED`.
+- **Don't hand-edit the stage routing.** `STAGE_BY_KEY` and `CLASSIFICATION_GATED` in [`src/ai/prompting/templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts) are the authoritative routing. Adding a new active-phase capture template requires a YAML entry plus a `STAGE_BY_KEY` registration; if it is classification-specific, also add it to `CLASSIFICATION_GATED`.
 
 ## How to verify a YAML edit
 
@@ -161,3 +161,4 @@ The AI writes these per-field instructions; the engine builds the rendered docum
 3. Open `View → Output → Data Lineage Viz` and set the channel log level to **Debug** (gear icon → Set Log Level → Debug).
 4. Look for `[AI] [Hop N]` lines emitted for each successful `submit_findings` — they show character counts written into the archive (`detail=…`, `summary=…`). A drop on a hop you just tightened means the AI captured less; a jump means you broadened.
 5. The synthesised document is in the chat panel; the structured view is in the AI view card. Compare against an earlier run if you want a delta.
+

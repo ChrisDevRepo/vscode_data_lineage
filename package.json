@@ -631,68 +631,6 @@
         }
       },
       {
-        "name": "lineage_get_neighborhood",
-        "toolReferenceName": "lineage_get_neighborhood",
-        "displayName": "Get Neighborhood",
-        "userDescription": "Fetch the surrounding dependency graph for an object.",
-        "modelDescription": "Returns the upstream and/or downstream neighbors for a starting object within a specified depth.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(type-hierarchy-sub)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "description": "Starting object ID."
-            },
-            "upstream_hops": {
-              "type": "number",
-              "description": "Upstream depth (0 = none). Default 3."
-            },
-            "downstream_hops": {
-              "type": "number",
-              "description": "Downstream depth (0 = none). Default 3."
-            },
-            "types": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "table",
-                  "view",
-                  "procedure",
-                  "function",
-                  "external"
-                ]
-              },
-              "description": "Include only these node types."
-            },
-            "schemas": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Include only nodes in these schemas."
-            },
-            "include_ddl": {
-              "type": "boolean",
-              "description": "Include DDL/columns in results (default true)."
-            },
-            "target": {
-              "type": "string",
-              "description": "Path mode: find all nodes on paths from id to target. When provided, upstream_hops/downstream_hops are ignored."
-            }
-          },
-          "required": [
-            "id"
-          ]
-        }
-      },
-      {
         "name": "lineage_detect_graph_patterns",
         "toolReferenceName": "lineage_detect_graph_patterns",
         "displayName": "Detect Graph Patterns",
