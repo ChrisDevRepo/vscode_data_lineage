@@ -109,12 +109,58 @@ class ToolHandler {
 
     sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
+    const rejection = this.extractRejectionInfo(data);
+    if (rejection) {
+      const reason = trunc(sanitizeForLog(rejection.reason), 220);
+      const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), 220)}` : '';
+      this.logger.debug(`[Reject] tool=${toolName} code=${rejection.code} reason=${reason}${hintPart}`);
+    }
     return this.toolResult(data);
+  }
+
+  private extractRejectionInfo(data: object): { code: string; reason: string; hint?: string } | null {
+    const anyData = data as {
+      success?: unknown;
+      error?: unknown;
+      errors?: unknown;
+      hint?: unknown;
+      message?: unknown;
+      detail?: unknown;
+    };
+    const hasError = typeof anyData.error === 'string';
+    const hasFailedSuccess = anyData.success === false;
+    const hasErrors = Array.isArray(anyData.errors) && anyData.errors.length > 0;
+    if (!hasError && !hasFailedSuccess && !hasErrors) return null;
+
+    const code = hasError ? String(anyData.error) : 'validation';
+    let reason = '';
+    if (hasErrors) reason = String((anyData.errors as unknown[])[0] ?? '');
+    if (!reason && typeof anyData.message === 'string') reason = anyData.message;
+    if (!reason && typeof anyData.detail === 'string') reason = anyData.detail;
+    if (!reason && hasError) reason = String(anyData.error);
+    if (!reason) reason = 'tool returned failure envelope';
+    const hint = typeof anyData.hint === 'string' ? anyData.hint : undefined;
+    return { code, reason, hint };
+  }
+
+  private notePresentResultFailure(sess: AiSession, data: object): void {
+    const rejection = this.extractRejectionInfo(data);
+    if (!rejection) return;
+    sess.presentResultFailureCountThisTurn += 1;
+    const reason = rejection.hint
+      ? `${rejection.reason} (${rejection.hint})`
+      : rejection.reason;
+    sess.presentResultLastFailureReasonThisTurn = trunc(sanitizeForLog(reason), 240);
   }
 
   private toolError(toolName: string, err: unknown): vscode.LanguageModelToolResult {
     const msg = err instanceof Error ? err.message : String(err);
-    this.logger.error(`${toolName}: unhandled`, err instanceof Error ? err : new Error(msg));
+    if (toolName === 'present_result') {
+      const sess = this.getSession();
+      sess.presentResultFailureCountThisTurn += 1;
+      sess.presentResultLastFailureReasonThisTurn = trunc(sanitizeForLog(`internal_error: ${msg}`), 240);
+    }
+    this.logger.debug(`[Reject] tool=${toolName} code=internal_error reason=${trunc(sanitizeForLog(msg), 220)}`);
     return this.toolResult({ error: 'internal_error', tool: toolName, message: msg });
   }
 
@@ -582,6 +628,7 @@ class ToolHandler {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const sess = this.getSession();
+      sess.presentResultAttemptCountThisTurn += 1;
       const model = this.requireModel();
 
       if (input.sections !== undefined && !Array.isArray(input.sections)) input.sections = undefined;
@@ -591,7 +638,10 @@ class ToolHandler {
       if (input.highlight_groups !== undefined && !Array.isArray(input.highlight_groups)) input.highlight_groups = undefined;
 
       const presentPrecondition = evaluatePresentResultPreconditionsRule(!!sess.resultGraph);
-      if (presentPrecondition) return this.logAndReturn('present_result', presentPrecondition, input);
+      if (presentPrecondition) {
+        this.notePresentResultFailure(sess, presentPrecondition);
+        return this.logAndReturn('present_result', presentPrecondition, input);
+      }
       const resultGraph = sess.resultGraph!;
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
@@ -603,13 +653,15 @@ class ToolHandler {
         const currentSet = new Set(resolvedNodeIds);
         const addResolution = resolveModelNodeIds(input.add_node_ids, modelNodeMap);
         if (addResolution.unresolved.length > 0) {
-          return this.logAndReturn('present_result', {
+          const failure = {
             success: false,
             errors: [
               `Unknown add_node_ids after bracket/case normalization: ${addResolution.unresolved.map(id => `\`${id}\``).join(', ')}.`,
               'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
             ],
-          }, input);
+          };
+          this.notePresentResultFailure(sess, failure);
+          return this.logAndReturn('present_result', failure, input);
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
         resolvedNodeIds.push(...toAdd);
@@ -622,13 +674,15 @@ class ToolHandler {
       if (input.prune_node_ids?.length) {
         const pruneResolution = resolveModelNodeIds(input.prune_node_ids, modelNodeMap);
         if (pruneResolution.unresolved.length > 0) {
-          return this.logAndReturn('present_result', {
+          const failure = {
             success: false,
             errors: [
               `Unknown prune_node_ids after bracket/case normalization: ${pruneResolution.unresolved.map(id => `\`${id}\``).join(', ')}.`,
               'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
             ],
-          }, input);
+          };
+          this.notePresentResultFailure(sess, failure);
+          return this.logAndReturn('present_result', failure, input);
         }
         const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
@@ -686,7 +740,10 @@ class ToolHandler {
 
       const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges, assembledDescription);
 
-      if (!validation.success) return this.logAndReturn('present_result', validation, input);
+      if (!validation.success) {
+        this.notePresentResultFailure(sess, validation);
+        return this.logAndReturn('present_result', validation, input);
+      }
 
       const aiMetadata: AIViewMetadata = {
         summary: validation.summary,

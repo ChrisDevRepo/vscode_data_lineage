@@ -1370,18 +1370,35 @@ export class NavigationEngine implements IHopStateMachine {
         }
       }
 
-      // Explicitly prune adjacent neighbors requested by the AI
+      // Explicitly prune adjacent neighbors requested by the AI.
+      // Guardrail: never prune already-analyzed/visited nodes; synthesis must keep
+      // slot node_ids grounded in the final result graph.
       if (finding.prune_neighbors && finding.prune_neighbors.length > 0) {
+        const notedIds = new Set<string>(this.memory.notedNodeIds);
         for (const nidRaw of finding.prune_neighbors) {
           const nid = nidRaw.toLowerCase();
-          if (this.nodeMap.has(nid) && nid !== this.originNodeId) {
-            this.removedSet.add(nid);
-            if (SCRIPT_TYPES.has(this.nodeMap.get(nid)!.type) && this.scopeNodeIds.has(nid)) {
-              this._totalNodes--;
-              this.log('debug', `[AI] [CT] prune_neighbor ${nid} — bodied scope node (total −1 → ${this._totalNodes})`);
-            }
-            this.log('debug', `[AI] [CT] prune_neighbor hop=${this.hopCount}: ${nid}`);
+          if (!this.nodeMap.has(nid)) {
+            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nidRaw} reason=unknown_node`);
+            continue;
           }
+          if (nid === this.originNodeId) {
+            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=origin_forbidden`);
+            continue;
+          }
+          if (this.visited.has(nid)) {
+            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=already_visited`);
+            continue;
+          }
+          if (notedIds.has(nid)) {
+            this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=already_analyzed`);
+            continue;
+          }
+          this.removedSet.add(nid);
+          if (SCRIPT_TYPES.has(this.nodeMap.get(nid)!.type) && this.scopeNodeIds.has(nid)) {
+            this._totalNodes--;
+            this.log('debug', `[AI] [CT] prune_neighbor ${nid} — bodied scope node (total −1 → ${this._totalNodes})`);
+          }
+          this.log('debug', `[AI] [CT] prune_neighbor hop=${this.hopCount}: ${nid}`);
         }
       }
 
@@ -1755,7 +1772,10 @@ export class NavigationEngine implements IHopStateMachine {
       }
       scopeForBfs = ctNodes;
     }
-    const finalNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, scopeForBfs);
+    const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, scopeForBfs);
+    const finalNodeIds = new Set<string>(reachableNodeIds);
+    finalNodeIds.add(this.originNodeId!);
+    for (const notedId of notedIds) finalNodeIds.add(notedId);
 
     const finalEdges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {

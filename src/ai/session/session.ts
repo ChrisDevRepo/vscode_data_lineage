@@ -103,6 +103,28 @@ export class AiSession {
    */
   public synthesisCorrectiveAttempted = false;
   /**
+   * Number of `present_result` tool invocations observed in the current runHopLoop turn.
+   *
+   * @remarks
+   * Incremented at tool-handler entry. Reset at runHopLoop start.
+   */
+  public presentResultAttemptCountThisTurn = 0;
+  /**
+   * Number of failed `present_result` invocations in the current runHopLoop turn.
+   *
+   * @remarks
+   * Incremented when `present_result` returns a structured failure envelope or throws.
+   * Reset at runHopLoop start.
+   */
+  public presentResultFailureCountThisTurn = 0;
+  /**
+   * Last `present_result` failure reason captured this turn.
+   *
+   * @remarks
+   * Used by synthesis fallback rendering to report why assembly failed.
+   */
+  public presentResultLastFailureReasonThisTurn: string | null = null;
+  /**
    * One-shot guard for emitting the "Synthesizing the answer…" progress chip
    * on the first synthesis-phase round. The synthesis call to the model
    * typically takes 30–90s; without a progress signal users perceive a hang.
@@ -222,6 +244,9 @@ export class AiSession {
     this.startExplorationRoundId = null;
     this.phase = { kind: 'idle' };
     this.classification = undefined;
+    this.presentResultAttemptCountThisTurn = 0;
+    this.presentResultFailureCountThisTurn = 0;
+    this.presentResultLastFailureReasonThisTurn = null;
     this.lastDiscoveryOrigin = null;
     this.lastDiscoveryWalkCount = 0;
     this.lastDiscoveryQuestion = null;

@@ -43,6 +43,7 @@ tests/
 │   ├── navigation-engine-cascade.test.ts  # Cascade-prune + viewPrune.prunePreserveOnly
 │   ├── navigation-engine-bipartite.test.ts # Bipartite agenda rule
 │   ├── navigation-engine-supplement.test.ts # Supplement-agenda flow
+│   ├── navigation-engine-synthesis-regression.test.ts # Keeps analyzed slots grounded for synthesis after prune-neighbor attempts
 │   ├── column-flow-validation.test.ts     # CT column_flow validation
 │   │
 │   │  — Boundary guards (Zod / policy / state) —
@@ -54,6 +55,7 @@ tests/
 │   ├── repeat-reject-guard.test.ts        # Idempotency counter (abort on 3 identical failures)
 │   ├── transient-retry.test.ts            # Transient-network classifier
 │   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
+│   ├── log-normalization.test.ts          # Output-channel single-line normalization guard
 │   ├── refine-loop.test.ts                # Discovery-phase refinement loop
 │   ├── projectStore.test.ts               # Migration, serialization
 │   │

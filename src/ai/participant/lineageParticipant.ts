@@ -445,7 +445,7 @@ export class LineageParticipant {
                 this.logger.warn(`[Discovery] Memo composition returned empty response — discoverySummary not set`);
               }
             } catch (err) {
-              this.logger.error('Discovery memo composition', err);
+              this.logger.debug(`[Reject] discovery_memo_composition code=internal_error reason=${sanitizeForLog(err instanceof Error ? err.message : String(err))}`);
               // _discoverySummary stays null (never set) — absence is clean.
               writer.markdown(`\n\n> ⚠ Could not compose discovery summary — analysis will proceed without it.\n\n`);
             }
@@ -671,6 +671,9 @@ export class LineageParticipant {
       sess.presentResultCalledThisTurn = false;
       sess.synthesisCorrectiveAttempted = false;
       sess.synthesisProgressEmitted = false;
+      sess.presentResultAttemptCountThisTurn = 0;
+      sess.presentResultFailureCountThisTurn = 0;
+      sess.presentResultLastFailureReasonThisTurn = null;
       let actionRequiredPending = false;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
@@ -1053,7 +1056,7 @@ export class LineageParticipant {
       } else {
         const msg = err instanceof Error ? err.message : String(err);
         const isEnvelopeReject = msg.includes('unexpected tool_use_id');
-        this.logger.error('Chat handler', err);
+        this.logger.debug(`[Reject] chat_handler code=internal_error reason=${sanitizeForLog(err instanceof Error ? err.message : String(err))}`);
         if (isEnvelopeReject) {
           this.logger.debug(`[AI] [Envelope] at-error ${envelope.snapshot()}`);
         }
@@ -1179,9 +1182,15 @@ export class LineageParticipant {
       return;
     }
     const userQuestion = sess.memory.getUserQuestion();
+    const attempted = sess.presentResultAttemptCountThisTurn;
+    const failed = sess.presentResultFailureCountThisTurn;
+    const reason = sess.presentResultLastFailureReasonThisTurn?.trim();
+    const fallbackBanner = attempted > 0
+      ? `> Synthesis fallback — present_result failed validation ${failed}/${attempted} attempt(s).${reason ? ` Last reason: ${reason}` : ''} Captured analysis below.`
+      : '> Synthesis fallback — the model did not invoke `present_result`. Captured analysis below.';
     const lines: string[] = [
       '',
-      '> Synthesis fallback — the model did not invoke `present_result`. Captured analysis below.',
+      fallbackBanner,
       '',
     ];
     if (userQuestion) lines.push(`# ${userQuestion}`, '');
