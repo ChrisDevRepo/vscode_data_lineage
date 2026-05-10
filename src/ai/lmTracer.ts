@@ -4,7 +4,7 @@
  * @internal
  * @remarks
  * Development observability tool — not part of the extension's public API and never
- * active in release builds (ENABLED defaults to false).
+ * active in release builds unless explicitly enabled via configuration.
  *
  * Captures the full traffic of every `vscode.lm.sendRequest` call as NDJSON to
  * `tmp/lm-trace/trace-{iso}.ndjson` for post-session diagnostic analysis:
@@ -12,8 +12,8 @@
  * response quality metrics.
  *
  * Lifecycle:
- * - `ENABLED = true`  → trace file is created on {@link LmTracer.init}, all events written.
- * - `ENABLED = false` → every method is a no-op; no file is created (default for releases).
+ * - enabled=true  → trace file is created on {@link LmTracer.init}, all events written.
+ * - enabled=false → every method is a no-op; no file is created (default).
  *
  * Analyse a captured trace:
  * ```
@@ -25,11 +25,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-
-// DEV TRACE — set true to capture LM traffic to tmp/lm-trace/ for diagnostic analysis.
-// Default is false for release builds. Flip to true only during active diagnosis.
-// See docs/LM_TRACING.md for the full analysis workflow.
-const ENABLED = true; // ← flip to false to disable
 
 /** JSON-safe snapshot of one content part from a serialized LM message; written to the trace file only. */
 interface TracePart {
@@ -48,15 +43,17 @@ interface TraceMessage {
 }
 
 export class LmTracer {
-  static readonly enabled: boolean = ENABLED;
+  private static enabledFlag = false;
   private static filePath: string | null = null;
 
   /**
    * Opens the trace file. Call once from `extension.ts` activate.
    * @param workspaceRoot - absolute path to the workspace root
+   * @param enabled - explicit runtime toggle (false by default)
    */
-  static init(workspaceRoot: string): void {
-    if (!ENABLED) return;
+  static init(workspaceRoot: string, enabled: boolean): void {
+    this.enabledFlag = enabled;
+    if (!this.enabledFlag) return;
     const dir = path.join(workspaceRoot, 'tmp', 'lm-trace');
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -101,7 +98,7 @@ export class LmTracer {
   // ── write ─────────────────────────────────────────────────────────────────
 
   private static write(ev: string, sid: string, rid: number, extra: Record<string, unknown>): void {
-    if (!ENABLED || !this.filePath) return;
+    if (!this.enabledFlag || !this.filePath) return;
     const line = JSON.stringify({ _: 'TX', ev, sid, rid, t: Date.now(), ...extra });
     try {
       fs.appendFileSync(this.filePath, line + '\n', 'utf8');
@@ -112,7 +109,7 @@ export class LmTracer {
 
   /** Emitted once per turn at entry to handleChatRequest. */
   static sessionStart(sid: string, modelId: string, maxTokens: number): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('SESSION_START', sid, 0, { modelId, maxTokens });
   }
 
@@ -125,7 +122,7 @@ export class LmTracer {
     tools: string[],
     mode: string,
   ): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('REQ', sid, rid, {
       phase,
       tools,
@@ -137,13 +134,13 @@ export class LmTracer {
 
   /** Emitted for each LanguageModelToolCallPart that arrives in the response stream. */
   static toolCall(sid: string, rid: number, tool: string, callId: string, input: Record<string, unknown>): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('TOOL_CALL', sid, rid, { tool, callId, input });
   }
 
   /** Emitted immediately before vscode.lm.invokeTool. cached=true for dedup-cache hits. */
   static toolInvoke(sid: string, rid: number, tool: string, callId: string, cached: boolean): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('TOOL_INVOKE', sid, rid, { tool, callId, cached });
   }
 
@@ -156,7 +153,7 @@ export class LmTracer {
     result: vscode.LanguageModelToolResult,
     ms: number,
   ): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     const content: string[] = [];
     let errCode: string | null = null;
     let hint: string | null = null;
@@ -185,13 +182,13 @@ export class LmTracer {
     outTok: number,
     toolCount: number,
   ): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('ROUND', sid, rid, { phase, ms, inTok, outTok, toolCount });
   }
 
   /** Emitted before every envelope.wipeAndSeed call. msgsBefore = envelope.length before wipe. */
   static wipe(sid: string, rid: number, trigger: string, msgsBefore: number): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('WIPE', sid, rid, { trigger, msgsBefore });
   }
 
@@ -201,7 +198,7 @@ export class LmTracer {
    * appears in a subsequent REQ message history, so it must be captured explicitly.
    */
   static finalAnswer(sid: string, rid: number, text: string): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('ANSWER_TEXT', sid, rid, { chars: text.length, text });
   }
 
@@ -215,7 +212,7 @@ export class LmTracer {
     tools: number,
     exitKind: string,
   ): void {
-    if (!ENABLED) return;
+    if (!this.enabledFlag) return;
     this.write('SESSION_END', sid, 0, { cumInTok, cumOutTok, peakTok, rounds, tools, exitKind });
   }
 

@@ -34,8 +34,13 @@ let outputChannel: vscode.LogOutputChannel;
 export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
-  LmTracer.init(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd());
   const logger = Logger.create(outputChannel, 'Config');
+  const aiConfig = vscode.workspace.getConfiguration('dataLineageViz.ai');
+  const lmTraceEnabled = aiConfig.get<boolean>('lmTraceEnabled', false);
+  LmTracer.init(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(), lmTraceEnabled);
+  if (lmTraceEnabled) {
+    logger.info('LM trace enabled — writing NDJSON to tmp/lm-trace/');
+  }
 
   const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
   logger.info(`Extension activated — built ${buildStamp}`);

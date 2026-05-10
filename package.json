@@ -466,6 +466,11 @@
             "type": "boolean",
             "default": false,
             "markdownDescription": "Show each `@lineage` tool call as an expandable chat part (with input JSON). When off (default), the copy button captures only the AI prose; tool progress is shown ephemerally via status text and full tool I/O is available in the **Data Lineage Viz** output channel. Turn on for developer debugging — note that VS Code's built-in chat copy will then include tool-call details."
+          },
+          "dataLineageViz.ai.lmTraceEnabled": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Developer only: write full LM traffic (prompts, tool calls/results, answer text) to `tmp/lm-trace/*.ndjson` for diagnostics. Keep disabled outside UAT/dev because traces may include sensitive SQL and business metadata."
           }
         }
       }
@@ -1237,6 +1242,7 @@
     "vitest": "^3.2.4"
   },
   "overrides": {
+    "fast-xml-builder": "^1.1.7",
     "dompurify": "^3.4.1",
     "serialize-javascript": "^7.0.5",
     "picomatch": "4.0.4"
