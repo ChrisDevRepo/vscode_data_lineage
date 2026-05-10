@@ -7,6 +7,7 @@
  */
 
 import type { DeferredQuestion } from './smTypes';
+import { sanitizeMissionBrief } from './inputNormalization';
 
 
 /**
@@ -508,7 +509,8 @@ export function buildToolUsageBlock(): string {
  * @returns Filled mission-brief XML block, or an empty string when both `brief` and `question` are absent.
  */
 export function buildMissionBriefBlock(brief: string, question: string): string {
-  const missionText = brief || question;
+  const cleanedBrief = brief ? sanitizeMissionBrief(brief).text : '';
+  const missionText = cleanedBrief || question;
   if (!missionText) return '';
   return [
     '## Mission Context',

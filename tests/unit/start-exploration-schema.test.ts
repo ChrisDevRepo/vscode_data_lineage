@@ -7,6 +7,7 @@
 
 import { assert, printSummary } from './helpers/testUtils';
 import { StartExplorationInputSchema } from '../../src/ai/tools';
+import { resolveModelNodeId, sanitizeMissionBrief } from '../../src/ai/inputNormalization';
 
 async function runTests() {
   console.log('\n══════ start-exploration-schema tests ══════');
@@ -92,6 +93,40 @@ async function runTests() {
       `rejection message names both 'origin' and 'supplement' (got: ${msg})`,
     );
   }
+
+  console.log('\n── mission brief sanitization ──');
+  const dirtyBrief = 'Use `lineage_search_objects` then submit_findings. Explain business lineage.';
+  const sanitized = sanitizeMissionBrief(dirtyBrief);
+  assert(sanitized.changed, 'mission brief with tool mentions is sanitized');
+  assert(!/search_objects/i.test(sanitized.text), 'search_objects token removed from mission brief');
+  assert(!/submit_findings/i.test(sanitized.text), 'submit_findings token removed from mission brief');
+  assert(/business lineage/i.test(sanitized.text), 'semantic mission content remains');
+
+  console.log('\n── node id normalization (with/without brackets) ──');
+  const nodeMap = new Map<string, unknown>([
+    ['[dbo].[factsales]', { id: '[dbo].[factsales]' }],
+    ['[sales].[daily report]', { id: '[sales].[daily report]' }],
+  ]);
+  assert(
+    resolveModelNodeId('[dbo].[FactSales]', nodeMap) === '[dbo].[factsales]',
+    'canonical bracketed mixed-case id resolves',
+  );
+  assert(
+    resolveModelNodeId('dbo.FactSales', nodeMap) === '[dbo].[factsales]',
+    'unbracketed schema.name id resolves to canonical id',
+  );
+  assert(
+    resolveModelNodeId('[sales].[daily report]', nodeMap) === '[sales].[daily report]',
+    'bracketed id with spaces resolves',
+  );
+  assert(
+    resolveModelNodeId('sales.daily report', nodeMap) === '[sales].[daily report]',
+    'unbracketed id with spaces resolves',
+  );
+  assert(
+    resolveModelNodeId('dbo.DoesNotExist', nodeMap) === null,
+    'unknown id remains unresolved after normalization',
+  );
 
   printSummary('start-exploration-schema');
 }

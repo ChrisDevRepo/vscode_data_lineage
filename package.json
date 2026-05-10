@@ -51,7 +51,7 @@
     "type": "git",
     "url": "https://github.com/ChrisDevRepo/vscode_data_lineage"
   },
-  "homepage": "https://chrisdevrepo.github.io/vscode_data_lineage/",
+  "homepage": "https://datalineage.chwagner.eu/",
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": true

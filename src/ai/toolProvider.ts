@@ -41,6 +41,7 @@ import { CLASSIFICATION_LABEL, type ClassificationValue } from './classification
 import type { CapturedSection, CaptureAngle } from './memoryManager';
 import { getToolInvocationLabel } from './toolLabels';
 import { renderScopeSummaryMd } from './scopeSummaryRenderer';
+import { resolveModelNodeId, resolveModelNodeIds, sanitizeMissionBrief } from './inputNormalization';
 export { renderScopeSummaryMd } from './scopeSummaryRenderer';
 
 /** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
@@ -303,12 +304,18 @@ class ToolHandler {
         }, input);
       }
       const data = parsed.data;
+      const normalizedMissionBrief = typeof data.mission_brief === 'string'
+        ? sanitizeMissionBrief(data.mission_brief)
+        : null;
+      if (normalizedMissionBrief?.changed) {
+        this.logger.debug(`[Mission] sanitized at tool boundary reasons=[${normalizedMissionBrief.reasons.join(',')}] old_len=${data.mission_brief!.length} new_len=${normalizedMissionBrief.text.length}`);
+      }
 
       // DRY helper: propagates follow-up context updates shared by supplement + same-origin retrace.
       const applyFollowUpContext = (engine: NavigationEngine): void => {
         if (data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
         sess.setClassification(data.classification);
-        if (typeof data.mission_brief === 'string') sess.memory.setMissionBrief(data.mission_brief);
+        if (normalizedMissionBrief?.text) sess.memory.setMissionBrief(normalizedMissionBrief.text);
         if (data.question) sess.memory.setUserQuestion(data.question);
       };
 
@@ -366,7 +373,7 @@ class ToolHandler {
       if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
         const sameOrigin =
           !!data.origin && !!sess.resultGraph?.originNodeId &&
-          data.origin.toLowerCase() === sess.resultGraph.originNodeId.toLowerCase();
+          resolveModelNodeId(data.origin, new Map(m.nodes.map(n => [n.id, n]))) === sess.resultGraph.originNodeId;
 
         if (sameOrigin) {
           const visitedIds = prior.getDetailSlots().map(s => s.nodeId);
@@ -440,7 +447,9 @@ class ToolHandler {
       const refineDownstreamDepth = data.downstream_depth ?? (isRefining ? (prior!.currentDownstreamDepth ?? undefined) : undefined);
       const refineEnforcement = data.depth_enforcement ?? (isRefining ? prior!.currentDepthEnforcement : undefined);
       const refineQuestion = data.question ?? (isRefining ? prior!.currentQuestion : 'Explore lineage');
-      const refineMissionBrief = typeof data.mission_brief === 'string' ? data.mission_brief : (isRefining ? (prior!.currentMissionBrief ?? undefined) : undefined);
+      const refineMissionBrief = normalizedMissionBrief
+        ? (normalizedMissionBrief.text || undefined)
+        : (isRefining ? sanitizeMissionBrief(prior!.currentMissionBrief ?? '').text || undefined : undefined);
       const refineTargetColumns = data.targetColumns ?? (isRefining ? (prior!.currentTargetColumns ?? undefined) : undefined);
 
       const initResult = engine.init({
@@ -465,7 +474,8 @@ class ToolHandler {
       const maxRounds = aiCfg.get<number>('maxRounds', 50);
       const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
       if (initResult.scopeSize > safeMax) {
-        const safeDepth = suggestNarrowerDepth(g, data.origin, data.direction || 'bidirectional', safeMax);
+        const scopeOrigin = engine.currentOrigin ?? data.origin;
+        const safeDepth = suggestNarrowerDepth(g, scopeOrigin, data.direction || 'bidirectional', safeMax);
         sess.resetExploration();
         return this.logAndReturn('start_exploration', {
           error: 'scope_exceeds_budget',
@@ -691,10 +701,21 @@ class ToolHandler {
       let resolvedNodeIds: string[] = [...sess.resultGraph.nodeIds];
       let resolvedEdges: [string, string, string][] = [...sess.resultGraph.edges];
       const graphSource = sess.resultGraph.source;
+      const modelNodeMap = new Map(model.nodes.map(n => [n.id, n]));
 
       if (input.is_update && input.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
-        const toAdd = input.add_node_ids.filter(id => model.nodes.some(n => n.id === id) && !currentSet.has(id));
+        const addResolution = resolveModelNodeIds(input.add_node_ids, modelNodeMap);
+        if (addResolution.unresolved.length > 0) {
+          return this.logAndReturn('present_result', {
+            success: false,
+            errors: [
+              `Unknown add_node_ids after bracket/case normalization: ${addResolution.unresolved.map(id => `\`${id}\``).join(', ')}.`,
+              'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
+            ],
+          }, input);
+        }
+        const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
         resolvedNodeIds.push(...toAdd);
         const newSet = new Set(resolvedNodeIds);
         resolvedEdges = model.edges
@@ -703,7 +724,17 @@ class ToolHandler {
       }
 
       if (input.prune_node_ids?.length) {
-        const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, input.prune_node_ids);
+        const pruneResolution = resolveModelNodeIds(input.prune_node_ids, modelNodeMap);
+        if (pruneResolution.unresolved.length > 0) {
+          return this.logAndReturn('present_result', {
+            success: false,
+            errors: [
+              `Unknown prune_node_ids after bracket/case normalization: ${pruneResolution.unresolved.map(id => `\`${id}\``).join(', ')}.`,
+              'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
+            ],
+          }, input);
+        }
+        const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
         resolvedEdges = pruned.edges;
       }

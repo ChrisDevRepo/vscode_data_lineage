@@ -20,6 +20,7 @@ import { edgeApiType } from './aiPresenter';
 import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from './smGuards';
 import { trunc } from '../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from './memoryManager';
+import { resolveModelNodeId, sanitizeMissionBrief } from './inputNormalization';
 import type { ApprovedBorder, ColumnAspect, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from './smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
@@ -853,17 +854,18 @@ export class NavigationEngine implements IHopStateMachine {
     this.agendaIds.clear();
     this.memory.reset();
     this.memory.setUserQuestion(params.question);
-    if (params.mission_brief) {
-      this.memory.setMissionBrief(params.mission_brief);
-      this.log('debug', `[Mission] brief=${trunc(params.mission_brief, 200)}`);
+    const sanitizedMission = params.mission_brief ? sanitizeMissionBrief(params.mission_brief) : null;
+    if (sanitizedMission?.text) {
+      this.memory.setMissionBrief(sanitizedMission.text);
+      this.log('debug', `[Mission] brief=${trunc(sanitizedMission.text, 200)}`);
+    }
+    if (sanitizedMission?.changed) {
+      this.log('debug', `[Mission] sanitized reasons=[${sanitizedMission.reasons.join(',')}] old_len=${params.mission_brief!.length} new_len=${sanitizedMission.text.length}`);
     }
     // Validate user-named identifier filters resolve to real graph nodes before storing.
     // Unknown ids would silently no-op at scope-build time (excludedNodeIds.has(id) returns
     // false for ids never present in the seen set), masking the AI inventing wrong-schema ids.
-    const resolveId = (raw: string): string | null =>
-      this.nodeMap.has(raw) ? raw
-      : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase()
-      : null;
+    const resolveId = (raw: string): string | null => resolveModelNodeId(raw, this.nodeMap);
     const partition = (raws: string[]): { resolved: string[]; unresolved: string[] } => {
       const resolved: string[] = [];
       const unresolved: string[] = [];
@@ -879,7 +881,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[AI] [NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
       return {
         error: 'unknown_node_ids',
-        hint: "These ids don't exist in the loaded model. Call lineage_search_objects with each user-named identifier to resolve the real schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
+        hint: "These ids don't exist in the loaded model after bracket/case normalization. Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
         unresolved_excludeNodeIds: excludeIds.unresolved,
         unresolved_passNodeIds: passIds.unresolved,
       };
@@ -893,7 +895,8 @@ export class NavigationEngine implements IHopStateMachine {
     this.excludedNodeIds = new Set(excludeIds.resolved.map(s => s.toLowerCase()));
     this.passNodeIds = new Set(passIds.resolved.map(s => s.toLowerCase()));
 
-    const originNode = this.nodeMap.get(params.origin.toLowerCase());
+    const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap);
+    const originNode = resolvedOriginId ? this.nodeMap.get(resolvedOriginId) : null;
     if (!originNode) {
       return {
         error: 'origin_not_found',
@@ -988,7 +991,7 @@ export class NavigationEngine implements IHopStateMachine {
       upstream_depth: params.upstream_depth,
       downstream_depth: params.downstream_depth,
       depth_enforcement: params.depth_enforcement,
-      mission_brief: params.mission_brief,
+      mission_brief: sanitizedMission?.text || undefined,
     };
     // Bipartite agenda rule: `enqueueHop` is the only code path that writes to the agenda.
     // It pushes bodied nodes directly and contracts body-less nodes through to their bodied
