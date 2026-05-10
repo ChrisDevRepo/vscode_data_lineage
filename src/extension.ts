@@ -35,10 +35,10 @@ export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
   const logger = Logger.create(outputChannel, 'Config');
-  const lmTraceEnabled = isLmTraceEnabledFromEnv();
+  const lmTraceEnabled = true;
   LmTracer.init(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(), lmTraceEnabled);
   if (lmTraceEnabled) {
-    logger.info('LM trace enabled via DLV_LM_TRACE — writing NDJSON to tmp/lm-trace/');
+    logger.info('LM trace enabled (internal dev backdoor) — writing NDJSON to tmp/lm-trace/');
   }
 
   const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
@@ -152,13 +152,6 @@ export async function activate(context: vscode.ExtensionContext) {
  */
 export function deactivate() {
   LmTracer.flush();
-}
-
-function isLmTraceEnabledFromEnv(): boolean {
-  const raw = process.env.DLV_LM_TRACE;
-  if (!raw) return false;
-  const normalized = raw.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
 }
 
 /**

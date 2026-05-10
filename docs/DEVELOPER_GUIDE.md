@@ -155,7 +155,7 @@ AI behaviour beyond pure-function surface is verified via UAT baseline captures 
 
 ## LM traffic tracer
 
-`src/ai/lmTracer.ts` is a built-in observability tool that captures the full content of every `vscode.lm.sendRequest` call as NDJSON for post-session diagnostic analysis. It is an internal developer backdoor controlled only by the `DLV_LM_TRACE` environment variable.
+`src/ai/lmTracer.ts` is a built-in observability tool that captures the full content of every `vscode.lm.sendRequest` call as NDJSON for post-session diagnostic analysis. In this internal development branch, tracing is currently hardcoded ON in `src/extension.ts`.
 
 ### What it captures
 
@@ -177,21 +177,9 @@ Token counts (`inTok`, `outTok`) come from `model.countTokens()` — a local est
 
 ### How to enable
 
-Set an environment variable before starting VS Code / Extension Host:
+Tracing is enabled by default via a hardcoded flag during extension activation. Run a `@lineage` chat session and trace files will be written to `tmp/lm-trace/` (gitignored).
 
-```powershell
-$env:DLV_LM_TRACE = "1"
-```
-
-Disable tracing by unsetting or setting `0`:
-
-```powershell
-Remove-Item Env:DLV_LM_TRACE
-# or
-$env:DLV_LM_TRACE = "0"
-```
-
-Then run a `@lineage` chat session. Trace files land at `tmp/lm-trace/` (gitignored). When the variable is absent (or `0`), all `LmTracer` methods are no-ops.
+To disable later for production, change the activation flag in `src/extension.ts` from `true` to `false` before packaging.
 
 ### Analyzing a trace
 
