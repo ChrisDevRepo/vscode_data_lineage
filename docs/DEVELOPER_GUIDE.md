@@ -120,7 +120,7 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 | `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
 | `buildPhasePrompt(phase, ctx?)` | `prompts.ts` | Canonical static phase protocol entrypoint (discover/active/synthesis/completed). |
 | `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules. |
-| `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract. |
+| `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract; routes mission-relevant neighbors via `route_requests` (pruning specifics are SM-owned). |
 | `buildSynthesisPrompt` | `prompts.ts` | Archive lift + assembly + intro/closing anchoring. |
 | `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
 | `buildSmProtocol(targetColumns?, classification)` | `smPrompts.ts` | Active SM protocol (verdict + sections + badges + routing + pruning); CT adds column protocol. Pruning uses `get_neighbor_columns` for lightweight neighbor inspection before deciding to prune. |

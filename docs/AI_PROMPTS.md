@@ -22,7 +22,7 @@ Prompt assembly is now phase-first in TS:
 
 - `buildGeneralSystemPrompt(...)` - shared system baseline.
 - `buildPhasePrompt(phase, ctx)` - canonical static protocol per phase (`discover` / `active` / `synthesis` / `completed`).
-- `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning, CT anchor).
+- `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning, CT anchor). Canonical home for pruning-specific guidance.
 - `resolveStagePrompt(...)` - YAML template injection and gating.
 - Dynamic active-only blocks:
   - `buildCurrentTaskBlock(...)`

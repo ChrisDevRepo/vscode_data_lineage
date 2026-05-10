@@ -194,7 +194,7 @@ export function buildActivePhasePrompt(isInline = false): string {
     '',
     '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
     '2. MATHEMATICS: Wrap every formula in LaTeX math delimiters — $expr$ inline, $$expr$$ block — transforms, allocations, thresholds, proportions, CASE expressions. Never use backticks for formulas. Correct: $\\text{Ratio} = \\frac{A}{B}$. Wrong: `\\text{Ratio} = \\frac{A}{B}`. Math delimited this way reaches the final document; math in backticks or plain prose does not.',
-    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth. Routing: explicitly adjudicate neighbors for the current focus — route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s), and mark non-relevant neighbors with `prune_neighbors` when justified by the current evidence.',
+    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth. Routing: explicitly adjudicate neighbors for the current focus — route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s).',
     `4. ROUTE_REQUESTS: ${ROUTE_REQUESTS_VERBATIM_CONTRACT}`,
     `5. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
   ].join('\n');
