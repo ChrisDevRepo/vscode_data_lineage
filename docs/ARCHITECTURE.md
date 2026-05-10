@@ -190,7 +190,7 @@ flowchart LR
 
 The dashed orange WM boxes are not stored anywhere — they are computed on demand by `getWorkingMemory()` and `getShortTermMemory()`, then serialised into the prompt. The next hop rebuilds WM from the *now-larger* archive. This is what makes the loop bounded: WM stays small even as the archive grows.
 
-**ACTIVE isolation contract.** In `active` phase, the participant runs a strict sliding-memory loop: broad chat-history replay is disabled. Each hop request is composed from the current system prompt + current directive, with at most one minimal trailing tool pair (assistant `tool_call` + user `tool_result`) preserved only for protocol continuity. The full archived analysis remains in `AiMemoryManager` and is lifted at synthesis; it is not replayed verbatim each hop.
+**ACTIVE isolation contract.** In `active` phase, the participant runs a strict sliding-memory loop: broad chat-history replay is disabled. Each hop request is composed from the current system prompt + current directive, with at most one minimal trailing tool pair (assistant `tool_call` + user `tool_result`) preserved only for protocol continuity. Canonical-field de-dup runs per request envelope: hop counters and focus ownership stay in `<mission_state>`, mission intent ownership stays in `<mission_brief>`, and replayed tool payload is reduced to current-hop evidence (`focus_node`, `neighbors`, `sm_status`). The full archived analysis remains in `AiMemoryManager` and is lifted at synthesis; it is not replayed verbatim each hop.
 
 **Archive growth across hops.** Each successful `submit_findings` appends one `DetailSlot` to the archive. The sliding window every hop reads is `archive.slice(-3)` — so as the archive grows, the *content* of `short_term_memory` slides forward.
 
@@ -245,7 +245,7 @@ None of these WM fields are stored — they are computed from the archive (or th
 | `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, depth_from_origin, in_budget, in_approved_scope, would_trigger_action_required}` |
 | `current_task` | Sub-question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
 | `mission_brief` | AI-composed mission statement — set once at `start_exploration`, delivered verbatim every hop, survives sliding-memory wipes |
-| `working_memory.user_question` | The user's original question, echoed verbatim every hop |
+| `working_memory.user_question` | The user's original question in hop payloads; in strict active replay it is de-duplicated against `<mission_brief>` and not replayed as a second carrier |
 | `working_memory.short_term_memory` | Sliding window of the last 3 node summaries the AI authored |
 | `working_memory.checklist` | Drain progress: `current_hop`, `noted`, `total`, `open`, `coveragePct`, `rounds_used`, `scope_growth` |
 | `working_memory.recent_rejections` | Recent route-validation failures (capped at 5) |

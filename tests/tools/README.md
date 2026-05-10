@@ -22,7 +22,7 @@ node tests/tools/trace-analyze.js <file.ndjson> [flags] [--sid <id>]
 |---|---|
 | `--summary` | Per-session totals: rounds, tokens, tools, rejections. Default when no flag given. |
 | `--phase` | Token breakdown per phase (compose / discover / active / synthesis / completed). |
-| `--patterns` | Which prompt structural blocks appear in which phase; flags cross-phase anomalies. |
+| `--patterns` | Which prompt structural blocks appear in which phase; flags cross-phase anomalies and active-phase canonical ownership/required-field checks (dedup guard). |
 | `--redundancy` | Duplicate content across message parts in the same request. |
 | `--rejected` | All tool result rejections with error codes and hints; marks expected gate rejects (`start_exploration` + `confirm_sm_start`) separately. |
 | `--loops` | Same tool called consecutively with identical input (≥2×). |

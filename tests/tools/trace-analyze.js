@@ -149,6 +149,72 @@ function segmentStablePrefix(text) {
   return segments;
 }
 
+function parseToolResultJsonParts(messages) {
+  const payloads = [];
+  if (!Array.isArray(messages)) return payloads;
+  for (const msg of messages) {
+    for (const part of (msg.parts || [])) {
+      if (part.type !== 'tool_result' || !Array.isArray(part.content)) continue;
+      for (const c of part.content) {
+        if (typeof c !== 'string') continue;
+        try { payloads.push(JSON.parse(c)); } catch { /* ignore non-json */ }
+      }
+    }
+  }
+  return payloads;
+}
+
+function getOwnershipCheck(req) {
+  const sysText = (req.messages?.[0]?.parts || [])
+    .filter(p => p.type === 'text')
+    .map(p => p.value || '')
+    .join('');
+  const directiveText = (req.messages?.[1]?.parts || [])
+    .filter(p => p.type === 'text')
+    .map(p => p.value || '')
+    .join('');
+  const toolPayloads = parseToolResultJsonParts(req.messages || []);
+  const replay = toolPayloads.length > 0 ? toolPayloads[toolPayloads.length - 1] : null;
+
+  const missionStateFocus = /focus_node_id:\s*([^\n\r]+)/.exec(sysText)?.[1]?.trim() || '';
+  const missionStateHop = /hop:\s*(\d+)\s*\/\s*(\d+)/.exec(sysText);
+  const missionStateAgenda = /agenda_remaining:\s*(\d+)/.exec(sysText);
+  const missionBriefExists = sysText.includes('<mission_brief>');
+
+  const directiveFocus = /focus for hop\s+\d+\s+is\s+([^\.\n\r]+)/i.exec(directiveText)?.[1]?.trim() || '';
+  const directiveHop = /focus for hop\s+(\d+)/i.exec(directiveText)?.[1] || '';
+
+  const replayFocus = replay?.focus_node?.id ? String(replay.focus_node.id) : '';
+  const replayHop = typeof replay?.hop === 'number' ? String(replay.hop) : '';
+  const replayAgenda = typeof replay?.agenda_remaining === 'number' ? String(replay.agenda_remaining) : '';
+  const replayMission = typeof replay?.working_memory?.user_question === 'string' ? replay.working_memory.user_question : '';
+  const replayBddl = typeof replay?.focus_node?.bb_ddl === 'string' ? replay.focus_node.bb_ddl : '';
+  const replayNeighbors = Array.isArray(replay?.neighbors) ? replay.neighbors : null;
+
+  const focusCarriers = [missionStateFocus, directiveFocus, replayFocus].filter(Boolean).length;
+  const hopCarriers = [missionStateHop?.[1] || '', directiveHop, replayHop].filter(Boolean).length;
+  const agendaCarriers = [missionStateAgenda?.[1] || '', replayAgenda].filter(Boolean).length;
+  const missionCarriers = [missionBriefExists ? 'mission_brief' : '', replayMission].filter(Boolean).length;
+
+  const duplicates = {
+    focus_node_id: focusCarriers > 1,
+    hop: hopCarriers > 1,
+    agenda_remaining: agendaCarriers > 1,
+    mission_intent: missionCarriers > 1,
+  };
+
+  const requiredMissing = {
+    mission_state_focus: !missionStateFocus,
+    mission_state_hop: !missionStateHop,
+    mission_state_agenda: !missionStateAgenda,
+    replay_focus_node: !replayFocus,
+    replay_focus_bb_ddl: !replayBddl,
+    replay_neighbors: !replayNeighbors,
+  };
+
+  return { duplicates, requiredMissing, replayFound: !!replay };
+}
+
 // ── known prompt structural markers ───────────────────────────────────────────
 // These appear inside the system prompt and signal specific blocks.
 // Used by --patterns to detect where blocks appear and if they're in wrong phases.
@@ -738,6 +804,27 @@ if (flags.has('--patterns')) {
           console.log(`       ${''.padEnd(26)}  source: ${srcStr}`);
         }
       }
+    }
+    if (ph === 'active') {
+      const reqs = reqsByPhase[ph] || [];
+      let dupFocus = 0, dupHop = 0, dupAgenda = 0, dupMission = 0;
+      let missingFocus = 0, missingHop = 0, missingAgenda = 0, missingReplay = 0, missingBddl = 0, missingNeighbors = 0;
+      for (const req of reqs) {
+        const check = getOwnershipCheck(req);
+        if (check.duplicates.focus_node_id) dupFocus++;
+        if (check.duplicates.hop) dupHop++;
+        if (check.duplicates.agenda_remaining) dupAgenda++;
+        if (check.duplicates.mission_intent) dupMission++;
+        if (check.requiredMissing.mission_state_focus) missingFocus++;
+        if (check.requiredMissing.mission_state_hop) missingHop++;
+        if (check.requiredMissing.mission_state_agenda) missingAgenda++;
+        if (check.requiredMissing.replay_focus_node) missingReplay++;
+        if (check.requiredMissing.replay_focus_bb_ddl) missingBddl++;
+        if (check.requiredMissing.replay_neighbors) missingNeighbors++;
+      }
+      console.log('  Ownership checks (active):');
+      console.log(`    duplicate carriers: focus_node_id=${dupFocus}/${total}, hop=${dupHop}/${total}, agenda_remaining=${dupAgenda}/${total}, mission_intent=${dupMission}/${total}`);
+      console.log(`    required missing : mission_state.focus=${missingFocus}/${total}, mission_state.hop=${missingHop}/${total}, mission_state.agenda=${missingAgenda}/${total}, replay.focus_node=${missingReplay}/${total}, replay.bb_ddl=${missingBddl}/${total}, replay.neighbors=${missingNeighbors}/${total}`);
     }
     console.log('');
   }

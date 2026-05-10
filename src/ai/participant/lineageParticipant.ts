@@ -102,18 +102,19 @@ function findLastToolPairInHistory(
  * Minimizes replayed tool-result payload for ACTIVE phase.
  *
  * @remarks
- * Keeps only hop-driving fields needed for the next step. Drops archived
- * narrative payload from prior hops.
+ * Keeps only current-hop evidence fields. Hop counters and mission intent are
+ * emitted by canonical prompt blocks (`<mission_state>`, `<mission_brief>`),
+ * so they are removed from replay to avoid duplicate carriers in one envelope.
  */
 function minimizeActiveToolResultPayload(payload: any): any {
   if (!payload || typeof payload !== 'object') return payload;
   const out: Record<string, unknown> = {};
   if (typeof payload.sm_status === 'string') out.sm_status = payload.sm_status;
-  if (typeof payload.hop === 'number') out.hop = payload.hop;
-  if (typeof payload.agenda_remaining === 'number') out.agenda_remaining = payload.agenda_remaining;
   if (payload.focus_node && typeof payload.focus_node === 'object') out.focus_node = payload.focus_node;
   if (Array.isArray(payload.neighbors)) out.neighbors = payload.neighbors;
-  if (payload.working_memory && typeof payload.working_memory === 'object') out.working_memory = payload.working_memory;
+  // Guard against accidental evidence loss: if the compact projection would
+  // drop focus evidence, preserve the original payload.
+  if (!out.focus_node || !Array.isArray(out.neighbors)) return payload;
   if (Object.keys(out).length > 0) return out;
   return payload;
 }
@@ -202,10 +203,8 @@ export function extractToolErrorCode(result: vscode.LanguageModelToolResult | un
  * advanced focus + hop number, not the gate-approval text frozen at session start.
  */
 function renderHopDirective(engine: NavigationEngine | null): string {
-  const focusId = engine?.currentFocus;
-  const hopNumber = engine?.hopProgress.current ?? 0;
-  return focusId
-    ? `Continue. Current focus for hop ${hopNumber} is ${focusId}. Call submit_findings for this node.`
+  return engine?.currentFocus
+    ? 'Continue the hop-by-hop analysis — call submit_findings for this node.'
     : 'Continue the hop-by-hop analysis — call submit_findings for the current focus node.';
 }
 

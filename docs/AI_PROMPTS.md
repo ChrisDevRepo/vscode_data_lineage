@@ -39,7 +39,7 @@ In `lineageParticipant`, stable assembly is:
 
 Dynamic assembly is appended only during active hops.
 
-Active-phase context rule: in strict sliding-memory mode, `<short_term_memory>` is the only narrative carry-over channel (last 3 summaries). Prior-hop tool payloads are not broadly replayed in active requests; only minimal protocol continuity data may be preserved.
+Active-phase context rule: in strict sliding-memory mode, `<short_term_memory>` is the only narrative carry-over channel (last 3 summaries). Prior-hop tool payloads are not broadly replayed in active requests; only minimal protocol continuity data is preserved, with canonical-field de-dup (`<mission_state>` owns hop/focus state, `<mission_brief>` owns mission intent, replay owns only current-hop evidence).
 
 ## AI vs engine ownership
 
