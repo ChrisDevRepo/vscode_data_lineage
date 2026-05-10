@@ -12,4 +12,3 @@ export function evaluatePresentResultPreconditionsRule(hasResultGraph: boolean):
     hint: 'Complete the active exploration first so resultGraph is available.',
   };
 }
-

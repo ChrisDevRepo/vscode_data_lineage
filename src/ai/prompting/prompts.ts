@@ -6,8 +6,8 @@
  * `smPrompts.ts` (Universal Markdown blocks).
  */
 
-import type { DeferredQuestion } from '../smTypes';
-import { sanitizeMissionBrief } from '../inputNormalization';
+import type { DeferredQuestion } from '../sm/smTypes';
+import { sanitizeMissionBrief } from '../infra/inputNormalization';
 
 /** Phase key used by the TS prompt protocol builders. */
 export type PromptPhase = 'discover' | 'active' | 'synthesis' | 'completed';

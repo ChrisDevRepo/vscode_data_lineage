@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
-import { type AiSession } from '../ai/session';
+import { type AiSession } from '../ai/session/session';
 import { Logger, trunc, sanitizeForLog, logRaw } from '../utils/log';
 import { type BridgeHost } from './host';
 import {
@@ -24,7 +24,7 @@ import {
   type FilterProfile,
   type ProjectStore,
 } from '../engine/projectStore';
-import { buildBareGraph } from '../ai/graphUtils';
+import { buildBareGraph } from '../ai/infra/graphUtils';
 import { populateColumnStore } from '../engine/modelBuilder';
 import {
   DetailPanelToExtensionMsgSchema,

@@ -6,9 +6,9 @@
  * - Orphan protection prevents pruning a node that would disconnect already-noted work.
  */
 
-import { NavigationEngine } from '../../src/ai/smBase';
+import { NavigationEngine } from '../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
-import { bfsReachable } from '../../src/ai/smGuards';
+import { bfsReachable } from '../../src/ai/sm/smGuards';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 
 console.log('Navigation Engine Cascade (Prune)');
@@ -143,7 +143,7 @@ const graph = makeGraph(nodes, edges);
 
 // Test 3: prunePreserveOnly (present_result prune)
 {
-  const { prunePreserveOnly } = require('../../src/ai/viewPrune');
+  const { prunePreserveOnly } = require('../../src/ai/infra/viewPrune');
   const nodeIds = ['A', 'B', 'C'];
   const edgesPP: Array<[string, string, string]> = [['A', 'B', 'read'], ['B', 'C', 'read']];
   const pruneIds = ['B'];

@@ -2,12 +2,12 @@ import type Graph from 'graphology';
 import type { DatabaseModel } from '../../engine/types';
 import type { SerializedFilterState, FilterProfile } from '../../engine/projectStore';
 import { ColumnStore } from '../../engine/columnStore';
-import { AiMemoryManager } from '../memoryManager';
-import { type ResultGraph, type AiOutputTemplates, EMPTY_AI_TEMPLATES, type SessionSummary, type NodeRole } from '../types';
-import type { IHopStateMachine } from '../smBase';
-import type { HopLogEntry, SmResult } from '../smTypes';
-import type { SessionPhase, PendingGate } from '../sessionPhase';
-import { ClassificationSchema, type ClassificationValue } from '../classification';
+import { AiMemoryManager } from '../session/memoryManager';
+import { type ResultGraph, type AiOutputTemplates, EMPTY_AI_TEMPLATES, type SessionSummary, type NodeRole } from '../session/types';
+import type { IHopStateMachine } from '../sm/smBase';
+import type { HopLogEntry, SmResult } from '../sm/smTypes';
+import type { SessionPhase, PendingGate } from '../session/sessionPhase';
+import { ClassificationSchema, type ClassificationValue } from '../session/classification';
 
 /**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.

@@ -1,7 +1,7 @@
 /**
  * Unit tests for the structural validator that backs MessageEnvelope.
  *
- * The thin VS Code wrapper at src/ai/messageEnvelope.ts cannot be exercised
+ * The thin VS Code wrapper at src/ai/participant/messageEnvelope.ts cannot be exercised
  * under tsx (no `vscode` runtime). The pure validator in messageEnvelopeCore.ts
  * is the meaningful surface — it owns the tool_use ↔ tool_result invariant and
  * the trailing-pair detection. These tests reproduce the live HTTP-400 from
@@ -15,7 +15,7 @@ import {
   findLastToolPairShape,
   MessageEnvelopeInvariantError,
   type MessageShape,
-} from '../../src/ai/messageEnvelopeCore';
+} from '../../src/ai/participant/messageEnvelopeCore';
 
 console.log('MessageEnvelope structural validator');
 console.log('='.repeat(40));
@@ -208,7 +208,7 @@ console.log('\n── findLastToolPairShape returns undefined when parent assist
 // ─── 10. Snapshot string is compact and informative ──────────────────────────
 console.log('\n── snapshot string includes role + kind tags ──');
 {
-  const { snapshotShape } = require('../../src/ai/messageEnvelopeCore') as typeof import('../../src/ai/messageEnvelopeCore');
+  const { snapshotShape } = require('../../src/ai/participant/messageEnvelopeCore') as typeof import('../../src/ai/participant/messageEnvelopeCore');
   const snap = snapshotShape([
     u({ kind: 'text' }),
     a({ kind: 'tool_use', callId: 'aaaaaaXY' }),

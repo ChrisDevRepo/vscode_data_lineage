@@ -17,9 +17,9 @@
  * keep stream writes funneled through {@link ChatResponseWriter}.
  */
 import * as vscode from 'vscode';
-import { AiSession } from '../session';
+import { AiSession } from '../session/session';
 import { Logger, trunc, sanitizeForLog } from '../../utils/log';
-import { setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, SCRIPT_TYPES } from '../tools';
+import { setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, SCRIPT_TYPES } from '../tools/tools';
 import {
   buildGeneralSystemPrompt, buildPhasePrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
@@ -28,25 +28,25 @@ import {
   START_DEEPER_ANALYSIS_TRIGGER, buildStartDeeperAnalysisTriggerPrompt,
   buildDiscoverySummaryBlock, buildDiscoverySummaryComposePrompt,
   ACTION_REQUIRED_PENDING_HINT
-} from '../prompts';
-import { getToolInvocationLabel } from '../toolLabels';
-import { buildSmProtocol } from '../smPrompts';
-import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from '../historyManager';
-import { CONTEXT_PRESSURE_THRESHOLD } from '../tokenBudget';
-import { NavigationEngine } from '../smBase';
-import { RepeatRejectGuard } from '../repeatRejectGuard';
-import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from '../sessionPhase';
-import { renderScopeSummaryMd } from '../scopeSummaryRenderer';
+} from '../prompting/prompts';
+import { getToolInvocationLabel } from '../tools/toolLabels';
+import { buildSmProtocol } from '../prompting/smPrompts';
+import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from '../participant/historyManager';
+import { CONTEXT_PRESSURE_THRESHOLD } from '../infra/tokenBudget';
+import { NavigationEngine } from '../sm/smBase';
+import { RepeatRejectGuard } from '../participant/repeatRejectGuard';
+import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from '../session/sessionPhase';
+import { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
 import { decideGateTransition } from '../interaction/rules/gateTransitionRules';
 
-import { filterLmTools, activeModeOf } from '../toolPolicy';
-import { resolveStagePrompt } from '../templateRenderer';
-import { ChatResponseWriter } from '../chatResponseWriter';
-import { PerformanceCollector } from '../diagnostics';
-import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from '../messageEnvelope';
-import { matchesTransientNetPattern } from '../transientErrors';
-import { LmTracer } from '../lmTracer';
-export { classifyGateReply } from '../sessionPhase';
+import { filterLmTools, activeModeOf } from '../tools/toolPolicy';
+import { resolveStagePrompt } from '../prompting/templateRenderer';
+import { ChatResponseWriter } from '../participant/chatResponseWriter';
+import { PerformanceCollector } from '../infra/diagnostics';
+import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from '../participant/messageEnvelope';
+import { matchesTransientNetPattern } from '../infra/transientErrors';
+import { LmTracer } from '../infra/lmTracer';
+export { classifyGateReply } from '../session/sessionPhase';
 
 /**
  * Normalizes the extraction of key fields from a VS Code language model tool call part.

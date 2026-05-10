@@ -6,8 +6,8 @@
  * activeModeOf CT discriminator, and supplementAgenda CT propagation.
  */
 
-import { NavigationEngine } from '../../src/ai/smBase';
-import { activeModeOf } from '../../src/ai/toolPolicy';
+import { NavigationEngine } from '../../src/ai/sm/smBase';
+import { activeModeOf } from '../../src/ai/tools/toolPolicy';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 

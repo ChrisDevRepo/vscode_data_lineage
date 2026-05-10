@@ -1,12 +1,12 @@
 # tests/tools — LM Traffic Analysis Tools
 
-Post-session diagnostic scripts for `src/ai/lmTracer.ts`. These tools analyze NDJSON trace files produced by the tracer to measure token spend, detect behavioral problems, and track improvement over time.
+Post-session diagnostic scripts for `src/ai/infra/lmTracer.ts`. These tools analyze NDJSON trace files produced by the tracer to measure token spend, detect behavioral problems, and track improvement over time.
 
 **Not shipped in the VSIX** — `tests/**` is excluded via `.vscodeignore`.
 
 ## Prerequisites
 
-1. Set `ENABLED = true` at the top of [`src/ai/lmTracer.ts`](../../src/ai/lmTracer.ts) (disabled by default).
+1. Set `ENABLED = true` at the top of [`src/ai/infra/lmTracer.ts`](../../src/ai/infra/lmTracer.ts) (disabled by default).
 2. Rebuild the extension and run a `@lineage` chat session.
 3. The trace file appears at `tmp/lm-trace/trace-{iso}.ndjson` (gitignored).
 

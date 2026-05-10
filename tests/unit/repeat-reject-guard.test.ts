@@ -5,7 +5,7 @@
 
 import { suite, test } from 'node:test';
 import * as assert from 'assert';
-import { RepeatRejectGuard } from '../../src/ai/repeatRejectGuard';
+import { RepeatRejectGuard } from '../../src/ai/participant/repeatRejectGuard';
 
 suite('RepeatRejectGuard', () => {
   test('success resets the counter', () => {

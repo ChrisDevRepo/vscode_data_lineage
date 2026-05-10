@@ -18,7 +18,7 @@ import {
 import { buildGraph, traceNode } from '../../src/engine/graphBuilder';
 import { filterBySchemas } from '../../src/engine/dacpacExtractor';
 import { applyExclusionFilter, applyIsolationFilter } from '../../src/engine/modelFilters';
-import { bfsReachable } from '../../src/ai/smGuards';
+import { bfsReachable } from '../../src/ai/sm/smGuards';
 import { assert, assertEq, loadAdventureWorksModel, printSummary } from './helpers/testUtils';
 import { bidirectional } from 'graphology-shortest-path';
 

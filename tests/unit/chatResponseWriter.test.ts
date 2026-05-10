@@ -7,7 +7,7 @@
  */
 
 import { assert, printSummary, resetCounters } from './helpers/testUtils';
-import { ChatResponseWriter } from '../../src/ai/chatResponseWriter';
+import { ChatResponseWriter } from '../../src/ai/participant/chatResponseWriter';
 
 type LogEntry = { level: 'info' | 'warn' | 'debug' | 'error'; msg: string };
 

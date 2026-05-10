@@ -33,9 +33,9 @@ import {
   snapshotShape,
   type MessageShape,
   type MessagePartShape,
-} from '../messageEnvelopeCore';
+} from '../participant/messageEnvelopeCore';
 
-export { MessageEnvelopeInvariantError } from '../messageEnvelopeCore';
+export { MessageEnvelopeInvariantError } from '../participant/messageEnvelopeCore';
 
 /** A matched `(Assistant tool_use, User tool_result)` adjacency from the envelope tail. */
 export interface ToolPair {

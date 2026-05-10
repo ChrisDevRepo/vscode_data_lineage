@@ -12,9 +12,9 @@
  *      schema sort, type pluralization, +K-more overflow, active-filters block).
  */
 
-import { NavigationEngine } from '../../src/ai/smBase';
-import { classifyGateReply } from '../../src/ai/sessionPhase';
-import { renderScopeSummaryMd } from '../../src/ai/scopeSummaryRenderer';
+import { NavigationEngine } from '../../src/ai/sm/smBase';
+import { classifyGateReply } from '../../src/ai/session/sessionPhase';
+import { renderScopeSummaryMd } from '../../src/ai/prompting/scopeSummaryRenderer';
 import { decideGateTransition } from '../../src/ai/interaction/rules/gateTransitionRules';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';

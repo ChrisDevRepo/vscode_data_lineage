@@ -7,8 +7,8 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for Claude precision.
  */
 
-import { buildColumnAspectPrompt } from '../prompts';
-import type { ColumnEdge } from '../smTypes';
+import { buildColumnAspectPrompt } from '../prompting/prompts';
+import type { ColumnEdge } from '../sm/smTypes';
 
 
 const BLOCK = {

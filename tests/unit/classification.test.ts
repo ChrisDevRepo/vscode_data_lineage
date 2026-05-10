@@ -9,8 +9,8 @@
 import { assert, printSummary } from './helpers/testUtils';
 import {
   ClassificationSchema,
-} from '../../src/ai/classification';
-import { AiSession } from '../../src/ai/session';
+} from '../../src/ai/session/classification';
+import { AiSession } from '../../src/ai/session/session';
 
 async function runTests() {
   console.log('\n══════ classification tests ══════');

@@ -3,8 +3,8 @@
  */
 
 import type { LineageNode } from '../../engine/types';
-import type { AiOutputTemplates } from '../types';
-import type { ClassificationValue } from '../classification';
+import type { AiOutputTemplates } from '../session/types';
+import type { ClassificationValue } from '../session/classification';
 
 /** Map from node id (`[schema].[name]`) to the resolved node record. */
 export type NodeMap = Map<string, LineageNode>;

@@ -13,7 +13,7 @@ import {
   activeModeOf,
   filterLmTools,
   type LmStage,
-} from '../../src/ai/toolPolicy';
+} from '../../src/ai/tools/toolPolicy';
 
 async function runTests() {
   console.log('\n══════ toolPolicy tests ══════');

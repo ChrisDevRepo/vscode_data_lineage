@@ -1,4 +1,4 @@
-import type { ColumnEdge } from '../smTypes';
+import type { ColumnEdge } from '../sm/smTypes';
 
 /**
  * Categorizes nodes based on their semantic relevance to an AI-driven lineage investigation.

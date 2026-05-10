@@ -15,13 +15,13 @@ import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
 import type { SerializedFilterState } from '../../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from '../tools';
-import { edgeApiType } from '../aiPresenter';
-import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from '../smGuards';
+import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from '../tools/tools';
+import { edgeApiType } from '../infra/aiPresenter';
+import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from '../sm/smGuards';
 import { trunc } from '../../utils/log';
-import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../memoryManager';
-import { resolveModelNodeId, sanitizeMissionBrief } from '../inputNormalization';
-import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from '../smTypes';
+import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
+import { resolveModelNodeId, sanitizeMissionBrief } from '../infra/inputNormalization';
+import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from '../sm/smTypes';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -31,8 +31,8 @@ const SILENT_DEPTH_HEADROOM = 2;
 const RECENT_REJECTION_CAP = 5;
 
 
-export type { SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from '../smTypes';
-export type { BoundaryFlag } from '../smTypes';
+export type { SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from '../sm/smTypes';
+export type { BoundaryFlag } from '../sm/smTypes';
 
 /**
  * Represents an entry in the navigation agenda.

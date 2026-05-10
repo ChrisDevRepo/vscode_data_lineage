@@ -15,8 +15,8 @@
  */
 import * as vscode from 'vscode';
 import type Graph from 'graphology';
-import { NavigationEngine } from '../smBase';
-import type { AiSession } from '../session';
+import { NavigationEngine } from '../sm/smBase';
+import type { AiSession } from '../session/session';
 import { Logger, trunc, sanitizeForLog } from '../../utils/log';
 import {
   suggestNarrowerDepth,
@@ -29,18 +29,18 @@ import {
   GetNeighborColumnsInputSchema,
   autoFixPresentResult, validatePresentResult, orderAndAssemble,
   type PresentResultInput,
-} from '../tools';
-import { edgeApiType } from '../aiPresenter';
-import { prunePreserveOnly } from '../viewPrune';
+} from '../tools/tools';
+import { edgeApiType } from '../infra/aiPresenter';
+import { prunePreserveOnly } from '../infra/viewPrune';
 import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNode } from '../../engine/types';
 import { type SerializedFilterState, type AIViewMetadata } from '../../engine/projectStore';
-import { PendingGateSchema } from '../sessionPhase';
-import { buildSynthesisReminder, buildCtSynthesisBlock } from '../smPrompts';
-import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../toolPolicy';
-import { CLASSIFICATION_LABEL } from '../classification';
-import { getToolInvocationLabel } from '../toolLabels';
-import { renderScopeSummaryMd } from '../scopeSummaryRenderer';
-import { resolveModelNodeId, resolveModelNodeIds, sanitizeMissionBrief } from '../inputNormalization';
+import { PendingGateSchema } from '../session/sessionPhase';
+import { buildSynthesisReminder, buildCtSynthesisBlock } from '../prompting/smPrompts';
+import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../tools/toolPolicy';
+import { CLASSIFICATION_LABEL } from '../session/classification';
+import { getToolInvocationLabel } from '../tools/toolLabels';
+import { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
+import { resolveModelNodeId, resolveModelNodeIds, sanitizeMissionBrief } from '../infra/inputNormalization';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import {
   evaluateAlreadyStartedRule,
@@ -54,7 +54,7 @@ import {
   validateSectionsAgainstClassification,
 } from '../interaction/rules/submitFindingsRules';
 import { evaluatePresentResultPreconditionsRule } from '../interaction/rules/presentResultRules';
-export { renderScopeSummaryMd } from '../scopeSummaryRenderer';
+export { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
 
 /** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
 const SAFETY_RATIO = 0.7;

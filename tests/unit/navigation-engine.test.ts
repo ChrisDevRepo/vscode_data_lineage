@@ -3,7 +3,7 @@
  * routing validation, and verdict tallying.
  */
 
-import { NavigationEngine } from '../../src/ai/smBase';
+import { NavigationEngine } from '../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 

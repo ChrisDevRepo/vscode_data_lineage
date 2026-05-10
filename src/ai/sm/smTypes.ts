@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import type { CaptureAngle, CapturedSection, DetailSlot, MemoryStateSnapshot } from '../memoryManager';
+import type { CaptureAngle, CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
 
 
 /**

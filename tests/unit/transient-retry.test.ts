@@ -10,7 +10,7 @@
  */
 
 import { assert, printSummary, resetCounters } from './helpers/testUtils';
-import { matchesTransientNetPattern } from '../../src/ai/transientErrors';
+import { matchesTransientNetPattern } from '../../src/ai/infra/transientErrors';
 
 console.log('Transient-network retry classifier');
 console.log('='.repeat(40));

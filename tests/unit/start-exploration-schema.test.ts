@@ -6,8 +6,8 @@
  */
 
 import { assert, printSummary } from './helpers/testUtils';
-import { StartExplorationInputSchema } from '../../src/ai/tools';
-import { resolveModelNodeId, sanitizeMissionBrief } from '../../src/ai/inputNormalization';
+import { StartExplorationInputSchema } from '../../src/ai/tools/tools';
+import { resolveModelNodeId, sanitizeMissionBrief } from '../../src/ai/infra/inputNormalization';
 
 async function runTests() {
   console.log('\n══════ start-exploration-schema tests ══════');

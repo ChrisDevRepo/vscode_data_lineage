@@ -1,4 +1,4 @@
-import type { LmStage } from '../../toolPolicy';
+import type { LmStage } from '../../tools/toolPolicy';
 import type { InteractionRuleResult } from '../types';
 
 /**
@@ -37,4 +37,3 @@ export function evaluateToolPhaseRule(
     hint: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}. Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${offPolicyHint(toolName, stage)}`,
   };
 }
-

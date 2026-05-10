@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { AiSession } from '../session';
+import { AiSession } from '../session/session';
 import { Logger } from '../../utils/log';
-import type { SmState } from '../smTypes';
+import type { SmState } from '../sm/smTypes';
 
 /**
  * Telemetry data for a single agentic loop iteration (hop).

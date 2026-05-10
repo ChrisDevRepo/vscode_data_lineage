@@ -23,18 +23,18 @@ import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
 import { normalizeBodyScript } from '../../utils/sql';
-import { normalizeSearchQueryInput } from '../inputNormalization';
+import { normalizeSearchQueryInput } from '../infra/inputNormalization';
 import type { SerializedFilterState, FilterProfile } from '../../engine/projectStore';
 import {
   strip, edgeApiType,
   presentNode, presentColumn, presentColumnCompact, presentFkCompact,
   presentSchema, presentNeighbor, presentFilter,
-} from '../aiPresenter';
-import type { ColumnFlowRole } from '../smTypes';
+} from '../infra/aiPresenter';
+import type { ColumnFlowRole } from '../sm/smTypes';
 
 
-import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from '../tokenBudget';
-export { shouldInline, estimateTokens, getEffectiveBudget, setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, checkScopeBudget, getDiscoveryLimits } from '../tokenBudget';
+import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from '../infra/tokenBudget';
+export { shouldInline, estimateTokens, getEffectiveBudget, setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, checkScopeBudget, getDiscoveryLimits } from '../infra/tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
 export const BFS_INLINE_NODE_CAP = 200;

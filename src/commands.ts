@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { z } from 'zod';
-import { type AiSession } from './ai/session';
-import { DeferredQuestionSchema } from './ai/smTypes';
-import { buildDeferredQuestionsPrompt } from './ai/prompts';
+import { type AiSession } from './ai/session/session';
+import { DeferredQuestionSchema } from './ai/sm/smTypes';
+import { buildDeferredQuestionsPrompt } from './ai/prompting/prompts';
 import { getActivePanel } from './panelProvider';
 import { Logger } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
@@ -276,7 +276,7 @@ export function registerCommands(
       configLogger.info(`Forcing project load from: ${uri.fsPath}`);
       try {
         const { extractDacpac } = await import('./engine/dacpacExtractor');
-        const { buildBareGraph } = await import('./ai/graphUtils');
+        const { buildBareGraph } = await import('./ai/infra/graphUtils');
 
         const buffer = await vscode.workspace.fs.readFile(uri);
         const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);

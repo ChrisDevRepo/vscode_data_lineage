@@ -1,5 +1,5 @@
-import type { ClassificationValue } from '../../classification';
-import type { CapturedSection, CaptureAngle } from '../../memoryManager';
+import type { ClassificationValue } from '../../session/classification';
+import type { CapturedSection, CaptureAngle } from '../../session/memoryManager';
 import type { InteractionRuleResult } from '../types';
 
 /** Section-shape truth table by locked classification. */
@@ -89,4 +89,3 @@ export function evaluateFocusMismatchRule(
     hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${expectedFocusNodeId}. Resubmit with the correct focus_node_id.`,
   };
 }
-

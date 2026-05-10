@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { type AiSession } from './ai/session';
+import { type AiSession } from './ai/session/session';
 import { Logger } from './utils/log';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';

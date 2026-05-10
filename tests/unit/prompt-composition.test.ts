@@ -12,8 +12,8 @@ import {
   buildGeneralSystemPrompt,
   buildPhasePrompt,
   ROUTE_REQUESTS_VERBATIM_CONTRACT,
-} from '../../src/ai/prompts';
-import { buildSmProtocol } from '../../src/ai/smPrompts';
+} from '../../src/ai/prompting/prompts';
+import { buildSmProtocol } from '../../src/ai/prompting/smPrompts';
 
 function countOccurrences(haystack: string, needle: string): number {
   if (!needle) return 0;

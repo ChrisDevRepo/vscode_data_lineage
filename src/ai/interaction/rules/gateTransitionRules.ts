@@ -1,4 +1,4 @@
-import type { PendingGate } from '../../sessionPhase';
+import type { PendingGate } from '../../session/sessionPhase';
 
 /**
  * Represents the discrete actions the engine can take when transitioning

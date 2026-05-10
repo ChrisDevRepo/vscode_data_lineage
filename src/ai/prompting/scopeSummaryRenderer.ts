@@ -6,7 +6,7 @@
  * the VS Code module surface. Single source of truth for the gate-detail markdown.
  */
 
-import type { ScopeSummary } from '../smTypes';
+import type { ScopeSummary } from '../sm/smTypes';
 
 /** Pluralizes a noun based on count. */
 function plural(n: number, noun: string): string {

@@ -8,8 +8,8 @@
  *  - Agenda invariant: every enqueued node is bodied (view/procedure/function).
  */
 
-import { NavigationEngine } from '../../src/ai/smBase';
-import { SCRIPT_TYPES } from '../../src/ai/tools';
+import { NavigationEngine } from '../../src/ai/sm/smBase';
+import { SCRIPT_TYPES } from '../../src/ai/tools/tools';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 
