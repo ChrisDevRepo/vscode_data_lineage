@@ -438,14 +438,14 @@
           },
           "dataLineageViz.ai.discoveryNodeCap": {
             "type": "integer",
-            "default": 8,
+            "default": 10,
             "minimum": 1,
             "maximum": 30,
             "markdownDescription": "Maximum scope nodes the AI may pull during a single discovery-phase catalog request before the engine forces an SM escalation via the gate. Discovery answers small ad-hoc questions in chat; over-budget requests are rejected with a hint to call `lineage_start_exploration`."
           },
           "dataLineageViz.ai.discoveryTokenBudget": {
             "type": "integer",
-            "default": 8000,
+            "default": 14000,
             "minimum": 1000,
             "maximum": 32000,
             "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request. Exceeding either this or the node cap forces an SM escalation via the consent gate."

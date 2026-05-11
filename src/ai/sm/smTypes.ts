@@ -453,6 +453,10 @@ export interface ScopeSummary {
   columnAspectActive: boolean;
   /** Target columns being traced, present when `columnAspectActive` is true. */
   targetColumns?: string[];
+  /** Approximate UTF-16 DDL character count across the proposed scope. */
+  estimatedDdlChars: number;
+  /** Approximate DDL token count (1 token ~= 4 chars) across the proposed scope. */
+  estimatedDdlTokens: number;
   /** Schema → type → leaf rollup used by `renderScopeSummaryMd` to build the tree. */
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf>; }>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */

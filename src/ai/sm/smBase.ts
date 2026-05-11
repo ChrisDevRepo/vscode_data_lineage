@@ -22,6 +22,7 @@ import { trunc } from '../../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../infra/inputNormalization';
 import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from '../sm/smTypes';
+import { estimateTokens } from '../infra/tokenBudget';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -675,6 +676,8 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    const estimatedDdlChars = this.estimateScopeDdlChars();
+
     return {
       hopCount,
       scopeCount: this.scopeNodeIds.size,
@@ -683,6 +686,8 @@ export class NavigationEngine implements IHopStateMachine {
       direction: this._direction,
       columnAspectActive: !!this._columnAspect,
       targetColumns: this._columnAspect?.target_columns,
+      estimatedDdlChars,
+      estimatedDdlTokens: estimateTokens(estimatedDdlChars),
       bySchema,
       activeFilters: {
         schemas: Array.from(this.excludedSchemas).sort(),

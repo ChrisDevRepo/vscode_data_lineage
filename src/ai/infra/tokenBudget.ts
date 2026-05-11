@@ -79,10 +79,10 @@ export function shouldInline(payloadChars: number, precomputedTokens?: number): 
 // ─── Discovery-phase budget guard ────────────────────────────────────────────
 
 /** Default node cap for discovery-phase catalog requests — overridden via VS Code `ai.discoveryNodeCap`. */
-const DEFAULT_DISCOVERY_NODE_CAP = 8;
+const DEFAULT_DISCOVERY_NODE_CAP = 10;
 
 /** Default DDL-token budget for discovery-phase catalog requests — overridden via `ai.discoveryTokenBudget`. */
-const DEFAULT_DISCOVERY_TOKEN_BUDGET = 8_000;
+const DEFAULT_DISCOVERY_TOKEN_BUDGET = 14_000;
 
 let discoveryNodeCap = DEFAULT_DISCOVERY_NODE_CAP;
 let discoveryTokenBudget = DEFAULT_DISCOVERY_TOKEN_BUDGET;

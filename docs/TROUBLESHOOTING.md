@@ -28,7 +28,7 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **"Scope exceeds budget".** The exploration would exceed `dataLineageViz.ai.maxRounds`. Narrow the question, accept the `safe_depth_hint`, or raise the setting.
 
-**"Confirm SM start" gate.** Sliding-Memory mode asks once before burning hops. Triggered when you ask for a graph render, a detailed multi-object analysis, or column tracing — otherwise the assistant stays in chat (discovery). The chat-vs-SM thresholds live in `dataLineageViz.ai.discoveryNodeCap` and `discoveryTokenBudget`.
+**"Confirm SM start" gate.** Sliding-Memory mode asks once before burning hops. Triggered when you ask for a graph render, a column trace, or when discovery exceeds its scope budget — otherwise the assistant stays in chat (discovery). The chat-vs-SM thresholds live in `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`. The gate detail now includes an estimated scope DDL token/char footprint to explain budget-triggered escalations.
 
 **"Unanswered (out of approved scope)".** By design — SM locks the border at confirmation. The **Show deferred questions** button pre-fills them for a new run.
 

@@ -475,7 +475,7 @@ class ToolHandler {
         const summary = engine.getScopeSummary();
         const tree = renderScopeSummaryMd(summary);
         const classLabel = CLASSIFICATION_LABEL[sess.classification!] + (isCt ? ' (Column Trace)' : '');
-        const detail = `${tree}\n\n_Analysis: ${classLabel}_`;
+        const detail = `${tree}\n\n_Analysis: ${classLabel}_\n_Estimated scope DDL: ~${summary.estimatedDdlTokens.toLocaleString('en-US')} tokens (${summary.estimatedDdlChars.toLocaleString('en-US')} chars)_`;
 
         const gate = PendingGateSchema.parse({
           gate: 'confirm_sm_start',
