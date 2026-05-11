@@ -17,6 +17,7 @@ import * as vscode from 'vscode';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import type { AiSession } from '../session/session';
+import { AiMemoryManager } from '../session/memoryManager';
 import { Logger, trunc, sanitizeForLog } from '../../utils/log';
 import {
   suggestNarrowerDepth,
@@ -117,6 +118,53 @@ class ToolHandler {
       this.logger.debug(`[Reject] tool=${toolName} code=${rejection.code} reason=${reason}${hintPart}`);
     }
     return this.toolResult(data);
+  }
+
+  private buildActiveFilter(sess: AiSession): SerializedFilterState {
+    const filter = sess.filter;
+    if (!filter) throw new Error('No filter state available.');
+    return {
+      schemas: filter.schemas || [],
+      types: filter.types || [],
+      searchTerm: filter.searchTerm || '',
+      hideIsolated: !!filter.hideIsolated,
+      focusSchemas: filter.focusSchemas || [],
+      showExternalRefs: !!filter.showExternalRefs,
+      externalRefTypes: filter.externalRefTypes || [],
+      exclusionPatterns: filter.exclusionPatterns || [],
+    };
+  }
+
+  private projectApprovalScopeForOrigin(
+    sess: AiSession,
+    originId: string,
+  ): { nodes: number; ddl_chars: number; ddl_tokens: number } | null {
+    const m = this.requireModel();
+    const g = this.requireGraph();
+    const probe = new NavigationEngine(
+      m,
+      g,
+      () => { /* scope probe: no-op logger */ },
+      {
+        activeFilter: this.buildActiveFilter(sess),
+        // Isolate probe state from the live session memory.
+        memory: new AiMemoryManager(),
+        qualityGuards: false,
+      },
+      sess.columnStore,
+    );
+    const init = probe.init({
+      question: 'Discovery scope probe',
+      origin: originId,
+      direction: 'bidirectional',
+    });
+    if ('error' in init) return null;
+    const summary = probe.getScopeSummary();
+    return {
+      nodes: summary.scopeCount,
+      ddl_chars: summary.estimatedDdlChars,
+      ddl_tokens: summary.estimatedDdlTokens,
+    };
   }
 
   private extractRejectionInfo(data: object): { code: string; reason: string; hint?: string } | null {
@@ -364,19 +412,7 @@ class ToolHandler {
         if (alreadyStarted) return this.logAndReturn('start_exploration', alreadyStarted, input);
       }
 
-      const filter = sess.filter;
-      if (!filter) throw new Error('No filter state available.');
-
-      const activeFilter: SerializedFilterState = {
-        schemas: filter.schemas || [],
-        types: filter.types || [],
-        searchTerm: filter.searchTerm || '',
-        hideIsolated: !!filter.hideIsolated,
-        focusSchemas: filter.focusSchemas || [],
-        showExternalRefs: !!filter.showExternalRefs,
-        externalRefTypes: filter.externalRefTypes || [],
-        exclusionPatterns: filter.exclusionPatterns || [],
-      };
+      const activeFilter = this.buildActiveFilter(sess);
 
       const engineLog = (l: 'info' | 'debug' | 'warn', msg: string) => {
         const line = `[Engine] ${msg}`;
@@ -809,26 +845,29 @@ class ToolHandler {
       const { id } = input as { id: string };
       const detail = getObjectDetail(this.requireModel(), id, sess.columnStore) as Record<string, unknown>;
 
-      // Discovery-only cumulative budget guard:
-      // keep catalog Q&A in discovery until scope crosses the configured cap,
-      // then return over_discovery_budget so AI routes to start_exploration.
+      // Discovery-only budget guard:
+      // project the same scope metrics used by the confirm gate so escalation
+      // matches the numbers shown in approval.
       const stage = this.deriveLmStage(sess);
       if (stage.kind === 'discover' && typeof detail.error !== 'string') {
-        const nodeId = typeof detail.id === 'string' ? detail.id : null;
-        const ddl = typeof detail.ddl === 'string' ? detail.ddl : '';
-        if (nodeId) {
-          const projected = sess.projectDiscoveryBudget(nodeId, Buffer.byteLength(ddl, 'utf8'));
-          const budget = checkScopeBudget(projected.nodes, projected.ddl_bytes);
+        const originId = typeof detail.id === 'string' && detail.id.length > 0 ? detail.id : id;
+        const projected = this.projectApprovalScopeForOrigin(sess, originId);
+        if (projected) {
+          const budget = checkScopeBudget(projected.nodes, projected.ddl_chars);
           if (!budget.ok) {
             return this.logAndReturn('get_object_detail', {
               error: budget.reason,
               counts: budget.counts,
               limits: budget.limits,
+              scope_preview: {
+                nodes: projected.nodes,
+                ddl_chars: projected.ddl_chars,
+                ddl_tokens: projected.ddl_tokens,
+              },
               hint: budget.hint,
               next_action: 'start_exploration',
             }, input);
           }
-          sess.commitDiscoveryBudget(nodeId, Buffer.byteLength(ddl, 'utf8'));
         }
       }
 

@@ -166,17 +166,6 @@ export class AiSession {
    */
   public lastDiscoveryAnswer: string | null = null;
   /**
-   * Discovery-scope budget tracker (per turn).
-   *
-   * @remarks
-   * Tracks unique object-detail loads and cumulative DDL bytes while the
-   * participant remains in discovery routing. Reset at discovery-turn entry and
-   * whenever exploration state is reset.
-   */
-  public discoveryBudgetNodeIds: Set<string> = new Set();
-  /** Cumulative UTF-8 DDL byte count for unique discovery object-detail loads. */
-  public discoveryBudgetDdlBytes = 0;
-  /**
    * Mission-type classification inferred at end of discovery.
    *
    * @remarks
@@ -262,42 +251,6 @@ export class AiSession {
     this.lastDiscoveryWalkCount = 0;
     this.lastDiscoveryQuestion = null;
     this.lastDiscoveryAnswer = null;
-    this.resetDiscoveryBudgetWindow();
-  }
-
-  /**
-   * Clears the per-turn discovery budget tracker.
-   */
-  public resetDiscoveryBudgetWindow(): void {
-    this.discoveryBudgetNodeIds.clear();
-    this.discoveryBudgetDdlBytes = 0;
-  }
-
-  /**
-   * Projects discovery budget totals if the given detail object were added.
-   *
-   * @param nodeId - Canonical node id returned by `lineage_get_object_detail`.
-   * @param ddlBytes - UTF-8 byte size of the node's DDL payload.
-   * @returns Projected cumulative node and DDL-byte totals.
-   */
-  public projectDiscoveryBudget(nodeId: string, ddlBytes: number): { nodes: number; ddl_bytes: number } {
-    const seen = this.discoveryBudgetNodeIds.has(nodeId);
-    return {
-      nodes: this.discoveryBudgetNodeIds.size + (seen ? 0 : 1),
-      ddl_bytes: this.discoveryBudgetDdlBytes + (seen ? 0 : Math.max(0, ddlBytes | 0)),
-    };
-  }
-
-  /**
-   * Commits a detail object to the discovery budget tracker.
-   *
-   * @param nodeId - Canonical node id returned by `lineage_get_object_detail`.
-   * @param ddlBytes - UTF-8 byte size of the node's DDL payload.
-   */
-  public commitDiscoveryBudget(nodeId: string, ddlBytes: number): void {
-    if (this.discoveryBudgetNodeIds.has(nodeId)) return;
-    this.discoveryBudgetNodeIds.add(nodeId);
-    this.discoveryBudgetDdlBytes += Math.max(0, ddlBytes | 0);
   }
 
   /**

@@ -168,12 +168,12 @@ The `@lineage` assistant goes further by analysing the available metadata (DDL, 
 The default state. The AI uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`) to look up loaded scope, DDL, columns, and neighbours, then answers in chat.
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
-- Bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` — over-budget catalog requests are rejected and the AI is told to escalate to SM via the consent gate.
+- Bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` — the engine uses projected approval-scope metrics (same scope count and estimated DDL shown in `Confirm exploration`) to decide over-budget escalation.
 - Discovery cannot render a graph in the GUI; for graph rendering, multi-object analysis, or column tracing the assistant escalates.
 
 #### 2. Sliding-Memory (graph render + deep analysis)
 
-Triggered by an explicit user request for a graph, a detailed multi-object analysis, or column tracing — or when the engine forces escalation on an over-budget discovery request. Begins after the user approves the `confirm_sm_start` consent gate.
+Triggered by an explicit user request for a graph, column tracing, or an engine-forced over-budget discovery request. Begins after the user approves the `confirm_sm_start` consent gate.
 
 - **Map & Router**: the extension owns a topological map of the trace; the AI acts as a router that analyses one object at a time.
 - **Sliding short-term memory**: after each hop the AI's one-line summary is appended to `working_memory.short_term_memory` and echoed on the next 3 hops. Local continuity without global context bloat.

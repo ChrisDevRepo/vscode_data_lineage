@@ -2,10 +2,10 @@
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
  * Two budgets in play:
- *   1. ai.discoveryNodeCap (default 8) — max nodes the AI may pull during a single
- *      discovery-phase catalog request before the engine forces SM via the gate.
- *   2. ai.discoveryTokenBudget (default 8000) — max DDL token estimate for the
- *      same. Either cap exceeded → request rejected at the tool boundary with
+ *   1. ai.discoveryNodeCap (default 10) — max projected scope nodes allowed in
+ *      discovery before the engine forces SM via the gate.
+ *   2. ai.discoveryTokenBudget (default 14000) — max projected DDL token estimate
+ *      for that same scope. Either cap exceeded → request rejected at the tool boundary with
  *      a structured `over_discovery_budget` envelope pointing the AI at
  *      `lineage_start_exploration`.
  *

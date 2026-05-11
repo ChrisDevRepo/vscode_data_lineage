@@ -142,7 +142,7 @@ Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.tes
   - explicit visual graph/render request,
   - explicit column trace request (`targetColumns`),
   - discovery returns `over_discovery_budget`.
-- Discovery budget is enforced cumulatively across unique `lineage_get_object_detail` loads in the turn (nodes + DDL bytes), using `ai.discoveryNodeCap` and `ai.discoveryTokenBudget`.
+- Discovery budget is enforced from the same projected scope metrics shown in `confirm_sm_start` (scope nodes + estimated DDL chars/tokens), using `ai.discoveryNodeCap` and `ai.discoveryTokenBudget`.
 - If intent is ambiguous between chat and graph, discovery answers in chat first; the post-discovery deeper-analysis follow-up remains the opt-in path to SM.
 
 ## Commands crosscheck

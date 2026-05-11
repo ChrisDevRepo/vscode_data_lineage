@@ -359,12 +359,6 @@ export class LineageParticipant {
     setDiscoveryTokenBudget(aiConfig.get<number>('ai.discoveryTokenBudget', 14_000));
     const showToolInvocations = aiConfig.get<boolean>('ai.showToolInvocations', false);
 
-    // Discovery budget is scoped to the current user turn. SM has its own
-    // separate hop/round budget contracts.
-    if (sess.phase.kind === 'idle') {
-      sess.resetDiscoveryBudgetWindow();
-    }
-
     if (!sess.model) {
       writer.markdown('No lineage data loaded. Open a `.dacpac` file or connect to a database first.');
       return {};
