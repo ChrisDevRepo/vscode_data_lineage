@@ -637,6 +637,7 @@ class ToolHandler {
       if (input.add_node_ids !== undefined && !Array.isArray(input.add_node_ids)) input.add_node_ids = undefined;
       if (input.prune_node_ids !== undefined && !Array.isArray(input.prune_node_ids)) input.prune_node_ids = undefined;
       if (input.highlight_groups !== undefined && !Array.isArray(input.highlight_groups)) input.highlight_groups = undefined;
+      if (sess.phase.kind === 'completed' && input.is_update === undefined) input.is_update = true;
 
       const presentPrecondition = evaluatePresentResultPreconditionsRule(!!sess.resultGraph);
       if (presentPrecondition) {

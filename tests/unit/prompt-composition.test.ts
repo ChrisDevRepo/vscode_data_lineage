@@ -51,7 +51,10 @@ async function runTests() {
 
     const completed = buildPhasePrompt('completed');
     assert(completed.includes('Follow-Up Protocol'), 'completed includes follow-up heading');
-    assert(completed.includes('Refinement paths:'), 'completed includes refinement paths');
+    assert(completed.includes('Route A - Adjust the existing graph'), 'completed includes existing-graph route');
+    assert(completed.includes('Route B - Start a new trace'), 'completed includes fresh-trace route');
+    assert(completed.includes('Relabel nodes / sections / badges'), 'completed maps relabel requests to sections');
+    assert(completed.includes('notes[]'), 'completed maps note updates');
   }
 
   console.log('\n── buildSmProtocol invariants ──');

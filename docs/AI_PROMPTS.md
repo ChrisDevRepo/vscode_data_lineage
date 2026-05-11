@@ -123,6 +123,8 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 - AI submits structured parts; engine assembles deterministic description.
 - Validation enforces summary/name/sections/highlights and markdown fence integrity.
 - No AI-writeable `description` input field.
+- Follow-up relabel/regroup requests must update `sections[]` (`label` / `node_ids`), because badge chips are derived from sections.
+- `notes[]` are per-node captions shown below the graph and do not rename section badges.
 
 ## Tool policy by phase
 

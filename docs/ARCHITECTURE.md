@@ -163,6 +163,8 @@ There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) w
 
 The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
+**Completed-phase follow-up split.** After synthesis, follow-up turns resolve into two routes: (1) ad-hoc refinement of the current graph via `present_result` (badge relabel/regroup through `sections[]`; note captions through `notes[]`; topology edits via prune/add ids), or (2) a new trace via `start_exploration` when origin/direction/scope intent changes.
+
 ## Memory model
 
 There is exactly **one** persistent store — the **Detail Archive** (`detailSlots`, append-only across the session). Each hop the prompt builder assembles fresh **Working Memory (WM)** by selectively projecting from the archive plus a few constants — there is no second mutable store and nothing is "wiped". Two diagrams: (1) what WM looks like and where each field comes from; (2) how the archive grows across hops and what the sliding window reads back.

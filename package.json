@@ -800,7 +800,7 @@
             },
             "sections": {
               "type": "array",
-              "description": "Report sections grouping nodes by badge label and angle. Provide label, angle, and node_ids. Write text for specific questions (user named a bracketed identifier); omit text for broad questions — the engine injects full archive content.",
+              "description": "Report sections drive badge labels and section grouping in the graph. Update `sections[].label` and/or `sections[].node_ids` when the user asks to relabel or regroup nodes.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -814,7 +814,7 @@
                       "business",
                       "technical"
                     ],
-                    "description": "Capture angle for this section group. Required when text is omitted — determines which archived body the engine injects."
+                    "description": "Capture angle for this section group."
                   },
                   "node_ids": {
                     "type": "array",
@@ -824,7 +824,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Specific questions only (user question contains bracketed identifiers like [Column] or [Schema].[Table]): write rich detail from the archive focused on what answers the question — include formulas, column transformations, SQL predicates, data flows; omit audit logging, concurrency, version history, and unrelated rules. Depth stays high; focus shifts to the question. Broad questions: omit this field — the engine injects full archive content."
+                    "description": "Section body text shown in the rendered description for this section."
                   }
                 },
                 "required": [
@@ -834,7 +834,7 @@
             },
             "notes": {
               "type": "array",
-              "description": "Optional annotations for specific nodes.",
+              "description": "Optional per-node captions shown below the graph; notes do not drive badge labels.",
               "items": {
                 "type": "object",
                 "properties": {

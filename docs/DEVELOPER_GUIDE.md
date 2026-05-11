@@ -121,6 +121,8 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 
 **Synthesis output contract.** The AI submits `present_result` with structured parts: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids[], text }` lifted verbatim from a captured slot body), `closing`, `notes[]`, `highlight_groups[]`. The engine, via `orderAndAssemble()` ([`tools.ts`](../src/ai/tools/tools.ts)), assembles those parts into the rendered description shown in `AiDescriptionOverlay`: section numbering (`## N {label}`), object link headers (`### Objects [name](#focus-node:id)`), badge chips on the graph. The AI never writes the assembled blob; there is no AI-input `description` field. This is enforced mechanically — `PresentResultInput` omits the field — and documented across the YAML header, `buildSynthesisPrompt()`, and `STAGE_BY_KEY`.
 
+**Completed follow-up intent split.** In completed phase, treat follow-ups as either (A) refine existing graph or (B) start a new trace. Route A uses `lineage_present_result` (relabel/regroup via `sections[]`; caption updates via `notes[]`; graph edits via `prune_node_ids` / `add_node_ids`). Route B uses `lineage_start_exploration` for new origin/scope semantics; engine routing decides retrace vs fresh discovery.
+
 | Function | File | Concern |
 |----------|------|---------|
 | `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
