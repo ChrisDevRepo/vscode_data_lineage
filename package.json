@@ -581,7 +581,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Use ONLY for single-object questions about one object's own properties: 'what does X do', 'show DDL of X', 'list columns of X'. If the question asks about relationships, sources, upstream, downstream, dependencies, or anything spanning multiple objects — even phrased as 'review [X] and its sources' — that is a BFS question: use lineage_start_exploration instead. DISCOVERY and SYNTHESIS phases only — during active SM exploration, use lineage_get_neighbor_columns instead.",
+        "modelDescription": "Primary detail lookup for discovery and synthesis. Use this to inspect one object at a time (DDL, columns, direct neighbors), including discovery lineage walks across multiple objects by calling it repeatedly. Escalate to lineage_start_exploration only when one of these is true: explicit visual graph request, explicit column trace request (targetColumns), or discovery returns over_discovery_budget. During active SM exploration, use lineage_get_neighbor_columns instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",

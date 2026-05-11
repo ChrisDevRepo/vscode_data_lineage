@@ -23,6 +23,7 @@ import {
   getContext, searchObjects, getObjectDetail,
   runAnalysis, searchDdl,
   getNeighborColumns,
+  checkScopeBudget,
   validateToolInput,
   StartExplorationInputSchema,
   SubmitFindingsInputSchema,
@@ -801,10 +802,36 @@ class ToolHandler {
       if (!this.isAiEnabled()) return this.disabled();
       const offPolicy = this.offPolicyOrNull('lineage_get_object_detail');
       if (offPolicy) return offPolicy;
+      const sess = this.getSession();
       const inputErr = validateToolInput(input, { id: 'string' });
       if (inputErr) return this.toolResult(inputErr);
       const { id } = input as { id: string };
-      return this.logAndReturn('get_object_detail', getObjectDetail(this.requireModel(), id, this.getSession().columnStore), input);
+      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore) as Record<string, unknown>;
+
+      // Discovery-only cumulative budget guard:
+      // keep catalog Q&A in discovery until scope crosses the configured cap,
+      // then return over_discovery_budget so AI routes to start_exploration.
+      const stage = this.deriveLmStage(sess);
+      if (stage.kind === 'discover' && typeof detail.error !== 'string') {
+        const nodeId = typeof detail.id === 'string' ? detail.id : null;
+        const ddl = typeof detail.ddl === 'string' ? detail.ddl : '';
+        if (nodeId) {
+          const projected = sess.projectDiscoveryBudget(nodeId, Buffer.byteLength(ddl, 'utf8'));
+          const budget = checkScopeBudget(projected.nodes, projected.ddl_bytes);
+          if (!budget.ok) {
+            return this.logAndReturn('get_object_detail', {
+              error: budget.reason,
+              counts: budget.counts,
+              limits: budget.limits,
+              hint: budget.hint,
+              next_action: 'start_exploration',
+            }, input);
+          }
+          sess.commitDiscoveryBudget(nodeId, Buffer.byteLength(ddl, 'utf8'));
+        }
+      }
+
+      return this.logAndReturn('get_object_detail', detail, input);
     } catch (err) { return this.toolError('get_object_detail', err); }
   }
 

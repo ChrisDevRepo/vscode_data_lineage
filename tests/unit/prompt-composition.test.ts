@@ -36,6 +36,9 @@ async function runTests() {
     const discover = buildPhasePrompt('discover');
     assert(discover.includes('Class D — Direct'), 'discover includes Class D guidance');
     assert(discover.includes('Class S — State machine'), 'discover includes Class S guidance');
+    assert(discover.includes('Discovery is the default state'), 'discover defaults to discovery-first routing');
+    assert(discover.includes('over_discovery_budget'), 'discover includes over_discovery_budget escalation trigger');
+    assert(!discover.includes('prefer Class S'), 'discover no longer biases ambiguous routing to Class S');
 
     const active = buildPhasePrompt('active', { isInline: false });
     assert(active.includes('Active Exploration Protocol'), 'active includes protocol heading');
@@ -81,4 +84,3 @@ runTests().catch(err => {
   console.error(err);
   process.exit(1);
 });
-

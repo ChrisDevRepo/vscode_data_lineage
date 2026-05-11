@@ -133,6 +133,16 @@ Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.tes
 - synthesis: `lineage_present_result`
 - completed: `lineage_present_result`, `lineage_get_object_detail`, `lineage_search_ddl`, `lineage_search_objects`, `lineage_start_exploration`
 
+## Discovery escalation contract
+
+- Discovery is default. Multi-object lineage wording (`trace`, `upstream`, `dependencies`, `all levels`) stays in discovery chat while within budget.
+- Escalate to `lineage_start_exploration` only when:
+  - explicit visual graph/render request,
+  - explicit column trace request (`targetColumns`),
+  - discovery returns `over_discovery_budget`.
+- Discovery budget is enforced cumulatively across unique `lineage_get_object_detail` loads in the turn (nodes + DDL bytes), using `ai.discoveryNodeCap` and `ai.discoveryTokenBudget`.
+- If intent is ambiguous between chat and graph, discovery answers in chat first; the post-discovery deeper-analysis follow-up remains the opt-in path to SM.
+
 ## Commands crosscheck
 
 From `src/commands.ts` + `package.json`.
