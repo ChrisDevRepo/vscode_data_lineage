@@ -4,7 +4,7 @@
  * Two budgets in play:
  *   1. ai.discoveryNodeCap (default 10) — max projected scope nodes allowed in
  *      discovery before the engine forces SM via the gate.
- *   2. ai.discoveryTokenBudget (default 14000) — max projected DDL token estimate
+ *   2. ai.discoveryTokenBudget (default 10000) — max projected DDL token estimate
  *      for that same scope. Either cap exceeded → request rejected at the tool boundary with
  *      a structured `over_discovery_budget` envelope pointing the AI at
  *      `lineage_start_exploration`.
@@ -82,7 +82,7 @@ export function shouldInline(payloadChars: number, precomputedTokens?: number): 
 const DEFAULT_DISCOVERY_NODE_CAP = 10;
 
 /** Default DDL-token budget for discovery-phase catalog requests — overridden via `ai.discoveryTokenBudget`. */
-const DEFAULT_DISCOVERY_TOKEN_BUDGET = 14_000;
+const DEFAULT_DISCOVERY_TOKEN_BUDGET = 10_000;
 
 let discoveryNodeCap = DEFAULT_DISCOVERY_NODE_CAP;
 let discoveryTokenBudget = DEFAULT_DISCOVERY_TOKEN_BUDGET;

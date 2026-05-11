@@ -168,7 +168,7 @@ The `@lineage` assistant goes further by analysing the available metadata (DDL, 
 The default state. The AI uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`) to look up loaded scope, DDL, columns, and neighbours, then answers in chat.
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
-- Bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` — the engine uses projected approval-scope metrics (same scope count and estimated DDL shown in `Confirm exploration`) to decide over-budget escalation.
+- Bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` — the engine uses projected scope metrics from the discovery request contract (origin + optional direction/depth hints) to decide over-budget escalation. If hints are missing, projection defaults to a conservative upstream scope to avoid false-positive kickoff.
 - Discovery cannot render a graph in the GUI; for graph rendering, multi-object analysis, or column tracing the assistant escalates.
 
 #### 2. Sliding-Memory (graph render + deep analysis)
@@ -253,7 +253,7 @@ Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
 | `dataLineageViz.ai.enabled` | `true` | Enable / disable the `@lineage` participant and tools. |
 | `dataLineageViz.ai.maxRounds` | `50` | Safety cap on tool turns per investigation (5–100). |
 | `dataLineageViz.ai.discoveryNodeCap` | `10` | Max scope nodes the AI may pull during a single discovery-phase catalog request before escalation is forced (1–30). |
-| `dataLineageViz.ai.discoveryTokenBudget` | `14000` | Max estimated DDL token budget for a single discovery-phase catalog request (1000–32000). |
+| `dataLineageViz.ai.discoveryTokenBudget` | `10000` | Max estimated DDL token budget for a single discovery-phase catalog request (1000–32000). |
 | `dataLineageViz.ai.contextPayloadBudget` | `10000` | Token budget for `lineage_get_context` deciding inline-full vs summary-only catalog delivery (1000–100000). |
 | `dataLineageViz.ai.outputTemplateFile` | `""` | Path to custom YAML output templates. See [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 | `dataLineageViz.ai.showToolInvocations` | `false` | Show each tool call as an expandable chat part with input JSON (developer debugging). |

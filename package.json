@@ -445,7 +445,7 @@
           },
           "dataLineageViz.ai.discoveryTokenBudget": {
             "type": "integer",
-            "default": 14000,
+            "default": 10000,
             "minimum": 1000,
             "maximum": 32000,
             "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request. Exceeding either this or the node cap forces an SM escalation via the consent gate."

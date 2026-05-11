@@ -356,7 +356,7 @@ export class LineageParticipant {
     const MAX_ROUNDS = aiConfig.get<number>('ai.maxRounds', 50);
     setCatalogInlineTokenBudget(aiConfig.get<number>('ai.contextPayloadBudget', 10_000));
     setDiscoveryNodeCap(aiConfig.get<number>('ai.discoveryNodeCap', 10));
-    setDiscoveryTokenBudget(aiConfig.get<number>('ai.discoveryTokenBudget', 14_000));
+    setDiscoveryTokenBudget(aiConfig.get<number>('ai.discoveryTokenBudget', 10_000));
     const showToolInvocations = aiConfig.get<boolean>('ai.showToolInvocations', false);
 
     if (!sess.model) {
