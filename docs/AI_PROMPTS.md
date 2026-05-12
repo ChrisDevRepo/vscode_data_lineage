@@ -147,6 +147,13 @@ Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.tes
 - synthesis: `lineage_present_result`
 - completed: `lineage_present_result`, `lineage_get_object_detail`, `lineage_search_ddl`, `lineage_search_objects`, `lineage_start_exploration`
 
+### Completed-phase replay contract
+
+- Completed/follow-up turns run with a compact replay envelope (minimal trailing tool pair), not broad full-history replay.
+- Replayed `lineage_present_result` history payloads are compacted to summary metadata (`view_name`, `node_count`, `graph_source`) once SM is complete.
+- Follow-up turns inject a compact “current rendered result snapshot” (title/summary/section map + bounded description excerpt) so edits can be made without replaying full prior payloads.
+- If the follow-up recommendation pill is clicked with zero deferred objects, the participant now returns a direct edit helper response; it does not inject internal Route A/Route B protocol text into user-visible chat.
+
 ## Discovery escalation contract
 
 - Discovery is default. Single-object asks use `lineage_get_object_detail`. Graph-scope asks use `lineage_get_scope_bundle` with explicit finite depth.

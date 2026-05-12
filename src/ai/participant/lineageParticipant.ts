@@ -174,6 +174,129 @@ function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | unde
 }
 
 /**
+ * Builds a compact follow-up snapshot so completed-phase turns keep only the
+ * currently editable result contract instead of replaying all prior rounds.
+ */
+function buildCompletedResultSnapshot(sess: AiSession): string {
+  const rg = sess.resultGraph;
+  if (!rg) return '';
+
+  const sectionLines = (rg.sections ?? [])
+    .slice(0, 8)
+    .map((s, i) => `${i + 1}. ${s.label}${s.angle ? ` [${s.angle}]` : ''} (${s.node_ids?.length ?? 0} node${(s.node_ids?.length ?? 0) === 1 ? '' : 's'})`)
+    .join('\n');
+
+  const desc = (sess.lastPresentResultDescription ?? rg.description ?? '').trim();
+  const descExcerpt = desc.length > 2200
+    ? `${desc.slice(0, 2200)}\n\n…[description truncated; ${desc.length - 2200} chars omitted]`
+    : desc;
+
+  return [
+    '## Current Rendered Result Snapshot',
+    `- view: ${rg.summary ?? '(none)'}`,
+    `- title: ${rg.title ?? '(none)'}`,
+    `- sections: ${(rg.sections ?? []).length}`,
+    `- notes: ${(rg.notes ?? []).length}`,
+    '- archive_status: complete (details are stored in SM state and can be requested/updated)',
+    sectionLines ? '\n### Section map\n' + sectionLines : '',
+    descExcerpt ? '\n### Current description excerpt\n' + descExcerpt : '',
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * Minimizes replayed tool-result payload for COMPLETED phase.
+ *
+ * @remarks
+ * Keeps only success/error envelope and compact graph identifiers. The detailed
+ * rendered body is supplied via {@link buildCompletedResultSnapshot}.
+ */
+function minimizeCompletedToolResultPayload(payload: any): any {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (payload.error) {
+    return { error: payload.error, hint: payload.hint, next_action: payload.next_action };
+  }
+  if (payload.success === true) {
+    return {
+      success: true,
+      view_name: payload.view_name,
+      node_count: payload.node_count,
+      graph_source: payload.graph_source,
+      compacted: true,
+    };
+  }
+  if (payload.compacted) return payload;
+  return { compacted: true, summary: 'completed_replay_compacted' };
+}
+
+/**
+ * Builds a COMPLETED-safe minimal replay pair from a full tool pair.
+ */
+function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolPair | undefined {
+  if (!pair) return undefined;
+
+  const toolCallParts = (pair.assistant.content as readonly unknown[])
+    .filter((p): p is vscode.LanguageModelToolCallPart => p instanceof vscode.LanguageModelToolCallPart);
+  const firstCall = toolCallParts[0];
+  if (!firstCall) return undefined;
+
+  const rawInput = (firstCall.input as Record<string, unknown>) || {};
+  let compactInput: Record<string, unknown> = { replay_compacted: true };
+  if (firstCall.name === 'lineage_present_result') {
+    compactInput = {
+      replay_compacted: true,
+      is_update: rawInput.is_update === true,
+      summary: rawInput.summary,
+      title: rawInput.title,
+      section_labels: Array.isArray(rawInput.sections)
+        ? (rawInput.sections as Array<Record<string, unknown>>).map(s => String(s.label ?? '')).filter(Boolean).slice(0, 8)
+        : [],
+    };
+  } else if (firstCall.name === 'lineage_submit_findings') {
+    compactInput = {
+      replay_compacted: true,
+      focus_node_id: rawInput.focus_node_id,
+      verdict: rawInput.verdict,
+      badge_label: rawInput.badge_label,
+    };
+  } else if (firstCall.name === 'lineage_start_exploration') {
+    compactInput = {
+      replay_compacted: true,
+      origin: rawInput.origin,
+      direction: rawInput.direction,
+      classification: rawInput.classification,
+      depth: rawInput.depth,
+    };
+  }
+
+  const assistant = new vscode.LanguageModelChatMessage(
+    vscode.LanguageModelChatMessageRole.Assistant,
+    [new vscode.LanguageModelToolCallPart(firstCall.callId, firstCall.name, compactInput)],
+  );
+
+  const compactResults: vscode.LanguageModelToolResultPart[] = [];
+  for (const part of (pair.result.content as readonly unknown[])) {
+    if (!(part instanceof vscode.LanguageModelToolResultPart)) continue;
+    const textPart = part.content.find(c => c instanceof vscode.LanguageModelTextPart) as vscode.LanguageModelTextPart | undefined;
+    if (!textPart) {
+      compactResults.push(part);
+      continue;
+    }
+    try {
+      const payload = JSON.parse(textPart.value);
+      const compact = minimizeCompletedToolResultPayload(payload);
+      compactResults.push(new vscode.LanguageModelToolResultPart(
+        part.callId,
+        [new vscode.LanguageModelTextPart(JSON.stringify(compact))],
+      ));
+    } catch {
+      compactResults.push(part);
+    }
+  }
+  const result = new vscode.LanguageModelChatMessage(vscode.LanguageModelChatMessageRole.User, compactResults);
+  return { assistant, result };
+}
+
+/**
  * Extracts the error code from a tool result's JSON envelope.
  *
  * @remarks
@@ -392,10 +515,24 @@ export class LineageParticipant {
     let effectivePrompt = request.prompt;
     if (effectivePrompt === RECOMMEND_FOLLOWUPS_TRIGGER) {
       const deferred = sess.stateMachine?.deferredQuestions || [];
-      effectivePrompt = deferred.length > 0
-        ? buildDeferredQuestionsPrompt(deferred)
-        : buildFollowUpPrompt();
-      this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
+      if (deferred.length > 0) {
+        effectivePrompt = buildDeferredQuestionsPrompt(deferred);
+        this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
+      } else {
+        writer.markdown([
+          'No deferred related objects were queued from the last run.',
+          '',
+          'Tell me one concrete graph update and I will apply it directly:',
+          '- prune node `<id>`',
+          '- relabel node `<id>` to section `<label>`',
+          '- edit intro/closing text',
+          '- update note for node `<id>`',
+          '',
+          'Use **Show full description** if you want the full current text before editing.',
+        ].join('\n'));
+        this.logger.info('[Trigger] Follow-up expansion: 0 objects (direct helper response)');
+        return {};
+      }
     } else if (effectivePrompt === SHOW_DESCRIPTION_TRIGGER) {
       if (sess.lastPresentResultDescription) {
         writer.markdown(sess.lastPresentResultDescription);
@@ -617,11 +754,16 @@ export class LineageParticipant {
     // Use session phase (not per-round local phase) because this runs before
     // round-loop transitions. Keep only the latest tool pair (assistant
     // tool_call + user tool_result), minimized to hop-driving fields.
-    const isStrictActiveReplay = sess.phase.kind === 'exploring';
+    const isStrictReplay =
+      sess.phase.kind === 'exploring' ||
+      (sess.phase.kind === 'completed' && !!sess.stateMachine && sess.stateMachine.status === 'complete');
     const historyMessages: vscode.LanguageModelChatMessage[] =
-      isStrictActiveReplay
+      isStrictReplay
         ? (() => {
-            const pair = buildActiveMinimalToolPair(findLastToolPairInHistory(rebuiltHistoryMessages));
+            const rawPair = findLastToolPairInHistory(rebuiltHistoryMessages);
+            const pair = sess.phase.kind === 'exploring'
+              ? buildActiveMinimalToolPair(rawPair)
+              : buildCompletedMinimalToolPair(rawPair);
             return pair ? [pair.assistant, pair.result] : [];
           })()
         : rebuiltHistoryMessages;
@@ -736,6 +878,10 @@ export class LineageParticipant {
     } else if (resumingInCompleted) {
       activePhase = 'completed';
       lineageTools = filterLmTools(vscode.lm.tools, { kind: 'completed' });
+      const snapshot = buildCompletedResultSnapshot(sess);
+      if (snapshot) {
+        effectivePrompt = `${effectivePrompt}\n\n${snapshot}`;
+      }
       this.logger.info(`[Phase] completed → follow-up — archive slots=${sess.memory.slotCount}, tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
       this.logger.info(`[Phase] follow-up entry — mission="${trunc(sess.memory.getMissionBrief() || sess.memory.getUserQuestion(), 200)}", classification=${sess.classification ?? '(none)'}`);
     }

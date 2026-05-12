@@ -43,7 +43,7 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 | **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. If `present_result` is attempted but fails validation, fallback copy reports validation failure (with reason), not "tool not invoked". |
-| **Completed** | User | Holds the result graph. Three convergent operations (no gate, no wipe): (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes via SM; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). |
+| **Completed** | User | Holds the result graph. Three convergent operations: (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes via SM; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). Completed turns use compact replay (minimal trailing tool pair + current rendered-result snapshot), not full broad history replay. |
 
 Active-hop routing/pruning instruction ownership is single-source: `smPrompts.ts` (`Neighbor Decision Contract`). `prompts.ts` no longer duplicates route/prune policy text.
 
@@ -178,6 +178,7 @@ Progress semantics:
 The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
 **Completed-phase follow-up split.** After synthesis, follow-up turns resolve into two routes: (1) ad-hoc refinement of the current graph via `present_result` (badge relabel/regroup through `sections[]`; note captions through `notes[]`; topology edits via prune/add ids), or (2) a new trace via `start_exploration` when origin/direction/scope intent changes.
+When no deferred objects exist, the follow-up recommendation click path returns a direct edit-helper response instead of surfacing internal Route A/Route B protocol prose.
 
 ## Memory model
 
@@ -207,6 +208,8 @@ flowchart LR
 The dashed orange WM boxes are not stored anywhere — they are computed on demand by `getWorkingMemory()` and `getShortTermMemory()`, then serialised into the prompt. The next hop rebuilds WM from the *now-larger* archive. This is what makes the loop bounded: WM stays small even as the archive grows.
 
 **ACTIVE isolation contract.** In `active` phase, the participant runs a strict sliding-memory loop: broad chat-history replay is disabled. Each hop request is composed from the current system prompt + current directive, with at most one minimal trailing tool pair (assistant `tool_call` + user `tool_result`) preserved only for protocol continuity. Canonical-field de-dup runs per request envelope: hop counters and focus ownership stay in `<mission_state>`, mission intent ownership stays in `<mission_brief>`, and replayed tool payload is reduced to current-hop evidence (`focus_node`, `neighbors`, `sm_status`). The full archived analysis remains in `AiMemoryManager` and is lifted at synthesis; it is not replayed verbatim each hop.
+
+**COMPLETED isolation contract.** In `completed` phase, follow-up turns also avoid broad replay: the participant preserves only a compact trailing tool pair plus a bounded “current rendered result” snapshot (summary/title/section map + bounded description excerpt). Stale `present_result` history payloads are compacted to metadata-only summaries to prevent repeated large JSON replay in follow-up edits. The archive remains authoritative in session state and can still be queried/updated via follow-up tools.
 
 **Archive growth across hops.** Each successful `submit_findings` appends one `DetailSlot` to the archive. The sliding window every hop reads is `archive.slice(-3)` — so as the archive grows, the *content* of `short_term_memory` slides forward.
 

@@ -45,7 +45,7 @@ export function compactNoiseResult(toolName: string, resultJson: string): string
 
 
 /** Tool names whose results should be compacted once the owning SM is complete. */
-const BB_HOP_TOOLS = new Set(['lineage_submit_findings', 'lineage_start_exploration']);
+const BB_HOP_TOOLS = new Set(['lineage_submit_findings', 'lineage_start_exploration', 'lineage_present_result']);
 
 /**
  * Compacts high-volume hop analysis results once the SM execution is complete.
@@ -74,6 +74,12 @@ export function compactStaleHopResult(
   const shortName = toolName.replace('lineage_', '');
   try {
     const parsed = JSON.parse(resultJson);
+    if (toolName === 'lineage_present_result') {
+      return JSON.stringify({
+        compacted: true,
+        summary: `${shortName} → ${parsed?.view_name ?? '(view)'} · nodes=${parsed?.node_count ?? '?'} · source=${parsed?.graph_source ?? '?'}`,
+      });
+    }
     const node = parsed.focus_node?.n ?? parsed.originNode?.n ?? '';
     const hop = parsed.hop ?? '';
     const status = parsed.bb_mode ?? parsed.status ?? '';
