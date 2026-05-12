@@ -41,6 +41,18 @@ Dynamic assembly is appended only during active hops.
 
 Active-phase context rule: in strict sliding-memory mode, `<short_term_memory>` is the only narrative carry-over channel (last 3 summaries). Prior-hop tool payloads are not broadly replayed in active requests; only minimal protocol continuity data is preserved, with canonical-field de-dup (`<mission_state>` owns hop/focus state, `<mission_brief>` owns mission intent, replay owns only current-hop evidence).
 
+## Active hop decision contract (canonical)
+
+Routing/pruning policy is canonicalized in `buildSmProtocol()` (`src/ai/prompting/smPrompts.ts`) under **Neighbor Decision Contract (Current Hop Only)**.
+
+- Actionable IDs are current-hop `neighbors[]` + current `focus_node`.
+- History (`short_term_memory`, prior hops, archive) is reference-only.
+- Active-phase `prompts.ts` now points to this contract instead of duplicating route/prune policy text.
+- Out-of-scope but mission-relevant routes are still deferred and preserved for post-synthesis follow-up.
+
+Reviewer artifact:
+- `tmp/AI_PROMPT_COMPILATION.md` is maintained as a human-readable compilation for prompt reviews (commands/tools inventory + one 1:1 active-hop prompt example from trace).
+
 ## AI vs engine ownership
 
 | Owner | Writes/builds | Where enforced |

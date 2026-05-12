@@ -52,26 +52,19 @@ const BLOCK = {
     '2. NOTE: `note_caption` — quick user-facing preview sentence for this node. Keep it short and plain-language; put deep reasoning in `sections[].text`.',
   ].join('\n'),
 
-  /** Routing line for SM — engine selects the next focus node; AI judges it against the mission brief. */
-  routingSm: [
-    '## Routing',
-    'Treat the provided mission/task metadata as the source of truth for intent, scope position, and next-hop task; do not re-derive mission context from memory or prose. For the current focus node, always emit an explicit `verdict`. For neighbors, make an explicit decision: route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s), and list non-relevant neighbors in `prune_neighbors` when the current DDL proves they are out of mission scope. Generic sub-questions like "analyze this node" are invalid. Every routed sub-question must state exactly what to verify next (rule/predicate/columns/formula) and what decision this verification resolves for the mission. Source every routed id verbatim from tool results.',
-  ].join('\n'),
-
-  /**
-   * SM pruning protocol — lightweight metadata via `lineage_get_neighbor_columns`.
-   *
-   * @remarks
-   * Only the focus node's DDL is delivered per hop. `lineage_get_neighbor_columns`
-   * is available (sm_bb / sm_ct tool sets) and provides structural metadata for
-   * direct neighbors without requiring a full hop. Procedures are the exception —
-   * their logic is only accessible at the hop.
-   */
-  pruningProtocolSm: [
-    '## Pruning — When to Prune',
-    'Prune nodes that do not contribute to the `<mission_brief>`.',
-    '- **Structural neighbors**: For tables, views, or functions, call `lineage_get_neighbor_columns({ids:["..."]})` to inspect the schema and foreign keys before deciding to prune. This tool provides metadata for direct neighbors of the focus node.',
-    '- **Procedures**: Since DDL is only visible at the hop, route to the procedure with a specific question (e.g., `question="Prune candidate — [reason]"`) to verify its relevance before pruning.',
+  /** Canonical hop-local routing/pruning contract (single source, no duplicates across surfaces). */
+  hopDecisionContract: [
+    '## Neighbor Decision Contract (Current Hop Only)',
+    'Use mission/task metadata as source of truth. Do not re-derive intent from history prose.',
+    '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
+    '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only — do not route/prune from it.',
+    '- Emit explicit `verdict` for the focus node every hop.',
+    '- For neighbors, make explicit decisions with current-hop IDs only:',
+    '  - route mission-relevant neighbors via `route_requests` using concrete verification sub-questions.',
+    '  - prune non-relevant neighbors via `prune_neighbors` when current-hop evidence proves out-of-scope.',
+    '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
+    '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
+    '- Need structural evidence before pruning a neighbor? Call `lineage_get_neighbor_columns({ids:["..."]})` for current-hop direct neighbors.',
   ].join('\n'),
 } as const;
 
@@ -123,9 +116,7 @@ export function buildSmProtocol({
     '',
     BLOCK.badgeAndNote,
     '',
-    BLOCK.routingSm,
-    '',
-    BLOCK.pruningProtocolSm,
+    BLOCK.hopDecisionContract,
   );
 
   if (isColumnAspectActive) {

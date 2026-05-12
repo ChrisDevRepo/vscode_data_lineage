@@ -991,6 +991,10 @@ export class LineageParticipant {
             const { current, total } = sess.stateMachine.hopProgress;
             const shortName = sess.stateMachine.currentFocus?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
             progressLine = `Hop ${current} / ${total} — analyzing ${shortName}…`;
+          } else if (f.name === 'lineage_get_neighbor_columns' && sess.stateMachine) {
+            const { current, total } = sess.stateMachine.hopProgress;
+            const remaining = Math.max(total - current, 0);
+            progressLine = `Inspecting ${remaining} neighbor${remaining === 1 ? '' : 's'} for pruning…`;
           }
           if (progressLine !== lastProgressLine) {
             writer.progress(progressLine);

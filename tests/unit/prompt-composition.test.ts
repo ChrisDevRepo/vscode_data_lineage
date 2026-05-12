@@ -11,7 +11,6 @@ import { assert, assertEq, printSummary } from './helpers/testUtils';
 import {
   buildGeneralSystemPrompt,
   buildPhasePrompt,
-  ROUTE_REQUESTS_VERBATIM_CONTRACT,
 } from '../../src/ai/prompting/prompts';
 import { buildSmProtocol } from '../../src/ai/prompting/smPrompts';
 
@@ -43,7 +42,7 @@ async function runTests() {
     const active = buildPhasePrompt('active', { isInline: false });
     assert(active.includes('Active Exploration Protocol'), 'active includes protocol heading');
     assert(active.includes('TOOL CONSTRAINTS'), 'active includes tool constraints');
-    assert(active.includes('ROUTE_REQUESTS'), 'active includes route_requests contract');
+    assert(active.includes('DECISION SOURCE'), 'active points to canonical decision contract');
 
     const synthesis = buildPhasePrompt('synthesis');
     assert(synthesis.includes('Synthesis Protocol'), 'synthesis includes protocol heading');
@@ -63,7 +62,7 @@ async function runTests() {
     assert(sm.includes('Verdict Protocol'), 'SM includes verdict contract');
     assert(sm.includes('Section Submission'), 'SM includes section submission contract');
     assert(sm.includes('Metadata Protocol'), 'SM includes metadata contract');
-    assert(sm.includes('## Routing'), 'SM includes routing contract');
+    assert(sm.includes('Neighbor Decision Contract (Current Hop Only)'), 'SM includes canonical hop decision contract');
 
     const smCt = buildSmProtocol({ classification: 'both', targetColumns: ['TotalRevenue'] });
     assert(smCt.includes('Column Trace: active'), 'SM CT includes CT stable anchor');
@@ -76,8 +75,9 @@ async function runTests() {
     const phase = buildPhasePrompt('active', { isInline: false });
     const sm = buildSmProtocol({ classification: 'business' });
     const assembled = [base, phase, sm].join('\n\n');
-    const count = countOccurrences(assembled, ROUTE_REQUESTS_VERBATIM_CONTRACT);
-    assertEq(count, 1, 'canonical route_requests contract appears exactly once in active assembly');
+    const needle = 'Neighbor Decision Contract (Current Hop Only)';
+    const count = countOccurrences(assembled, needle);
+    assertEq(count, 1, 'canonical hop decision contract appears exactly once in active assembly');
   }
 
   printSummary('prompt-composition');

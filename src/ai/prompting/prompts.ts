@@ -14,32 +14,6 @@ export type PromptPhase = 'discover' | 'active' | 'synthesis' | 'completed';
 
 
 /**
- * Single-source contract describing how the AI must treat neighbors that fall
- * outside the session's approved schemas or depth cap.
- *
- * @remarks
- * Referenced from every prompt block that discusses routing (active-phase tool
- * usage, SM mode routing). Keeping the text in one place prevents wording
- * drift across model families and preserves the stable prompt prefix for
- * Anthropic prompt caching.
- *
- * The contract:
- * 1. Out-of-scope routing is *encouraged* when mission-relevant — the engine defers it.
- * 2. Deferred routes are surfaced post-synthesis as an inline UI affordance.
- * 3. Per-route disposition is reported back via `route_outcomes[]`.
- * 4. The detail analysis references only `accepted: true` nodes; deferred nodes are
- *    surfaced exclusively via the post-synthesis follow-up pill — do not enumerate
- *    them in the report.
- */
-export const OUT_OF_SCOPE_CONTRACT: string =
-  'Out-of-scope routes (schema or depth beyond the approved border) are encouraged when mission-relevant. The engine defers them and surfaces them to the user post-synthesis via the follow-up pill. Each `submit_findings` tool result reports `route_outcomes[]`; reference only nodes with `accepted: true` inside your captured `sections[]`. Do not enumerate deferred nodes in the report — the follow-up pill handles that surface.';
-
-/** Canonical source-id routing constraint for `route_requests`. */
-export const ROUTE_REQUESTS_VERBATIM_CONTRACT =
-  'Source every `nodeId` verbatim from a prior tool result — `next_hop` / `neighbors[]` from a previous `submit_findings`, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Reconstructed ids from question text fail validation. On `route_validation_failed`, the rejection envelope returns `route_target_candidates` (up to 3 fuzzy matches per unresolved id) — pick a candidate verbatim or call `lineage_search_objects` to find the right id, then re-submit.';
-
-
-/**
  * Constructs the base system prompt used to govern AI behavior across all phases.
  *
  * @remarks
@@ -135,7 +109,7 @@ export function buildDiscoveryPrompt(): string {
     '',
     '**Column Trace selection:** if the user names a specific column (`[Object].[Column]` or "the X column"), extract it directly as `targetColumns`. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its columns, then select matching columns and pass them as `targetColumns`.',
     '',
-    'Resolve every user-named identifier — both the origin and any names the user said to ignore / exclude / drop / skip — with `lineage_search_objects` BEFORE calling `lineage_start_exploration`. The model has many schemas; user-shorthand names ("RECON", "EXCP2") often live in a non-default schema. Inventing an id like `[dbo].[recon]` causes `lineage_start_exploration` to reject with `unknown_node_ids`. If multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
+    'Resolve every user-named identifier — both the origin and any names the user said to ignore / exclude / drop / skip — with `lineage_search_objects` BEFORE calling `lineage_start_exploration`. User shorthand often omits schema (for example `Employee` or `SalesOrderHeader`), and the same base name can exist in multiple schemas. Never invent a fully qualified id; use the exact id returned by `lineage_search_objects`. If multiple candidates match, ask the user to pick. Then call `lineage_start_exploration` — its parameter descriptions carry the full contract (scope mapping, NL-filter handling, `mission_brief` composition, classification values).',
     '',
     'The engine emits a `confirm_sm_start` consent gate on every exploration so the user can review scope (nodes, schemas, excluded types, mode) before analysis runs. Present it to the user; that is expected control flow, not an error to retry around.',
     '',
@@ -193,9 +167,8 @@ export function buildActivePhasePrompt(isInline = false): string {
     '',
     '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
     '2. MATHEMATICS: Wrap every formula in LaTeX math delimiters — $expr$ inline, $$expr$$ block — transforms, allocations, thresholds, proportions, CASE expressions. Never use backticks for formulas. Correct: $\\text{Ratio} = \\frac{A}{B}$. Wrong: `\\text{Ratio} = \\frac{A}{B}`. Math delimited this way reaches the final document; math in backticks or plain prose does not.',
-    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth. Routing: explicitly adjudicate neighbors for the current focus — route mission-relevant neighbors via `route_requests` with concrete verification sub-question(s).',
-    `4. ROUTE_REQUESTS: ${ROUTE_REQUESTS_VERBATIM_CONTRACT}`,
-    `5. ROUTE OUTCOMES: ${OUT_OF_SCOPE_CONTRACT}`,
+    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth.',
+    '4. DECISION SOURCE: Apply the canonical Neighbor Decision Contract from the SM protocol block for all route/prune choices.',
   ].join('\n');
 }
 

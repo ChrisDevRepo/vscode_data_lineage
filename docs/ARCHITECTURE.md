@@ -45,6 +45,8 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. If `present_result` is attempted but fails validation, fallback copy reports validation failure (with reason), not "tool not invoked". |
 | **Completed** | User | Holds the result graph. Three convergent operations (no gate, no wipe): (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes via SM; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). |
 
+Active-hop routing/pruning instruction ownership is single-source: `smPrompts.ts` (`Neighbor Decision Contract`). `prompts.ts` no longer duplicates route/prune policy text.
+
 ## Component map
 
 C4 Container view. Deployment boundaries as containers; modules inside; arrows are asymmetric calls (a typed contract crosses every arrow — either a Zod schema boundary or a VS Code API).
@@ -160,6 +162,10 @@ There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) w
 | **History** | Wiped every hop |
 | **Termination** | Engine drains agenda; `complete: true` silently ignored |
 | **Mid-session out-of-scope route** | Engine `deferQuestion(...)`; surfaced at synthesis |
+
+Progress semantics:
+- `Hop X / Y` reports hop progress.
+- `Inspecting N neighbors for pruning…` is rendered as a pruning-progress cue from current SM state in the participant loop (single-number UI preserved).
 
 The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 

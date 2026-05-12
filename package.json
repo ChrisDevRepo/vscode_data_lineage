@@ -1086,14 +1086,14 @@
                   "question"
                 ]
               },
-              "description": "Routing requests for next hops. Every `nodeId` must already exist in the loaded model (verified against a prior tool result or via `lineage_search_objects`); unresolved ids are rejected and do not enter the agenda."
+              "description": "Current-hop neighbor route requests. Use concrete verification sub-questions; out-of-scope mission-relevant routes are deferred for post-synthesis follow-up."
             },
             "prune_neighbors": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Neighbor node IDs to aggressively prune from the agenda."
+              "description": "Current-hop neighbor IDs to prune from exploration."
             },
             "badge_label": {
               "type": "string",
