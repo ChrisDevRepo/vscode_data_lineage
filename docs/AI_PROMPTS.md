@@ -128,6 +128,7 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 - Verdict enum fixed: `analyze | pass | prune`.
 - `sections[]` count/angles are locked by classification (`submitFindingsRules.ts`).
 - For CT, non-prune findings require `column_flow` (`column_flow_required` on violation).
+- SM behavior is shared across BB and CT: neighbor decisions still use `route_requests` / `prune_neighbors`; CT adds column lineage continuity only.
 - Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.
 
 ### `lineage_present_result`
@@ -153,6 +154,9 @@ Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.tes
 - Replayed `lineage_present_result` history payloads are compacted to summary metadata (`view_name`, `node_count`, `graph_source`) once SM is complete.
 - Follow-up turns inject a compact “current rendered result snapshot” (title/summary/section map + bounded description excerpt) so edits can be made without replaying full prior payloads.
 - If the follow-up recommendation pill is clicked with zero deferred objects, the participant now returns a direct edit helper response; it does not inject internal Route A/Route B protocol text into user-visible chat.
+- Deferred follow-up guidance now distinguishes:
+  - mandatory-now per skipped object (`add_now` or `keep_pruned_now`),
+  - optional-later questions only for non-mandatory future investigation.
 
 ## Discovery escalation contract
 

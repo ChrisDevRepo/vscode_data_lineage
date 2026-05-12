@@ -247,7 +247,10 @@ export function buildFollowUpPrompt(): string {
     'quote from the archive, browse the catalog, or refine the visualization without',
     'starting over.',
     '',
-    'Choose one of two routes based on user intent:',
+    'Choose one route using this decision order:',
+    '1) DEFAULT: Route A (adjust/extend current graph).',
+    '2) Route B only when the user explicitly changes origin, direction, or scope semantics.',
+    'If uncertain, stay in Route A.',
     '',
     'Route A - Adjust the existing graph (same topic):',
     '- Relabel nodes / sections / badges: update `sections[]` (`label` and/or `node_ids`)',
@@ -421,13 +424,13 @@ export function buildDiscoverySummaryBlock(summary: string | null): string {
  * @returns The multiline prompt string to pre-fill into the chat input.
  */
 export function buildDeferredQuestionsPrompt(entries: ReadonlyArray<DeferredQuestion>): string {
-  const header = `Based on the graph we just explored, we found some related objects that were skipped because they were out of scope. Please summarize these skipped objects and, for the most mission-relevant ones, explain WHY I should analyze them (what specific value do they add to the story we just mapped?). Recommend 2-3 specific follow-up questions I could ask, using your knowledge of the BFS archive to justify the reasoning.`;
+  const header = `Based on the graph we just explored, some related objects were outside the approved scope. For EACH skipped object, decide what to do now for this same investigation: either add now to the current graph, or keep pruned now with a short reason. Then optionally suggest up to 2 future-investigation follow-up questions only for items that are useful later but not mandatory now.`;
   const lines = entries.map((d) => {
     const schema = d.schema ? ` [schema: ${d.schema}]` : '';
     const from = ` (from ${d.fromFocusNodeId}, reason: ${d.reason})`;
     return `- ${d.nodeId}${schema}${from}`;
   });
-  return `${header}\n\n<skipped_objects>\n${lines.join('\n')}\n</skipped_objects>`;
+  return `${header}\n\n<follow_up_context>\nroute_default: adjust_existing_graph\nmandatory_scope_rule: decide each skipped object now (add_now | keep_pruned_now)\noptional_future_questions: only for non-mandatory items\n</follow_up_context>\n\n<skipped_objects>\n${lines.join('\n')}\n</skipped_objects>`;
 }
 
 /** 
@@ -482,8 +485,12 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     '# Column Trace: active',
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    'PRIMARY job this hop: fill the `column_flow` field — structural provenance for each active column.',
+    'SM behavior is unchanged in CT: keep the same per-hop neighbor decisions (`route_requests` / `prune_neighbors`) as non-CT.',
+    'CT adds column tracking only.',
+    'PRIMARY job this hop: for non-prune verdicts, fill `column_flow` — structural provenance for each active column.',
     'SUPPORTING job: fill `sections[].text` — business/technical context explaining WHY the column flows this way.',
+    'For mission-critical contributors, add concrete `route_requests` sub-questions to continue the column chain.',
+    'Optional: add extra sub-questions for non-core neighbors only when they may still affect the mission outcome.',
     '',
     'Fields are separate: `column_flow` ≠ `sections[]`.',
     'The capture-rules header below applies to sections[] only (business_capture / technical_capture).',

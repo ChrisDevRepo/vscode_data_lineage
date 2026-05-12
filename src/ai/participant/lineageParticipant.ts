@@ -99,6 +99,17 @@ function findLastToolPairInHistory(
 }
 
 /**
+ * Appends a block to text once per turn.
+ *
+ * @returns Updated text plus whether a duplicate append was avoided.
+ */
+function appendBlockOnce(base: string, block: string): { text: string; skippedDuplicate: boolean } {
+  if (!block) return { text: base, skippedDuplicate: false };
+  if (base.includes(block)) return { text: base, skippedDuplicate: true };
+  return { text: `${base}\n\n${block}`, skippedDuplicate: false };
+}
+
+/**
  * Minimizes replayed tool-result payload for ACTIVE phase.
  *
  * @remarks
@@ -503,6 +514,7 @@ export class LineageParticipant {
 
     // Reset the parallel-call guard at every turn entry.
     sess.startExplorationRoundId = null;
+    sess.fromFollowupDeferredTriggerThisTurn = false;
     this.logger.info(
       `[${sess.id}] Session start — ` +
       `model=${model.vendor}/${model.family}/${model.version} (id=${model.id}, max=${model.maxInputTokens}t) ` +
@@ -513,10 +525,13 @@ export class LineageParticipant {
     );
 
     let effectivePrompt = request.prompt;
+    let duplicateBlocksRemovedThisTurn = 0;
+    const toolResultCharsByTool = new Map<string, number>();
     if (effectivePrompt === RECOMMEND_FOLLOWUPS_TRIGGER) {
       const deferred = sess.stateMachine?.deferredQuestions || [];
       if (deferred.length > 0) {
         effectivePrompt = buildDeferredQuestionsPrompt(deferred);
+        sess.fromFollowupDeferredTriggerThisTurn = true;
         this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
       } else {
         writer.markdown([
@@ -880,7 +895,9 @@ export class LineageParticipant {
       lineageTools = filterLmTools(vscode.lm.tools, { kind: 'completed' });
       const snapshot = buildCompletedResultSnapshot(sess);
       if (snapshot) {
-        effectivePrompt = `${effectivePrompt}\n\n${snapshot}`;
+        const appended = appendBlockOnce(effectivePrompt, snapshot);
+        effectivePrompt = appended.text;
+        if (appended.skippedDuplicate) duplicateBlocksRemovedThisTurn++;
       }
       this.logger.info(`[Phase] completed → follow-up — archive slots=${sess.memory.slotCount}, tools: ${lineageTools.map(t => t.name.replace('lineage_', '')).join(', ')}`);
       this.logger.info(`[Phase] follow-up entry — mission="${trunc(sess.memory.getMissionBrief() || sess.memory.getUserQuestion(), 200)}", classification=${sess.classification ?? '(none)'}`);
@@ -1116,6 +1133,18 @@ export class LineageParticipant {
         let roundHadCacheHit = false;
         for (const call of toolCalls) {
           const f = extractToolCallFields(call);
+          if (
+            activePhase === 'completed' &&
+            sess.fromFollowupDeferredTriggerThisTurn &&
+            f.name === 'lineage_start_exploration'
+          ) {
+            const inp = f.input as { origin?: unknown; supplement?: { nodeIds?: unknown[] } | null };
+            const hasFreshOrigin = typeof inp.origin === 'string' && inp.origin.trim().length > 0;
+            const hasSupplement = !!(inp.supplement && Array.isArray(inp.supplement.nodeIds) && inp.supplement.nodeIds.length > 0);
+            if (hasFreshOrigin && !hasSupplement) {
+              this.logger.warn('[FollowUpRoute] deferred-trigger turn attempted fresh start_exploration (origin without supplement).');
+            }
+          }
           const cacheKey = `${f.name}::${JSON.stringify(f.input)}`;
           if (toolCallCache.has(cacheKey)) {
             const cached = toolCallCache.get(cacheKey)!;
@@ -1155,6 +1184,10 @@ export class LineageParticipant {
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, result.content));
             accumulatedToolResults[f.callId] = result;
             toolCallCache.set(cacheKey, result);
+            let toolResultChars = 0;
+            try { toolResultChars = JSON.stringify(result.content).length; } catch { /* no-op */ }
+            const prev = toolResultCharsByTool.get(f.name) ?? 0;
+            toolResultCharsByTool.set(f.name, prev + toolResultChars);
           } catch (err) {
             const errContent = [new vscode.LanguageModelTextPart(JSON.stringify({ error: 'tool_error', message: String(err) }))];
             resultParts.push(new vscode.LanguageModelToolResultPart(f.callId, errContent));
@@ -1340,6 +1373,13 @@ export class LineageParticipant {
     const smStatus = sess.stateMachine ? (sess.stateMachine.columnAspect ? 'Column' : 'BB') : '—';
     const peakPct = sess.maxInputTokens > 0 ? ((peakRoundInputTokens / sess.maxInputTokens) * 100).toFixed(0) : '?';
     this.logger.info(`Summary — model: ${sess.modelName}, SM: ${smStatus}, phase: ${activePhase}, rounds: ${roundCount}, tools: ${totalToolCallsMade}, cumulative in: ${totalRoundInputTokens}, out: ${totalOutputTokens}, peak-round: ${peakRoundInputTokens}/${sess.maxInputTokens} (${peakPct}%)`);
+    const toolBloat = [...toolResultCharsByTool.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([tool, chars]) => `${tool.replace('lineage_', '')}:${chars}`)
+      .join(', ');
+    this.logger.info(
+      `[PromptMetrics] trigger_followup_deferred=${sess.fromFollowupDeferredTriggerThisTurn} duplicate_blocks_removed=${duplicateBlocksRemovedThisTurn} initial_prompt_chars=${effectivePrompt.length} tool_result_chars_by_tool=${toolBloat || '(none)'}`
+    );
 
     // Post-discovery walk capture: store the question + chat answer + origin so
     // the post-discovery SM-offer pill (and the eventual discovery-summary

@@ -166,6 +166,14 @@ export class AiSession {
    */
   public lastDiscoveryAnswer: string | null = null;
   /**
+   * True only for turns started from the completed-phase deferred follow-up trigger.
+   *
+   * @remarks
+   * Diagnostic marker for routing/telemetry only. It must not change runtime
+   * control flow in this low-risk phase.
+   */
+  public fromFollowupDeferredTriggerThisTurn = false;
+  /**
    * Mission-type classification inferred at end of discovery.
    *
    * @remarks
@@ -251,6 +259,7 @@ export class AiSession {
     this.lastDiscoveryWalkCount = 0;
     this.lastDiscoveryQuestion = null;
     this.lastDiscoveryAnswer = null;
+    this.fromFollowupDeferredTriggerThisTurn = false;
   }
 
   /**

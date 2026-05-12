@@ -55,6 +55,8 @@ async function runTests() {
     assert(completed.includes('Follow-Up Protocol'), 'completed includes follow-up heading');
     assert(completed.includes('Route A - Adjust the existing graph'), 'completed includes existing-graph route');
     assert(completed.includes('Route B - Start a new trace'), 'completed includes fresh-trace route');
+    assert(completed.includes('DEFAULT: Route A'), 'completed defaults follow-up routing to Route A');
+    assert(completed.includes('If uncertain, stay in Route A'), 'completed includes Route A tiebreaker');
     assert(completed.includes('Relabel nodes / sections / badges'), 'completed maps relabel requests to sections');
     assert(completed.includes('notes[]'), 'completed maps note updates');
   }
@@ -70,6 +72,7 @@ async function runTests() {
     const smCt = buildSmProtocol({ classification: 'both', targetColumns: ['TotalRevenue'] });
     assert(smCt.includes('Column Trace: active'), 'SM CT includes CT stable anchor');
     assert(smCt.includes('column_flow'), 'SM CT includes column_flow contract');
+    assert(smCt.includes('This contract is identical in SM BB and SM CT'), 'SM contract parity is explicit');
   }
 
   console.log('\n── active assembly redundancy guard ──');

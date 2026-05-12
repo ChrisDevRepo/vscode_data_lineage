@@ -123,6 +123,12 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 
 **Completed follow-up intent split.** In completed phase, treat follow-ups as either (A) refine existing graph or (B) start a new trace. Route A uses `lineage_present_result` (relabel/regroup via `sections[]`; caption updates via `notes[]`; graph edits via `prune_node_ids` / `add_node_ids`). Route B uses `lineage_start_exploration` for new origin/scope semantics; engine routing decides retrace vs fresh discovery.
 
+Low-risk diagnostics added for follow-up routing:
+- `fromFollowupDeferredTriggerThisTurn` marks turns expanded from deferred follow-up trigger text.
+- completed-phase warning log fires when that trigger flow attempts fresh `start_exploration` with `origin` and no `supplement`.
+- exact-string block append guard prevents duplicate snapshot injection into one request.
+- prompt metrics now log duplicate block removals and per-tool result payload chars.
+
 | Function | File | Concern |
 |----------|------|---------|
 | `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |

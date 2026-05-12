@@ -161,6 +161,8 @@ If the user's intent is unclear between chat and graph, discovery answers in cha
 
 There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) when `targetColumns` is set. SM is gate-approved before the first hop runs.
 
+**CT parity contract.** CT does not introduce a second routing model. BB and CT share the same hop contract (`route_requests` / `prune_neighbors` + deferred out-of-scope routes). CT adds one requirement only: non-prune hops must submit `column_flow` so the column chain remains continuous.
+
 | Dimension | SM (sliding-memory) |
 |-----------|---------------------|
 | **Trigger** | User explicitly requests a visual graph render, or column tracing, or clicks the deeper-analysis follow-up |
@@ -174,6 +176,7 @@ There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) w
 Progress semantics:
 - `Hop X / Y` reports hop progress.
 - `Inspecting N neighbors for pruning…` is rendered as a pruning-progress cue from current SM state in the participant loop (single-number UI preserved).
+- In CT, branches with no tracked contributor columns contract out of the column chain; explicit prune remains available but is secondary to column-flow-driven relevance.
 
 The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
