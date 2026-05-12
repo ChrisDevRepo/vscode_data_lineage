@@ -230,16 +230,6 @@ export function registerCommands(
       });
     }),
 
-    // --- UI Controls ---
-    vscode.commands.registerCommand('dataLineageViz.toggleOverviewMode', () => {
-      const panel = getActivePanel();
-      if (!panel) {
-        vscode.window.showWarningMessage('Data Lineage: Open a graph first to toggle overview mode.');
-        return;
-      }
-      panel.webview.postMessage({ type: 'toggle-overview' });
-    }),
-
     /** 
      * Launches a Quick Pick search interface for all SQL objects in the current model.
      */

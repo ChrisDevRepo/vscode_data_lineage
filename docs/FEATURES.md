@@ -9,7 +9,7 @@ Capabilities of Data Lineage Viz, with the VS Code settings that control them. F
 When a graph exceeds a configurable node threshold, the extension auto-activates **schema overview mode** — replacing individual nodes with schema-level bubbles showing object counts and type distribution.
 
 - Double-click any schema bubble to drill into its objects and connected neighbours.
-- Toggle manually via the toolbar or the **Toggle Schema Overview Mode** command.
+- Toggle manually via the toolbar.
 - Configure: `dataLineageViz.overview.enabled`, `dataLineageViz.overview.threshold`.
 
 ### Rendering limits

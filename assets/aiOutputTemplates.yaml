@@ -188,10 +188,9 @@ business_capture:
     downstream, why each rule matters to the domain.
     </purpose>
 
-    ⛔ STRICT GROUNDING — analyze ONLY what is present in `bb_ddl` from the
-    focus_node. Do not invent business rules, formulas, thresholds, or
-    relationships that are not explicitly written in the DDL body. If a
-    construct is absent from the DDL, it does not exist in this analysis.
+    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Do not
+    invent rules, formulas, thresholds, or relationships. If a construct is
+    absent from DDL, treat it as out of scope.
 
     Submit one section: `{ angle: "business", text: "<body>" }`. The
     archive has no length cap and synthesis lifts your text verbatim —
@@ -275,12 +274,10 @@ technical_capture:
     pattern, performance affordances and traps.
     </purpose>
 
-    ⛔ STRICT GROUNDING — analyze ONLY what is present in `bb_ddl` from the
-    focus_node. Do not invent indexes, partitioning strategies, performance
-    concerns, or object references that are not explicitly in the DDL body.
-    Performance observations must be traceable to actual SQL constructs in the
-    DDL (JOIN types, WHERE predicates, DISTINCT, subqueries). Do not speculate
-    about what "probably" exists. If it is not in the DDL, it is not in scope.
+    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Do not
+    invent indexes, partitioning, performance issues, or references. Tie
+    performance claims to visible SQL constructs (JOIN, WHERE, DISTINCT,
+    subquery). If it is not in DDL, it is out of scope.
 
     Submit one section: `{ angle: "technical", text: "<body>" }`. The
     archive has no length cap; synthesis lifts your text verbatim. Write
@@ -343,18 +340,15 @@ technical_capture:
 structural_summary:
   stages: [active]
   instruction: >
-    Reduced capture template — fires only when the user's starting point is a
-    non-bodied node (a table or any node without a DDL body). Replaces the
-    business_capture / technical_capture templates for this single hop.
+    Fires only when the focus node has no DDL body (table/non-bodied).
+    For this hop only, it replaces `business_capture` and `technical_capture`.
 
     Describe what this node **is**; point to the surrounding procedures for
     what it **does**. Non-bodied nodes carry structure, not behaviour.
 
-    ⛔ STRICT GROUNDING — every section must be populated from the focus_node
-    data delivered in the context. Do NOT infer, assume, or invent any column
-    names, object names, neighbors, or relationships.
-    If a field is empty or absent in the focus_node, write the explicit
-    empty-case text shown below — never a guess.
+    ⛔ STRICT GROUNDING — use only `focus_node` data. Do not invent columns,
+    objects, neighbors, or relationships. If a field is missing/empty, output
+    the explicit empty-case text below.
 
     Required sections (use these headings exactly):
 
@@ -363,8 +357,7 @@ structural_summary:
     Source: node id / type from focus_node.
 
     ## Columns
-    Render ONLY columns present in `cols[]` from focus_node as a
-    `| Column | Type | Role / ⚠️ |` table. Role is a short phrase
+    From `cols[]` only, render a `| Column | Type | Role / ⚠️ |` table. Role is a short phrase
     (key / dim / metric / audit / computed). Flag nullable columns with ⚠️.
     If `cols[]` is absent: write "Column metadata not available in current model."
 

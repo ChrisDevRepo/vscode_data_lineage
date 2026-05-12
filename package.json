@@ -125,11 +125,6 @@
         "icon": "$(sparkle)"
       },
       {
-        "command": "dataLineageViz.toggleOverviewMode",
-        "title": "Data Lineage: Toggle Schema Overview Mode",
-        "icon": "$(graph)"
-      },
-      {
         "command": "dataLineageViz.aiCreateView",
         "title": "Data Lineage: Show AI Trace in Graph",
         "icon": "$(type-hierarchy-sub)"

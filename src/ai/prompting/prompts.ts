@@ -52,7 +52,7 @@ export function buildGeneralSystemPrompt(
     '',
     `Current phase: ${phaseLabel}.`,
     '',
-    '**Grounding rule:** Use only object IDs, columns, and relationships returned by tool calls. Never infer, construct, or invent identifiers.',
+    '**Grounding rule:** Use only tool-returned IDs, columns, and relationships. Never invent identifiers.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
@@ -144,7 +144,7 @@ export function buildDiscoveryPrompt(): string {
     '',
     '## Response format',
     '',
-    'Markdown only. Match response length to the question.',
+    'Markdown only; match length to the question.',
   ].join('\n');
 }
 
@@ -169,9 +169,9 @@ export function buildActivePhasePrompt(isInline = false): string {
     `Mode: ${mode}`,
     '',
     '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
-    '2. MATHEMATICS: Wrap every formula in LaTeX math delimiters — $expr$ inline, $$expr$$ block — transforms, allocations, thresholds, proportions, CASE expressions. Never use backticks for formulas. Correct: $\\text{Ratio} = \\frac{A}{B}$. Wrong: `\\text{Ratio} = \\frac{A}{B}`. Math delimited this way reaches the final document; math in backticks or plain prose does not.',
-    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` to process focus nodes. Submit `sections[]` per the locked classification (one entry per fired `*_capture`); each section body is full-depth.',
-    '4. DECISION SOURCE: Apply the canonical Neighbor Decision Contract from the SM protocol block for all route/prune choices.',
+    '2. MATHEMATICS: Write formulas in LaTeX (`$...$` inline, `$$...$$` block). Do not use backticks or plain prose for formulas.',
+    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` for focus-node analysis. Submit `sections[]` per locked classification (one entry per fired `*_capture`) with full-depth text.',
+    '4. DECISION SOURCE: Use the SM Neighbor Decision Contract for all route/prune choices.',
   ].join('\n');
 }
 
@@ -492,9 +492,8 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     'For mission-critical contributors, add concrete `route_requests` sub-questions to continue the column chain.',
     'Optional: add extra sub-questions for non-core neighbors only when they may still affect the mission outcome.',
     '',
-    'Fields are separate: `column_flow` ≠ `sections[]`.',
-    'The capture-rules header below applies to sections[] only (business_capture / technical_capture).',
-    '`column_trace_capture` → fills the `column_flow` field, not sections[].',
+    '`column_flow` and `sections[]` are separate fields.',
+    '`column_trace_capture` writes `column_flow`; business/technical captures write `sections[]`.',
   ].join('\n');
 }
 

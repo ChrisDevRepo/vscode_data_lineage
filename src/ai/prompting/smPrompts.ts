@@ -36,8 +36,8 @@ const BLOCK = {
     return [
       '## Section Submission',
       submitLine,
-      'This is the canonical active-phase `sections[]` shape contract. If neighboring prompt text conflicts, follow this block.',
-      'Body content is governed by the capture template above; this block specifies only the submission shape.',
+      'Canonical `sections[]` shape for active phase. If any nearby text conflicts, follow this block.',
+      'Body content still comes from the capture template above.',
       '`summary` — one short sentence digest of the whole node.',
     ].join('\n');
   },
@@ -47,7 +47,7 @@ const BLOCK = {
     '## Metadata Protocol',
     '1. BADGE: `badge_label` is a short semantic ROLE label — prefer 1-2 words; longer phrases acceptable only when no shorter form fits the role precisely. Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "Revenue Calc", "Price Adjustment", "Territory Load".',
     '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
-    '   - SHARED ROLE: Nodes serving the same role take the same label. Five discount procedures all use `"Price Adjustment"`; three territory loaders all use `"Territory Load"`. The differing detail belongs in the section body, not the label.',
+    '   - SHARED ROLE: Nodes with the same role use the same label (for example `"Price Adjustment"`). Keep differences in section body text, not label text.',
     '   ❌ Step-count labels ("Step 1", "Step A", "Transform Step") — sections are auto-numbered; role labels only.',
     '2. NOTE: `note_caption` — quick user-facing preview sentence for this node. Keep it short and plain-language; put deep reasoning in `sections[].text`.',
   ].join('\n'),
@@ -55,8 +55,7 @@ const BLOCK = {
   /** Canonical hop-local routing/pruning contract (single source, no duplicates across surfaces). */
   hopDecisionContract: [
     '## Neighbor Decision Contract (Current Hop Only)',
-    'This contract is identical in SM BB and SM CT. CT adds column tracking only.',
-    'Use mission/task metadata as source of truth. Do not re-derive intent from history prose.',
+    'Same contract for SM BB and SM CT (CT only adds column tracking). Use mission/task metadata as source of truth; do not re-derive intent from history prose.',
     '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
     '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only — do not route/prune from it.',
     '- Emit explicit `verdict` for the focus node every hop.',
