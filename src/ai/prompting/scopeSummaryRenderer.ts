@@ -32,7 +32,10 @@ function typeLabel(t: string, n: number): string {
 export function renderScopeSummaryMd(s: ScopeSummary): string {
   const lines: string[] = [];
   const dirLabel = s.direction === 'bidirectional' ? 'bidirectional' : s.direction;
-  const depthLabel = s.depth !== null ? `depth ${s.depth}` : 'unbounded depth';
+  const hasAsymmetric = s.direction === 'bidirectional' && (s.upstreamDepth !== null || s.downstreamDepth !== null);
+  const depthLabel = hasAsymmetric
+    ? `depth u:${s.upstreamDepth ?? 'all'} d:${s.downstreamDepth ?? 'all'}`
+    : (s.depth !== null ? `depth ${s.depth}` : 'unbounded depth');
   const colLabel = s.targetColumns?.length ? ` — columns: [${s.targetColumns.join(', ')}]` : '';
   const traceLabel = s.columnAspectActive ? `Column-Trace${colLabel}` : 'Blackboard';
 

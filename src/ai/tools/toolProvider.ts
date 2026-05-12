@@ -17,14 +17,12 @@ import * as vscode from 'vscode';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import type { AiSession } from '../session/session';
-import { AiMemoryManager } from '../session/memoryManager';
 import { Logger, trunc, sanitizeForLog } from '../../utils/log';
 import {
   suggestNarrowerDepth,
   getContext, searchObjects, getObjectDetail,
   runAnalysis, searchDdl,
   getNeighborColumns,
-  checkScopeBudget,
   validateToolInput,
   StartExplorationInputSchema,
   SubmitFindingsInputSchema,
@@ -132,47 +130,6 @@ class ToolHandler {
       showExternalRefs: !!filter.showExternalRefs,
       externalRefTypes: filter.externalRefTypes || [],
       exclusionPatterns: filter.exclusionPatterns || [],
-    };
-  }
-
-  private projectApprovalScopeForOrigin(
-    sess: AiSession,
-    originId: string,
-    opts?: {
-      direction?: 'upstream' | 'downstream' | 'bidirectional';
-      depth?: number;
-      upstream_depth?: number;
-      downstream_depth?: number;
-    },
-  ): { nodes: number; ddl_chars: number; ddl_tokens: number } | null {
-    const m = this.requireModel();
-    const g = this.requireGraph();
-    const probe = new NavigationEngine(
-      m,
-      g,
-      () => { /* scope probe: no-op logger */ },
-      {
-        activeFilter: this.buildActiveFilter(sess),
-        // Isolate probe state from the live session memory.
-        memory: new AiMemoryManager(),
-        qualityGuards: false,
-      },
-      sess.columnStore,
-    );
-    const init = probe.init({
-      question: 'Discovery scope probe',
-      origin: originId,
-      direction: opts?.direction ?? 'upstream',
-      depth: opts?.depth,
-      upstream_depth: opts?.upstream_depth,
-      downstream_depth: opts?.downstream_depth,
-    });
-    if ('error' in init) return null;
-    const summary = probe.getScopeSummary();
-    return {
-      nodes: summary.scopeCount,
-      ddl_chars: summary.estimatedDdlChars,
-      ddl_tokens: summary.estimatedDdlTokens,
     };
   }
 
@@ -860,56 +817,6 @@ class ToolHandler {
       };
       const { id } = request;
       const detail = getObjectDetail(this.requireModel(), id, sess.columnStore) as Record<string, unknown>;
-
-      // Discovery-only budget guard:
-      // project the same scope metrics used by the confirm gate so escalation
-      // matches the numbers shown in approval.
-      const stage = this.deriveLmStage(sess);
-      if (stage.kind === 'discover' && typeof detail.error !== 'string') {
-        const originId = typeof detail.id === 'string' && detail.id.length > 0 ? detail.id : id;
-        const direction = request.direction === 'upstream' || request.direction === 'downstream' || request.direction === 'bidirectional'
-          ? request.direction
-          : undefined;
-        const depth = typeof request.depth === 'number' && Number.isFinite(request.depth) && request.depth > 0
-          ? Math.floor(request.depth)
-          : undefined;
-        const upstreamDepth = typeof request.upstream_depth === 'number' && Number.isFinite(request.upstream_depth) && request.upstream_depth >= 0
-          ? Math.floor(request.upstream_depth)
-          : undefined;
-        const downstreamDepth = typeof request.downstream_depth === 'number' && Number.isFinite(request.downstream_depth) && request.downstream_depth >= 0
-          ? Math.floor(request.downstream_depth)
-          : undefined;
-        const projected = this.projectApprovalScopeForOrigin(sess, originId, {
-          direction,
-          depth,
-          upstream_depth: upstreamDepth,
-          downstream_depth: downstreamDepth,
-        });
-        if (projected) {
-          const budget = checkScopeBudget(projected.nodes, projected.ddl_chars);
-          if (!budget.ok) {
-            this.logger.info(
-              `[DiscoveryBudget] escalate origin=${originId} ` +
-              `dir=${direction ?? 'upstream(default)'} depth=${depth ?? 'default'} ` +
-              `uDepth=${upstreamDepth ?? 'default'} dDepth=${downstreamDepth ?? 'default'} ` +
-              `projected_nodes=${projected.nodes} projected_tokens=${projected.ddl_tokens} ` +
-              `limits=node_cap:${budget.limits.node_cap},token_budget:${budget.limits.token_budget}`,
-            );
-            return this.logAndReturn('get_object_detail', {
-              error: budget.reason,
-              counts: budget.counts,
-              limits: budget.limits,
-              scope_preview: {
-                nodes: projected.nodes,
-                ddl_chars: projected.ddl_chars,
-                ddl_tokens: projected.ddl_tokens,
-              },
-              hint: budget.hint,
-              next_action: 'start_exploration',
-            }, input);
-          }
-        }
-      }
 
       return this.logAndReturn('get_object_detail', detail, input);
     } catch (err) { return this.toolError('get_object_detail', err); }

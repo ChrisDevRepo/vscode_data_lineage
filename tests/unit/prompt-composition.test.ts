@@ -36,7 +36,9 @@ async function runTests() {
     assert(discover.includes('Class D — Direct'), 'discover includes Class D guidance');
     assert(discover.includes('Class S — State machine'), 'discover includes Class S guidance');
     assert(discover.includes('Discovery is the default state'), 'discover defaults to discovery-first routing');
-    assert(discover.includes('over_discovery_budget'), 'discover includes over_discovery_budget escalation trigger');
+    assert(discover.includes('explicitly asks for visual graph render'), 'discover escalates on explicit graph render intent');
+    assert(discover.includes('requests column tracing (`targetColumns`)'), 'discover escalates on column-trace intent');
+    assert(!discover.includes('over_discovery_budget'), 'discover does not escalate on discovery budget text');
     assert(!discover.includes('prefer Class S'), 'discover no longer biases ambiguous routing to Class S');
 
     const active = buildPhasePrompt('active', { isInline: false });

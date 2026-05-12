@@ -153,8 +153,9 @@ Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.tes
 - Escalate to `lineage_start_exploration` only when:
   - explicit visual graph/render request,
   - explicit column trace request (`targetColumns`),
-  - discovery returns `over_discovery_budget`.
-- Discovery budget is enforced from the same projected scope metrics shown in `confirm_sm_start` (scope nodes + estimated DDL chars/tokens), using `ai.discoveryNodeCap` and `ai.discoveryTokenBudget`.
+  - explicit post-discovery deeper-analysis intent.
+- Discovery `get_object_detail` is a catalog lookup surface and does not hard-reject on projected scope budget.
+- Scope budget guarding is enforced at `lineage_start_exploration` preflight and must use the same scope snapshot rendered in `confirm_sm_start` (scope nodes + estimated DDL chars/tokens).
 - If intent is ambiguous between chat and graph, discovery answers in chat first; the post-discovery deeper-analysis follow-up remains the opt-in path to SM.
 
 ## Commands crosscheck

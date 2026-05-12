@@ -14,7 +14,7 @@ flowchart LR
     D -->|chat answer<br/>multi-object walk ≥2 nodes| R2[Direct answer in chat<br/>+ SM-offer pill]:::ai
     R2 --> EX
     R2 -.->|user clicks SM-offer pill| GG
-    D -->|graph render / CT / over_discovery_budget| GG[/Gate: confirm_sm_start<br/>tree + 3 buttons/]:::engine
+    D -->|graph render / CT / deeper-analysis intent| GG[/Gate: confirm_sm_start<br/>tree + 3 buttons/]:::engine
     GG -->|approve| CMP[Post-approval<br/>discovery-summary memo<br/>one LM round, no tools]:::ai
     CMP --> SM[SM hop loop<br/>stable prefix:<br/>question + contract + memo<br/>+ sliding 3-node STM]:::engine
     GG -->|refine| GG
@@ -30,7 +30,7 @@ flowchart LR
     classDef done stroke:#388e3c,stroke-width:2px,stroke-dasharray:4 2
 ```
 
-**Four user-driven paths into SM:** (a) explicit graph-render request, (c) column trace request, (d) engine `over_discovery_budget` rejection, **and (e) post-discovery SM-offer pill** — the last is gated by `phase.kind === 'idle'` and only renders after a multi-object discovery walk (≥2 distinct `lineage_get_object_detail` calls). The pill disappears the moment a gate is pending.
+**Three user-driven paths into SM:** (a) explicit graph-render request, (c) column trace request, and **(e) post-discovery SM-offer pill** — the pill is gated by `phase.kind === 'idle'` and only renders after a multi-object discovery walk (≥2 distinct `lineage_get_object_detail` calls). The pill disappears the moment a gate is pending.
 
 **Post-approval discovery-summary memo (Wave 3).** Between gate approval and the first SM hop, a one-shot LM round (no tools, text-only) composes a 2–4 sentence memo from the captured discovery question + chat answer + approved gate parameters. The memo carries user-stated semantic intent that the structural approval fields cannot capture ("focus on the revenue chain", "be careful with the conversion logic"). It is sealed into `engine._discoverySummary` and rendered into every hop's stable prefix as `<discovery_summary>` alongside `<mission_brief>` — surviving every sliding-memory wipe for the engine's lifetime.
 
@@ -38,8 +38,8 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 
 | Phase | Owner | Behaviour |
 |-------|-------|-----------|
-| **Discovery** | AI | Default chat state — handles every multi-object dependency question that fits the budget by chaining `lineage_get_object_detail` calls. Uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`). Escalates via `lineage_start_exploration` only on three triggers: (a) explicit visual graph render, (c) column tracing, or (d) engine `over_discovery_budget` rejection. Verbs like "trace / lineage / dependencies / upstream" are ordinary catalog questions; size is decided by the engine, not the AI. |
-| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every escalation. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/prompting/scopeSummaryRenderer.ts`](../src/ai/prompting/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The footer also shows an estimated scope DDL token/char footprint so users can see why budget-based escalation happened. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. |
+| **Discovery** | AI | Default chat state — handles multi-object dependency questions by chaining `lineage_get_object_detail` calls. Uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`). Escalates via `lineage_start_exploration` only on explicit visual graph render, explicit column tracing, or explicit post-discovery deeper-analysis intent. Verbs like "trace / lineage / dependencies / upstream" remain ordinary catalog questions. |
+| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every escalation. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/prompting/scopeSummaryRenderer.ts`](../src/ai/prompting/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. |
 | **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
 | **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. If `present_result` is attempted but fails validation, fallback copy reports validation failure (with reason), not "tool not invoked". |
@@ -137,13 +137,13 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 
 ## Discovery escalation contract
 
-Discovery is the default chat state and handles every multi-object dependency question that fits the budget. The AI escalates to SM via `lineage_start_exploration` (which emits `confirm_sm_start`) only on three triggers:
+Discovery is the default chat state and handles multi-object dependency questions through catalog calls. The AI escalates to SM via `lineage_start_exploration` (which emits `confirm_sm_start`) only when the user asks for graph/SM behavior:
 
-- (a) The user explicitly asks for the lineage **rendered visually** — words like "graph / diagram / visualization / picture / draw it / show me on the canvas / in the panel".
-- (c) The user requests **column tracing** (`targetColumns`).
-- (d) The engine returns `over_discovery_budget` — the rejection's `hint` names `lineage_start_exploration` as the next action.
+- (a) explicit visual graph render request;
+- (c) explicit column-trace request;
+- (e) explicit post-discovery deeper-analysis intent.
 
-**Size is decided by the engine, not by the AI.** Verbs like "trace / lineage / dependencies / upstream / follow / all levels" are ordinary catalog questions — discovery answers them by chaining `lineage_get_object_detail` calls and writing Markdown. The budget guard at [src/ai/infra/tokenBudget.ts](../src/ai/infra/tokenBudget.ts) (`checkScopeBudget`) is the only mechanical size discriminator: during discovery, the engine projects scope from the discovery request contract (origin + optional direction/depth hints) and compares those metrics (scope nodes + estimated DDL chars/tokens) to `discoveryNodeCap` (default 10) / `discoveryTokenBudget` (default 10000). If directional/depth hints are absent, projection defaults to a conservative upstream scope to reduce false-positive escalation. Over-budget discovery requests hard-reject with `over_discovery_budget`, which routes to trigger (d).
+**Guard boundary:** discovery lookups (`lineage_get_object_detail`) are for understanding and do not run scope-budget hard rejects. The scope/DDL budget guard is applied at `lineage_start_exploration` preflight, where full BFS scope is committed. The same `ScopeSummary` snapshot drives both guard decision and approval detail, so threshold checks and displayed numbers stay aligned.
 
 The escalation contract removed the legacy "detailed analysis verbs" trigger after commit `d27caa9` deleted inline mode. With inline gone, "detailed analysis" no longer has a low-cost path; routing those requests through gate-approved SM was costly and unnecessary for small scopes that fit the catalog.
 
@@ -155,7 +155,7 @@ There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) w
 
 | Dimension | SM (sliding-memory) |
 |-----------|---------------------|
-| **Trigger** | User explicitly requests a visual graph render, or column tracing; OR engine rejects an over-budget discovery catalog request |
+| **Trigger** | User explicitly requests a visual graph render, or column tracing, or clicks the deeper-analysis follow-up |
 | **Context** | Focus DDL + sliding window of last 3 node summaries |
 | **Brief delivery** | Per-hop brief: verdict / sections / badge / routing / pruning every hop, focus DDL rotates. Synthesis contract ships at the synthesis-phase boundary after the agenda drains. |
 | **Tools in ACTIVE** | `submit_findings` + `get_neighbor_columns` |
@@ -385,7 +385,7 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Map** | Deterministic state owned by `NavigationEngine`: agenda, visited set, neighbour metadata, gates. |
 | **Router** | Semantic decisions made by the AI: sub-question, verdict, route requests, prune judgements. |
 | **Discovery** | Default chat state — AI uses catalog tools and answers in chat. Cannot render a graph or sustain large-BFS analysis; both require SM. |
-| **SM (Sliding-Memory)** | Gate-approved hop-by-hop execution. Triggered by visual graph-render request, column tracing, or engine `over_discovery_budget` rejection. Memory wiped each hop; engine owns termination. |
+| **SM (Sliding-Memory)** | Gate-approved hop-by-hop execution. Triggered by visual graph-render request, column tracing, or explicit deeper-analysis intent. Memory wiped each hop; engine owns termination. |
 | **BB** (Blackboard) | Default SM analysis mode. Used when no target columns are specified. |
 | **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus the CT addition: `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every non-prune verdict; engine rejects with `column_flow_required` if omitted. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |

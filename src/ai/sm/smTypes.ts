@@ -447,6 +447,10 @@ export interface ScopeSummary {
   origin: string;
   /** Depth budget set at `start_exploration`; `null` when unbounded. */
   depth: number | null;
+  /** Asymmetric upstream depth override captured at start, when provided. */
+  upstreamDepth: number | null;
+  /** Asymmetric downstream depth override captured at start, when provided. */
+  downstreamDepth: number | null;
   /** Exploration direction set at `start_exploration`. */
   direction: 'upstream' | 'downstream' | 'bidirectional';
   /** True when the session has `targetColumns` (column-trace aspect). */

@@ -683,6 +683,8 @@ export class NavigationEngine implements IHopStateMachine {
       scopeCount: this.scopeNodeIds.size,
       origin: this.originNodeId ?? '',
       depth: this.depthBudget,
+      upstreamDepth: this.initSnapshot?.upstream_depth ?? null,
+      downstreamDepth: this.initSnapshot?.downstream_depth ?? null,
       direction: this._direction,
       columnAspectActive: !!this._columnAspect,
       targetColumns: this._columnAspect?.target_columns,
