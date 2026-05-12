@@ -55,7 +55,7 @@ const BLOCK = {
   /** Canonical hop-local routing/pruning contract (single source, no duplicates across surfaces). */
   hopDecisionContract: [
     '## Neighbor Decision Contract (Current Hop Only)',
-    'Same contract for SM BB and SM CT (CT only adds column tracking). Use mission/task metadata as source of truth; do not re-derive intent from history prose.',
+    'This contract is identical in SM BB and SM CT (CT only adds column tracking). Use mission/task metadata as source of truth; do not re-derive intent from history prose.',
     '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
     '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only — do not route/prune from it.',
     '- Emit explicit `verdict` for the focus node every hop.',

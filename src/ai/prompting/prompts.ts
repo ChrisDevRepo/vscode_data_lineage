@@ -433,6 +433,34 @@ export function buildDeferredQuestionsPrompt(entries: ReadonlyArray<DeferredQues
   return `${header}\n\n<follow_up_context>\nroute_default: adjust_existing_graph\nmandatory_scope_rule: decide each skipped object now (add_now | keep_pruned_now)\noptional_future_questions: only for non-mandatory items\n</follow_up_context>\n\n<skipped_objects>\n${lines.join('\n')}\n</skipped_objects>`;
 }
 
+/**
+ * Builds a fallback follow-up prompt when no deferred nodes were captured.
+ *
+ * @remarks
+ * Asks the AI to derive concrete next-step questions from the currently rendered
+ * graph/report context, optionally grounding with targeted object-detail lookups.
+ *
+ * @returns Prompt text for completed-phase follow-up guidance.
+ */
+export function buildFollowupFallbackPrompt(): string {
+  return [
+    'No deferred follow-up nodes were captured in the last run.',
+    'Based on the current rendered graph/report context, propose at least 2 concrete next-step follow-up questions.',
+    'Each question must name specific object IDs and explain the investigation goal in one short sentence.',
+    '',
+    'Grounding rules:',
+    '- Use the current result snapshot and archive context first.',
+    '- If needed, call `lineage_get_object_detail` on 1-2 key nodes to inspect neighbors before proposing questions.',
+    '- Keep suggestions in the same investigation domain (do not switch topics).',
+    '',
+    'Output format:',
+    '1. Follow-up question',
+    '2. Follow-up question',
+    '',
+    'Optional (only if truly useful): add one "stretch" follow-up as item 3.',
+  ].join('\n');
+}
+
 /** 
  * Transforms raw user input into a structured model search request.
  * 

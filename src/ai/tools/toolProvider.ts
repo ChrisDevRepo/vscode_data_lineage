@@ -497,7 +497,13 @@ class ToolHandler {
         const summary = engine.getScopeSummary();
         const tree = renderScopeSummaryMd(summary);
         const classLabel = CLASSIFICATION_LABEL[sess.classification!] + (isCt ? ' (Column Trace)' : '');
-        const detail = `${tree}\n\n_Analysis: ${classLabel}_\n_Estimated scope DDL: ~${summary.estimatedDdlTokens.toLocaleString('en-US')} tokens (${summary.estimatedDdlChars.toLocaleString('en-US')} chars)_`;
+        const detail = `${tree}\n\n_Analysis: ${classLabel}_`;
+        this.logger.debug(
+          `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
+          `scope_nodes=${summary.scopeCount} ` +
+          `estimated_ddl_tokens=${summary.estimatedDdlTokens} ` +
+          `estimated_ddl_chars=${summary.estimatedDdlChars}`
+        );
 
         const gate = PendingGateSchema.parse({
           gate: 'confirm_sm_start',

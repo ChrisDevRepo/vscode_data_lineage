@@ -24,7 +24,7 @@ import {
   buildGeneralSystemPrompt, buildPhasePrompt, buildFollowUpPrompt,
   buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
   buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
-  buildDeferredQuestionsPrompt, RECOMMEND_FOLLOWUPS_TRIGGER, SHOW_DESCRIPTION_TRIGGER,
+  buildDeferredQuestionsPrompt, buildFollowupFallbackPrompt, RECOMMEND_FOLLOWUPS_TRIGGER, SHOW_DESCRIPTION_TRIGGER,
   START_DEEPER_ANALYSIS_TRIGGER, buildStartDeeperAnalysisTriggerPrompt,
   buildDiscoverySummaryBlock, buildDiscoverySummaryComposePrompt,
   ACTION_REQUIRED_PENDING_HINT
@@ -308,6 +308,64 @@ function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolPair | u
 }
 
 /**
+ * Compacts `present_result` tool-call input for same-turn replay.
+ *
+ * @remarks
+ * The tool invocation itself still receives the full model-emitted input.
+ * This compact form is used only when replaying assistant tool-calls back
+ * into the envelope for subsequent rounds, reducing repeated payload bloat.
+ */
+function compactPresentResultReplayInput(rawInput: Record<string, unknown>): Record<string, unknown> {
+  const sections = Array.isArray(rawInput.sections)
+    ? (rawInput.sections as Array<Record<string, unknown>>)
+      .slice(0, 12)
+      .map((s) => ({
+        label: s.label,
+        angle: s.angle,
+        node_ids: Array.isArray(s.node_ids) ? (s.node_ids as unknown[]).slice(0, 20) : [],
+        text: typeof s.text === 'string' ? trunc(s.text, 240) : '',
+      }))
+    : [];
+
+  return {
+    replay_compacted: true,
+    is_update: rawInput.is_update === true,
+    name: rawInput.name,
+    title: rawInput.title,
+    summary: rawInput.summary,
+    layout_direction: rawInput.layout_direction,
+    sections,
+    add_node_ids: Array.isArray(rawInput.add_node_ids) ? (rawInput.add_node_ids as unknown[]).slice(0, 50) : [],
+    prune_node_ids: Array.isArray(rawInput.prune_node_ids) ? (rawInput.prune_node_ids as unknown[]).slice(0, 50) : [],
+    note_count: Array.isArray(rawInput.notes) ? rawInput.notes.length : 0,
+    highlight_group_count: Array.isArray(rawInput.highlight_groups) ? rawInput.highlight_groups.length : 0,
+  };
+}
+
+/**
+ * Compacts assistant tool-call parts for same-turn envelope replay.
+ *
+ * @remarks
+ * Applied only in synthesis/completed phases and only to `present_result`
+ * calls, where retries otherwise replay large unchanged payloads.
+ */
+function compactAssistantReplayParts(
+  parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart>,
+  phase: 'discover' | 'active' | 'synthesis' | 'completed',
+): Array<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart> {
+  if (phase !== 'synthesis' && phase !== 'completed') return parts;
+  let changed = false;
+  const compacted = parts.map((p) => {
+    if (!(p instanceof vscode.LanguageModelToolCallPart)) return p;
+    if (p.name !== 'lineage_present_result') return p;
+    const compactInput = compactPresentResultReplayInput((p.input as Record<string, unknown>) || {});
+    changed = true;
+    return new vscode.LanguageModelToolCallPart(p.callId, p.name, compactInput);
+  });
+  return changed ? compacted : parts;
+}
+
+/**
  * Extracts the error code from a tool result's JSON envelope.
  *
  * @remarks
@@ -327,6 +385,34 @@ export function extractToolErrorCode(result: vscode.LanguageModelToolResult | un
     } catch { /* Ignore non-JSON parts */ }
   }
   return null;
+}
+
+/**
+ * Parses the first JSON payload from a tool result.
+ *
+ * @param result - The tool result to inspect.
+ * @returns Parsed object payload, or null when absent / invalid.
+ */
+function extractToolResultJson(result: vscode.LanguageModelToolResult | undefined): Record<string, unknown> | null {
+  if (!result) return null;
+  for (const p of result.content) {
+    if (!(p instanceof vscode.LanguageModelTextPart)) continue;
+    try {
+      const data = JSON.parse(p.value);
+      if (data && typeof data === 'object') return data as Record<string, unknown>;
+    } catch { /* Ignore non-JSON parts */ }
+  }
+  return null;
+}
+
+/**
+ * Normalizes follow-up trigger text for resilient matching across UI variants.
+ *
+ * @param value - Raw chat prompt text.
+ * @returns Lower-cased, trimmed string with unified ellipsis.
+ */
+function normalizeFollowupTrigger(value: string): string {
+  return value.trim().toLowerCase().replace(/…/g, '...');
 }
 
 /**
@@ -527,28 +613,30 @@ export class LineageParticipant {
     let effectivePrompt = request.prompt;
     let duplicateBlocksRemovedThisTurn = 0;
     const toolResultCharsByTool = new Map<string, number>();
-    if (effectivePrompt === RECOMMEND_FOLLOWUPS_TRIGGER) {
+    const normalizedPrompt = normalizeFollowupTrigger(effectivePrompt);
+    const isRecommendFollowupTrigger = (
+      normalizedPrompt === normalizeFollowupTrigger(RECOMMEND_FOLLOWUPS_TRIGGER) ||
+      normalizedPrompt === 'follow-up: explore related objects...' ||
+      normalizedPrompt === 'ask a follow-up question'
+    );
+    const isShowDescriptionTrigger = (
+      normalizedPrompt === normalizeFollowupTrigger(SHOW_DESCRIPTION_TRIGGER) ||
+      normalizedPrompt === 'show full description'
+    );
+    const isStartDeeperTrigger = (
+      normalizedPrompt === normalizeFollowupTrigger(START_DEEPER_ANALYSIS_TRIGGER)
+    );
+
+    if (isRecommendFollowupTrigger) {
       const deferred = sess.stateMachine?.deferredQuestions || [];
       if (deferred.length > 0) {
         effectivePrompt = buildDeferredQuestionsPrompt(deferred);
         sess.fromFollowupDeferredTriggerThisTurn = true;
         this.logger.info(`[Trigger] Follow-up expansion: ${deferred.length} objects`);
       } else {
-        writer.markdown([
-          'No deferred related objects were queued from the last run.',
-          '',
-          'Tell me one concrete graph update and I will apply it directly:',
-          '- prune node `<id>`',
-          '- relabel node `<id>` to section `<label>`',
-          '- edit intro/closing text',
-          '- update note for node `<id>`',
-          '',
-          'Use **Show full description** if you want the full current text before editing.',
-        ].join('\n'));
-        this.logger.info('[Trigger] Follow-up expansion: 0 objects (direct helper response)');
-        return {};
+        effectivePrompt = buildFollowupFallbackPrompt();
       }
-    } else if (effectivePrompt === SHOW_DESCRIPTION_TRIGGER) {
+    } else if (isShowDescriptionTrigger) {
       if (sess.lastPresentResultDescription) {
         writer.markdown(sess.lastPresentResultDescription);
       } else {
@@ -556,7 +644,7 @@ export class LineageParticipant {
       }
       this.logger.info(`[Trigger] Show full description — ${sess.lastPresentResultDescription?.length ?? 0} chars`);
       return {};
-    } else if (effectivePrompt === START_DEEPER_ANALYSIS_TRIGGER) {
+    } else if (isStartDeeperTrigger) {
       if (!sess.lastDiscoveryOrigin || !sess.lastDiscoveryQuestion || !sess.lastDiscoveryAnswer) {
         writer.markdown('_The deeper-analysis link expired (no recent discovery walk). Ask the question again to enable it._');
         this.logger.warn(`[Trigger] Start deeper — discovery context missing (origin=${sess.lastDiscoveryOrigin}, q=${!!sess.lastDiscoveryQuestion}, a=${!!sess.lastDiscoveryAnswer})`);
@@ -1080,7 +1168,11 @@ export class LineageParticipant {
           if (activePhase === 'active' && engineAwaiting) {
             this.logger.debug(`Round ${roundCount} [${activePhase.toUpperCase()}] — self-terminate blocked; injecting corrective prompt`);
             if (assistantParts.length > 0) {
-              envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
+              const replayParts = compactAssistantReplayParts(
+                assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[],
+                activePhase
+              );
+              envelope.pushAssistant(replayParts);
             }
             envelope.pushUserText(
               'Free-form responses are outside protocol in the SM hop loop. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
@@ -1105,7 +1197,11 @@ export class LineageParticipant {
               sess.synthesisCorrectiveAttempted = true;
               this.logger.debug(`Round ${roundCount} [SYNTHESIS] — no tool call; injecting one-shot corrective and retrying`);
               if (assistantParts.length > 0) {
-                envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
+                const replayParts = compactAssistantReplayParts(
+                  assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[],
+                  activePhase
+                );
+                envelope.pushAssistant(replayParts);
               }
               envelope.pushUserText(
                 'Call `lineage_present_result` now to assemble the structured view from the archive. The archive is closed; lift each slot\'s analysis text and assemble per the synthesis output templates.'
@@ -1127,7 +1223,11 @@ export class LineageParticipant {
         }
 
         if (actionRequiredPending && responseText.length > 0) actionRequiredPending = false;
-        envelope.pushAssistant(assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[]);
+        const replayParts = compactAssistantReplayParts(
+          assistantParts as (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[],
+          activePhase
+        );
+        envelope.pushAssistant(replayParts);
         const resultParts: vscode.LanguageModelToolResultPart[] = [];
 
         let roundHadCacheHit = false;
@@ -1381,14 +1481,18 @@ export class LineageParticipant {
       `[PromptMetrics] trigger_followup_deferred=${sess.fromFollowupDeferredTriggerThisTurn} duplicate_blocks_removed=${duplicateBlocksRemovedThisTurn} initial_prompt_chars=${effectivePrompt.length} tool_result_chars_by_tool=${toolBloat || '(none)'}`
     );
 
-    // Post-discovery walk capture: store the question + chat answer + origin so
+    // Post-discovery context capture: store the question + chat answer + origin so
     // the post-discovery SM-offer pill (and the eventual discovery-summary
     // composition round) can recover the context. Cleared in enterGate so a
     // stale pill never crosses into SM.
-    // Multi-object criteria: ≥2 distinct lineage_get_object_detail calls.
+    // Trigger criteria:
+    //  - ≥2 distinct lineage_get_object_detail calls (classic multi-object walk), or
+    //  - lineage_get_scope_bundle with include_ddl=true and scope.nodes >= 2.
     if (activePhase === 'discover' && exit.kind === 'final_answer' && sess.phase.kind === 'idle') {
       const walkedIds = new Set<string>();
       let firstWalkedId: string | null = null;
+      let ddlScopeNodeCount = 0;
+      let ddlScopeOrigin: string | null = null;
       let lastResponseText = '';
       for (const round of toolCallRounds) {
         if (round.response) lastResponseText = round.response;
@@ -1401,14 +1505,32 @@ export class LineageParticipant {
               if (firstWalkedId === null) firstWalkedId = id;
             }
           }
+          if (fields.name === 'lineage_get_scope_bundle') {
+            const input = fields.input as { include_ddl?: unknown; origin?: unknown };
+            if (input.include_ddl !== true) continue;
+            const payload = extractToolResultJson(accumulatedToolResults[fields.callId]);
+            const scope = payload?.scope as Record<string, unknown> | undefined;
+            const nodes = typeof scope?.nodes === 'number' ? scope.nodes : 0;
+            if (nodes >= 2 && nodes > ddlScopeNodeCount) {
+              ddlScopeNodeCount = nodes;
+              ddlScopeOrigin = typeof payload?.origin === 'string'
+                ? payload.origin
+                : (typeof input.origin === 'string' ? input.origin : null);
+            }
+          }
         }
       }
-      if (walkedIds.size >= 2 && firstWalkedId !== null) {
-        sess.lastDiscoveryWalkCount = walkedIds.size;
-        sess.lastDiscoveryOrigin = firstWalkedId;
+      const hasObjectWalk = walkedIds.size >= 2 && firstWalkedId !== null;
+      const hasDdlScopeWalk = ddlScopeNodeCount >= 2 && ddlScopeOrigin !== null;
+      if (hasObjectWalk || hasDdlScopeWalk) {
+        const capturedCount = hasObjectWalk ? walkedIds.size : ddlScopeNodeCount;
+        const capturedOrigin = hasObjectWalk ? firstWalkedId! : ddlScopeOrigin!;
+        sess.lastDiscoveryWalkCount = capturedCount;
+        sess.lastDiscoveryOrigin = capturedOrigin;
         sess.lastDiscoveryQuestion = request.prompt;
         sess.lastDiscoveryAnswer = lastResponseText;
-        this.logger.info(`[Discovery] Multi-object walk recorded — origin=${firstWalkedId} walk_count=${sess.lastDiscoveryWalkCount} q_len=${request.prompt.length} a_len=${lastResponseText.length}`);
+        const mode = hasObjectWalk ? 'object_detail' : 'scope_bundle_ddl';
+        this.logger.info(`[Discovery] Walk recorded (${mode}) — origin=${capturedOrigin} walk_count=${capturedCount} q_len=${request.prompt.length} a_len=${lastResponseText.length}`);
       }
     }
 

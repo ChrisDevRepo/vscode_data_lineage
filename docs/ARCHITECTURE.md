@@ -30,7 +30,7 @@ flowchart LR
     classDef done stroke:#388e3c,stroke-width:2px,stroke-dasharray:4 2
 ```
 
-**Three user-driven paths into SM:** (a) explicit graph-render request, (c) column trace request, and **(e) post-discovery SM-offer pill** — the pill is gated by `phase.kind === 'idle'` and only renders after a multi-object discovery walk (≥2 distinct `lineage_get_object_detail` calls). The pill disappears the moment a gate is pending.
+**Three user-driven paths into SM:** (a) explicit graph-render request, (c) column trace request, and **(e) post-discovery SM-offer pill** — the pill is gated by `phase.kind === 'idle'` and renders after either: (1) a multi-object discovery walk (≥2 distinct `lineage_get_object_detail` calls), or (2) a discovery `lineage_get_scope_bundle` run with `include_ddl: true` and scope size ≥2 nodes. The pill disappears the moment a gate is pending.
 
 **Post-approval discovery-summary memo (Wave 3).** Between gate approval and the first SM hop, a one-shot LM round (no tools, text-only) composes a 2–4 sentence memo from the captured discovery question + chat answer + approved gate parameters. The memo carries user-stated semantic intent that the structural approval fields cannot capture ("focus on the revenue chain", "be careful with the conversion logic"). It is sealed into `engine._discoverySummary` and rendered into every hop's stable prefix as `<discovery_summary>` alongside `<mission_brief>` — surviving every sliding-memory wipe for the engine's lifetime.
 
@@ -181,7 +181,7 @@ Progress semantics:
 The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
 **Completed-phase follow-up split.** After synthesis, follow-up turns resolve into two routes: (1) ad-hoc refinement of the current graph via `present_result` (badge relabel/regroup through `sections[]`; note captions through `notes[]`; topology edits via prune/add ids), or (2) a new trace via `start_exploration` when origin/direction/scope intent changes.
-When no deferred objects exist, the follow-up recommendation click path returns a direct edit-helper response instead of surfacing internal Route A/Route B protocol prose.
+When no deferred objects exist, the follow-up recommendation click path injects a fallback prompt that asks the AI to propose at least two concrete, same-topic follow-up questions grounded in the current rendered result (optionally with targeted object-detail lookups).
 
 ## Memory model
 

@@ -154,7 +154,7 @@ Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.tes
 - Completed/follow-up turns run with a compact replay envelope (minimal trailing tool pair), not broad full-history replay.
 - Replayed `lineage_present_result` history payloads are compacted to summary metadata (`view_name`, `node_count`, `graph_source`) once SM is complete.
 - Follow-up turns inject a compact “current rendered result snapshot” (title/summary/section map + bounded description excerpt) so edits can be made without replaying full prior payloads.
-- If the follow-up recommendation pill is clicked with zero deferred objects, the participant now returns a direct edit helper response; it does not inject internal Route A/Route B protocol text into user-visible chat.
+- If the follow-up recommendation pill is clicked with zero deferred objects, the participant now injects a fallback prompt that asks for at least two concrete, same-topic follow-up questions grounded in the current rendered result (instead of returning internal Route A/Route B protocol prose).
 - Deferred follow-up guidance now distinguishes:
   - mandatory-now per skipped object (`add_now` or `keep_pruned_now`),
   - optional-later questions only for non-mandatory future investigation.
