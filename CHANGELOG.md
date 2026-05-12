@@ -1,24 +1,18 @@
 # Changelog
 
-## [1.0.0] - 2026-05-05
+## [1.0.0] - 2026-05-12
 
 ### Changed
-- **Chat is the default — graphs only when you ask.** Most lineage questions get a quick chat answer summarizing the loaded model. The side-panel graph and consent gate now fire only when you ask for a visual render, request column tracing, or open a scope too large for chat.
-- **Discovery answers read like a structured memory of what was inspected.** Multi-object dependency questions ("trace upstream from X two levels", "what feeds Y") return as Markdown with one heading per node visited — business meaning, technical execution, formulas in math fences, column-rename tables, and ⚠️ data-quality flags inline.
-- **Trace any direction depth combination.** Ask for "all upstream, 2 downstream" or any other up/down combination — both bounds are honoured independently in one request.
+- **Chat-first answers.** Lineage questions return structured Markdown in chat by default; the graph panel and walkthrough only launch when explicitly requested.
+- **Asymmetric depth tracing.** Specify independent upstream/downstream depths in a single request (e.g. "3 upstream, 1 downstream").
 
 ### Added
-- **One-click "deeper analysis" path.** After the chat answers a multi-object dependency question, a follow-up "Start deeper hop-by-hop analysis" pill appears under the answer. Clicking it walks the same graph through the structured renderer with consent gate, scope preview, and the rendered detail panel — no need to re-type the question.
-- **The walkthrough remembers what you said in chat.** Once you approve the structured walkthrough, the AI composes a short memo of the chat question, what was already found, and any "ignore X / focus on Y / be careful with Z" you mentioned during the chat. That memo rides every hop of the walkthrough so the analysis stays anchored to your intent — even when the AI reaches a node that wasn't on the original ignore list.
-- **Customizable chat-answer style.** Tune the discovery chat output (length, structure, framing references, rendering primitives like math fences and rename tables) via `aiOutputTemplates.yaml` — the same template surface that drives the rendered SM detail, so chat and graph share consistent formatting.
+- **One-click deeper analysis.** Post-discovery pill launches the hop-by-hop walkthrough with scope preview and consent gate — no need to re-type the question.
+- **Persistent discovery context.** The AI carries a memo of the discovery findings and any focus/exclusion instructions through every hop of the walkthrough.
+- **Customizable chat output** via `aiOutputTemplates.yaml`.
 
 ### Removed
-- **Inline mode** — superseded by the chat-vs-walkthrough split. One execution path now: chat for ad-hoc and dependency questions, the structured walkthrough for visual renders, column traces, and over-budget scopes.
-- **Integration-DB test suite** — `integration-db.test.ts` (1111 lines) removed; replaced by `navigation-engine.test.ts` and `navigation-engine-cascade.test.ts` unit coverage.
-
-### Migration notes
-- Settings `dataLineageViz.ai.inlineNodeCap` and `dataLineageViz.ai.inlineTokenBudget` have been renamed to `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`. If you customised these values in your VS Code settings, update the key names — the old keys are not read and values will silently fall back to defaults (8 nodes / 8000 tokens).
-- Custom `aiOutputTemplates.yaml` overlays using `$$` math syntax must migrate to ` ```math ` fences — `$` and `$$` are now blocked in prompts.
+- **Inline mode** — superseded by the chat-vs-walkthrough split.
 
 
 ## [0.9.x] - 2026-02 to 2026-04

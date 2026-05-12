@@ -38,9 +38,6 @@ export { shouldInline, estimateTokens, getEffectiveBudget, setCatalogInlineToken
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
 export const BFS_INLINE_NODE_CAP = 200;
-/** Max results returned in fallback (cross-schema) search. */
-export const FALLBACK_RESULT_LIMIT = 10;
-
 
 type FieldType = 'string' | 'array' | 'number' | 'object' | 'boolean';
 
@@ -610,35 +607,27 @@ export function searchObjects(
   };
 
   if (taggedResults.length === 0) {
-    // Schema mismatch detection: schema-filtered search empty, but name exists elsewhere?
     if (appliedSchemaFilter) {
-      const fallbackHits = searchCatalog(
+      // Probe cross-schema to surface where the object actually lives — return schema names only,
+      // not the results themselves, so the AI self-corrects its filter on the next call.
+      const crossHits = searchCatalog(
         model.nodes as SearchableNode[],
         effectiveQuery,
         typeSet,
-        undefined, // no schema filter
-        FALLBACK_RESULT_LIMIT,
+        undefined,
+        10,
         mode,
       );
-      if (fallbackHits.length > 0) {
-        const foundSchemas = [...new Set(fallbackHits.map(n => n.schema))];
-        // Return fallback results as primary — AI can proceed immediately
-        const fallbackResults = fallbackHits.slice(0, FALLBACK_RESULT_LIMIT).map(n => ({
-          ...presentNode(n, model.neighborIndex),
-          match: 'name' as const,
-          in_user_filter: filterSchemaSet ? filterSchemaSet.has(n.schema.toLowerCase()) : true,
-        }));
-        return {
-          results: fallbackResults,
-          total: fallbackResults.length,
-          filter_context: filterContext,
-          ai_hint: `0 results in schemas [${appliedSchemaFilter.join(', ')}]. Found "${effectiveQuery}" in [${foundSchemas.join(', ')}]. Results shown from matched schemas.`,
-          schema_correction: {
-            requested_schemas: appliedSchemaFilter,
-            actual_schemas: foundSchemas,
-          },
-        };
-      }
+      const foundSchemas = crossHits.length > 0
+        ? [...new Set(crossHits.map(n => n.schema))]
+        : [];
+      const schemaHint = foundSchemas.length > 0
+        ? ` "${effectiveQuery}" exists in [${foundSchemas.join(', ')}] — retry without schema filter or use search_ddl.`
+        : '';
+      return {
+        ...base,
+        ai_hint: `0 results in schemas [${appliedSchemaFilter.join(', ')}].${schemaHint}`,
+      };
     }
     return {
       ...base,

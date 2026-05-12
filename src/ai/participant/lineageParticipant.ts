@@ -1412,7 +1412,9 @@ export class LineageParticipant {
                 errorSample = parsed.error;
                 break;
               }
-            } catch {}
+            } catch (e) {
+              this.logger.debug(`[Gate] submit-result not JSON — callId=${sp.callId}: ${trunc(String(e), 200)}`);
+            }
           }
           if (!anyError) {
             consecutiveErrorRounds = 0;

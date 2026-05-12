@@ -328,9 +328,6 @@ export function buildStartDeeperAnalysisTriggerPrompt(
   answer: string,
   origin: string,
 ): string {
-  const truncatedAnswer = answer.length > 2000
-    ? `${answer.slice(0, 2000)}\n\n…[answer truncated; ${answer.length - 2000} chars omitted]`
-    : answer;
   return [
     'The user clicked the post-discovery "Start deeper hop-by-hop analysis" link.',
     'Call `lineage_start_exploration` once this turn — the tool call is the only valid action; no prose, no other tools.',
@@ -349,7 +346,7 @@ export function buildStartDeeperAnalysisTriggerPrompt(
     `<original_question>${question}</original_question>`,
     '',
     '<discovery_answer>',
-    truncatedAnswer,
+    answer,
     '</discovery_answer>',
   ].join('\n');
 }
@@ -368,9 +365,6 @@ export function buildDiscoverySummaryComposePrompt(
   answer: string,
   contractSummary: string,
 ): string {
-  const truncatedAnswer = answer.length > 2000
-    ? `${answer.slice(0, 2000)}\n\n…[answer truncated; ${answer.length - 2000} chars omitted]`
-    : answer;
   return [
     'The user approved the SM exploration. Compose a 2–4 sentence discovery summary that will ride in every hop\'s stable prefix as `<discovery_summary>`.',
     'Reply with text only this turn. Output the memo as a single paragraph, 2–4 sentences total. No preamble, no headers, no bullets.',
@@ -388,7 +382,7 @@ export function buildDiscoverySummaryComposePrompt(
     `<original_question>${question}</original_question>`,
     '',
     '<discovery_answer>',
-    truncatedAnswer,
+    answer,
     '</discovery_answer>',
   ].join('\n');
 }
