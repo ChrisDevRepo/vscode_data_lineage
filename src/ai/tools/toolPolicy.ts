@@ -10,7 +10,7 @@
  *
  * | Stage                     | Tools                                                                                            |
  * |---------------------------|--------------------------------------------------------------------------------------------------|
- * | `discover`                | get_context, search_objects, search_ddl, get_object_detail, detect_graph_patterns, start_exploration |
+ * | `discover`                | get_context, search_objects, get_scope_bundle, search_ddl, get_object_detail, detect_graph_patterns, start_exploration |
  * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | present_result                                                                                    |
  * | `completed`               | present_result, get_object_detail, search_ddl, search_objects, start_exploration (supplement-only) |
@@ -40,6 +40,7 @@ export type LmStage =
 const DISCOVERY_TOOLS: readonly string[] = [
   'lineage_get_context',
   'lineage_search_objects',
+  'lineage_get_scope_bundle',
   'lineage_search_ddl',
   'lineage_get_object_detail',
   'lineage_detect_graph_patterns',

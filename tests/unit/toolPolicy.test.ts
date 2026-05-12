@@ -25,6 +25,7 @@ async function runTests() {
     const tools = getAllowedLmToolNames({ kind: 'discover' });
     assert(tools.has('lineage_get_context'),           'get_context present');
     assert(tools.has('lineage_search_objects'),        'search_objects present');
+    assert(tools.has('lineage_get_scope_bundle'),      'get_scope_bundle present');
     assert(tools.has('lineage_search_ddl'),            'search_ddl present');
     assert(tools.has('lineage_get_object_detail'),     'get_object_detail present');
     assert(tools.has('lineage_detect_graph_patterns'), 'detect_graph_patterns present');
@@ -32,7 +33,7 @@ async function runTests() {
     assert(!tools.has('lineage_submit_findings'),      'submit_findings absent');
     assert(!tools.has('lineage_present_result'),       'present_result absent');
     assert(!tools.has('lineage_get_neighbor_columns'), 'get_neighbor_columns absent');
-    assertEq(tools.size, 6, 'discover: exactly 6 tools');
+    assertEq(tools.size, 7, 'discover: exactly 7 tools');
   }
 
   console.log('\n── active / sm_bb ──');

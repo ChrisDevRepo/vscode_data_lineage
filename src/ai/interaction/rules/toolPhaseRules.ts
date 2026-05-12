@@ -10,6 +10,7 @@ function offPolicyHint(toolName: string, stage: LmStage): string {
     case 'lineage_search_objects':
     case 'lineage_search_ddl':
     case 'lineage_get_object_detail':
+    case 'lineage_get_scope_bundle':
     case 'lineage_get_context':
     case 'lineage_detect_graph_patterns':
       return 'Use route_requests with nodeIds taken verbatim from the prior submit_findings result\'s neighbors[] / next_hop. The agenda is delivered explicitly - searching mid-hop is unnecessary.';

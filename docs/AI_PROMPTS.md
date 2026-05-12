@@ -142,20 +142,21 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 
 Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.test.ts`.
 
-- discover: `lineage_get_context`, `lineage_search_objects`, `lineage_search_ddl`, `lineage_get_object_detail`, `lineage_detect_graph_patterns`, `lineage_start_exploration`
+- discover: `lineage_get_context`, `lineage_search_objects`, `lineage_get_scope_bundle`, `lineage_search_ddl`, `lineage_get_object_detail`, `lineage_detect_graph_patterns`, `lineage_start_exploration`
 - active (`sm_bb` or `sm_ct`): `lineage_submit_findings`, `lineage_get_neighbor_columns`
 - synthesis: `lineage_present_result`
 - completed: `lineage_present_result`, `lineage_get_object_detail`, `lineage_search_ddl`, `lineage_search_objects`, `lineage_start_exploration`
 
 ## Discovery escalation contract
 
-- Discovery is default. Multi-object lineage wording (`trace`, `upstream`, `dependencies`, `all levels`) stays in discovery chat while within budget.
+- Discovery is default. Single-object asks use `lineage_get_object_detail`. Graph-scope asks use `lineage_get_scope_bundle` with explicit finite depth.
 - Escalate to `lineage_start_exploration` only when:
   - explicit visual graph/render request,
   - explicit column trace request (`targetColumns`),
-  - explicit post-discovery deeper-analysis intent.
-- Discovery `get_object_detail` is a catalog lookup surface and does not hard-reject on projected scope budget.
-- Scope budget guarding is enforced at `lineage_start_exploration` preflight and must use the same scope snapshot rendered in `confirm_sm_start` (scope nodes + estimated DDL chars/tokens).
+  - explicit post-discovery deeper-analysis intent,
+  - `over_discovery_budget` from `lineage_get_scope_bundle`.
+- Discovery scope budget guarding is enforced at `lineage_get_scope_bundle` when `include_ddl:true` using `discoveryNodeCap` + `discoveryTokenBudget`.
+- `lineage_start_exploration` preflight remains a second safety net and must stay aligned with the scope contract rendered in `confirm_sm_start`.
 - If intent is ambiguous between chat and graph, discovery answers in chat first; the post-discovery deeper-analysis follow-up remains the opt-in path to SM.
 
 ## Commands crosscheck

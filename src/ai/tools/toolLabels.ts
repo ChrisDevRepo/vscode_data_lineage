@@ -15,6 +15,8 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
       return 'Loading lineage context…';
     case 'lineage_search_objects':
       return `Searching for "${(inp?.query as string | undefined) ?? ''}"…`;
+    case 'lineage_get_scope_bundle':
+      return `Bundling scope for ${(inp?.origin as string | undefined) ?? '…'}…`;
     case 'lineage_start_exploration':
       return 'Starting exploration…';
     case 'lineage_present_result':

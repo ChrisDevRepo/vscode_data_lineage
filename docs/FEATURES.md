@@ -165,10 +165,11 @@ The `@lineage` assistant goes further by analysing the available metadata (DDL, 
 
 #### 1. Discovery (chat answers, no graph)
 
-The default state. The AI uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`) to look up loaded scope, DDL, columns, and neighbours, then answers in chat.
+The default state. The AI uses catalog tools (`get_context`, `search_objects`, `get_scope_bundle`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`) to look up loaded scope, DDL, columns, and neighbours, then answers in chat.
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
-- Bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` — the engine uses projected scope metrics from the discovery request contract (origin + optional direction/depth hints) to decide over-budget escalation. If hints are missing, projection defaults to a conservative upstream scope to avoid false-positive kickoff.
+- Single-object asks use `get_object_detail`; graph-scope asks use one bounded BFS call via `get_scope_bundle`.
+- When `get_scope_bundle(include_ddl:true)` exceeds `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget`, it returns `over_discovery_budget` with a hint to initiate `start_exploration` (SM approval flow).
 - Discovery cannot render a graph in the GUI; for graph rendering, multi-object analysis, or column tracing the assistant escalates.
 
 #### 2. Sliding-Memory (graph render + deep analysis)

@@ -38,7 +38,7 @@ Legend (border colour only — interior follows light/dark theme): purple = user
 
 | Phase | Owner | Behaviour |
 |-------|-------|-----------|
-| **Discovery** | AI | Default chat state — handles multi-object dependency questions by chaining `lineage_get_object_detail` calls. Uses catalog tools (`get_context`, `search_objects`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`). Escalates via `lineage_start_exploration` only on explicit visual graph render, explicit column tracing, or explicit post-discovery deeper-analysis intent. Verbs like "trace / lineage / dependencies / upstream" remain ordinary catalog questions. |
+| **Discovery** | AI | Default chat state. Single-object questions use `lineage_get_object_detail`; graph-scope questions use one bounded BFS retrieval via `lineage_get_scope_bundle` (optionally `include_ddl:true`). Escalates via `lineage_start_exploration` on explicit visual graph render, explicit column tracing, explicit post-discovery deeper-analysis intent, or `over_discovery_budget` from scope bundle retrieval. |
 | **Gate** | Engine | Emits `action_required: confirm_sm_start` for every escalation. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/prompting/scopeSummaryRenderer.ts`](../src/ai/prompting/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. |
 | **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
@@ -127,8 +127,9 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 |------|:---------:|:-----------------:|:---------:|:---------:|---------|
 | `get_context` | ✓ | — | — | — | Schemas, stats, active filter |
 | `search_objects` | ✓ | — | — | ✓ | Resolve name / column → ID |
+| `get_scope_bundle` | ✓ | — | — | — | Bounded BFS scope retrieval (optional all-DDL bundle) |
 | `search_ddl` | ✓ | — | — | ✓ | Regex over SP / view / function bodies |
-| `get_object_detail` | ✓ | — | — | ✓ | Full metadata + DDL + neighbours for one object |
+| `get_object_detail` | ✓ | — | — | ✓ | Full metadata + DDL + neighbours for one object (single-object lookup) |
 | `get_neighbor_columns` | — | ✓ | — | — | Columns + types + FKs for direct neighbours (no DDL); used for prune decisions |
 | `detect_graph_patterns` | ✓ | — | — | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
 | `start_exploration` | ✓ | — | — | ✓ (supplement) | Hand off to the state machine |
@@ -137,13 +138,20 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 
 ## Discovery escalation contract
 
-Discovery is the default chat state and handles multi-object dependency questions through catalog calls. The AI escalates to SM via `lineage_start_exploration` (which emits `confirm_sm_start`) only when the user asks for graph/SM behavior:
+Discovery is the default chat state. Routing contract:
+
+- single-object asks: `lineage_get_object_detail`;
+- graph-scope asks: `lineage_get_scope_bundle` with explicit finite depth (and `include_ddl:true` when the user asks for all logic in scope);
+- if scope bundle returns `over_discovery_budget`: escalate to `lineage_start_exploration`.
+
+The AI escalates to SM via `lineage_start_exploration` (which emits `confirm_sm_start`) when the user asks for graph/SM behavior:
 
 - (a) explicit visual graph render request;
 - (c) explicit column-trace request;
-- (e) explicit post-discovery deeper-analysis intent.
+- (e) explicit post-discovery deeper-analysis intent;
+- (f) discovery scope bundle over budget (`over_discovery_budget`).
 
-**Guard boundary:** discovery lookups (`lineage_get_object_detail`) are for understanding and do not run scope-budget hard rejects. The scope/DDL budget guard is applied at `lineage_start_exploration` preflight, where full BFS scope is committed. The same `ScopeSummary` snapshot drives both guard decision and approval detail, so threshold checks and displayed numbers stay aligned.
+**Guard boundary:** discovery graph-scope bundle retrieval (`lineage_get_scope_bundle` with `include_ddl:true`) enforces node/token budget and may return `over_discovery_budget`. `lineage_start_exploration` preflight remains a second safety net at SM-commit boundary. The same scope contract fields (origin/direction/depth/asymmetric depth) should drive both checks to avoid mismatch.
 
 The escalation contract removed the legacy "detailed analysis verbs" trigger after commit `d27caa9` deleted inline mode. With inline gone, "detailed analysis" no longer has a low-cost path; routing those requests through gate-approved SM was costly and unnecessary for small scopes that fit the catalog.
 

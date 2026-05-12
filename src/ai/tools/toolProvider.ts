@@ -21,11 +21,12 @@ import { Logger, trunc, sanitizeForLog } from '../../utils/log';
 import {
   suggestNarrowerDepth,
   getContext, searchObjects, getObjectDetail,
-  runAnalysis, searchDdl,
+  runAnalysis, searchDdl, getScopeBundle,
   getNeighborColumns,
   validateToolInput,
   StartExplorationInputSchema,
   SubmitFindingsInputSchema,
+  GetScopeBundleInputSchema,
   GetNeighborColumnsInputSchema,
   autoFixPresentResult, validatePresentResult, orderAndAssemble,
   type PresentResultInput,
@@ -244,6 +245,25 @@ class ToolHandler {
       const { query, types, schemas, mode } = input as { query: string; types?: ObjectType[]; schemas?: string[]; mode?: 'substring' | 'regex' };
       return this.logAndReturn('search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter), input);
     } catch (err) { return this.toolError('search_objects', err); }
+  }
+
+  public getScopeBundle(input: unknown) {
+    try {
+      if (!this.isAiEnabled()) return this.disabled();
+      const offPolicy = this.offPolicyOrNull('lineage_get_scope_bundle');
+      if (offPolicy) return offPolicy;
+      const parsed = GetScopeBundleInputSchema.safeParse(input);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        const field = issue?.path?.join('.') || '(root)';
+        return this.toolResult({
+          error: 'invalid_input',
+          hint: `Invalid get_scope_bundle input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: origin. Optional: direction, depth, upstream_depth, downstream_depth, include_ddl.`,
+        });
+      }
+      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.getSession().columnStore);
+      return this.logAndReturn('get_scope_bundle', bundle, input);
+    } catch (err) { return this.toolError('get_scope_bundle', err); }
   }
 
   public startExploration(input: unknown) {
@@ -929,6 +949,11 @@ export function registerAiTools(
     vscode.lm.registerTool('lineage_search_objects', {
       prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_search_objects', options.input) }; },
       invoke(options, _token) { return handler.searchObjects(options.input); },
+    }),
+
+    vscode.lm.registerTool('lineage_get_scope_bundle', {
+      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel('lineage_get_scope_bundle', options.input) }; },
+      invoke(options, _token) { return handler.getScopeBundle(options.input); },
     }),
 
     vscode.lm.registerTool('lineage_start_exploration', {

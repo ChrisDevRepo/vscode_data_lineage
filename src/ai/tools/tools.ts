@@ -33,7 +33,7 @@ import {
 import type { ColumnFlowRole } from '../sm/smTypes';
 
 
-import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget } from '../infra/tokenBudget';
+import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget, checkScopeBudget } from '../infra/tokenBudget';
 export { shouldInline, estimateTokens, getEffectiveBudget, setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, checkScopeBudget, getDiscoveryLimits } from '../infra/tokenBudget';
 
 /** Max nodes for inline BFS delivery — above this, recommend state machine. */
@@ -108,6 +108,25 @@ export const StartExplorationInputSchema = z.object({
 );
 
 export type StartExplorationInput = z.infer<typeof StartExplorationInputSchema>;
+
+/**
+ * Zod schema for discovery-scoped BFS bundle retrieval.
+ *
+ * @remarks
+ * Used for graph-scope discovery asks where the AI needs one bounded scope in a
+ * single call (instead of many per-node detail calls). Optional asymmetric depth
+ * is honored only for bidirectional traversals.
+ */
+export const GetScopeBundleInputSchema = z.object({
+  origin: z.string().min(1),
+  direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
+  depth: z.coerce.number().int().min(0).optional(),
+  upstream_depth: z.coerce.number().int().min(0).optional(),
+  downstream_depth: z.coerce.number().int().min(0).optional(),
+  include_ddl: z.boolean().optional(),
+});
+
+export type GetScopeBundleInput = z.infer<typeof GetScopeBundleInputSchema>;
 
 /**
  * Zod schema for one captured section within `submit_findings.sections[]`.
@@ -704,6 +723,104 @@ export function getObjectDetail(
 
   // Never truncate DDL — zero-truncation guarantee
   return { ...base, ddl, unresolved_refs };
+}
+
+/**
+ * Retrieves a bounded BFS scope in one call, optionally including all DDL.
+ *
+ * @remarks
+ * Discovery graph-scope helper: returns the scope as a bundle so the AI can
+ * answer multi-object lineage asks without chaining per-node detail calls.
+ * When `include_ddl` is true, the discovery scope budget guard is enforced
+ * before materializing the payload.
+ */
+export function getScopeBundle(
+  model: DatabaseModel,
+  graph: Graph,
+  input: GetScopeBundleInput,
+  store?: import('../../engine/columnStore').ColumnStore,
+): object {
+  const nodeMap = buildNodeMap(model);
+  const edgeMap = buildEdgeTypeMap(model);
+  const origin = normalizeName(input.origin);
+  const originNode = nodeMap.get(origin);
+  if (!originNode) {
+    return { error: 'not_found' as const, origin: input.origin, hint: 'Call lineage_search_objects to resolve the canonical origin ID.' };
+  }
+
+  const direction = input.direction ?? 'bidirectional';
+  const includeDdl = input.include_ddl ?? false;
+  const defaultDepth = input.depth ?? 2;
+  const upstreamDepth = direction === 'bidirectional' ? (input.upstream_depth ?? defaultDepth) : undefined;
+  const downstreamDepth = direction === 'bidirectional' ? (input.downstream_depth ?? defaultDepth) : undefined;
+  const singleDepth = input.depth ?? 2;
+
+  const scopeIds = new Set<string>([origin]);
+  const walkWithCap = (mode: 'inbound' | 'outbound' | 'directed', maxDepth: number): void => {
+    if (maxDepth <= 0) return;
+    bfsFromNode(graph, origin, (key, _attr, depth) => {
+      if (depth > maxDepth) return true;
+      scopeIds.add(String(key).toLowerCase());
+      return false;
+    }, { mode });
+  };
+
+  if (direction === 'upstream') {
+    walkWithCap('inbound', singleDepth);
+  } else if (direction === 'downstream') {
+    walkWithCap('outbound', singleDepth);
+  } else {
+    walkWithCap('inbound', upstreamDepth ?? defaultDepth);
+    walkWithCap('outbound', downstreamDepth ?? defaultDepth);
+  }
+
+  let ddlChars = 0;
+  if (includeDdl) {
+    for (const id of scopeIds) {
+      const ddl = getNodeDdl(id, nodeMap, store);
+      if (ddl) ddlChars += ddl.length;
+    }
+    const budget = checkScopeBudget(scopeIds.size, ddlChars);
+    if (!budget.ok) {
+      return budget;
+    }
+  }
+
+  const edges = model.edges
+    .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
+    .map(e => [e.source, e.target, edgeApiType(e.type)] as [string, string, string]);
+
+  const nodes = [...scopeIds]
+    .map(id => nodeMap.get(id))
+    .filter((n): n is LineageNode => !!n)
+    .map(n => {
+      const base = presentNode(n, model.neighborIndex);
+      const payload: Record<string, unknown> = { ...base };
+      if (includeDdl && SCRIPT_TYPES.has(n.type)) {
+        payload.ddl = getNodeDdl(n.id, nodeMap, store) ?? null;
+      } else if (includeDdl) {
+        const cols = getNodeColumns(n.id, nodeMap, store);
+        if (cols?.length) payload.cols = cols.map(c => presentColumn(c));
+      }
+      return strip(payload);
+    });
+
+  return {
+    origin: originNode.id,
+    direction,
+    depth: direction === 'bidirectional' ? undefined : singleDepth,
+    upstream_depth: direction === 'bidirectional' ? (upstreamDepth ?? null) : undefined,
+    downstream_depth: direction === 'bidirectional' ? (downstreamDepth ?? null) : undefined,
+    include_ddl: includeDdl,
+    scope: {
+      nodes: nodes.length,
+      edges: edges.length,
+      estimated_ddl_chars: ddlChars,
+      estimated_ddl_tokens: includeDdl ? estimateTokens(ddlChars) : 0,
+    },
+    nodes,
+    edges,
+  };
 }
 
 
