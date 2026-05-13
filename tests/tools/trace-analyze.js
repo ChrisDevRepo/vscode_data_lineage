@@ -127,7 +127,7 @@ function extractTexts(messages) {
       } else if (part.type === 'tool_call' && part.input) {
         // Replay-compacted tool calls are historical context, not fresh model intent.
         // Exclude them from redundancy/pattern text analysis to avoid false positives.
-        if (part.input.replay_compacted === true || part.input.trace_replay === true) continue;
+        if (part.input.replay_compacted === true || part.input.trace_replay === true) return;
         results.push({ msgIdx: mi, partIdx: pi, role: msg.role, type: 'tool_call', text: JSON.stringify(part.input) });
       }
     });

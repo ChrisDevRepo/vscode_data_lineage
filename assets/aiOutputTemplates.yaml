@@ -129,11 +129,11 @@ closing:
     After the sections, separated by a `---` divider, write a brief
     closing block:
     (1) one-paragraph through-line that names the overall pipeline answer
-    in the lens the user requested, and
-    (2) a top-risks markdown table — the cross-cutting data-quality / scope
-    risks that span sections (each row prefixed with ⚠️). Two columns:
-    `| Risk | Scope |`. Draw from ⚠️ markers visible in the node
-    summaries and note_captions; do not invent new risks.
+    in the lens the user requested.
+    Add a risk callout block only when there is a significant,
+    decision-impacting issue grounded in captured evidence. In business-only
+    missions, keep callouts business-facing (impact/scope), not technical
+    internals. If no significant issue is present, omit risk callouts.
   example: |
     The spBuildSalesReport pipeline reloads from staging each run, applies a
     four-stage cascade (order staging → price calculation → discount
@@ -204,7 +204,8 @@ business_capture:
     2. **Decision rules** — what condition triggers the change and what outcome it drives.
     3. **Lifecycle impact** — business status/phase transitions when present.
     4. **Audit-trail meaning** — what business event each audit entry represents.
-    5. **Data-quality risks** — ⚠️ inline at the point they apply.
+    5. **Material risks** — add ⚠️ only for significant, decision-impacting
+       data-quality issues grounded in the loaded evidence.
     6. **Technical evidence** — formulas, predicates, or column references only when
        needed to clarify a business point.
     </emphasis>
@@ -220,7 +221,8 @@ business_capture:
     4. Express status-enum lifecycles as numbered transitions
        ("1. New → 2. Approved → 3. Shipped"). Capture the business
        state change, not the SQL UPDATE that effects it.
-    5. Mark data-quality risks with ⚠️ inline at the point they apply.
+    5. Add ⚠️ only when the issue is significant and decision-impacting.
+       If no material issue exists, omit risk callouts.
     6. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
        this view makes queryable and its business meaning — not how the
        SELECT is structured.
@@ -467,8 +469,10 @@ general:
       clarification; never include full statements.
     - **Status-enum lifecycles**: express as numbered transitions
       ("1. New → 2. Approved → 3. Shipped").
-    - **Risks / data-quality flags**: every ⚠️ from capture appears in the
-      assembled section at the point it applies — verbatim, in place.
+    - **Risks / data-quality flags**: include ⚠️ only for material,
+      decision-impacting issues backed by captured evidence. In
+      business-only missions, phrase risk in business terms first; add
+      technical detail only when it clarifies impact.
 
     These rules apply only when the captured body has the underlying material.
     Do not invent tables, formulas, or fences without source.
