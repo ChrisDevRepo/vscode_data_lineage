@@ -25,38 +25,52 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
 };
 
 /**
- * Primary color palette for light themes, based on Tableau 10.
- * Provides high-contrast, vibrant colors for distinct schema identification.
+ * Primary color palette for light themes, based on Tableau 20.
+ * Colors 1–10 are the Tableau 10 base; colors 11–15 are the Tableau 20
+ * paired lighter variants for Orange, Green, Pink, Brown, and Gray — the five
+ * pairs that remain perceptually distinct from their T10 counterparts in dark mode.
  */
 export const SCHEMA_COLORS_LIGHT = [
-  '#4E79A7', // Tableau Blue
-  '#F28E2B', // Tableau Orange
-  '#E15759', // Tableau Red
-  '#76B7B2', // Tableau Teal
-  '#59A14F', // Tableau Green
-  '#EDC948', // Tableau Yellow
-  '#B07AA1', // Tableau Purple
-  '#FF9DA7', // Tableau Pink
-  '#9C755F', // Tableau Brown
-  '#BAB0AC', // Tableau Gray
+  '#4E79A7', // 1  Tableau Blue
+  '#F28E2B', // 2  Tableau Orange
+  '#E15759', // 3  Tableau Red
+  '#76B7B2', // 4  Tableau Teal
+  '#59A14F', // 5  Tableau Green
+  '#EDC948', // 6  Tableau Yellow
+  '#B07AA1', // 7  Tableau Purple
+  '#FF9DA7', // 8  Tableau Pink
+  '#9C755F', // 9  Tableau Brown
+  '#BAB0AC', // 10 Tableau Gray
+  '#FFBE7D', // 11 T20 Light Orange  (pairs with #F28E2B)
+  '#8CD17D', // 12 T20 Light Green   (pairs with #59A14F)
+  '#FABFD2', // 13 T20 Light Pink    (pairs with #FF9DA7)
+  '#D7B5A6', // 14 T20 Light Brown   (pairs with #9C755F)
+  '#CECCCA', // 15 T20 Light Gray    (pairs with #BAB0AC)
 ];
 
 /**
  * Primary color palette for dark themes.
- * Uses lightened and desaturated variants of the Tableau 10 palette
- * to maintain visibility and accessibility on dark backgrounds.
+ * Colors 1–10 are lightened Tableau 10 variants; colors 11–15 are the dark-adapted
+ * T20 lighter variants (L ≥ 72%) for Orange, Green, Pink, Brown, and Gray.
+ * Blue, Red, Teal, Yellow, and Purple T20 pairs are excluded — their dark-mode
+ * variants are indistinguishable from their T10 counterparts at these luminance levels.
  */
 const SCHEMA_COLORS_DARK = [
-  '#8AB8E6', // Lighter Blue
-  '#FFAD5C', // Lighter Orange
-  '#FF8A8C', // Lighter Red
-  '#A1D6D1', // Lighter Teal
-  '#88C580', // Lighter Green
-  '#F7E589', // Lighter Yellow
-  '#D4A8C7', // Lighter Purple
-  '#FFC2C9', // Lighter Pink
-  '#C39B82', // Lighter Brown
-  '#D9D2CE', // Lighter Gray
+  '#8AB8E6', // 1  Lighter Blue
+  '#FFAD5C', // 2  Lighter Orange
+  '#FF8A8C', // 3  Lighter Red
+  '#A1D6D1', // 4  Lighter Teal
+  '#88C580', // 5  Lighter Green
+  '#F7E589', // 6  Lighter Yellow
+  '#D4A8C7', // 7  Lighter Purple
+  '#FFC2C9', // 8  Lighter Pink
+  '#C39B82', // 9  Lighter Brown
+  '#D9D2CE', // 10 Lighter Gray
+  '#FFBE7D', // 11 Light Orange dark (L=74%)
+  '#A8DFA0', // 12 Light Green dark  (L=74%, brightened from 65%)
+  '#FABFD2', // 13 Light Pink dark   (L=83%)
+  '#D7B5A6', // 14 Light Brown dark  (L=74%)
+  '#CECCCA', // 15 Light Gray dark   (L=80%)
 ];
 
 /**
