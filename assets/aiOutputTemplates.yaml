@@ -58,24 +58,23 @@ discovery_chat:
     `bb_ddl`, the `cols[]` / `in[]` / `out[]` / `fks[]` fields, and tool
     results — when a field is empty, say so plainly. Ground every claim
     in the loaded data; leave general SQL knowledge and naming conventions
-    aside. (Note: The user sees datatypes, columns, and object names in the GUI,
-    so use SQL snippets and column listings sparsely—only when critical to explain
-    the business logic or execution).
+    aside. Default to business-focused wording. Include SQL snippets, predicate
+    details, or column-level mechanics only when needed to clarify a business
+    point the user asked about.
 
 
     Scale the answer to the question:
 
     - **Single-object question** ("what does X do", "show DDL of X", "list
       columns of X") — one focused answer. Open with the direct answer,
-      then a balanced summary covering BOTH the business meaning AND the
-      technical execution. One paragraph per side unless the loaded data
-      warrants more.
+      then explain business meaning and impact. Add technical mechanics only
+      when needed for business clarification.
 
     - **Multi-object walk** (dependency trace, lineage walk, "N levels
       up/down", "what feeds X", "list dependencies of X") — one Markdown
       heading per node visited. Under each heading: a short business
-      paragraph (what the node represents in domain terms) and a short
-      technical paragraph (how it executes). Cover every node you loaded
+      paragraph (what the node represents and why it matters). Add technical
+      mechanics only when needed for business clarification. Cover every node you loaded
       and use only nodes that appeared in your tool-call results. Order
       the headings to match the lineage flow (origin first, then upstream,
       then downstream — or the order the user named).
@@ -201,45 +200,31 @@ business_capture:
 
     <emphasis>
     Highest-value content, in order:
-    1. **Formulas** — computed expressions (weights, thresholds,
-       allocations, proportions, ratios, CASE branches, fallback values)
-       expressed in math code fences (```math … ```).
-    2. **Eligibility predicates** — which records qualify (status,
-       country, flag, threshold). Quote the predicate values verbatim.
-    3. **Allocation / decision rules** — what value each rule produces
-       and from which inputs.
-    4. **Status-lifecycle transitions** — numbered transitions per
-       record class.
-    5. **Audit-trail meaning** — what business event each entry records.
-       Capture the event semantics, not the JSON envelope shape.
-    6. **Data-quality risks** — ⚠️ inline at the point they apply.
+    1. **Business outcome** — what changes for users, reporting, or decisions.
+    2. **Decision rules** — what condition triggers the change and what outcome it drives.
+    3. **Lifecycle impact** — business status/phase transitions when present.
+    4. **Audit-trail meaning** — what business event each audit entry represents.
+    5. **Data-quality risks** — ⚠️ inline at the point they apply.
+    6. **Technical evidence** — formulas, predicates, or column references only when
+       needed to clarify a business point.
     </emphasis>
 
     <body_recipe>
     1. Open with one sentence naming the domain role ("computes revenue
        at INSERT", "allocates budget units across cost centres",
        "applies tier-discount when order qualifies").
-    2. Walk through every business rule the DDL exposes — eligibility
-       predicates, allocation formulas, threshold decisions, fallback
-       values, status transitions, audit-trail business events. Name
-       what changes for the business when the rule fires; do not
-       describe how SQL implements it.
-    3. Express formulas in math code fences (```math … ```) —
-       the math is the rule, no need to paraphrase it.
-    4. Quote short SQL predicate VALUES inline as proof (the literal
-       `'PENDING'`, `'Global'`, `> 0`, the column names being compared)
-       — not the surrounding INSERT/UPDATE/transaction scaffolding.
-    5. Tabulate column renames as `| From | To | Business meaning |` when
-       3+ sibling columns share the rename shape; 1–2 renames as prose
-       with backticks.
-    6. Express status-enum lifecycles as numbered transitions
+    2. Walk through business rules in plain language first. Name what
+       changes for the business when each rule fires.
+    3. Add formulas, predicates, and column-level details only when needed
+       to clarify a business point; keep them short and targeted.
+    4. Express status-enum lifecycles as numbered transitions
        ("1. New → 2. Approved → 3. Shipped"). Capture the business
        state change, not the SQL UPDATE that effects it.
-    7. Mark data-quality risks with ⚠️ inline at the point they apply.
-    8. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
+    5. Mark data-quality risks with ⚠️ inline at the point they apply.
+    6. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
        this view makes queryable and its business meaning — not how the
        SELECT is structured.
-    9. Wrap column and object names in `\`backticks\``.
+    7. Wrap column and object names in `\`backticks\`` only when used.
     </body_recipe>
   example: |
     `spCalcRevenue` computes `TotalRevenue` at the final INSERT into
@@ -470,17 +455,16 @@ general:
   stages: [discovery, synthesis]
   instruction: >
     Apply this rendering set across every assembled section so the document
-    reads consistently end-to-end:
+    reads consistently end-to-end. Prioritize business clarity; include
+    technical formatting only when needed to clarify business meaning:
 
-    - **Formulas**: when the captured body has a computation — CASE expressions,
-      multi-step derivations, allocation formulas — carry the formula verbatim;
-      do not re-express it in prose.
+    - **Formulas**: include only when they clarify business behavior; keep
+      them concise and grounded in captured content.
     - **Column renames**: render as a `| From | To | Business meaning |`
-      table whenever 3+ sibling columns share the rename shape. For 1–2
-      renames, prose with backticks is enough.
+      table only when the rename pattern is central to business understanding.
     - **Source guards** (WHERE / JOIN / MERGE predicates that filter or key
-      the data): quote the SQL verbatim inside ```sql code fences. Snippet
-      only — never the full INSERT/SELECT statement.
+      the data): quote short SQL snippets only when needed for business
+      clarification; never include full statements.
     - **Status-enum lifecycles**: express as numbered transitions
       ("1. New → 2. Approved → 3. Shipped").
     - **Risks / data-quality flags**: every ⚠️ from capture appears in the

@@ -155,6 +155,7 @@ Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.tes
 ### Completed-phase replay contract
 
 - Completed/follow-up turns run with a compact replay envelope (minimal trailing tool pair), not broad full-history replay.
+- Replayed tool-call envelopes carry `replay_compacted: true` and `trace_replay: true` markers so diagnostics can distinguish replay context from fresh model intent.
 - Replayed `lineage_present_result` history payloads are compacted to summary metadata (`view_name`, `node_count`, `graph_source`) once SM is complete.
 - Follow-up turns inject a compact “current rendered result snapshot” (title/summary/section map + bounded description excerpt) so edits can be made without replaying full prior payloads.
 - If the follow-up recommendation pill is clicked with zero deferred objects, the participant now injects a fallback prompt that asks for at least two concrete, same-topic follow-up questions grounded in the current rendered result (instead of returning internal Route A/Route B protocol prose).
@@ -196,6 +197,7 @@ From `src/commands.ts` + `package.json`.
 - Graph badges are derived from section labels and numbered by assembly order.
 - Description markdown is assembled as: `title` -> `intro` -> numbered `sections[]` -> `closing`.
 - Object links are injected as `### Objects [name](#focus-node:id)` when node mapping exists.
+- The follow-up "Show full description" chat replay sanitizes focus anchors to plain object names for readability; overlay rendering keeps interactive focus links.
 - CT synthesis can override standard badge grouping using chain-role guidance (`buildCtSynthesisBlock`).
 
 ## Test crosscheck matrix

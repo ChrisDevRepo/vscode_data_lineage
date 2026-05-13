@@ -110,6 +110,22 @@ function appendBlockOnce(base: string, block: string): { text: string; skippedDu
 }
 
 /**
+ * Removes overlay-only focus anchors from markdown replayed into chat.
+ *
+ * @remarks
+ * The description overlay supports `#focus-node:<id>` links for graph focus.
+ * Chat replay should remain readable without exposing anchor payloads.
+ */
+function sanitizeDescriptionForChat(description: string): string {
+  return description
+    .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => {
+      const cleaned = tail.replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
+      return `### Objects ${cleaned}`;
+    })
+    .replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
+}
+
+/**
  * Minimizes replayed tool-result payload for ACTIVE phase.
  *
  * @remarks
@@ -149,7 +165,7 @@ function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | unde
   if (!firstCall) return undefined;
 
   const rawInput = (firstCall.input as Record<string, unknown>) || {};
-  let compactInput: Record<string, unknown> = {};
+  let compactInput: Record<string, unknown> = { replay_compacted: true, trace_replay: true };
   if (firstCall.name === 'lineage_submit_findings') {
     const isCtSubmit = Array.isArray(rawInput.column_flow);
     const routeRequestCount = Array.isArray(rawInput.route_requests) ? rawInput.route_requests.length : 0;
@@ -161,6 +177,8 @@ function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | unde
         .slice(0, 12)
       : [];
     compactInput = {
+      replay_compacted: true,
+      trace_replay: true,
       focus_node_id: rawInput.focus_node_id,
       verdict: rawInput.verdict,
       mode: isCtSubmit ? 'ct' : 'bb',
@@ -176,6 +194,8 @@ function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | unde
     };
   } else if (firstCall.name === 'lineage_start_exploration') {
     compactInput = {
+      replay_compacted: true,
+      trace_replay: true,
       origin: rawInput.origin,
       direction: rawInput.direction,
       classification: rawInput.classification,
@@ -664,7 +684,7 @@ export class LineageParticipant {
       }
     } else if (isShowDescriptionTrigger) {
       if (sess.lastPresentResultDescription) {
-        writer.markdown(sess.lastPresentResultDescription);
+        writer.markdown(sanitizeDescriptionForChat(sess.lastPresentResultDescription));
       } else {
         writer.markdown('_No AI preview description is currently cached for this session._');
       }

@@ -213,8 +213,6 @@ export function buildSynthesisPrompt(): string {
     '- `node_ids[]`: every grouped slot id within this angle.',
     '- `text`: write the section body. Draw from the captured detail in `detail_slots[]` for each `node_ids[]` entry — you own the text.',
     '',
-    'Pass / Prune slots: mention in one line inside a `### Passthrough / Pruned` subsection of the relevant section — add this subsection as plain text in `closing`, not as a separate section.',
-    '',
     '## Other parts',
     '- `summary` (REQUIRED): one line, ≤300 chars, the headline of the analysis.',
     '- `title`: ≤80 chars, "[Subject] — [key finding]" shape.',
