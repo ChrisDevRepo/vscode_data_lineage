@@ -81,10 +81,10 @@ const SCHEMA_COLORS_DARK = [
  * @returns A deterministic hash value.
  */
 export function hashString(str: string): number {
-  let hash = 0;
+  let hash = 2166136261; // FNV-1a offset basis
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619); // FNV prime
     hash |= 0;
   }
   return hash;
