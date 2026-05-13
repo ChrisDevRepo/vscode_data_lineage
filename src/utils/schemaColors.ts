@@ -90,63 +90,19 @@ export function hashString(str: string): number {
   return hash;
 }
 
-// Shifts the lightness of a hex color by `delta` percentage points.
-function shiftL(hex: string, delta: number): string {
-  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
-  const max = Math.max(r,g,b), min = Math.min(r,g,b);
-  let h = 0, s = 0; const l = (max+min)/2;
-  if (max !== min) {
-    const d = max-min; s = l>0.5 ? d/(2-max-min) : d/(max+min);
-    if (max===r) h=((g-b)/d+(g<b?6:0))/6;
-    else if (max===g) h=((b-r)/d+2)/6;
-    else h=((r-g)/d+4)/6;
-  }
-  const nl = Math.max(0.08, Math.min(0.92, l+delta/100));
-  const q = nl<0.5 ? nl*(1+s) : nl+s-nl*s, p = 2*nl-q;
-  const c = (t: number) => { if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
-  return '#'+[h+1/3,h,h-1/3].map(t=>Math.round(c(t)*255).toString(16).padStart(2,'0')).join('');
-}
-
-// 30-slot doubled palettes: original 15 + 15 lightness-shifted variants.
-const SCHEMA_COLORS_LIGHT_DOUBLE = [
-  ...SCHEMA_COLORS_LIGHT,
-  ...SCHEMA_COLORS_LIGHT.map(c => shiftL(c, 14)),
-];
-const SCHEMA_COLORS_DARK_DOUBLE = [
-  ...SCHEMA_COLORS_DARK,
-  ...SCHEMA_COLORS_DARK.map(c => shiftL(c, -12)),
-];
-
-// schemaKey → sorted position; populated by buildSchemaColorMap before any render.
-const _colorMap = new Map<string, number>();
-
-/**
- * Assigns each distinct schema a unique palette index by sorted alphabetical position.
- * Matches the Tableau/D3 approach: sequential assignment, never hashing.
- * Call once per graph build, before any `getSchemaColor` call.
- *
- * @param schemas - All schema names from the model (may contain duplicates).
- */
-export function buildSchemaColorMap(schemas: string[]): void {
-  _colorMap.clear();
-  [...new Set(schemas.map(schemaKey))].sort().forEach((key, i) => _colorMap.set(key, i));
-}
-
 /**
  * Retrieves a deterministic theme-aware color for a given SQL schema.
- * Uses the sorted position from `buildSchemaColorMap` to guarantee unique colors
- * for up to 30 schemas; cycles the 30-slot palette beyond that.
+ * Uses FNV-1a hash modulo the palette size. The same schema name always
+ * produces the same color regardless of what other schemas are loaded.
+ * With more schemas than palette slots some collisions are expected.
  *
  * @param schema - The schema name.
  * @param forceLight - If true, ignores the current theme and returns the light variant.
  * @returns A CSS hex color string.
  */
 export function getSchemaColor(schema: string, forceLight?: boolean): string {
-  const dark = !forceLight && isDarkTheme();
-  const palette = dark ? SCHEMA_COLORS_DARK_DOUBLE : SCHEMA_COLORS_LIGHT_DOUBLE;
-  const key = schemaKey(schema);
-  const idx = _colorMap.has(key) ? _colorMap.get(key)! : Math.abs(hashString(key));
-  return palette[idx % palette.length];
+  const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
+  return colors[Math.abs(hashString(schemaKey(schema))) % colors.length];
 }
 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */

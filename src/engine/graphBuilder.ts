@@ -17,7 +17,7 @@ import { bidirectional } from 'graphology-shortest-path';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';
-import { getSchemaColor, buildSchemaColorMap } from '../utils/schemaColors';
+import { getSchemaColor } from '../utils/schemaColors';
 import { notifyUser } from '../utils/notify';
 
 /** Width of a standard graph node in pixels. */
@@ -165,7 +165,6 @@ function toFlowResult(
  * @returns Complete graph result.
  */
 export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
-  buildSchemaColorMap(model.nodes.map(n => n.schema));
   const graph = buildGraphologyGraph(model);
   const positions = computeLayout(graph, config);
   return toFlowResult(model, graph, positions, config);
@@ -179,7 +178,6 @@ export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAU
  * @returns Complete graph result with zeroed positions.
  */
 export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
-  buildSchemaColorMap(model.nodes.map(n => n.schema));
   const graph = buildGraphologyGraph(model);
   return toFlowResult(model, graph, new Map(), config);
 }
@@ -746,7 +744,6 @@ export function buildSchemaGraph(
   model: DatabaseModel,
   visibleSchemas: Set<string>
 ): { nodes: FlowNode<SchemaNodeData>[]; edges: FlowEdge[] } {
-  buildSchemaColorMap(model.nodes.map(n => n.schema));
   const schemaEdgeCounts = buildSchemaEdges(model, visibleSchemas);
 
   const schemaMeta = new Map<string, { count: number; types: Partial<Record<string, number>> }>();
