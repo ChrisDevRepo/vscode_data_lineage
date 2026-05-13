@@ -108,7 +108,6 @@ function shiftL(hex: string, delta: number): string {
 }
 
 // 30-slot doubled palettes: original 15 + 15 lightness-shifted variants.
-// Used when more than 15 distinct schemas are present.
 const SCHEMA_COLORS_LIGHT_DOUBLE = [
   ...SCHEMA_COLORS_LIGHT,
   ...SCHEMA_COLORS_LIGHT.map(c => shiftL(c, 14)),
@@ -118,23 +117,25 @@ const SCHEMA_COLORS_DARK_DOUBLE = [
   ...SCHEMA_COLORS_DARK.map(c => shiftL(c, -12)),
 ];
 
-let _schemaCount = 0;
+// schemaKey → sorted position; populated by buildSchemaColorMap before any render.
+const _colorMap = new Map<string, number>();
 
 /**
- * Records the number of distinct schemas in the current model so `getSchemaColor`
- * can choose between the 15-slot and 30-slot palette.
+ * Assigns each distinct schema a unique palette index by sorted alphabetical position.
+ * Matches the Tableau/D3 approach: sequential assignment, never hashing.
  * Call once per graph build, before any `getSchemaColor` call.
  *
  * @param schemas - All schema names from the model (may contain duplicates).
  */
 export function buildSchemaColorMap(schemas: string[]): void {
-  _schemaCount = new Set(schemas.map(schemaKey)).size;
+  _colorMap.clear();
+  [...new Set(schemas.map(schemaKey))].sort().forEach((key, i) => _colorMap.set(key, i));
 }
 
 /**
  * Retrieves a deterministic theme-aware color for a given SQL schema.
- * When more than 15 distinct schemas are loaded, uses a 30-slot palette
- * (original 15 + lightness-shifted variants) to reduce same-color collisions.
+ * Uses the sorted position from `buildSchemaColorMap` to guarantee unique colors
+ * for up to 30 schemas; cycles the 30-slot palette beyond that.
  *
  * @param schema - The schema name.
  * @param forceLight - If true, ignores the current theme and returns the light variant.
@@ -142,10 +143,10 @@ export function buildSchemaColorMap(schemas: string[]): void {
  */
 export function getSchemaColor(schema: string, forceLight?: boolean): string {
   const dark = !forceLight && isDarkTheme();
-  const palette = _schemaCount > 15
-    ? (dark ? SCHEMA_COLORS_DARK_DOUBLE  : SCHEMA_COLORS_LIGHT_DOUBLE)
-    : (dark ? SCHEMA_COLORS_DARK         : SCHEMA_COLORS_LIGHT);
-  return palette[Math.abs(hashString(schemaKey(schema))) % palette.length];
+  const palette = dark ? SCHEMA_COLORS_DARK_DOUBLE : SCHEMA_COLORS_LIGHT_DOUBLE;
+  const key = schemaKey(schema);
+  const idx = _colorMap.has(key) ? _colorMap.get(key)! : Math.abs(hashString(key));
+  return palette[idx % palette.length];
 }
 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
