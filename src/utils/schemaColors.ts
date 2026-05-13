@@ -90,17 +90,62 @@ export function hashString(str: string): number {
   return hash;
 }
 
+// Shifts the lightness of a hex color by `delta` percentage points.
+function shiftL(hex: string, delta: number): string {
+  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h = 0, s = 0; const l = (max+min)/2;
+  if (max !== min) {
+    const d = max-min; s = l>0.5 ? d/(2-max-min) : d/(max+min);
+    if (max===r) h=((g-b)/d+(g<b?6:0))/6;
+    else if (max===g) h=((b-r)/d+2)/6;
+    else h=((r-g)/d+4)/6;
+  }
+  const nl = Math.max(0.08, Math.min(0.92, l+delta/100));
+  const q = nl<0.5 ? nl*(1+s) : nl+s-nl*s, p = 2*nl-q;
+  const c = (t: number) => { if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
+  return '#'+[h+1/3,h,h-1/3].map(t=>Math.round(c(t)*255).toString(16).padStart(2,'0')).join('');
+}
+
+// 30-slot doubled palettes: original 15 + 15 lightness-shifted variants.
+// Used when more than 15 distinct schemas are present.
+const SCHEMA_COLORS_LIGHT_DOUBLE = [
+  ...SCHEMA_COLORS_LIGHT,
+  ...SCHEMA_COLORS_LIGHT.map(c => shiftL(c, 14)),
+];
+const SCHEMA_COLORS_DARK_DOUBLE = [
+  ...SCHEMA_COLORS_DARK,
+  ...SCHEMA_COLORS_DARK.map(c => shiftL(c, -12)),
+];
+
+let _schemaCount = 0;
+
+/**
+ * Records the number of distinct schemas in the current model so `getSchemaColor`
+ * can choose between the 15-slot and 30-slot palette.
+ * Call once per graph build, before any `getSchemaColor` call.
+ *
+ * @param schemas - All schema names from the model (may contain duplicates).
+ */
+export function buildSchemaColorMap(schemas: string[]): void {
+  _schemaCount = new Set(schemas.map(schemaKey)).size;
+}
+
 /**
  * Retrieves a deterministic theme-aware color for a given SQL schema.
- * 
+ * When more than 15 distinct schemas are loaded, uses a 30-slot palette
+ * (original 15 + lightness-shifted variants) to reduce same-color collisions.
+ *
  * @param schema - The schema name.
  * @param forceLight - If true, ignores the current theme and returns the light variant.
  * @returns A CSS hex color string.
  */
 export function getSchemaColor(schema: string, forceLight?: boolean): string {
-  const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
-  const idx = Math.abs(hashString(schemaKey(schema))) % colors.length;
-  return colors[idx];
+  const dark = !forceLight && isDarkTheme();
+  const palette = _schemaCount > 15
+    ? (dark ? SCHEMA_COLORS_DARK_DOUBLE  : SCHEMA_COLORS_LIGHT_DOUBLE)
+    : (dark ? SCHEMA_COLORS_DARK         : SCHEMA_COLORS_LIGHT);
+  return palette[Math.abs(hashString(schemaKey(schema))) % palette.length];
 }
 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
