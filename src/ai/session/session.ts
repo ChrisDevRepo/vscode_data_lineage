@@ -358,16 +358,7 @@ export class AiSession {
       verdicts,
       source: sourceMode,
       originNodeId: fullResult.originNodeId,
-      notes: (fullResult.detail_slots || []).map(s => ({
-        nodeId: s.nodeId,
-        summary: s.note_caption || s.summary || ''
-      })),
-      suggested_labels: (fullResult.detail_slots || [])
-        .filter(s => s.badge_label)
-        .map(s => ({ node_id: s.nodeId, text: s.badge_label! })),
-      suggested_notes: (fullResult.detail_slots || [])
-        .filter(s => s.note_caption)
-        .map(s => ({ node_id: s.nodeId, text: s.note_caption! })),
+      notes: prior?.notes,
       suggested_sections: fullResult.suggested_sections,
       description: prior?.description,
       summary: prior?.summary,

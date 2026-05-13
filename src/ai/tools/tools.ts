@@ -1080,6 +1080,13 @@ export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn
  *   - AI writes: summary, title, intro, sections[], closing, notes[], highlight_groups[]
  *   - Engine builds: the assembled markdown blob (returned as `description`
  *     on PresentResultRequest), section numbering, badge chips, object links.
+ *   - Dispatcher normalizes and validates only; it does not synthesize missing
+ *     labels, node links, captions, or section text.
+ *
+ * Final `sections[]` is the authoritative graph/detail link surface. A final
+ * section label maps to exactly one section text body; its optional `node_ids[]`
+ * links zero or more graph nodes to that section badge. Nodes omitted from
+ * `node_ids[]` intentionally have no final section badge.
  *
  * There is intentionally NO `description` field on this input — that field is
  * engine output, not AI input. If a future change wants to re-add it, fix the
@@ -1101,9 +1108,9 @@ export type PresentResultInput = {
     node_ids: string[];
   }>;
   sections?: Array<{
-    label: string;       // PRIMARY KEY for document grouping — unique per section
-    node_ids?: string[]; // nodes that display this label as a badge chip (1..N)
-    text: string;        // markdown description for this label group (1..1 per label)
+    label: string;       // AI-owned final section/badge label — unique, short graph pointer
+    node_ids?: string[]; // optional AI-owned node links; nodes omitted here get no badge
+    text: string;        // mandatory detail body for this exact label (1:1 with label)
   }>;
   notes?: Array<{
     node_id: string;
@@ -1137,6 +1144,26 @@ export type PresentResultError = { success: false; errors: string[]; hint: strin
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
+ * Normalizes AI-authored final section labels for uniqueness checks and assembly.
+ *
+ * @remarks
+ * Final `present_result.sections[].label` is the authoritative graph/detail
+ * pointer: the same string becomes the detail heading and the badge shown on
+ * every node listed in that section's `node_ids[]`. The normalizer strips only
+ * engine numbering artifacts and whitespace/case differences; it does not
+ * rewrite semantics or synthesize labels.
+ */
+export function normalizePresentSectionLabel(label: string): string {
+  return (label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Counts visible words in a final section label for graph-badge UX limits. */
+function countPresentSectionLabelWords(label: string): number {
+  const normalized = (label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
+  return normalized ? normalized.split(/\s+/).length : 0;
+}
+
+/**
  * Builds the rendered description markdown from the AI's structured input parts.
  *
  * @remarks
@@ -1147,9 +1174,10 @@ const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'go
  * the `### Objects [name](#focus-node:id)` link header are all engine-owned;
  * they are not AI-authored fields.
  *
- * Numbered badges are emitted in narrative order so chips on the graph align
- * with `## N` headings in the description. Leading numbers in AI-supplied
- * labels are stripped to keep numbering deterministic.
+ * Numbered badges are emitted only for AI-provided `sections[].node_ids[]`, in
+ * narrative order, so chips on the graph align with `## N` headings in the
+ * description. Nodes not linked by the AI get no badge. Leading numbers in
+ * AI-supplied labels are stripped to keep numbering deterministic.
  *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
@@ -1165,8 +1193,8 @@ export function orderAndAssemble(
     nodeMap?: Map<string, { id: string; name: string }>;
   },
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
-  // Strip leading "N " or "N. " so AI numbers don't interfere with label matching
-  const stripLeadingNumber = (s: string) => s.replace(/^\d+[\.]?\s+/, '').trim();
+  // Strip leading "N " or "N. " so AI numbers don't interfere with label matching.
+  const stripLeadingNumber = (s: string) => (s ?? '').replace(/^\d+[\.]?\s+/, '').trim();
 
   // First occurrence index per label — preserves AI's narrative order
   const labelToAiIndex = new Map<string, number>();
@@ -1347,7 +1375,13 @@ export function validateMarkdownFormat(md: string): string[] {
  *
  * @remarks
  * Enforces naming length, summary length, sections[] presence, node-id resolution,
- * and markdown-fence closure on the engine-assembled description.
+ * final section label/text cardinality, and markdown-fence closure on the
+ * engine-assembled description.
+ *
+ * Content quality remains prompt-owned, but structural invariants are enforced
+ * here: each final section label is non-empty, short, unique, and has exactly
+ * one text body; `node_ids[]` is optional, but a node may not be linked to
+ * multiple final sections.
  *
  * The `description` returned in {@link PresentResultRequest} is the engine-assembled
  * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
@@ -1391,7 +1425,7 @@ export function validatePresentResult(
   // Either AI submitted sections[] (which the engine assembles into a description before
   // validation) OR an engine-assembled description is supplied. Without one, there's no body.
   if (!hasSections && !hasAssembled) {
-    errors.push('sections[] is required — provide at least one section with label, angle, and node_ids[].');
+    errors.push('sections[] is required — provide at least one section with label and text; node_ids[] is optional.');
   }
 
   // Mechanical fence-closure check on the engine-assembled blob (catches cases where
@@ -1400,18 +1434,42 @@ export function validatePresentResult(
     errors.push(...validateMarkdownFormat(assembledDescription!));
   }
 
-  // Sections validation — node_ids (when provided) must be valid; section text must be present.
+  // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
   if (hasSections) {
     const resolvedSet = new Set(resolvedNodeIds);
+    const labels = new Set<string>();
+    const nodeToSectionLabel = new Map<string, string>();
     for (const sec of input.sections!) {
+      const label = (sec.label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
+      const normalizedLabel = normalizePresentSectionLabel(sec.label);
+      if (!label) {
+        errors.push('Section label is required — provide a short final label for this detail section');
+      } else {
+        const labelWords = countPresentSectionLabelWords(label);
+        if (labelWords > 3) {
+          errors.push(`Section "${label}" label exceeds 3 words — use a short graph pointer`);
+        }
+        if (labels.has(normalizedLabel)) {
+          errors.push(`Duplicate section label "${label}" — each final label must map to exactly one section text`);
+        }
+        labels.add(normalizedLabel);
+      }
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
           errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — ${SECTION_NODE_ID_HINT}`);
         }
+        for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
+          const existingLabel = nodeToSectionLabel.get(nodeId);
+          if (existingLabel && existingLabel !== normalizedLabel) {
+            errors.push(`Node "${nodeId}" is linked to multiple section labels — each node may point to at most one final section`);
+            continue;
+          }
+          nodeToSectionLabel.set(nodeId, normalizedLabel);
+        }
       }
       if (!sec.text || sec.text.trim().length === 0) {
-        errors.push(`Section "${sec.label}" is missing text — ensure node_ids[] references nodes that were analyzed during the hop loop`);
+        errors.push(`Section "${sec.label}" is missing text — every final section label requires one detail body`);
       }
       if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
     }

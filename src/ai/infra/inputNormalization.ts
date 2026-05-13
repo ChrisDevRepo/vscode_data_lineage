@@ -71,6 +71,12 @@ export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>): 
   for (const candidate of candidates) {
     if (nodeMap.has(candidate)) return candidate;
   }
+
+  const lowerInput = input.toLowerCase();
+  for (const key of nodeMap.keys()) {
+    if (key.toLowerCase() === lowerInput) return key;
+  }
+
   return null;
 }
 

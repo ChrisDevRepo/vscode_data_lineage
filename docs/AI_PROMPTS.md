@@ -61,7 +61,7 @@ Reviewer artifact:
 | AI | `submit_findings.sections[]` (`business`/`technical` angle text), `summary`, `title`, `intro`, `sections[]`, `closing`, `notes[]`, `highlight_groups[]` | `prompts.ts`, `smPrompts.ts`, tool schemas |
 | Engine | Deterministic markdown assembly, section numbering (`## N`), badge chips, object link headers, validation and rejection envelopes | `orderAndAssemble()` + `validatePresentResult()` in `src/ai/tools/tools.ts` |
 
-Important correction: in synthesis, `sections[].text` is AI-authored and required by validation. The engine assembles structure deterministically, but does not auto-create missing section text.
+Important correction: in synthesis, final `sections[]` fields are AI-authored. The engine assembles structure deterministically, but does not auto-create missing section text, node links, labels, or captions.
 
 ## Template routing (authoritative)
 
@@ -140,8 +140,10 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 - AI submits structured parts; engine assembles deterministic description.
 - Validation enforces summary/name/sections/highlights and markdown fence integrity.
 - No AI-writeable `description` input field.
-- Follow-up relabel/regroup requests must update `sections[]` (`label` / `node_ids`), because badge chips are derived from sections.
-- `notes[]` are per-node captions shown below the graph and do not rename section badges.
+- Follow-up relabel/regroup requests must update final `sections[]` (`label` / `node_ids`), because badge chips are derived from sections.
+- Final `sections[].label` is the authoritative short graph/detail pointer and maps 1:1 to `sections[].text`.
+- Final `sections[].node_ids[]` is optional and AI-owned: a section label may link many nodes, a node may have zero labels, and a node may appear in at most one section.
+- `notes[]` are optional AI-authored per-node captions shown below the graph and do not create or rename section badges.
 
 ## Tool policy by phase
 
@@ -197,8 +199,9 @@ From `src/commands.ts` + `package.json`.
 - Graph badges are derived from section labels and numbered by assembly order.
 - Description markdown is assembled as: `title` -> `intro` -> numbered `sections[]` -> `closing`.
 - Object links are injected as `### Objects [name](#focus-node:id)` when node mapping exists.
+- Nodes not discussed in the detail description do not need badges.
 - The follow-up "Show full description" chat replay sanitizes focus anchors to plain object names for readability; overlay rendering keeps interactive focus links.
-- CT synthesis can override standard badge grouping using chain-role guidance (`buildCtSynthesisBlock`).
+- CT-only synthesis guidance (`buildCtSynthesisBlock`) groups by the traced-column answer and keeps pass-through nodes compact.
 
 ## Test crosscheck matrix
 

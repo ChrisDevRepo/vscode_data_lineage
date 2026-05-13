@@ -32,12 +32,8 @@ export interface ResultGraph {
   source: string;
   /** The starting node ID of the exploration; used for topological sorting. */
   originNodeId?: string;
-  /** Summary notes linked to specific nodes for auto-populating reports. */
+  /** AI-authored node captions from the latest `present_result.notes[]`. */
   notes?: Array<{ nodeId: string; summary: string }>;
-  /** AI-suggested UI labels (badges) for specific nodes. */
-  suggested_labels?: Array<{ node_id: string; text: string }>;
-  /** AI-suggested descriptive text (notes) for specific nodes. */
-  suggested_notes?: Array<{ node_id: string; text: string }>;
   /** AI-suggested grouping of nodes into narrative sections. */
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /**

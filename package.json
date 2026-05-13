@@ -846,13 +846,13 @@
             },
             "sections": {
               "type": "array",
-              "description": "Report sections drive badge labels and section grouping in the graph. Update `sections[].label` and/or `sections[].node_ids` when the user asks to relabel or regroup nodes.",
+              "description": "Final graph/detail sections. Labels and node links are AI-authored; the engine validates and renders them.",
               "items": {
                 "type": "object",
                 "properties": {
                   "label": {
                     "type": "string",
-                    "description": "Section title and node badge (from badge_label in the captured slot)."
+                    "description": "Final short section/badge label, 2-3 words."
                   },
                   "angle": {
                     "type": "string",
@@ -864,23 +864,25 @@
                   },
                   "node_ids": {
                     "type": "array",
+                    "description": "Optional nodes linked to this section; omit nodes not discussed.",
                     "items": {
                       "type": "string"
                     }
                   },
                   "text": {
                     "type": "string",
-                    "description": "Section body text shown in the rendered description for this section."
+                    "description": "Required detail body for this section label."
                   }
                 },
                 "required": [
-                  "label"
+                  "label",
+                  "text"
                 ]
               }
             },
             "notes": {
               "type": "array",
-              "description": "Optional per-node captions shown below the graph; notes do not drive badge labels.",
+              "description": "Optional AI-authored captions shown below selected graph nodes; notes do not create badges or sections.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -889,7 +891,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Note text (max 400 chars)."
+                    "description": "One-sentence node caption."
                   }
                 },
                 "required": [
@@ -1181,12 +1183,12 @@
             "badge_label": {
               "type": "string",
               "maxLength": 50,
-              "description": "Short semantic role (2-4 words) for node badge (e.g. 'Source', 'Transformation')."
+              "description": "Optional hop helper label; advisory only, not rendered directly."
             },
             "note_caption": {
               "type": "string",
               "maxLength": 200,
-              "description": "One-line technical reasoning caption shown on the node."
+              "description": "Optional AI-authored one-sentence preview for this node."
             }
           },
           "required": [

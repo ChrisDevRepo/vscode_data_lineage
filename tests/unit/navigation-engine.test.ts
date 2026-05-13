@@ -113,6 +113,35 @@ const graph = makeGraph(nodes, edges);
   assert(rejections[0].nodeId === 'NON_EXISTENT', 'nodeId matched');
 }
 
+// Route target IDs resolve across casing/bracket normalization before rejection
+{
+  const mixedNodes: LineageNode[] = [
+    { id: '[dbo].[OriginProc]', schema: 'dbo', name: 'OriginProc', type: 'procedure' },
+    { id: '[dbo].[ChildView]', schema: 'dbo', name: 'ChildView', type: 'view' },
+  ];
+  const mixedEdges: Array<[string, string]> = [['[dbo].[OriginProc]', '[dbo].[ChildView]']];
+  const mixedModel: DatabaseModel = {
+    nodes: mixedNodes,
+    edges: mixedEdges.map(([s, t]) => ({ source: s, target: t, type: 'SELECT' })),
+    schemas: ['dbo'],
+    dbPlatform: 'SQL Server',
+  };
+  const mixedGraph = makeGraph(mixedNodes, mixedEdges);
+  const engine = new NavigationEngine(mixedModel, mixedGraph, () => {}, {});
+  engine.init({ origin: '[dbo].[originproc]', question: 'test', direction: 'downstream' });
+
+  engine.getHopContext();
+  const result = engine.submitFindings({
+    focus_node_id: '[dbo].[originproc]',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: '[dbo].[childview]', question: 'trace child' }],
+  });
+
+  assert(!('error' in result), 'casing-only route target resolves before validation');
+}
+
 // Diagnostics archive counter
 {
   const engine = new NavigationEngine(model, graph, () => {}, {});

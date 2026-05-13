@@ -47,14 +47,12 @@ const BLOCK = {
     ].join('\n');
   },
 
-  /** Metadata protocol — badge_label drives final-document section labels. */
+  /** Metadata protocol — active-hop helper metadata only. */
   badgeAndNote: [
-    '## Metadata Protocol',
-    '1. BADGE: `badge_label` is a short semantic ROLE label — prefer 1-2 words; longer phrases acceptable only when no shorter form fits the role precisely. Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "Revenue Calc", "Price Adjustment", "Territory Load".',
-    '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins) unless a label materially improves answer clarity.',
-    '   - SHARED ROLE: Nodes with the same role use the same label (for example `"Price Adjustment"`). Keep differences in section body text, not label text.',
-    '   ❌ Step-count labels ("Step 1", "Step A", "Transform Step") — sections are auto-numbered; role labels only.',
-    '2. NOTE: `note_caption` — quick user-facing preview sentence for this node. Keep it short and plain-language; put deep reasoning in `sections[].text`.',
+    '## Current Hop Metadata',
+    'Analyze the current `focus_node` for the current task only. Prior memory is context, not a final report plan.',
+    '- `badge_label`: optional hop-time grouping hint only; it is not rendered directly. Use a short role phrase when it helps later synthesis, e.g. "Source", "Staging", "Revenue Calc", "Price Inputs".',
+    '- `note_caption`: optional AI-authored node preview sentence. Use it when one sentence below this node would help users understand the current hop.',
   ].join('\n'),
 
   /** Canonical hop-local routing/pruning contract (single source, no duplicates across surfaces). */
@@ -161,9 +159,10 @@ export function buildSynthesisReminder(question: string): string {
   return [
     '## Synthesis Reminder — re-read before calling `lineage_present_result`',
     `- User question: "${question}"`,
-    '- `sections[]` is REQUIRED — select nodes that directly answer the user question; omit nodes orthogonal to it. Write `text` for every section: if the question names specific identifiers, focus on detail that answers the question (formulas, column transformations, SQL predicates, data flows, join keys, source tables); if broad, draw from the full captured detail. You own the text — write it.',
-    '- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; `badge_label` is helper input only. Keep business/technical split only when it improves clarity. Nodes without `badge_label` may be placed in the most relevant section when materially useful.',
-    '- Every badged node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.',
+    '- `sections[]` is REQUIRED — create final graph/detail links from the full archive. Write `text` for every section: if the question names specific identifiers, focus on detail that answers the question (formulas, column transformations, SQL predicates, data flows, join keys, source tables); if broad, draw from the full captured detail. You own the text — write it.',
+    '- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; hop `badge_label` values are helper hints only. Keep business/technical split only when it improves clarity.',
+    '- Link only nodes discussed in the section body and needed to answer the question. A node may be unlabeled; a node should appear in at most one final section; many nodes may share one section label.',
+    '- Every linked node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.',
     '- Carry formulas and ⚠️ callouts only when they materially help answer the user question. Do not force formula/risk inclusion when no significant issue is present.',
     '- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases write the text — do not leave sections[] without text.',
     '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
@@ -178,8 +177,8 @@ export function buildSynthesisReminder(question: string): string {
  * Appended to the synthesis reminder when CT was active and edges were recorded.
  * Presents the directed graph in a flat edge list so the AI can structure
  * `present_result` around the actual traced path rather than free-form prose.
- * Overrides the standard badge_label grouping — in CT mode sections[] group by
- * column chain role (origin / writers / terminal source) instead.
+ * Adds CT-only synthesis guidance: column traces group by the final answer,
+ * using recorded column-flow edges as primary evidence.
  * Nodes that were visited but produced no edges are listed as excluded branches.
  *
  * @param edges - Validated edges from `ColumnAspect.edges`.
@@ -205,10 +204,11 @@ export function buildCtSynthesisBlock(edges: ColumnEdge[], ctPrunedNodeIds?: str
   const terminalSources = [...new Set(edges.map(e => e.from_node))].filter(n => !toNodes.has(n));
 
   lines.push('');
-  lines.push('Structure present_result using this chain (CT override — use chain role, not badge_label, for grouping):');
+  lines.push('Structure present_result using this CT chain:');
   lines.push('- summary: one sentence naming origin column → traced path → terminal source');
   lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
-  lines.push('- sections[]: group by chain role: origin node | writer/transform nodes | terminal source node');
+  lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link only nodes discussed in section text.');
+  lines.push('- Keep pass-through or tangential nodes compact unless they change the traced column.');
   lines.push(`- highlight_groups.source: terminal source nodes (appear as from_node but never as to_node): ${terminalSources.join(', ') || '(none)'}`);
   lines.push('  — terminal source = the deepest data origin in this trace; can be any type when base table is out of scope');
   lines.push('- highlight_groups.target: origin node only');

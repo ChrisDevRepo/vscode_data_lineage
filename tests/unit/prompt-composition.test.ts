@@ -12,7 +12,7 @@ import {
   buildGeneralSystemPrompt,
   buildPhasePrompt,
 } from '../../src/ai/prompting/prompts';
-import { buildSmProtocol } from '../../src/ai/prompting/smPrompts';
+import { buildCtSynthesisBlock, buildSmProtocol } from '../../src/ai/prompting/smPrompts';
 
 function countOccurrences(haystack: string, needle: string): number {
   if (!needle) return 0;
@@ -50,6 +50,10 @@ async function runTests() {
     const synthesis = buildPhasePrompt('synthesis');
     assert(synthesis.includes('Synthesis Protocol'), 'synthesis includes protocol heading');
     assert(synthesis.includes('## sections[] — REQUIRED'), 'synthesis enforces sections[]');
+    assert(synthesis.includes('Final sections are the only authoritative graph/detail link surface'), 'synthesis owns final graph/detail links');
+    assert(synthesis.includes('short section pointer, 2-3 words'), 'synthesis asks for short final labels');
+    assert(synthesis.includes('node may appear in zero or one section'), 'synthesis documents optional node labels');
+    assert(synthesis.includes('Notes do not create badges or sections'), 'synthesis separates notes from badges');
 
     const completed = buildPhasePrompt('completed');
     assert(completed.includes('Follow-Up Protocol'), 'completed includes follow-up heading');
@@ -67,7 +71,9 @@ async function runTests() {
     const sm = buildSmProtocol({ classification: 'business' });
     assert(sm.includes('Verdict Protocol'), 'SM includes verdict contract');
     assert(sm.includes('Section Submission'), 'SM includes section submission contract');
-    assert(sm.includes('Metadata Protocol'), 'SM includes metadata contract');
+    assert(sm.includes('Current Hop Metadata'), 'SM includes current-hop metadata contract');
+    assert(sm.includes('current task only'), 'SM metadata is current-hop scoped');
+    assert(sm.includes('not rendered directly'), 'SM badge_label is helper-only');
     assert(sm.includes('Neighbor Decision Contract (Current Hop Only)'), 'SM includes canonical hop decision contract');
     assert(sm.includes('prune_neighbors'), 'SM BB keeps prune_neighbors guidance');
 
@@ -77,6 +83,13 @@ async function runTests() {
     assert(!smCt.includes('prune commands are disabled'), 'SM CT has no negation prune instruction');
     assert(!smCt.includes('prune non-relevant neighbors via `prune_neighbors`'), 'SM CT removes prune_neighbors guidance');
     assert(!smCt.includes('→ Does not interact:        verdict=prune. Omit column_flow.'), 'SM CT removes map-or-prune guidance');
+    assert(!sm.includes('group by the answer, not by every hop'), 'CT synthesis wording absent from non-CT SM prompt');
+
+    const ctSynthesis = buildCtSynthesisBlock([
+      { hop_node: 'proc', hop: 1, from_node: 'source', from_col: 'Amount', to_node: 'target', to_col: 'Total', role: 'formula' },
+    ]);
+    assert(ctSynthesis.includes('group by the answer, not by every hop'), 'CT synthesis carries CT-only grouping guidance');
+    assert(ctSynthesis.includes('Keep pass-through or tangential nodes compact'), 'CT synthesis carries CT-only compactness guidance');
   }
 
   console.log('\n── active assembly redundancy guard ──');

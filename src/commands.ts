@@ -149,7 +149,14 @@ export function registerCommands(
         // If it was never sent (present_result errored/skipped) or the webview lost state,
         // reveal alone would show a stale/empty panel.
         const rg = sess.resultGraph;
-        const badges = (rg.suggested_labels ?? []).map(l => ({ nodeId: l.node_id, text: l.text }));
+        const labelToNumber = new Map<string, number>();
+        const badges = (rg.sections ?? []).flatMap((section, index) => {
+          const label = section.label.replace(/^\d+[\.]?\s+/, '').trim();
+          if (!label) return [];
+          if (!labelToNumber.has(label)) labelToNumber.set(label, index + 1);
+          const n = labelToNumber.get(label)!;
+          return (section.node_ids ?? []).map(nodeId => ({ nodeId, text: `${n} ${label}` }));
+        });
         const notes = (rg.notes ?? [])
           .filter(n => n.summary)
           .map(n => ({ nodeId: n.nodeId, text: n.summary }));

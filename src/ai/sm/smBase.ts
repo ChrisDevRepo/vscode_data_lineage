@@ -1223,7 +1223,7 @@ export class NavigationEngine implements IHopStateMachine {
     const allInvalidRoutes: Array<{ id: string; reason: string; available_columns?: string[] }> = [];
     const routeOutcomes: RouteOutcome[] = [];
     const finding = params;
-    const focusId = finding.focus_node_id?.toLowerCase();
+    const focusId = resolveModelNodeId(finding.focus_node_id, this.nodeMap) ?? finding.focus_node_id?.toLowerCase();
     if (focusId !== this.currentFocusNodeId) {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
     }
@@ -1266,7 +1266,7 @@ export class NavigationEngine implements IHopStateMachine {
       const depthCap = this.computeDepthCap();
 
       for (const req of finding.route_requests) {
-        const nid = req.nodeId?.trim().toLowerCase();
+        const nid = resolveModelNodeId(req.nodeId, this.nodeMap);
         const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nNode || !nid) {
           allInvalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
@@ -1294,18 +1294,18 @@ export class NavigationEngine implements IHopStateMachine {
           const deferReason: 'schema' | 'depth' | 'schema_and_depth' =
             schemaBlocked && scopeReason ? 'schema_and_depth' : schemaBlocked ? 'schema' : 'depth';
           deferredRoutes.push({
-            nodeId: req.nodeId,
+            nodeId: nNode.id,
             schema: nNode.schema,
             question: req.question ?? '',
             reason: deferReason,
             depth: candidateDepth,
           });
-          routeOutcomes.push({ nodeId: req.nodeId, accepted: false, deferred: true, reason: deferReason });
+          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: deferReason });
           continue;
         }
 
         acceptedNids.add(nid);
-        routeOutcomes.push({ nodeId: req.nodeId, accepted: true });
+        routeOutcomes.push({ nodeId: nNode.id, accepted: true });
         if (!this.scopeNodeIds.has(nid)) scopeAddNids.add(nid);
 
         if (req.columns && this._columnAspect) {
@@ -1372,7 +1372,8 @@ export class NavigationEngine implements IHopStateMachine {
         }
 
         for (const cont of entry.contributors) {
-          const neighbor = this.nodeMap.get(cont.from_node.toLowerCase());
+          const neighborId = resolveModelNodeId(cont.from_node, this.nodeMap);
+          const neighbor = neighborId ? this.nodeMap.get(neighborId) : null;
           if (!neighbor) {
             allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor node "${cont.from_node}" not found in graph.` });
             continue;
@@ -1469,14 +1470,15 @@ export class NavigationEngine implements IHopStateMachine {
       if (this._columnAspect && finding.column_flow) {
         this.lastHopColumnFlowEntries = finding.column_flow.length;
         for (const entry of finding.column_flow) {
-          const toNode = entry.writes_to?.node.toLowerCase() ?? focusId;
+          const toNode = entry.writes_to?.node ? (resolveModelNodeId(entry.writes_to.node, this.nodeMap) ?? entry.writes_to.node.toLowerCase()) : focusId;
           const toCol  = entry.writes_to?.col  ?? entry.out_col;
           for (const cont of entry.contributors) {
             if (cont.role === 'filter_only') continue;
+            const fromNode = resolveModelNodeId(cont.from_node, this.nodeMap) ?? cont.from_node.toLowerCase();
             stagedColumnEdges.push({
               hop_node:  focusId,
               hop:       this.hopCount,
-              from_node: cont.from_node.toLowerCase(),
+              from_node: fromNode,
               from_col:  cont.from_col,
               to_node:   toNode,
               to_col:    toCol,
@@ -1571,7 +1573,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (finding.route_requests) {
       for (const req of finding.route_requests) {
-        const nid = req.nodeId.toLowerCase();
+        const nid = resolveModelNodeId(req.nodeId, this.nodeMap) ?? req.nodeId.toLowerCase();
         if (!acceptedNids.has(nid)) continue;
 
         // Route enqueue funnels through the bipartite rule. For bodied targets
@@ -1594,8 +1596,8 @@ export class NavigationEngine implements IHopStateMachine {
         // from "accepted but no new hop enqueued".
         if (added === 0 && !targetIsBodied && !wasAlreadyVisited) {
           for (let i = routeOutcomes.length - 1; i >= 0; i--) {
-            if (routeOutcomes[i].nodeId === req.nodeId && routeOutcomes[i].accepted) {
-              routeOutcomes[i] = { nodeId: req.nodeId, accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' };
+            if (routeOutcomes[i].nodeId === nid && routeOutcomes[i].accepted) {
+              routeOutcomes[i] = { nodeId: nid, accepted: false, deferred: true, reason: 'depth_contracted_beyond_budget' };
               break;
             }
           }

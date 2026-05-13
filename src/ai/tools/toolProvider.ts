@@ -769,36 +769,6 @@ class ToolHandler {
         }
       }
 
-      if (resultGraph.notes?.length) {
-        const userNoteIds = new Set((input.notes ?? []).map(n => (n as { node_id: string }).node_id));
-        const resolvedSet = new Set(resolvedNodeIds);
-        const autoNotes: Array<{ node_id: string; text: string }> = [];
-        for (const { nodeId, summary } of resultGraph.notes) {
-          if (resolvedSet.has(nodeId) && !userNoteIds.has(nodeId) && summary) {
-            autoNotes.push({ node_id: nodeId, text: summary });
-          }
-        }
-        if (autoNotes.length > 0) input.notes = [...(input.notes ?? []), ...autoNotes];
-      }
-
-      if (resultGraph.suggested_labels?.length && input.sections?.length) {
-        const hasNodeIds = input.sections.some(s => s.node_ids && s.node_ids.length > 0);
-        if (!hasNodeIds) {
-          const stripNum = (s: string) => s.replace(/^\d+[\.\s]+/, '').trim();
-          const labelToNodeIds = new Map<string, string[]>();
-          for (const sl of resultGraph.suggested_labels) {
-            if (!sl.text) continue;
-            const label = stripNum(sl.text);
-            if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, []);
-            labelToNodeIds.get(label)!.push(sl.node_id);
-          }
-          input.sections = input.sections.map(sec => {
-            const ids = labelToNodeIds.get(stripNum(sec.label));
-            return ids?.length ? { ...sec, node_ids: ids } : sec;
-          });
-        }
-      }
-
       this.logger.debug(`presentResult section[0] preview: ${trunc(input.sections?.[0]?.text ?? '(empty)', 200)}`);
 
       // Auto-fix AI output artifacts (newline unescaping, length truncation) before assembly.
@@ -859,6 +829,8 @@ class ToolHandler {
         const existingNotes = new Map((resultGraph.notes ?? []).map(n => [n.nodeId, n]));
         for (const n of validation.notes) existingNotes.set(n.node_id, { nodeId: n.node_id, summary: n.text });
         resultGraph.notes = Array.from(existingNotes.values());
+      } else {
+        resultGraph.notes = validation.notes.map(n => ({ nodeId: n.node_id, summary: n.text }));
       }
       // B-1: persist the synthesized body fields onto resultGraph so `GET /state` carries
       // the full description, not just topology + suggested_*. Pre-fix these fields were
