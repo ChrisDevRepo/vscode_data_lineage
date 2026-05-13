@@ -507,12 +507,12 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     '# Column Trace: active',
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    'SM behavior is unchanged in CT: keep the same per-hop neighbor decisions (`route_requests` / `prune_neighbors`) as non-CT.',
-    'CT adds column tracking only.',
-    'PRIMARY job this hop: for non-prune verdicts, fill `column_flow` — structural provenance for each active column.',
+    'CT uses a column-first contract.',
+    'PRIMARY job this hop: fill `column_flow` — structural provenance for each active column.',
     'SUPPORTING job: fill `sections[].text` — business/technical context explaining WHY the column flows this way.',
     'For mission-critical contributors, add concrete `route_requests` sub-questions to continue the column chain.',
     'Optional: add extra sub-questions for non-core neighbors only when they may still affect the mission outcome.',
+    'CT prune commands are disabled: do not use `verdict=prune` or `prune_neighbors`.',
     '',
     '`column_flow` and `sections[]` are separate fields.',
     '`column_trace_capture` writes `column_flow`; business/technical captures write `sections[]`.',
@@ -531,7 +531,7 @@ export function buildToolUsageBlock(): string {
     '## Tool Constraints',
     '',
     'Use `lineage_submit_findings` for active hops with classification-locked sections.',
-    'Route mission-relevant neighbors via `route_requests`; use `prune_neighbors` for proven out-of-scope neighbors.',
+    'Route mission-relevant neighbors via `route_requests` with concrete verification questions.',
   ].join('\n');
 }
 
@@ -575,7 +575,7 @@ export function buildMissionBriefBlock(brief: string, question: string): string 
  * THIS hop — removing ambiguity about which segment is active.
  *
  * When CT is active, a `<column_trace>` block is appended with the binary
- * map-or-prune decision gate and a tip to call `lineage_get_neighbor_columns`
+ * map-or-pass decision gate and a tip to call `lineage_get_neighbor_columns`
  * for upstream column inspection. When prior-hop edges exist, a `<lineage_questions>`
  * block follows labelled as PRIMARY follow-up (more important than the AI's own sub_question).
  *
@@ -606,7 +606,8 @@ export function buildCurrentTaskBlock(
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
       `    Per column — binary decision:`,
       `      → Interacts with this node: fill column_flow (out_col + contributors + role). Route upstream.`,
-      `      → Does not interact:        verdict=prune. Omit column_flow.`,
+      `      → Does not interact:        verdict=pass. Omit column_flow and avoid non-essential routes.`,
+      `    CT prune commands are disabled. Non-contributor hops are handled by engine-side auto-prune.`,
       `    To inspect upstream column schemas before declaring contributors: call lineage_get_neighbor_columns.`,
       `    Writer procedures: out_col = column name in the target table (same as writes_to.col). Set writes_to. Role: formula/case/etc for computed expressions; rename for direct pass-through.`,
       `  </column_trace>`,

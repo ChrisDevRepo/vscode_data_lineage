@@ -22,7 +22,7 @@ Prompt assembly is now phase-first in TS:
 
 - `buildGeneralSystemPrompt(...)` - shared system baseline.
 - `buildPhasePrompt(phase, ctx)` - canonical static protocol per phase (`discover` / `active` / `synthesis` / `completed`).
-- `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning, CT anchor). Canonical home for pruning-specific guidance.
+- `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning contracts, CT anchor). BB and CT variants are separated here; CT explicitly disables AI prune commands.
 - `resolveStagePrompt(...)` - YAML template injection and gating.
 - Dynamic active-only blocks:
   - `buildCurrentTaskBlock(...)`
@@ -128,8 +128,9 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 
 - Verdict enum fixed: `analyze | pass | prune`.
 - `sections[]` count/angles are locked by classification (`submitFindingsRules.ts`).
-- For CT, non-prune findings require `column_flow` (`column_flow_required` on violation).
-- SM behavior is shared across BB and CT: neighbor decisions still use `route_requests` / `prune_neighbors`; CT adds column lineage continuity only.
+- For CT, every finding requires `column_flow` (`column_flow_required` on violation).
+- In CT, AI prune commands are disabled: `verdict='prune'` and `prune_neighbors` reject with `ct_prune_forbidden`. Use `verdict='pass'` for non-contributor hops.
+- CT neighbor decisions are route-or-pass (`route_requests` only). `prune_neighbors` remains a BB-only AI command.
 - Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.
 
 ### `lineage_present_result`

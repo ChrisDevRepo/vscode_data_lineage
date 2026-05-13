@@ -1,7 +1,7 @@
 /**
  * Unit tests for `column_flow` validation and CT-mode guards in NavigationEngine.
  *
- * Covers: column_flow_required, prune exemption, out_col/from_node/from_col
+ * Covers: column_flow_required, CT prune rejection, out_col/from_node/from_col
  * structural rejection, edge accumulation, filter_only exclusion,
  * activeModeOf CT discriminator, and supplementAgenda CT propagation.
  */
@@ -80,7 +80,7 @@ function ctEngine(targetColumns = ['amount']) {
   assert('error' in result && result.error === 'column_flow_required', 'column_flow_required on pass');
 }
 
-// ── Test 3: prune is allowed without column_flow in CT mode ──
+// ── Test 3: CT rejects AI prune verdicts ──
 {
   const engine = ctEngine();
   const result = engine.submitFindings({
@@ -89,9 +89,24 @@ function ctEngine(targetColumns = ['amount']) {
     summary: 'pruned',
     verdict: 'prune',
   });
-  // prune on the origin node is rejected (origin cannot be pruned — it would orphan itself)
-  // so we check for any error that is NOT column_flow_required
-  assert(!('error' in result && result.error === 'column_flow_required'), 'prune does not trigger column_flow_required');
+  assert('error' in result && result.error === 'ct_prune_forbidden', 'CT rejects verdict=prune');
+}
+
+// ── Test 3b: CT rejects prune_neighbors in submit_findings ──
+{
+  const engine = ctEngine(['amount']);
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{
+      out_col: 'amount',
+      contributors: [{ from_node: 'base_table', from_col: 'raw_amount', role: 'formula' as const }],
+    }],
+    prune_neighbors: ['base_table'],
+  });
+  assert('error' in result && result.error === 'ct_prune_forbidden', 'CT rejects prune_neighbors');
 }
 
 // ── Test 4: out_col not in active_columns → route_validation_failed ──

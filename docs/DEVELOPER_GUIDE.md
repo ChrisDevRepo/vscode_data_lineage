@@ -123,6 +123,11 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 
 **Completed follow-up intent split.** In completed phase, treat follow-ups as either (A) refine existing graph or (B) start a new trace. Route A uses `lineage_present_result` (relabel/regroup via `sections[]`; caption updates via `notes[]`; graph edits via `prune_node_ids` / `add_node_ids`). Route B uses `lineage_start_exploration` for new origin/scope semantics; engine routing decides retrace vs fresh discovery.
 
+**Closed-graph enforcement.** The final result must stay connected from `originNodeId`. Implementation uses one topology guard pattern (BFS reachability from origin) across:
+- SM prune commit paths (BB `verdict='prune'` + BB `prune_neighbors`, CT auto-prune shaping) before mutating/rematerializing topology.
+- `NavigationEngine.getResult()` (reachable-only `fullNodes`; disconnected slots filtered out).
+- `lineage_present_result` follow-up topology edits (`add_node_ids` / `prune_node_ids`) — disconnected updates are rejected.
+
 Low-risk diagnostics added for follow-up routing:
 - `fromFollowupDeferredTriggerThisTurn` marks turns expanded from deferred follow-up trigger text.
 - completed-phase warning log fires when that trigger flow attempts fresh `start_exploration` with `origin` and no `supplement`.
@@ -137,7 +142,7 @@ Low-risk diagnostics added for follow-up routing:
 | `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract; routes mission-relevant neighbors via `route_requests` (pruning specifics are SM-owned). |
 | `buildSynthesisPrompt` | `prompts.ts` | Archive lift + assembly + intro/closing anchoring. |
 | `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
-| `buildSmProtocol(targetColumns?, classification)` | `smPrompts.ts` | Active SM protocol (verdict + sections + badges + routing + pruning); CT adds column protocol. Pruning uses `get_neighbor_columns` for lightweight neighbor inspection before deciding to prune. |
+| `buildSmProtocol(targetColumns?, classification)` | `smPrompts.ts` | Active SM protocol (verdict + sections + badges + routing/prune contracts). BB retains prune guidance; CT is route-or-pass with AI prune commands disabled and mandatory `column_flow`. |
 | `buildModeBlock(targetColumns?, classification)` | `smPrompts.ts` | Compatibility wrapper delegating to `buildSmProtocol(...)`. |
 | `buildColumnAspectPrompt` | `prompts.ts` | CT protocol block — two-channel contract, role table, terminal source rules. Injected into stable system prompt when CT is active. |
 | `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. Renders accumulated `ColumnEdge[]` as a directed edge list so `present_result` anchors to the traced path. |
@@ -226,7 +231,7 @@ node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson \
 | `--growth` | Per-round context size + growth % (flags runaway rounds >50%) |
 | `--tool-bloat` | Tool result payload sizes — avg/max chars |
 | `--detail-metrics` | Badge/caption Zod limit scan, math violations, response length |
-| `--ct` | Column tracing session analysis: per-hop flow coverage, CT-specific rejections (`column_flow_required`, `ct_requires_sm`), column propagation edges |
+| `--ct` | Column tracing session analysis: per-hop flow coverage, CT-specific rejections (`column_flow_required`, `ct_prune_forbidden`, `ct_requires_sm`), column propagation edges |
 | `--report` | Full round-by-round narrative including prompt excerpts |
 | `--sizes` | Per-round message composition: system / history / tool_results / prompt |
 | `--timeline` | Chronological event dump |

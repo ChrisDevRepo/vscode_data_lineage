@@ -28,7 +28,7 @@ import {
   SubmitFindingsInputSchema,
   GetScopeBundleInputSchema,
   GetNeighborColumnsInputSchema,
-  autoFixPresentResult, validatePresentResult, orderAndAssemble,
+  autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
   type PresentResultInput,
 } from '../tools/tools';
 import { edgeApiType } from '../infra/aiPresenter';
@@ -717,6 +717,23 @@ class ToolHandler {
         const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
         resolvedEdges = pruned.edges;
+      }
+
+      // Closed-graph invariant: completed-phase add/prune edits must keep every
+      // node connected to the original origin node in the rendered view.
+      if (resultGraph.originNodeId) {
+        const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
+        if (disconnected.length > 0) {
+          const failure = {
+            success: false,
+            errors: [
+              `Closed-graph invariant failed: ${disconnected.slice(0, 5).map(id => `\`${id}\``).join(', ')} ${disconnected.length === 1 ? 'is' : 'are'} disconnected from origin \`${resultGraph.originNodeId}\`.`,
+              'Adjust add_node_ids / prune_node_ids so the view remains connected from the starting node.',
+            ],
+          };
+          this.notePresentResultFailure(sess, failure);
+          return this.logAndReturn('present_result', failure, input);
+        }
       }
 
       if (resultGraph.notes?.length) {

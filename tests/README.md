@@ -40,10 +40,11 @@ tests/
 │   │
 │   │  — SM / NavigationEngine invariants —
 │   ├── navigation-engine.test.ts          # Lifecycle, tally, route rejection, archive counter, complete-flag contract
-│   ├── navigation-engine-cascade.test.ts  # Cascade-prune + viewPrune.prunePreserveOnly
+│   ├── navigation-engine-cascade.test.ts  # Cascade-prune + connector-closure guard + viewPrune.prunePreserveOnly
 │   ├── navigation-engine-bipartite.test.ts # Bipartite agenda rule
 │   ├── navigation-engine-supplement.test.ts # Supplement-agenda flow
-│   ├── navigation-engine-synthesis-regression.test.ts # Keeps analyzed slots grounded for synthesis after prune-neighbor attempts
+│   ├── navigation-engine-synthesis-regression.test.ts # Reject diagnostics + synthesis grounding invariants
+│   ├── present-result-closure.test.ts     # present_result add/prune closed-graph validation helper
 │   ├── column-flow-validation.test.ts     # CT column_flow validation
 │   │
 │   │  — Boundary guards (Zod / policy / state) —

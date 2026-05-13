@@ -133,7 +133,7 @@ Rounded boxes are bodied (agenda-eligible); the square box is the passive table.
 | `get_neighbor_columns` | — | ✓ | — | — | Columns + types + FKs for direct neighbours (no DDL); used for prune decisions |
 | `detect_graph_patterns` | ✓ | — | — | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
 | `start_exploration` | ✓ | — | — | ✓ (supplement) | Hand off to the state machine |
-| `submit_findings` | — | ✓ | — | — | Submit hop analysis + route + prune. Required mode. |
+| `submit_findings` | — | ✓ | — | — | Submit hop analysis + route decisions. BB allows AI prune commands; CT enforces route-or-pass (AI prune commands disabled). Required mode. |
 | `present_result` | — | — | ✓ | ✓ | Author the final report (sections, summary, highlights). |
 
 ## Discovery escalation contract
@@ -161,7 +161,11 @@ If the user's intent is unclear between chat and graph, discovery answers in cha
 
 There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) when `targetColumns` is set. SM is gate-approved before the first hop runs.
 
-**CT parity contract.** CT does not introduce a second routing model. BB and CT share the same hop contract (`route_requests` / `prune_neighbors` + deferred out-of-scope routes). CT adds one requirement only: non-prune hops must submit `column_flow` so the column chain remains continuous.
+**CT contract (current).** CT keeps the same engine/hop loop as BB, but changes AI action surface:
+- CT is column-first: every hop must submit `column_flow`.
+- CT AI prune commands are disabled (`verdict='prune'`, `prune_neighbors`) and reject with `ct_prune_forbidden`.
+- CT non-contributor handling is `verdict='pass'`; structural contraction is engine-side CT auto-prune for nodes that dequeue with no active tracked columns.
+- BB keeps full prune semantics (`verdict='prune'`, `prune_neighbors`), guarded by origin-closure.
 
 | Dimension | SM (sliding-memory) |
 |-----------|---------------------|
@@ -176,7 +180,7 @@ There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) w
 Progress semantics:
 - `Hop X / Y` reports hop progress.
 - `Inspecting N neighbors for pruning…` is rendered as a pruning-progress cue from current SM state in the participant loop (single-number UI preserved).
-- In CT, branches with no tracked contributor columns contract out of the column chain; explicit prune remains available but is secondary to column-flow-driven relevance.
+- In CT, branches with no tracked contributor columns contract out of the column chain via engine auto-prune; AI prune commands are disabled.
 
 The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
@@ -302,19 +306,26 @@ Three verdicts:
 
 The orphan guard (`wouldOrphanNotedNode`) is content-blind. Engine guards are topological only — content judgement lives in the AI and the prompts that frame it.
 
+Prune source split (important for debugging):
+- **BB AI prune**: explicit `submit_findings.prune_neighbors[]` or `verdict: "prune"`; mutates `removedSet`.
+- **CT AI prune**: forbidden (`ct_prune_forbidden`) — no prune mutation is committed.
+- **SM CT auto-prune**: hop dequeue with no active tracked columns (`[CT] auto-prune ... no active columns`); recorded in `ctPrunedNodeIds`.
+If CT is active and `ctPrunedNodeIds` is empty, no prune was committed in that CT path.
+
 ## Mechanical enforcement
 
 The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`, but the ACTIVE-mode toolset has ≥ 2 tools (`submit_findings + get_neighbor_columns`), so per VS Code LM rules `Required` always falls back to `Auto`. The contract is enforced in `lineageParticipant.runHopLoop` by a toolless-drift corrective: when the engine is `awaiting_findings` and the AI emits free-form text instead of a tool call, a mode-specific corrective user message is pushed onto the envelope and the loop continues. `MAX_ROUNDS` is the safety net for repeated drift.
 
-- **Speed via verbs, not adjectives.** `verdict: "prune"` drains the agenda quickly → synthesis fires. No silent text bail.
+- **Speed via verbs, not adjectives.** In BB, `verdict: "prune"` drains the agenda quickly → synthesis fires. In CT, use `verdict: "pass"` + route contributors; non-contributor branches are contracted by engine auto-prune.
 - **ACTIVE tool palette** — BB/CT exposes `submit_findings + get_neighbor_columns`; synthesis is a separate later turn after the agenda drains. Single source: [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 - **Repeat-Reject Guard** — [`src/ai/participant/repeatRejectGuard.ts`](../src/ai/participant/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
 - **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here" — `complete: true` is silently ignored in SM mode.
 - **Classification gate at session lock-in.** `start_exploration` requires `classification` (`business` | `technical` | `both`); missing or invalid values are rejected at the Zod boundary — there is no engine fallback. The tool-param description in `package.json` biases the AI toward `business` for ambiguous intent (`technical` only for explicit perf/index/tuning asks; `both` only for explicit "both angles" requests). The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification by [`src/ai/interaction/rules/submitFindingsRules.ts`](../src/ai/interaction/rules/submitFindingsRules.ts); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.
 - **Two-stage template gate** — `STAGE_BY_KEY` (phase routing) and `CLASSIFICATION_GATED` (per-classification filter) in [`templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts) decide which YAML keys ship per stage. `closing` carries an additional `slotCount >= 5` gate. No template body for an un-fired stage / classification ever reaches the model.
 - **Identifier-match contract on capture.** `submit_findings` rejects with `focus_subject_mismatch` when any captured `section.text` opens by naming a different scope node than the declared `focus_node_id`. Mechanical scan of the first 200 chars; not a content-quality judgement.
-- **Synthesis grounding guard.** `getResult()` keeps analyzed `detail_slots[].nodeId` grounded in `fullNodes` even when later `prune_neighbors` suggestions target already-analyzed nodes. This prevents `present_result.sections[].node_ids` unknown-ID drift.
-- **Prune-neighbor reject diagnostics.** Invalid `prune_neighbors` entries (`unknown_node`, `origin_forbidden`, `already_visited`, `already_analyzed`) emit structured debug rejects (`[AI] [Reject] ...`).
+- **Closed-graph invariant (origin-closure).** `getResult()` returns only nodes reachable from `originNodeId` under the active `removedSet` (+ CT scope filter). Disconnected analyzed slots are dropped from `detail_slots` at result time instead of force-inserting disconnected nodes into `fullNodes`.
+- **Shared prune closure guard.** Prune paths use one BFS-based guard: before committing prune mutations, the engine verifies required nodes (already analyzed + current focus when relevant) remain reachable from origin. This guard is topology-only (content-blind), DRY, and shared across all prune-commit paths (BB verdict prune, BB `prune_neighbors`, and CT auto-prune result shaping).
+- **Prune-neighbor reject diagnostics.** Invalid `prune_neighbors` entries (`unknown_node`, `origin_forbidden`, `already_visited`, `already_analyzed`, `would_orphan_noted`) emit structured debug rejects (`[AI] [Reject] ...`).
 - **Gate detail always rendered** — when the session is `awaiting_gate` at finalizer time, `dispatchExit` rebuilds the detail from `engine.getScopeSummary()` (rendered through `renderScopeSummaryMd`) if no `gate`-exit fired this turn. Refine narration ("I'll remove the views…") with no tool call still shows the current scope tree above the buttons.
 - **Synthesis pre-tool prose is shape-bounded.** The streamer's prose-gate (in `lineageParticipant.handleChatRequest`) surfaces synthesis prose only after the first `tool_use` part is observed; pre-tool prose is suppressed because the rendered chat narrative comes after the `present_result` call. A `## ` heading-slice on synthesis prose strips the model's planning preamble ("Now I have all slots. Assembling the final report.") so it never welds onto the synthesised answer.
 
@@ -325,9 +336,9 @@ These are observed in production logs; the mitigations are real code paths, not 
 | Mode | Symptom | Mitigation |
 |------|---------|------------|
 | **Multiple `start_exploration` storm** | After a `complete_rejected`, the AI emits multiple `start_exploration` calls in one LM round and wipes the accumulated archive. | Hard guard in `toolProvider.ts`: rejects calls 2..N within one LM round with `{error:'parallel_call_forbidden', hint}`. Prose hints alone are not binding. |
-| **DDL overflow** | One hop returns a 50K-char tool result (verbose log SP) and the next hop's input jumps from ~7K to ~17K tokens. | Full DDL is shipped per hop (no truncation, no refetch — simpler contract). On a > 500K-char mega-proc the provider's token limit surfaces naturally; the user prunes via `prune_neighbors` or refines the start scope. |
+| **DDL overflow** | One hop returns a 50K-char tool result (verbose log SP) and the next hop's input jumps from ~7K to ~17K tokens. | Full DDL is shipped per hop (no truncation, no refetch — simpler contract). On a > 500K-char mega-proc the provider's token limit surfaces naturally; in BB the user can prune via `prune_neighbors`, in CT they route only contributors and rely on engine auto-prune + narrower scope. |
 | **Synthesis on empty archive** | Final round receives the synthesis prompt but no archive slots — output is truncated with no `present_result`. | Detect empty-archive synthesis and emit a user-facing warning + re-run suggestion. |
-| **Synthesis unknown node_ids after prune** | `present_result` rejects section node IDs as unknown even though those nodes were analyzed earlier. | Keep analyzed slot IDs in final result graph (`detail_slots ∪ reachable ∪ origin`) and reject invalid prune-neighbor requests with explicit debug reasons. |
+| **Disconnected nodes after prune** | CT/BB can show disconnected nodes (orphans) after connector prune operations. | Enforce origin-closure in three places: (1) prune commit guard in SM, (2) `getResult()` reachable-only final node set, (3) `present_result` add/prune validation rejects disconnected topology updates. |
 
 ## State diagram — navigation engine
 
@@ -401,7 +412,7 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Discovery** | Default chat state — AI uses catalog tools and answers in chat. Cannot render a graph or sustain large-BFS analysis; both require SM. |
 | **SM (Sliding-Memory)** | Gate-approved hop-by-hop execution. Triggered by visual graph-render request, column tracing, or explicit deeper-analysis intent. Memory wiped each hop; engine owns termination. |
 | **BB** (Blackboard) | Default SM analysis mode. Used when no target columns are specified. |
-| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus the CT addition: `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every non-prune verdict; engine rejects with `column_flow_required` if omitted. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
+| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus mandatory `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every CT finding; engine rejects with `column_flow_required` if omitted. AI prune commands are disabled in CT (`ct_prune_forbidden` for `verdict='prune'` / `prune_neighbors`); non-contributors use `verdict='pass'` and engine-side CT auto-prune contracts no-column branches. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |
 | **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours. |
 | **Detail Archive** | Per-node full `analysis` text, written each hop, shipped only at synthesis. |

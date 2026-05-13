@@ -20,6 +20,12 @@ const BLOCK = {
     '- prune: Utility node (logging/error), or downstream consumer that is topologically adjacent but does not contribute to the stated question.',
     '- prune_neighbors: When the DDL of the current focus node reveals adjacent tables that are filter-only (used in a JOIN ON or IN subquery, with no columns selected from them that contribute to the mission), add those table ids to `prune_neighbors` in the same submit_findings. Example: a calendar table joined only to filter by fiscal year; a region lookup joined only to restrict which rows are imported.',
   ].join('\n'),
+  verdictCategoriesCt: [
+    '## Verdict Protocol',
+    '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
+    '- pass: Node is pure wire (SELECT *, synonym) or does not materially transform the tracked columns.',
+    '- CT policy: AI prune commands are disabled (`verdict=prune`, `prune_neighbors`). Engine handles non-contributor contraction/auto-prune from column context.',
+  ].join('\n'),
 
   /**
    * Section-shape contract — points at the YAML capture templates as the
@@ -67,6 +73,19 @@ const BLOCK = {
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
     '- Need structural evidence before pruning a neighbor? Call `lineage_get_neighbor_columns({ids:["..."]})` for current-hop direct neighbors.',
   ].join('\n'),
+  hopDecisionContractCt: [
+    '## Neighbor Decision Contract (Current Hop Only)',
+    'CT is column-first: route only contributors needed to continue the active column chain.',
+    '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
+    '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only — do not route from it.',
+    '- Emit explicit `verdict` for the focus node every hop (`analyze` or `pass`).',
+    '- For neighbors in CT, make decisions with current-hop IDs only:',
+    '  - route mission-relevant contributors via `route_requests` using concrete verification sub-questions.',
+    '  - do not emit prune commands in CT; leave non-contributors unrouted.',
+    '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
+    '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
+    '- Need structural evidence before routing a neighbor? Call `lineage_get_neighbor_columns({ids:["..."]})` for current-hop direct neighbors.',
+  ].join('\n'),
 } as const;
 
 
@@ -111,13 +130,13 @@ export function buildSmProtocol({
   sections.push('# Exploration Mode: SLIDING MEMORY');
   sections.push(
     '',
-    BLOCK.verdictCategories,
+    isColumnAspectActive ? BLOCK.verdictCategoriesCt : BLOCK.verdictCategories,
     '',
     BLOCK.buildSectionsShape(classification),
     '',
     BLOCK.badgeAndNote,
     '',
-    BLOCK.hopDecisionContract,
+    isColumnAspectActive ? BLOCK.hopDecisionContractCt : BLOCK.hopDecisionContract,
   );
 
   if (isColumnAspectActive) {

@@ -96,6 +96,36 @@ export function wouldOrphanNotedNode(
 }
 
 /**
+ * Returns the first required node that would become disconnected from origin after removals.
+ *
+ * @remarks
+ * Shared closed-graph guard for prune operations. Any node in `requiredNodeIds` that
+ * is not removed must stay reachable from the origin.
+ *
+ * @param graph - The graphology instance to check.
+ * @param originId - Exploration origin node id.
+ * @param removedSet - Node ids treated as removed.
+ * @param requiredNodeIds - Nodes that must remain connected from origin.
+ * @param scope - Optional traversal scope restriction.
+ * @returns First disconnected required node id, otherwise `null`.
+ */
+export function firstDisconnectedRequiredNode(
+  graph: Graph,
+  originId: string,
+  removedSet: ReadonlySet<string>,
+  requiredNodeIds: ReadonlySet<string>,
+  scope?: ReadonlySet<string>,
+): string | null {
+  if (requiredNodeIds.size === 0) return null;
+  const reachable = bfsReachable(graph, originId, removedSet, undefined, scope);
+  for (const id of requiredNodeIds) {
+    if (removedSet.has(id)) continue;
+    if (!reachable.has(id)) return id;
+  }
+  return null;
+}
+
+/**
  * Generates a depth map for a directed graph starting from an origin node.
  *
  * @remarks

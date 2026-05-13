@@ -148,11 +148,20 @@ const HopFindingSchema = z.object({
   focus_node_id: z.string(),
   /**
    * One section per fired `*_capture` template. Length 1 (`business` / `technical`
-   * classification) or 2 (`both`). Verdict=prune findings may submit length 0
-   * (no analysis to record).
+   * classification) or 2 (`both`). BB prune findings may submit length 0
+   * (no analysis to record). In CT mode, prune commands are rejected by engine
+   * (`ct_prune_forbidden`), so `column_flow` + sections remain expected.
    */
   sections: z.array(CapturedSectionSchema).max(2),
   summary: z.string().max(500),
+  /**
+   * Verdict vocabulary is shared at schema level for BB and CT sessions.
+   *
+   * @remarks
+   * Runtime policy is mode-specific in `NavigationEngine.submitFindings`:
+   * - BB: `analyze | pass | prune`
+   * - CT: `analyze | pass` only (`prune` rejects with `ct_prune_forbidden`)
+   */
   verdict: z.enum(['analyze', 'pass', 'prune']),
   /**
    * Optional list of neighbors to queue for the next hops. Each entry's
@@ -172,6 +181,13 @@ const HopFindingSchema = z.object({
     question: z.string(),
     columns: z.array(z.string()).optional(),
   })).optional(),
+  /**
+   * Optional BB-only neighbor prune list (current-hop neighbors).
+   *
+   * @remarks
+   * In CT mode this field is rejected with `ct_prune_forbidden`; CT uses
+   * route-or-pass plus engine-side auto-prune for no-column branches.
+   */
   prune_neighbors: z.array(z.string()).optional(),
   complete: z.boolean().optional(),
   badge_label: z.string().max(50).optional(),
@@ -1447,6 +1463,45 @@ export function validatePresentResult(
     badges: assembledBadges ?? [],
     notes: input.notes ?? [],
   };
+}
+
+/**
+ * Finds nodes that are disconnected from the given origin inside a result view.
+ *
+ * @remarks
+ * Uses undirected connectivity to match lineage-closure semantics used by the SM.
+ *
+ * @param nodeIds - Nodes currently in the candidate result view.
+ * @param edges - Edges currently in the candidate result view.
+ * @param originNodeId - Origin node that must reach all nodes in the view.
+ * @returns Sorted list of disconnected node ids. Empty when closed.
+ */
+export function findDisconnectedViewNodes(
+  nodeIds: ReadonlyArray<string>,
+  edges: ReadonlyArray<[string, string, string]>,
+  originNodeId: string,
+): string[] {
+  if (!originNodeId || !nodeIds.includes(originNodeId)) return [];
+  const nodeSet = new Set(nodeIds);
+  const adj = new Map<string, Set<string>>();
+  for (const id of nodeIds) adj.set(id, new Set<string>());
+  for (const [src, tgt] of edges) {
+    if (!nodeSet.has(src) || !nodeSet.has(tgt)) continue;
+    adj.get(src)!.add(tgt);
+    adj.get(tgt)!.add(src);
+  }
+  const seen = new Set<string>([originNodeId]);
+  const queue: string[] = [originNodeId];
+  let idx = 0;
+  while (idx < queue.length) {
+    const id = queue[idx++];
+    for (const nid of adj.get(id) ?? []) {
+      if (seen.has(nid)) continue;
+      seen.add(nid);
+      queue.push(nid);
+    }
+  }
+  return nodeIds.filter(id => !seen.has(id)).sort();
 }
 
 /**

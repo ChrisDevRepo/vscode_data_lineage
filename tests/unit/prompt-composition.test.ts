@@ -68,11 +68,14 @@ async function runTests() {
     assert(sm.includes('Section Submission'), 'SM includes section submission contract');
     assert(sm.includes('Metadata Protocol'), 'SM includes metadata contract');
     assert(sm.includes('Neighbor Decision Contract (Current Hop Only)'), 'SM includes canonical hop decision contract');
+    assert(sm.includes('prune_neighbors'), 'SM BB keeps prune_neighbors guidance');
 
     const smCt = buildSmProtocol({ classification: 'both', targetColumns: ['TotalRevenue'] });
     assert(smCt.includes('Column Trace: active'), 'SM CT includes CT stable anchor');
     assert(smCt.includes('column_flow'), 'SM CT includes column_flow contract');
-    assert(smCt.includes('This contract is identical in SM BB and SM CT'), 'SM contract parity is explicit');
+    assert(smCt.includes('CT prune commands are disabled'), 'SM CT explicitly disables prune commands');
+    assert(!smCt.includes('prune non-relevant neighbors via `prune_neighbors`'), 'SM CT removes prune_neighbors guidance');
+    assert(!smCt.includes('→ Does not interact:        verdict=prune. Omit column_flow.'), 'SM CT removes map-or-prune guidance');
   }
 
   console.log('\n── active assembly redundancy guard ──');

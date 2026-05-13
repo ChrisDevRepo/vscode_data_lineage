@@ -157,4 +157,62 @@ const graph = makeGraph(nodes, edges);
   assert(result2.nodeIds.length === 3, 'no-op nodeIds');
 }
 
+// Test 4: prune_neighbors cannot remove an unvisited connector that would break origin closure
+{
+  // Topology:
+  // origin(proc) -> bridge(table) -> p1(proc), p2(proc)
+  // bridge is non-bodied (never visited directly), but removing it would disconnect p1 from origin.
+  const nodes2: LineageNode[] = [
+    { id: 'origin2', schema: 'dbo', name: 'origin2', type: 'procedure' },
+    { id: 'bridge', schema: 'dbo', name: 'bridge', type: 'table' },
+    { id: 'p1', schema: 'dbo', name: 'p1', type: 'procedure' },
+    { id: 'p2', schema: 'dbo', name: 'p2', type: 'procedure' },
+  ];
+  const edges2: Array<[string, string]> = [
+    ['origin2', 'bridge'],
+    ['bridge', 'p1'],
+    ['bridge', 'p2'],
+  ];
+  const model2: DatabaseModel = {
+    nodes: nodes2,
+    edges: edges2.map(([s, t]) => ({ source: s, target: t, type: 'SELECT' })),
+    schemas: ['dbo'],
+    dbPlatform: 'SQL Server',
+  };
+  const graph2 = makeGraph(nodes2, edges2);
+  const logs: string[] = [];
+  const engine2 = new NavigationEngine(model2, graph2, (level, msg) => logs.push(`[${level}] ${msg}`), {});
+
+  engine2.init({
+    origin: 'origin2',
+    question: 'connector prune guard',
+    direction: 'downstream',
+    depth: 5,
+  });
+
+  let ctx2 = engine2.getHopContext();
+  assert(ctx2 && ctx2.focus_node && ctx2.focus_node.id === 'origin2', 'connector test starts at origin2');
+  engine2.submitFindings({
+    focus_node_id: 'origin2',
+    sections: [{ angle: 'business' as const, text: 'root' }],
+    summary: 'root',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'bridge', question: 'trace bridge branch' }],
+  });
+
+  ctx2 = engine2.getHopContext();
+  assert(ctx2 && ctx2.focus_node && ctx2.focus_node.id === 'p1', 'connector test reaches p1 through non-bodied bridge');
+  engine2.submitFindings({
+    focus_node_id: 'p1',
+    sections: [{ angle: 'business' as const, text: 'p1' }],
+    summary: 'p1',
+    verdict: 'analyze',
+    prune_neighbors: ['bridge'],
+  });
+
+  const state2 = engine2.toJSON();
+  assert(!state2.removedSet.includes('bridge'), 'connector bridge is not pruned when it would break closure');
+  assert(logs.some(l => l.includes('reason=would_orphan_noted')), 'reject log includes reason=would_orphan_noted');
+}
+
 printSummary('Navigation Engine Cascade (Prune)');

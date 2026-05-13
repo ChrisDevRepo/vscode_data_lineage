@@ -17,7 +17,7 @@ import type { ColumnStore } from '../../engine/columnStore';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from '../tools/tools';
 import { edgeApiType } from '../infra/aiPresenter';
-import { bfsDepthMap, wouldOrphanNotedNode, bfsReachable, type LogFn } from '../sm/smGuards';
+import { bfsDepthMap, wouldOrphanNotedNode, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../sm/smGuards';
 import { trunc } from '../../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../infra/inputNormalization';
@@ -1196,6 +1196,11 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Processes the findings from a completed hop and adjusts the agenda.
    *
+   * @remarks
+   * CT mode is route-or-pass only. AI prune commands are rejected centrally with
+   * `ct_prune_forbidden`, and column continuity is enforced by requiring
+   * `column_flow` on every CT finding.
+   *
    * @param params - Submission details including focus, verdict, and routing data.
    * @returns Information summarizing the operation's outcome.
    */
@@ -1224,6 +1229,13 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (!focusId || !this.nodeMap.has(focusId)) {
       return { error: 'invalid_focus_node', got: focusId };
+    }
+    // CT is route-or-pass: AI prune commands are disabled by contract.
+    if (this._columnAspect && (finding.verdict === 'prune' || (finding.prune_neighbors?.length ?? 0) > 0)) {
+      return {
+        error: 'ct_prune_forbidden',
+        detail: 'CT mode forbids AI prune commands. Submit `column_flow` + `route_requests` as needed, or use verdict=\'pass\'.',
+      };
     }
 
     const acceptedNids = new Set<string>();
@@ -1302,9 +1314,9 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // CT contract: column_flow required for all non-prune verdicts when CT is active.
+    // CT contract: column_flow required for all findings when CT is active.
     // Echo-back pattern: name what was received + what is missing + binary decision gate + example.
-    if (this._columnAspect && finding.verdict !== 'prune') {
+    if (this._columnAspect) {
       if (!finding.column_flow || finding.column_flow.length === 0) {
         const cols = this._columnAspect.active_columns;
         const exCol = cols[0] ?? '<col>';
@@ -1313,7 +1325,7 @@ export class NavigationEngine implements IHopStateMachine {
           hint:
             `CT active — column_flow (PRIMARY task) is missing for [${cols.join(', ')}].\n` +
             `Your sections/summary/verdict were received and are correct — ADD column_flow alongside them.\n` +
-            `Binary decision: map the column to its upstream source, OR use verdict=prune.\n` +
+            `Binary decision: map the column to its upstream source, OR use verdict=pass.\n` +
             `Required format: column_flow:[{out_col:"${exCol}",contributors:[{from_node:"<node>",from_col:"<col>",role:"formula|rename|source|..."}]}]`,
         };
       }
@@ -1336,7 +1348,7 @@ export class NavigationEngine implements IHopStateMachine {
         // out_col must exist on the focus node when column metadata is available.
         // Procedures have no output-column metadata; size=0 skips the check.
         if (validFocusCols.size > 0 && !validFocusCols.has(entry.out_col.toLowerCase())) {
-          allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='prune'.` });
+          allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='pass' and do not route downstream from it.` });
           continue;
         }
 
@@ -1379,11 +1391,15 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // Explicitly prune adjacent neighbors requested by the AI.
+    // BB-only: explicitly prune adjacent neighbors requested by the AI.
     // Guardrail: never prune already-analyzed/visited nodes; synthesis must keep
     // slot node_ids grounded in the final result graph.
     if (finding.prune_neighbors && finding.prune_neighbors.length > 0) {
       const notedIds = new Set<string>(this.memory.notedNodeIds);
+      const requiredConnectedIds = new Set<string>(notedIds);
+      if (!prunable) requiredConnectedIds.add(focusId);
+      const stagedRemoved = new Set<string>(this.removedSet);
+      if (prunable) stagedRemoved.add(focusId);
       for (const nidRaw of finding.prune_neighbors) {
         const nid = nidRaw.toLowerCase();
         if (!this.nodeMap.has(nid)) {
@@ -1402,8 +1418,22 @@ export class NavigationEngine implements IHopStateMachine {
           this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=already_analyzed`);
           continue;
         }
+        const candidateRemoved = new Set<string>(stagedRemoved);
+        candidateRemoved.add(nid);
+        const disconnected = firstDisconnectedRequiredNode(
+          this.graph,
+          this.originNodeId!,
+          candidateRemoved,
+          requiredConnectedIds,
+          this.scopeNodeIds,
+        );
+        if (disconnected) {
+          this.log('debug', `[AI] [Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=would_orphan_noted disconnected=${disconnected}`);
+          continue;
+        }
         if (!prunedNeighborNids.has(nid)) {
           prunedNeighborNids.add(nid);
+          stagedRemoved.add(nid);
         }
       }
     }
@@ -1818,7 +1848,6 @@ export class NavigationEngine implements IHopStateMachine {
     const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, scopeForBfs);
     const finalNodeIds = new Set<string>(reachableNodeIds);
     finalNodeIds.add(this.originNodeId!);
-    for (const notedId of notedIds) finalNodeIds.add(notedId);
 
     const finalEdges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
@@ -1848,7 +1877,7 @@ export class NavigationEngine implements IHopStateMachine {
       }),
       edges: finalEdges,
       suggested_sections: sections,
-      detail_slots: mem.detail_slots,
+      detail_slots: mem.detail_slots.filter(slot => finalNodeIds.has(slot.nodeId)),
       columnAspect: this._columnAspect,
       ...(this._columnAspect ? { ctPrunedNodeIds: Array.from(this.ctAutoPrunedNodeIds) } : {}),
     };
