@@ -51,7 +51,7 @@ const BLOCK = {
   badgeAndNote: [
     '## Metadata Protocol',
     '1. BADGE: `badge_label` is a short semantic ROLE label — prefer 1-2 words; longer phrases acceptable only when no shorter form fits the role precisely. Use ROLE words: "Source", "Transform", "Staging", "Output", "Validation", "Aggregation", "Revenue Calc", "Price Adjustment", "Territory Load".',
-    '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins). They are mentioned in section text without their own badge.',
+    '   - SELECTIVITY: Skip `badge_label` for passthrough nodes (SELECT *, simple staging, lookup joins) unless a label materially improves answer clarity.',
     '   - SHARED ROLE: Nodes with the same role use the same label (for example `"Price Adjustment"`). Keep differences in section body text, not label text.',
     '   ❌ Step-count labels ("Step 1", "Step A", "Transform Step") — sections are auto-numbered; role labels only.',
     '2. NOTE: `note_caption` — quick user-facing preview sentence for this node. Keep it short and plain-language; put deep reasoning in `sections[].text`.',
@@ -71,6 +71,7 @@ const BLOCK = {
     '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
     '- Need structural evidence before pruning a neighbor? Call `lineage_get_neighbor_columns({ids:["..."]})` for current-hop direct neighbors.',
+    '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
   ].join('\n'),
   hopDecisionContractCt: [
     '## Neighbor Decision Contract (Current Hop Only)',
@@ -83,6 +84,7 @@ const BLOCK = {
     '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
     '- Need structural evidence before routing a neighbor? Call `lineage_get_neighbor_columns({ids:["..."]})` for current-hop direct neighbors.',
+    '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
   ].join('\n'),
 } as const;
 
@@ -160,7 +162,7 @@ export function buildSynthesisReminder(question: string): string {
     '## Synthesis Reminder — re-read before calling `lineage_present_result`',
     `- User question: "${question}"`,
     '- `sections[]` is REQUIRED — select nodes that directly answer the user question; omit nodes orthogonal to it. Write `text` for every section: if the question names specific identifiers, focus on detail that answers the question (formulas, column transformations, SQL predicates, data flows, join keys, source tables); if broad, draw from the full captured detail. You own the text — write it.',
-    '- GROUP along two orthogonal axes: (1) keep each captured slot\'s `angle` separate — a business section and a technical section remain individual entries; under `classification = both` this yields two parallel streams. (2) Within a single angle, nodes that share `badge_label` become one section (badge → `label`, every grouped node id → `node_ids[]`). Nodes with no `badge_label` must NOT receive their own section and must NOT be assigned any synthetic label — never write labels like "(unbadged)", "unlabeled", or similar. Include them only as inline references in the body text of the nearest thematically relevant section.',
+    '- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; `badge_label` is helper input only. Keep business/technical split only when it improves clarity. Nodes without `badge_label` may be placed in the most relevant section when materially useful.',
     '- Every badged node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.',
     '- Carry formulas and ⚠️ callouts only when they materially help answer the user question. Do not force formula/risk inclusion when no significant issue is present.',
     '- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases write the text — do not leave sections[] without text.',

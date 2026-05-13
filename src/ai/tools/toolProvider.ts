@@ -837,9 +837,11 @@ class ToolHandler {
         ...(resultGraph.columnAspect ? {
           columnAspect: {
             edges: resultGraph.columnAspect.edges.map(e => ({
-              hopNode: e.hop_node,
-              fromCol: e.from_col,
-              toCol: e.to_col,
+              hopNode:  e.hop_node,
+              fromNode: e.from_node,
+              toNode:   e.to_node,
+              fromCol:  e.from_col,
+              toCol:    e.to_col,
             })),
           },
         } : {}),

@@ -640,10 +640,17 @@ export function GraphCanvas({
     const m = new Map<string, { fromCol: string; toCol: string }[]>();
     const edges = activeAiMetadata?.columnAspect?.edges;
     if (!edges) return m;
+    const add = (nodeId: string, pair: { fromCol: string; toCol: string }) => {
+      const k = nodeId.toLowerCase();
+      if (!m.has(k)) m.set(k, []);
+      const arr = m.get(k)!;
+      if (!arr.some(p => p.fromCol === pair.fromCol && p.toCol === pair.toCol)) arr.push(pair);
+    };
     for (const e of edges) {
-      const key = e.hopNode.toLowerCase();
-      if (!m.has(key)) m.set(key, []);
-      m.get(key)!.push({ fromCol: e.fromCol, toCol: e.toCol });
+      const pair = { fromCol: e.fromCol, toCol: e.toCol };
+      add(e.fromNode, pair);
+      add(e.toNode,   pair);
+      add(e.hopNode,  pair); // covers writes_to procs where hopNode ≠ toNode
     }
     return m;
   }, [activeAiMetadata]);

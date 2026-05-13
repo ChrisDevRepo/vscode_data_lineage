@@ -1233,6 +1233,7 @@ if (flags.has('--detail-metrics')) {
   const MATH_RE_DM  = /(?<!\$)\$(?!\$)[A-Za-z@_\\][^$\n]{0,100}\$(?!\$)/g;
   const MATH_BLOCK_DOLLAR_RE = /\$\$[\s\S]*?\$\$/g;
   const MATH_FENCE_RE = /```math[\s\S]*?```/g;
+  const normalizeSectionLabel = (s) => String(s || '').replace(/^\d+[\.]?\s+/, '').trim().toLowerCase();
 
   // Per-round stats from TOOL_CALL events (each call recorded once, no history duplication)
   const ridStats = {};
@@ -1280,6 +1281,11 @@ if (flags.has('--detail-metrics')) {
   const allMathViolations = [];
   const mathFormatCounts = { block_dollar: 0, math_fence: 0 };
   const routeQuestionStats = { total: 0, generic: 0, concrete: 0 };
+  const labelStats = {
+    badgeHints: new Set(),
+    sectionLabels: new Set(),
+    presentCallsWithSections: 0,
+  };
 
   for (let i = 0; i < dmReqs.length; i++) {
     const req  = dmReqs[i];
@@ -1356,6 +1362,10 @@ if (flags.has('--detail-metrics')) {
 
   for (const tc of events.filter(e => e.ev === 'TOOL_CALL' && (e.tool || '').includes('submit_findings'))) {
     const routes = tc.input?.route_requests;
+    const badge = tc.input?.badge_label;
+    if (typeof badge === 'string' && badge.trim().length > 0) {
+      labelStats.badgeHints.add(normalizeSectionLabel(badge));
+    }
     if (!Array.isArray(routes)) continue;
     for (const r of routes) {
       const q = r?.question;
@@ -1363,6 +1373,16 @@ if (flags.has('--detail-metrics')) {
       routeQuestionStats.total++;
       if (isGenericRouteQuestion(q)) routeQuestionStats.generic++;
       else routeQuestionStats.concrete++;
+    }
+  }
+
+  for (const tc of events.filter(e => e.ev === 'TOOL_CALL' && (e.tool || '').includes('present_result'))) {
+    const sections = tc.input?.sections;
+    if (!Array.isArray(sections) || sections.length === 0) continue;
+    labelStats.presentCallsWithSections++;
+    for (const sec of sections) {
+      if (!sec || typeof sec.label !== 'string' || sec.label.trim().length === 0) continue;
+      labelStats.sectionLabels.add(normalizeSectionLabel(sec.label));
     }
   }
 
@@ -1424,6 +1444,19 @@ if (flags.has('--detail-metrics')) {
     console.log(`ROUTE QUESTION QUALITY: concrete=${routeQuestionStats.concrete}/${routeQuestionStats.total}  generic=${routeQuestionStats.generic}/${routeQuestionStats.total}`);
   } else {
     console.log('ROUTE QUESTION QUALITY: no route_requests questions found');
+  }
+  if (labelStats.presentCallsWithSections > 0) {
+    const sectionOnly = [...labelStats.sectionLabels].filter(l => !labelStats.badgeHints.has(l));
+    const preview = sectionOnly.slice(0, 4).join(', ');
+    const sectionOnlySuffix = sectionOnly.length > 0
+      ? ` (${preview}${sectionOnly.length > 4 ? ', ...' : ''})`
+      : '';
+    console.log(
+      `LABEL PRECEDENCE CHECK: present_result section labels=${labelStats.sectionLabels.size}, badge_label hints=${labelStats.badgeHints.size}, section-only labels=${sectionOnly.length}${sectionOnlySuffix}`,
+    );
+    console.log('  Expected interpretation: section labels are final report grouping authority; badge labels are hop-time helper hints.');
+  } else {
+    console.log('LABEL PRECEDENCE CHECK: no present_result sections found in trace.');
   }
   console.log('');
 }

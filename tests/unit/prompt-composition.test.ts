@@ -57,7 +57,8 @@ async function runTests() {
     assert(completed.includes('Route B - Start a new trace'), 'completed includes fresh-trace route');
     assert(completed.includes('DEFAULT: Route A'), 'completed defaults follow-up routing to Route A');
     assert(completed.includes('If uncertain, stay in Route A'), 'completed includes Route A tiebreaker');
-    assert(completed.includes('Relabel nodes / sections / badges'), 'completed maps relabel requests to sections');
+    assert(completed.includes('Section labels remain the authoritative final grouping/linking surface'), 'completed states section-label precedence');
+    assert(completed.includes('badges regenerate from section labels'), 'completed maps badge regeneration to sections');
     assert(completed.includes('notes[]'), 'completed maps note updates');
   }
 

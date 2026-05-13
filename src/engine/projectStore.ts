@@ -79,8 +79,8 @@ export interface AIViewMetadata {
   notes?: Array<{ nodeId: string; text: string }>;
   /** Dagre layout direction hint. Default: 'TB' (Top-to-Bottom). */
   layoutDirection?: 'LR' | 'TB';
-  /** Column trace edges from a CT session, keyed by the hop node that analyzed them. */
-  columnAspect?: { edges: Array<{ hopNode: string; fromCol: string; toCol: string }> };
+  /** Column trace edges from a CT session. Each edge records the analyzing hop node plus source and destination so every result node can show column flow data. */
+  columnAspect?: { edges: Array<{ hopNode: string; fromNode: string; toNode: string; fromCol: string; toCol: string }> };
 }
 
 /**
