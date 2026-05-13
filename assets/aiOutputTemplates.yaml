@@ -388,16 +388,16 @@ column_trace_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Per active column — one binary decision:
+    Per active column — one explicit decision:
       → Column interacts with this node  →  fill column_flow (map to upstream source) + route upstream.
-      → Column does NOT interact         →  verdict=prune. No column_flow needed.
+      → Column does NOT interact         →  column_flow: []   Engine auto-prunes. No route_requests needed.
 
-    No third path. column_flow is engine-validated; missing it on a non-prune verdict returns
-    column_flow_required with the active column list.
+    column_flow is engine-validated. Missing it entirely (field not submitted) returns column_flow_required.
+    Submitting column_flow: [] is the correct signal for no interaction — do not invent contributors.
     </purpose>
 
     ## Before submitting — verify
-    □ Per active column: column_flow filled OR verdict=prune. No middle ground.
+    □ Per active column: column_flow has entries (interaction) OR column_flow: [] (no interaction). Never omit the field.
     □ column_flow[] has one entry per active column that interacts with this node.
     □ sections[].text (from business/technical capture) explains the context of the flow.
     □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
@@ -413,7 +413,7 @@ column_trace_capture:
     verdict: "analyze"
 
     ## Example — column does not interact with this node
-    verdict: "prune"    ← omit column_flow entirely
+    column_flow: []    ← engine auto-prunes this node
 
     ## Verdict — choose based on how the node interacts with tracked columns
     - `analyze`: the node transforms or is the terminal source of a target column.
@@ -424,14 +424,12 @@ column_trace_capture:
     - `pass`: column flows through unchanged; the upstream writer is not yet visited.
       Fill column_flow naming the contributor, then add route_requests to visit it.
       The edge is recorded here; full attribution resolves at the routed node.
-    - `prune`: the node does not interact with any tracked column. Omit column_flow.
 
     ## Non-bodied table focus (TABLE written by a procedure)
     When the focus node is a TABLE (no DDL — only schema metadata), the procedure that
     writes to it is upstream. Use verdict='pass'; use the column name as it appears in the table.
     column_flow: [{ out_col: "TotalRevenue", contributors: [{ from_node: "[schema].[spWriter]", from_col: "TotalRevenue", role: "rename" }] }]
     Leave route_requests empty — the CT engine queues contributors[] automatically.
-    Do NOT use verdict='prune' just because there is no DDL.
 
     ## column_flow fields per entry
     - out_col: column name being produced. For PROCEDURE focus: the column name in the target table (same as writes_to.col).

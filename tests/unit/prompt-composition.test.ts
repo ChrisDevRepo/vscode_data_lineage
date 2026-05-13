@@ -73,7 +73,7 @@ async function runTests() {
     const smCt = buildSmProtocol({ classification: 'both', targetColumns: ['TotalRevenue'] });
     assert(smCt.includes('Column Trace: active'), 'SM CT includes CT stable anchor');
     assert(smCt.includes('column_flow'), 'SM CT includes column_flow contract');
-    assert(smCt.includes('CT prune commands are disabled'), 'SM CT explicitly disables prune commands');
+    assert(!smCt.includes('prune commands are disabled'), 'SM CT has no negation prune instruction');
     assert(!smCt.includes('prune non-relevant neighbors via `prune_neighbors`'), 'SM CT removes prune_neighbors guidance');
     assert(!smCt.includes('→ Does not interact:        verdict=prune. Omit column_flow.'), 'SM CT removes map-or-prune guidance');
   }

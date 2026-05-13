@@ -22,7 +22,7 @@ Prompt assembly is now phase-first in TS:
 
 - `buildGeneralSystemPrompt(...)` - shared system baseline.
 - `buildPhasePrompt(phase, ctx)` - canonical static protocol per phase (`discover` / `active` / `synthesis` / `completed`).
-- `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning contracts, CT anchor). BB and CT variants are separated here; CT explicitly disables AI prune commands.
+- `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning contracts, CT anchor). BB and CT variants are separated here; CT variant removes all AI pruning vocabulary — engine handles pruning via `column_flow` absence.
 - `resolveStagePrompt(...)` - YAML template injection and gating.
 - Dynamic active-only blocks:
   - `buildCurrentTaskBlock(...)`
@@ -128,9 +128,9 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 
 - Verdict enum fixed: `analyze | pass | prune`.
 - `sections[]` count/angles are locked by classification (`submitFindingsRules.ts`).
-- For CT, every finding requires `column_flow` (`column_flow_required` on violation).
-- In CT, AI prune commands are disabled: `verdict='prune'` and `prune_neighbors` reject with `ct_prune_forbidden`. Use `verdict='pass'` for non-contributor hops.
-- CT neighbor decisions are route-or-pass (`route_requests` only). `prune_neighbors` remains a BB-only AI command.
+- For CT, AI always provides `column_flow` field. Non-empty → node in chain (validation runs). `column_flow: []` (explicit empty) → engine auto-prunes silently. Missing `column_flow` field → `column_flow_required` (AI must provide the field). `verdict=prune` → engine silently converts to auto-prune (no error). `prune_neighbors` → `ct_prune_forbidden` (topology safety; still rejected).
+- CT prompts contain no pruning vocabulary — AI is not taught to prune in CT; engine derives all pruning from `column_flow` content.
+- CT neighbor decisions: `route_requests` for contributors; non-contributors simply omit routes (engine auto-prunes from empty `column_flow`). `prune_neighbors` remains a BB-only AI command.
 - Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.
 
 ### `lineage_present_result`

@@ -1230,12 +1230,21 @@ export class NavigationEngine implements IHopStateMachine {
     if (!focusId || !this.nodeMap.has(focusId)) {
       return { error: 'invalid_focus_node', got: focusId };
     }
-    // CT is route-or-pass: AI prune commands are disabled by contract.
-    if (this._columnAspect && (finding.verdict === 'prune' || (finding.prune_neighbors?.length ?? 0) > 0)) {
+    // CT: prune_neighbors always rejected — topology safety.
+    if (this._columnAspect && (finding.prune_neighbors?.length ?? 0) > 0) {
       return {
         error: 'ct_prune_forbidden',
-        detail: 'CT mode forbids AI prune commands. Submit `column_flow` + `route_requests` as needed, or use verdict=\'pass\'.',
+        detail: 'CT mode does not accept `prune_neighbors`. Submit `column_flow` (or `column_flow: []` for no interaction) and let the engine handle pruning.',
       };
+    }
+    // CT: verdict=prune → silent auto-prune (engine owns pruning; no retry loop).
+    if (this._columnAspect && finding.verdict === 'prune') {
+      this.visited.add(focusId);
+      this.ctAutoPrunedNodeIds.add(focusId);
+      this.memory.recordVerdict('prune');
+      this._totalNodes--;
+      this.log('debug', `[CT] auto-prune ${focusId} — AI submitted verdict=prune (converted silently)`);
+      return { ok: true };
     }
 
     const acceptedNids = new Set<string>();
@@ -1314,20 +1323,30 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // CT contract: column_flow required for all findings when CT is active.
-    // Echo-back pattern: name what was received + what is missing + binary decision gate + example.
+    // CT: column_flow field must be present — AI must make an explicit decision.
+    // Empty array column_flow: [] = "no column interaction" → engine auto-prunes.
     if (this._columnAspect) {
-      if (!finding.column_flow || finding.column_flow.length === 0) {
+      if (finding.column_flow === undefined || finding.column_flow === null) {
         const cols = this._columnAspect.active_columns;
         const exCol = cols[0] ?? '<col>';
         return {
           error: 'column_flow_required',
           hint:
-            `CT active — column_flow (PRIMARY task) is missing for [${cols.join(', ')}].\n` +
+            `CT active — column_flow field is missing for [${cols.join(', ')}].\n` +
             `Your sections/summary/verdict were received and are correct — ADD column_flow alongside them.\n` +
-            `Binary decision: map the column to its upstream source, OR use verdict=pass.\n` +
-            `Required format: column_flow:[{out_col:"${exCol}",contributors:[{from_node:"<node>",from_col:"<col>",role:"formula|rename|source|..."}]}]`,
+            `If columns interact: column_flow:[{out_col:"${exCol}",contributors:[{from_node:"<node>",from_col:"<col>",role:"formula|rename|source|..."}]}]\n` +
+            `If no columns interact at this node: column_flow:[]  (engine auto-prunes — do not invent contributors)`,
         };
+      }
+      // Empty column_flow: [] = explicit "no interaction" signal → auto-prune, no error.
+      // Route_requests computed above are intentionally discarded (non-contributing node should not route forward).
+      if (finding.column_flow.length === 0) {
+        this.visited.add(focusId);
+        this.ctAutoPrunedNodeIds.add(focusId);
+        this.memory.recordVerdict('prune');
+        this._totalNodes--;
+        this.log('debug', `[CT] auto-prune ${focusId} — AI submitted column_flow: [] (no column interaction)`);
+        return { ok: true };
       }
     }
 

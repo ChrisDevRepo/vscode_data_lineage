@@ -22,9 +22,8 @@ const BLOCK = {
   ].join('\n'),
   verdictCategoriesCt: [
     '## Verdict Protocol',
-    '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
-    '- pass: Node is pure wire (SELECT *, synonym) or does not materially transform the tracked columns.',
-    '- CT policy: AI prune commands are disabled (`verdict=prune`, `prune_neighbors`). Engine handles non-contributor contraction/auto-prune from column context.',
+    '- analyze: Node transforms or is the terminal source of a tracked column. Fill column_flow.',
+    '- pass: Column flows through unchanged (SELECT *, rename, synonym). Fill column_flow naming the upstream contributor.',
   ].join('\n'),
 
   /**
@@ -81,7 +80,6 @@ const BLOCK = {
     '- Emit explicit `verdict` for the focus node every hop (`analyze` or `pass`).',
     '- For neighbors in CT, make decisions with current-hop IDs only:',
     '  - route mission-relevant contributors via `route_requests` using concrete verification sub-questions.',
-    '  - do not emit prune commands in CT; leave non-contributors unrouted.',
     '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
     '- Need structural evidence before routing a neighbor? Call `lineage_get_neighbor_columns({ids:["..."]})` for current-hop direct neighbors.',

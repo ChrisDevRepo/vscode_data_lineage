@@ -1,9 +1,10 @@
 /**
  * Unit tests for `column_flow` validation and CT-mode guards in NavigationEngine.
  *
- * Covers: column_flow_required, CT prune rejection, out_col/from_node/from_col
- * structural rejection, edge accumulation, filter_only exclusion,
- * activeModeOf CT discriminator, and supplementAgenda CT propagation.
+ * Covers: column_flow_required, CT auto-prune (verdict=prune → silent; column_flow:[] → silent),
+ * prune_neighbors rejection, out_col/from_node/from_col structural rejection,
+ * edge accumulation, filter_only exclusion, activeModeOf CT discriminator,
+ * and supplementAgenda CT propagation.
  */
 
 import { NavigationEngine } from '../../src/ai/sm/smBase';
@@ -80,7 +81,7 @@ function ctEngine(targetColumns = ['amount']) {
   assert('error' in result && result.error === 'column_flow_required', 'column_flow_required on pass');
 }
 
-// ── Test 3: CT rejects AI prune verdicts ──
+// ── Test 3: CT silently auto-prunes on verdict=prune (no retry loop) ──
 {
   const engine = ctEngine();
   const result = engine.submitFindings({
@@ -89,7 +90,26 @@ function ctEngine(targetColumns = ['amount']) {
     summary: 'pruned',
     verdict: 'prune',
   });
-  assert('error' in result && result.error === 'ct_prune_forbidden', 'CT rejects verdict=prune');
+  assert('ok' in result && result.ok === true, 'CT converts verdict=prune to auto-prune (no error)');
+  // Agenda is empty (no routes were processed) → exploration done
+  const ctx = engine.getHopContext();
+  assert(ctx.done === true, 'exploration done after CT auto-prune via verdict=prune');
+}
+
+// ── Test 3c: CT silently auto-prunes on column_flow: [] (explicit no-interaction signal) ──
+{
+  const engine = ctEngine();
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: 'no interaction' }],
+    summary: 'no interaction',
+    verdict: 'analyze',
+    column_flow: [],
+  });
+  assert('ok' in result && result.ok === true, 'CT auto-prunes on column_flow: [] (no error)');
+  // Agenda is empty → exploration done
+  const ctx = engine.getHopContext();
+  assert(ctx.done === true, 'exploration done after CT auto-prune via column_flow: []');
 }
 
 // ── Test 3b: CT rejects prune_neighbors in submit_findings ──

@@ -161,10 +161,13 @@ If the user's intent is unclear between chat and graph, discovery answers in cha
 
 There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) when `targetColumns` is set. SM is gate-approved before the first hop runs.
 
-**CT contract (current).** CT keeps the same engine/hop loop as BB, but changes AI action surface:
-- CT is column-first: every hop must submit `column_flow`.
-- CT AI prune commands are disabled (`verdict='prune'`, `prune_neighbors`) and reject with `ct_prune_forbidden`.
-- CT non-contributor handling is `verdict='pass'`; structural contraction is engine-side CT auto-prune for nodes that dequeue with no active tracked columns.
+**CT contract (current).** CT keeps the same engine/hop loop as BB, but the AI action surface is column-flow-only — engine owns all pruning decisions:
+- CT is column-first: AI must always submit `column_flow` field per hop.
+- Non-empty `column_flow` → node contributes to the column chain (validation runs, contributors routed).
+- `column_flow: []` (explicit empty) → engine auto-prunes the node silently (no error, no retry, route_requests discarded).
+- `verdict=prune` → engine silently converts to auto-prune (same outcome as `column_flow: []`; no retry loop).
+- `prune_neighbors` → still rejected with `ct_prune_forbidden` (topology safety — never silently accepted).
+- Dequeue-time auto-prune: nodes with no derivable `activeColumns` are auto-pruned before the AI is called.
 - BB keeps full prune semantics (`verdict='prune'`, `prune_neighbors`), guarded by origin-closure.
 
 | Dimension | SM (sliding-memory) |
@@ -308,15 +311,18 @@ The orphan guard (`wouldOrphanNotedNode`) is content-blind. Engine guards are to
 
 Prune source split (important for debugging):
 - **BB AI prune**: explicit `submit_findings.prune_neighbors[]` or `verdict: "prune"`; mutates `removedSet`.
-- **CT AI prune**: forbidden (`ct_prune_forbidden`) — no prune mutation is committed.
-- **SM CT auto-prune**: hop dequeue with no active tracked columns (`[CT] auto-prune ... no active columns`); recorded in `ctPrunedNodeIds`.
-If CT is active and `ctPrunedNodeIds` is empty, no prune was committed in that CT path.
+- **CT AI prune**: all three paths below record in `ctPrunedNodeIds`; none mutate `removedSet`.
+  - **Dequeue**: `[CT] auto-prune ... no active columns` — node never reaches AI.
+  - **submit `column_flow: []`**: `[CT] auto-prune ... AI submitted column_flow: [] (no column interaction)` — accepted silently.
+  - **submit `verdict=prune`**: `[CT] auto-prune ... AI submitted verdict=prune (converted silently)` — accepted silently.
+- **CT `prune_neighbors`**: still rejected with `ct_prune_forbidden` — topology safety, not converted.
+If CT is active and `ctPrunedNodeIds` is empty, no node was pruned in that CT path.
 
 ## Mechanical enforcement
 
 The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`, but the ACTIVE-mode toolset has ≥ 2 tools (`submit_findings + get_neighbor_columns`), so per VS Code LM rules `Required` always falls back to `Auto`. The contract is enforced in `lineageParticipant.runHopLoop` by a toolless-drift corrective: when the engine is `awaiting_findings` and the AI emits free-form text instead of a tool call, a mode-specific corrective user message is pushed onto the envelope and the loop continues. `MAX_ROUNDS` is the safety net for repeated drift.
 
-- **Speed via verbs, not adjectives.** In BB, `verdict: "prune"` drains the agenda quickly → synthesis fires. In CT, use `verdict: "pass"` + route contributors; non-contributor branches are contracted by engine auto-prune.
+- **Speed via verbs, not adjectives.** In BB, `verdict: "prune"` drains the agenda quickly → synthesis fires. In CT, submit `column_flow: []` for non-contributors → engine auto-prunes; no AI pruning vocabulary needed.
 - **ACTIVE tool palette** — BB/CT exposes `submit_findings + get_neighbor_columns`; synthesis is a separate later turn after the agenda drains. Single source: [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 - **Repeat-Reject Guard** — [`src/ai/participant/repeatRejectGuard.ts`](../src/ai/participant/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
 - **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here" — `complete: true` is silently ignored in SM mode.
