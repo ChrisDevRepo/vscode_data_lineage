@@ -262,6 +262,7 @@ const COLUMN_SEARCH_LIMIT = 50;
 const PRESENT_RESULT_NAME_MAX_LENGTH = 200;
 /** Char cap on the AI-supplied `summary` field in `present_result` — keeps the badge readable in the chat stream. */
 const PRESENT_RESULT_SUMMARY_HARD_LIMIT = 300;
+const SECTION_NODE_ID_HINT = 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically; if still unresolved, resolve canonical IDs with lineage_search_objects.';
 
 /**
  * Builds a lookup map for edges between nodes.
@@ -1406,7 +1407,7 @@ export function validatePresentResult(
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
-          errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — use IDs from the result graph`);
+          errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — ${SECTION_NODE_ID_HINT}`);
         }
       }
       if (!sec.text || sec.text.trim().length === 0) {
@@ -1453,9 +1454,12 @@ export function validatePresentResult(
       else if (e.includes('No nodes')) failedFields.add('nodes');
     }
     const fieldList = [...failedFields];
-    const hint = fieldList.length === 1
+    let hint = fieldList.length === 1
       ? `Fix ${fieldList[0]} only. Keep all other fields (notes, summary, highlight_groups) exactly as submitted.`
       : `Fix these fields: ${fieldList.join(', ')}. Keep all other fields exactly as submitted.`;
+    if (failedFields.has('sections')) {
+      hint = `${hint} ${SECTION_NODE_ID_HINT}`;
+    }
     return { success: false, errors, hint };
   }
 

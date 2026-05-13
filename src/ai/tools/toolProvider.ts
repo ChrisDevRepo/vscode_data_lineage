@@ -744,6 +744,14 @@ class ToolHandler {
         resolvedEdges = pruned.edges;
       }
 
+      if (Array.isArray(input.sections) && input.sections.length > 0) {
+        input.sections = input.sections.map((sec) => {
+          if (!Array.isArray(sec.node_ids) || sec.node_ids.length === 0) return sec;
+          const normalizedNodeIds = sec.node_ids.map((id) => resolveModelNodeId(id, modelNodeMap) ?? id);
+          return { ...sec, node_ids: normalizedNodeIds };
+        });
+      }
+
       // Closed-graph invariant: completed-phase add/prune edits must keep every
       // node connected to the original origin node in the rendered view.
       if (resultGraph.originNodeId) {
