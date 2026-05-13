@@ -165,8 +165,8 @@ There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) w
 - CT is column-first: AI must always submit `column_flow` field per hop.
 - Non-empty `column_flow` → node contributes to the column chain (validation runs, contributors routed).
 - `column_flow: []` (explicit empty) → engine auto-prunes the node silently (no error, no retry, route_requests discarded).
-- `verdict=prune` → engine silently converts to auto-prune (same outcome as `column_flow: []`; no retry loop).
-- `prune_neighbors` → still rejected with `ct_prune_forbidden` (topology safety — never silently accepted).
+- `verdict=prune` is rejected at the tool boundary (`ct_verdict_forbidden`) before engine submit.
+- `prune_neighbors` is rejected at the tool boundary (`bb_field_forbidden_in_ct`) before engine submit.
 - Dequeue-time auto-prune: nodes with no derivable `activeColumns` are auto-pruned before the AI is called.
 - BB keeps full prune semantics (`verdict='prune'`, `prune_neighbors`), guarded by origin-closure.
 
@@ -314,8 +314,7 @@ Prune source split (important for debugging):
 - **CT AI prune**: all three paths below record in `ctPrunedNodeIds`; none mutate `removedSet`.
   - **Dequeue**: `[CT] auto-prune ... no active columns` — node never reaches AI.
   - **submit `column_flow: []`**: `[CT] auto-prune ... AI submitted column_flow: [] (no column interaction)` — accepted silently.
-  - **submit `verdict=prune`**: `[CT] auto-prune ... AI submitted verdict=prune (converted silently)` — accepted silently.
-- **CT `prune_neighbors`**: field is stripped from the `lineage_submit_findings` JSON schema before the LM sees it in CT mode (`lineageParticipant.ts` tools map). If submitted anyway, rejected with `ct_prune_forbidden` — topology safety, not converted.
+- **CT `verdict=prune` / `prune_neighbors`**: blocked by mode-dispatched Zod boundary in `toolProvider.submitFindings` (`ct_verdict_forbidden` / `bb_field_forbidden_in_ct`).
 If CT is active and `ctPrunedNodeIds` is empty, no node was dequeued-and-pruned in that CT path; scope nodes not referenced in CT edges are excluded from the result graph by `getResult()` CT scope filter (they need not be in `ctPrunedNodeIds`).
 
 ## Mechanical enforcement
@@ -418,7 +417,7 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Discovery** | Default chat state — AI uses catalog tools and answers in chat. Cannot render a graph or sustain large-BFS analysis; both require SM. |
 | **SM (Sliding-Memory)** | Gate-approved hop-by-hop execution. Triggered by visual graph-render request, column tracing, or explicit deeper-analysis intent. Memory wiped each hop; engine owns termination. |
 | **BB** (Blackboard) | Default SM analysis mode. Used when no target columns are specified. |
-| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus mandatory `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every CT finding; engine rejects with `column_flow_required` if omitted. AI prune commands are disabled in CT (`ct_prune_forbidden` for `verdict='prune'` / `prune_neighbors`); non-contributors use `verdict='pass'` and engine-side CT auto-prune contracts no-column branches. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
+| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus mandatory `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every CT finding; missing field is rejected at the tool boundary (`ct_field_required`). AI prune commands are disabled in CT (`ct_verdict_forbidden` / `bb_field_forbidden_in_ct`); non-contributors use `column_flow: []` and engine-side CT auto-prune contracts no-column branches. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |
 | **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours. |
 | **Detail Archive** | Per-node full `analysis` text, written each hop, shipped only at synthesis. |

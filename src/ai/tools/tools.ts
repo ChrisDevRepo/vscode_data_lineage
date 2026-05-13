@@ -141,73 +141,80 @@ const CapturedSectionSchema = z.object({
   text: z.string().min(1),
 });
 
+const RouteRequestSchema = z.object({
+  nodeId: z.string(),
+  question: z.string(),
+  columns: z.array(z.string()).optional(),
+}).strict();
+
+const ColumnFlowContributorSchema = z.object({
+  from_node: z.string(),
+  from_col: z.string(),
+  role: z.enum(['formula', 'rename', 'case', 'coalesce', 'join_value', 'aggregate', 'filter_only', 'source'] satisfies [ColumnFlowRole, ...ColumnFlowRole[]]),
+}).strict();
+
+const ColumnFlowEntrySchema = z.object({
+  out_col: z.string(),
+  writes_to: z.object({ node: z.string(), col: z.string() }).strict().optional(),
+  contributors: z.array(ColumnFlowContributorSchema),
+}).strict();
+
 /**
- * Zod schema for a single finding within `submit_findings`.
+ * Shared `submit_findings` fields across BB and CT modes.
  */
-const HopFindingSchema = z.object({
+const HopFindingBaseSchema = z.object({
   focus_node_id: z.string(),
   /**
    * One section per fired `*_capture` template. Length 1 (`business` / `technical`
-   * classification) or 2 (`both`). BB prune findings may submit length 0
-   * (no analysis to record). In CT mode, prune commands are rejected by engine
-   * (`ct_prune_forbidden`), so `column_flow` + sections remain expected.
+   * classification) or 2 (`both`). BB prune findings may submit length 0.
    */
   sections: z.array(CapturedSectionSchema).max(2),
   summary: z.string().max(500),
   /**
-   * Verdict vocabulary is shared at schema level for BB and CT sessions.
-   *
-   * @remarks
-   * Runtime policy is mode-specific in `NavigationEngine.submitFindings`:
-   * - BB: `analyze | pass | prune`
-   * - CT: `analyze | pass` only (`prune` rejects with `ct_prune_forbidden`)
-   */
-  verdict: z.enum(['analyze', 'pass', 'prune']),
-  /**
    * Optional list of neighbors to queue for the next hops. Each entry's
-   * `nodeId` must already be a real id you have seen — either in the prior
-   * tool result's `next_hop` / `neighbors[]` data, in a
-   * `lineage_get_neighbor_columns` lookup, or in a `lineage_search_objects`
-   * result. Inventing an id (e.g. guessing `[s].[procFoo]` when the real
-   * name is `[s].[ProcFooDetailed]`) causes the engine to reject the
-   * submission with `route_validation_failed` — the rejected ids do not
-   * enter the agenda, so the next hop will re-present the same focus and
-   * the exploration cannot advance.
-   * `question` is the sub-question driving analysis at that hop (multi-part
-   * is fine); `columns` is optional column-trace targets for CT mode.
+   * `nodeId` must already be a real id you have seen.
    */
-  route_requests: z.array(z.object({
-    nodeId: z.string(),
-    question: z.string(),
-    columns: z.array(z.string()).optional(),
-  })).optional(),
-  /**
-   * Optional BB-only neighbor prune list (current-hop neighbors).
-   *
-   * @remarks
-   * In CT mode this field is rejected with `ct_prune_forbidden`; CT uses
-   * route-or-pass plus engine-side auto-prune for no-column branches.
-   */
-  prune_neighbors: z.array(z.string()).optional(),
+  route_requests: z.array(RouteRequestSchema).optional(),
+  /** Reserved. Engine owns completion in SM mode. */
   complete: z.boolean().optional(),
   badge_label: z.string().max(50).optional(),
   note_caption: z.string().max(200).optional(),
-  column_flow: z.array(z.object({
-    out_col: z.string(),
-    writes_to: z.object({ node: z.string(), col: z.string() }).optional(),
-    contributors: z.array(z.object({
-      from_node: z.string(),
-      from_col: z.string(),
-      role: z.enum(['formula', 'rename', 'case', 'coalesce', 'join_value', 'aggregate', 'filter_only', 'source'] satisfies [ColumnFlowRole, ...ColumnFlowRole[]]),
-    })),
-  })).optional(),
-});
+}).strict();
 
 /**
- * Zod schema for `submit_findings` tool input — one finding per SM hop.
+ * BB-mode submit_findings input.
+ *
+ * @remarks
+ * BB allows prune semantics (`verdict='prune'`, `prune_neighbors`) and does not
+ * carry CT-only `column_flow`.
  */
-export const SubmitFindingsInputSchema = HopFindingSchema;
+export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
+  verdict: z.enum(['analyze', 'pass', 'prune']),
+  prune_neighbors: z.array(z.string()).optional(),
+}).strict();
 
+/**
+ * CT-mode submit_findings input.
+ *
+ * @remarks
+ * CT is route-or-pass only (`verdict='analyze' | 'pass'`) and requires
+ * explicit `column_flow` presence every hop (`[]` = no interaction).
+ */
+export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
+  verdict: z.enum(['analyze', 'pass']),
+  column_flow: z.array(ColumnFlowEntrySchema),
+}).strict();
+
+/**
+ * Legacy union export kept for non-dispatched callers/tests.
+ */
+export const SubmitFindingsInputSchema = z.union([
+  SubmitFindingsBbInputSchema,
+  SubmitFindingsCtInputSchema,
+]);
+
+export type SubmitFindingsBbInput = z.infer<typeof SubmitFindingsBbInputSchema>;
+export type SubmitFindingsCtInput = z.infer<typeof SubmitFindingsCtInputSchema>;
 export type SubmitFindingsInput = z.infer<typeof SubmitFindingsInputSchema>;
 
 /**

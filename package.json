@@ -1055,7 +1055,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
         "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
-        "modelDescription": "Submits analysis for the current focus node and requests the next hop's data. The `sections` array carries one captured section per fired *_capture template — `business` classification → 1 business section; `technical` → 1 technical; `both` → 2 sections (one of each). The locked classification is enforced mechanically; mismatches are rejected with a structured hint.",
+        "modelDescription": "Submits analysis for the current focus node and requests the next hop's data. The `sections` array carries one captured section per fired *_capture template — `business` classification → 1 business section; `technical` → 1 technical; `both` → 2 sections (one of each). Dispatch is mode-specific: BB accepts prune semantics, CT requires `column_flow` and forbids BB prune fields.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -1104,7 +1104,7 @@
                 "pass",
                 "prune"
               ],
-              "description": "Action for focus node: 'analyze' (store findings), 'pass' (mark visited, wire-only), or 'prune' (block branch — for utility/logging nodes or any node outside the mission scope)."
+              "description": "Action for focus node: 'analyze' (store findings), 'pass' (mark visited, wire-only), or 'prune' (BB mode only). CT mode accepts only analyze/pass and rejects prune with ct_verdict_forbidden."
             },
             "route_requests": {
               "type": "array",
@@ -1139,11 +1139,48 @@
               "items": {
                 "type": "string"
               },
-              "description": "Current-hop neighbor IDs to prune from exploration."
+              "description": "Current-hop neighbor IDs to prune from exploration (BB only). CT mode rejects this field with bb_field_forbidden_in_ct."
+            },
+            "column_flow": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "out_col": {
+                    "type": "string",
+                    "description": "Tracked output column on the current focus node."
+                  },
+                  "writes_to": {
+                    "type": "object",
+                    "properties": {
+                      "node": { "type": "string" },
+                      "col": { "type": "string" }
+                    },
+                    "required": ["node", "col"]
+                  },
+                  "contributors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "from_node": { "type": "string" },
+                        "from_col": { "type": "string" },
+                        "role": {
+                          "type": "string",
+                          "enum": ["formula", "rename", "case", "coalesce", "join_value", "aggregate", "filter_only", "source"]
+                        }
+                      },
+                      "required": ["from_node", "from_col", "role"]
+                    }
+                  }
+                },
+                "required": ["out_col", "contributors"]
+              },
+              "description": "CT mode only. Required in CT for every hop (`[]` means no tracked interaction). BB mode rejects this field with bb_field_unknown."
             },
             "badge_label": {
               "type": "string",
-              "maxLength": 30,
+              "maxLength": 50,
               "description": "Short semantic role (2-4 words) for node badge (e.g. 'Source', 'Transformation')."
             },
             "note_caption": {
@@ -1170,7 +1207,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/repeat-reject-guard.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts && tsx tests/unit/transient-retry.test.ts && tsx tests/unit/column-flow-validation.test.ts && tsx tests/unit/toolPolicy.test.ts && tsx tests/unit/prompt-composition.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts && tsx tests/unit/navigation-engine-synthesis-regression.test.ts && tsx tests/unit/present-result-closure.test.ts && tsx tests/unit/log-normalization.test.ts",
+    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/repeat-reject-guard.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts && tsx tests/unit/transient-retry.test.ts && tsx tests/unit/column-flow-validation.test.ts && tsx tests/unit/submit-findings-schema.test.ts && tsx tests/unit/toolPolicy.test.ts && tsx tests/unit/prompt-composition.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts && tsx tests/unit/navigation-engine-synthesis-regression.test.ts && tsx tests/unit/present-result-closure.test.ts && tsx tests/unit/log-normalization.test.ts",
     "test:unit": "npm run test",
     "test:parser": "tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/tsql-complex.test.ts",
     "test:graph": "tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/graphAnalysis.test.ts",

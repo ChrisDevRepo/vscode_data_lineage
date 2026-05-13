@@ -123,6 +123,13 @@ function minimizeActiveToolResultPayload(payload: any): any {
   if (typeof payload.sm_status === 'string') out.sm_status = payload.sm_status;
   if (payload.focus_node && typeof payload.focus_node === 'object') out.focus_node = payload.focus_node;
   if (Array.isArray(payload.neighbors)) out.neighbors = payload.neighbors;
+  const activeColumns = payload?.working_memory?.column_aspect?.active_columns;
+  if (Array.isArray(activeColumns)) {
+    out.column_state = {
+      active_columns: activeColumns.slice(0, 12),
+      active_count: activeColumns.length,
+    };
+  }
   // Guard against accidental evidence loss: if the compact projection would
   // drop focus evidence, preserve the original payload.
   if (!out.focus_node || !Array.isArray(out.neighbors)) return payload;
@@ -144,9 +151,28 @@ function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | unde
   const rawInput = (firstCall.input as Record<string, unknown>) || {};
   let compactInput: Record<string, unknown> = {};
   if (firstCall.name === 'lineage_submit_findings') {
+    const isCtSubmit = Array.isArray(rawInput.column_flow);
+    const routeRequestCount = Array.isArray(rawInput.route_requests) ? rawInput.route_requests.length : 0;
+    const pruneNeighborCount = Array.isArray(rawInput.prune_neighbors) ? rawInput.prune_neighbors.length : 0;
+    const outCols = isCtSubmit
+      ? (rawInput.column_flow as Array<Record<string, unknown>>)
+        .map(cf => typeof cf.out_col === 'string' ? cf.out_col : '')
+        .filter(Boolean)
+        .slice(0, 12)
+      : [];
     compactInput = {
       focus_node_id: rawInput.focus_node_id,
       verdict: rawInput.verdict,
+      mode: isCtSubmit ? 'ct' : 'bb',
+      ...(isCtSubmit
+        ? {
+            column_flow_entries: (rawInput.column_flow as unknown[]).length,
+            column_flow_out_cols: outCols,
+          }
+        : {
+            route_request_count: routeRequestCount,
+            prune_neighbor_count: pruneNeighborCount,
+          }),
     };
   } else if (firstCall.name === 'lineage_start_exploration') {
     compactInput = {

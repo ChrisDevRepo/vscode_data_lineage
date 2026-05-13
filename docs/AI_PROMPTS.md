@@ -126,9 +126,11 @@ Important correction: in synthesis, `sections[].text` is AI-authored and require
 
 ### `lineage_submit_findings`
 
-- Verdict enum fixed: `analyze | pass | prune`.
+- Single tool, mode-dispatched schema:
+  - BB contract: allows `verdict=prune` and `prune_neighbors`.
+  - CT contract: allows only `verdict=analyze|pass`, requires `column_flow`, rejects BB-only fields.
 - `sections[]` count/angles are locked by classification (`submitFindingsRules.ts`).
-- For CT, AI always provides `column_flow` field. Non-empty → node in chain (validation runs). `column_flow: []` (explicit empty) → engine auto-prunes silently. Missing `column_flow` field → `column_flow_required` (AI must provide the field). `verdict=prune` → engine silently converts to auto-prune (no error). `prune_neighbors` → `ct_prune_forbidden` (topology safety; still rejected).
+- For CT, AI always provides `column_flow` field. Non-empty → node in chain (validation runs). `column_flow: []` (explicit empty) → engine auto-prunes silently. Missing `column_flow` field rejects at boundary (`ct_field_required`). `verdict=prune` rejects at boundary (`ct_verdict_forbidden`). `prune_neighbors` rejects at boundary (`bb_field_forbidden_in_ct`).
 - CT prompts contain no pruning vocabulary — AI is not taught to prune in CT; engine derives all pruning from `column_flow` content.
 - CT neighbor decisions: `route_requests` for contributors; non-contributors simply omit routes (engine auto-prunes from empty `column_flow`). `prune_neighbors` remains a BB-only AI command.
 - Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.

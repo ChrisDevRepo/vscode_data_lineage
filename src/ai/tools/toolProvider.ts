@@ -25,7 +25,8 @@ import {
   getNeighborColumns,
   validateToolInput,
   StartExplorationInputSchema,
-  SubmitFindingsInputSchema,
+  SubmitFindingsBbInputSchema,
+  SubmitFindingsCtInputSchema,
   GetScopeBundleInputSchema,
   GetNeighborColumnsInputSchema,
   autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
@@ -549,8 +550,31 @@ class ToolHandler {
       const completeViolation = evaluateExplorationCompleteRule(engine.status);
       if (completeViolation) return this.logAndReturn('submit_findings', completeViolation, input);
 
-      const parsed = SubmitFindingsInputSchema.safeParse(input);
+      const parsed = engine.columnAspect
+        ? SubmitFindingsCtInputSchema.safeParse(input)
+        : SubmitFindingsBbInputSchema.safeParse(input);
       if (!parsed.success) {
+        const isCtMode = !!engine.columnAspect;
+        const rawInput = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        if (isCtMode && rawInput.prune_neighbors !== undefined) {
+          return this.logAndReturn('submit_findings', {
+            error: 'bb_field_forbidden_in_ct',
+            hint: 'CT mode forbids `prune_neighbors`. Submit `column_flow` (or `column_flow: []` for no interaction) and use route_requests for contributors.',
+          }, input);
+        }
+        if (isCtMode && rawInput.verdict === 'prune') {
+          return this.logAndReturn('submit_findings', {
+            error: 'ct_verdict_forbidden',
+            hint: 'CT mode allows verdict only `analyze` or `pass`. Use `column_flow: []` when the node has no tracked column interaction.',
+          }, input);
+        }
+        if (!isCtMode && rawInput.column_flow !== undefined) {
+          return this.logAndReturn('submit_findings', {
+            error: 'bb_field_unknown',
+            hint: 'BB mode does not accept `column_flow`. Submit business/technical sections plus verdict and optional prune/route fields.',
+          }, input);
+        }
+
         // Surface specific field paths so the model can correct the right field on retry.
         const seen = new Set<string>();
         const fieldErrors: string[] = [];
@@ -562,11 +586,12 @@ class ToolHandler {
           fieldErrors.push(`${key}: ${issue.message}`);
           if (fieldErrors.length >= 3) break;
         }
+        const modeLabel = isCtMode ? 'CT' : 'BB';
         const hint = fieldErrors.length > 0
-          ? `Invalid submit_findings input — ${fieldErrors.join('; ')}.`
-          : `Invalid submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
+          ? `Invalid ${modeLabel} submit_findings input — ${fieldErrors.join('; ')}.`
+          : `Invalid ${modeLabel} submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
         return this.logAndReturn('submit_findings', {
-          error: 'invalid_input',
+          error: isCtMode ? 'ct_field_required' : 'invalid_input',
           hint,
         }, input);
       }
