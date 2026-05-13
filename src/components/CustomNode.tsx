@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
@@ -44,6 +44,8 @@ export type CustomNodeData = {
    * Custom color and shadow configuration for AI-driven highlights.
    */
   aiHighlight?: { color: string; glow: string; shadow: string };
+  /** Column flows for this node from an active CT session, keyed by hop analysis. */
+  ctColumnFlows?: { fromCol: string; toCol: string }[];
   /** Whether to show a 'Remove' button on the node (used in Advanced Bookmarks). */
   showRemoveButton?: boolean;
   /** Callback to remove this node from the current view. */
@@ -91,7 +93,21 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   }
   tooltipLines.push(`Object Type: ${TYPE_LABELS[data.objectType]}${isVirtual ? (data.externalType === 'file' ? ' (File Source)' : ' (Cross-Database)') : ''}`);
   tooltipLines.push(`In: ${data.inDegree} | Out: ${data.outDegree}`);
-  const tooltipText = tooltipLines.join('\n');
+
+  const tooltipContent: string | ReactNode = data.ctColumnFlows?.length
+    ? (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {tooltipLines.map((line, i) => <div key={i}>{line}</div>)}
+        <div style={{ borderTop: '1px solid var(--vscode-widget-border, #555)', margin: '3px 0' }} />
+        <div style={{ fontWeight: 600, fontSize: '0.85em', color: 'var(--ln-fg-muted)' }}>Column trace:</div>
+        {data.ctColumnFlows.map((f, i) => (
+          <div key={i} style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>
+            {f.fromCol} → {f.toCol}
+          </div>
+        ))}
+      </div>
+    )
+    : tooltipLines.join('\n');
 
   return (
     <>
@@ -115,7 +131,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           </Tooltip>
         </NodeToolbar>
       )}
-      <Tooltip content={tooltipText} placement="top" multiline maxWidth={300} asChild>
+      <Tooltip content={tooltipContent} placement="top" multiline maxWidth={300} asChild>
       <div
         className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-card"
         style={{

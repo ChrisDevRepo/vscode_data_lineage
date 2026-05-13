@@ -826,6 +826,15 @@ class ToolHandler {
         badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
         notes: validation.notes.map(n => ({ nodeId: n.node_id, text: n.text })),
         layoutDirection: validation.layout_direction,
+        ...(resultGraph.columnAspect ? {
+          columnAspect: {
+            edges: resultGraph.columnAspect.edges.map(e => ({
+              hopNode: e.hop_node,
+              fromCol: e.from_col,
+              toCol: e.to_col,
+            })),
+          },
+        } : {}),
       };
 
       const panel = this.getPanel();

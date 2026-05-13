@@ -207,6 +207,14 @@ export const AIViewMetadataSchema = z.object({
     text: z.string(),
   })).optional(),
   layoutDirection: z.enum(['LR', 'TB']).optional(),
+  /** Column trace edges keyed by the hop node that analyzed them. Only present during CT sessions. */
+  columnAspect: z.object({
+    edges: z.array(z.object({
+      hopNode: z.string(),
+      fromCol: z.string(),
+      toCol: z.string(),
+    })),
+  }).optional(),
 });
 
 /**

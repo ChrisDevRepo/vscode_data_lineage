@@ -102,6 +102,34 @@ function countRegexMatches(text, regex) {
   return m ? m.length : 0;
 }
 
+const EXPECTED_WIPE_TRIGGERS = new Set([
+  'submit_ok',
+  'synthesis_transition',
+  // Bounded error self-correction guard. Keep neutral (non-regression) by default.
+  'forced_error_3',
+]);
+
+function summarizeWipes(wipes, rounds) {
+  const roundsByRid = new Map(rounds.map(r => [r.rid, r]));
+  const out = {
+    expectedWipes: 0,
+    unexpectedWipes: 0,
+    expectedTokensAtWipe: 0,
+    unexpectedTokensAtWipe: 0,
+  };
+  for (const w of wipes) {
+    const inTok = roundsByRid.get(w.rid)?.inTok || 0;
+    if (EXPECTED_WIPE_TRIGGERS.has(w.trigger)) {
+      out.expectedWipes++;
+      out.expectedTokensAtWipe += inTok;
+    } else {
+      out.unexpectedWipes++;
+      out.unexpectedTokensAtWipe += inTok;
+    }
+  }
+  return out;
+}
+
 function isGenericRouteQuestion(q) {
   if (!q) return true;
   const t = String(q).trim().toLowerCase();
@@ -115,9 +143,11 @@ function isGenericRouteQuestion(q) {
 function extractTexts(messages) {
   const results = []; // { msgIdx, partIdx, role, type, text }
   if (!Array.isArray(messages)) return results;
-  messages.forEach((msg, mi) => {
-    if (!Array.isArray(msg.parts)) return;
-    msg.parts.forEach((part, pi) => {
+  for (let mi = 0; mi < messages.length; mi++) {
+    const msg = messages[mi];
+    if (!Array.isArray(msg.parts)) continue;
+    for (let pi = 0; pi < msg.parts.length; pi++) {
+      const part = msg.parts[pi];
       if (part.type === 'text' && part.value) {
         results.push({ msgIdx: mi, partIdx: pi, role: msg.role, type: 'text', text: part.value });
       } else if (part.type === 'tool_result' && Array.isArray(part.content)) {
@@ -127,11 +157,11 @@ function extractTexts(messages) {
       } else if (part.type === 'tool_call' && part.input) {
         // Replay-compacted tool calls are historical context, not fresh model intent.
         // Exclude them from redundancy/pattern text analysis to avoid false positives.
-        if (part.input.replay_compacted === true || part.input.trace_replay === true) return;
+        if (part.input.replay_compacted === true || part.input.trace_replay === true) continue;
         results.push({ msgIdx: mi, partIdx: pi, role: msg.role, type: 'tool_call', text: JSON.stringify(part.input) });
       }
-    });
-  });
+    }
+  }
   return results;
 }
 
@@ -261,6 +291,9 @@ if (flags.has('--journal-metrics')) {
     const wipes   = evs.filter(e => e.ev === 'WIPE');
     const cached  = evs.filter(e => e.ev === 'TOOL_INVOKE' && e.cached);
     const toolInv = evs.filter(e => e.ev === 'TOOL_INVOKE' && !e.cached);
+    const totalInvokes = evs.filter(e => e.ev === 'TOOL_INVOKE').length;
+    const cacheHitRate = totalInvokes > 0 ? Number(((cached.length / totalInvokes) * 100).toFixed(1)) : 0;
+    const wipeSummary = summarizeWipes(wipes, rounds);
 
     const phases = {};
     for (const r of rounds) {
@@ -385,7 +418,13 @@ if (flags.has('--journal-metrics')) {
       unexpected_rejects: unexpectedRejects.length,
       loops,
       wipes:      wipes.length,
+      expected_wipes: wipeSummary.expectedWipes,
+      unexpected_wipes: wipeSummary.unexpectedWipes,
+      expected_wipe_tokens: wipeSummary.expectedTokensAtWipe,
+      unexpected_wipe_tokens: wipeSummary.unexpectedTokensAtWipe,
+      unexpected_waste_pct: cumIn > 0 ? Number(((wipeSummary.unexpectedTokensAtWipe / cumIn) * 100).toFixed(1)) : 0,
       cache_hits: cached.length,
+      cache_hit_rate: cacheHitRate,
       tool_calls: toolInv.length,
       exit_kind:  end ? end.exitKind : 'unknown',
       phases,
@@ -417,10 +456,12 @@ if (flags.size === 0 || flags.has('--summary')) {
     const rounds = evs.filter(e => e.ev === 'ROUND');
     const invocs = evs.filter(e => e.ev === 'TOOL_INVOKE' && !e.cached);
     const cached = evs.filter(e => e.ev === 'TOOL_INVOKE' && e.cached);
+    const allInvokes = evs.filter(e => e.ev === 'TOOL_INVOKE');
     const rejects= evs.filter(e => e.ev === 'TOOL_RESULT' && e.errCode);
     const expectedGateRejects = rejects.filter(isExpectedGateReject);
     const unexpectedRejects = rejects.filter(r => !isExpectedGateReject(r));
     const wipes  = evs.filter(e => e.ev === 'WIPE');
+    const wipeSummary = summarizeWipes(wipes, rounds);
 
     const cumIn  = end ? end.cumInTok  : rounds.reduce((s, r) => s + (r.inTok  || 0), 0);
     const cumOut = end ? end.cumOutTok : rounds.reduce((s, r) => s + (r.outTok || 0), 0);
@@ -438,9 +479,11 @@ if (flags.size === 0 || flags.has('--summary')) {
 
     console.log(`sid: ${sid}`);
     console.log(`  exit:     ${exit}`);
-    console.log(`  rounds:   ${nRound}   invocations: ${nTools}   cache_hits: ${cached.length}`);
+    const hitRate = allInvokes.length > 0 ? ((cached.length / allInvokes.length) * 100).toFixed(1) : '0.0';
+    console.log(`  rounds:   ${nRound}   invocations: ${nTools}   cache_hits(dedup): ${cached.length} (${hitRate}%)`);
     console.log(`  tokens:   in=${cumIn}  out=${cumOut}  peak_round=${peak}`);
     console.log(`  rejected: ${rejects.length} (expected_gate=${expectedGateRejects.length}, unexpected=${unexpectedRejects.length})   wipes: ${wipes.length}`);
+    console.log(`  wipe_kinds: expected=${wipeSummary.expectedWipes} unexpected=${wipeSummary.unexpectedWipes}`);
     console.log(`  latency:  total=${roundMs}ms  model≈${modelMs}ms (${modelPct}%)  tools=${toolMs}ms (${toolPct}%)`);
     if (rejects.length > 0) {
       const byTool = {};
@@ -1004,15 +1047,20 @@ if (flags.has('--waste')) {
   for (const [sid, evs] of sessions) {
     const rounds = evs.filter(e => e.ev === 'ROUND');
     const wipes  = evs.filter(e => e.ev === 'WIPE');
+    const wipeSummary = summarizeWipes(wipes, rounds);
     const totalIn = rounds.reduce((s, r) => s + (r.inTok || 0), 0);
     const wipeRids = new Set(wipes.map(w => w.rid));
     const tokAtWipe = rounds.filter(r => wipeRids.has(r.rid)).reduce((s, r) => s + (r.inTok || 0), 0);
     const ratio = totalIn > 0 ? ((tokAtWipe / totalIn) * 100).toFixed(1) : '0.0';
+    const expectedRatio = totalIn > 0 ? ((wipeSummary.expectedTokensAtWipe / totalIn) * 100).toFixed(1) : '0.0';
+    const unexpectedRatio = totalIn > 0 ? ((wipeSummary.unexpectedTokensAtWipe / totalIn) * 100).toFixed(1) : '0.0';
 
     console.log(`sid=${sid}`);
     console.log(`  total_input_tokens:  ${totalIn}`);
     console.log(`  wipes:               ${wipes.length}`);
     console.log(`  tokens_at_wipe_time: ${tokAtWipe}  (${ratio}% of total input)`);
+    console.log(`  expected_wipes:      ${wipeSummary.expectedWipes}  tokens=${wipeSummary.expectedTokensAtWipe} (${expectedRatio}%)`);
+    console.log(`  unexpected_wipes:    ${wipeSummary.unexpectedWipes}  tokens=${wipeSummary.unexpectedTokensAtWipe} (${unexpectedRatio}%)`);
     for (const w of wipes) {
       const r = rounds.find(x => x.rid === w.rid);
       console.log(`    rid=${w.rid} trigger=${w.trigger}  inTok=${r?.inTok ?? '?'}  msgs_discarded=${w.msgsBefore}`);
@@ -1033,9 +1081,11 @@ if (flags.has('--tools')) {
     if (ev.errCode) s.rejected++;
   }
   const cacheHits = {};
+  let totalInvokes = 0;
   for (const ev of events.filter(e => e.ev === 'TOOL_INVOKE' && e.cached)) {
     cacheHits[ev.tool] = (cacheHits[ev.tool] || 0) + 1;
   }
+  totalInvokes = events.filter(e => e.ev === 'TOOL_INVOKE').length;
   const allTools = new Set([...Object.keys(stats), ...Object.keys(cacheHits)]);
   const sorted = [...allTools].sort((a, b) => (stats[b]?.calls || 0) - (stats[a]?.calls || 0));
 
@@ -1048,6 +1098,9 @@ if (flags.has('--tools')) {
     const rp   = s.calls > 0 ? ((s.rejected / s.calls) * 100).toFixed(0) : '0';
     console.log(pad(short(tool), 26) + lpad(s.calls, 7) + lpad(hits, 8) + lpad(s.rejected, 10) + lpad(rp + '%', 6) + lpad(avg, 8));
   }
+  const totalHits = Object.values(cacheHits).reduce((s, n) => s + n, 0);
+  const hitRate = totalInvokes > 0 ? ((totalHits / totalInvokes) * 100).toFixed(1) : '0.0';
+  console.log(`\ncache note: 'cached' is in-turn dedup hits from TOOL_INVOKE.cached (not a global/session cache). total=${totalHits}/${totalInvokes} (${hitRate}%)`);
   console.log('');
 }
 
