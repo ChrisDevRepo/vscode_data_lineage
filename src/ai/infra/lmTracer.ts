@@ -221,4 +221,3 @@ export class LmTracer {
     // intentional no-op — appendFileSync writes are synchronous
   }
 }
-

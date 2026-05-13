@@ -124,4 +124,3 @@ function tailId(id: string | undefined): string {
   if (!id) return '?';
   return id.length > 6 ? id.slice(-6) : id;
 }
-

@@ -271,4 +271,3 @@ Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
 | `dataLineageViz.tableStatistics.sampleSize` | `10000` | Number of rows in the TABLESAMPLE when sampling is triggered. |
 | `dataLineageViz.tableStatistics.useApproxDistinct` | `true` | Use `APPROX_COUNT_DISTINCT` for faster (±2%) distinct counts. |
 | `dataLineageViz.tableStatistics.maxColumns` | `50` | Maximum columns profiled per table; wider tables are truncated. |
-

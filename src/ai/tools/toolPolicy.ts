@@ -122,4 +122,3 @@ export function filterLmTools<T extends { name: string }>(
   const allowed = getAllowedLmToolNames(stage);
   return allTools.filter(t => allowed.has(t.name));
 }
-

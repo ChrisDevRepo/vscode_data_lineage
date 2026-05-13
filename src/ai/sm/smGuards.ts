@@ -19,8 +19,8 @@ import type Graph from 'graphology';
  * Logging callback injected into state machines for operational tracing.
  *
  * @remarks
- * Per [`logging.md`](../../.claude/rules/logging.md), only `info` / `debug` / `warn` are
- * permitted; `error` flows through dedicated channels with notification escalation.
+ * Only `info` / `debug` / `warn` are permitted here; `error` flows through
+ * dedicated channels with notification escalation.
  */
 export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
 
@@ -164,6 +164,3 @@ export function bfsDepthMap(
   }
   return depth;
 }
-
-
-

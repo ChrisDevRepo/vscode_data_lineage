@@ -70,11 +70,9 @@ export function buildGeneralSystemPrompt(
  */
 export function buildPhasePrompt(
   phase: PromptPhase,
-  opts?: { isInline?: boolean },
 ): string {
-  const isInline = !!opts?.isInline;
   if (phase === 'discover') return buildDiscoveryPrompt();
-  if (phase === 'active') return buildActivePhasePrompt(isInline);
+  if (phase === 'active') return buildActivePhasePrompt();
   if (phase === 'synthesis') return buildSynthesisPrompt();
   return buildFollowUpPrompt();
 }
@@ -150,23 +148,18 @@ export function buildDiscoveryPrompt(): string {
 
 
 /**
- * Constructs the prompt for the Active (Hop-by-Hop or Full Run) phase.
- * 
- * @remarks
- * Dynamically switches instructions based on whether the engine is in True Inline mode
- * or Sliding Memory mode, while sharing the core heuristic rules for node analysis.
+ * Constructs the prompt for the Active hop-by-hop phase.
  *
- * @param isInline - Whether the engine is delivering the entire graph context at once.
+ * @remarks
+ * Active execution is always strict sliding memory. Full-catalog inline delivery is
+ * a discovery-tool payload decision and is intentionally not an execution mode here.
+ *
  * @returns A formatted system instruction for the active phase.
  */
-export function buildActivePhasePrompt(isInline = false): string {
-  const mode = isInline
-    ? 'TRUE INLINE: Analyze all nodes holistically in a single turn.'
-    : 'SLIDING MEMORY: Analyze nodes sequentially as presented.';
-
+export function buildActivePhasePrompt(): string {
   return [
     '# Active Exploration Protocol',
-    `Mode: ${mode}`,
+    'Mode: SLIDING MEMORY: Analyze nodes sequentially as presented.',
     '',
     '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
     '2. MATHEMATICS: Write formulas in LaTeX (`$...$` inline, `$$...$$` block). Do not use backticks or plain prose for formulas.',
@@ -458,9 +451,9 @@ export function buildFollowupFallbackPrompt(): string {
   ].join('\n');
 }
 
-/** 
+/**
  * Transforms raw user input into a structured model search request.
- * 
+ *
  * @param userInput - The search term or regex provided by the user.
  * @returns A formatted prompt for the `/search` command.
  */
@@ -469,13 +462,13 @@ export function buildSearchPrompt(userInput: string): string {
 }
 
 
-/** 
+/**
  * Constructs a "Stop Gate" message when an AI action requires explicit user confirmation.
- * 
+ *
  * @remarks
- * Injected as a User message to pause the autonomous tool loop when a `action_required` 
+ * Injected as a User message to pause the autonomous tool loop when a `action_required`
  * state is detected by the extension host.
- * 
+ *
  * @param gates - List of reasons/conditions that blocked the execution.
  * @returns A strict instruction string for the AI to cease tool calls.
  */
@@ -483,7 +476,7 @@ export function buildActionRequiredGate(gates: string[]): string {
   return `STOP: ${gates.join(' | ')} — Address this with the user before proceeding with further tool calls.`;
 }
 
-/** 
+/**
  * Error hint provided to the AI if it attempts to call tools while a gate is pending.
  */
 export const ACTION_REQUIRED_PENDING_HINT =
@@ -684,4 +677,3 @@ export function buildMissionStateBlock(
   );
   return lines.join('\n');
 }
-

@@ -121,5 +121,3 @@ export function buildEvictionStub(evictedCount: number): string {
     hint: 'Earlier conversation was removed to fit context window. Key context from those turns may be missing.',
   });
 }
-
-

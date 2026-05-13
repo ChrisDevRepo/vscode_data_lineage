@@ -1588,5 +1588,3 @@ export interface PresentResultResult {
   /** Count of nodes included in the rendered view after add/prune resolution. */
   node_count: number;
 }
-
-

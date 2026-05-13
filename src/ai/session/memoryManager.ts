@@ -4,8 +4,8 @@
  * @remarks
  * Stores high-fidelity per-node analysis (`DetailSlot`). On every hop the manager
  * emits a {@link WorkingMemory} snapshot containing the user's original question,
- * a sliding window of recent node summaries (incremental loading), and progress 
- * metrics. Emission is state-machine-driven — the full detail archive remains 
+ * a sliding window of recent node summaries (incremental loading), and progress
+ * metrics. Emission is state-machine-driven — the full detail archive remains
  * internal until synthesis to prevent context bloat.
  */
 
@@ -341,4 +341,3 @@ export class AiMemoryManager {
       .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
   }
 }
-

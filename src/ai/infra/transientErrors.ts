@@ -26,4 +26,3 @@ export function matchesTransientNetPattern(err: unknown): boolean {
   const code = (err as { code?: string })?.code ?? '';
   return TRANSIENT_NET_PATTERN.test(msg) || TRANSIENT_NET_PATTERN.test(code);
 }
-

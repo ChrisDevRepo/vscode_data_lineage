@@ -29,4 +29,4 @@
 
 ## Test data
 
-Only AdventureWorks dacpacs are allowed in [`../fixtures/`](../fixtures/). Customer/proprietary data must never be committed (see [`../../.claude/rules/test-data.md`](../../.claude/rules/test-data.md)).
+Only AdventureWorks dacpacs are allowed in [`../fixtures/`](../fixtures/). Customer/proprietary data must never be committed; see the repository security policy in [`../../.github/copilot-instructions.md`](../../.github/copilot-instructions.md) and [`../../AGENTS.md`](../../AGENTS.md).

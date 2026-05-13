@@ -153,7 +153,7 @@ The AI escalates to SM via `lineage_start_exploration` (which emits `confirm_sm_
 
 **Guard boundary:** discovery graph-scope bundle retrieval (`lineage_get_scope_bundle` with `include_ddl:true`) enforces node/token budget and may return `over_discovery_budget`. `lineage_start_exploration` preflight remains a second safety net at SM-commit boundary. The same scope contract fields (origin/direction/depth/asymmetric depth) should drive both checks to avoid mismatch.
 
-The escalation contract removed the legacy "detailed analysis verbs" trigger after commit `d27caa9` deleted inline mode. With inline gone, "detailed analysis" no longer has a low-cost path; routing those requests through gate-approved SM was costly and unnecessary for small scopes that fit the catalog.
+The escalation contract does not treat vague "detailed analysis" wording as an SM trigger. Broad analysis requires gate-approved SM, which is costly and unnecessary for small scopes that fit the discovery catalog tools.
 
 If the user's intent is unclear between chat and graph, discovery answers in chat. The post-discovery SM-offer follow-up pill (Wave 2, shipped in 1.0.0) gives the user a one-click path to SM if the chat answer made them want a deeper hop-by-hop walk.
 
@@ -428,4 +428,3 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Working Memory** (WM) | Per-hop snapshot the prompt builder assembles from the archive plus constants — `user_question`, `checklist`, `recent_rejections`, `active_schemas`, optional `budget_pressure`; `short_term_memory` (last 3 summaries) is a sibling sliding view from `getShortTermMemory()`. Not stored — recomputed every hop. |
 | **`action_required`** | Engine envelope that emits a consent gate. Turn ends; user reply resumes or aborts. |
 | **Deferred question** | In SM, an out-of-border route collected silently and surfaced at synthesis. |
-

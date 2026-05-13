@@ -115,4 +115,3 @@ export function classifyGateReply(reply: string): 'yes' | 'no' | 'refine' | 'red
   if (/^refine\s*:?/.test(trimmed)) return 'refine';
   return 'redirect';
 }
-

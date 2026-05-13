@@ -137,7 +137,7 @@ Low-risk diagnostics added for follow-up routing:
 | Function | File | Concern |
 |----------|------|---------|
 | `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
-| `buildPhasePrompt(phase, ctx?)` | `prompts.ts` | Canonical static phase protocol entrypoint (discover/active/synthesis/completed). |
+| `buildPhasePrompt(phase)` | `prompts.ts` | Canonical static phase protocol entrypoint (discover/active/synthesis/completed). |
 | `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules. |
 | `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract; routes mission-relevant neighbors via `route_requests` (pruning specifics are SM-owned). |
 | `buildSynthesisPrompt` | `prompts.ts` | Archive lift + assembly + intro/closing anchoring. |
@@ -275,4 +275,3 @@ node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson --journal-metrics >
 | Webview (React Flow, filters, themes) | [`src/panelProvider.ts`](../src/panelProvider.ts), [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts), [`src/components/`](../src/components/). |
 | DMV ingestion / DBA contract | [`DMV_QUERIES.md`](DMV_QUERIES.md), [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml), [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts). |
 | Profiling SQL | [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md), [`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts). |
-

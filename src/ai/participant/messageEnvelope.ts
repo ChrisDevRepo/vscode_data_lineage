@@ -179,4 +179,3 @@ export class MessageEnvelope {
     return out;
   }
 }
-

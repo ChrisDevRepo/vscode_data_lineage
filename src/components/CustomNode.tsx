@@ -30,17 +30,17 @@ export type CustomNodeData = {
   externalUrl?: string;
   /** Database name for cross-database references. */
   externalDatabase?: string;
-  /** 
-   * A small text badge displayed above the node. 
+  /**
+   * A small text badge displayed above the node.
    * Typically used for AI reasoning steps or bookmark categories.
    */
   aiBadge?: { text: string };
-  /** 
+  /**
    * A descriptive note displayed below the node.
    * Provides deep business logic or transformation context.
    */
   aiNote?: { text: string };
-  /** 
+  /**
    * Custom color and shadow configuration for AI-driven highlights.
    */
   aiHighlight?: { color: string; glow: string; shadow: string };
@@ -54,7 +54,7 @@ export type CustomNodeData = {
 
 /**
  * A highly customized React Flow node component that renders database objects.
- * 
+ *
  * @remarks
  * This component handles complex visual states including:
  * - Schema-based color coding (left border).
@@ -63,9 +63,9 @@ export type CustomNodeData = {
  * - Toolbars for AI-generated annotations and badges.
  * - Interactive elements like the 'Remove from View' button.
  * - High-fidelity tooltips showing qualified names and connectivity metrics.
- * 
+ *
  * It utilize standard React Flow `Handle` components for edge anchoring.
- * 
+ *
  * @param props - Component props containing the node ID and business data.
  */
 function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {

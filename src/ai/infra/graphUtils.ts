@@ -30,4 +30,3 @@ export function buildBareGraph(model: DatabaseModel): Graph {
 
   return graph;
 }
-

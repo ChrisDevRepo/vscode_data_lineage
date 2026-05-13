@@ -104,7 +104,7 @@ This fallback is why the YAML doesn't need an exhaustive `INSERT`/`UPDATE`/`MERG
 
 ## How to verify a rule change
 
-The snapshot test catches regressions across all 31 stored procedures in the two committed dacpacs (`AdventureWorks.dacpac` and `AdventureWorks_sdk-style.dacpac`). Use it as the regression net before merging.
+The snapshot test catches regressions across all 31 stored procedures in the two committed dacpacs (`AdventureWorks2025_AI.dacpac` and `AdventureWorks_sdk-style.dacpac`). Use it as the regression net before merging.
 
 ```bash
 npm run test:snapshot          # exits 1 on any diff vs tests/fixtures/aw-baseline.tsv
@@ -134,4 +134,3 @@ When working on a single SP, point the wizard at one schema, narrow the model, a
 - Engine: [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts)
 - Snapshot baseline: [`tests/fixtures/aw-baseline.tsv`](../tests/fixtures/aw-baseline.tsv)
 - Microsoft T-SQL reference: <https://learn.microsoft.com/sql/t-sql/language-reference>
-

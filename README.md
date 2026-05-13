@@ -92,4 +92,3 @@ Bug reports welcome. For custom features, fork and extend under the MIT license.
 ---
 
 MIT License · [Christian Wagner](https://www.linkedin.com/in/christian-wagner-11aa8614b) · [GitHub](https://github.com/ChrisDevRepo/vscode_data_lineage) · Developed with [Claude Code](https://claude.ai/code)
-

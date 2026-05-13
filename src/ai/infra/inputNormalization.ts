@@ -130,4 +130,3 @@ export function normalizeSearchQueryInput(raw: string): { query: string; schemaH
 
   return { query: input };
 }
-

@@ -21,7 +21,7 @@ Important correction: YAML is not the only authoritative surface. YAML controls 
 Prompt assembly is now phase-first in TS:
 
 - `buildGeneralSystemPrompt(...)` - shared system baseline.
-- `buildPhasePrompt(phase, ctx)` - canonical static protocol per phase (`discover` / `active` / `synthesis` / `completed`).
+- `buildPhasePrompt(phase)` - canonical static protocol per phase (`discover` / `active` / `synthesis` / `completed`).
 - `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning contracts, CT anchor). BB and CT variants are separated here; CT variant removes all AI pruning vocabulary — engine handles pruning via `column_flow` absence.
 - `resolveStagePrompt(...)` - YAML template injection and gating.
 - Dynamic active-only blocks:
@@ -31,10 +31,10 @@ Prompt assembly is now phase-first in TS:
 
 In `lineageParticipant`, stable assembly is:
 
-1. general system prompt  
-2. phase protocol  
-3. SM protocol (active only)  
-4. YAML stage block  
+1. general system prompt
+2. phase protocol
+3. SM protocol (active only)
+4. YAML stage block
 5. mission/discovery summary metadata blocks
 
 Dynamic assembly is appended only during active hops.

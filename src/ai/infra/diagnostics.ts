@@ -103,7 +103,7 @@ export class PerformanceCollector {
     error?: string
   ): void {
     const latency = Date.now() - this.tRoundStart;
-    
+
     this.rounds.push({
       round,
       phase,
@@ -132,7 +132,7 @@ export class PerformanceCollector {
     const totalLatency = Date.now() - this.tStart;
     const totalIn = this.rounds.reduce((sum, r) => sum + r.tokensIn, 0);
     const totalOut = this.rounds.reduce((sum, r) => sum + r.tokensOut, 0);
-    const utilization = sess.maxInputTokens > 0 
+    const utilization = sess.maxInputTokens > 0
       ? `${((peakInput / sess.maxInputTokens) * 100).toFixed(0)}%`
       : '0%';
 
@@ -157,8 +157,7 @@ export class PerformanceCollector {
     };
 
     this.logger.info(`[AI] [Hop] Performance Final — total_latency=${totalLatency}ms hops=${this.rounds.length} tokens=${totalIn}in/${totalOut}out utilization=${utilization} evictions=${this.evictionCount}`);
-    
+
     return diag;
   }
 }
-

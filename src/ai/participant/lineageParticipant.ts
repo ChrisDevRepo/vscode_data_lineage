@@ -125,6 +125,10 @@ function sanitizeDescriptionForChat(description: string): string {
     .replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 /**
  * Minimizes replayed tool-result payload for ACTIVE phase.
  *
@@ -133,13 +137,15 @@ function sanitizeDescriptionForChat(description: string): string {
  * emitted by canonical prompt blocks (`<mission_state>`, `<mission_brief>`),
  * so they are removed from replay to avoid duplicate carriers in one envelope.
  */
-function minimizeActiveToolResultPayload(payload: any): any {
-  if (!payload || typeof payload !== 'object') return payload;
+function minimizeActiveToolResultPayload(payload: unknown): unknown {
+  if (!isRecord(payload)) return payload;
   const out: Record<string, unknown> = {};
   if (typeof payload.sm_status === 'string') out.sm_status = payload.sm_status;
-  if (payload.focus_node && typeof payload.focus_node === 'object') out.focus_node = payload.focus_node;
+  if (isRecord(payload.focus_node)) out.focus_node = payload.focus_node;
   if (Array.isArray(payload.neighbors)) out.neighbors = payload.neighbors;
-  const activeColumns = payload?.working_memory?.column_aspect?.active_columns;
+  const workingMemory = isRecord(payload.working_memory) ? payload.working_memory : undefined;
+  const columnAspect = isRecord(workingMemory?.column_aspect) ? workingMemory.column_aspect : undefined;
+  const activeColumns = columnAspect?.active_columns;
   if (Array.isArray(activeColumns)) {
     out.column_state = {
       active_columns: activeColumns.slice(0, 12),
@@ -216,7 +222,7 @@ function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | unde
       continue;
     }
     try {
-      const payload = JSON.parse(textPart.value);
+      const payload: unknown = JSON.parse(textPart.value);
       const compact = minimizeActiveToolResultPayload(payload);
       compactResults.push(new vscode.LanguageModelToolResultPart(
         part.callId,
@@ -267,8 +273,8 @@ function buildCompletedResultSnapshot(sess: AiSession): string {
  * Keeps only success/error envelope and compact graph identifiers. The detailed
  * rendered body is supplied via {@link buildCompletedResultSnapshot}.
  */
-function minimizeCompletedToolResultPayload(payload: any): any {
-  if (!payload || typeof payload !== 'object') return payload;
+function minimizeCompletedToolResultPayload(payload: unknown): unknown {
+  if (!isRecord(payload)) return payload;
   if (payload.error) {
     return { error: payload.error, hint: payload.hint, next_action: payload.next_action };
   }
@@ -339,7 +345,7 @@ function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolPair | u
       continue;
     }
     try {
-      const payload = JSON.parse(textPart.value);
+      const payload: unknown = JSON.parse(textPart.value);
       const compact = minimizeCompletedToolResultPayload(payload);
       compactResults.push(new vscode.LanguageModelToolResultPart(
         part.callId,
@@ -521,7 +527,7 @@ export class LineageParticipant {
    * Registers the chat participant and its feedback listener.
    *
    * @remarks
-   * Suggested follow-up actions (like exploring deferred nodes) are surfaced via 
+   * Suggested follow-up actions (like exploring deferred nodes) are surfaced via
    * a `followupProvider` as standard VS Code chat pills. This maintains a clean
    * UX while inviting the user to deepen the analysis. Deterministic UI actions
    * (like "Show in Graph") remain as `stream.button` in the response stream.
@@ -938,7 +944,7 @@ export class LineageParticipant {
           : totalNodes;
         const base = buildGeneralSystemPrompt(phase, dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes);
 
-        const phaseSpecific = buildPhasePrompt(phase, { isInline: false });
+        const phaseSpecific = buildPhasePrompt(phase);
 
         // Follow-up phase inherits the synthesis-stage YAML block so `present_result`
         // re-renders keep the same formatting contract.
@@ -1828,4 +1834,3 @@ export class LineageParticipant {
     }
   }
 }
-

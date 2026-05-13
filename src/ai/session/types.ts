@@ -2,7 +2,7 @@ import type { ColumnEdge } from '../sm/smTypes';
 
 /**
  * Categorizes nodes based on their semantic relevance to an AI-driven lineage investigation.
- * 
+ *
  * @remarks
  * Used for both graph visualization (React Flow) and AI reasoning (BFS/DFS).
  * - `trace`: Part of the active lineage path.
@@ -14,9 +14,9 @@ import type { ColumnEdge } from '../sm/smTypes';
  */
 export type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'origin';
 
-/** 
+/**
  * Represents the grounded findings of an AI session, serialized for visualization.
- * 
+ *
  * @remarks
  * This structure is typically populated by `ColumnTrace` or `Blackboard` modes and
  * consumed by the `present_result` synthesis logic to generate the final interactive report.
@@ -60,9 +60,9 @@ export interface ResultGraph {
   columnAspect?: { edges: ColumnEdge[]; ctPrunedNodeIds: string[] };
 }
 
-/** 
+/**
  * Collection of Markdown-formatted instructions for AI report generation.
- * 
+ *
  * @remarks
  * These templates are loaded from `assets/aiOutputTemplates.yaml` during extension activation
  * and guide the AI in synthesizing its findings into a structured, user-friendly report.
@@ -151,9 +151,9 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   column_trace_capture: '',
 };
 
-/** 
+/**
  * A high-level, human-readable summary of an active AI session's state.
- * 
+ *
  * @remarks
  * Primarily used for logging, telemetry, and updating VS Code UI elements
  * (like the Status Bar or Chat Participant metadata).
@@ -172,4 +172,3 @@ export interface SessionSummary {
   /** Total number of hops (visits) performed by the AI. */
   hopCount: number;
 }
-

@@ -18,12 +18,12 @@ export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findi
 /** Live progress for the hop loop: completed AI hops, queued nodes, and total acknowledged nodes. */
 export type HopProgress = { current: number; open: number; total: number };
 
-/** 
+/**
  * Flags identifying structural boundaries encountered during graph traversal.
  */
 export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 
-/** 
+/**
  * The AI's qualitative assessment of a node's relevance to the current lineage investigation.
  */
 export type Verdict = 'analyze' | 'pass' | 'prune';
@@ -264,7 +264,7 @@ export interface HopFinding {
  */
 export type HopSubmission = HopFinding;
 
-/** 
+/**
  * A request to add a specific node to the navigation agenda.
  */
 export interface RouteRequest {
@@ -619,4 +619,3 @@ export interface HopLogEntry {
   /** ISO timestamp of the execution. */
   timestamp: string;
 }
-

@@ -15,4 +15,3 @@ export type InteractionRuleFailure = {
 
 /** `null` means the rule passed. */
 export type InteractionRuleResult = InteractionRuleFailure | null;
-

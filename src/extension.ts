@@ -20,14 +20,14 @@ let outputChannel: vscode.LogOutputChannel;
 
 /**
  * Extension Activation Lifecycle.
- * 
+ *
  * Orchestrates the bootstrapping of the Data Lineage Viz extension.
  * Adheres to a strict registration order mandated by stability requirements:
  * 1.  **Sidebar/Quick Actions**: Registered first to prevent "no provider" UI errors during early activation.
  * 2.  **Commands & Project Store**: Core functionality and state management.
  * 3.  **AI Bridge & Language Model Tools**: Integration with VS Code's AI ecosystem.
  * 4.  **Chat Participant**: The autonomous lineage explorer.
- * 
+ *
  * @param context - The extension context provided by VS Code.
  * @returns An API object for testing and internal integration.
  */
@@ -67,19 +67,19 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register all user-facing commands.
   context.subscriptions.push(...registerCommands(
-    context, 
-    getSession, 
-    outputChannel, 
+    context,
+    getSession,
+    outputChannel,
     (ctx, title, demo) => {
       Logger.create(outputChannel, 'Bridge').info(`Command executed: openPanel (demo=${demo})`);
       return openPanel(
-        ctx, 
-        title, 
-        getSession, 
-        outputChannel, 
-        loadStore, 
-        saveStore, 
-        async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel); }, 
+        ctx,
+        title,
+        getSession,
+        outputChannel,
+        loadStore,
+        saveStore,
+        async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel); },
         demo
       );
     },
@@ -156,10 +156,10 @@ export function deactivate() {
 
 /**
  * Loads AI Output Templates from built-in assets and optional user overrides.
- * 
+ *
  * These templates provide the structural instructions used by the AI to generate
  * summaries, section titles, and highlighted badges in the UI.
- * 
+ *
  * @param outputChannel - The log channel for reporting load status.
  * @param extensionUri - The root URI of the extension.
  * @returns A promise resolving to the compiled `AiOutputTemplates`.
@@ -231,10 +231,10 @@ async function loadAiOutputTemplates(
 
 /**
  * Loads and installs SQL parsing rules for DDL analysis.
- * 
+ *
  * Rules are loaded from the built-in `defaultParseRules.yaml` and can be
  * overridden by a custom file specified in settings.
- * 
+ *
  * @param outputChannel - The log channel.
  * @param extensionUri - The root URI of the extension.
  * @returns A promise that resolves when the rules are loaded and applied to the engine.

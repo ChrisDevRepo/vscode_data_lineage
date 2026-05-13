@@ -11,11 +11,11 @@ import { ClassificationSchema, type ClassificationValue } from '../session/class
 
 /**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
- * 
+ *
  * @remarks
- * The `AiSession` acts as a "Clean Slate" for `@lineage` participant interactions. 
- * It maintains the grounded database model, the active exploration state machine, 
- * and the two-tier memory manager. Sessions are strictly isolated to prevent 
+ * The `AiSession` acts as a "Clean Slate" for `@lineage` participant interactions.
+ * It maintains the grounded database model, the active exploration state machine,
+ * and the two-tier memory manager. Sessions are strictly isolated to prevent
  * cross-project or cross-user context leakage.
  */
 export class AiSession {
@@ -23,7 +23,7 @@ export class AiSession {
   public id: string;
   /** Orchestrates short-term narrative and long-term technical memory. */
   public readonly memory: AiMemoryManager;
-  
+
   // ── Environment State ──
   /** The current database model (nodes/edges) extracted from DDL. */
   public model: DatabaseModel | null = null;
@@ -190,7 +190,7 @@ export class AiSession {
   public modelName = '';
   /** Sequential log of tool calls and results for the current exploration. */
   public hopLog: HopLogEntry[] = [];
-  
+
   // ── Telemetry / Log Correlation ──
   /** Unix timestamp of session creation. Pinned at creation; used for result-graft windowing. */
   public startTime: number;
@@ -218,7 +218,7 @@ export class AiSession {
 
   /**
    * Creates a new AiSession.
-   * 
+   *
    * @param templates - Optional report generation templates.
    */
   constructor(templates?: AiOutputTemplates) {
@@ -377,7 +377,7 @@ export class AiSession {
 
   /**
    * Generates a high-level summary of the session's current status.
-   * 
+   *
    * @returns A `SessionSummary` object for logging and UI updates.
    */
   public getSummary(): SessionSummary {
@@ -396,11 +396,11 @@ const GLOBAL_SESSION_KEY = '__VSCODE_DL_AI_SESSION__';
 
 /**
  * Retrieves the global singleton instance of the `AiSession`.
- * 
+ *
  * @remarks
  * Uses `globalThis` to ensure state persistence across different entry points
  * (Extension Host vs. Integration Tests).
- * 
+ *
  * @returns The active `AiSession` instance.
  */
 export function getSession(): AiSession {
@@ -409,4 +409,3 @@ export function getSession(): AiSession {
   }
   return (globalThis as any)[GLOBAL_SESSION_KEY];
 }
-

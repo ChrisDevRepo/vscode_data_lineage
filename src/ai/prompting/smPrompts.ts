@@ -215,4 +215,3 @@ export function buildCtSynthesisBlock(edges: ColumnEdge[], ctPrunedNodeIds?: str
   lines.push('- highlight_groups.transform: all remaining chain nodes (writers, views, procedures between source and target)');
   return lines.join('\n');
 }
-

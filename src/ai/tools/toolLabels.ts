@@ -43,4 +43,3 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
       return `Invoking ${name.replace('lineage_', '')}…`;
   }
 }
-

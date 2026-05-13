@@ -23,7 +23,7 @@
  */
 
 
-/** Default catalog-inline token budget — overridden per-request via `ai.contextPayloadBudget` (legacy `ai.inlineTokenBudget`). */
+/** Default catalog-inline token budget — overridden per-request via `ai.contextPayloadBudget`. */
 const DEFAULT_CATALOG_INLINE_TOKEN_BUDGET = 10_000;
 
 /** Runtime budget for `lineage_get_context` catalog inline-vs-summary delivery. */
@@ -153,4 +153,3 @@ export const CONTEXT_PRESSURE_THRESHOLD = 0.75;
  * and ensure catastrophic backtracking does not occur during model searching.
  */
 export const REGEX_MAX_LENGTH = 200;
-

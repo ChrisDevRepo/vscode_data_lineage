@@ -42,7 +42,7 @@ async function runTests() {
     assert(discover.includes('deeper hop-by-hop analysis'), 'discover escalates on explicit deeper-analysis intent');
     assert(!discover.includes('prefer Class S'), 'discover no longer biases ambiguous routing to Class S');
 
-    const active = buildPhasePrompt('active', { isInline: false });
+    const active = buildPhasePrompt('active');
     assert(active.includes('Active Exploration Protocol'), 'active includes protocol heading');
     assert(active.includes('TOOL CONSTRAINTS'), 'active includes tool constraints');
     assert(active.includes('DECISION SOURCE'), 'active points to canonical decision contract');
@@ -95,7 +95,7 @@ async function runTests() {
   console.log('\n── active assembly redundancy guard ──');
   {
     const base = buildGeneralSystemPrompt('active', 'SQL Server', ['dbo'], 1, 10, 10);
-    const phase = buildPhasePrompt('active', { isInline: false });
+    const phase = buildPhasePrompt('active');
     const sm = buildSmProtocol({ classification: 'business' });
     const assembled = [base, phase, sm].join('\n\n');
     const needle = 'Neighbor Decision Contract (Current Hop Only)';

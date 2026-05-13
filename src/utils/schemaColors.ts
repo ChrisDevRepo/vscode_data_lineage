@@ -75,7 +75,7 @@ const SCHEMA_COLORS_DARK = [
 /**
  * Generates a deterministic 32-bit integer hash for a given string.
  * This ensures that the same schema name always resolves to the same color index.
- * 
+ *
  * @param str - The input string to hash.
  * @returns A deterministic hash value.
  */
@@ -170,9 +170,9 @@ export const AI_ROLE_TO_COLOR: Record<string, string> = {
   gy: 'gy',
 };
 
-/** 
+/**
  * Resolves a semantic AI role or a raw color code to a standard two-letter color code.
- * 
+ *
  * @param role - The semantic role (e.g., 'source', 'target') or a color code.
  * @returns A valid two-letter color code, defaulting to 'gy' (gray).
  */
@@ -193,10 +193,10 @@ export const AI_COLOR_GLOW: Record<string, { glow: string; shadow: string }> = {
   gy: { glow: 'var(--ln-ai-gy-glow)', shadow: 'var(--ln-ai-gy-shadow)' },
 };
 
-/** 
+/**
  * Detects if the VS Code environment is currently using a dark or high-contrast theme.
  * This is determined by inspecting the `data-vscode-theme-kind` attribute on the document body.
- * 
+ *
  * @returns `true` if a dark theme is active; otherwise `false`.
  */
 export function isDarkTheme(): boolean {

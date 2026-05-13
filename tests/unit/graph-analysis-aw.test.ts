@@ -1,7 +1,7 @@
 /**
  * Snapshot-based baseline test for graph analysis on AdventureWorks2025_AI.dacpac.
  * COMPARES AGAINST: tests/fixtures/graph-baseline-aw.json (Verified with NetworkX)
- * 
+ *
  * Execute with: npx tsx tests/unit/graph-analysis-aw.test.ts
  */
 

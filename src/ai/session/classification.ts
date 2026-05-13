@@ -32,6 +32,3 @@ export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
   technical: 'technical-driven',
   both: 'business + technical driven',
 };
-
-
-

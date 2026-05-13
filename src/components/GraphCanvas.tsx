@@ -44,7 +44,7 @@ import { notifyUser } from '../utils/notify';
 
 /**
  * Mapping of custom node types for React Flow.
- * 
+ *
  * IMPORTANT: nodeTypes must be defined at module level — not inside the component.
  * If defined inside, React Flow remounts all nodes on every render, causing
  * severe performance degradation and loss of state.
@@ -57,9 +57,9 @@ const FIT_VIEW_PADDING = 0.15;
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
 
-/** 
- * Max time (ms) to wait for a pending zoom target to appear in flowNodes before 
- * giving up and showing a warning. 
+/**
+ * Max time (ms) to wait for a pending zoom target to appear in flowNodes before
+ * giving up and showing a warning.
  */
 const PENDING_ZOOM_TIMEOUT_MS = 5000;
 
@@ -177,9 +177,9 @@ interface GraphCanvasProps {
   isModeLocked?: boolean;
   /** The current graph abstraction level (full object graph or overview schema graph). */
   graphMode?: GraphMode;
-  /** 
+  /**
    * Object-level node IDs that passed all filters (from useGraphology flowNodes).
-   * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth. 
+   * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth.
    */
   filteredObjectIds?: Set<string>;
   /** Callback for double-clicking a schema node (triggers drill-down). */
@@ -234,18 +234,18 @@ interface GraphCanvasProps {
 
 /**
  * The primary canvas component for the lineage visualization.
- * 
+ *
  * This component orchestrates the graph display (via React Flow), the various
- * floating control panels (Toolbar, Search, Legend), and the specialized 
+ * floating control panels (Toolbar, Search, Legend), and the specialized
  * interaction modes (Trace, Path, Analysis).
- * 
+ *
  * It manages:
  * - Graph layout and viewport control (fit view, zoom to node).
  * - Multi-layered filtering (types, schemas, exclusions).
  * - Selection and highlighting logic.
  * - Drill-down transitions between Overview (schema) and Full (object) modes.
  * - State management for advanced bookmarks and AI-generated views.
- * 
+ *
  * @param props - The component props.
  * @returns A complex functional component.
  */

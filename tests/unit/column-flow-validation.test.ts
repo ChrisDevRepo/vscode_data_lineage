@@ -231,9 +231,9 @@ function ctEngine(targetColumns = ['amount']) {
 }
 
 // ── Test 9: activeModeOf — CT presence selects the SM-CT tool scope ──
-// Replaces the deleted shouldSmInline check. The two-state model has no inline
-// execution mode; CT activation is now expressed mechanically via the ActiveMode
-// discriminator (sm_ct), which gates the per-hop tool set in toolPolicy.
+// Replaces the deleted inline-execution guard. CT activation is now expressed
+// mechanically via the ActiveMode discriminator (sm_ct), which gates the per-hop
+// tool set in toolPolicy.
 {
   assert(activeModeOf(true) === 'sm_ct', 'activeModeOf(hasColumnAspect=true) === sm_ct');
   assert(activeModeOf(false) === 'sm_bb', 'activeModeOf(hasColumnAspect=false) === sm_bb');

@@ -1,6 +1,6 @@
 /**
  * Unified Navigation Engine — The core state machine for all exploration modes.
- * 
+ *
  * Consolidates Blackboard, Dependency, and Column Trace into a single grounded engine.
  * Implements a "Map & Router" architecture with:
  * - Topological Map: Managed by the engine (Visited, Current, Agenda).
@@ -1853,7 +1853,7 @@ export class NavigationEngine implements IHopStateMachine {
   public getResult(): SmResult {
     const mem = this.memory.getResult();
     const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
-    
+
     // CT mode: restrict BFS scope to only nodes that appear in a column_flow edge.
     // Non-CT scope nodes are excluded by limiting traversal, not by mutating removedSet.
     let scopeForBfs = this.scopeNodeIds;
@@ -1933,4 +1933,3 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 }
-

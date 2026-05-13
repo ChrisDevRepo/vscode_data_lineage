@@ -44,7 +44,7 @@ const graph = makeGraph(nodes, edges);
 // Test 1: Cascade prune
 {
   const engine = new NavigationEngine(model, graph, (l, m) => console.log(`[Engine ${l}] ${m}`), {});
-  
+
   engine.init({
     origin: 'origin',
     question: 'Test cascade',
@@ -55,7 +55,7 @@ const graph = makeGraph(nodes, edges);
   // Hop 1: origin
   let ctx = engine.getHopContext();
   assert(ctx && ctx.focus_node && ctx.focus_node.id === 'origin', 'Hop 1 is origin');
-  
+
   engine.submitFindings({
     focus_node_id: 'origin',
     sections: [{ angle: 'business' as const, text: 'Root node' }],
@@ -76,7 +76,7 @@ const graph = makeGraph(nodes, edges);
   while (true) {
     ctx = engine.getHopContext();
     if (ctx.done || !ctx.focus_node) break;
-    
+
     const nid = ctx.focus_node.id;
     console.log(`Hop focus: ${nid}`);
 

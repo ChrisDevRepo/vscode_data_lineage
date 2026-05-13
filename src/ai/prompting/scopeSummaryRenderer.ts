@@ -82,4 +82,3 @@ export function renderScopeSummaryMd(s: ScopeSummary): string {
 
   return lines.join('\n');
 }
-

@@ -232,4 +232,3 @@ These match `.dacpac` ingestion behaviour exactly — not new gaps.
 
 - Built-in YAML: [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml)
 - Microsoft DMV catalogue: <https://learn.microsoft.com/sql/relational-databases/system-dynamic-management-views/system-dynamic-management-views>
-

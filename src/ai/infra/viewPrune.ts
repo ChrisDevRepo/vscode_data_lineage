@@ -25,4 +25,3 @@ export function prunePreserveOnly(
     edges: edges.filter(([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt)),
   };
 }
-

@@ -21,20 +21,20 @@ const DeferredQuestionArgSchema = z.array(DeferredQuestionSchema).min(1);
 
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
- * 
+ *
  * This includes commands for:
  * - Opening the primary lineage panel (wizard or demo).
  * - Project management (loading, saving, deleting).
  * - Configuration scaffolding (creating YAML templates).
  * - AI integration (view creation, state dumping).
  * - UI controls (overview mode toggle, object search).
- * 
+ *
  * @param context - The extension context.
  * @param getSession - Factory to retrieve the active AI session.
  * @param outputChannel - Log channel for reporting command execution and errors.
  * @param openPanel - Function to open the primary lineage webview.
  * @param buildDebugDump - Function to generate diagnostic information.
- * 
+ *
  * @returns An array of disposables representing the registered commands.
  */
 export function registerCommands(
@@ -51,8 +51,8 @@ export function registerCommands(
     // --- Primary Entry Points ---
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
-    
-    /** 
+
+    /**
      * Programmatic entry point for automated testing or deep-linking.
      * Loads a specific project by its ID.
      */
@@ -81,7 +81,7 @@ export function registerCommands(
       }
     }),
 
-    /** 
+    /**
      * Dumps the current AI State Machine (SM) state to a JSON file in the workspace.
      * Used for debugging deep-trace behavior and non-deterministic AI failures.
      */
@@ -160,7 +160,7 @@ export function registerCommands(
         const notes = (rg.notes ?? [])
           .filter(n => n.summary)
           .map(n => ({ nodeId: n.nodeId, text: n.summary }));
-        const name = (originalPrompt || 'AI Lineage View').length > 200 
+        const name = (originalPrompt || 'AI Lineage View').length > 200
           ? (originalPrompt || 'AI Lineage View').slice(0, 200) + '\u2026'
           : (originalPrompt || 'AI Lineage View');
         panel.webview.postMessage({
@@ -237,7 +237,7 @@ export function registerCommands(
       });
     }),
 
-    /** 
+    /**
      * Launches a Quick Pick search interface for all SQL objects in the current model.
      */
     vscode.commands.registerCommand('dataLineageViz.searchObjects', async () => {
@@ -266,7 +266,7 @@ export function registerCommands(
       qp.show();
     }),
 
-    /** 
+    /**
      * Command intended for testing/integration that forces a .dacpac file load into the active session.
      */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
@@ -295,7 +295,7 @@ export function registerCommands(
 
 /**
  * Creates a YAML configuration file in the workspace root by copying a template from the extension assets.
- * 
+ *
  * @param context - The extension context.
  * @param fileName - The name of the file to create in the workspace.
  * @param sourceAsset - The name of the template file in the extension's `assets/` folder.
