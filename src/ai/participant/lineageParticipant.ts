@@ -1075,11 +1075,23 @@ export class LineageParticipant {
         }
 
         // Explicit map to LanguageModelChatTool — passing raw vscode.lm.tools objects causes sendRequest to silently drop the tools array.
-        const tools: vscode.LanguageModelChatTool[] = lineageTools.map(t => ({
-          name: t.name,
-          description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'),
-          inputSchema: t.inputSchema
-        }));
+        // In CT mode, strip prune_neighbors from submit_findings schema: the field is BB-only and
+        // its presence in the schema causes the AI to submit it even though CT mode rejects it.
+        const isCtMode = activePhase === 'active' && sess.stateMachine?.columnAspect !== null;
+        const tools: vscode.LanguageModelChatTool[] = lineageTools.map(t => {
+          let inputSchema = t.inputSchema;
+          if (isCtMode && t.name === 'lineage_submit_findings' && inputSchema) {
+            const schema = structuredClone(inputSchema) as Record<string, unknown>;
+            const props = schema.properties as Record<string, unknown> | undefined;
+            if (props) delete props['prune_neighbors'];
+            inputSchema = schema;
+          }
+          return {
+            name: t.name,
+            description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'),
+            inputSchema,
+          };
+        });
 
         // Required is only valid with exactly one tool; fall back to Auto for multi-tool sets.
         const toolMode = (requestedMode === vscode.LanguageModelChatToolMode.Required && tools.length > 1)

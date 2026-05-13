@@ -315,8 +315,8 @@ Prune source split (important for debugging):
   - **Dequeue**: `[CT] auto-prune ... no active columns` — node never reaches AI.
   - **submit `column_flow: []`**: `[CT] auto-prune ... AI submitted column_flow: [] (no column interaction)` — accepted silently.
   - **submit `verdict=prune`**: `[CT] auto-prune ... AI submitted verdict=prune (converted silently)` — accepted silently.
-- **CT `prune_neighbors`**: still rejected with `ct_prune_forbidden` — topology safety, not converted.
-If CT is active and `ctPrunedNodeIds` is empty, no node was pruned in that CT path.
+- **CT `prune_neighbors`**: field is stripped from the `lineage_submit_findings` JSON schema before the LM sees it in CT mode (`lineageParticipant.ts` tools map). If submitted anyway, rejected with `ct_prune_forbidden` — topology safety, not converted.
+If CT is active and `ctPrunedNodeIds` is empty, no node was dequeued-and-pruned in that CT path; scope nodes not referenced in CT edges are excluded from the result graph by `getResult()` CT scope filter (they need not be in `ctPrunedNodeIds`).
 
 ## Mechanical enforcement
 

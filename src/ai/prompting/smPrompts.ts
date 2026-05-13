@@ -198,12 +198,19 @@ export function buildCtSynthesisBlock(edges: ColumnEdge[], ctPrunedNodeIds?: str
     lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
     lines.push('- Do not include excluded branches in the column chain narrative or sections[].');
   }
+  // Compute terminal sources: appear as from_node but never as to_node in any CT edge.
+  const toNodes = new Set(edges.map(e => e.to_node));
+  const terminalSources = [...new Set(edges.map(e => e.from_node))].filter(n => !toNodes.has(n));
+
   lines.push('');
   lines.push('Structure present_result using this chain (CT override — use chain role, not badge_label, for grouping):');
   lines.push('- summary: one sentence naming origin column → traced path → terminal source');
   lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
   lines.push('- sections[]: group by chain role: origin node | writer/transform nodes | terminal source node');
-  lines.push('- highlight_groups: source=terminal nodes, target=origin, transform=writer nodes');
+  lines.push(`- highlight_groups.source: terminal source nodes (appear as from_node but never as to_node): ${terminalSources.join(', ') || '(none)'}`);
+  lines.push('  — terminal source = the deepest data origin in this trace; can be any type when base table is out of scope');
+  lines.push('- highlight_groups.target: origin node only');
+  lines.push('- highlight_groups.transform: all remaining chain nodes (writers, views, procedures between source and target)');
   return lines.join('\n');
 }
 

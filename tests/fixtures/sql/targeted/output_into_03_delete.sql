@@ -1,5 +1,7 @@
 -- OUTPUT INTO Pattern 03: DELETE with OUTPUT DELETED into tombstone table
--- EXPECT  targets:[dbo].[Session],[dbo].[ExpiredSession]
+-- Session is the DELETE source (row-removal, no column data contributed) — not a lineage target.
+-- ExpiredSession receives the deleted rows via OUTPUT INTO — that IS a data-contributing write.
+-- EXPECT  targets:[dbo].[ExpiredSession]
 
 -- Archive and delete expired sessions atomically
 DELETE FROM [dbo].[Session]

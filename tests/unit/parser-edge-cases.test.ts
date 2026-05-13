@@ -531,14 +531,14 @@ EXEC [dbo].[LogComplete]
 function testCriticalReviewEdgeCases() {
   console.log('\n\u2500\u2500 9. Edge cases from critical review \u2500\u2500');
 
-  // DELETE FROM produces a target (DELETE is a write — lineage fact)
+  // DELETE FROM does NOT produce a target — removes rows, contributes no column data to lineage.
+  // The FROM keyword still fires extract_sources_ansi, so Target appears as a source (read ref only).
   {
     const r = parseSqlBody(`DELETE FROM [dbo].[Target] WHERE Id = 1`);
-    assert(hasName(r.targets, 'Target'),
-      'DELETE FROM: Target IS in targets (DELETE is a write operation)');
-    // DELETE FROM also fires extract_sources_ansi (FROM keyword match) → bidirectional
+    assert(!hasName(r.targets, 'Target'),
+      'DELETE FROM: Target NOT in targets (DELETE removes rows, not a column-data write)');
     assert(hasName(r.sources, 'Target'),
-      'DELETE FROM: Target appears as source (via FROM keyword — bidirectional edge)');
+      'DELETE FROM: Target appears as source (via FROM keyword — read reference)');
   }
 
   // OPENQUERY: content inside string should not be extracted
