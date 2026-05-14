@@ -1,4 +1,4 @@
-import type { ColumnEdge } from '../sm/smTypes';
+import type { ColumnEdge, SmNodeState } from '../sm/smTypes';
 
 /**
  * Categorizes nodes based on their semantic relevance to an AI-driven lineage investigation.
@@ -36,6 +36,8 @@ export interface ResultGraph {
   notes?: Array<{ nodeId: string; summary: string }>;
   /** AI-suggested grouping of nodes into narrative sections. */
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
+  /** Engine-owned lifecycle state for nodes; detail slots are content only. */
+  node_states?: SmNodeState[];
   /**
    * Engine-assembled markdown body produced by `present_result` (engine output, not AI input).
    * Populated by the tool handler from `orderAndAssemble()` output so `GET /session/:id/state`

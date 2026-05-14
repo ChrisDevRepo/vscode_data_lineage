@@ -52,7 +52,7 @@ async function runTests() {
     assert(synthesis.includes('## sections[] — REQUIRED'), 'synthesis enforces sections[]');
     assert(synthesis.includes('Final sections are the only authoritative graph/detail link surface'), 'synthesis owns final graph/detail links');
     assert(synthesis.includes('short section pointer, 2-3 words'), 'synthesis asks for short final labels');
-    assert(synthesis.includes('node may appear in zero or one section'), 'synthesis documents optional node labels');
+    assert(synthesis.includes('Nodes with `pass` state'), 'synthesis documents pass-state nodes without detail slots');
     assert(synthesis.includes('Notes do not create badges or sections'), 'synthesis separates notes from badges');
 
     const completed = buildPhasePrompt('completed');
@@ -63,6 +63,9 @@ async function runTests() {
     assert(completed.includes('If uncertain, stay in Route A'), 'completed includes Route A tiebreaker');
     assert(completed.includes('Section labels remain the authoritative final grouping/linking surface'), 'completed states section-label precedence');
     assert(completed.includes('badges regenerate from section labels'), 'completed maps badge regeneration to sections');
+    assert(completed.includes('highlight_groups[]'), 'completed maps graph role/color edits to highlight_groups');
+    assert(completed.includes('add_node_ids'), 'completed maps presentation-only visible-node additions to add_node_ids');
+    assert(completed.includes('not for label/color/note/text edits'), 'completed keeps supplement scoped to new analysis');
     assert(completed.includes('notes[]'), 'completed maps note updates');
   }
 

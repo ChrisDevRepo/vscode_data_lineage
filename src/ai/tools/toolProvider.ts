@@ -61,6 +61,38 @@ export { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
 /** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
 const SAFETY_RATIO = 0.7;
 
+function looksLikePresentationUpdateStart(input: unknown): boolean {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+  const data = input as Record<string, unknown>;
+  const question = typeof data.question === 'string' ? data.question.toLowerCase() : '';
+  const hasSupplement = !!(data.supplement && typeof data.supplement === 'object');
+  if (!hasSupplement) return false;
+  return /\b(label|highlight|color|badge|note|source|transform|target)\b/.test(question);
+}
+
+function findMissingCtTerminalSources(
+  resultGraph: AiSession['resultGraph'],
+  input: PresentResultInput,
+  resolvedNodeIds: string[],
+): string[] {
+  const edges = resultGraph?.columnAspect?.edges ?? [];
+  if (edges.length === 0) return [];
+  const toNodes = new Set(edges.map(e => e.to_node));
+  const terminalSources = Array.from(new Set(edges.map(e => e.from_node)))
+    .filter(id => !toNodes.has(id) && resolvedNodeIds.includes(id));
+  if (terminalSources.length === 0) return [];
+
+  const linked = new Set<string>();
+  for (const sec of input.sections ?? []) {
+    for (const id of sec.node_ids ?? []) linked.add(id);
+  }
+  for (const group of input.highlight_groups ?? []) {
+    if (group.color !== 'source') continue;
+    for (const id of group.node_ids ?? []) linked.add(id);
+  }
+  return terminalSources.filter(id => !linked.has(id));
+}
+
 /**
  * Private handler for AI tool execution.
  *
@@ -284,7 +316,12 @@ class ToolHandler {
         const preCheckRefining = preCheckLive
           && sess.phase.kind === 'awaiting_gate'
           && sess.phase.gate.gate === 'confirm_sm_start';
-        const alreadyStarted = evaluateAlreadyStartedRule(preCheckLive, preCheckPrior?.sessionId === sess.id, preCheckRefining);
+        const alreadyStarted = evaluateAlreadyStartedRule(
+          preCheckLive,
+          preCheckPrior?.sessionId === sess.id,
+          preCheckRefining,
+          looksLikePresentationUpdateStart(input) ? 'presentation_update_after_agenda' : 'active_agenda',
+        );
         if (alreadyStarted) {
           return this.logAndReturn('start_exploration', alreadyStarted, input);
         }
@@ -318,6 +355,13 @@ class ToolHandler {
       // Post-synthesis supplement path: reuse the existing engine, extend the agenda,
       // run one-shot inline. Merges new slots into the existing archive — no reset.
       if (data.supplement) {
+        if (looksLikePresentationUpdateStart(input)) {
+          return this.logAndReturn('start_exploration', {
+            error: 'presentation_update_requires_present_result',
+            hint: 'This is a presentation-only graph update. Do not use supplement analysis. Call lineage_present_result with is_update:true; include add_node_ids for nodes not currently visible, and update sections[], notes[], or highlight_groups[] for labels/colors/captions.',
+            next_action: 'present_result',
+          }, input);
+        }
         const priorEngine = sess.stateMachine as NavigationEngine | null;
         const supplementPrereq = evaluateSupplementPrereqRule(priorEngine?.status ?? null);
         if (supplementPrereq) {
@@ -395,7 +439,12 @@ class ToolHandler {
         sess.resetExploration();
         sess.startExplorationRoundId = sess.currentRoundId;
       } else if (priorLive) {
-        const alreadyStarted = evaluateAlreadyStartedRule(priorLive, prior!.sessionId === sess.id, isRefining);
+        const alreadyStarted = evaluateAlreadyStartedRule(
+          priorLive,
+          prior!.sessionId === sess.id,
+          isRefining,
+          looksLikePresentationUpdateStart(input) ? 'presentation_update_after_agenda' : 'active_agenda',
+        );
         if (alreadyStarted) return this.logAndReturn('start_exploration', alreadyStarted, input);
       }
 
@@ -633,6 +682,7 @@ class ToolHandler {
           originNodeId: result.result.originNodeId,
           scope: { nodes: result.result.fullNodes.length, edges: result.result.edges.length },
           suggested_sections: result.result.suggested_sections,
+          node_states: result.result.node_states,
           detail_slots: result.result.detail_slots,
         };
         return this.logAndReturn('submit_findings', { ...result, result: lmResult }, input);
@@ -664,6 +714,7 @@ class ToolHandler {
           originNodeId: finalResult.originNodeId,
           scope: { nodes: finalResult.fullNodes.length, edges: finalResult.edges.length },
           suggested_sections: finalResult.suggested_sections,
+          node_states: finalResult.node_states,
           detail_slots: finalResult.detail_slots,
         };
         return this.logAndReturn('submit_findings', {
@@ -782,6 +833,20 @@ class ToolHandler {
         const assembled = orderAndAssemble(fixedInput.sections, { title: fixedInput.title, intro: fixedInput.intro, closing: fixedInput.closing, nodeMap });
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
+      }
+
+      const missingTerminalSources = findMissingCtTerminalSources(resultGraph, fixedInput, resolvedNodeIds);
+      if (missingTerminalSources.length > 0) {
+        const failure = {
+          success: false,
+          errors: [
+            `CT terminal source node(s) missing from final presentation: ${missingTerminalSources.slice(0, 5).map(id => `\`${id}\``).join(', ')}.`,
+            'Link them in sections[].node_ids or include them in highlight_groups[] with color:"source". Tables can be source nodes even when they have no detail slot.',
+          ],
+          hint: 'Fix CT source presentation only. Keep existing section text where possible; add the terminal source table(s) to the source section or source highlight group.',
+        };
+        this.notePresentResultFailure(sess, failure);
+        return this.logAndReturn('present_result', failure, input);
       }
 
       this.logger.info(

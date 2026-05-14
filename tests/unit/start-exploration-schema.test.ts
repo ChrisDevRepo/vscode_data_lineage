@@ -8,6 +8,7 @@
 import { assert, printSummary } from './helpers/testUtils';
 import { StartExplorationInputSchema } from '../../src/ai/tools/tools';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../../src/ai/infra/inputNormalization';
+import { evaluateAlreadyStartedRule } from '../../src/ai/interaction/rules/startExplorationRules';
 
 async function runTests() {
   console.log('\n══════ start-exploration-schema tests ══════');
@@ -127,6 +128,17 @@ async function runTests() {
     resolveModelNodeId('dbo.DoesNotExist', nodeMap) === null,
     'unknown id remains unresolved after normalization',
   );
+
+  console.log('\n── already-started recovery hints ──');
+  const activeRecovery = evaluateAlreadyStartedRule(true, true, false);
+  assert(activeRecovery?.error === 'already_started', 'active duplicate start rejected');
+  assert(activeRecovery?.next_action === 'submit_findings', 'active duplicate start points to submit_findings');
+
+  const presentationRecovery = evaluateAlreadyStartedRule(true, true, false, 'presentation_update_after_agenda');
+  assert(presentationRecovery?.error === 'already_started', 'presentation duplicate start rejected');
+  assert(/presentation edit/i.test(presentationRecovery?.hint ?? ''), 'presentation recovery preserves edit intent');
+  assert(/lineage_present_result/i.test(presentationRecovery?.hint ?? ''), 'presentation recovery names present_result update path');
+  assert(/highlight_groups/i.test(presentationRecovery?.hint ?? ''), 'presentation recovery names highlight_groups');
 
   printSummary('start-exploration-schema');
 }

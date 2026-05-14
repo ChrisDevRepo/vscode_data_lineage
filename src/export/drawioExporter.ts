@@ -1,7 +1,7 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TYPE_COLORS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
+import { TYPE_COLORS, createSchemaColorMap, getSchemaColorFromMap, getExternalNodeColor, type SchemaColorMap } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
 /**
@@ -84,7 +84,7 @@ function buildLabel(d: CustomNodeData): string {
  * @param startId - The starting ID for XML elements in this section.
  * @returns An object containing the generated cells and the next available ID.
  */
-function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nextId: number } {
+function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number): { cells: MxCell[]; nextId: number } {
   const cells: MxCell[] = [];
   let id = startId;
 
@@ -120,7 +120,7 @@ function buildLegend(schemas: string[], startId: number): { cells: MxCell[]; nex
 
   for (let i = 0; i < schemas.length; i++) {
     const y = padY + headerH + i * rowH + 10;
-    const color = getSchemaColor(schemas[i], true);
+    const color = getSchemaColorFromMap(schemas[i], colorMap);
 
     cells.push({
       '@_id': String(id++),
@@ -208,7 +208,14 @@ export function exportToDrawio(
   const offsetX = GRAPH_OFFSET_X - Math.min(0, minX);
   const offsetY = 20 - Math.min(0, minY);
 
-  const legend = buildLegend(schemas, nextId);
+  const realNodeSchemas = nodes
+    .map(n => n.data as CustomNodeData)
+    .filter(d => d.objectType !== 'external')
+    .map(d => d.schema);
+  const exportSchemas = Array.from(new Set([...schemas, ...realNodeSchemas])).filter(s => !!s && s.trim().length > 0).sort();
+  const schemaColorMap = createSchemaColorMap(exportSchemas, true);
+
+  const legend = buildLegend(exportSchemas, schemaColorMap, nextId);
   nextId = legend.nextId;
 
   const nodeObjects: MxObject[] = [];
@@ -219,7 +226,7 @@ export function exportToDrawio(
     idMap.set(node.id, nodeId);
 
     const isExternal = d.objectType === 'external';
-    const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColor(d.schema, true);
+    const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColorFromMap(d.schema, schemaColorMap);
 
     nodeObjects.push({
       '@_id': nodeId,

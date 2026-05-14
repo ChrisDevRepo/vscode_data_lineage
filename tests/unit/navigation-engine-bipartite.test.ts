@@ -43,12 +43,16 @@ const graph = makeGraph(nodes, edges);
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'sp', question: 'test', direction: 'downstream', depth: 3 });
 
-  const state = engine.toJSON() as { agenda: Array<{ nodeId: string }>; scopeNodeIds: string[] };
+  const state = engine.toJSON() as { agenda: Array<{ nodeId: string }>; scopeNodeIds: string[]; nodeStates: Array<{ nodeId: string; action: string; reason: string; source: string }> };
   const agendaIds = state.agenda.map(e => e.nodeId);
   const scopeIds = state.scopeNodeIds;
+  const tableState = state.nodeStates.find(s => s.nodeId === 'table');
 
   assert(scopeIds.includes('table'), 'scope contains the table (still routable / referenceable)');
   assert(!agendaIds.includes('table'), 'agenda does NOT contain the table (bipartite rule)');
+  assert(tableState?.action === 'pass', 'table lifecycle is pass, not inferred from detail slot absence');
+  assert(tableState?.source === 'engine', 'table pass state is engine-owned');
+  assert(tableState?.reason === 'non_bodied_passthrough', 'table pass reason records non-bodied passthrough');
   assert(agendaIds.includes('viewA'), 'agenda contains viewA (forwarded from table seed)');
   assert(agendaIds.includes('viewB'), 'agenda contains viewB (forwarded from table seed)');
   assert(
@@ -76,15 +80,17 @@ const graph = makeGraph(nodes, edges);
   });
 
   // After submit, agenda should have viewA and viewB with sp's verbatim question merged in.
-  const state = engine.toJSON() as { agenda: Array<{ nodeId: string; question: string }> };
+  const state = engine.toJSON() as { agenda: Array<{ nodeId: string; question: string }>; nodeStates: Array<{ nodeId: string; action: string; reason: string }> };
   const entryA = state.agenda.find(e => e.nodeId === 'viewA');
   const entryB = state.agenda.find(e => e.nodeId === 'viewB');
+  const tableState = state.nodeStates.find(s => s.nodeId === 'table');
 
   assert(!!entryA, 'viewA is on agenda after sp routes to table');
   assert(!!entryB, 'viewB is on agenda after sp routes to table');
   assert(entryA!.question.includes(SP_QUESTION), 'viewA inherits sp\'s authored question verbatim');
   assert(entryB!.question.includes(SP_QUESTION), 'viewB inherits sp\'s authored question verbatim');
   assert(!state.agenda.some(e => e.nodeId === 'table'), 'table is NOT on agenda after route forwarding');
+  assert(tableState?.action === 'pass', 'routed table keeps pass lifecycle state');
 }
 
 // Test 3: no non-bodied node ever becomes focus
@@ -110,6 +116,11 @@ const graph = makeGraph(nodes, edges);
     focusIds.every(id => SCRIPT_TYPES.has(nodes.find(n => n.id === id)!.type)),
     'every hop focus was bodied',
   );
+  const final = engine.getResult();
+  const tableNode = final.fullNodes.find(n => n.id === 'table');
+  assert(tableNode?.role === 'pass', 'final result role for contracted table comes from lifecycle state');
+  assert(final.node_states.some(s => s.nodeId === 'table' && s.action === 'pass'), 'final result exposes table lifecycle state');
+  assert(!final.detail_slots.some(s => s.nodeId === 'table'), 'contracted table does not need a detail slot');
 }
 
 printSummary('Bipartite Agenda Rule');

@@ -159,9 +159,9 @@ export function buildSynthesisReminder(question: string): string {
   return [
     '## Synthesis Reminder — re-read before calling `lineage_present_result`',
     `- User question: "${question}"`,
-    '- `sections[]` is REQUIRED — create final graph/detail links from the full archive. Write `text` for every section: if the question names specific identifiers, focus on detail that answers the question (formulas, column transformations, SQL predicates, data flows, join keys, source tables); if broad, draw from the full captured detail. You own the text — write it.',
+    '- `sections[]` is REQUIRED — create final graph/detail links from the full result. Use `detail_slots[]` for analyzed-node detail, `node_states[]` for lifecycle facts, and `columnAspect.edges[]` for CT provenance. Write `text` for every section.',
     '- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; hop `badge_label` values are helper hints only. Keep business/technical split only when it improves clarity.',
-    '- Link only nodes discussed in the section body and needed to answer the question. A node may be unlabeled; a node should appear in at most one final section; many nodes may share one section label.',
+    '- Link nodes needed to answer the question. A node with `pass` state may still be central, especially a source/target table in CT. Link, label, caption, or highlight it when column edges or lifecycle state make it part of the answer.',
     '- Every linked node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.',
     '- Carry formulas and ⚠️ callouts only when they materially help answer the user question. Do not force formula/risk inclusion when no significant issue is present.',
     '- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases write the text — do not leave sections[] without text.',
@@ -207,10 +207,10 @@ export function buildCtSynthesisBlock(edges: ColumnEdge[], ctPrunedNodeIds?: str
   lines.push('Structure present_result using this CT chain:');
   lines.push('- summary: one sentence naming origin column → traced path → terminal source');
   lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
-  lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link only nodes discussed in section text.');
-  lines.push('- Keep pass-through or tangential nodes compact unless they change the traced column.');
+  lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link nodes needed for the answer, including pass-state tables when they are source/target/bridge nodes in the column chain.');
+  lines.push('- Keep pass-through or tangential nodes compact unless they carry, persist, or terminate the traced column.');
   lines.push(`- highlight_groups.source: terminal source nodes (appear as from_node but never as to_node): ${terminalSources.join(', ') || '(none)'}`);
-  lines.push('  — terminal source = the deepest data origin in this trace; can be any type when base table is out of scope');
+  lines.push('  — terminal source = the deepest data origin in this trace; can be a table without a detail slot');
   lines.push('- highlight_groups.target: origin node only');
   lines.push('- highlight_groups.transform: all remaining chain nodes (writers, views, procedures between source and target)');
   return lines.join('\n');

@@ -38,7 +38,8 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
-import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
+import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor, type SchemaColorMap } from '../utils/schemaColors';
+import { schemaKey } from '../utils/sql';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 import { notifyUser } from '../utils/notify';
 
@@ -403,7 +404,7 @@ export function GraphCanvas({
       if (node.type === 'schemaNode') return (node.data as SchemaNodeData).color;
       const d = node.data as CustomNodeData;
       if (d.objectType === 'external') return getExternalNodeColor();
-      return getSchemaColor(String(d.schema));
+      return d.schemaColor ?? getSchemaColor(String(d.schema));
     },
     []
   );
@@ -750,6 +751,22 @@ export function GraphCanvas({
     return Array.from(schemasWithRealObjects).filter(Boolean).sort();
   }, [graphMode, trace.mode, localNodes, renderedSchemas]);
 
+  const legendColorMap = useMemo((): SchemaColorMap => {
+    const colors: SchemaColorMap = new Map();
+    for (const node of localNodes) {
+      if (node.type === 'schemaNode') {
+        const data = node.data as SchemaNodeData;
+        colors.set(schemaKey(data.schemaName), data.color);
+        continue;
+      }
+      const data = node.data as CustomNodeData;
+      if (data.objectType !== 'external') {
+        colors.set(schemaKey(data.schema), data.schemaColor ?? getSchemaColor(data.schema));
+      }
+    }
+    return colors;
+  }, [localNodes]);
+
   return (
     <div className="flex flex-col h-screen">
       <Toolbar
@@ -981,7 +998,7 @@ export function GraphCanvas({
           </div>
         )}
 
-        <Legend schemas={legendSchemas} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        <Legend schemas={legendSchemas} schemaColorMap={legendColorMap} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (

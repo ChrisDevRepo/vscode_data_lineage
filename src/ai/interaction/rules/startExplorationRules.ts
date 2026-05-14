@@ -8,8 +8,16 @@ export function evaluateAlreadyStartedRule(
   hasLiveEngine: boolean,
   sameSession: boolean,
   isRefining: boolean,
+  recovery: 'active_agenda' | 'presentation_update_after_agenda' = 'active_agenda',
 ): InteractionRuleResult {
   if (!(hasLiveEngine && sameSession && !isRefining)) return null;
+  if (recovery === 'presentation_update_after_agenda') {
+    return {
+      error: 'already_started',
+      hint: 'Exploration is already in progress. Preserve the user\'s presentation edit request; finish the current agenda with submit_findings, then apply the requested graph update with lineage_present_result using is_update:true, add_node_ids if needed, and highlight_groups for source/transform/target labels.',
+      next_action: 'submit_findings',
+    };
+  }
   return {
     error: 'already_started',
     hint: 'start_exploration is one-shot per turn. Use submit_findings to continue the current agenda. After complete_rejected, the unvisited neighbors are already queued at priority 3 - the next submit_findings will present one of them.',

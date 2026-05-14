@@ -360,6 +360,7 @@ export class AiSession {
       originNodeId: fullResult.originNodeId,
       notes: prior?.notes,
       suggested_sections: fullResult.suggested_sections,
+      node_states: fullResult.node_states,
       description: prior?.description,
       summary: prior?.summary,
       title: prior?.title,

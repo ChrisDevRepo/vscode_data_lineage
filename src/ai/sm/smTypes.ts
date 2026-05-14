@@ -28,6 +28,40 @@ export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
  */
 export type Verdict = 'analyze' | 'pass' | 'prune';
 
+/** Engine-owned lifecycle action for a node in an SM result. */
+export type SmNodeAction = 'analyze' | 'pass' | 'prune';
+
+/** Who made the lifecycle decision for a node. */
+export type SmNodeStateSource = 'ai' | 'engine' | 'user';
+
+/** Why a node received its lifecycle action. Keeps the public action vocabulary small. */
+export type SmNodeStateReason =
+  | 'submitted_analyze'
+  | 'submitted_pass'
+  | 'submitted_prune'
+  | 'bb_prune_neighbor'
+  | 'user_pass_filter'
+  | 'non_bodied_passthrough'
+  | 'ct_no_column_flow'
+  | 'ct_no_active_columns';
+
+/**
+ * Process state for one node in the SM traversal.
+ *
+ * @remarks
+ * This is the source of truth for lifecycle state. `DetailSlot` remains only
+ * the text/evidence bucket; a node can be `pass` without having a detail slot.
+ */
+export interface SmNodeState {
+  nodeId: string;
+  action: SmNodeAction;
+  source: SmNodeStateSource;
+  reason: SmNodeStateReason;
+  columns?: string[];
+  viaNodeId?: string;
+  atHop?: number;
+}
+
 /**
  * Semantic role of a column contribution in the lineage chain.
  * `source` means this branch is terminal — no further upstream exists.
@@ -480,7 +514,7 @@ export interface ResultNode {
   /** Object type. */
   t: string;
   /** Special semantic role within the result set. */
-  role?: 'origin' | 'noted' | 'bridge';
+  role?: 'origin' | 'noted' | 'bridge' | 'pass';
 }
 
 /**
@@ -499,6 +533,8 @@ export interface SmResult {
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /** High-fidelity analysis artifacts for each visited node. */
   detail_slots: DetailSlot[];
+  /** Engine-owned lifecycle state for result nodes and pruned/contracted nodes. */
+  node_states: SmNodeState[];
   /** Column lineage chain. Present when CT was active for this session; null otherwise. */
   columnAspect: ColumnAspect | null;
   /**
@@ -580,6 +616,8 @@ export interface SmState {
   visited: string[];
   /** Set of node IDs explicitly pruned from the exploration. */
   removedSet: string[];
+  /** Engine-owned node lifecycle states keyed by node id. */
+  nodeStates: SmNodeState[];
   /** Current number of nodes waiting on the agenda. */
   agendaSize: number;
   /** The list of upcoming tasks on the engine's agenda. */

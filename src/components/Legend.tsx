@@ -1,5 +1,5 @@
 import React, { memo, useState, useEffect } from 'react';
-import { getSchemaColor } from '../utils/schemaColors';
+import { createSchemaColorMap, getSchemaColorFromMap, type SchemaColorMap } from '../utils/schemaColors';
 
 /**
  * Props for the {@link Legend} component.
@@ -7,6 +7,8 @@ import { getSchemaColor } from '../utils/schemaColors';
 interface LegendProps {
   /** A list of database schema names to display in the legend. */
   schemas: string[];
+  /** Color assignments from the current loaded schema set. */
+  schemaColorMap?: SchemaColorMap;
   /** Optional flag indicating if the main sidebar is open, used for dynamic positioning. */
   isSidebarOpen?: boolean;
 }
@@ -25,7 +27,7 @@ const SCHEMA_DISPLAY_LIMIT = 10;
  * @param props - The component properties.
  * @returns A {@link React.JSX.Element} representing the schema legend.
  */
-export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendProps) {
+export const Legend = memo(function Legend({ schemas, schemaColorMap, isSidebarOpen }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
@@ -44,6 +46,8 @@ export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendPro
     });
     return () => observer.disconnect();
   }, []);
+
+  const colors = schemaColorMap ?? createSchemaColorMap(schemas);
 
   return (
     <div
@@ -68,7 +72,7 @@ export const Legend = memo(function Legend({ schemas, isSidebarOpen }: LegendPro
               {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT))
                 .filter(s => !!s && s.trim().length > 0)
                 .map((schema) => {
-                  const color = getSchemaColor(schema);
+                  const color = getSchemaColorFromMap(schema, colors);
                   return (
                     <div key={schema} className="flex items-center gap-2">
                       <div

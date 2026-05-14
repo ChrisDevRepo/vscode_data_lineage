@@ -49,6 +49,7 @@ Routing/pruning policy is canonicalized in `buildSmProtocol()` (`src/ai/promptin
 - History (`short_term_memory`, prior hops, archive) is reference-only.
 - Active-phase `prompts.ts` now points to this contract instead of duplicating route/prune policy text.
 - Out-of-scope but mission-relevant routes are still deferred and preserved for post-synthesis follow-up.
+- Lifecycle state is code-owned, not prompt-inferred. The only persisted node actions are `analyze`, `pass`, and `prune`; table passthrough is represented as `pass` with an engine reason, not as a fourth action.
 
 Reviewer artifact:
 - `tmp/AI_PROMPT_COMPILATION.md` is maintained as a human-readable compilation for prompt reviews (commands/tools inventory + one 1:1 active-hop prompt example from trace).
@@ -133,6 +134,7 @@ Important correction: in synthesis, final `sections[]` fields are AI-authored. T
 - For CT, AI always provides `column_flow` field. Non-empty → node in chain (validation runs). `column_flow: []` (explicit empty) → engine auto-prunes silently. Missing `column_flow` field rejects at boundary (`ct_field_required`). `verdict=prune` rejects at boundary (`ct_verdict_forbidden`). `prune_neighbors` rejects at boundary (`bb_field_forbidden_in_ct`).
 - CT prompts contain no pruning vocabulary — AI is not taught to prune in CT; engine derives all pruning from `column_flow` content.
 - CT neighbor decisions: `route_requests` for contributors; non-contributors simply omit routes (engine auto-prunes from empty `column_flow`). `prune_neighbors` remains a BB-only AI command.
+- BB and CT both populate `node_states[]` through the same engine lifecycle path. BB prune comes from `verdict:"prune"` or `prune_neighbors[]`; CT prune comes from `column_flow: []` or no active columns; table passthrough comes from non-bodied contraction.
 - Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.
 
 ### `lineage_present_result`
@@ -144,6 +146,8 @@ Important correction: in synthesis, final `sections[]` fields are AI-authored. T
 - Final `sections[].label` is the authoritative short graph/detail pointer and maps 1:1 to `sections[].text`.
 - Final `sections[].node_ids[]` is optional and AI-owned: a section label may link many nodes, a node may have zero labels, and a node may appear in at most one section.
 - `notes[]` are optional AI-authored per-node captions shown below the graph and do not create or rename section badges.
+- Synthesis must consider all three final evidence surfaces: `detail_slots[]` for analyzed narrative, `node_states[]` for pass/prune/analyze lifecycle, and `columnAspect.edges[]` for CT provenance. A pass-state table may need a label, caption, or source highlight even when it has no detail slot.
+- In CT mode, `present_result` validation rejects missing visible terminal source tables from the final section/highlight surface so the root column source is not silently omitted.
 
 ## Tool policy by phase
 
@@ -200,6 +204,7 @@ From `src/commands.ts` + `package.json`.
 - Description markdown is assembled as: `title` -> `intro` -> numbered `sections[]` -> `closing`.
 - Object links are injected as `### Objects [name](#focus-node:id)` when node mapping exists.
 - Nodes not discussed in the detail description do not need badges.
+- Nodes without detail slots can still be discussed when lifecycle/provenance makes them central: examples include CT terminal source tables, target tables, and contracted pass-through tables.
 - The follow-up "Show full description" chat replay sanitizes focus anchors to plain object names for readability; overlay rendering keeps interactive focus links.
 - CT-only synthesis guidance (`buildCtSynthesisBlock`) groups by the traced-column answer and keeps pass-through nodes compact.
 

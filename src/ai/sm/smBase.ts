@@ -21,7 +21,7 @@ import { bfsDepthMap, wouldOrphanNotedNode, firstDisconnectedRequiredNode, bfsRe
 import { trunc } from '../../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../infra/inputNormalization';
-import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmResult, SmState, SmStatus, SubmitResult } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult } from '../sm/smTypes';
 import { estimateTokens } from '../infra/tokenBudget';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
@@ -226,6 +226,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected ctAutoPrunedNodeIds = new Set<string>();
   /** Set of node identifiers excluded during exploration cascades. */
   protected removedSet = new Set<string>();
+  /** Engine-owned lifecycle state for nodes; detail slots are content storage only. */
+  protected nodeStates = new Map<string, SmNodeState>();
   /** List representing the current navigation agenda. */
   protected agenda: AgendaEntry[] = [];
   /** Set tracking node identifiers currently in the agenda. */
@@ -438,6 +440,59 @@ export class NavigationEngine implements IHopStateMachine {
     this._deferredQuestions.push(entry);
     this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
     return this._deferredQuestions.length - 1;
+  }
+
+  /**
+   * Records the process lifecycle state for a node.
+   *
+   * @remarks
+   * This is the source of truth for whether a node was analyzed, passed through,
+   * or pruned. `DetailSlot` remains only the text bucket. Stronger terminal
+   * states replace weaker ones, so an AI-analyzed node is not later downgraded
+   * by an incidental pass-through observation.
+   */
+  private markNodeState(
+    nodeId: string,
+    action: SmNodeAction,
+    source: SmNodeStateSource,
+    reason: SmNodeStateReason,
+    meta: { columns?: string[]; viaNodeId?: string; atHop?: number } = {},
+  ): void {
+    const id = resolveModelNodeId(nodeId, this.nodeMap) ?? nodeId.toLowerCase();
+    if (!this.nodeMap.has(id)) return;
+
+    const rank = (a: SmNodeAction): number => {
+      if (a === 'prune') return 3;
+      if (a === 'analyze') return 2;
+      return 1;
+    };
+    const existing = this.nodeStates.get(id);
+    const mergedColumns = Array.from(new Set([...(existing?.columns ?? []), ...(meta.columns ?? [])]));
+    if (existing && rank(existing.action) > rank(action)) {
+      this.nodeStates.set(id, {
+        ...existing,
+        columns: mergedColumns.length > 0 ? mergedColumns : existing.columns,
+      });
+      return;
+    }
+
+    this.nodeStates.set(id, {
+      nodeId: id,
+      action,
+      source,
+      reason,
+      ...(mergedColumns.length > 0 ? { columns: mergedColumns } : {}),
+      ...(meta.viaNodeId ? { viaNodeId: meta.viaNodeId } : existing?.viaNodeId ? { viaNodeId: existing.viaNodeId } : {}),
+      ...(typeof meta.atHop === 'number' ? { atHop: meta.atHop } : existing?.atHop !== undefined ? { atHop: existing.atHop } : {}),
+    });
+  }
+
+  private roleFromNodeState(nodeId: string): 'origin' | 'noted' | 'bridge' | 'pass' {
+    if (nodeId === this.originNodeId) return 'origin';
+    const state = this.nodeStates.get(nodeId);
+    if (state?.action === 'analyze') return 'noted';
+    if (state?.action === 'pass') return 'pass';
+    return 'bridge';
   }
 
   /**
@@ -859,6 +914,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.visited.clear();
     this.agenda = [];
     this.agendaIds.clear();
+    this.nodeStates.clear();
     this.memory.reset();
     this.memory.setUserQuestion(params.question);
     const sanitizedMission = params.mission_brief ? sanitizeMissionBrief(params.mission_brief) : null;
@@ -1085,6 +1141,10 @@ export class NavigationEngine implements IHopStateMachine {
       // bodied neighbours so descendants stay reachable. Topology preserved; no analysis.
       if (this.passNodeIds.has(candidate.nodeId.toLowerCase())) {
         this.visited.add(candidate.nodeId);
+        this.markNodeState(candidate.nodeId, 'pass', 'user', 'user_pass_filter', {
+          columns: candidate.activeColumns,
+          atHop: this.hopCount,
+        });
         this.memory.recordVerdict('pass');
         this.contractThroughPassNode(candidate);
         continue;
@@ -1111,6 +1171,9 @@ export class NavigationEngine implements IHopStateMachine {
         if (activeColumns.length === 0) {
           this.visited.add(candidate.nodeId);
           this.ctAutoPrunedNodeIds.add(candidate.nodeId);
+          this.markNodeState(candidate.nodeId, 'prune', 'engine', 'ct_no_active_columns', {
+            atHop: this.hopCount,
+          });
           this.memory.recordVerdict('prune');
           this._totalNodes--;
           this.log('debug', `[CT] auto-prune ${candidate.nodeId} — no active columns (total −1 → ${this._totalNodes})`);
@@ -1241,6 +1304,10 @@ export class NavigationEngine implements IHopStateMachine {
     if (this._columnAspect && finding.verdict === 'prune') {
       this.visited.add(focusId);
       this.ctAutoPrunedNodeIds.add(focusId);
+      this.markNodeState(focusId, 'prune', 'engine', 'ct_no_column_flow', {
+        columns: this._columnAspect.active_columns,
+        atHop: this.hopCount,
+      });
       this.memory.recordVerdict('prune');
       this._totalNodes--;
       this.log('debug', `[CT] auto-prune ${focusId} — AI submitted verdict=prune (converted silently)`);
@@ -1343,6 +1410,10 @@ export class NavigationEngine implements IHopStateMachine {
       if (finding.column_flow.length === 0) {
         this.visited.add(focusId);
         this.ctAutoPrunedNodeIds.add(focusId);
+        this.markNodeState(focusId, 'prune', 'engine', 'ct_no_column_flow', {
+          columns: this._columnAspect.active_columns,
+          atHop: this.hopCount,
+        });
         this.memory.recordVerdict('prune');
         this._totalNodes--;
         this.log('debug', `[CT] auto-prune ${focusId} — AI submitted column_flow: [] (no column interaction)`);
@@ -1472,9 +1543,25 @@ export class NavigationEngine implements IHopStateMachine {
         for (const entry of finding.column_flow) {
           const toNode = entry.writes_to?.node ? (resolveModelNodeId(entry.writes_to.node, this.nodeMap) ?? entry.writes_to.node.toLowerCase()) : focusId;
           const toCol  = entry.writes_to?.col  ?? entry.out_col;
+          const toNodeObj = this.nodeMap.get(toNode);
+          if (toNodeObj && !SCRIPT_TYPES.has(toNodeObj.type)) {
+            this.markNodeState(toNode, 'pass', 'engine', 'non_bodied_passthrough', {
+              columns: [toCol],
+              viaNodeId: focusId,
+              atHop: this.hopCount,
+            });
+          }
           for (const cont of entry.contributors) {
             if (cont.role === 'filter_only') continue;
             const fromNode = resolveModelNodeId(cont.from_node, this.nodeMap) ?? cont.from_node.toLowerCase();
+            const fromNodeObj = this.nodeMap.get(fromNode);
+            if (fromNodeObj && !SCRIPT_TYPES.has(fromNodeObj.type)) {
+              this.markNodeState(fromNode, 'pass', 'engine', 'non_bodied_passthrough', {
+                columns: [cont.from_col],
+                viaNodeId: focusId,
+                atHop: this.hopCount,
+              });
+            }
             stagedColumnEdges.push({
               hop_node:  focusId,
               hop:       this.hopCount,
@@ -1537,6 +1624,10 @@ export class NavigationEngine implements IHopStateMachine {
 
     for (const nid of prunedNeighborNids) {
       this.removedSet.add(nid);
+      this.markNodeState(nid, 'prune', 'ai', 'bb_prune_neighbor', {
+        viaNodeId: focusId,
+        atHop: this.hopCount,
+      });
       if (SCRIPT_TYPES.has(this.nodeMap.get(nid)!.type) && this.scopeNodeIds.has(nid)) {
         this._totalNodes--;
         this.log('debug', `[AI] [CT] prune_neighbor ${nid} — bodied scope node (total −1 → ${this._totalNodes})`);
@@ -1561,6 +1652,20 @@ export class NavigationEngine implements IHopStateMachine {
 
     this.memory.recordVerdict(finding.verdict);
     this.lastHopVerdict = finding.verdict;
+    this.markNodeState(
+      focusId,
+      finding.verdict,
+      'ai',
+      finding.verdict === 'analyze'
+        ? 'submitted_analyze'
+        : finding.verdict === 'pass'
+          ? 'submitted_pass'
+          : 'submitted_prune',
+      {
+        columns: this._columnAspect?.active_columns,
+        atHop: this.hopCount,
+      },
+    );
 
     if (prunable || prunedNeighborNids.size > 0) {
       if (prunable) this.removedSet.add(focusId);
@@ -1796,6 +1901,11 @@ export class NavigationEngine implements IHopStateMachine {
     // question to the target's bodied neighbors in the exploration direction.
     if (visitedRefs.has(targetId)) return;
     visitedRefs.add(targetId);
+    this.markNodeState(targetId, 'pass', 'engine', 'non_bodied_passthrough', {
+      columns,
+      viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
+      atHop: this.hopCount,
+    });
     for (const nid of this.directionalNeighbors(targetId, this._direction)) {
       this.enqueueHop(nid, question, depth + 1, priority, columns, visitedRefs);
     }
@@ -1852,7 +1962,6 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public getResult(): SmResult {
     const mem = this.memory.getResult();
-    const notedIds = new Set(mem.detail_slots.map(s => s.nodeId));
 
     // CT mode: restrict BFS scope to only nodes that appear in a column_flow edge.
     // Non-CT scope nodes are excluded by limiting traversal, not by mutating removedSet.
@@ -1894,11 +2003,12 @@ export class NavigationEngine implements IHopStateMachine {
       originNodeId: this.originNodeId!,
       fullNodes: Array.from(finalNodeIds).map(id => {
         const n = this.nodeMap.get(id)!;
-        return { id: n.id, s: n.schema, n: n.name, t: n.type, role: id === this.originNodeId ? 'origin' : notedIds.has(id) ? 'noted' : 'bridge' };
+        return { id: n.id, s: n.schema, n: n.name, t: n.type, role: this.roleFromNodeState(id) };
       }),
       edges: finalEdges,
       suggested_sections: sections,
       detail_slots: mem.detail_slots.filter(slot => finalNodeIds.has(slot.nodeId)),
+      node_states: Array.from(this.nodeStates.values()),
       columnAspect: this._columnAspect,
       ...(this._columnAspect ? { ctPrunedNodeIds: Array.from(this.ctAutoPrunedNodeIds) } : {}),
     };
@@ -1918,6 +2028,7 @@ export class NavigationEngine implements IHopStateMachine {
       scopeNodeIds: Array.from(this.scopeNodeIds),
       visited: Array.from(this.visited),
       removedSet: Array.from(this.removedSet),
+      nodeStates: Array.from(this.nodeStates.values()),
       agendaSize: this.agenda.length,
       agenda: this.agenda.map(a => ({
         nodeId: a.nodeId,

@@ -107,6 +107,11 @@ function ctEngine(targetColumns = ['amount']) {
     column_flow: [],
   });
   assert('ok' in result && result.ok === true, 'CT auto-prunes on column_flow: [] (no error)');
+  const state = engine.toJSON() as { nodeStates: Array<{ nodeId: string; action: string; reason: string; source: string }> };
+  const originState = state.nodeStates.find(s => s.nodeId === 'origin');
+  assert(originState?.action === 'prune', 'CT no-interaction lifecycle action is prune');
+  assert(originState?.source === 'engine', 'CT no-interaction prune is engine-owned');
+  assert(originState?.reason === 'ct_no_column_flow', 'CT no-interaction prune reason is recorded');
   // Agenda is empty → exploration done
   const ctx = engine.getHopContext();
   assert(ctx.done === true, 'exploration done after CT auto-prune via column_flow: []');
@@ -228,6 +233,11 @@ function ctEngine(targetColumns = ['amount']) {
   assert(edges[0]?.role === 'formula', 'accumulated edge role is formula');
   assert(edges[0]?.from_node === 'base_table', 'accumulated edge from_node is base_table');
   assert(edges[0]?.to_col === 'amount', 'accumulated edge to_col is amount');
+  const state = engine.toJSON() as { nodeStates: Array<{ nodeId: string; action: string; reason: string; columns?: string[] }> };
+  const baseState = state.nodeStates.find(s => s.nodeId === 'base_table');
+  assert(baseState?.action === 'pass', 'CT contributor table gets pass lifecycle state');
+  assert(baseState?.reason === 'non_bodied_passthrough', 'CT contributor table reason is non-bodied passthrough');
+  assert(baseState?.columns?.includes('raw_amount'), 'CT contributor table lifecycle carries source column');
 }
 
 // ── Test 9: activeModeOf — CT presence selects the SM-CT tool scope ──

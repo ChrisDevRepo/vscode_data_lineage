@@ -46,6 +46,7 @@ import { PerformanceCollector } from '../infra/diagnostics';
 import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from '../participant/messageEnvelope';
 import { matchesTransientNetPattern } from '../infra/transientErrors';
 import { LmTracer } from '../infra/lmTracer';
+import { buildConfirmedGraphPresentationEditInstruction, type FollowUpConfirmationPhase } from '../prompting/followUpConfirmation';
 export { classifyGateReply } from '../session/sessionPhase';
 
 /**
@@ -123,6 +124,19 @@ function sanitizeDescriptionForChat(description: string): string {
       return `### Objects ${cleaned}`;
     })
     .replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
+}
+
+function lastAssistantMarkdownFromHistory(history: readonly vscode.ChatRequestTurn[] | readonly vscode.ChatResponseTurn[] | readonly (vscode.ChatRequestTurn | vscode.ChatResponseTurn)[]): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const turn = history[i];
+    if (!(turn instanceof vscode.ChatResponseTurn)) continue;
+    const text = turn.response
+      .filter(p => p instanceof vscode.ChatResponseMarkdownPart)
+      .map(p => (p as vscode.ChatResponseMarkdownPart).value.value)
+      .join('');
+    if (text.trim()) return text;
+  }
+  return '';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -866,6 +880,23 @@ export class LineageParticipant {
         }
         this.logger.info(`[Gate] ${gate.gate} — user approved classes=[${gate.classes.join(', ')}]`);
       }
+    }
+
+    const confirmationPhase: FollowUpConfirmationPhase = sess.phase.kind === 'exploring'
+      ? 'exploring'
+      : sess.phase.kind === 'completed'
+        ? 'completed'
+        : 'discover';
+    const confirmedGraphEdit = buildConfirmedGraphPresentationEditInstruction(
+      request.prompt,
+      lastAssistantMarkdownFromHistory(chatContext.history),
+      confirmationPhase,
+    );
+    if (confirmedGraphEdit) {
+      const appended = appendBlockOnce(effectivePrompt, confirmedGraphEdit);
+      effectivePrompt = appended.text;
+      if (appended.skippedDuplicate) duplicateBlocksRemovedThisTurn++;
+      this.logger.info(`[FollowUpRoute] preserved confirmed graph presentation edit in ${confirmationPhase} phase`);
     }
 
     const rebuiltHistoryMessages: vscode.LanguageModelChatMessage[] = [];

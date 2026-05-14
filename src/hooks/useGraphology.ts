@@ -6,6 +6,7 @@ import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../
 import { buildGraph, buildGraphNoLayout, getGraphMetrics } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
 import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
+import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 
 /**
  * Return type for the useGraphology hook, encapsulating graph data and builders.
@@ -95,7 +96,20 @@ export function useGraphology(): UseGraphologyReturn {
     const schemas = [...new Set(
       allowlistFiltered.nodes.map(n => n.schema)
     )].filter(s => !!s && s.trim().length > 0).sort();
+    const schemaColorMap = createSchemaColorMap(schemas);
     setRenderedSchemas(schemas);
+
+    const withSchemaColors = (nodes: FlowNode<CustomNodeData>[]): FlowNode<CustomNodeData>[] =>
+      nodes.map((node) => {
+        if (node.data.objectType === 'external') return node;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            schemaColor: getSchemaColorFromMap(node.data.schema, schemaColorMap),
+          },
+        };
+      });
 
     // Guard 1: hard render limit — skip everything
     if (count > config.renderLimit) {
@@ -114,7 +128,7 @@ export function useGraphology(): UseGraphologyReturn {
     // Bypassed when forceLayout=true (user manually toggled overview→full or drilled down).
     if (!forceLayout && count > config.overview.threshold) {
       const result = buildGraphNoLayout(allowlistFiltered, config);
-      setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
+      setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
@@ -142,7 +156,7 @@ export function useGraphology(): UseGraphologyReturn {
         return count;
       }
     }
-    setFlowNodes(result.flowNodes as FlowNode<CustomNodeData>[]);
+    setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
     setFlowEdges(result.flowEdges);
     setGraph(result.graph);
     setMetrics(getGraphMetrics(result.graph));

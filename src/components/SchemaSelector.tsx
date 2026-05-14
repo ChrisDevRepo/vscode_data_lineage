@@ -1,6 +1,6 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import type { SchemaInfo } from '../engine/types';
-import { getSchemaColor } from '../utils/schemaColors';
+import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 
 /**
  * Props for the {@link SchemaSelector} component.
@@ -44,6 +44,10 @@ export const SchemaSelector = memo(function SchemaSelector({
   const filteredSchemas = searchTerm
     ? schemas.filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
     : schemas;
+  const schemaColorMap = useMemo(
+    () => createSchemaColorMap(schemas.map(s => s.name)),
+    [schemas]
+  );
 
   return (
     <div>
@@ -76,7 +80,7 @@ export const SchemaSelector = memo(function SchemaSelector({
       )}
       <div className="space-y-0.5 h-52 overflow-y-auto p-1.5 rounded ln-schema-list">
         {filteredSchemas.map((schema) => {
-          const color = getSchemaColor(schema.name);
+          const color = getSchemaColorFromMap(schema.name, schemaColorMap);
           return (
             <label
               key={schema.name}

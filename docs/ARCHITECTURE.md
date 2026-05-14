@@ -87,7 +87,7 @@ The webview never talks to the engine directly. **Map** (engine, deterministic) 
 | `toolProvider` | [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts) | Tool registration, Zod boundary, classification-locked `submit_findings` validation, scope-budget preflight |
 | `interaction/rules` | [`src/ai/interaction/rules/`](../src/ai/interaction/rules/) | Central non-Zod process rules: phase-policy gating, start/submit/present guards, gate-transition decision matrix |
 | `toolPolicy` | [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) | Phase × mode tool filter — single source of truth for which LM tools are exposed in discover / active-SM (BB or CT) / synthesis / completed |
-| `NavigationEngine` | [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) | Map owner — agenda, visited set, route validation, scope summary, deferred-question bucket |
+| `NavigationEngine` | [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) | Map owner — agenda, visited set, explicit node lifecycle state, route validation, scope summary, deferred-question bucket |
 | `scopeSummaryRenderer` | [`src/ai/prompting/scopeSummaryRenderer.ts`](../src/ai/prompting/scopeSummaryRenderer.ts) | Pure markdown renderer for the `confirm_sm_start` gate detail (Schema → Type → Node tree + active filters), driven by `ScopeSummary` from the engine |
 | `templateRenderer` | [`src/ai/prompting/templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts) | Two-stage gate on YAML keys: `STAGE_BY_KEY` (phase routing) then `CLASSIFICATION_GATED` (per-classification filter) |
 | `prompts` / `smPrompts` | [`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts), [`src/ai/prompting/smPrompts.ts`](../src/ai/prompting/smPrompts.ts) | Phase-first prompt composition (`buildPhasePrompt`) + active SM protocol (`buildSmProtocol`) + metadata/dynamic blocks (`buildMissionBriefBlock`, `buildCurrentTaskBlock`, `buildMemoryBlock`, `buildMissionStateBlock`) |
@@ -103,19 +103,20 @@ The engine treats the lineage graph as bipartite: only **bodied** nodes (views, 
 - **Agenda** — bodied nodes only. Each hop analyses one body.
 - **Scope** — every reachable node, including tables. Tables remain routable, referenceable, and inspectable via `get_neighbor_columns`.
 - **Edge contraction** — when a bodied node routes to a table, the authored question flows *through* the table to the table's bodied neighbours.
+- **Lifecycle state** — contraction does not create a `DetailSlot`; it records `node_states[].action = "pass"` with `source = "engine"` and `reason = "non_bodied_passthrough"`.
 
 ```mermaid
 graph LR
     SP([sp — procedure])
-    T[table — passive pipe]
+    T[table — passive pipe<br/>node state: pass]
     VA([viewA — view])
     VB([viewB — view])
     SP -->|route_request<br/>question forwarded| T
-    T -.->|edge contraction| VA
-    T -.->|edge contraction| VB
+    T -.->|edge contraction<br/>same sub-question| VA
+    T -.->|edge contraction<br/>same sub-question| VB
 ```
 
-Rounded boxes are bodied (agenda-eligible); the square box is the passive table. Dashed arrows are the contraction path — the AI never sees a "table hop". The invariant is enforced by a single funnel in [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts): `enqueueHop` is the only code path that writes to the agenda.
+Rounded boxes are bodied (agenda-eligible); the square box is the passive table. Dashed arrows are the contraction path — the AI never sees a middle-table "table hop". The invariant is enforced by a single funnel in [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts): `enqueueHop` is the only code path that writes to the agenda and the same path records pass-state for contracted tables.
 
 **Origin exception.** When the user starts a trace at a non-bodied node (typically a table), `enqueueHop` lifts the contraction *for the origin push only*: the starting point gets its own agenda slot and runs the standard `business_capture` / `technical_capture` templates. Middle-graph tables remain contracted.
 
@@ -159,12 +160,13 @@ If the user's intent is unclear between chat and graph, discovery answers in cha
 
 ## SM execution
 
-There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) when `targetColumns` is set. SM is gate-approved before the first hop runs.
+There is one execution mode: SM, hop-by-hop, with optional column tracing (CT) when `targetColumns` is set. SM is gate-approved before the first hop runs. The engine records node lifecycle with exactly three actions: `analyze`, `pass`, and `prune`. There is no separate "contract" action; table contraction is a pass action with an engine reason.
 
 **CT contract (current).** CT keeps the same engine/hop loop as BB, but the AI action surface is column-flow-only — engine owns all pruning decisions:
 - CT is column-first: AI must always submit `column_flow` field per hop.
 - Non-empty `column_flow` → node contributes to the column chain (validation runs, contributors routed).
 - `column_flow: []` (explicit empty) → engine auto-prunes the node silently (no error, no retry, route_requests discarded).
+- Tables that carry a CT edge are preserved as pass-state nodes and their column provenance remains in `columnAspect.edges[]`.
 - `verdict=prune` is rejected at the tool boundary (`ct_verdict_forbidden`) before engine submit.
 - `prune_neighbors` is rejected at the tool boundary (`bb_field_forbidden_in_ct`) before engine submit.
 - Dequeue-time auto-prune: nodes with no derivable `activeColumns` are auto-pruned before the AI is called.
@@ -185,14 +187,14 @@ Progress semantics:
 - `Inspecting N neighbors for pruning…` is rendered as a pruning-progress cue from current SM state in the participant loop (single-number UI preserved).
 - In CT, branches with no tracked contributor columns contract out of the column chain via engine auto-prune; AI prune commands are disabled.
 
-The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
+The synthesis contract lives in `buildSynthesisPrompt()` ([`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts)) — single source of truth, fired only at the synthesis-phase boundary. Synthesis receives three evidence surfaces: analyzed detail in `detail_slots[]`, lifecycle facts in `node_states[]`, and CT provenance in `columnAspect.edges[]`. The synthesis-stage YAML keys (`summary`, `title`, `intro`, `closing`, `highlights`, `notes`) flow through `resolveStagePrompt('synthesis', ...)` and apply classification + slot-count gates.
 
 **Completed-phase follow-up split.** After synthesis, follow-up turns resolve into two routes: (1) ad-hoc refinement of the current graph via `present_result` (final badge/detail relabel/regroup through AI-authored `sections[]`; optional node captions through AI-authored `notes[]`; topology edits via prune/add ids), or (2) a new trace via `start_exploration` when origin/direction/scope intent changes.
 When no deferred objects exist, the follow-up recommendation click path injects a fallback prompt that asks the AI to propose at least two concrete, same-topic follow-up questions grounded in the current rendered result (optionally with targeted object-detail lookups).
 
 ## Memory model
 
-There is exactly **one** persistent store — the **Detail Archive** (`detailSlots`, append-only across the session). Each hop the prompt builder assembles fresh **Working Memory (WM)** by selectively projecting from the archive plus a few constants — there is no second mutable store and nothing is "wiped". Two diagrams: (1) what WM looks like and where each field comes from; (2) how the archive grows across hops and what the sliding window reads back.
+There is exactly **one persistent content store** — the **Detail Archive** (`detailSlots`, append-only across the session). Process state is separate: `NavigationEngine.nodeStates` records whether each node was analyzed, passed, or pruned. A detail slot is a text bucket, not a visited-state signal. Each hop the prompt builder assembles fresh **Working Memory (WM)** by selectively projecting from the archive plus a few constants — there is no second mutable content store and nothing is "wiped". Two diagrams: (1) what WM looks like and where each field comes from; (2) how the archive grows across hops and what the sliding window reads back.
 
 **WM composition (one hop).** Cylinder = persistent datastore (UML); rounded box = projection / derived view; rectangle = constant.
 
@@ -200,12 +202,14 @@ There is exactly **one** persistent store — the **Detail Archive** (`detailSlo
 flowchart LR
     UQ[user_question<br/>constant]:::const
     DA[(Detail Archive<br/>append-only)]:::persistent
+    NS[(Node lifecycle<br/>node states)]:::persistent
     SCOPE[scope size +<br/>route rejections]:::const
 
     UQ --> WM
     SCOPE --> WM[/Working Memory<br/>WM/]:::wm
     DA -->|count + ratio| WM
     DA -->|last 3 summaries| STM[short_term_memory<br/>sliding view of archive]:::wm
+    NS -.->|not replayed active<br/>lifted at synthesis| SYN[Synthesis payload]:::wm
     STM --> WM
     WM --> PROMPT([System prompt<br/>this hop only]):::prompt
 
@@ -221,7 +225,7 @@ The dashed orange WM boxes are not stored anywhere — they are computed on dema
 
 **SM hop-local prompting.** Because active SM is intentionally sliding-memory and current-hop scoped, active prompts must focus on `current_task`, `focus_node`, current-hop `neighbors[]`, and CT `targetColumns` when present. Active-hop `badge_label` is helper metadata only and is not rendered directly. Final graph/detail grouping is a synthesis responsibility, when the full archive is available.
 
-**Final graph/detail text ownership.** `present_result.sections[]` is the only authoritative final graph/detail link surface. Each final `sections[].label` maps to exactly one required `sections[].text`; `sections[].node_ids[]` is optional and AI-owned. A final section may link many nodes, a node may be unlabeled, and a node should not appear in more than one final section. `notes[]` are optional AI-authored below-node captions and do not create badges. The dispatcher normalizes, validates, assembles, and persists; it does not autofill missing labels, node links, captions, or detail text.
+**Final graph/detail text ownership.** `present_result.sections[]` is the only authoritative final graph/detail link surface. Each final `sections[].label` maps to exactly one required `sections[].text`; `sections[].node_ids[]` is optional and AI-owned. A final section may link many nodes, a node may be unlabeled, and a node should not appear in more than one final section. `notes[]` are optional AI-authored below-node captions and do not create badges. Pass-state nodes can still be linked, captioned, or highlighted when `node_states[]`, topology, or `columnAspect.edges[]` make them part of the answer. The dispatcher normalizes, validates, assembles, and persists; it does not autofill missing labels, node links, captions, or detail text.
 
 **COMPLETED isolation contract.** In `completed` phase, follow-up turns also avoid broad replay: the participant preserves only a compact trailing tool pair plus a bounded “current rendered result” snapshot (summary/title/section map + bounded description excerpt). Stale `present_result` history payloads are compacted to metadata-only summaries to prevent repeated large JSON replay in follow-up edits. The archive remains authoritative in session state and can still be queried/updated via follow-up tools.
 
@@ -249,6 +253,8 @@ flowchart LR
 The dotted reverse arrows are **reads back from the archive into the next hop's prompt**. The window stays at 3 entries — past hop 3 the oldest summary slides off. Only at synthesis does the *full* archive get lifted (double arrow), regardless of length.
 
 **Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` once the agenda is drained — that is the synthesis-phase turn after the hop loop completes.
+
+**Node lifecycle state** — `NavigationEngine.nodeStates`. One explicit process record per touched node: `{ nodeId, action, source, reason, columns?, viaNodeId?, atHop? }`. `action` is only `analyze`, `pass`, or `prune`; `source` is `ai`, `engine`, or `user`. Engine pass reasons include `non_bodied_passthrough` and user pass filters; CT prune reasons include `ct_no_column_flow` and `ct_no_active_columns`. This state is returned as `SmResult.node_states[]` for synthesis and session result graphs. It never substitutes for final labels; it only tells synthesis what happened to nodes that may have no detail slot.
 
 **Submit Atomicity** — `submit_findings` is all-or-nothing. Route/column validation runs before commit; if the call returns a rejection envelope (for example `route_validation_failed`), the engine does not persist detail slots, CT edges, verdict tallies, prune/removal changes, or agenda mutations for that attempt.
 
@@ -289,6 +295,8 @@ None of these WM fields are stored — they are computed from the archive (or th
 | `working_memory.approved_border` | (SM only) `{ schemas, depth_cap }` locked at `confirm_sm_start` |
 | `working_memory.column_aspect` | (CT only) `{ target_columns, active_columns, edges[] }` |
 
+`node_states[]` is not part of the active hop prompt. It is emitted after successful submit results and at synthesis so the final renderer can reason about pass/prune/analyze lifecycle without inferring it from missing or present detail text.
+
 ## The system prompt builder
 
 `buildStageSystemPrompt(phase)` in [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) composes the prompt in two parts:
@@ -305,17 +313,17 @@ None of these WM fields are stored — they are computed from the archive (or th
 | Engine drains the agenda — every item gets `analyze`, `pass`, or `prune` | Engine emits the synthesis trigger; AI produces chat answer + `present_result`. `complete: true` is silently ignored. |
 | `ai.maxRounds` reached without completion | Partial archive discarded (`sess.memory.reset()`); actionable rerun message rendered. **All-or-nothing by design** — missing nodes can invert the picture. |
 
-Three verdicts:
+Three lifecycle actions:
 
-- `analyze` — full analysis stored; drives badges and notes.
-- `pass` — visited, no analysis stored. Intended for variant siblings of an already-analysed archetype.
-- `prune` — cascade-prune the node + its unreachable downstream. Rejected by the orphan guard if it would disconnect an already-analysed node; fall back to `pass`.
+- `analyze` — AI submitted analysis for the focus node; a detail slot is stored and `node_states[]` records `action:"analyze"`.
+- `pass` — node remains in scope with no detail slot. User pass filters, AI `verdict:"pass"`, and non-bodied table passthrough all converge here with different `reason` values.
+- `prune` — node is removed from the active answer path. BB prune can mutate `removedSet`; CT prune is column-chain narrowing and does not use AI pruning commands.
 
 The orphan guard (`wouldOrphanNotedNode`) is content-blind. Engine guards are topological only — content judgement lives in the AI and the prompts that frame it.
 
 Prune source split (important for debugging):
-- **BB AI prune**: explicit `submit_findings.prune_neighbors[]` or `verdict: "prune"`; mutates `removedSet`.
-- **CT AI prune**: all three paths below record in `ctPrunedNodeIds`; none mutate `removedSet`.
+- **BB AI prune**: explicit `submit_findings.prune_neighbors[]` or `verdict: "prune"`; mutates `removedSet` and records `node_states[].action = "prune"`.
+- **CT engine prune**: the paths below record `node_states[].action = "prune"` and `ctPrunedNodeIds`; none mutate `removedSet`.
   - **Dequeue**: `[CT] auto-prune ... no active columns` — node never reaches AI.
   - **submit `column_flow: []`**: `[CT] auto-prune ... AI submitted column_flow: [] (no column interaction)` — accepted silently.
 - **CT `verdict=prune` / `prune_neighbors`**: blocked by mode-dispatched Zod boundary in `toolProvider.submitFindings` (`ct_verdict_forbidden` / `bb_field_forbidden_in_ct`).
@@ -333,6 +341,7 @@ The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `send
 - **Two-stage template gate** — `STAGE_BY_KEY` (phase routing) and `CLASSIFICATION_GATED` (per-classification filter) in [`templateRenderer.ts`](../src/ai/prompting/templateRenderer.ts) decide which YAML keys ship per stage. `closing` carries an additional `slotCount >= 5` gate. No template body for an un-fired stage / classification ever reaches the model.
 - **Identifier-match contract on capture.** `submit_findings` rejects with `focus_subject_mismatch` when any captured `section.text` opens by naming a different scope node than the declared `focus_node_id`. Mechanical scan of the first 200 chars; not a content-quality judgement.
 - **Closed-graph invariant (origin-closure).** `getResult()` returns only nodes reachable from `originNodeId` under the active `removedSet` (+ CT scope filter). Disconnected analyzed slots are dropped from `detail_slots` at result time instead of force-inserting disconnected nodes into `fullNodes`.
+- **Lifecycle source of truth.** Final node roles come from explicit `node_states[]`, not from detail-slot presence. A node with no detail slot can be a valid pass/source/target node in the final graph.
 - **Shared prune closure guard.** Prune paths use one BFS-based guard: before committing prune mutations, the engine verifies required nodes (already analyzed + current focus when relevant) remain reachable from origin. This guard is topology-only (content-blind), DRY, and shared across all prune-commit paths (BB verdict prune, BB `prune_neighbors`, and CT auto-prune result shaping).
 - **Prune-neighbor reject diagnostics.** Invalid `prune_neighbors` entries (`unknown_node`, `origin_forbidden`, `already_visited`, `already_analyzed`, `would_orphan_noted`) emit structured debug rejects (`[AI] [Reject] ...`).
 - **Gate detail always rendered** — when the session is `awaiting_gate` at finalizer time, `dispatchExit` rebuilds the detail from `engine.getScopeSummary()` (rendered through `renderScopeSummaryMd`) if no `gate`-exit fired this turn. Refine narration ("I'll remove the views…") with no tool call still shows the current scope tree above the buttons.
@@ -368,18 +377,31 @@ stateDiagram-v2
     Completed --> Discovery: fresh question (different origin)
 ```
 
-**Analysis hop loop.** Inside the Analysis phase, every hop runs this cycle until the agenda is empty.
+**Analysis hop loop.** Inside the Analysis phase, the engine owns selection, lifecycle recording, and termination. The AI only reasons while the machine is in `Await finding`.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> EvaluateAgenda
-    EvaluateAgenda --> FetchContext: pop next
-    FetchContext --> AI_Reasoning: ship map + DDL
-    AI_Reasoning --> ValidateSubmission: submit_findings
-    ValidateSubmission --> UpdateMemory: ok
-    ValidateSubmission --> AI_Reasoning: rejected (fail-early retry)
-    UpdateMemory --> EvaluateAgenda
-    EvaluateAgenda --> [*]: agenda empty → Synthesis
+    [*] --> SelectNext
+    SelectNext --> AgendaDecision
+
+    state AgendaDecision <<choice>>
+    AgendaDecision --> [*]: agenda empty
+    AgendaDecision --> TablePassthrough: next item is table
+    AgendaDecision --> CtBranchClosed: CT has no active columns
+    AgendaDecision --> AwaitFinding: bodied focus
+
+    TablePassthrough --> SelectNext: record pass / forward question
+    CtBranchClosed --> SelectNext: record prune
+
+    AwaitFinding --> ValidateSubmission: submit_findings
+    ValidateSubmission --> AwaitFinding: rejected / retry same focus
+    ValidateSubmission --> CommitFinding: accepted
+
+    CommitFinding --> RouteDecision
+    state RouteDecision <<choice>>
+    RouteDecision --> TablePassthrough: routed neighbor is table
+    RouteDecision --> SelectNext: enqueue bodied routes
+    RouteDecision --> SelectNext: no routes
 ```
 
 Discovery sub-states (`ClassifyQuestion → direct | escalation → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. The Completed phase branches on the user's follow-up action — see the cross-phase transitions above.
@@ -421,10 +443,11 @@ Two complementary guards keep the loop inside the user's declared scope:
 | **Discovery** | Default chat state — AI uses catalog tools and answers in chat. Cannot render a graph or sustain large-BFS analysis; both require SM. |
 | **SM (Sliding-Memory)** | Gate-approved hop-by-hop execution. Triggered by visual graph-render request, column tracing, or explicit deeper-analysis intent. Memory wiped each hop; engine owns termination. |
 | **BB** (Blackboard) | Default SM analysis mode. Used when no target columns are specified. |
-| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus mandatory `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every CT finding; missing field is rejected at the tool boundary (`ct_field_required`). AI prune commands are disabled in CT (`ct_verdict_forbidden` / `bb_field_forbidden_in_ct`); non-contributors use `column_flow: []` and engine-side CT auto-prune contracts no-column branches. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
+| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus mandatory `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every CT finding; missing field is rejected at the tool boundary (`ct_field_required`). AI prune commands are disabled in CT (`ct_verdict_forbidden` / `bb_field_forbidden_in_ct`); non-contributors use `column_flow: []` and engine-side CT auto-prune records `node_states[].action="prune"`. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path, including terminal table sources that may have pass-state but no detail slot. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |
-| **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours. |
+| **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours and records the table as lifecycle `pass`; it does not create a detail slot. |
 | **Detail Archive** | Per-node full `analysis` text, written each hop, shipped only at synthesis. |
+| **Node lifecycle state** | `node_states[]` records explicit process actions (`analyze`, `pass`, `prune`) and reasons. Synthesis uses it as evidence, but final labels still come only from `present_result.sections[]`. |
 | **Working Memory** (WM) | Per-hop snapshot the prompt builder assembles from the archive plus constants — `user_question`, `checklist`, `recent_rejections`, `active_schemas`, optional `budget_pressure`; `short_term_memory` (last 3 summaries) is a sibling sliding view from `getShortTermMemory()`. Not stored — recomputed every hop. |
 | **`action_required`** | Engine envelope that emits a consent gate. Turn ends; user reply resumes or aborts. |
 | **Deferred question** | In SM, an out-of-border route collected silently and surfaced at synthesis. |

@@ -30,6 +30,8 @@ export type CustomNodeData = {
   externalUrl?: string;
   /** Database name for cross-database references. */
   externalDatabase?: string;
+  /** Schema color assigned from the loaded schema set. */
+  schemaColor?: string;
   /**
    * A small text badge displayed above the node.
    * Typically used for AI reasoning steps or bookmark categories.
@@ -74,7 +76,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const isVirtual = data.externalType === 'file' || data.externalType === 'db';
   // ⬢ filled = ET (real catalog object); ⬡ hollow = file/db virtual (no metadata)
   const displayIcon = isVirtual ? '⬡' : data.externalType === 'et' ? '⬢' : style.icon;
-  const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColor(data.schema);
+  const schemaColor = isExternal ? getExternalNodeColor() : (data.schemaColor ?? getSchemaColor(data.schema));
   const dimmed = data.dimmed === true;
   const highlighted = data.highlighted === true || data.highlighted === 'yellow';
   const isYellowHighlight = data.highlighted === 'yellow';

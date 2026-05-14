@@ -84,9 +84,9 @@ export function hashString(str: string): number {
   for (let i = 0; i < str.length; i++) {
     hash ^= str.charCodeAt(i);
     hash = Math.imul(hash, 16777619); // FNV prime
-    hash |= 0;
+    hash >>>= 0;
   }
-  return hash;
+  return mix32(hash);
 }
 
 // Shifts the lightness of a hex color by `delta` percentage points.
@@ -116,6 +116,29 @@ const SCHEMA_COLORS_DARK_EXT = [
   ...SCHEMA_COLORS_DARK.map(c => shiftL(c, -12)),
 ];
 
+export type SchemaColorMap = Map<string, string>;
+
+function requireSchemaName(schema: string): string {
+  const normalized = schema.trim();
+  if (!normalized) {
+    throw new Error('Schema color assignment requires a non-empty schema name');
+  }
+  return normalized;
+}
+
+function getSchemaPalette(forceLight?: boolean): string[] {
+  return (!forceLight && isDarkTheme()) ? SCHEMA_COLORS_DARK_EXT : SCHEMA_COLORS_LIGHT_EXT;
+}
+
+function mix32(hash: number): number {
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b) >>> 0;
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35) >>> 0;
+  hash ^= hash >>> 16;
+  return hash >>> 0;
+}
+
 /**
  * Retrieves a deterministic theme-aware color for a given SQL schema.
  * Hashes the schema name (FNV-1a) into a 30-slot palette — the base 15 colors
@@ -127,9 +150,60 @@ const SCHEMA_COLORS_DARK_EXT = [
  * @returns A CSS hex color string.
  */
 export function getSchemaColor(schema: string, forceLight?: boolean): string {
-  const dark = !forceLight && isDarkTheme();
-  const palette = dark ? SCHEMA_COLORS_DARK_EXT : SCHEMA_COLORS_LIGHT_EXT;
-  return palette[Math.abs(hashString(schemaKey(schema))) % palette.length];
+  const palette = getSchemaPalette(forceLight);
+  return palette[getSchemaColorIndex(schema, palette.length)];
+}
+
+/**
+ * Computes the stable preferred palette slot for a schema.
+ * The final avalanche improves distribution before reducing to the small palette.
+ */
+export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_EXT.length): number {
+  return hashString(schemaKey(requireSchemaName(schema))) % paletteSize;
+}
+
+/**
+ * Builds a deterministic loaded-set color map keyed by normalized schema name.
+ * Collisions are spread across free palette slots before any color is reused.
+ */
+export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean): SchemaColorMap {
+  const palette = getSchemaPalette(forceLight);
+  const schemaKeys = Array.from(new Set(schemas.map(s => schemaKey(requireSchemaName(s))))).sort();
+  const slotCount = schemaKeys.length <= SCHEMA_COLORS_LIGHT.length ? SCHEMA_COLORS_LIGHT.length : palette.length;
+  const slotUse = new Array<number>(slotCount).fill(0);
+  const map: SchemaColorMap = new Map();
+
+  for (const key of schemaKeys) {
+    const hash = hashString(key);
+    const preferred = hash % slotCount;
+    const step = [1, 7, 11, 13, 17, 19, 23, 29][(hash >>> 8) % 8];
+    let selected = preferred;
+
+    for (let attempt = 0; attempt < slotCount; attempt++) {
+      const candidate = (preferred + attempt * step) % slotCount;
+      if (slotUse[candidate] === 0) {
+        selected = candidate;
+        break;
+      }
+      if (slotUse[candidate] < slotUse[selected]) {
+        selected = candidate;
+      }
+    }
+
+    slotUse[selected]++;
+    map.set(key, palette[selected]);
+  }
+
+  return map;
+}
+
+export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap): string {
+  const key = schemaKey(requireSchemaName(schema));
+  const color = colorMap.get(key);
+  if (!color) {
+    throw new Error(`No schema color assigned for "${schema}"`);
+  }
+  return color;
 }
 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
