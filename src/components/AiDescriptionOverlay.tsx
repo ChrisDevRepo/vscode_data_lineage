@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
+import { preprocessDescriptionMarkdown } from './aiDescriptionMarkdown';
 
 /**
  * Sanitizes a KaTeX math string so KaTeX v0.16 can parse it without errors.
@@ -150,11 +151,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     }).catch(err => window.vscode?.postMessage({ type: 'error', error: `Clipboard write failed: ${err instanceof Error ? err.message : String(err)}` }));
   }
 
-  // Pre-process description: convert standard $$ delimiters back into ```math fences
-  // so the react-markdown CodeComponent can intercept them without adding remark-math.
-  const processedDescription = description.replace(/\$\$\s*([\s\S]*?)\s*\$\$/g, (_match, p1) => {
-    return `\n\`\`\`math\n${p1.trim()}\n\`\`\`\n`;
-  });
+  const processedDescription = preprocessDescriptionMarkdown(description);
 
   return (
     <div className="ln-ai-description-anchor">

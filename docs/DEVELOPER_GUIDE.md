@@ -115,39 +115,35 @@ Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Confi
 
 **Active-loop request composition (strict sliding-memory).**
 - `discover` / `completed`: normal chat-history replay is allowed.
-- `active`: broad `chatContext.history` replay is disabled; each hop request uses current system prompt + current directive, plus at most one minimized trailing tool pair for protocol continuity (`tool_use` / `tool_result` callId pairing).
-- `active` canonical de-dup: one owner per field in the request envelope. `<mission_state>` owns `focus_node_id` / hop counters, `<mission_brief>` owns mission intent, replayed tool payload owns current-hop evidence only (`focus_node`, `neighbors`, `sm_status`).
-- This prevents prior-hop narrative payloads (`submit_findings.sections[].text`) from being re-sent every hop while keeping synthesis quality (full archive remains in `AiMemoryManager`).
+- `active`: broad `chatContext.history` replay is disabled; each hop uses the current system prompt, current directive, and a minimal trailing tool pair for continuity.
+- Canonical de-dup keeps hop counters, mission intent, and current-hop evidence in separate fields so prior-hop prose is not replayed verbatim.
 
-**SM lifecycle contract.** `NavigationEngine` owns lifecycle state separately from detail text. A successful hop records one of three actions in `node_states[]`: `analyze`, `pass`, or `prune`. Tables that are routed through by edge contraction are `pass` with `reason:"non_bodied_passthrough"`; there is no `contract` action. CT auto-prune is ordinary `prune` lifecycle state with CT-specific reasons (`ct_no_column_flow` / `ct_no_active_columns`). Do not infer visited/pass/prune state from `detailSlots` presence; a detail slot is only an analyzed text bucket.
+**SM lifecycle contract.** `NavigationEngine` owns lifecycle state separately from detail text. A successful hop records one of three actions in `node_states[]`: `analyze`, `pass`, or `prune`. Tables reached through edge contraction are `pass` with an engine reason; detail slots are only analyzed text buckets.
 
-**Synthesis output contract.** The AI submits `present_result` with structured parts: `summary`, `title`, `intro`, `sections[]` (each `{ label, node_ids?, text }`), `closing`, `notes[]`, `highlight_groups[]`. Synthesis receives `detail_slots[]`, `node_states[]`, and CT `columnAspect.edges[]`; pass-state nodes can be linked or highlighted when lifecycle/provenance makes them part of the answer. Final `sections[].label` is the authoritative short graph/detail pointer and maps 1:1 to mandatory `sections[].text`; `sections[].node_ids[]` is optional and AI-owned, so many nodes may link to one section while nodes not discussed in the detail doc remain unlabeled. The engine, via `orderAndAssemble()` ([`tools.ts`](../src/ai/tools/tools.ts)), assembles those parts into the rendered description shown in `AiDescriptionOverlay`: section numbering (`## N {label}`), object link headers (`### Objects [name](#focus-node:id)`), badge chips on linked graph nodes. The AI never writes the assembled blob; there is no AI-input `description` field. The dispatcher normalizes and validates only; it does not synthesize missing labels, node links, captions, or section text.
+**Synthesis output contract.** The AI submits `present_result` with structured parts: `summary`, `title`, `intro`, `sections[]`, `closing`, `notes[]`, and `highlight_groups[]`. Synthesis receives `detail_slots[]`, `node_states[]`, and CT `columnAspect.edges[]`. The engine assembles the final rendered description; the AI does not write the assembled blob directly.
 
 **Completed follow-up intent split.** In completed phase, treat follow-ups as either (A) refine existing graph or (B) start a new trace. Route A uses `lineage_present_result` (relabel/regroup via `sections[]`; caption updates via `notes[]`; graph edits via `prune_node_ids` / `add_node_ids`). Route B uses `lineage_start_exploration` for new origin/scope semantics; engine routing decides retrace vs fresh discovery.
 
-**Closed-graph enforcement.** The final result must stay connected from `originNodeId`. Implementation uses one topology guard pattern (BFS reachability from origin) across:
-- SM prune commit paths (BB `verdict='prune'` + BB `prune_neighbors`, CT `column_flow: []` auto-prune, CT dequeue auto-prune) before mutating/rematerializing topology.
-- `NavigationEngine.getResult()` (reachable-only `fullNodes`; disconnected slots filtered out).
-- `lineage_present_result` follow-up topology edits (`add_node_ids` / `prune_node_ids`) — disconnected updates are rejected.
+**Closed-graph enforcement.** The final result must stay connected from `originNodeId`. Reachability-from-origin is enforced across prune commit paths, `NavigationEngine.getResult()`, and follow-up topology edits.
 
 Low-risk diagnostics added for follow-up routing:
 - `fromFollowupDeferredTriggerThisTurn` marks turns expanded from deferred follow-up trigger text.
 - completed-phase warning log fires when that trigger flow attempts fresh `start_exploration` with `origin` and no `supplement`.
 - exact-string block append guard prevents duplicate snapshot injection into one request.
-- prompt metrics now log duplicate block removals and per-tool result payload chars.
+- prompt metrics log duplicate block removals and per-tool result payload chars.
 
 | Function | File | Concern |
 |----------|------|---------|
 | `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
 | `buildPhasePrompt(phase)` | `prompts.ts` | Canonical static phase protocol entrypoint (discover/active/synthesis/completed). |
 | `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules. |
-| `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract; routes mission-relevant neighbors via `route_requests` (pruning specifics are SM-owned). |
+| `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract. |
 | `buildSynthesisPrompt` | `prompts.ts` | Archive + lifecycle + CT provenance lift; assembly + intro/closing anchoring. |
 | `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
-| `buildSmProtocol(targetColumns?, classification)` | `smPrompts.ts` | Active SM protocol (verdict + sections + badges + routing/prune contracts). BB retains prune guidance; CT has no pruning vocabulary — AI submits `column_flow` and engine auto-prunes based on content. Tool boundary enforces CT field restrictions (`ct_field_required`, `ct_verdict_forbidden`, `bb_field_forbidden_in_ct`). |
+| `buildSmProtocol(targetColumns?, classification)` | `smPrompts.ts` | Active SM protocol (verdict, sections, badges, routing). |
 | `buildModeBlock(targetColumns?, classification)` | `smPrompts.ts` | Compatibility wrapper delegating to `buildSmProtocol(...)`. |
 | `buildColumnAspectPrompt` | `prompts.ts` | CT protocol block — two-channel contract, role table, terminal source rules. Injected into stable system prompt when CT is active. |
-| `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. Renders accumulated `ColumnEdge[]` as a directed edge list so `present_result` anchors to the traced path, including pass-state terminal source/target tables. |
+| `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. |
 | `buildCurrentTaskBlock(task, columns?)` | `prompts.ts` | `<current_task>` XML block; when `columns` are passed (CT active), appends `<column_trace>` sub-block with the structural lineage sub-question. |
 | `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + per-field synthesis keys; classification-gated; `closing` size-gated on slotCount ≥ 5. |
 | `orderAndAssemble` | `tools.ts` | Engine-built description blob from AI's title + intro + sections[] + closing — sole assembly path. |

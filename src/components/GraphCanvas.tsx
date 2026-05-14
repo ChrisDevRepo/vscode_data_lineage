@@ -637,21 +637,47 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  const ctEdgeMap = useMemo((): Map<string, { fromCol: string; toCol: string }[]> => {
-    const m = new Map<string, { fromCol: string; toCol: string }[]>();
+  const ctEdgeMap = useMemo((): Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>> => {
+    const m = new Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>>();
     const edges = activeAiMetadata?.columnAspect?.edges;
     if (!edges) return m;
-    const add = (nodeId: string, pair: { fromCol: string; toCol: string }) => {
+    const add = (
+      nodeId: string,
+      pair: { neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }
+    ) => {
       const k = nodeId.toLowerCase();
       if (!m.has(k)) m.set(k, []);
       const arr = m.get(k)!;
-      if (!arr.some(p => p.fromCol === pair.fromCol && p.toCol === pair.toCol)) arr.push(pair);
+      if (!arr.some(p =>
+        p.neighborNode === pair.neighborNode &&
+        p.direction === pair.direction &&
+        p.fromCol === pair.fromCol &&
+        p.toCol === pair.toCol
+      )) {
+        arr.push(pair);
+      }
     };
     for (const e of edges) {
-      const pair = { fromCol: e.fromCol, toCol: e.toCol };
-      add(e.fromNode, pair);
-      add(e.toNode,   pair);
-      add(e.hopNode,  pair); // covers writes_to procs where hopNode ≠ toNode
+      add(e.toNode, {
+        neighborNode: e.fromNode,
+        direction: 'in',
+        fromCol: e.fromCol,
+        toCol: e.toCol,
+      });
+      add(e.fromNode, {
+        neighborNode: e.toNode,
+        direction: 'out',
+        fromCol: e.fromCol,
+        toCol: e.toCol,
+      });
+      if (e.hopNode.toLowerCase() !== e.toNode.toLowerCase()) {
+        add(e.hopNode, {
+          neighborNode: e.fromNode,
+          direction: 'in',
+          fromCol: e.fromCol,
+          toCol: e.toCol,
+        });
+      }
     }
     return m;
   }, [activeAiMetadata]);

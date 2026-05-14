@@ -35,7 +35,7 @@ export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
   const logger = Logger.create(outputChannel, 'Config');
-  const lmTraceEnabled = true;
+  const lmTraceEnabled = false;
   LmTracer.init(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(), lmTraceEnabled);
   if (lmTraceEnabled) {
     logger.info('LM trace enabled (internal dev backdoor) — writing NDJSON to tmp/lm-trace/');
