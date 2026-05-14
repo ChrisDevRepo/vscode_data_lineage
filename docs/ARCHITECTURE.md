@@ -360,51 +360,36 @@ These are observed in production logs; the mitigations are real code paths, not 
 
 ## State diagram — navigation engine
 
-Two zoom levels. The top-level FSM shows phase transitions; the Analysis loop is the only phase with non-trivial internal mechanics, so it gets its own focused view.
-
-**Top-level phases.** Cross-phase transitions only — sub-states are documented in their respective sections above.
+This diagram is intentionally overview-only. It shows phase ownership and the coarse routes between phases; detailed hop mechanics live in `NavigationEngine` code and JSDoc.
 
 ```mermaid
 stateDiagram-v2
+    direction LR
+
     [*] --> Discovery
-    Discovery --> Discovery: direct answer (chat)
-    Discovery --> Analysis: escalation (start_exploration)
-    Analysis --> Synthesis: agenda drained
-    Synthesis --> Completed: present_result
-    Completed --> Analysis: supplement / extend scope
-    Completed --> Analysis: same-origin retrace (auto-supplement)
-    Completed --> Synthesis: re-render only
-    Completed --> Discovery: fresh question (different origin)
+
+    state "Discovery" as Discovery
+    state "Gate pending" as Gate
+    state "SM active" as Active
+    state "Synthesis" as Synthesis
+    state "Result ready" as ResultReady
+
+    Discovery --> [*]: direct chat answer
+    Discovery --> Gate: graph / CT / deeper analysis
+
+    Gate --> Discovery: cancel
+    Gate --> Gate: refine scope
+    Gate --> Active: approve
+
+    Active --> Synthesis: agenda drained
+    Synthesis --> ResultReady: present_result
+
+    ResultReady --> ResultReady: presentation edit
+    ResultReady --> Active: supplement / same-origin retrace
+    ResultReady --> Discovery: new question
 ```
 
-**Analysis hop loop.** Inside the Analysis phase, the engine owns selection, lifecycle recording, and termination. The AI only reasons while the machine is in `Await finding`.
-
-```mermaid
-stateDiagram-v2
-    [*] --> SelectNext
-    SelectNext --> AgendaDecision
-
-    state AgendaDecision <<choice>>
-    AgendaDecision --> [*]: agenda empty
-    AgendaDecision --> TablePassthrough: next item is table
-    AgendaDecision --> CtBranchClosed: CT has no active columns
-    AgendaDecision --> AwaitFinding: bodied focus
-
-    TablePassthrough --> SelectNext: record pass / forward question
-    CtBranchClosed --> SelectNext: record prune
-
-    AwaitFinding --> ValidateSubmission: submit_findings
-    ValidateSubmission --> AwaitFinding: rejected / retry same focus
-    ValidateSubmission --> CommitFinding: accepted
-
-    CommitFinding --> RouteDecision
-    state RouteDecision <<choice>>
-    RouteDecision --> TablePassthrough: routed neighbor is table
-    RouteDecision --> SelectNext: enqueue bodied routes
-    RouteDecision --> SelectNext: no routes
-```
-
-Discovery sub-states (`ClassifyQuestion → direct | escalation → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. The Completed phase branches on the user's follow-up action — see the cross-phase transitions above.
+Discovery sub-states (`ClassifyQuestion → direct | escalation → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. Inside `SM active`, the engine owns selection, lifecycle recording, and termination. The AI only reasons while the engine is awaiting a `submit_findings` call.
 
 ## Session FSM & typed exit dispatch
 
