@@ -218,7 +218,8 @@ From `src/commands.ts` + `package.json`.
 ## Markdown normalization contract
 
 - `src/components/aiDescriptionMarkdown.ts` normalization is **non-destructive**.
-- Normalization may re-wrap display math delimiters (`$$...$$` -> ```math) for renderer compatibility.
+- Math rendering in preview is handled by `react-markdown` with `remark-math` + `rehype-katex`.
+- Supported math syntaxes are inline `$...$`, block `$$...$$`, and fenced ` ```math `.
 - Normalization must never remove, truncate, or silently rewrite business content.
 - If rendering ambiguity exists (for example currency-like `$0$` vs inline math), preserving source text takes priority over formatting convenience.
 

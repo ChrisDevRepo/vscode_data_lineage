@@ -1,78 +1,11 @@
 import React, { memo, useState } from 'react';
 import Markdown from 'react-markdown';
-import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import katex from 'katex';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 import { preprocessDescriptionMarkdown } from './aiDescriptionMarkdown';
-
-/**
- * Sanitizes a KaTeX math string so KaTeX v0.16 can parse it without errors.
- *
- * @remarks
- * Covers `\text{}`, `\textrm{}`, `\textit{}` and all `\text*{}` wrappers.
- * KaTeX v0.16 treats `_` as subscript, `#` as a parameter marker, and `%` as
- * a comment even inside text wrappers, and rejects backticks in text mode.
- * Uses negative lookbehind to avoid double-escaping already-escaped sequences.
- */
-function sanitizeKaTeX(math: string): string {
-  return math.replace(/\\text\w*\{([^}]*)\}/g, (full, inner: string) => {
-    const macro = full.slice(0, full.indexOf('{'));
-    const cleaned = inner.replace(/`/g, '');
-    const escaped = cleaned
-      .replace(/(?<!\\)_/g, '\\_')
-      .replace(/(?<!\\)%/g, '\\%');
-    if (!escaped.includes('#')) return `${macro}{${escaped}}`;
-    return escaped.split('#').map((p: string) => (p ? `${macro}{${p}}` : '')).join('\\#');
-  });
-}
-
-/**
- * Renders a ```math code fence as a KaTeX display block.
- *
- * @param props - Component props containing the raw math string.
- * @returns A div containing the rendered KaTeX HTML.
- */
-function MathBlock({ math }: { math: string }) {
-  const html = katex.renderToString(sanitizeKaTeX(math), {
-    displayMode: true,
-    throwOnError: false,   // render error message, don't crash
-    errorColor: 'var(--vscode-errorForeground, #f44747)',
-  });
-  // SAFE: katex.renderToString with throwOnError:false returns constrained HTML; input is markdown math, not user HTML.
-  return <div className="math-display" dangerouslySetInnerHTML={{ __html: html }} />;
-}
-
-/**
- * Custom code component for `react-markdown`.
- * Intercepts ```math fences for KaTeX rendering, while passing other code blocks through.
- *
- * @param props - Standard markdown component props.
- * @returns Either a MathBlock or a standard code element.
- */
-function CodeComponent({ className, children, ...props }: React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement> & ExtraProps) {
-  if (className === 'language-math') {
-    return <MathBlock math={String(children).trim()} />;
-  }
-  return <code className={className} {...props}>{children}</code>;
-}
-
-/**
- * Custom pre component for `react-markdown`.
- * Unwraps the `<pre>` wrapper for math blocks to ensure they render as display math
- * without the standard code block container styling.
- *
- * @param props - Standard markdown component props.
- * @returns Either the raw children (for math) or a standard pre element.
- */
-function PreComponent({ children, ...props }: React.ClassAttributes<HTMLPreElement> & React.HTMLAttributes<HTMLPreElement> & ExtraProps) {
-  const child = React.Children.toArray(children)[0] as React.ReactElement<{ className?: string }> | undefined;
-  if (child && typeof child === 'object' && 'props' in child && child.props?.className === 'language-math') {
-    return <>{children}</>;
-  }
-  return <pre {...props}>{children}</pre>;
-}
 
 /**
  * Props for the `AiDescriptionOverlay` component.
@@ -93,8 +26,8 @@ interface AiDescriptionOverlayProps {
  *
  * @remarks
  * Renders markdown with GitHub Flavored Markdown (GFM) and KaTeX math via
- * ` ```math ` code fences — the sole rendering path for formulas. Raw source
- * and clipboard copy are also available.
+ * `remark-math` + `rehype-katex`, supporting inline `$...$`, block `$$...$$`,
+ * and fenced ` ```math ` formulas. Raw source and clipboard copy are also available.
  *
  * @param props - The component props.
  */
@@ -207,8 +140,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             ) : (
               <div className="ln-ai-description-md">
                 <Markdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent, h3: H3Component }}
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{ a: AnchorComponent, h3: H3Component }}
                 >{processedDescription}</Markdown>
               </div>
             )}

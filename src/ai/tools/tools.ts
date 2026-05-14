@@ -1265,8 +1265,7 @@ export function orderAndAssemble(
  * @remarks
  * LLMs often produce slightly malformed outputs such as double-escaped newlines
  * or excessive title lengths. This function applies surgical corrections to ensure
- * the final UI renders correctly. Step 4 (`$$`→`` ```math `` conversion) was removed —
- * `AiDescriptionOverlay.tsx` handles `$$` client-side.
+ * the final UI renders correctly while preserving authored markdown content.
  *
  * @param model - The database model.
  * @param input - The raw input from the AI.
@@ -1309,8 +1308,6 @@ export function autoFixPresentResult(
     fixed = { ...fixed, summary: lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated.trimEnd() };
     fixes.push(`Truncated summary to ${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars`);
   }
-
-  // 4. (Removed legacy block math converter - we now natively support $$)
 
   const nodeIdSet = new Set(resolvedNodeIds ?? []);
 

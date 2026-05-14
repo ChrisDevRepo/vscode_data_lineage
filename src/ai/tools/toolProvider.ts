@@ -823,7 +823,8 @@ class ToolHandler {
       this.logger.debug(`presentResult section[0] preview: ${trunc(input.sections?.[0]?.text ?? '(empty)', 200)}`);
 
       // Auto-fix AI output artifacts (newline unescaping, length truncation) before assembly.
-      // $$ math is no longer converted here — AiDescriptionOverlay.tsx handles it client-side.
+      // Markdown math rendering is handled in AiDescriptionOverlay via
+      // react-markdown + remark-math + rehype-katex.
       const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
