@@ -15,7 +15,8 @@ const BLOCK = {
   /** Node classification protocol. */
   verdictCategories: [
     '## Verdict Protocol',
-    '- analyze: Node has logic/formulas relevant to the mission. Use for stored procedures writing mission-critical data.',
+    '- analyze: Focus-node DDL contains business-rule logic relevant to the mission (conditions, calculations, status transitions, or audit decision meaning).',
+    '- analyze applies to logic-bearing bodied nodes in this hop; non-bodied table handling follows the engine path (contracted pass-through by default, structural-summary when non-bodied focus appears).',
     '- pass: Node is pure wire (SELECT *, synonym). No transformation. (Use analyze if ANY logic exists.)',
     '- prune: Utility node (logging/error), or downstream consumer that is topologically adjacent but does not contribute to the stated question.',
     '- prune_neighbors: When the DDL of the current focus node reveals adjacent tables that are filter-only (used in a JOIN ON or IN subquery, with no columns selected from them that contribute to the mission), add those table ids to `prune_neighbors` in the same submit_findings. Example: a calendar table joined only to filter by fiscal year; a region lookup joined only to restrict which rows are imported.',
@@ -163,7 +164,8 @@ export function buildSynthesisReminder(question: string): string {
     '- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; hop `badge_label` values are helper hints only. Keep business/technical split only when it improves clarity.',
     '- Link nodes needed to answer the question. A node with `pass` state may still be central, especially a source/target table in CT. Link, label, caption, or highlight it when column edges or lifecycle state make it part of the answer.',
     '- Every linked node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.',
-    '- Carry formulas and ⚠️ callouts only when they materially help answer the user question. Do not force formula/risk inclusion when no significant issue is present.',
+    '- Formula/evidence policy: if captured business evidence contains formulas or explicit calculations for mission-critical nodes, keep them in section text. Compress prose, not evidence classes (rule triggers, thresholds, formulas, lifecycle effects, audit meaning).',
+    '- ⚠️ callout policy: include risk callouts only for significant decision-impacting issues grounded in captured evidence.',
     '- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases write the text — do not leave sections[] without text.',
     '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
   ].join('\n');

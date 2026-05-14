@@ -181,9 +181,9 @@ business_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Capture this node's BUSINESS MEANING — what each record represents,
-    what changes when a rule fires, which decisions or values flow
-    downstream, why each rule matters to the domain.
+    Capture this node's BUSINESS LOGIC from current DDL so a business analyst
+    can understand: what changes, why the rule exists, how the rule is decided,
+    and what assumptions/effects exist both upstream and downstream.
     </purpose>
 
     ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Do not
@@ -200,32 +200,34 @@ business_capture:
     <emphasis>
     Highest-value content, in order:
     1. **Business outcome** — what changes for users, reporting, or decisions.
-    2. **Decision rules** — what condition triggers the change and what outcome it drives.
-    3. **Lifecycle impact** — business status/phase transitions when present.
-    4. **Audit-trail meaning** — what business event each audit entry represents.
-    5. **Material risks** — add ⚠️ only for significant, decision-impacting
+    2. **Business intent (why)** — the decision objective this rule serves.
+    3. **Decision rules (how)** — what condition triggers the change and what outcome it drives.
+    4. **Lifecycle impact** — business status/phase transitions when present.
+    5. **Audit-trail meaning** — what business event each audit entry represents.
+    6. **Material risks** — add ⚠️ only for significant, decision-impacting
        data-quality issues grounded in the loaded evidence.
-    6. **Technical evidence** — formulas, predicates, or column references only when
-       needed to clarify a business point.
+    7. **Technical evidence** — formulas, predicates, thresholds, and key column references
+       used to explain business logic.
     </emphasis>
 
     <body_recipe>
     1. Open with one sentence naming the domain role ("computes revenue
-       at INSERT", "allocates budget units across cost centres",
-       "applies tier-discount when order qualifies").
+       at INSERT") and the decision objective ("why this rule exists").
     2. Walk through business rules in plain language first. Name what
        changes for the business when each rule fires.
-    3. Add formulas, predicates, and column-level details only when needed
-       to clarify a business point; keep them short and targeted.
-    4. Express status-enum lifecycles as numbered transitions
+    3. For each calculation rule in DDL, include the formula in LaTeX and
+       explain business meaning of terms briefly.
+    4. Capture both **upstream assumptions** and **downstream effects** when
+       evidenced in current DDL context.
+    5. Express status-enum lifecycles as numbered transitions
        ("1. New → 2. Approved → 3. Shipped"). Capture the business
        state change, not the SQL UPDATE that effects it.
-    5. Add ⚠️ only when the issue is significant and decision-impacting.
+    6. Add ⚠️ only when the issue is significant and decision-impacting.
        If no material issue exists, omit risk callouts.
-    6. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
+    7. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
        this view makes queryable and its business meaning — not how the
        SELECT is structured.
-    7. Wrap column and object names in `\`backticks\`` only when used.
+    8. Wrap column and object names in `\`backticks\`` only when used.
     </body_recipe>
   example: |
     `spCalcRevenue` computes `TotalRevenue` at the final INSERT into

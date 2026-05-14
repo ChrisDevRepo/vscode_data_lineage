@@ -12,7 +12,7 @@ import {
   buildGeneralSystemPrompt,
   buildPhasePrompt,
 } from '../../src/ai/prompting/prompts';
-import { buildCtSynthesisBlock, buildSmProtocol } from '../../src/ai/prompting/smPrompts';
+import { buildCtSynthesisBlock, buildSmProtocol, buildSynthesisReminder } from '../../src/ai/prompting/smPrompts';
 
 function countOccurrences(haystack: string, needle: string): number {
   if (!needle) return 0;
@@ -73,6 +73,8 @@ async function runTests() {
   {
     const sm = buildSmProtocol({ classification: 'business' });
     assert(sm.includes('Verdict Protocol'), 'SM includes verdict contract');
+    assert(sm.includes('business-rule logic relevant to the mission'), 'SM business verdict targets rule-bearing DDL');
+    assert(sm.includes('structural-summary when non-bodied focus appears'), 'SM documents non-bodied focus handling path');
     assert(sm.includes('Section Submission'), 'SM includes section submission contract');
     assert(sm.includes('Current Hop Metadata'), 'SM includes current-hop metadata contract');
     assert(sm.includes('current task only'), 'SM metadata is current-hop scoped');
@@ -93,6 +95,10 @@ async function runTests() {
     ]);
     assert(ctSynthesis.includes('group by the answer, not by every hop'), 'CT synthesis carries CT-only grouping guidance');
     assert(ctSynthesis.includes('Keep pass-through or tangential nodes compact'), 'CT synthesis carries CT-only compactness guidance');
+
+    const synthesisReminder = buildSynthesisReminder('How is revenue calculated?');
+    assert(synthesisReminder.includes('Formula/evidence policy'), 'synthesis reminder includes formula preservation policy');
+    assert(synthesisReminder.includes('Compress prose, not evidence classes'), 'synthesis reminder preserves rule evidence under compression');
   }
 
   console.log('\n── active assembly redundancy guard ──');

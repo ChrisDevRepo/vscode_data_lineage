@@ -5,12 +5,13 @@ import { buildTableTraceColumns, groupCtFlowsByNeighbor, type CtTooltipFlow } fr
 function run() {
   const withInline = 'Fallback uses $0$ when no price exists.';
   const processedInline = preprocessDescriptionMarkdown(withInline);
-  assert(processedInline.includes('\\$0\\$'), 'inline $...$ is escaped for literal rendering in overlay');
+  assert.equal(processedInline, withInline, 'inline content is preserved byte-for-byte (lossless normalization)');
 
   const withBlock = 'Revenue formula:\n\n$$\\text{TotalRevenue}=\\text{Qty}\\times\\text{UnitPrice}$$';
   const processedBlock = preprocessDescriptionMarkdown(withBlock);
   assert(processedBlock.includes('```math'), '$$...$$ converts to math fence for KaTeX');
   assert(!processedBlock.includes('$$\\text{TotalRevenue}'), 'raw $$ block is removed after preprocessing');
+  assert(processedBlock.includes('\\text{TotalRevenue}=\\text{Qty}\\times\\text{UnitPrice}'), 'math payload content is preserved');
 
   const flows: CtTooltipFlow[] = [
     { neighborNode: '[ai].[vwPriceList]', direction: 'in', fromCol: 'UnitPrice', toCol: 'TotalRevenue' },

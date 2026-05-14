@@ -103,6 +103,13 @@ Important correction: in synthesis, final `sections[]` fields are AI-authored. T
 - `structural_summary`
 - `column_trace_capture` (CT mode only)
 
+Business-capture contract (business mode) is now explicitly `what / why / how`:
+- What business outcome changes.
+- Why the rule exists (decision objective) when evidenced in current DDL.
+- How the rule executes (conditions, thresholds, formulas).
+- Upstream assumptions and downstream effects when evidenced.
+- Lifecycle/audit meaning and only material, decision-impacting risks.
+
 ### Synthesis output
 
 - `summary`
@@ -207,6 +214,13 @@ From `src/commands.ts` + `package.json`.
 - Nodes without detail slots can still be discussed when lifecycle/provenance makes them central: examples include CT terminal source tables, target tables, and contracted pass-through tables.
 - The follow-up "Show full description" chat replay sanitizes focus anchors to plain object names for readability; overlay rendering keeps interactive focus links.
 - CT-only synthesis guidance (`buildCtSynthesisBlock`) groups by the traced-column answer and keeps pass-through nodes compact.
+
+## Markdown normalization contract
+
+- `src/components/aiDescriptionMarkdown.ts` normalization is **non-destructive**.
+- Normalization may re-wrap display math delimiters (`$$...$$` -> ```math) for renderer compatibility.
+- Normalization must never remove, truncate, or silently rewrite business content.
+- If rendering ambiguity exists (for example currency-like `$0$` vs inline math), preserving source text takes priority over formatting convenience.
 
 ## Test crosscheck matrix
 
