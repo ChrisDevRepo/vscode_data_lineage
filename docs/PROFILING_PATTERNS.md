@@ -64,6 +64,9 @@ Non-profilable columns are grouped at the bottom under `Not profiled (N)` with d
 
 All settings under `dataLineageViz.tableStatistics.*`. Search "dataLineageViz" in VS Code Settings (`Ctrl+,`). Defaults are taken from [`package.json`](../package.json):
 
+These are the configured defaults. If a setting is missing at runtime, the engine falls back to:
+`sampleThreshold = 500000`, `sampleSize = 1000`, `maxColumns = 100`, `queryTimeout = 60`.
+
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `enabled` | boolean | `true` | Show the statistics section in the table-detail panel (DB mode only). |

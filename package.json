@@ -6,6 +6,9 @@
   "version": "1.0.0",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
+  "pricing": "Free",
+  "markdown": "github",
+  "qna": "marketplace",
   "extensionDependencies": [],
   "engines": {
     "vscode": "^1.95.0"

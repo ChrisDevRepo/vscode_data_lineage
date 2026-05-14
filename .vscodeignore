@@ -12,6 +12,7 @@ tmp_*
 # Pattern intentionally globs `out/test*/**` so orphaned timestamped dirs
 # like `out/test.stale.1777052232/` don't leak into the VSIX.
 out/test*/**
+out/**/*.d.ts
 
 # Config files
 .gitignore

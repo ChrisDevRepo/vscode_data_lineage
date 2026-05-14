@@ -52,7 +52,7 @@ Routing/pruning policy is canonicalized in `buildSmProtocol()` (`src/ai/promptin
 - Lifecycle state is code-owned, not prompt-inferred. The only persisted node actions are `analyze`, `pass`, and `prune`; table passthrough is represented as `pass` with an engine reason, not as a fourth action.
 
 Reviewer artifact:
-- `tmp/AI_PROMPT_COMPILATION.md` is maintained as a human-readable compilation for prompt reviews (commands/tools inventory + one 1:1 active-hop prompt example from trace).
+- A local reviewer compilation may be generated under `tmp/` for prompt reviews (commands/tools inventory + one 1:1 active-hop prompt example from trace).
 - It is a trace snapshot and may lag behind current prompt code; source-of-truth is the code-owned prompt surfaces in `src/ai/prompting/*` plus template routing in `templateRenderer.ts`.
 
 ## AI vs engine ownership

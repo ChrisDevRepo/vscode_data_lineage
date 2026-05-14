@@ -8,8 +8,7 @@
 # merges on top of this default — your keys win.
 #
 # Full key reference (purpose + maintenance for each key): see
-#   docs/AI_PROMPTS.md  →  §3 Custom Output Templates (YAML Interface)
-# https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md#3-custom-output-templates-yaml-interface
+#   docs/AI_PROMPTS.md
 #
 # Contract — AI writes parts, engine builds the document:
 #
@@ -28,7 +27,7 @@
 #     - Section numbering (## N {label}), badge chips, ### Objects link blocks.
 #
 #   Do NOT add an instruction template for any field the engine builds itself.
-#   The lift+group+label rule for sections[] lives in src/ai/prompts.ts →
+#   The lift+group+label rule for sections[] lives in src/ai/prompting/prompts.ts →
 #   buildSynthesisPrompt(), not here, to avoid duplication.
 #
 # Stages:
