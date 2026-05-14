@@ -77,7 +77,7 @@ The shipped 17 rules. Read [`assets/defaultParseRules.yaml`](../assets/defaultPa
 | `extract_sources_tsql_apply` | source | `CROSS APPLY` / `OUTER APPLY` sources. |
 | `extract_merge_using` | source | `MERGE … USING` source table. |
 | `extract_udf_calls` | source | Scalar UDF calls (`schema.func()`). |
-| `extract_targets_dml` | target | `INSERT`, `UPDATE`, `DELETE` targets. |
+| `extract_targets_dml` | target | `INSERT`, `UPDATE`, `MERGE` targets. DELETE excluded — removes rows, contributes no column data to the target table. `OUTPUT DELETED … INTO <table>` is captured separately by `extract_output_into`. |
 | `extract_ctas` | target | `CREATE TABLE AS SELECT` targets. |
 | `extract_select_into` | target | `SELECT … INTO` targets. |
 | `extract_copy_into` | target | `COPY INTO` targets (Synapse / Fabric). |
@@ -100,11 +100,11 @@ When the regex set misses a dependency that the dacpac XML or DMV catalog *does*
 | `function` | source | An SP referencing a function via metadata almost always reads from it. |
 | `table` / `view` | source | Safe default — writes are normally caught by the regex DML rules; metadata-only references are most often reads. |
 
-This fallback is why the YAML doesn't need an exhaustive `INSERT`/`UPDATE`/`DELETE` permutation — anything the regex misses surfaces with a sensible default direction. `dropped_refs` (entries that match neither regex nor catalog) are logged at DEBUG.
+This fallback is why the YAML doesn't need an exhaustive `INSERT`/`UPDATE`/`MERGE` permutation — anything the regex misses surfaces with a sensible default direction. `dropped_refs` (entries that match neither regex nor catalog) are logged at DEBUG.
 
 ## How to verify a rule change
 
-The snapshot test catches regressions across all 31 stored procedures in the two committed dacpacs (`AdventureWorks.dacpac` and `AdventureWorks_sdk-style.dacpac`). Use it as the regression net before merging.
+The snapshot test catches regressions across all 31 stored procedures in the two committed dacpacs (`AdventureWorks2025_AI.dacpac` and `AdventureWorks_sdk-style.dacpac`). Use it as the regression net before merging.
 
 ```bash
 npm run test:snapshot          # exits 1 on any diff vs tests/fixtures/aw-baseline.tsv

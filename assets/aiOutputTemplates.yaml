@@ -8,8 +8,7 @@
 # merges on top of this default — your keys win.
 #
 # Full key reference (purpose + maintenance for each key): see
-#   docs/AI_PROMPTS.md  →  §3 Custom Output Templates (YAML Interface)
-# https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md#3-custom-output-templates-yaml-interface
+#   docs/AI_PROMPTS.md
 #
 # Contract — AI writes parts, engine builds the document:
 #
@@ -28,7 +27,7 @@
 #     - Section numbering (## N {label}), badge chips, ### Objects link blocks.
 #
 #   Do NOT add an instruction template for any field the engine builds itself.
-#   The lift+group+label rule for sections[] lives in src/ai/prompts.ts →
+#   The lift+group+label rule for sections[] lives in src/ai/prompting/prompts.ts →
 #   buildSynthesisPrompt(), not here, to avoid duplication.
 #
 # Stages:
@@ -47,6 +46,43 @@
 # YAML `stages:` is informational — overlays that contradict are logged
 # and ignored.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── Discovery (chat-only) — editable via overlay ─────────────────────────────
+
+discovery_chat:
+  stages: [discovery]
+  instruction: >
+    Markdown. Fully fulfill what the user asked. Cite the node and field
+    you are reading from. State only what is present in the loaded
+    `bb_ddl`, the `cols[]` / `in[]` / `out[]` / `fks[]` fields, and tool
+    results — when a field is empty, say so plainly. Ground every claim
+    in the loaded data; leave general SQL knowledge and naming conventions
+    aside. Default to business-focused wording. Include SQL snippets, predicate
+    details, or column-level mechanics only when needed to clarify a business
+    point the user asked about.
+
+
+    Scale the answer to the question:
+
+    - **Single-object question** ("what does X do", "show DDL of X", "list
+      columns of X") — one focused answer. Open with the direct answer,
+      then explain business meaning and impact. Add technical mechanics only
+      when needed for business clarification.
+
+    - **Multi-object walk** (dependency trace, lineage walk, "N levels
+      up/down", "what feeds X", "list dependencies of X") — one Markdown
+      heading per node visited. Under each heading: a short business
+      paragraph (what the node represents and why it matters). Add technical
+      mechanics only when needed for business clarification. Cover every node you loaded
+      and use only nodes that appeared in your tool-call results. Order
+      the headings to match the lineage flow (origin first, then upstream,
+      then downstream — or the order the user named).
+
+
+    Output rendering (math fences, rename tables, source-guard SQL fences,
+    status-enum lifecycles, ⚠️ markers) is governed by the `general`
+    template — apply its rules whenever the loaded data carries the
+    underlying material.
 
 # ── Card + top of the document ───────────────────────────────────────────────
 
@@ -92,21 +128,20 @@ closing:
     After the sections, separated by a `---` divider, write a brief
     closing block:
     (1) one-paragraph through-line that names the overall pipeline answer
-    in the lens the user requested, and
-    (2) a top-risks markdown table — the cross-cutting data-quality / scope
-    risks that span sections (each row prefixed with ⚠️). Two columns:
-    `| Risk | Scope |`. Draw from ⚠️ markers visible in the node
-    summaries and note_captions; do not invent new risks.
+    in the lens the user requested.
+    Add a risk callout block only when there is a significant,
+    decision-impacting issue grounded in captured evidence. In business-only
+    missions, keep callouts business-facing (impact/scope), not technical
+    internals. If no significant issue is present, omit risk callouts.
   example: |
-    The CadenceWorker pipeline reloads from staging each run, applies a
-    nine-stage rule cascade (init → OOS gate → AC reallocation → integrity
-    correction → EV computation → exception overrides → reconciliation →
-    publish), and lands USD-converted facts in FactCadenceDetails.
+    The spBuildSalesReport pipeline reloads from staging each run, applies a
+    four-stage cascade (order staging → price calculation → discount
+    application → fact write), and lands USD-converted totals in FactSalesReport.
 
     | Risk | Scope |
     |---|---|
-    | ⚠️ Missing `vDataFilters` config NULLs `PctEVDirect` | All EV cases |
-    | ⚠️ Missing `LkpCurrencyRate` rows produce NULL KPIs | Final fact load |
+    | ⚠️ NULL UnitPrice in SalesOrderDetail collapses TotalRevenue | All revenue rows |
+    | ⚠️ Missing DimCurrency rows produce NULL CurrencyTotal | Final fact load |
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools.ts
 # from title + intro + sections[] + closing) — NOT an AI-writeable field.
@@ -146,10 +181,14 @@ business_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Capture this node's BUSINESS MEANING — what each record represents,
-    what changes when a rule fires, which decisions or values flow
-    downstream, why each rule matters to the domain.
+    Capture this node's BUSINESS LOGIC from current DDL so a business analyst
+    can understand: what changes, why the rule exists, how the rule is decided,
+    and what assumptions/effects exist both upstream and downstream.
     </purpose>
+
+    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Do not
+    invent rules, formulas, thresholds, or relationships. If a construct is
+    absent from DDL, treat it as out of scope.
 
     Submit one section: `{ angle: "business", text: "<body>" }`. The
     archive has no length cap and synthesis lifts your text verbatim —
@@ -160,55 +199,48 @@ business_capture:
 
     <emphasis>
     Highest-value content, in order:
-    1. **Formulas in LaTeX** — computed expressions (weights, thresholds,
-       allocations, proportions, ratios, CASE branches, fallback values)
-       are clearest as math (`$expr$` inline, `$$expr$$` block).
-    2. **Eligibility predicates** — which records qualify (status,
-       country, flag, threshold). Quote the predicate values verbatim.
-    3. **Allocation / decision rules** — what value each rule produces
-       and from which inputs.
-    4. **Status-lifecycle transitions** — numbered transitions per
-       record class.
-    5. **Audit-trail meaning** — what business event each entry records.
-       Capture the event semantics, not the JSON envelope shape.
-    6. **Data-quality risks** — ⚠️ inline at the point they apply.
+    1. **Business outcome** — what changes for users, reporting, or decisions.
+    2. **Business intent (why)** — the decision objective this rule serves.
+    3. **Decision rules (how)** — what condition triggers the change and what outcome it drives.
+    4. **Lifecycle impact** — business status/phase transitions when present.
+    5. **Audit-trail meaning** — what business event each audit entry represents.
+    6. **Material risks** — add ⚠️ only for significant, decision-impacting
+       data-quality issues grounded in the loaded evidence.
+    7. **Technical evidence** — formulas, predicates, thresholds, and key column references
+       used to explain business logic.
     </emphasis>
 
     <body_recipe>
     1. Open with one sentence naming the domain role ("computes revenue
-       at INSERT", "allocates budget units across cost centres",
-       "applies tier-discount when order qualifies").
-    2. Walk through every business rule the DDL exposes — eligibility
-       predicates, allocation formulas, threshold decisions, fallback
-       values, status transitions, audit-trail business events. Name
-       what changes for the business when the rule fires; do not
-       describe how SQL implements it.
-    3. Express formulas in LaTeX (`$expr$` inline, `$$expr$$` block) —
-       the math is the rule, no need to paraphrase it.
-    4. Quote short SQL predicate VALUES inline as proof (the literal
-       `'PENDING'`, `'Global'`, `> 0`, the column names being compared)
-       — not the surrounding INSERT/UPDATE/transaction scaffolding.
-    5. Tabulate column renames as `| From | To | Business meaning |` when
-       3+ sibling columns share the rename shape; 1–2 renames as prose
-       with backticks.
-    6. Express status-enum lifecycles as numbered transitions
+       at INSERT") and the decision objective ("why this rule exists").
+    2. Walk through business rules in plain language first. Name what
+       changes for the business when each rule fires.
+    3. For each calculation rule in DDL, include the formula in LaTeX and
+       explain business meaning of terms briefly.
+    4. Capture both **upstream assumptions** and **downstream effects** when
+       evidenced in current DDL context.
+    5. Express status-enum lifecycles as numbered transitions
        ("1. New → 2. Approved → 3. Shipped"). Capture the business
        state change, not the SQL UPDATE that effects it.
-    7. Mark data-quality risks with ⚠️ inline at the point they apply.
-    8. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
+    6. Add ⚠️ only when the issue is significant and decision-impacting.
+       If no material issue exists, omit risk callouts.
+    7. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
        this view makes queryable and its business meaning — not how the
        SELECT is structured.
-    9. Wrap column and object names in `\`backticks\``.
+    8. Wrap column and object names in `\`backticks\`` only when used.
     </body_recipe>
   example: |
-    `spCalcRevenue` computes `TotalRevenue = $Qty \times UnitPrice$` at the
-    final INSERT into `FactSalesReport`, only for rows with
-    `Status = 'CONFIRMED'`.
+    `spCalcRevenue` computes `TotalRevenue` at the final INSERT into
+    `FactSalesReport`, only for rows with `Status = 'CONFIRMED'`.
+
+    ```math
+    TotalRevenue = Qty \times UnitPrice
+    ```
 
     1. `Qty` is line-item quantity sold, renamed from `OrderQty` in
        `CTE_Orders`.
     2. `UnitPrice` is list price after markup:
-       $UnitPrice = CostPrice \times (1 + MarkupPct)$.
+       `UnitPrice = CostPrice × (1 + MarkupPct)`.
     3. The fact row is INSERTed with `TotalRevenue` populated.
 
     | From | To | Business meaning |
@@ -229,6 +261,11 @@ technical_capture:
     Capture HOW this node runs — execution mechanics, query shape, loading
     pattern, performance affordances and traps.
     </purpose>
+
+    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Do not
+    invent indexes, partitioning, performance issues, or references. Tie
+    performance claims to visible SQL constructs (JOIN, WHERE, DISTINCT,
+    subquery). If it is not in DDL, it is out of scope.
 
     Submit one section: `{ angle: "technical", text: "<body>" }`. The
     archive has no length cap; synthesis lifts your text verbatim. Write
@@ -291,33 +328,40 @@ technical_capture:
 structural_summary:
   stages: [active]
   instruction: >
-    Reduced capture template — fires only when the user's starting point is a
-    non-bodied node (a table or any node without a DDL body). Replaces the
-    business_capture / technical_capture templates for this single hop.
+    Fires only when the focus node has no DDL body (table/non-bodied).
+    For this hop only, it replaces `business_capture` and `technical_capture`.
 
     Describe what this node **is**; point to the surrounding procedures for
     what it **does**. Non-bodied nodes carry structure, not behaviour.
+
+    ⛔ STRICT GROUNDING — use only `focus_node` data. Do not invent columns,
+    objects, neighbors, or relationships. If a field is missing/empty, output
+    the explicit empty-case text below.
 
     Required sections (use these headings exactly):
 
     ## Purpose
     One short sentence naming the role of this node in the pipeline.
+    Source: node id / type from focus_node.
 
     ## Columns
-    Render the columns list as a `| Column | Type | Role / ⚠️ |` table. Role
-    is a short phrase (key / dim / metric / audit / computed). Flag
-    nullability risks with ⚠️ inline. Factual metadata only.
+    From `cols[]` only, render a `| Column | Type | Role / ⚠️ |` table. Role is a short phrase
+    (key / dim / metric / audit / computed). Flag nullable columns with ⚠️.
+    If `cols[]` is absent: write "Column metadata not available in current model."
 
     ## Upstream sources
-    Bulleted list of adjacent bodied nodes that **write to** this node. One
-    line per source: node id + one-sentence role.
+    Populate from `in[]` in focus_node — these are the nodes that write TO
+    this table. One line per entry: node id + one-sentence role.
+    If `in[]` is empty or absent: write "No upstream sources found in graph."
 
     ## Downstream consumers
-    Bulleted list of adjacent bodied nodes that **read from** this node. One
-    line per consumer: node id + one-sentence role.
+    Populate from `out[]` in focus_node — these are the nodes that read FROM
+    this table. One line per entry: node id + one-sentence role.
+    If `out[]` is empty or absent: write "No downstream consumers found in graph."
 
     ## Grain / keys
-    Primary key + common join keys from foreign keys. One short paragraph.
+    Derive from PK-flagged columns in `cols[]` and `fks[]` in focus_node only.
+    If neither is present: write "Key information not available in current model."
 
     Scope: structure and relationships only — the surrounding procedure slots carry all transform logic.
 
@@ -332,16 +376,16 @@ column_trace_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Per active column — one binary decision:
+    Per active column — one explicit decision:
       → Column interacts with this node  →  fill column_flow (map to upstream source) + route upstream.
-      → Column does NOT interact         →  verdict=prune. No column_flow needed.
+      → Column does NOT interact         →  column_flow: []   Engine auto-prunes. No route_requests needed.
 
-    No third path. column_flow is engine-validated; missing it on a non-prune verdict returns
-    column_flow_required with the active column list.
+    column_flow is engine-validated. Missing it entirely (field not submitted) returns column_flow_required.
+    Submitting column_flow: [] is the correct signal for no interaction — do not invent contributors.
     </purpose>
 
     ## Before submitting — verify
-    □ Per active column: column_flow filled OR verdict=prune. No middle ground.
+    □ Per active column: column_flow has entries (interaction) OR column_flow: [] (no interaction). Never omit the field.
     □ column_flow[] has one entry per active column that interacts with this node.
     □ sections[].text (from business/technical capture) explains the context of the flow.
     □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
@@ -357,7 +401,7 @@ column_trace_capture:
     verdict: "analyze"
 
     ## Example — column does not interact with this node
-    verdict: "prune"    ← omit column_flow entirely
+    column_flow: []    ← engine auto-prunes this node
 
     ## Verdict — choose based on how the node interacts with tracked columns
     - `analyze`: the node transforms or is the terminal source of a target column.
@@ -368,14 +412,12 @@ column_trace_capture:
     - `pass`: column flows through unchanged; the upstream writer is not yet visited.
       Fill column_flow naming the contributor, then add route_requests to visit it.
       The edge is recorded here; full attribution resolves at the routed node.
-    - `prune`: the node does not interact with any tracked column. Omit column_flow.
 
     ## Non-bodied table focus (TABLE written by a procedure)
     When the focus node is a TABLE (no DDL — only schema metadata), the procedure that
     writes to it is upstream. Use verdict='pass'; use the column name as it appears in the table.
     column_flow: [{ out_col: "TotalRevenue", contributors: [{ from_node: "[schema].[spWriter]", from_col: "TotalRevenue", role: "rename" }] }]
     Leave route_requests empty — the CT engine queues contributors[] automatically.
-    Do NOT use verdict='prune' just because there is no DDL.
 
     ## column_flow fields per entry
     - out_col: column name being produced. For PROCEDURE focus: the column name in the target table (same as writes_to.col).
@@ -413,32 +455,32 @@ column_trace_capture:
 # material; the AI does NOT invent tables / formulas / fences without source.
 
 general:
-  stages: [synthesis]
+  stages: [discovery, synthesis]
   instruction: >
     Apply this rendering set across every assembled section so the document
-    reads consistently end-to-end:
+    reads consistently end-to-end. Prioritize business clarity; include
+    technical formatting only when needed to clarify business meaning:
 
-    - **Formulas**: write as LaTeX `$expr$` whenever the captured body has a
-      computation (e.g. `$Revenue = Qty \times Price$`). For block math
-      (`$$…$$`) — multi-line CASE expressions, matrices, multi-step
-      derivations — put the opening `$$` and the closing `$$` on lines of
-      their own, with the body on the lines between. Inline content on the
-      opener line breaks the renderer.
+    - **Formulas**: include only when they clarify business behavior; keep
+      them concise and grounded in captured content.
     - **Column renames**: render as a `| From | To | Business meaning |`
-      table whenever 3+ sibling columns share the rename shape. For 1–2
-      renames, prose with backticks is enough.
+      table only when the rename pattern is central to business understanding.
     - **Source guards** (WHERE / JOIN / MERGE predicates that filter or key
-      the data): quote the SQL verbatim inside ```sql code fences. Snippet
-      only — never the full INSERT/SELECT statement.
+      the data): quote short SQL snippets only when needed for business
+      clarification; never include full statements.
     - **Status-enum lifecycles**: express as numbered transitions
       ("1. New → 2. Approved → 3. Shipped").
-    - **Risks / data-quality flags**: every ⚠️ from capture appears in the
-      assembled section at the point it applies — verbatim, in place.
+    - **Risks / data-quality flags**: include ⚠️ only for material,
+      decision-impacting issues backed by captured evidence. In
+      business-only missions, phrase risk in business terms first; add
+      technical detail only when it clarifies impact.
 
     These rules apply only when the captured body has the underlying material.
     Do not invent tables, formulas, or fences without source.
   example: >
-    Formula: $TotalRevenue = Qty \times UnitPrice \times (1 - Discount)$
+    ```math
+    TotalRevenue = Qty \times UnitPrice \times (1 - Discount)
+    ```
 
     | From | To | Business meaning |
     | --- | --- | --- |

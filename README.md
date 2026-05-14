@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
-![Status](https://img.shields.io/badge/status-preview-orange.svg)
+![Status](https://img.shields.io/badge/status-stable-green.svg)
 
 Visualise SQL dependencies right inside VS Code. Ask `@lineage` in Copilot Chat to explore your lineage graph in natural language — or browse interactively with search, trace, and schema overview.
 
@@ -32,10 +32,10 @@ The assistant can trace dependencies, build bookmarked graph views, and analyse 
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
-`@lineage` adapts to the size of the question:
+`@lineage` has two modes of operation:
 
-- **Small scopes run inline** — the AI sees all relevant DDL at once and answers directly. If a relevant dependency falls outside your filter schemas, it pauses and asks you to approve extending the scope for this session.
-- **Large scopes run hop-by-hop** — before the first hop the assistant shows you the planned scope (nodes, schemas, depth, budget) and asks for confirmation. Once approved the contract is locked.
+- **Discovery (chat)** — the default. Most lineage questions are answered directly in chat, including multi-object dependency questions like "trace upstream from X two levels" or "what feeds Y". Each visited node gets its own heading with business meaning, technical execution, formulas in math fences, column-rename tables, and ⚠️ data-quality flags inline.
+- **Structured walkthrough (graph render + column tracing)** — when you ask for a graph rendered in the side panel, request a column trace, or open a scope too large for chat, the assistant first shows you the planned scope (nodes, schemas, depth) and asks for confirmation. Once approved, it walks the graph hop-by-hop and renders the result with origin / transformer / terminal nodes coloured.
 
 Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
 
@@ -81,7 +81,7 @@ Unqualified names depend on the caller's default schema, which the catalog does 
 - [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA contract for live-database ingestion (no black box).
 - [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — generated SQL for table profiling.
 - [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) — YAML reference for the SQL parser.
-- [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — YAML reference for `@lineage` capture / render templates.
+- [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — prompt architecture + YAML reference for `@lineage` capture / render templates.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common issues.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — coding standards, testing protocol, PR hygiene.
 
@@ -91,4 +91,4 @@ Bug reports welcome. For custom features, fork and extend under the MIT license.
 
 ---
 
-MIT License · [Christian Wagner](https://www.linkedin.com/in/christian-wagner-11aa8614b) · [GitHub](https://github.com/ChrisDevRepo/vscode_data_lineage) · Developed with [Claude Code](https://claude.ai/code)
+MIT License · [Christian Wagner](https://www.linkedin.com/in/christian-wagner-11aa8614b) · [GitHub](https://github.com/ChrisDevRepo/vscode_data_lineage) · Developed with Claude Code, Codex and Gemini

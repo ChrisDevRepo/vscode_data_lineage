@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
-import { type AiSession } from '../ai/session';
+import { type AiSession } from '../ai/session/session';
 import { Logger, trunc, sanitizeForLog, logRaw } from '../utils/log';
 import { type BridgeHost } from './host';
 import {
@@ -24,7 +24,7 @@ import {
   type FilterProfile,
   type ProjectStore,
 } from '../engine/projectStore';
-import { buildBareGraph } from '../ai/graphUtils';
+import { buildBareGraph } from '../ai/infra/graphUtils';
 import { populateColumnStore } from '../engine/modelBuilder';
 import {
   DetailPanelToExtensionMsgSchema,
@@ -44,7 +44,7 @@ export type WebviewMessageHandlers = {
 
 declare const __BUILD_TIMESTAMP__: string;
 
-/** 
+/**
  * Storage key for the project store in VS Code's global state.
  */
 export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
@@ -180,13 +180,13 @@ export function createMessageHandlers(
         const title = msg.node ? `Detail: ${msg.node.name}` : 'Detail';
         detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', title, vscode.ViewColumn.Beside, { enableScripts: true });
         detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, host.getExtensionUri());
-        detailPanel.onDidDispose(() => { 
-          detailPanel = undefined; 
-          setDetailPanel(undefined); 
+        detailPanel.onDidDispose(() => {
+          detailPanel = undefined;
+          setDetailPanel(undefined);
           host.postMessage({ type: 'detail-closed' });
         });
         setDetailPanel(detailPanel);
-        
+
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
           const parsed = DetailPanelToExtensionMsgSchema.safeParse(rawM);
           if (!parsed.success) {
@@ -217,9 +217,9 @@ export function createMessageHandlers(
         detailPanel.reveal(vscode.ViewColumn.Beside);
         if (msg.node) {
           detailPanel.title = `Detail: ${msg.node.name}`;
-          detailPanel.webview.postMessage({ 
-            type: 'detail-update', 
-            node: enrichNodeForDetail(msg.node), 
+          detailPanel.webview.postMessage({
+            type: 'detail-update',
+            node: enrichNodeForDetail(msg.node),
             findQuery: msg.findQuery,
             config: await getDetailConfig()
           });
@@ -240,8 +240,8 @@ export function createMessageHandlers(
     },
     'open-dacpac': async () => {
       host.log('info', 'Bridge', 'Opening dacpac picker');
-      const uris = await host.showOpenDialog({ 
-        canSelectMany: false, 
+      const uris = await host.showOpenDialog({
+        canSelectMany: false,
         filters: { 'DACPAC': ['dacpac'] },
         title: 'Select a .dacpac file'
       });
@@ -268,7 +268,7 @@ export function createMessageHandlers(
     'load-project': async (msg) => {
       host.log('info', 'Bridge', `Loading project: ${msg.id}`);
       await cleanupStatsConnection();
-      
+
       const store = loadProjectStore(context);
       const project = store.projects.find((p: any) => p.id === msg.id);
       if (!project) {
@@ -283,7 +283,7 @@ export function createMessageHandlers(
           host.log('info', 'Bridge', `Reading dacpac file: ${fileUri.fsPath}`);
           const data = await host.readFile(fileUri);
           if (isDacpacTooLarge(data.byteLength, host)) return;
-          
+
           const refreshed = { ...project, updatedAt: new Date().toISOString() };
           const updatedStore = updateProject(store, refreshed);
           await saveProjectStore(context, updatedStore);
@@ -291,7 +291,7 @@ export function createMessageHandlers(
 
           const config = await readExtensionConfig(host);
           const schemas = project.connection.schemas;
-          
+
           if (schemas && schemas.length > 0) {
             host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
@@ -589,7 +589,7 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const config = await readExtensionConfig(host);
   const logger = Logger.create(outputChannel, 'Parse');
   logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
-  
+
   const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes, (msg) => {
     logger.debug(msg);
   });
@@ -651,7 +651,7 @@ async function handleTableStatsRequestHost(
     const connectionUri = statsConnState.uri!;
     const serverInfo = await getServerInfo(connectionUri, outputChannel);
     const engineEdition = serverInfo.engineEditionId;
-    
+
     const rowCountSql = buildRowCountQuery(schema, objectName);
     const rowCountPromise = executeSimpleQuery(connectionUri, rowCountSql, outputChannel);
     const rowCountResult = await withQueryTimeout(rowCountPromise, timeoutMs, `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
@@ -692,7 +692,7 @@ async function handleTableStatsRequestHost(
   }
 }
 
-/** 
+/**
  * Logs a summary of the SQL parsing results and stores it in the session.
  */
 function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, objectCount?: number, edgeCount?: number, schemaCount?: number) {

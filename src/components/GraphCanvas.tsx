@@ -38,13 +38,14 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
-import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
+import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor, type SchemaColorMap } from '../utils/schemaColors';
+import { schemaKey } from '../utils/sql';
 import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 import { notifyUser } from '../utils/notify';
 
 /**
  * Mapping of custom node types for React Flow.
- * 
+ *
  * IMPORTANT: nodeTypes must be defined at module level — not inside the component.
  * If defined inside, React Flow remounts all nodes on every render, causing
  * severe performance degradation and loss of state.
@@ -57,9 +58,9 @@ const FIT_VIEW_PADDING = 0.15;
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
 
-/** 
- * Max time (ms) to wait for a pending zoom target to appear in flowNodes before 
- * giving up and showing a warning. 
+/**
+ * Max time (ms) to wait for a pending zoom target to appear in flowNodes before
+ * giving up and showing a warning.
  */
 const PENDING_ZOOM_TIMEOUT_MS = 5000;
 
@@ -177,9 +178,9 @@ interface GraphCanvasProps {
   isModeLocked?: boolean;
   /** The current graph abstraction level (full object graph or overview schema graph). */
   graphMode?: GraphMode;
-  /** 
+  /**
    * Object-level node IDs that passed all filters (from useGraphology flowNodes).
-   * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth. 
+   * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth.
    */
   filteredObjectIds?: Set<string>;
   /** Callback for double-clicking a schema node (triggers drill-down). */
@@ -234,18 +235,18 @@ interface GraphCanvasProps {
 
 /**
  * The primary canvas component for the lineage visualization.
- * 
+ *
  * This component orchestrates the graph display (via React Flow), the various
- * floating control panels (Toolbar, Search, Legend), and the specialized 
+ * floating control panels (Toolbar, Search, Legend), and the specialized
  * interaction modes (Trace, Path, Analysis).
- * 
+ *
  * It manages:
  * - Graph layout and viewport control (fit view, zoom to node).
  * - Multi-layered filtering (types, schemas, exclusions).
  * - Selection and highlighting logic.
  * - Drill-down transitions between Overview (schema) and Full (object) modes.
  * - State management for advanced bookmarks and AI-generated views.
- * 
+ *
  * @param props - The component props.
  * @returns A complex functional component.
  */
@@ -403,7 +404,7 @@ export function GraphCanvas({
       if (node.type === 'schemaNode') return (node.data as SchemaNodeData).color;
       const d = node.data as CustomNodeData;
       if (d.objectType === 'external') return getExternalNodeColor();
-      return getSchemaColor(String(d.schema));
+      return d.schemaColor ?? getSchemaColor(String(d.schema));
     },
     []
   );
@@ -636,6 +637,51 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
+  const ctEdgeMap = useMemo((): Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>> => {
+    const m = new Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>>();
+    const edges = activeAiMetadata?.columnAspect?.edges;
+    if (!edges) return m;
+    const add = (
+      nodeId: string,
+      pair: { neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }
+    ) => {
+      const k = nodeId.toLowerCase();
+      if (!m.has(k)) m.set(k, []);
+      const arr = m.get(k)!;
+      if (!arr.some(p =>
+        p.neighborNode === pair.neighborNode &&
+        p.direction === pair.direction &&
+        p.fromCol === pair.fromCol &&
+        p.toCol === pair.toCol
+      )) {
+        arr.push(pair);
+      }
+    };
+    for (const e of edges) {
+      add(e.toNode, {
+        neighborNode: e.fromNode,
+        direction: 'in',
+        fromCol: e.fromCol,
+        toCol: e.toCol,
+      });
+      add(e.fromNode, {
+        neighborNode: e.toNode,
+        direction: 'out',
+        fromCol: e.fromCol,
+        toCol: e.toCol,
+      });
+      if (e.hopNode.toLowerCase() !== e.toNode.toLowerCase()) {
+        add(e.hopNode, {
+          neighborNode: e.fromNode,
+          direction: 'in',
+          fromCol: e.fromCol,
+          toCol: e.toCol,
+        });
+      }
+    }
+    return m;
+  }, [activeAiMetadata]);
+
   const displayNodes = useMemo((): FlowNode[] => {
     return localNodes.map(node => {
       const isHighlighted = highlightedNodeId === node.id;
@@ -651,10 +697,11 @@ export function GraphCanvas({
           aiHighlight: aiHighlightMap.get(node.id),
           aiBadge: aiBadgeMap.get(node.id),
           aiNote: notesVisible ? aiNoteMap.get(node.id) : undefined,
+          ctColumnFlows: ctEdgeMap.get(node.id.toLowerCase()),
         },
       };
     });
-  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible]);
+  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, ctEdgeMap]);
 
   const displayEdges = useMemo(() => {
     if (!highlightedNodeId) return localEdges;
@@ -729,6 +776,22 @@ export function GraphCanvas({
     }
     return Array.from(schemasWithRealObjects).filter(Boolean).sort();
   }, [graphMode, trace.mode, localNodes, renderedSchemas]);
+
+  const legendColorMap = useMemo((): SchemaColorMap => {
+    const colors: SchemaColorMap = new Map();
+    for (const node of localNodes) {
+      if (node.type === 'schemaNode') {
+        const data = node.data as SchemaNodeData;
+        colors.set(schemaKey(data.schemaName), data.color);
+        continue;
+      }
+      const data = node.data as CustomNodeData;
+      if (data.objectType !== 'external') {
+        colors.set(schemaKey(data.schema), data.schemaColor ?? getSchemaColor(data.schema));
+      }
+    }
+    return colors;
+  }, [localNodes]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -961,7 +1024,7 @@ export function GraphCanvas({
           </div>
         )}
 
-        <Legend schemas={legendSchemas} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        <Legend schemas={legendSchemas} schemaColorMap={legendColorMap} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (

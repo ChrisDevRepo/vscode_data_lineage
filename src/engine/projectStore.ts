@@ -45,20 +45,20 @@ export interface SerializedFilterState {
   externalRefTypes: string[];
   /** Optional array of regex patterns used to exclude specific nodes. */
   exclusionPatterns?: string[];
-  /** 
-   * Allowlist: when non-empty, only these node IDs are shown. 
-   * Empty or absent means no restriction. 
+  /**
+   * Allowlist: when non-empty, only these node IDs are shown.
+   * Empty or absent means no restriction.
    */
   allowlistNodeIds?: string[];
 }
 
 /**
- * Semantic highlight role. 
+ * Semantic highlight role.
  * Mapped to specific CSS colors by the AI view presenter.
  */
 export type AIHighlightColor = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
-/** 
+/**
  * Metadata attached to AI-authored advanced bookmarks.
  * Defines presentation attributes for the AI-generated analysis.
  */
@@ -79,6 +79,8 @@ export interface AIViewMetadata {
   notes?: Array<{ nodeId: string; text: string }>;
   /** Dagre layout direction hint. Default: 'TB' (Top-to-Bottom). */
   layoutDirection?: 'LR' | 'TB';
+  /** Column trace edges from a CT session. Each edge records the analyzing hop node plus source and destination so every result node can show column flow data. */
+  columnAspect?: { edges: Array<{ hopNode: string; fromNode: string; toNode: string; fromCol: string; toCol: string }> };
 }
 
 /**
@@ -181,7 +183,7 @@ export interface DatabaseConnection {
 
 /**
  * Returns an empty ProjectStore initialized to the current schema version.
- * 
+ *
  * @returns A fresh, empty project store instance.
  */
 function emptyStore(): ProjectStore {
@@ -191,7 +193,7 @@ function emptyStore(): ProjectStore {
 /**
  * Safely deserializes a raw object into a ProjectStore.
  * Validates the schema version and project shapes. Returns an empty store on any parse failure.
- * 
+ *
  * @param raw - The untyped data loaded from persistent storage.
  * @returns A validated ProjectStore.
  */
@@ -217,7 +219,7 @@ export function migrateProjectStore(raw: unknown): ProjectStore {
 
 /**
  * Type guard to determine if a given object matches the Project interface.
- * 
+ *
  * @param p - The object to validate.
  * @returns True if the object is a valid Project, false otherwise.
  */
@@ -236,7 +238,7 @@ export function isValidProject(p: unknown): p is Project {
 /**
  * Type guard to determine if a given object matches a valid connection type
  * (DacpacConnection or DatabaseConnection).
- * 
+ *
  * @param c - The object to validate.
  * @returns True if the object is a valid connection, false otherwise.
  */
@@ -263,7 +265,7 @@ function isValidConnection(c: unknown): c is DacpacConnection | DatabaseConnecti
 
 /**
  * Creates a new Project record with a generated UUID and current timestamps.
- * 
+ *
  * @param name - The user-defined or auto-generated name for the project.
  * @param connection - The validated DACPAC or Database connection.
  * @returns A newly instantiated Project object.
@@ -279,7 +281,7 @@ export function createProject(
 /**
  * Upserts a project into the store and updates the last opened identifier.
  * If the project ID already exists, it is replaced; otherwise, it is appended.
- * 
+ *
  * @param store - The current project store state.
  * @param project - The project to insert or update.
  * @returns A new project store instance with the applied changes.
@@ -295,7 +297,7 @@ export function updateProject(store: ProjectStore, project: Project): ProjectSto
 /**
  * Removes a project from the store by its identifier.
  * Automatically adjusts the last opened ID to the most recently updated project if the current active project is deleted.
- * 
+ *
  * @param store - The current project store state.
  * @param id - The UUID of the project to delete.
  * @returns A new project store instance with the project removed.
@@ -312,7 +314,7 @@ export function deleteProject(store: ProjectStore, id: string): ProjectStore {
 /**
  * Generates a default project name based on the connection type and current timestamp.
  * Format: "{sourceName or displayName} YYYY-MM-DD HH:mm".
- * 
+ *
  * @param connection - The connection to derive the name from.
  * @returns A formatted string representing the default project name.
  */
@@ -331,7 +333,7 @@ export function generateProjectName(connection: DacpacConnection | DatabaseConne
 
 /**
  * Pads a number with a leading zero if it is less than 10.
- * 
+ *
  * @param n - The number to pad.
  * @returns A two-character padded string.
  */
@@ -342,7 +344,7 @@ function pad(n: number): string {
 /**
  * Adds or replaces a filter profile for a specific project.
  * Matches existing profiles based on their ID.
- * 
+ *
  * @param store - The current project store state.
  * @param projectId - The UUID of the project to modify.
  * @param profile - The new or updated filter profile to insert.
@@ -362,7 +364,7 @@ export function addFilterProfile(store: ProjectStore, projectId: string, profile
 
 /**
  * Removes a filter profile from a specific project.
- * 
+ *
  * @param store - The current project store state.
  * @param projectId - The UUID of the project to modify.
  * @param profileId - The UUID of the filter profile to remove.
@@ -378,7 +380,7 @@ export function deleteFilterProfile(store: ProjectStore, projectId: string, prof
 
 /**
  * Converts a live FilterState containing Sets into a JSON-serializable SerializedFilterState.
- * 
+ *
  * @param filter - The active in-memory filter state.
  * @returns A plain object suitable for persistent storage.
  */
@@ -401,7 +403,7 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
 /**
  * Restores a SerializedFilterState from persistent storage back into a live FilterState.
  * Reconstructs Set objects where required.
- * 
+ *
  * @param s - The serialized filter state object.
  * @returns An in-memory FilterState object with fully instantiated Sets.
  */

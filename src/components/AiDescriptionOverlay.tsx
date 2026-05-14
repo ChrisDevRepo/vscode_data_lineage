@@ -1,112 +1,11 @@
 import React, { memo, useState } from 'react';
 import Markdown from 'react-markdown';
-import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import katex from 'katex';
 import 'katex/dist/katex.min.css';
-import { visit } from 'unist-util-visit';
 import { Tooltip } from './ui/Tooltip';
-
-/**
- * Sanitizes a KaTeX math string so KaTeX v0.16 can parse it without errors.
- *
- * @remarks
- * KaTeX v0.16 treats `_` as a subscript operator, `#` as a parameter marker,
- * and `%` as a comment character even inside `\text{...}`, and doesn't support
- * backticks in text mode. Strips backticks (markdown code notation that leaked
- * into LaTeX), escapes `_` → `\_`, `%` → `\%`, and moves `#` outside
- * `\text{...}` as `\#`.
- */
-function sanitizeKaTeX(math: string): string {
-  return math.replace(/\\text\{([^{}]*)\}/g, (_, inner: string) => {
-    const cleaned = inner.replace(/`/g, '');
-    const escaped = cleaned
-      .replace(/(^|[^\\])_/g, '$1\\_')
-      .replace(/(^|[^\\])%/g, '$1\\%');
-    if (!escaped.includes('#')) return `\\text{${escaped}}`;
-    return escaped.split('#').map((part: string) => (part ? `\\text{${part}}` : '')).join('\\#');
-  });
-}
-
-/** Remark plugin — sanitizes math/inlineMath node values before rehype-katex renders them. */
-function remarkSanitizeKaTeX() {
-  return (tree: import('mdast').Root) => {
-    visit(tree, ['math', 'inlineMath'], (node: any) => {
-      node.value = sanitizeKaTeX(node.value as string);
-    });
-  };
-}
-
-/**
- * Renders a ```math code fence as a KaTeX display block.
- *
- * @param props - Component props containing the raw math string.
- * @returns A div containing the rendered KaTeX HTML.
- */
-function MathBlock({ math }: { math: string }) {
-  const html = katex.renderToString(sanitizeKaTeX(math), {
-    displayMode: true,
-    throwOnError: false,   // render error message, don't crash
-    errorColor: 'var(--vscode-errorForeground, #f44747)',
-  });
-  // SAFE: katex.renderToString with throwOnError:false returns constrained HTML; input is markdown math, not user HTML.
-  return <div className="math-display" dangerouslySetInnerHTML={{ __html: html }} />;
-}
-
-/**
- * Custom code component for `react-markdown`.
- * Intercepts ```math fences for KaTeX rendering, while passing other code blocks through.
- *
- * @param props - Standard markdown component props.
- * @returns Either a MathBlock or a standard code element.
- */
-function CodeComponent({ className, children, ...props }: React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement> & ExtraProps) {
-  if (className === 'language-math') {
-    return <MathBlock math={String(children).trim()} />;
-  }
-  return <code className={className} {...props}>{children}</code>;
-}
-
-/**
- * Normalize block-math fences so `remark-math` can detect them.
- *
- * @remarks
- * `remark-math` recognizes block math only when `$$` opens and closes on lines of
- * their own. AI-emitted formulas often place content directly after the opener
- * (`$$\text{X} = \begin{cases}` …) — the parser then leaves the orphan body as
- * paragraph text. Splitting the delimiters onto their own lines restores the block.
- * Single-line `$$expr$$` (no embedded newline) passes through unchanged.
- *
- * @remarks
- * The input is expected to contain actual newline characters (from JSON parsing).
- * No pre-processing of literal `\n` escape sequences is performed here — doing so
- * would corrupt LaTeX commands that start with `\n` (`\not`, `\neq`, `\notin`, etc.).
- */
-function normalizeBlockMath(src: string): string {
-  return src.replace(/\$\$([\s\S]+?)\$\$/g, (match, body: string) => {
-    if (!body.includes('\n')) return match;
-    const trimmed = body.replace(/^\n+/, '').replace(/\n+$/, '');
-    return `$$\n${trimmed}\n$$`;
-  });
-}
-
-/** 
- * Custom pre component for `react-markdown`.
- * Unwraps the `<pre>` wrapper for math blocks to ensure they render as display math
- * without the standard code block container styling.
- * 
- * @param props - Standard markdown component props.
- * @returns Either the raw children (for math) or a standard pre element.
- */
-function PreComponent({ children, ...props }: React.ClassAttributes<HTMLPreElement> & React.HTMLAttributes<HTMLPreElement> & ExtraProps) {
-  const child = React.Children.toArray(children)[0] as React.ReactElement<{ className?: string }> | undefined;
-  if (child && typeof child === 'object' && 'props' in child && child.props?.className === 'language-math') {
-    return <>{children}</>;
-  }
-  return <pre {...props}>{children}</pre>;
-}
+import { preprocessDescriptionMarkdown } from './aiDescriptionMarkdown';
 
 /**
  * Props for the `AiDescriptionOverlay` component.
@@ -124,14 +23,12 @@ interface AiDescriptionOverlayProps {
 
 /**
  * A floating overlay component that displays AI-generated descriptions and logic summaries.
- * 
+ *
  * @remarks
- * This component supports rich markdown rendering including:
- * - GitHub Flavored Markdown (GFM) via `remark-gfm`.
- * - Mathematical formulas via KaTeX (`remark-math` and `rehype-katex`).
- * - Raw markdown source viewing mode.
- * - One-click clipboard copying of the source text.
- * 
+ * Renders markdown with GitHub Flavored Markdown (GFM) and KaTeX math via
+ * `remark-math` + `rehype-katex`, supporting inline `$...$`, block `$$...$$`,
+ * and fenced ` ```math ` formulas. Raw source and clipboard copy are also available.
+ *
  * @param props - The component props.
  */
 export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
@@ -187,6 +84,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     }).catch(err => window.vscode?.postMessage({ type: 'error', error: `Clipboard write failed: ${err instanceof Error ? err.message : String(err)}` }));
   }
 
+  const processedDescription = preprocessDescriptionMarkdown(description);
+
   return (
     <div className="ln-ai-description-anchor">
       {!expanded ? (
@@ -241,10 +140,10 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             ) : (
               <div className="ln-ai-description-md">
                 <Markdown
-                  remarkPlugins={[remarkGfm, remarkMath, remarkSanitizeKaTeX]}
-                  rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                  components={{ code: CodeComponent, pre: PreComponent, a: AnchorComponent, h3: H3Component }}
-                >{normalizeBlockMath(description)}</Markdown>
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{ a: AnchorComponent, h3: H3Component }}
+                >{processedDescription}</Markdown>
               </div>
             )}
           </div>

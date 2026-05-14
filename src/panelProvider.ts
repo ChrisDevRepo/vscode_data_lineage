@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { type AiSession } from './ai/session';
+import { type AiSession } from './ai/session/session';
 import { Logger } from './utils/log';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
@@ -14,20 +14,20 @@ export { PROJECT_STORE_KEY };
 
 /**
  * Retrieves the currently active lineage webview panel, if one exists.
- * 
+ *
  * @returns The active `vscode.WebviewPanel` or `undefined` if no panel is open.
  */
 export function getActivePanel() { return activePanel; }
 
 /**
  * Orchestrates the creation, restoration, and lifecycle of the primary Data Lineage Webview.
- * 
+ *
  * This function handles:
  * - Preventing multiple instances of the same panel (revealing the existing one instead).
  * - Initializing the IPC bridge (BridgeHost) for Extension <-> Webview communication.
  * - Injecting the necessary HTML, scripts, and styles into the webview.
  * - Managing panel-scoped state and ensuring cleanup on disposal.
- * 
+ *
  * @param context - The extension context.
  * @param title - The display title for the webview tab.
  * @param getSession - Factory to retrieve the current AI session.
@@ -79,7 +79,7 @@ export function openPanel(
     bridgeLogger.info('Panel disposed');
     activePanel = undefined;
     detailPanel?.dispose();
-    
+
     const sess = getSession();
     // Only discard exploration state when there is no active SM.
     // A panel closed mid-exploration preserves the archive for the next panel open.
@@ -125,7 +125,7 @@ export function openPanel(
   }, undefined, context.subscriptions);
 }
 
-/** 
+/**
  * Generates the root HTML for the lineage webview.
  */
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo: boolean): string {
@@ -138,17 +138,17 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
 
 /**
  * Provides the "Quick Actions" tree view in the VS Code Sidebar.
- * 
- * This provider registers static entry points for common extension tasks 
+ *
+ * This provider registers static entry points for common extension tasks
  * (Open Wizard, Open Demo, Settings) to improve discoverability.
  */
 export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  /** 
+  /**
    * Returns a tree item representation for a specific element.
    */
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
 
-  /** 
+  /**
    * Retrieves the top-level items for the sidebar.
    */
   getChildren(): vscode.TreeItem[] {
@@ -159,7 +159,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     ];
   }
 
-  /** 
+  /**
    * Helper to construct a standard `vscode.TreeItem` with a command and icon.
    */
   private item(label: string, commandId: string, icon: string): vscode.TreeItem {

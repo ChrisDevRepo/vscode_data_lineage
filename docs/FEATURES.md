@@ -9,7 +9,7 @@ Capabilities of Data Lineage Viz, with the VS Code settings that control them. F
 When a graph exceeds a configurable node threshold, the extension auto-activates **schema overview mode** — replacing individual nodes with schema-level bubbles showing object counts and type distribution.
 
 - Double-click any schema bubble to drill into its objects and connected neighbours.
-- Toggle manually via the toolbar or the **Toggle Schema Overview Mode** command.
+- Toggle manually via the toolbar.
 - Configure: `dataLineageViz.overview.enabled`, `dataLineageViz.overview.threshold`.
 
 ### Rendering limits
@@ -161,19 +161,20 @@ Type `@lineage` in GitHub Copilot Chat to explore your loaded lineage graph in n
 
 The extension provides **object-level lineage** as its core feature — tracing dependencies between tables, views, procedures, and functions. This works deterministically from the loaded data model.
 
-The `@lineage` assistant goes further by analysing the available metadata (DDL, column definitions, constraints) using a **Map & Router** state-machine architecture. It chooses between two analysis modes based on scope size:
+The `@lineage` assistant goes further by analysing the available metadata (DDL, column definitions, constraints) using a **Map & Router** state-machine architecture. It runs in two states:
 
-#### 1. Quick analysis (Inline mode)
+#### 1. Discovery (chat answers, no graph)
 
-For small scopes (≤ `inlineNodeCap` nodes and within `inlineTokenBudget`).
+The default state. The AI uses catalog tools (`get_context`, `search_objects`, `get_scope_bundle`, `get_object_detail`, `search_ddl`, `detect_graph_patterns`) to look up loaded scope, DDL, columns, and neighbours, then answers in chat.
 
-- The AI receives all SQL at once and reasons about everything in a single pass.
-- Best for direct questions like *"what reads from the Employee table?"*.
-- Same Map & Router contract as deep mode, just without the round-trip overhead.
+- Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
+- Single-object asks use `get_object_detail`; graph-scope asks use one bounded BFS call via `get_scope_bundle`.
+- When `get_scope_bundle(include_ddl:true)` exceeds `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget`, it returns `over_discovery_budget` with a hint to initiate `start_exploration` (SM approval flow).
+- Discovery cannot render a graph in the GUI; for graph rendering, multi-object analysis, or column tracing the assistant escalates.
 
-#### 2. Deep exploration (Sliding-Memory mode)
+#### 2. Sliding-Memory (graph render + deep analysis)
 
-For larger scopes (> `inlineNodeCap` nodes or exceeding the token budget).
+Triggered by an explicit user request for a graph, column tracing, or an engine-forced over-budget discovery request. Begins after the user approves the `confirm_sm_start` consent gate.
 
 - **Map & Router**: the extension owns a topological map of the trace; the AI acts as a router that analyses one object at a time.
 - **Sliding short-term memory**: after each hop the AI's one-line summary is appended to `working_memory.short_term_memory` and echoed on the next 3 hops. Local continuity without global context bloat.
@@ -252,8 +253,9 @@ Search "dataLineageViz" in VS Code Settings (`Ctrl+,`).
 |---------|---------|---------|
 | `dataLineageViz.ai.enabled` | `true` | Enable / disable the `@lineage` participant and tools. |
 | `dataLineageViz.ai.maxRounds` | `50` | Safety cap on tool turns per investigation (5–100). |
-| `dataLineageViz.ai.inlineTokenBudget` | `10000` | Max estimated token budget for one-shot DDL delivery before switching to hop-by-hop (1000–100000). |
-| `dataLineageViz.ai.inlineNodeCap` | `10` | Max scope nodes for one-shot delivery (1–100). |
+| `dataLineageViz.ai.discoveryNodeCap` | `10` | Max scope nodes the AI may pull during a single discovery-phase catalog request before escalation is forced (1–30). |
+| `dataLineageViz.ai.discoveryTokenBudget` | `10000` | Max estimated DDL token budget for a single discovery-phase catalog request (1000–32000). |
+| `dataLineageViz.ai.contextPayloadBudget` | `10000` | Token budget for `lineage_get_context` deciding inline-full vs summary-only catalog delivery (1000–100000). |
 | `dataLineageViz.ai.outputTemplateFile` | `""` | Path to custom YAML output templates. See [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 | `dataLineageViz.ai.showToolInvocations` | `false` | Show each tool call as an expandable chat part with input JSON (developer debugging). |
 

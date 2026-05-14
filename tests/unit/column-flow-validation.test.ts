@@ -1,13 +1,14 @@
 /**
  * Unit tests for `column_flow` validation and CT-mode guards in NavigationEngine.
  *
- * Covers: column_flow_required, prune exemption, out_col/from_node/from_col
- * structural rejection, edge accumulation, filter_only exclusion,
- * shouldSmInline CT invariant, and supplementAgenda CT propagation.
+ * Covers: column_flow_required, CT auto-prune (verdict=prune → silent; column_flow:[] → silent),
+ * prune_neighbors rejection, out_col/from_node/from_col structural rejection,
+ * edge accumulation, filter_only exclusion, activeModeOf CT discriminator,
+ * and supplementAgenda CT propagation.
  */
 
-import { NavigationEngine } from '../../src/ai/smBase';
-import { shouldSmInline } from '../../src/ai/tokenBudget';
+import { NavigationEngine } from '../../src/ai/sm/smBase';
+import { activeModeOf } from '../../src/ai/tools/toolPolicy';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 
@@ -80,7 +81,7 @@ function ctEngine(targetColumns = ['amount']) {
   assert('error' in result && result.error === 'column_flow_required', 'column_flow_required on pass');
 }
 
-// ── Test 3: prune is allowed without column_flow in CT mode ──
+// ── Test 3: CT silently auto-prunes on verdict=prune (no retry loop) ──
 {
   const engine = ctEngine();
   const result = engine.submitFindings({
@@ -89,9 +90,48 @@ function ctEngine(targetColumns = ['amount']) {
     summary: 'pruned',
     verdict: 'prune',
   });
-  // prune on the origin node is rejected (origin cannot be pruned — it would orphan itself)
-  // so we check for any error that is NOT column_flow_required
-  assert(!('error' in result && result.error === 'column_flow_required'), 'prune does not trigger column_flow_required');
+  assert('ok' in result && result.ok === true, 'CT converts verdict=prune to auto-prune (no error)');
+  // Agenda is empty (no routes were processed) → exploration done
+  const ctx = engine.getHopContext();
+  assert(ctx.done === true, 'exploration done after CT auto-prune via verdict=prune');
+}
+
+// ── Test 3c: CT silently auto-prunes on column_flow: [] (explicit no-interaction signal) ──
+{
+  const engine = ctEngine();
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: 'no interaction' }],
+    summary: 'no interaction',
+    verdict: 'analyze',
+    column_flow: [],
+  });
+  assert('ok' in result && result.ok === true, 'CT auto-prunes on column_flow: [] (no error)');
+  const state = engine.toJSON() as { nodeStates: Array<{ nodeId: string; action: string; reason: string; source: string }> };
+  const originState = state.nodeStates.find(s => s.nodeId === 'origin');
+  assert(originState?.action === 'prune', 'CT no-interaction lifecycle action is prune');
+  assert(originState?.source === 'engine', 'CT no-interaction prune is engine-owned');
+  assert(originState?.reason === 'ct_no_column_flow', 'CT no-interaction prune reason is recorded');
+  // Agenda is empty → exploration done
+  const ctx = engine.getHopContext();
+  assert(ctx.done === true, 'exploration done after CT auto-prune via column_flow: []');
+}
+
+// ── Test 3b: CT rejects prune_neighbors in submit_findings ──
+{
+  const engine = ctEngine(['amount']);
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{
+      out_col: 'amount',
+      contributors: [{ from_node: 'base_table', from_col: 'raw_amount', role: 'formula' as const }],
+    }],
+    prune_neighbors: ['base_table'],
+  });
+  assert('error' in result && result.error === 'ct_prune_forbidden', 'CT rejects prune_neighbors');
 }
 
 // ── Test 4: out_col not in active_columns → route_validation_failed ──
@@ -193,19 +233,23 @@ function ctEngine(targetColumns = ['amount']) {
   assert(edges[0]?.role === 'formula', 'accumulated edge role is formula');
   assert(edges[0]?.from_node === 'base_table', 'accumulated edge from_node is base_table');
   assert(edges[0]?.to_col === 'amount', 'accumulated edge to_col is amount');
+  const state = engine.toJSON() as { nodeStates: Array<{ nodeId: string; action: string; reason: string; columns?: string[] }> };
+  const baseState = state.nodeStates.find(s => s.nodeId === 'base_table');
+  assert(baseState?.action === 'pass', 'CT contributor table gets pass lifecycle state');
+  assert(baseState?.reason === 'non_bodied_passthrough', 'CT contributor table reason is non-bodied passthrough');
+  assert(baseState?.columns?.includes('raw_amount'), 'CT contributor table lifecycle carries source column');
 }
 
-// ── Test 9: shouldSmInline always returns false when CT is active ──
+// ── Test 9: activeModeOf — CT presence selects the SM-CT tool scope ──
+// Replaces the deleted inline-execution guard. CT activation is now expressed
+// mechanically via the ActiveMode discriminator (sm_ct), which gates the per-hop
+// tool set in toolPolicy.
 {
-  // Payload and scope that would normally qualify for inline
-  assert(shouldSmInline(true, 100, 3) === false, 'shouldSmInline(ct=true, small payload, small scope) = false');
-  assert(shouldSmInline(true, 0, 0) === false, 'shouldSmInline(ct=true, 0, 0) = false');
-  assert(shouldSmInline(true, 999999, 999) === false, 'shouldSmInline(ct=true, large payload) = false');
-  // Verify non-CT with small payload returns true (confirms the guard is CT-specific)
-  assert(shouldSmInline(false, 100, 3) === true, 'shouldSmInline(ct=false, small payload) = true');
+  assert(activeModeOf(true) === 'sm_ct', 'activeModeOf(hasColumnAspect=true) === sm_ct');
+  assert(activeModeOf(false) === 'sm_bb', 'activeModeOf(hasColumnAspect=false) === sm_bb');
 }
 
-// ── Test 10: supplementAgenda with CT — inlineMode stays false; nodes get target_columns ──
+// ── Test 10: supplementAgenda with CT — supplemented node inherits target_columns ──
 {
   // Graph: origin_view (view) upstream of another view
   const secondView: LineageNode = {
@@ -247,7 +291,6 @@ function ctEngine(targetColumns = ['amount']) {
   // Supplement with second_view
   const suppResult = engine.supplementAgenda(['second_view']);
   assert('ok' in suppResult && suppResult.ok === true, 'supplementAgenda ok');
-  assert(engine.inlineMode === false, 'inlineMode stays false after supplementAgenda with CT');
 
   // Advance to second_view hop and verify active_columns = target_columns
   engine.getHopContext();

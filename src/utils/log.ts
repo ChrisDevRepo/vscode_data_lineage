@@ -50,6 +50,10 @@ function logToTest(cat: LogCategory, msg: string) {
   }
 }
 
+function normalizeLogMessage(msg: string): string {
+  return sanitizeForLog(msg);
+}
+
 /**
  * Logs a milestone event that is meaningful to the end-user.
  *
@@ -61,8 +65,9 @@ function logToTest(cat: LogCategory, msg: string) {
  * @param msg - The message to log. Format: `Operation — key result (timing)`
  */
 export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
-  logToTest(cat, msg);
-  ch.info(`[${cat}] ${msg}`);
+  const norm = normalizeLogMessage(msg);
+  logToTest(cat, norm);
+  ch.info(`[${cat}] ${norm}`);
 }
 
 /**
@@ -76,8 +81,9 @@ export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
  * @param msg - The message to log. Format: `Detail — context, parameters, timing`
  */
 export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
-  logToTest(cat, msg);
-  ch.debug(`[${cat}] ${msg}`);
+  const norm = normalizeLogMessage(msg);
+  logToTest(cat, norm);
+  ch.debug(`[${cat}] ${norm}`);
 }
 
 /**
@@ -91,8 +97,9 @@ export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): v
  * @param msg - The message to log. Format: `What happened — what system did → recovery hint`
  */
 export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
-  logToTest(cat, msg);
-  ch.warn(`[${cat}] ${msg}`);
+  const norm = normalizeLogMessage(msg);
+  logToTest(cat, norm);
+  ch.warn(`[${cat}] ${norm}`);
 }
 
 /**
@@ -151,11 +158,12 @@ export function logRaw(
   level: 'info' | 'debug' | 'warn' | 'error',
   text: string,
 ): void {
+  const norm = normalizeLogMessage(text);
   switch (level) {
-    case 'info':  ch.info(text);  return;
-    case 'warn':  ch.warn(text);  return;
-    case 'error': ch.error(text); return;
-    case 'debug': ch.debug(text); return;
+    case 'info':  ch.info(norm);  return;
+    case 'warn':  ch.warn(norm);  return;
+    case 'error': ch.error(norm); return;
+    case 'debug': ch.debug(norm); return;
   }
 }
 
@@ -185,9 +193,10 @@ export function trunc(val: string | any[], max: number): string {
  */
 export function sanitizeForLog(s: string): string {
   return s
-    .replace(/\\[nrt]/g, ' ')   // JSON-escaped newline/return/tab → space
-    .replace(/[\n\r\t]/g, ' ')  // real control chars → space
-    .replace(/ {2,}/g, ' ');    // collapse runs of spaces
+    .replace(/\\[nrt]/g, ' ')      // JSON-escaped newline/return/tab → space
+    .replace(/[\u0000-\u001F\u007F]/g, ' ') // ASCII control chars → space
+    .replace(/\s+/g, ' ')          // collapse all whitespace runs
+    .trim();
 }
 
 /**
@@ -205,11 +214,11 @@ export function sanitizeForLog(s: string): string {
  * Format: `[CAT] FAILED: operation — error detail`
  */
 export function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
-  const detail = err instanceof Error ? err.message : String(err);
+  const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
   const msg = `FAILED: ${op} — ${detail}`;
   logToTest(cat, msg);
   ch.error(`[${cat}] ${msg}`);
   if (err instanceof Error && err.stack) {
-    ch.error(`[${cat}] Stack: ${err.stack}`);
+    ch.error(`[${cat}] Stack: ${normalizeLogMessage(err.stack)}`);
   }
 }

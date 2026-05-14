@@ -9,16 +9,17 @@ One turn of a `@lineage` question. The diagram encodes **ownership** (who termin
 ```mermaid
 flowchart LR
     U([User question]):::user --> D[Discovery]:::ai
-    D -->|Class D| R1[Direct answer]:::ai
+    D -->|chat answer<br/>single-object lookup| R1[Direct answer in chat]:::ai
     R1 --> EX(((End))):::done
-    D -->|Class S| GG[/Gate: confirm_sm_start<br/>tree + 3 buttons/]:::engine
-    GG -->|approve| MD{Mode at lock-in<br/>≤10 nodes &amp; ≤10k tokens?}:::engine
-    MD -->|yes| IN[Inline run]:::ai
-    MD -->|no| SM[SM hop loop]:::engine
+    D -->|chat answer<br/>multi-object walk ≥2 nodes| R2[Direct answer in chat<br/>+ SM-offer pill]:::ai
+    R2 --> EX
+    R2 -.->|user clicks SM-offer pill| GG
+    D -->|graph render / CT / deeper-analysis intent| GG[/Gate: confirm_sm_start<br/>tree + 3 buttons/]:::engine
+    GG -->|approve| CMP[Post-approval<br/>discovery-summary memo<br/>one LM round, no tools]:::ai
+    CMP --> SM[SM hop loop<br/>stable prefix:<br/>question + contract + memo<br/>+ sliding 3-node STM]:::engine
     GG -->|refine| GG
     GG -->|cancel| EX
-    IN --> SY[Synthesis]:::ai
-    SM --> SY
+    SM --> SY[Synthesis]:::ai
     SY --> C{{Completed}}:::done
     C -.->|fresh question| U
     C -.->|supplement| SM
@@ -29,17 +30,22 @@ flowchart LR
     classDef done stroke:#388e3c,stroke-width:2px,stroke-dasharray:4 2
 ```
 
-Legend (border colour only — interior follows light/dark theme): purple = user-driven · blue = AI-driven · orange = engine-driven · green dashed = terminator. Termination authority is therefore: AI in Discovery / Inline / Synthesis, Engine in SM hop loop and the consent gate.
+**Three user-driven paths into SM:** explicit graph-render request, column trace request, and the post-discovery SM-offer pill. The pill appears only after a sufficiently broad discovery walk and disappears as soon as a gate is pending.
+
+**Post-approval discovery-summary memo.** Between gate approval and the first SM hop, the engine captures a short memo from the discovery turn and carries it into the SM prefix alongside `<mission_brief>`. It preserves the user intent that the gate fields alone do not express.
+
+Legend (border colour only — interior follows light/dark theme): purple = user-driven · blue = AI-driven · orange = engine-driven · green dashed = terminator. Termination authority is therefore: AI in Discovery / Synthesis, Engine in SM hop loop and the consent gate.
 
 | Phase | Owner | Behaviour |
 |-------|-------|-----------|
-| **Discovery** | AI | Searches the catalog and classifies the question. **Class D** = single object or graph-wide metadata, answered directly. **Class S** = relationships spanning ≥2 connected objects, hands off to the engine via `start_exploration`. |
-| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every Class-S exploration. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. Mode (Inline / Sliding-Memory) is decided at lock-in based on the post-filter scope size + DDL cost (≤10 nodes ∧ ≤10k tokens → Inline) — refining can flip the mode. |
-| **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
-| **Inline run** | AI | One-shot analysis; AI sees the full scope's DDL at once and self-terminates with `complete: true`. |
+| **Discovery** | AI | Default chat state. Single-object questions use `lineage_get_object_detail`; graph-scope questions use one bounded BFS retrieval via `lineage_get_scope_bundle` (optionally `include_ddl:true`). Escalates via `lineage_start_exploration` on explicit visual graph render, explicit column tracing, explicit post-discovery deeper-analysis intent, or `over_discovery_budget` from scope bundle retrieval. |
+| **Gate** | Engine | Emits `action_required: confirm_sm_start` for every escalation. Renders the BFS scope as a Schema → Type → Node tree with three buttons: **Approve & Proceed**, **Refine scope**, **Cancel**. Detail markdown is produced by `renderScopeSummaryMd()` in [`src/ai/prompting/scopeSummaryRenderer.ts`](../src/ai/prompting/scopeSummaryRenderer.ts) from the `ScopeSummary` snapshot returned by `engine.getScopeSummary()`. The participant always re-renders the gate detail when the session is `awaiting_gate` at finalizer time — even when the AI narrates without re-calling `start_exploration`. |
+| **Refine loop** | AI + Engine | While the gate is pending, free-text user replies are routed to the AI as scope-refinement intent. The AI translates natural language ("ignore the staging schema", "drop views", "trace TotalRevenue") into a full re-spec on `lineage_start_exploration` — `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns`. Engine re-runs BFS, rebuilds the scope summary, and re-emits the gate. Loop until Approve or Cancel. |
 | **SM hop loop** | Engine | Hop-by-hop drain of the agenda. Memory wipes each hop. AI's `complete: true` is silently ignored — the engine emits the synthesis trigger when the agenda is empty. |
-| **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. |
-| **Completed** | User | Holds the result graph. Three convergent operations (no gate, no wipe): (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes inline; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). |
+| **Synthesis** | AI | Lifts the full Detail Archive and authors the final report via `present_result`. If `present_result` is attempted but fails validation, fallback copy reports validation failure (with reason), not "tool not invoked". |
+| **Completed** | User | Holds the result graph. Three convergent operations: (1) edits/prunes via `present_result`; (2) `supplement` adds specific nodes via SM; (3) same-origin retrace (e.g. new column on the same view) auto-routes to supplement — visited nodes re-queued, `targetColumns`/`mission_brief` updated, no archive reset. Different-origin `start_exploration` is the only divergent path (gate + archive wipe + Discovery return). Completed turns use compact replay (minimal trailing tool pair + current rendered-result snapshot), not full broad history replay. |
+
+Active-hop routing/pruning instruction ownership is single-source: `smPrompts.ts` (`Neighbor Decision Contract`). `prompts.ts` no longer duplicates route/prune policy text.
 
 ## Component map
 
@@ -72,96 +78,88 @@ flowchart LR
     style EXT stroke:#f57f17,stroke-width:2px
 ```
 
-The webview never talks to the engine directly. **Map** (engine, deterministic) — agenda, visited set, neighbour metadata, consent gates, route / column validation. **Router** (AI, semantic) — read focus DDL, write `sections[]` (one entry per fired `*_capture` template — classification-locked: 1 for `business`/`technical`, 2 for `both`) + summary, emit verdict, issue `route_requests`. The two sides couple through exactly two calls: `getHopContext` downstream, `submit_findings` upstream.
+The webview never talks to the engine directly. **Map** (engine, deterministic) owns agenda, visited set, gates, and validation. **Router** (AI, semantic) reads the current focus, writes findings, emits verdicts, and proposes next routes. The two sides couple through `getHopContext` downstream and `submit_findings` upstream.
 
 | Module | File | Role |
 |--------|------|------|
-| Chat surface | `vscode.lm` / `ChatResponseStream` | VS Code chat API — `sendRequest`, tool results, stream writer |
-| `lineageParticipant` | [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) | Turn handler, phase dispatch, system-prompt assembly (`buildStageSystemPrompt`), gate finalizer (`dispatchExit`) |
-| `toolProvider` | [`src/ai/toolProvider.ts`](../src/ai/toolProvider.ts) | Tool registration, Zod boundary, classification-locked `submit_findings` validation, scope-budget preflight |
-| `toolPolicy` | [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) | Phase × mode tool filter — single source of truth for which LM tools are exposed in discover / active-inline / active-SM / synthesis / completed |
-| `NavigationEngine` | [`src/ai/smBase.ts`](../src/ai/smBase.ts) | Map owner — agenda, visited set, route validation, scope summary, deferred-question bucket |
-| `scopeSummaryRenderer` | [`src/ai/scopeSummaryRenderer.ts`](../src/ai/scopeSummaryRenderer.ts) | Pure markdown renderer for the `confirm_sm_start` gate detail (Schema → Type → Node tree + active filters), driven by `ScopeSummary` from the engine |
-| `templateRenderer` | [`src/ai/templateRenderer.ts`](../src/ai/templateRenderer.ts) | Two-stage gate on YAML keys: `STAGE_BY_KEY` (phase routing) then `CLASSIFICATION_GATED` (per-classification filter) |
-| `prompts` / `smPrompts` | [`src/ai/prompts.ts`](../src/ai/prompts.ts), [`src/ai/smPrompts.ts`](../src/ai/smPrompts.ts) | Phase-specific prompt builders (`buildDiscoveryPrompt`, `buildActivePhasePrompt`, `buildSynthesisPrompt`, `buildModeBlock`, `buildMissionBriefBlock`, `buildCurrentTaskBlock`, `buildMemoryBlock`, `buildMissionStateBlock`) |
-| `messageEnvelope` | [`src/ai/messageEnvelope.ts`](../src/ai/messageEnvelope.ts) | Owner of the chat-message array; enforces tool_use/tool_result pairing invariant; sliding-memory wipe via `wipeAndSeed` |
-| `memoryManager` | [`src/ai/memoryManager.ts`](../src/ai/memoryManager.ts) | Detail archive + sliding working memory |
-| `panelProvider` | [`src/panelProvider.ts`](../src/panelProvider.ts) | Webview bridge — Zod validation against [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) |
-| Webview | React UI | Graph rendering, filter UI, user actions |
+| Chat surface | `vscode.lm` / `ChatResponseStream` | VS Code chat API |
+| `lineageParticipant` | [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) | Turn handler and phase dispatch |
+| `toolProvider` | [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts) | Tool registration and boundary validation |
+| `NavigationEngine` | [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) | Engine-owned map, agenda, and hop state |
+| `prompts` / `smPrompts` | [`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts), [`src/ai/prompting/smPrompts.ts`](../src/ai/prompting/smPrompts.ts) | Prompt composition |
+| `memoryManager` | [`src/ai/session/memoryManager.ts`](../src/ai/session/memoryManager.ts) | Detail archive and working memory |
+| `panelProvider` | [`src/panelProvider.ts`](../src/panelProvider.ts) | Webview bridge |
+| Webview | React UI | Graph rendering and user actions |
 
 ## Bipartite analysis model
 
-The engine treats the lineage graph as bipartite: only **bodied** nodes (views, procedures, functions with a body) carry logic the AI can analyse. Tables have structure but no body — they are pipes, not work.
-
-- **Agenda** — bodied nodes only. Each hop analyses one body.
-- **Scope** — every reachable node, including tables. Tables remain routable, referenceable, and inspectable via `get_neighbor_columns`.
-- **Edge contraction** — when a bodied node routes to a table, the authored question flows *through* the table to the table's bodied neighbours.
+The engine treats the lineage graph as bipartite: bodied nodes carry analyzable logic, while tables act as routed connectors. The agenda follows bodied nodes, but tables can still be traversed and inspected.
 
 ```mermaid
 graph LR
     SP([sp — procedure])
-    T[table — passive pipe]
+    T[table — passive pipe<br/>node state: pass]
     VA([viewA — view])
     VB([viewB — view])
     SP -->|route_request<br/>question forwarded| T
-    T -.->|edge contraction| VA
-    T -.->|edge contraction| VB
+    T -.->|edge contraction<br/>same sub-question| VA
+    T -.->|edge contraction<br/>same sub-question| VB
 ```
 
-Rounded boxes are bodied (agenda-eligible); the square box is the passive table. Dashed arrows are the contraction path — the AI never sees a "table hop". The invariant is enforced by a single funnel in [`src/ai/smBase.ts`](../src/ai/smBase.ts): `enqueueHop` is the only code path that writes to the agenda.
-
-**Origin exception.** When the user starts a trace at a non-bodied node (typically a table), `enqueueHop` lifts the contraction *for the origin push only*: the starting point gets its own agenda slot and runs the standard `business_capture` / `technical_capture` templates. Middle-graph tables remain contracted.
+Rounded boxes are bodied and therefore agenda-eligible; the square box is a table connector. The AI reasons over the routed question, not over an extra middle-table hop.
 
 ## Tools per phase
 
-[`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts) is the single source of truth. The narrow ACTIVE palette is what keeps `toolMode.Required` effective: providers may downgrade `Required` to `Auto` when more than one tool is visible.
+[`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) is the single source of truth. Active SM uses a narrow toolset, while discovery and synthesis expose broader catalog and presentation tools.
 
-| Tool | Discovery | ACTIVE inline BB | ACTIVE SM (BB+CT) | Synthesis | Completed | Purpose |
-|------|:---------:|:----------------:|:-----------------:|:---------:|:---------:|---------|
-| `get_context` | ✓ | — | — | — | — | Schemas, stats, active filter |
-| `search_objects` | ✓ | — | — | — | ✓ | Resolve name / column → ID |
-| `search_ddl` | ✓ | — | — | — | ✓ | Regex over SP / view / function bodies |
-| `get_object_detail` | ✓ | — | — | — | ✓ | Full metadata + DDL + neighbours for one object |
-| `get_neighbor_columns` | — | — | ✓ | — | — | Columns + types + FKs for direct neighbours (no DDL); used for prune decisions |
-| `detect_graph_patterns` | ✓ | — | — | — | — | Hubs / orphans / cycles / islands / longest-path / external-refs |
-| `start_exploration` | ✓ | — | — | — | ✓ (supplement) | Hand off to the state machine |
-| `submit_findings` | — | ✓ | ✓ | — | — | Submit hop analysis + route + prune. Required mode. |
-| `present_result` | — | — | — | ✓ | ✓ | Author the final report (sections, summary, highlights) |
+| Tool | Discovery | ACTIVE SM | Synthesis | Completed | Purpose |
+|------|:---------:|:---------:|:---------:|:---------:|---------|
+| `get_context` | ✓ | — | — | — | Current schema and filter context |
+| `search_objects` | ✓ | — | — | ✓ | Resolve names to IDs |
+| `get_scope_bundle` | ✓ | — | — | — | Bounded discovery walk |
+| `get_object_detail` | ✓ | — | — | ✓ | One-object lookup |
+| `get_neighbor_columns` | — | ✓ | — | — | Direct-neighbour column detail |
+| `start_exploration` | ✓ | — | — | ✓ (supplement) | Hand off to SM |
+| `submit_findings` | — | ✓ | — | — | Submit hop findings and route decisions |
+| `present_result` | — | — | ✓ | ✓ | Build the final report |
 
-## Class D / Class S routing contract
+## Discovery escalation contract
 
-- **Class D — Direct.** One named object in isolation OR graph-wide metadata. Answered directly via chat using discovery tools. Never used to narrate "flow", "lineage", or "join path" across multiple neighbours.
-- **Class S — State machine.** Analysis or visualisation of relationships spanning ≥ 2 connected objects. Routes to `start_exploration`. Any "lineage graph", "annotated trace", or "explain the joins / pipeline" request must use Class S.
-- **Tiebreaker.** Prefer Class S when ambiguous.
+Discovery is the default chat state. It answers small questions directly and escalates to SM when the user explicitly asks for graph rendering, column tracing, or deeper hop-by-hop analysis. A discovery walk can also escalate when the scope exceeds budget.
 
-## Inline vs SM execution
+## SM execution
 
-| Dimension | Inline mode | SM (sliding-memory) mode |
-|-----------|-------------|--------------------------|
-| **Trigger** | Scope ≤ `inlineNodeCap` AND ≤ `inlineTokenBudget`, no column tracing | Scope exceeds either threshold, or column tracing active |
-| **Context** | Full DDL + columns for ALL scope nodes shipped at once | Focus DDL + sliding window of last 3 node summaries |
-| **History** | Not wiped | Wiped every hop |
-| **Termination** | AI sets `complete: true` | Engine drains agenda; `complete: true` silently ignored |
-| **Mid-session out-of-scope route** | Engine emits `action_required` consent gate | Engine `deferQuestion(...)`; surfaced at synthesis |
+There is one execution mode: SM, with optional column tracing (CT) when `targetColumns` is set. SM is gate-approved before the first hop runs, and the engine records only three lifecycle actions: `analyze`, `pass`, and `prune`.
 
-True Inline runs Blackboard only; any session with a Column Aspect is forced to SM regardless of scope size.
+CT keeps the same hop loop, but column flow becomes the main structured signal and pruning is engine-controlled. BB keeps the richer prune vocabulary.
+
+SM is hop-by-hop and intentionally short-memory: each hop focuses on the current node and its neighbors, while synthesis receives the full archive only after the agenda drains. The synthesis prompt is assembled at the phase boundary, and completed turns can either refine the result or start a new trace.
+
+| Dimension | SM |
+|-----------|----|
+| Trigger | Graph render, column trace, or deeper-analysis intent |
+| Context | Current focus, neighbors, and a short summary window |
+| Termination | Engine drains the agenda and emits synthesis |
+| Mid-session out-of-scope | Deferred for follow-up instead of blocking the hop |
 
 ## Memory model
 
-There is exactly **one** persistent store — the **Detail Archive** (`detailSlots`, append-only across the session). Each hop the prompt builder assembles fresh **Working Memory (WM)** by selectively projecting from the archive plus a few constants — there is no second mutable store and nothing is "wiped". Two diagrams: (1) what WM looks like and where each field comes from; (2) how the archive grows across hops and what the sliding window reads back.
+There is one persistent content store, the Detail Archive. Process state lives separately in `NavigationEngine.nodeStates`. Each hop rebuilds a compact Working Memory projection from the archive plus a few constants, so the active prompt stays bounded even as the archive grows.
 
-**WM composition (one hop).** Cylinder = persistent datastore (UML); rounded box = projection / derived view; rectangle = constant.
+**WM composition (one hop).** Cylinder = persistent store; rounded box = derived view; rectangle = constant.
 
 ```mermaid
 flowchart LR
     UQ[user_question<br/>constant]:::const
     DA[(Detail Archive<br/>append-only)]:::persistent
+    NS[(Node lifecycle<br/>node states)]:::persistent
     SCOPE[scope size +<br/>route rejections]:::const
 
     UQ --> WM
     SCOPE --> WM[/Working Memory<br/>WM/]:::wm
     DA -->|count + ratio| WM
     DA -->|last 3 summaries| STM[short_term_memory<br/>sliding view of archive]:::wm
+    NS -.->|not replayed active<br/>lifted at synthesis| SYN[Synthesis payload]:::wm
     STM --> WM
     WM --> PROMPT([System prompt<br/>this hop only]):::prompt
 
@@ -171,157 +169,107 @@ flowchart LR
     classDef prompt stroke:#0288d1,stroke-width:2px
 ```
 
-The dashed orange WM boxes are not stored anywhere — they are computed on demand by `getWorkingMemory()` and `getShortTermMemory()`, then serialised into the prompt. The next hop rebuilds WM from the *now-larger* archive. This is what makes the loop bounded: WM stays small even as the archive grows.
+The dashed orange WM boxes are computed on demand by `getWorkingMemory()` and `getShortTermMemory()`, then serialized into the prompt. The next hop rebuilds WM from the growing archive.
 
-**Archive growth across hops.** Each successful `submit_findings` appends one `DetailSlot` to the archive. The sliding window every hop reads is `archive.slice(-3)` — so as the archive grows, the *content* of `short_term_memory` slides forward.
+**ACTIVE isolation contract.** Active SM uses a short sliding-memory loop: broad chat-history replay is disabled, and each hop replays only the current task plus a minimal continuity tail.
 
-```mermaid
-flowchart LR
-    H1[/Hop 1/]:::hop -->|append slot for node A| A1[(A)]:::slot
-    H2[/Hop 2/]:::hop -->|append slot for node B| A2[(A·B)]:::slot
-    H3[/Hop 3/]:::hop -->|append slot for node C| A3[(A·B·C)]:::slot
-    H4[/Hop 4/]:::hop -->|append slot for node D| A4[(A·B·C·D)]:::slot
-    HN[/Hop N+1/]:::hop -.->|... agenda drains| END([Synthesis lifts<br/>full archive verbatim]):::synth
+**Final graph/detail text ownership.** `present_result.sections[]` is the authoritative final graph/detail link surface. Final labels, linked nodes, and captions are assembled at synthesis; they are not inferred from the archive.
 
-    A2 -.->|short_term_memory<br/>at hop 3 = A·B| H3
-    A3 -.->|short_term_memory<br/>at hop 4 = A·B·C| H4
-    A4 -.->|at hop 5 = B·C·D<br/>oldest slides off| HN
+**Node lifecycle and atomicity.** `NavigationEngine.nodeStates` records analyze/pass/prune outcomes, while `submit_findings` is all-or-nothing. A rejected hop does not partially mutate the archive or routing state.
 
-    A4 ==>|lifted verbatim| END
+**Working Memory fields.** The hop prompt carries the user question, progress checklist, recent rejections, active schemas, optional budget pressure, and a short-term memory window. CT adds column-aspect context when tracing columns. Everything is derived per hop rather than stored as a second mutable content store.
 
-    classDef hop stroke:#0288d1,stroke-width:2px
-    classDef slot stroke:#388e3c,stroke-width:3px
-    classDef synth stroke:#6a1b9a,stroke-width:2px
-```
-
-The dotted reverse arrows are **reads back from the archive into the next hop's prompt**. The window stays at 3 entries — past hop 3 the oldest summary slides off. Only at synthesis does the *full* archive get lifted (double arrow), regardless of length.
-
-**Detail Archive** — `AiMemoryManager.detailSlots`. Per-node sections (one entry per fired `*_capture` template, classification-locked: business → 1, technical → 1, both → 2), written via `submit_findings.sections[]`. Never compressed, never shipped mid-loop. Lifted verbatim as peer entries in `present_result.sections[]` at synthesis only.
-
-**WM fields.** Three accessors on `AiMemoryManager` produce the inputs the prompt builder needs each hop:
-
-| Field | Source | Purpose |
-|-------|--------|---------|
-| `user_question` | constant (set at session start) | Root question echoed verbatim every hop so it survives the per-hop prompt rebuild. |
-| `checklist` | `getWorkingMemory()` — derived from `detailSlots.size` and scope | `{ current_hop, noted, total, open, coveragePct, rounds_used, scope_growth }` — drain signal so the AI knows agenda progress. |
-| `recent_rejections` | `getWorkingMemory()` | Recent route validation failures — feedback channel without re-injecting full errors. |
-| `active_schemas` | `getWorkingMemory()` | Schema filter still in effect this hop. |
-| `budget_pressure` | `getWorkingMemory()` (optional) | `'tight'` or `'exceeded'` — surfaced when the engine wants the AI to wind down. |
-| `short_term_memory` | `getShortTermMemory()` — `detailSlots.values().slice(-3)` | Sliding window of the last three node summaries, injected as the `<short_term_memory>` XML block in the system prompt. **This is the "iteratively growing" view of the archive.** |
-| `column_aspect` | column tracker (CT mode only) | `{ target_columns, active_columns, edges[] }` — present only when the session is tracing specific columns. `edges[]` accumulates validated `ColumnEdge` entries each hop; branch termination is structural (`role="source"`). |
-
-None of these WM fields are stored — they are computed from the archive (or the constants) every hop. Global engine state (agenda, visited set, pending questions) is intentionally excluded from this payload; that's what keeps each hop's input bounded even on a long trace.
+| WM field | Role |
+|----------|------|
+| `user_question` | Stable root question |
+| `checklist` | Progress and coverage signal |
+| `recent_rejections` | Short route-error memory |
+| `active_schemas` | Current schema allowlist |
+| `short_term_memory` | Last few node summaries |
+| `column_aspect` | CT-only column chain context |
 
 ## The hop payload
 
-`NavigationEngine.getHopContext()` returns one JSON object per hop, delivered as the tool result. It is self-contained — the AI does not need conversation history to reason about the current hop.
+`NavigationEngine.getHopContext()` returns one JSON object per hop. It is self-contained, so the AI can reason about the current hop without replaying the whole conversation.
 
 | Field | Purpose |
 |-------|---------|
-| `mode` | `'inline'` or `'sm'` — stamped once at `start_exploration` from the size+budget heuristic; never flips. |
+| `mode` | `'sm'` — always SM; set once at `start_exploration`. |
 | `sm_status` | `'awaiting_findings'` while draining — explicit "you are mid-loop" signal that survives sliding wipes |
 | `hop` | 1-based hop number |
-| `agenda_remaining` | Nodes still on the agenda |
-| `focus_node` | `{id, schema, name, type, bb_ddl, cols, fks, unresolved_refs}` for the current node — single object in SM mode, array in inline (batch) mode |
-| `neighbors[]` | Each entry: `{id, schema, name, type, edge_direction, edge_type, boundary, cols, depth_from_origin, in_budget, in_approved_scope, would_trigger_action_required}` |
-| `current_task` | Sub-question driving *this* hop (set by `route_requests` from a prior hop, or the root question on hop 1) |
-| `mission_brief` | AI-composed mission statement — set once at `start_exploration`, delivered verbatim every hop, survives sliding-memory wipes |
-| `working_memory.user_question` | The user's original question, echoed verbatim every hop |
-| `working_memory.short_term_memory` | Sliding window of the last 3 node summaries the AI authored |
-| `working_memory.checklist` | Drain progress: `current_hop`, `noted`, `total`, `open`, `coveragePct`, `rounds_used`, `scope_growth` |
-| `working_memory.recent_rejections` | Recent route-validation failures (capped at 5) |
-| `working_memory.active_schemas` | Schemas currently on the session allowlist |
-| `working_memory.topological_map` | `navigation_path` (origin → … → focus) and `current_focus` |
-| `working_memory.approved_border` | (SM only) `{ schemas, depth_cap }` locked at `confirm_sm_start` |
-| `working_memory.column_aspect` | (CT only) `{ target_columns, active_columns, edges[] }` |
+| `agenda_remaining` | Nodes still on the agenda (`hopProgress.open`) |
+| `focus_node` | Current node under analysis |
+| `neighbors[]` | Direct neighbors for routing and pruning decisions |
+| `current_task` | Sub-question for this hop |
+| `mission_brief` | Stable mission summary across the session |
+| `working_memory` | Progress, short-term memory, and other hop-local context |
+
+`node_states[]` is not part of the active hop prompt. It is emitted after submit and at synthesis so the final renderer can reason about lifecycle without inferring it from missing detail text.
 
 ## The system prompt builder
 
-`buildStageSystemPrompt(phase)` in [`src/ai/lineageParticipant.ts`](../src/ai/lineageParticipant.ts) composes the prompt in two parts:
-
-- **`buildStablePart(phase)`** is byte-stable across hops within a phase and is cached on `cachedStablePart`. It assembles, in order: `buildGeneralSystemPrompt` (role + platform + filter context + phase label) → the phase-specific block (`buildDiscoveryPrompt` / `buildActivePhasePrompt` / `buildSynthesisPrompt` / `buildFollowUpPrompt`) → in active phase only, `buildToolUsageBlock` + `buildModeBlock(BB|CT)` → `resolveStagePrompt` (the YAML-driven capture or render templates filtered by `STAGE_BY_KEY` and `CLASSIFICATION_GATED`) → `buildMissionBriefBlock` for active / synthesis / completed.
-- **`buildDynamicPart(phase)`** is rebuilt each hop. In active SM mode it carries `buildCurrentTaskBlock`, `buildMemoryBlock` (`<short_term_memory>` + tally), and `buildMissionStateBlock` (the ACK/WAIT protocol envelope). Synthesis emits no dynamic suffix — the closed archive is the substance, and a stale `<current_task>` from the last hop must not leak into the synthesis prompt.
-
-`invalidateStablePart()` is called when the participant flips phase (discover → active, active → synthesis), and the next prompt rebuilds the stable part once for the new phase. The mission brief and the YAML capture instructions live inside the stable part so the prefix stays cacheable across hops within a phase.
+`buildStageSystemPrompt(phase)` in [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) builds a stable phase prompt plus a small dynamic hop suffix. The stable part carries the phase protocol and mission brief; the dynamic part carries the current hop context.
 
 ## Completion contract
 
-| Mode | Trigger | What happens |
-|------|---------|--------------|
-| Inline | AI sets `complete: true` on `submit_findings` | Tool returns `{ ok: true, done: true, result }`; AI produces chat answer + `present_result` |
-| SM | Engine drains the agenda — every item gets `analyze`, `pass`, or `prune` | Engine emits the synthesis trigger; AI produces chat answer + `present_result`. `complete: true` is silently ignored. |
-| MAX_ROUNDS cap | `ai.maxRounds` reached without completion | Partial archive discarded (`sess.memory.reset()`); actionable rerun message rendered. **All-or-nothing by design** — missing nodes can invert the picture. |
+| Trigger | What happens |
+|---------|--------------|
+| Engine drains the agenda | Engine emits synthesis and AI produces `present_result` |
+| `ai.maxRounds` reached | Partial archive is discarded and the user gets a rerun message |
 
-Three verdicts (SM mode):
-
-- `analyze` — full analysis stored; drives badges and notes.
-- `pass` — visited, no analysis stored. Intended for variant siblings of an already-analysed archetype.
-- `prune` — cascade-prune the node + its unreachable downstream. Rejected by the orphan guard if it would disconnect an already-analysed node; fall back to `pass`.
-
-The orphan guard (`wouldOrphanNotedNode`) is content-blind. Engine guards are topological only — content judgement lives in the AI and the prompts that frame it.
+The lifecycle actions stay simple: analyze stores detail, pass keeps topology without detail, and prune removes the node from the active answer path. CT narrows the traced column chain; BB keeps the richer prune workflow.
 
 ## Mechanical enforcement
 
-The ACTIVE phase sets `vscode.LanguageModelChatToolMode.Required` on every `sendRequest`. The AI cannot emit free-form text during the hop loop — it must call `submit_findings`.
+The ACTIVE phase uses a strict tool loop with repetition guards, classification gating, and engine-owned termination. The important point is structural: the model can propose, but the engine decides when a hop is valid and when the session ends.
 
-- **Speed via verbs, not adjectives.** `verdict: "prune"` drains the agenda quickly → synthesis fires. No silent text bail.
-- **ACTIVE tool palette is narrow** — `submit_findings` only in inline BB; `+ get_neighbor_columns` in SM. Multi-tool would force `Required` to downgrade to `Auto` on some providers; the policy is enforced by [`src/ai/toolPolicy.ts`](../src/ai/toolPolicy.ts).
-- **Repeat-Reject Guard** — [`src/ai/repeatRejectGuard.ts`](../src/ai/repeatRejectGuard.ts). Aborts the session cleanly if the same tool call fails three consecutive times. Surfaces via `HopLoopExit.aborted` with `{ error: 'session_aborted_repeat_reject' }`.
-- **Termination authority** stays with the engine in SM. The engine emits the synthesis trigger after the last verdict; the AI never decides "we're done here" — `complete: true` is silently ignored in SM mode.
-- **Classification gate at session lock-in.** `start_exploration` requires `classification` (`business` | `technical` | `both`); missing or invalid values are rejected at the Zod boundary — there is no engine fallback. The tool-param description in `package.json` biases the AI toward `business` for ambiguous intent (`technical` only for explicit perf/index/tuning asks; `both` only for explicit "both angles" requests). The locked value drives `CLASSIFICATION_GATED` in [`templateRenderer.ts`](../src/ai/templateRenderer.ts). Each `submit_findings` is mechanically validated against the locked classification at the tool handler boundary (`toolProvider.validateSectionsAgainstClassification`); a slot whose `sections[]` shape disagrees with the lock rejects with `classification_lock_violation`.
-- **Two-stage template gate** — `STAGE_BY_KEY` (phase routing) and `CLASSIFICATION_GATED` (per-classification filter) in [`templateRenderer.ts`](../src/ai/templateRenderer.ts) decide which YAML keys ship per stage. `closing` carries an additional `slotCount >= 5` gate. No template body for an un-fired stage / classification ever reaches the model.
-- **Identifier-match contract on capture.** `submit_findings` rejects with `focus_subject_mismatch` when any captured `section.text` opens by naming a different scope node than the declared `focus_node_id`. Mechanical scan of the first 200 chars; not a content-quality judgement.
-- **Gate detail always rendered** — when the session is `awaiting_gate` at finalizer time, `dispatchExit` rebuilds the detail from `engine.getScopeSummary()` (rendered through `renderScopeSummaryMd`) if no `gate`-exit fired this turn. Refine narration ("I'll remove the views…") with no tool call still shows the current scope tree above the buttons.
-- **Synthesis pre-tool prose is shape-bounded.** The streamer's prose-gate (in `lineageParticipant.handleChatRequest`) surfaces synthesis prose only after the first `tool_use` part is observed; pre-tool prose is suppressed because the rendered chat narrative comes after the `present_result` call. A `## ` heading-slice on synthesis prose strips the model's planning preamble ("Now I have all slots. Assembling the final report.") so it never welds onto the synthesised answer.
+- Active SM uses a narrow tool palette.
+- Repeat-reject protection stops the same failing call from looping forever.
+- Classification is locked at exploration start and carried into synthesis.
+- The engine owns the final transition to synthesis; `complete: true` is not authoritative.
 
 ## Known failure modes
 
-These are observed in production logs; the mitigations are real code paths, not hypothetical.
+These are the main observed failure modes: repeated `start_exploration` storms, oversized DDL payloads, empty-archive synthesis, and disconnected nodes after prune. The mitigations are real code paths, not hypothetical, but the overview only needs the names of the failure classes.
 
-| Mode | Symptom | Mitigation |
-|------|---------|------------|
-| **Parallel `start_exploration` storm** | After a `complete_rejected`, the AI emits N parallel `start_exploration` calls (one per unvisited neighbour) and wipes the accumulated archive. | Hard guard in `toolProvider.ts`: rejects calls 2..N within one LM round with `{error:'parallel_call_forbidden', hint}`. Prose hints alone are not binding. |
-| **DDL overflow** | One hop returns a 50K-char tool result (verbose log SP) and the next hop's input jumps from ~7K to ~17K tokens. | Full DDL is shipped per hop (no truncation, no refetch — simpler contract). On a > 500K-char mega-proc the provider's token limit surfaces naturally; the user prunes via `prune_neighbors` or refines the start scope. |
-| **Synthesis on empty archive** | Final round receives the synthesis prompt but no archive slots — output is truncated with no `present_result`. | Detect empty-archive synthesis and emit a user-facing warning + re-run suggestion. |
+Typical mitigations are: guard repeated start calls, keep DDL payloads untrimmed but bounded by the provider, fail fast on empty archive synthesis, and enforce origin-closure after prune.
 
 ## State diagram — navigation engine
 
-Two zoom levels. The top-level FSM shows phase transitions; the Analysis loop is the only phase with non-trivial internal mechanics, so it gets its own focused view.
-
-**Top-level phases.** Cross-phase transitions only — sub-states are documented in their respective sections above.
+This diagram is intentionally overview-only. It shows phase ownership and the coarse routes between phases; detailed hop mechanics live in `NavigationEngine` code and JSDoc.
 
 ```mermaid
 stateDiagram-v2
+    direction LR
+
     [*] --> Discovery
-    Discovery --> Discovery: Class D direct answer
-    Discovery --> Analysis: Class S — start_exploration
-    Analysis --> Synthesis: agenda drained
-    Synthesis --> Completed: present_result
-    Completed --> Analysis: supplement / extend scope
-    Completed --> Analysis: same-origin retrace (auto-supplement)
-    Completed --> Synthesis: re-render only
-    Completed --> Discovery: fresh question (different origin)
+
+    state "Discovery" as Discovery
+    state "Gate pending" as Gate
+    state "SM active" as Active
+    state "Synthesis" as Synthesis
+    state "Result ready" as ResultReady
+
+    Discovery --> [*]: direct chat answer
+    Discovery --> Gate: graph / CT / deeper analysis
+
+    Gate --> Discovery: cancel
+    Gate --> Gate: refine scope
+    Gate --> Active: approve
+
+    Active --> Synthesis: agenda drained
+    Synthesis --> ResultReady: present_result
+
+    ResultReady --> ResultReady: presentation edit
+    ResultReady --> Active: supplement / same-origin retrace
+    ResultReady --> Discovery: new question
 ```
 
-**Analysis hop loop.** Inside the Analysis phase, every hop runs this cycle until the agenda is empty.
-
-```mermaid
-stateDiagram-v2
-    [*] --> EvaluateAgenda
-    EvaluateAgenda --> FetchContext: pop next
-    FetchContext --> AI_Reasoning: ship map + DDL
-    AI_Reasoning --> ValidateSubmission: submit_findings
-    ValidateSubmission --> UpdateMemory: ok
-    ValidateSubmission --> AI_Reasoning: rejected (fail-early retry)
-    UpdateMemory --> EvaluateAgenda
-    EvaluateAgenda --> [*]: agenda empty → Synthesis
-```
-
-Discovery sub-states (`ClassifyQuestion → ClassD | ClassS → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. The Completed phase branches on the user's follow-up action — see the cross-phase transitions above.
+Discovery sub-states (`ClassifyQuestion → direct | escalation → SeedAgenda`) and Synthesis sub-states (`AggregateFindings → GenerateReport → PresentResult`) are linear and are documented inline in those phase descriptions. Inside `SM active`, the engine owns selection, lifecycle recording, and termination. The AI only reasons while the engine is awaiting a `submit_findings` call.
 
 ## Session FSM & typed exit dispatch
 
-`SessionPhase` ([`src/ai/sessionPhase.ts`](../src/ai/sessionPhase.ts)) is a typed discriminated union; every hop-loop exit is typed; one `dispatchExit` switch owns all post-loop cleanup. TypeScript exhaustiveness prevents "paused gate rendered as incomplete" regressions structurally.
+`SessionPhase` ([`src/ai/session/sessionPhase.ts`](../src/ai/session/sessionPhase.ts)) is a typed discriminated union; every hop-loop exit is typed; one `dispatchExit` switch owns all post-loop cleanup. TypeScript exhaustiveness prevents "paused gate rendered as incomplete" regressions structurally.
 
 | `HopLoopExit.kind` | Triggered by | Cleanup |
 |--------------------|--------------|---------|
@@ -345,7 +293,7 @@ One `AiSession` per extension instance.
 Two complementary guards keep the loop inside the user's declared scope:
 
 1. **Preflight gate** — at `start_exploration`, SM sessions whose initial BFS scope exceeds `ai.maxRounds × 0.7` are rejected with `scope_exceeds_budget`. The AI receives a `safe_depth_hint` and asks the user to narrow the question.
-2. **Per-hop consent gate** — during ACTIVE, any route leaving the schema filter or exceeding the depth cap returns an `action_required` envelope. Inline mode pauses for yes/no; SM mode silently defers (deferred questions surface at synthesis).
+2. **Per-hop deferral** — during ACTIVE, any route leaving the schema filter or exceeding the depth cap is silently deferred via `engine.deferQuestion(...)`. The deferred questions surface at synthesis (rendered as the "Unanswered" section) and to the user post-turn via the `dataLineageViz.showDeferredQuestions` button.
 
 ## Glossary
 
@@ -353,15 +301,14 @@ Two complementary guards keep the loop inside the user's declared scope:
 |------|---------|
 | **Map** | Deterministic state owned by `NavigationEngine`: agenda, visited set, neighbour metadata, gates. |
 | **Router** | Semantic decisions made by the AI: sub-question, verdict, route requests, prune judgements. |
-| **Class D** | Direct answer via discovery tools — one isolated object or graph-wide metadata. No "flow" narration. |
-| **Class S** | State-machine exploration via `start_exploration` — anything spanning ≥ 2 connected objects. |
-| **BB** (Blackboard) | Default nav mode. Used when no target columns are specified. |
-| **CT** (Column Trace) | Nav mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus the CT addition: `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every non-prune verdict; engine rejects with `column_flow_required` if omitted. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path. |
-| **Inline mode** | One-shot execution for scopes within `inlineNodeCap` and `inlineTokenBudget`. AI may self-terminate. |
-| **SM mode** | Hop-by-hop execution for larger scopes. Memory wiped each hop; engine owns termination. |
+| **Discovery** | Default chat state — AI uses catalog tools and answers in chat. Cannot render a graph or sustain large-BFS analysis; both require SM. |
+| **SM (Sliding-Memory)** | Gate-approved hop-by-hop execution. Triggered by visual graph-render request, column tracing, or explicit deeper-analysis intent. Memory wiped each hop; engine owns termination. |
+| **BB** (Blackboard) | Default SM analysis mode. Used when no target columns are specified. |
+| **CT** (Column Trace) | SM analysis mode activated when `targetColumns` are set. Every hop has the same `sections[].text` obligation as BB, plus mandatory `column_flow` — structured JSON declaring how each active column flows through the node. `column_flow` is mechanically enforced for every CT finding; missing field is rejected at the tool boundary (`ct_field_required`). AI prune commands are disabled in CT (`ct_verdict_forbidden` / `bb_field_forbidden_in_ct`); non-contributors use `column_flow: []` and engine-side CT auto-prune records `node_states[].action="prune"`. Validated edges accumulate in `SmResult.columnAspect.edges[]`; a branch is terminal when its last edge carries `role="source"`. Synthesis receives a `buildCtSynthesisBlock` chain so `present_result` is anchored to the traced path, including terminal table sources that may have pass-state but no detail slot. |
 | **Bodied node** | View / procedure / function. Only these enter the agenda as hop focuses. |
-| **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours. |
+| **Edge contraction** | Routing through a table forwards the question to the table's bodied neighbours and records the table as lifecycle `pass`; it does not create a detail slot. |
 | **Detail Archive** | Per-node full `analysis` text, written each hop, shipped only at synthesis. |
+| **Node lifecycle state** | `node_states[]` records explicit process actions (`analyze`, `pass`, `prune`) and reasons. Synthesis uses it as evidence, but final labels still come only from `present_result.sections[]`. |
 | **Working Memory** (WM) | Per-hop snapshot the prompt builder assembles from the archive plus constants — `user_question`, `checklist`, `recent_rejections`, `active_schemas`, optional `budget_pressure`; `short_term_memory` (last 3 summaries) is a sibling sliding view from `getShortTermMemory()`. Not stored — recomputed every hop. |
 | **`action_required`** | Engine envelope that emits a consent gate. Turn ends; user reply resumes or aborts. |
 | **Deferred question** | In SM, an out-of-border route collected silently and surfaced at synthesis. |

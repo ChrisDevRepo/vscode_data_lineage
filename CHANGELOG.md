@@ -1,81 +1,34 @@
 # Changelog
 
-## [0.9.9] - 2026-04-26
-
-### Added
-- **Pick the analysis lens before exploration** — Choose `business`, `technical`, or `both` when starting a `@lineage` exploration. Business reports describe domain meaning (rules, formulas, consumer impact). Technical reports describe execution (SQL evidence, joins, loading patterns, anti-patterns). `both` produces two peer sections per node, one of each angle.
-- **Approve scope before analysis starts** — Every exploration shows a scope tree (Schema → Type → Node) with the live hop count. Approve to proceed, **Refine scope** to narrow it, or **Cancel**. Describe the narrowing e.g. ("ignore staging", "drop UDFs", "trace ProductID only") and the assistant re-runs. The loop continues until you approve or cancel.
-
+## [1.0.0] - 2026-05-12
 
 ### Changed
-- **AI output templates expanded** — `aiOutputTemplates.yaml` now drives both per-hop capture instructions (`business_capture`, `technical_capture`, `structural_summary`) and final report rendering (`title`, `intro`, `closing`, `notes`, `highlights`).
-- **Unified exploration engine** — the three separate state-machine classes (Blackboard, Column Trace, and their abstract base) are merged into a single `NavigationEngine` with mode variants (Inline, SM-Blackboard, SM-Column-Trace). Classification locking, scope approval gate, and the Detail Archive memory model are shared across all modes.
-- **Typed extension-webview messaging contract** — all messages between the extension host and the graph UI are now defined in a single Zod-validated schema; replaces untyped `postMessage` calls so malformed messages are caught at the boundary instead of causing silent UI failures.
-
-## [0.9.8] - 2026-04-12
+- **Chat-first answers.** Lineage questions return structured Markdown in chat by default; the graph panel and walkthrough only launch when explicitly requested.
+- **Asymmetric depth tracing.** Specify independent upstream/downstream depths in a single request (e.g. "3 upstream, 1 downstream").
+- **Schema color palette expanded to 15 colors** for both light and dark themes; schemas beyond the 10th now map to a second set of lighter paired variants, giving each additional schema a distinct color.
 
 ### Added
-- **Structured graph descriptions** — AI results organized into labeled sections ordered by data flow, with badge numbers on nodes
-- **"Show in Graph" button** — one-click after AI trace completes
+- **One-click deeper analysis.** Post-discovery pill launches the hop-by-hop walkthrough with scope preview and consent gate — no need to re-type the question.
+- **Persistent discovery context.** The AI carries a memo of the discovery findings and any focus/exclusion instructions through every hop of the walkthrough.
+- **Customizable chat output** via `aiOutputTemplates.yaml`.
 
-### Changed
-- **Inline mode for small scopes** — small traces deliver all DDL at once; larger scopes use hop-by-hop with persistent memory
+### Removed
+- **Inline mode** — superseded by the chat-vs-walkthrough split.
 
-### Fixed
-- Schema-aware AI queries, Find Path ignoring active filters, search visibility in schema overview
 
-## [0.9.7] - 2026-03-31
-
-### Added
-- **Column metadata for views & TVFs** — column details in the detail panel with columns/DDL toggle
-- **`@lineage` column tracing** — follow columns hop-by-hop through views, procedures, and functions, tracking renames and transformations
-
-### Fixed
-- CTE `UPDATE alias SET … FROM cte_name` patterns now produce correct write edges
-
-## [0.9.6] - 2026-03-27
+## [0.9.x] - 2026-02 to 2026-04
 
 ### Added
+- **`@lineage` AI assistant** — natural-language lineage questions in Copilot Chat; choose `business`, `technical`, or `both` analysis lens; scope approval gate with Schema → Type → Node preview before every run
+- **Column tracing** — follow a named column hop-by-hop through views, procedures, and functions, tracking renames and transformations
+- **Database import** — SQL Server, Azure SQL, Fabric DW, and Synapse via live connection; platform auto-detected
 - **Schema overview** — graphs with 150+ nodes open as a schema-level bubble map; double-click to drill in
-- **`@lineage` AI assistant** — natural-language lineage questions in GitHub Copilot Chat. Requires GitHub Copilot and VS Code 1.95+
-- **AI output templates** — customize `@lineage` output format via `dataLineageViz.ai.outputTemplateFile`
-- **Platform detection** — identifies SQL Server, Azure SQL, Fabric, and Synapse from dacpac and live connections
-
-## [0.9.5] - 2026-03-24
-
-### Added
-- **Project sessions** — save connections and schema selections as named projects
-- **Saved Views** — save and restore filter states (schemas, types, exclusions) per project
-- **Exclusion Rules** — hide nodes by `%` wildcard or regex pattern in real time
-
-## [0.9.4] - 2026-03-12
-
-### Fixed
-- BFS trace non-deterministic results from co-writer filter; direction-aware edge filtering restored
-
-## [0.9.3] - 2026-03-08
-
-### Fixed
-- False-positive external cross-DB nodes from SQL Server CLR type method calls
-
-## [0.9.2] - 2026-03-07
-
-### Added
-- **Table design viewer** — column details, constraints, and foreign keys for tables and external tables
-- **Table statistics** — Quick and Detail stats for database-imported tables with platform-aware sampling
-- **External tables & virtual refs** — OPENROWSET file paths and cross-database 3-part names surfaced as nodes
-- **External Refs analysis** — lists all file sources and cross-database references
-
-## [0.9.1] - 2026-02-25
-
-- Workspace Trust support
-
-## [0.9.0] - 2026-02-20
-
-### Added
-- **Database Import** — SQL Server, Azure SQL, Fabric DW, Synapse
 - **Find Path** — shortest dependency path between any two nodes
 - **Graph Analysis** — islands, hubs, orphans, longest paths, cycles
+- **Table design viewer** — columns, constraints, foreign keys, and statistics
+- **Column metadata** — column details for views and table-valued functions in the detail panel
+- **Project sessions** — save connections, schema selections, and filter states as named projects with exclusion rules
+- **AI output templates** — customizable `@lineage` output format via `dataLineageViz.ai.outputTemplateFile`
 
 ## [0.8.x] - 2026-02
 

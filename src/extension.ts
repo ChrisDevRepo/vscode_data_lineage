@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
 import * as yaml from 'js-yaml';
 import * as path from 'path';
-import { getSession } from './ai/session';
-import { registerAiTools } from './ai/toolProvider';
+import { getSession } from './ai/session/session';
+import { registerAiTools } from './ai/tools/toolProvider';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { Logger, testLogCapture } from './utils/log';
 import { migrateProjectStore, type ProjectStore } from './engine/projectStore';
-import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/types';
-import { LineageParticipant } from './ai/lineageParticipant';
+import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/session/types';
+import { LineageParticipant } from './ai/participant/lineageParticipant';
+import { LmTracer } from './ai/infra/lmTracer';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules, type ParseRulesConfig } from './engine/sqlBodyParser';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
@@ -19,14 +20,14 @@ let outputChannel: vscode.LogOutputChannel;
 
 /**
  * Extension Activation Lifecycle.
- * 
+ *
  * Orchestrates the bootstrapping of the Data Lineage Viz extension.
  * Adheres to a strict registration order mandated by stability requirements:
  * 1.  **Sidebar/Quick Actions**: Registered first to prevent "no provider" UI errors during early activation.
  * 2.  **Commands & Project Store**: Core functionality and state management.
  * 3.  **AI Bridge & Language Model Tools**: Integration with VS Code's AI ecosystem.
  * 4.  **Chat Participant**: The autonomous lineage explorer.
- * 
+ *
  * @param context - The extension context provided by VS Code.
  * @returns An API object for testing and internal integration.
  */
@@ -34,6 +35,11 @@ export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
   const logger = Logger.create(outputChannel, 'Config');
+  const lmTraceEnabled = false;
+  LmTracer.init(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(), lmTraceEnabled);
+  if (lmTraceEnabled) {
+    logger.info('LM trace enabled (internal dev backdoor) — writing NDJSON to tmp/lm-trace/');
+  }
 
   const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
   logger.info(`Extension activated — built ${buildStamp}`);
@@ -61,19 +67,19 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register all user-facing commands.
   context.subscriptions.push(...registerCommands(
-    context, 
-    getSession, 
-    outputChannel, 
+    context,
+    getSession,
+    outputChannel,
     (ctx, title, demo) => {
       Logger.create(outputChannel, 'Bridge').info(`Command executed: openPanel (demo=${demo})`);
       return openPanel(
-        ctx, 
-        title, 
-        getSession, 
-        outputChannel, 
-        loadStore, 
-        saveStore, 
-        async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel); }, 
+        ctx,
+        title,
+        getSession,
+        outputChannel,
+        loadStore,
+        saveStore,
+        async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel); },
         demo
       );
     },
@@ -145,15 +151,15 @@ export async function activate(context: vscode.ExtensionContext) {
  * handler, again outside this function's responsibility.
  */
 export function deactivate() {
-  // no-op
+  LmTracer.flush();
 }
 
 /**
  * Loads AI Output Templates from built-in assets and optional user overrides.
- * 
+ *
  * These templates provide the structural instructions used by the AI to generate
  * summaries, section titles, and highlighted badges in the UI.
- * 
+ *
  * @param outputChannel - The log channel for reporting load status.
  * @param extensionUri - The root URI of the extension.
  * @returns A promise resolving to the compiled `AiOutputTemplates`.
@@ -163,7 +169,7 @@ async function loadAiOutputTemplates(
   extensionUri: vscode.Uri,
 ): Promise<AiOutputTemplates> {
   const logger = Logger.create(outputChannel, 'Config');
-  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['summary', 'title', 'intro', 'closing', 'highlights', 'notes', 'business_capture', 'technical_capture', 'structural_summary', 'general', 'loading_pattern', 'column_trace_capture'];
+  const REQUIRED_KEYS: (keyof AiOutputTemplates)[] = ['discovery_chat', 'summary', 'title', 'intro', 'closing', 'highlights', 'notes', 'business_capture', 'technical_capture', 'structural_summary', 'general', 'loading_pattern', 'column_trace_capture'];
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   const builtInKeys: string[] = [];
 
@@ -225,10 +231,10 @@ async function loadAiOutputTemplates(
 
 /**
  * Loads and installs SQL parsing rules for DDL analysis.
- * 
+ *
  * Rules are loaded from the built-in `defaultParseRules.yaml` and can be
  * overridden by a custom file specified in settings.
- * 
+ *
  * @param outputChannel - The log channel.
  * @param extensionUri - The root URI of the extension.
  * @returns A promise that resolves when the rules are loaded and applied to the engine.

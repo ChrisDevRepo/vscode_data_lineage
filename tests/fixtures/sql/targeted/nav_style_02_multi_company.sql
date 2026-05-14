@@ -1,6 +1,6 @@
 -- NAV/Dynamics Style Pattern 02: Multi-company NAV with complex bracketed names containing dots
 -- EXPECT  sources:[dbo].[Fabrikam Inc_$Customer],[dbo].[Fabrikam Inc_$Item],[dbo].[Fabrikam Inc_$Item Ledger Entry]  targets:[dbo].[Fabrikam Inc_$Posted Sales Invoice],[dbo].[Fabrikam Inc_$Posted Sales Invoice Line]  exec:
--- Key test: [spLoadReconciliation_Case4.5] style names (dot inside brackets = part of name)
+-- Key test: [spLoadCase4.5] style names (dot inside brackets = part of name)
 
 -- Note: table names contain dots inside brackets (e.g. version numbers like Case4.5)
 -- splitSqlName must NOT split [dbo].[Fabrikam Inc_$Item Ledger Entry] into more than 2 parts

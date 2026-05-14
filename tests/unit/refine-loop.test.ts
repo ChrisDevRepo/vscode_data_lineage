@@ -12,9 +12,10 @@
  *      schema sort, type pluralization, +K-more overflow, active-filters block).
  */
 
-import { NavigationEngine } from '../../src/ai/smBase';
-import { classifyGateReply } from '../../src/ai/sessionPhase';
-import { renderScopeSummaryMd } from '../../src/ai/scopeSummaryRenderer';
+import { NavigationEngine } from '../../src/ai/sm/smBase';
+import { classifyGateReply } from '../../src/ai/session/sessionPhase';
+import { renderScopeSummaryMd } from '../../src/ai/prompting/scopeSummaryRenderer';
+import { decideGateTransition } from '../../src/ai/interaction/rules/gateTransitionRules';
 import type { DatabaseModel, LineageNode } from '../../src/engine/types';
 import { assert, resetCounters, printSummary, makeGraph } from './helpers/testUtils';
 
@@ -40,6 +41,23 @@ assert(classifyGateReply('no, do X')                === 'redirect', '"no, do X" 
 assert(classifyGateReply('drop the staging schema') === 'redirect', '"drop the staging schema" → redirect (AI interprets)');
 assert(classifyGateReply('exclude views')           === 'redirect', '"exclude views" → redirect (AI interprets)');
 assert(classifyGateReply('hmm')                     === 'redirect', '"hmm" → redirect');
+
+// ─── gate transition matrix ──────────────────────────────────────────────────
+console.log('\n── decideGateTransition matrix ──');
+{
+  const confirmGate = { gate: 'confirm_sm_start', classes: [], nodeIds: [] } as any;
+  const expandGate = { gate: 'confirm_scope_expansion', classes: [], nodeIds: [] } as any;
+
+  assert(decideGateTransition(confirmGate, 'yes').action === 'approve_confirm_sm', 'confirm gate + yes → approve_confirm_sm');
+  assert(decideGateTransition(confirmGate, 'refine').action === 'refine_confirm_sm', 'confirm gate + refine → refine_confirm_sm');
+  assert(decideGateTransition(confirmGate, 'redirect').action === 'refine_confirm_sm', 'confirm gate + redirect → refine_confirm_sm');
+  assert(decideGateTransition(confirmGate, 'no').action === 'cancel', 'confirm gate + no → cancel');
+
+  assert(decideGateTransition(expandGate, 'yes').action === 'approve_scope_expansion', 'scope-expansion gate + yes → approve');
+  assert(decideGateTransition(expandGate, 'refine').action === 'approve_scope_expansion', 'scope-expansion gate + refine → approve (legacy behavior)');
+  assert(decideGateTransition(expandGate, 'redirect').action === 'redirect_non_confirm', 'scope-expansion gate + redirect → redirect_non_confirm');
+  assert(decideGateTransition(expandGate, 'no').action === 'cancel', 'scope-expansion gate + no → cancel');
+}
 
 // ─── Engine fixture ──────────────────────────────────────────────────────────
 //

@@ -404,11 +404,11 @@ function testCteExclusion() {
   // Pass 1.6 rewrites FROM cte → FROM [schema].[table], enabling extract_update_alias_target
   {
     const r = parseSqlBody(`
-      WITH cte_Result AS (SELECT * FROM [TRANSFORMATION_FINANCEHUB].[CadenceWorker])
+      WITH cte_Result AS (SELECT * FROM [staging].[OrderWorker])
       UPDATE w SET w.Col = 1 FROM cte_Result w
     `);
-    assert(hasName(r.targets, 'CadenceWorker'), 'CTE UPDATE alias-FROM: CadenceWorker in targets');
-    assert(hasName(r.sources, 'CadenceWorker'), 'CTE UPDATE alias-FROM: CadenceWorker also in sources');
+    assert(hasName(r.targets, 'OrderWorker'), 'CTE UPDATE alias-FROM: OrderWorker in targets');
+    assert(hasName(r.sources, 'OrderWorker'), 'CTE UPDATE alias-FROM: OrderWorker also in sources');
     assert(!r.targets.some(s => s.toLowerCase().includes('cte_result')), 'CTE UPDATE alias-FROM: cte_Result NOT in targets');
   }
 
@@ -531,14 +531,14 @@ EXEC [dbo].[LogComplete]
 function testCriticalReviewEdgeCases() {
   console.log('\n\u2500\u2500 9. Edge cases from critical review \u2500\u2500');
 
-  // DELETE FROM produces a target (DELETE is a write — lineage fact)
+  // DELETE FROM does NOT produce a target — removes rows, contributes no column data to lineage.
+  // The FROM keyword still fires extract_sources_ansi, so Target appears as a source (read ref only).
   {
     const r = parseSqlBody(`DELETE FROM [dbo].[Target] WHERE Id = 1`);
-    assert(hasName(r.targets, 'Target'),
-      'DELETE FROM: Target IS in targets (DELETE is a write operation)');
-    // DELETE FROM also fires extract_sources_ansi (FROM keyword match) → bidirectional
+    assert(!hasName(r.targets, 'Target'),
+      'DELETE FROM: Target NOT in targets (DELETE removes rows, not a column-data write)');
     assert(hasName(r.sources, 'Target'),
-      'DELETE FROM: Target appears as source (via FROM keyword — bidirectional edge)');
+      'DELETE FROM: Target appears as source (via FROM keyword — read reference)');
   }
 
   // OPENQUERY: content inside string should not be extracted

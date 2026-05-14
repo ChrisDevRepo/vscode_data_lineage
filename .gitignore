@@ -39,6 +39,7 @@ nul
 
 # AI assistant config — NEVER commit to public repo
 # These folders contain local context, prompts, credentials, and internal instructions.
+AGENTS.md
 CLAUDE.md
 .claude/
 **/.claude/**
@@ -58,6 +59,3 @@ GEMINI.md
 # Verification scripts and artifacts
 scripts/
 adventure_works_graph.json
-
-# Test dacpacs — local only, not for public repo
-tests/fixtures/*.dacpac

@@ -1,5 +1,5 @@
 dacpac	sp_name	regex_sources	regex_targets	regex_exec	edge_count
-ai	ai.spArchiveOldOrders	[ai].[salesstaging]	[ai].[archiveorders],[ai].[salesstaging]	[ai].[splogaudit]	4
+ai	ai.spArchiveOldOrders	[ai].[salesstaging]	[ai].[archiveorders]	[ai].[splogaudit]	4
 ai	ai.spBuildSalesReport	[ai].[customermaster],[ai].[customersegmentmap],[ai].[factsalesreport],[ai].[regionlookup],[ai].[vwconsolidatedsales],[ai].[vwdiscountcalc],[ai].[vwpricelist]	[ai].[errorlog],[ai].[factsalesreport]	[ai].[splogaudit]	10
 ai	ai.spCleanOrders	[ai].[cleanedorders],[ai].[customermaster],[ai].[raworderimport]	[ai].[cleanedorders],[ai].[errorlog]	[ai].[splogaudit]	6
 ai	ai.spImportOrders	[ai].[activeregions],[ai].[raworderimport],[ai].[vwexternalorders]	[ai].[activeregions],[ai].[errorlog],[ai].[raworderimport]	[ai].[splogaudit]	7

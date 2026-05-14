@@ -1,11 +1,14 @@
 {
   "name": "data-lineage-viz",
   "displayName": "Data Lineage Viz",
-  "preview": true,
+  "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "0.9.9",
+  "version": "1.0.0",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
+  "pricing": "Free",
+  "markdown": "github",
+  "qna": "marketplace",
   "extensionDependencies": [],
   "engines": {
     "vscode": "^1.95.0"
@@ -51,7 +54,7 @@
     "type": "git",
     "url": "https://github.com/ChrisDevRepo/vscode_data_lineage"
   },
-  "homepage": "https://chrisdevrepo.github.io/vscode_data_lineage/",
+  "homepage": "https://datalineage.chwagner.eu/",
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": true
@@ -123,11 +126,6 @@
         "command": "dataLineageViz.createAiOutputTemplates",
         "title": "Data Lineage: Create AI Output Templates",
         "icon": "$(sparkle)"
-      },
-      {
-        "command": "dataLineageViz.toggleOverviewMode",
-        "title": "Data Lineage: Toggle Schema Overview Mode",
-        "icon": "$(graph)"
       },
       {
         "command": "dataLineageViz.aiCreateView",
@@ -436,19 +434,26 @@
             "maximum": 100,
             "markdownDescription": "Maximum tool-call rounds per `@lineage` request. Increase for complex explorations on deep graphs. Each round is one AI reasoning step + tool call."
           },
-          "dataLineageViz.ai.inlineTokenBudget": {
+          "dataLineageViz.ai.discoveryNodeCap": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 30,
+            "markdownDescription": "Maximum scope nodes the AI may pull during a single discovery-phase catalog request before the engine forces an SM escalation via the gate. Discovery answers small ad-hoc questions in chat; over-budget requests are rejected with a hint to call `lineage_start_exploration`."
+          },
+          "dataLineageViz.ai.discoveryTokenBudget": {
+            "type": "integer",
+            "default": 10000,
+            "minimum": 1000,
+            "maximum": 32000,
+            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request. Exceeding either this or the node cap forces an SM escalation via the consent gate."
+          },
+          "dataLineageViz.ai.contextPayloadBudget": {
             "type": "integer",
             "default": 10000,
             "minimum": 1000,
             "maximum": 100000,
-            "markdownDescription": "Maximum estimated tokens for inline (quick) delivery. When a trace or exploration scope fits within **both** this token budget and the node cap, the AI receives all SQL at once for faster analysis. Exceeding either threshold switches to hop-by-hop deep exploration with persistent memory. Lower values favor accuracy; higher values favor speed."
-          },
-          "dataLineageViz.ai.inlineNodeCap": {
-            "type": "integer",
-            "default": 10,
-            "minimum": 1,
-            "maximum": 100,
-            "markdownDescription": "Maximum scope nodes for inline (quick) delivery. When a trace or exploration scope has more nodes than this, the AI explores hop-by-hop with persistent memory for deeper analysis. Deep mode tracks column renames and transformations across many dependency stages. Lower values favor accuracy; higher values favor speed."
+            "markdownDescription": "Token budget for `lineage_get_context` deciding whether to inline the full catalog or return a summary. Unrelated to the discovery scope budget above."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
@@ -488,7 +493,7 @@
               "Where does revenue come from",
               "Trace the data flow for orders",
               "What tables does this procedure read from",
-              "Show me the lineage for the financehub schema",
+              "Show me the lineage for the sales schema",
               "What are the upstream sources of this table"
             ]
           }
@@ -570,11 +575,62 @@
         }
       },
       {
+        "name": "lineage_get_scope_bundle",
+        "toolReferenceName": "lineage_get_scope_bundle",
+        "displayName": "Get Scope Bundle",
+        "userDescription": "Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.",
+        "modelDescription": "Discovery graph-scope retrieval. Use this for multi-object lineage questions when you need a bounded BFS scope in one call. For small scopes set include_ddl=true to fetch all scope DDL at once and answer directly in chat. If the tool returns over_discovery_budget, do not retry with per-node calls; call lineage_start_exploration so the user can review/approve the scope gate. Keep lineage_get_object_detail for single-object questions.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "lineage",
+          "lineage-research"
+        ],
+        "icon": "$(graph)",
+        "when": "dataLineageViz.modelLoaded",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "description": "Exact origin object ID (e.g. '[dbo].[FactSales]')."
+            },
+            "direction": {
+              "type": "string",
+              "enum": [
+                "upstream",
+                "downstream",
+                "bidirectional"
+              ],
+              "description": "Traversal direction for scope expansion."
+            },
+            "depth": {
+              "type": "number",
+              "description": "Symmetric BFS depth. Use explicit finite values from user intent."
+            },
+            "upstream_depth": {
+              "type": "number",
+              "description": "Optional upstream depth override (bidirectional only)."
+            },
+            "downstream_depth": {
+              "type": "number",
+              "description": "Optional downstream depth override (bidirectional only)."
+            },
+            "include_ddl": {
+              "type": "boolean",
+              "description": "When true, include DDL for all scriptable nodes in scope and enforce discovery node/token budget guard."
+            }
+          },
+          "required": [
+            "origin"
+          ]
+        }
+      },
+      {
         "name": "lineage_get_object_detail",
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Returns full metadata for a single object, including columns, foreign keys, DDL, and immediate neighbors. DISCOVERY and SYNTHESIS phases only — during active SM exploration, use lineage_get_neighbor_columns instead.",
+        "modelDescription": "Primary single-object lookup for discovery and synthesis. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls. During active SM exploration, use lineage_get_neighbor_columns instead.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -620,68 +676,6 @@
           },
           "required": [
             "ids"
-          ]
-        }
-      },
-      {
-        "name": "lineage_get_neighborhood",
-        "toolReferenceName": "lineage_get_neighborhood",
-        "displayName": "Get Neighborhood",
-        "userDescription": "Fetch the surrounding dependency graph for an object.",
-        "modelDescription": "Returns the upstream and/or downstream neighbors for a starting object within a specified depth.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(type-hierarchy-sub)",
-        "when": "dataLineageViz.modelLoaded",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "description": "Starting object ID."
-            },
-            "upstream_hops": {
-              "type": "number",
-              "description": "Upstream depth (0 = none). Default 3."
-            },
-            "downstream_hops": {
-              "type": "number",
-              "description": "Downstream depth (0 = none). Default 3."
-            },
-            "types": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "table",
-                  "view",
-                  "procedure",
-                  "function",
-                  "external"
-                ]
-              },
-              "description": "Include only these node types."
-            },
-            "schemas": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Include only nodes in these schemas."
-            },
-            "include_ddl": {
-              "type": "boolean",
-              "description": "Include DDL/columns in results (default true)."
-            },
-            "target": {
-              "type": "string",
-              "description": "Path mode: find all nodes on paths from id to target. When provided, upstream_hops/downstream_hops are ignored."
-            }
-          },
-          "required": [
-            "id"
           ]
         }
       },
@@ -770,7 +764,7 @@
         "toolReferenceName": "lineage_present_result",
         "displayName": "Present Result",
         "userDescription": "Generate a final report and visualization for the exploration.",
-        "modelDescription": "Authors the presentation layer (report) for an exploration result. Groups nodes into sections and provides an executive summary.",
+        "modelDescription": "Authors or updates the presentation layer for an exploration result. Use for report sections, node badges, notes, pruning, add_node_ids, and graph role/color highlights such as source/transform/target. Presentation-only changes must use this tool, not start_exploration.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage-presentation"
@@ -810,6 +804,13 @@
                 "type": "string"
               },
               "description": "Nodes to remove from the final visualization."
+            },
+            "add_node_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Nodes to add to the final visualization for presentation-only updates; pair with sections, notes, or highlight_groups as needed."
             },
             "layout_direction": {
               "type": "string",
@@ -855,38 +856,43 @@
             },
             "sections": {
               "type": "array",
-              "description": "Report sections grouping nodes by badge label and angle. Provide label, angle, and node_ids. Write text for specific questions (user named a bracketed identifier); omit text for broad questions — the engine injects full archive content.",
+              "description": "Final graph/detail sections. Labels and node links are AI-authored; the engine validates and renders them.",
               "items": {
                 "type": "object",
                 "properties": {
                   "label": {
                     "type": "string",
-                    "description": "Section title and node badge (from badge_label in the captured slot)."
+                    "description": "Final short section/badge label, 2-3 words."
                   },
                   "angle": {
                     "type": "string",
-                    "enum": ["business", "technical"],
-                    "description": "Capture angle for this section group. Required when text is omitted — determines which archived body the engine injects."
+                    "enum": [
+                      "business",
+                      "technical"
+                    ],
+                    "description": "Capture angle for this section group."
                   },
                   "node_ids": {
                     "type": "array",
+                    "description": "Optional nodes linked to this section; omit nodes not discussed.",
                     "items": {
                       "type": "string"
                     }
                   },
                   "text": {
                     "type": "string",
-                    "description": "Specific questions only (user question contains bracketed identifiers like [Column] or [Schema].[Table]): write rich detail from the archive focused on what answers the question — include formulas, column transformations, SQL predicates, data flows; omit audit logging, concurrency, version history, and unrelated rules. Depth stays high; focus shifts to the question. Broad questions: omit this field — the engine injects full archive content."
+                    "description": "Required detail body for this section label."
                   }
                 },
                 "required": [
-                  "label"
+                  "label",
+                  "text"
                 ]
               }
             },
             "notes": {
               "type": "array",
-              "description": "Optional annotations for specific nodes.",
+              "description": "Optional AI-authored captions shown below selected graph nodes; notes do not create badges or sections.",
               "items": {
                 "type": "object",
                 "properties": {
@@ -895,7 +901,7 @@
                   },
                   "text": {
                     "type": "string",
-                    "description": "Note text (max 400 chars)."
+                    "description": "One-sentence node caption."
                   }
                 },
                 "required": [
@@ -921,7 +927,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Start Exploration",
         "userDescription": "Start an autonomous exploration of database objects for data flow, business rules, or investigations.",
-        "modelDescription": "Starts a hop-by-hop exploration across database objects (Blackboard, or Column-Trace when `targetColumns` is set). Scope parameters: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. Honor NL filters: 'ignore UDFs/functions' → `excludeTypes:['function']`; 'ignore views' → `['view']`; 'only tables' → `['view','procedure','function']`. On wide graphs start `depth` shallow (1-2); sliding-memory sessions lock scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session. Compose `mission_brief` (3-6 sentences) capturing user intent, NL filters, name-based exclusions, and chosen scope — delivered verbatim every hop and surviving memory wipes. POST-SYNTHESIS SUPPLEMENT: in the follow-up phase, call with only `supplement:{nodeIds:[...]}` (no `origin` required) to extend the existing archive with one-shot inline analysis for those ids. The prior engine, memory, and filter state are reused — new slots merge into the archive; a fresh re-render via `lineage_present_result` follows. Use this path for deferred-question continuations and user-requested 'add node X' refinements.\n\n## Decision order\n\nWhen the user refines a pending `confirm_sm_start` gate, settle decisions in this order — later axes depend on earlier ones being fixed:\n\n1. **Origin** — locked. Refine cannot change origin; that is a fresh question. If the user names a different starting object, ask them to cancel and re-ask.\n2. **Direction** (`upstream` / `downstream` / `bidirectional`) — refinable. Re-runs BFS.\n3. **Depth** (`depth`, `depth_enforcement`) — refinable. Re-runs BFS.\n4. **Per-node bucket** for each node BFS surfaced — analyze (default) / pass-through / prune.\n5. **Mode + classification + tracing** — `forceMode`, `classification`, `targetColumns`.\n\n## Scope filters\n\n`excludeSchemas`, `excludeTypes`, `excludeNodeIds`, and `passNodeIds` are applied at BFS scope-build time. Each call REPLACES the prior filter set on the engine — accumulate across rounds by sending every prior filter plus the new one in a single call.\n\n## Pass vs prune\n\nA node has two narrowing semantics. Choose deliberately:\n\n- **`passNodeIds`** — node stays in scope; BFS still routes through it (descendants reachable); the engine auto-emits `verdict:'pass'` so no analysis is written for that node. Topology preserved. Default interpretation when the user says 'ignore', 'skip', or 'don't analyze X'.\n- **`excludeNodeIds`** / **`excludeSchemas`** / **`excludeTypes`** — node (and its subtree reachable only through it) is cut at BFS time. Use only when the user explicitly says 'remove', 'drop', 'prune', 'cut', or names a leaf they reject.\n\nIf you propose pruning a node that would orphan in-scope descendants, rewrite the call as `passNodeIds` for those ids unless the user has explicitly approved removing the subtree.\n\n## Discovery-phase refinement loop\n\nWhen a `confirm_sm_start` gate is pending and the user wants to adjust the proposed scope:\n\n1. Read the user's chat message and map their intent to the right axis using the decision order above. Phrasing varies — they may say ignore / drop / remove / without / no / skip — and they may name schemas, object types, or specific objects. Use your judgment; if intent is unclear, ask one short clarifying question and call no tool that turn.\n2. Call `lineage_start_exploration` with the same `origin` from the prior call, plus the updated `direction` / `depth` / `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `forceMode` / `classification` / `targetColumns` as the user requested.\n3. The engine re-runs BFS, re-evaluates mode (inline / sliding-memory, blackboard / column-trace), and re-emits the gate with the new counts. The user reviews and either approves, refines further, or cancels.\n4. During this loop, only `lineage_start_exploration` is appropriate — `submit_findings` is not yet available, and analysis begins only after the user approves.\n\n<examples>\n<example>\nUser: 'ignore the staging schema'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'] })\n</example>\n\n<example>\nPrior call excluded 'staging'. User: 'also drop procedures.'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'], excludeTypes: ['procedure'] })\n</example>\n\n<example>\nUser: 'ignore usp_PostJournal but I still want to see what it reads from'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, passNodeIds: ['[dbo].[usp_PostJournal]'] })\n</example>\n\n<example>\nUser: 'remove the staging subtree entirely — I don\\'t need anything below it'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'] })\n</example>\n\n<example>\nPrior gate: Mode=Inline, Analysis=business. User: 'do this as sliding memory and trace TotalRevenue'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, forceMode: 'sm', targetColumns: ['TotalRevenue'] })\n</example>\n</examples>",
+        "modelDescription": "Starts an SM (Sliding Memory) exploration across database objects — hop-by-hop traversal with per-hop verdicts. The user must approve via the `confirm_sm_start` gate before any analysis runs. Use this when the user explicitly asks for graph/canvas visualization, requests column tracing (`targetColumns`), clicks deeper hop-by-hop analysis, or discovery returns `over_discovery_budget` for graph-scope DDL retrieval. Scope parameters: pick `direction`, `depth`, `depth_enforcement`, and `excludeTypes` to match how the user phrased scope. Honor NL filters: 'ignore UDFs/functions' → `excludeTypes:['function']`; 'ignore views' → `['view']`; 'only tables' → `['view','procedure','function']`. Depth values must come from user intent and current graph constraints: provide explicit finite numbers (no fixed defaults, no sentinel values). SM sessions lock scope at session start, and out-of-scope routes are deferred to a post-session review list rather than prompting mid-session. Compose `mission_brief` (3-6 sentences) capturing user intent, NL filters, name-based exclusions, and chosen scope — delivered verbatim every hop and surviving memory wipes. POST-SYNTHESIS SUPPLEMENT: in the follow-up phase, call with only `supplement:{nodeIds:[...]}` (no `origin` required) to extend the existing archive with new analysis for those ids. The prior engine, memory, and filter state are reused — new slots merge into the archive via the SM hop loop; a fresh re-render via `lineage_present_result` follows. Use this path for deferred-question continuations and user-requested 'add node X' refinements.\n\n## Decision order\n\nWhen the user refines a pending `confirm_sm_start` gate, settle decisions in this order — later axes depend on earlier ones being fixed:\n\n1. **Origin** — locked. Refine cannot change origin; that is a fresh question. If the user names a different starting object, ask them to cancel and re-ask.\n2. **Direction** (`upstream` / `downstream` / `bidirectional`) — refinable. Re-runs BFS.\n3. **Depth** (`depth`, `depth_enforcement`, plus `upstream_depth` / `downstream_depth` for asymmetric bidirectional) — refinable. Re-runs BFS.\n4. **Per-node bucket** for each node BFS surfaced — analyze (default) / pass-through / prune.\n5. **Classification + tracing** — `classification`, `targetColumns`.\n\n## Scope filters\n\n`excludeSchemas`, `excludeTypes`, `excludeNodeIds`, and `passNodeIds` are applied at BFS scope-build time. Each call REPLACES the prior filter set on the engine — accumulate across rounds by sending every prior filter plus the new one in a single call.\n\n## Pass vs prune\n\nA node has two narrowing semantics. Choose deliberately:\n\n- **`passNodeIds`** — node stays in scope; BFS still routes through it (descendants reachable); the engine auto-emits `verdict:'pass'` so no analysis is written for that node. Topology preserved. Default interpretation when the user says 'ignore', 'skip', or 'don't analyze X'.\n- **`excludeNodeIds`** / **`excludeSchemas`** / **`excludeTypes`** — node (and its subtree reachable only through it) is cut at BFS time. Use only when the user explicitly says 'remove', 'drop', 'prune', 'cut', or names a leaf they reject.\n\nIf you propose pruning a node that would orphan in-scope descendants, rewrite the call as `passNodeIds` for those ids unless the user has explicitly approved removing the subtree.\n\n## Gate refinement loop\n\nWhen a `confirm_sm_start` gate is pending and the user wants to adjust the proposed scope:\n\n1. Read the user's chat message and map their intent to the right axis using the decision order above. Phrasing varies — they may say ignore / drop / remove / without / no / skip — and they may name schemas, object types, or specific objects. Use your judgment; if intent is unclear, ask one short clarifying question and call no tool that turn.\n2. Call `lineage_start_exploration` with the same `origin` from the prior call, plus the updated `direction` / `depth` / `upstream_depth` / `downstream_depth` / `excludeTypes` / `excludeSchemas` / `excludeNodeIds` / `passNodeIds` / `classification` / `targetColumns` as the user requested.\n3. The engine re-runs BFS and re-emits the gate with the new counts. The user reviews and either approves, refines further, or cancels.\n4. During this loop, only `lineage_start_exploration` is appropriate — `submit_findings` is not yet available, and analysis begins only after the user approves.\n\n<examples>\n<example>\nUser: 'ignore the staging schema'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'] })\n</example>\n\n<example>\nPrior call excluded 'staging'. User: 'also drop procedures.'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'], excludeTypes: ['procedure'] })\n</example>\n\n<example>\nUser: 'ignore usp_PostJournal but I still want to see what it reads from'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, passNodeIds: ['[dbo].[usp_PostJournal]'] })\n</example>\n\n<example>\nUser: 'remove the staging subtree entirely — I don\\'t need anything below it'\nCall: lineage_start_exploration({ origin: <kept>, depth: <kept>, excludeSchemas: ['staging'] })\n</example>\n\n<example>\nUser: 'all upstream, one downstream, and trace TotalRevenue'\nCall: lineage_start_exploration({ origin: <kept>, direction: 'bidirectional', upstream_depth: <computed_upstream_depth>, downstream_depth: 1, targetColumns: ['TotalRevenue'] })\n</example>\n</examples>",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -955,7 +961,15 @@
             },
             "depth": {
               "type": "number",
-              "description": "Initial BFS depth from origin (default 5)."
+              "description": "Symmetric BFS depth from origin (default 5). Overridden per-direction by upstream_depth / downstream_depth when those are provided."
+            },
+            "upstream_depth": {
+              "type": "number",
+              "description": "Optional. BFS depth for upstream (inbound/input) traversal. Overrides 'depth' for the upstream direction when direction='bidirectional'. Use when the user requests asymmetric levels, e.g. 'all upstream, 2 downstream'."
+            },
+            "downstream_depth": {
+              "type": "number",
+              "description": "Optional. BFS depth for downstream (outbound/output) traversal. Overrides 'depth' for the downstream direction when direction='bidirectional'. Use when the user requests asymmetric levels."
             },
             "depth_enforcement": {
               "type": "string",
@@ -1013,14 +1027,6 @@
               },
               "description": "Optional. Node ids to keep in scope but auto-pass — engine emits verdict:'pass' so no analysis is written, topology preserved so descendants stay reachable. Default interpretation when the user says 'ignore/skip/don't analyze X'. REPLACE semantics."
             },
-            "forceMode": {
-              "type": "string",
-              "enum": [
-                "inline",
-                "sm"
-              ],
-              "description": "Optional. Override the inline-vs-SM mode heuristic. Use only when the user explicitly says 'do this inline' or 'force sliding memory'. After the gate is approved, the chosen mode locks in."
-            },
             "classification": {
               "type": "string",
               "enum": [
@@ -1032,7 +1038,7 @@
             },
             "supplement": {
               "type": "object",
-              "description": "Post-synthesis supplement. Supply only in the follow-up phase to extend the existing archive with additional ids. When present, `origin` may be omitted. Runs the existing engine one-shot in inline mode; new slots merge into the archive.",
+              "description": "Post-synthesis supplement. Supply only in the follow-up phase to extend the existing archive with additional ids. When present, `origin` may be omitted. Runs through the SM hop loop; new slots merge into the existing archive.",
               "properties": {
                 "nodeIds": {
                   "type": "array",
@@ -1061,7 +1067,7 @@
         "when": "dataLineageViz.modelLoaded",
         "displayName": "Submit Findings",
         "userDescription": "Submit analysis of the current node and propose next routes in the exploration.",
-        "modelDescription": "Submits analysis for the current focus node and requests the next hop's data. The `sections` array carries one captured section per fired *_capture template — `business` classification → 1 business section; `technical` → 1 technical; `both` → 2 sections (one of each). The locked classification is enforced mechanically; mismatches are rejected with a structured hint.",
+        "modelDescription": "Submits analysis for the current focus node and requests the next hop's data. The `sections` array carries one captured section per fired *_capture template — `business` classification → 1 business section; `technical` → 1 technical; `both` → 2 sections (one of each). Dispatch is mode-specific: BB accepts prune semantics, CT requires `column_flow` and forbids BB prune fields.",
         "tags": [
           "lineage",
           "lineage-engine"
@@ -1110,7 +1116,7 @@
                 "pass",
                 "prune"
               ],
-              "description": "Action for focus node: 'analyze' (store findings), 'pass' (mark visited, wire-only), or 'prune' (block branch — for utility/logging nodes or any node outside the mission scope)."
+              "description": "Action for focus node: 'analyze' (store findings), 'pass' (mark visited, wire-only), or 'prune' (BB mode only). CT mode accepts only analyze/pass and rejects prune with ct_verdict_forbidden."
             },
             "route_requests": {
               "type": "array",
@@ -1138,24 +1144,61 @@
                   "question"
                 ]
               },
-              "description": "Routing requests for next hops. Every `nodeId` must already exist in the loaded model (verified against a prior tool result or via `lineage_search_objects`); unresolved ids are rejected and do not enter the agenda."
+              "description": "Current-hop neighbor route requests. Use concrete verification sub-questions; out-of-scope mission-relevant routes are deferred for post-synthesis follow-up."
             },
             "prune_neighbors": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "Neighbor node IDs to aggressively prune from the agenda."
+              "description": "Current-hop neighbor IDs to prune from exploration (BB only). CT mode rejects this field with bb_field_forbidden_in_ct."
+            },
+            "column_flow": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "out_col": {
+                    "type": "string",
+                    "description": "Tracked output column on the current focus node."
+                  },
+                  "writes_to": {
+                    "type": "object",
+                    "properties": {
+                      "node": { "type": "string" },
+                      "col": { "type": "string" }
+                    },
+                    "required": ["node", "col"]
+                  },
+                  "contributors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "from_node": { "type": "string" },
+                        "from_col": { "type": "string" },
+                        "role": {
+                          "type": "string",
+                          "enum": ["formula", "rename", "case", "coalesce", "join_value", "aggregate", "filter_only", "source"]
+                        }
+                      },
+                      "required": ["from_node", "from_col", "role"]
+                    }
+                  }
+                },
+                "required": ["out_col", "contributors"]
+              },
+              "description": "CT mode only. Required in CT for every hop (`[]` means no tracked interaction). BB mode rejects this field with bb_field_unknown."
             },
             "badge_label": {
               "type": "string",
-              "maxLength": 30,
-              "description": "Short semantic role (2-4 words) for node badge (e.g. 'Source', 'Transformation')."
+              "maxLength": 50,
+              "description": "Optional hop helper label; advisory only, not rendered directly."
             },
             "note_caption": {
               "type": "string",
               "maxLength": 200,
-              "description": "One-line technical reasoning caption shown on the node."
+              "description": "Optional AI-authored one-sentence preview for this node."
             }
           },
           "required": [
@@ -1176,17 +1219,11 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/repeat-reject-guard.test.ts && tsx tests/unit/sm-robustness.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts && tsx tests/unit/transient-retry.test.ts && tsx tests/unit/column-flow-validation.test.ts && tsx tests/unit/toolPolicy.test.ts",
+    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/schemaColors.test.ts && tsx tests/unit/repeat-reject-guard.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts && tsx tests/unit/followup-confirmation.test.ts && tsx tests/unit/transient-retry.test.ts && tsx tests/unit/column-flow-validation.test.ts && tsx tests/unit/submit-findings-schema.test.ts && tsx tests/unit/toolPolicy.test.ts && tsx tests/unit/prompt-composition.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts && tsx tests/unit/navigation-engine-synthesis-regression.test.ts && tsx tests/unit/present-result-closure.test.ts && tsx tests/unit/log-normalization.test.ts && tsx tests/unit/ai-preview-rendering.test.ts",
     "test:unit": "npm run test",
-    "test:unit:ai": "tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts",
-    "test:dacpac": "tsx tests/unit/dacpacExtractor.test.ts",
-    "test:graph": "tsx tests/unit/graphBuilder.test.ts",
-    "test:parser": "tsx tests/unit/parser-edge-cases.test.ts",
-    "test:analysis": "tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts",
-    "test:dmv": "tsx tests/unit/dmvExtractor.test.ts",
-    "test:sql": "tsx tests/unit/tsql-complex.test.ts",
-    "test:project": "tsx tests/unit/projectStore.test.ts",
-    "test:integration": "tsx tests/integration/integration-db.test.ts",
+    "test:parser": "tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/tsql-complex.test.ts",
+    "test:graph": "tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/graphAnalysis.test.ts",
+    "test:baseline": "tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/graph-analysis-aw.test.ts",
     "test:hooks": "vitest run --config vitest.config.ts",
     "test:snapshot": "tsx tests/unit/snapshot-aw-baseline.ts",
     "test:snapshot:update": "tsx tests/unit/snapshot-aw-baseline.ts --update",
@@ -1205,30 +1242,28 @@
     "graphology-types": "^0.24.8",
     "js-yaml": "^4.1.0",
     "jszip": "^3.10.1",
+      "katex": "^0.16.46",
     "monaco-editor": "^0.53.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-markdown": "^10.1.0",
-    "rehype-katex": "^7.0.1",
-    "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
+      "react": "^19.0.0",
+      "react-dom": "^19.0.0",
+      "react-markdown": "^10.1.0",
+      "rehype-katex": "^7.0.1",
+      "remark-math": "^6.0.0",
+      "remark-gfm": "^4.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4.0.9",
     "@types/jsdom": "^28.0.1",
-    "@types/mssql": "^9",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.95.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.20",
-    "dotenv": "^16",
     "esbuild": "^0.25.0",
     "jsdom": "^29.0.1",
-    "mssql": "^11",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
@@ -1237,6 +1272,7 @@
     "vitest": "^3.2.4"
   },
   "overrides": {
+    "fast-xml-builder": "^1.1.7",
     "dompurify": "^3.4.1",
     "serialize-javascript": "^7.0.5",
     "picomatch": "4.0.4"

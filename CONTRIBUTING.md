@@ -20,12 +20,18 @@ This project prioritizes stability, logical accuracy, and high-performance SQL p
 ## 3. Testing Protocol
 All changes must pass the full test suite before submission.
 
+The high-priority regression net is **parsing, BFS, and baseline**. Other tests are narrower guards.
+
 | Tier | Command | Scope |
 | :--- | :--- | :--- |
-| **Unit** | `npm run test:unit` | Parsing, graph building, and core logic. |
-| **AI** | `npm run test:unit:ai` | State machine, memory management, and tool registration. |
-| **Snapshot** | `npm run test:snapshot` | Validates parsing against the AdventureWorks baseline. |
-| **Integration** | `npm run test:integration` | Live SQL Server connection tests (requires `.env` setup). |
+| **Unit** | `npm run test:unit` | All `tests/unit/*.test.ts` — parser, graph, baseline, NavigationEngine + cascade + bipartite + supplement, boundary guards. |
+| **Parsing** | `npm run test:parser` | SQL parser edge cases + 55 real-world SQL fixtures. |
+| **Graph / BFS** | `npm run test:graph` | Graph construction, BFS, analysis algorithms. |
+| **Baseline** | `npm run test:baseline` | Parser TSV + graph-analysis JSON regression net. |
+| **Snapshot** | `npm run test:snapshot` | Parser baseline only (refresh: `:update`). |
+| **Hooks** | `npm run test:hooks` | React hooks (vitest jsdom). |
+
+AI behaviour beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT baseline captures (`tmp/baseline/`), not unit tests.
 
 ### Parser Snapshots
 If you modify `assets/defaultParseRules.yaml`, you must update the baseline:

@@ -1,7 +1,7 @@
 /**
  * Snapshot-based baseline test for graph analysis on AdventureWorks2025_AI.dacpac.
  * COMPARES AGAINST: tests/fixtures/graph-baseline-aw.json (Verified with NetworkX)
- * 
+ *
  * Execute with: npx tsx tests/unit/graph-analysis-aw.test.ts
  */
 
@@ -18,7 +18,7 @@ import {
 import { buildGraph, traceNode } from '../../src/engine/graphBuilder';
 import { filterBySchemas } from '../../src/engine/dacpacExtractor';
 import { applyExclusionFilter, applyIsolationFilter } from '../../src/engine/modelFilters';
-import { bfsReachable } from '../../src/ai/smGuards';
+import { bfsReachable } from '../../src/ai/sm/smGuards';
 import { assert, assertEq, loadAdventureWorksModel, printSummary } from './helpers/testUtils';
 import { bidirectional } from 'graphology-shortest-path';
 

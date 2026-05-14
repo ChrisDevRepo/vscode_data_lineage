@@ -25,68 +25,185 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
 };
 
 /**
- * Primary color palette for light themes, based on Tableau 10.
- * Provides high-contrast, vibrant colors for distinct schema identification.
+ * 15-entry categorical color palette for light themes.
+ * Colors 1–10 are saturated base hues; colors 11–15 are lighter variants
+ * for Orange, Green, Pink, Brown, and Gray.
  */
 export const SCHEMA_COLORS_LIGHT = [
-  '#4E79A7', // Tableau Blue
-  '#F28E2B', // Tableau Orange
-  '#E15759', // Tableau Red
-  '#76B7B2', // Tableau Teal
-  '#59A14F', // Tableau Green
-  '#EDC948', // Tableau Yellow
-  '#B07AA1', // Tableau Purple
-  '#FF9DA7', // Tableau Pink
-  '#9C755F', // Tableau Brown
-  '#BAB0AC', // Tableau Gray
+  '#4E79A7', // 1  Blue
+  '#F28E2B', // 2  Orange
+  '#E15759', // 3  Red
+  '#76B7B2', // 4  Teal
+  '#59A14F', // 5  Green
+  '#EDC948', // 6  Yellow
+  '#B07AA1', // 7  Purple
+  '#FF9DA7', // 8  Pink
+  '#9C755F', // 9  Brown
+  '#BAB0AC', // 10 Gray
+  '#FFBE7D', // 11 Light Orange
+  '#8CD17D', // 12 Light Green
+  '#FABFD2', // 13 Light Pink
+  '#D7B5A6', // 14 Light Brown
+  '#CECCCA', // 15 Light Gray
 ];
 
 /**
- * Primary color palette for dark themes.
- * Uses lightened and desaturated variants of the Tableau 10 palette
- * to maintain visibility and accessibility on dark backgrounds.
+ * 15-entry categorical color palette for dark themes.
+ * Colors 1–10 are brightened base hues; colors 11–15 are lighter variants
+ * for Orange, Green, Pink, Brown, and Gray at L ≥ 72%.
+ * Blue, Red, Teal, Yellow, and Purple lighter variants are excluded — their
+ * dark-mode versions are indistinguishable from the base hues at these luminance levels.
  */
 const SCHEMA_COLORS_DARK = [
-  '#8AB8E6', // Lighter Blue
-  '#FFAD5C', // Lighter Orange
-  '#FF8A8C', // Lighter Red
-  '#A1D6D1', // Lighter Teal
-  '#88C580', // Lighter Green
-  '#F7E589', // Lighter Yellow
-  '#D4A8C7', // Lighter Purple
-  '#FFC2C9', // Lighter Pink
-  '#C39B82', // Lighter Brown
-  '#D9D2CE', // Lighter Gray
+  '#8AB8E6', // 1  Blue
+  '#FFAD5C', // 2  Orange
+  '#FF8A8C', // 3  Red
+  '#A1D6D1', // 4  Teal
+  '#88C580', // 5  Green
+  '#F7E589', // 6  Yellow
+  '#D4A8C7', // 7  Purple
+  '#FFC2C9', // 8  Pink
+  '#C39B82', // 9  Brown
+  '#D9D2CE', // 10 Gray
+  '#FFBE7D', // 11 Light Orange (L=74%)
+  '#A8DFA0', // 12 Light Green  (L=74%)
+  '#FABFD2', // 13 Light Pink   (L=83%)
+  '#D7B5A6', // 14 Light Brown  (L=74%)
+  '#CECCCA', // 15 Light Gray   (L=80%)
 ];
 
 /**
  * Generates a deterministic 32-bit integer hash for a given string.
  * This ensures that the same schema name always resolves to the same color index.
- * 
+ *
  * @param str - The input string to hash.
  * @returns A deterministic hash value.
  */
 export function hashString(str: string): number {
-  let hash = 0;
+  let hash = 2166136261; // FNV-1a offset basis
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619); // FNV prime
+    hash >>>= 0;
   }
-  return hash;
+  return mix32(hash);
+}
+
+// Shifts the lightness of a hex color by `delta` percentage points.
+function shiftL(hex: string, delta: number): string {
+  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h = 0, s = 0; const l = (max+min)/2;
+  if (max !== min) {
+    const d = max-min; s = l>0.5 ? d/(2-max-min) : d/(max+min);
+    if (max===r) h=((g-b)/d+(g<b?6:0))/6;
+    else if (max===g) h=((b-r)/d+2)/6;
+    else h=((r-g)/d+4)/6;
+  }
+  const nl = Math.max(0.08, Math.min(0.92, l+delta/100));
+  const q = nl<0.5 ? nl*(1+s) : nl+s-nl*s, p = 2*nl-q;
+  const c = (t: number) => { if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
+  return '#'+[h+1/3,h,h-1/3].map(t=>Math.round(c(t)*255).toString(16).padStart(2,'0')).join('');
+}
+
+// 30-slot palettes: base 15 + 15 lightness-shifted variants, computed once at module load.
+const SCHEMA_COLORS_LIGHT_EXT = [
+  ...SCHEMA_COLORS_LIGHT,
+  ...SCHEMA_COLORS_LIGHT.map(c => shiftL(c, 14)),
+];
+const SCHEMA_COLORS_DARK_EXT = [
+  ...SCHEMA_COLORS_DARK,
+  ...SCHEMA_COLORS_DARK.map(c => shiftL(c, -12)),
+];
+
+export type SchemaColorMap = Map<string, string>;
+
+function requireSchemaName(schema: string): string {
+  const normalized = schema.trim();
+  if (!normalized) {
+    throw new Error('Schema color assignment requires a non-empty schema name');
+  }
+  return normalized;
+}
+
+function getSchemaPalette(forceLight?: boolean): string[] {
+  return (!forceLight && isDarkTheme()) ? SCHEMA_COLORS_DARK_EXT : SCHEMA_COLORS_LIGHT_EXT;
+}
+
+function mix32(hash: number): number {
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b) >>> 0;
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35) >>> 0;
+  hash ^= hash >>> 16;
+  return hash >>> 0;
 }
 
 /**
  * Retrieves a deterministic theme-aware color for a given SQL schema.
- * 
+ * Hashes the schema name (FNV-1a) into a 30-slot palette — the base 15 colors
+ * plus 15 lightness-shifted variants. The same schema name always produces the
+ * same color regardless of how many other schemas are loaded.
+ *
  * @param schema - The schema name.
  * @param forceLight - If true, ignores the current theme and returns the light variant.
  * @returns A CSS hex color string.
  */
 export function getSchemaColor(schema: string, forceLight?: boolean): string {
-  const colors = forceLight || !isDarkTheme() ? SCHEMA_COLORS_LIGHT : SCHEMA_COLORS_DARK;
-  const idx = Math.abs(hashString(schemaKey(schema))) % colors.length;
-  return colors[idx];
+  const palette = getSchemaPalette(forceLight);
+  return palette[getSchemaColorIndex(schema, palette.length)];
+}
+
+/**
+ * Computes the stable preferred palette slot for a schema.
+ * The final avalanche improves distribution before reducing to the small palette.
+ */
+export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_EXT.length): number {
+  return hashString(schemaKey(requireSchemaName(schema))) % paletteSize;
+}
+
+/**
+ * Builds a deterministic loaded-set color map keyed by normalized schema name.
+ * Collisions are spread across free palette slots before any color is reused.
+ */
+export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean): SchemaColorMap {
+  const palette = getSchemaPalette(forceLight);
+  const schemaKeys = Array.from(new Set(schemas.map(s => schemaKey(requireSchemaName(s))))).sort();
+  const slotCount = schemaKeys.length <= SCHEMA_COLORS_LIGHT.length ? SCHEMA_COLORS_LIGHT.length : palette.length;
+  const slotUse = new Array<number>(slotCount).fill(0);
+  const map: SchemaColorMap = new Map();
+
+  for (const key of schemaKeys) {
+    const hash = hashString(key);
+    const preferred = hash % slotCount;
+    const step = [1, 7, 11, 13, 17, 19, 23, 29][(hash >>> 8) % 8];
+    let selected = preferred;
+
+    for (let attempt = 0; attempt < slotCount; attempt++) {
+      const candidate = (preferred + attempt * step) % slotCount;
+      if (slotUse[candidate] === 0) {
+        selected = candidate;
+        break;
+      }
+      if (slotUse[candidate] < slotUse[selected]) {
+        selected = candidate;
+      }
+    }
+
+    slotUse[selected]++;
+    map.set(key, palette[selected]);
+  }
+
+  return map;
+}
+
+export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap): string {
+  const key = schemaKey(requireSchemaName(schema));
+  const color = colorMap.get(key);
+  if (!color) {
+    throw new Error(`No schema color assigned for "${schema}"`);
+  }
+  return color;
 }
 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
@@ -127,9 +244,9 @@ export const AI_ROLE_TO_COLOR: Record<string, string> = {
   gy: 'gy',
 };
 
-/** 
+/**
  * Resolves a semantic AI role or a raw color code to a standard two-letter color code.
- * 
+ *
  * @param role - The semantic role (e.g., 'source', 'target') or a color code.
  * @returns A valid two-letter color code, defaulting to 'gy' (gray).
  */
@@ -150,10 +267,10 @@ export const AI_COLOR_GLOW: Record<string, { glow: string; shadow: string }> = {
   gy: { glow: 'var(--ln-ai-gy-glow)', shadow: 'var(--ln-ai-gy-shadow)' },
 };
 
-/** 
+/**
  * Detects if the VS Code environment is currently using a dark or high-contrast theme.
  * This is determined by inspecting the `data-vscode-theme-kind` attribute on the document body.
- * 
+ *
  * @returns `true` if a dark theme is active; otherwise `false`.
  */
 export function isDarkTheme(): boolean {

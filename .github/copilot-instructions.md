@@ -36,11 +36,38 @@ A VS Code extension for visualizing SQL dependencies. Key technologies:
 
 ## Testing & Verification
 
-- **Snapshot Testing**: Any change to `assets/defaultParseRules.yaml` requires `npm run test:snapshot`. Zero lost dependencies allowed.
+The regression net rests on three high-priority categories — **parsing, BFS/graph, baseline**. Other tests are narrower guards (Zod boundaries, tool policy, idempotency, classifiers); add to them only when an invariant they protect changes.
+
+- **Snapshot testing**: Any change to `assets/defaultParseRules.yaml` requires `npm run test:snapshot`. Zero lost dependencies allowed.
 - **Tiers**:
-  - `npm run test:unit`: Core logic.
-  - `npm run test:unit:ai`: AI state machine and memory management.
-  - `npm run test:integration`: Live DB connections (requires `.env`).
+  - `npm test` — full unit suite (parser, graph, baseline, NavigationEngine + cascade + bipartite + supplement, boundary guards).
+  - `npm run test:parser` — SQL parser edge cases + 55 real-world SQL fixtures.
+  - `npm run test:graph` — graph construction, BFS, analysis algorithms.
+  - `npm run test:baseline` — parser TSV + graph-analysis JSON regression net.
+  - `npm run test:hooks` — React hooks (vitest jsdom).
+- **AI quality** beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT baseline captures (`tmp/baseline/`), not unit tests — there is no in-process LM to assert against.
+
+## Dev: LM Traffic Tracer
+
+`src/ai/infra/lmTracer.ts` is a **built-in observability tool** — not part of the extension API. It is an internal developer backdoor for testing only, controlled by a hardcoded code flag. It is not removed after use.
+
+It captures every `vscode.lm.sendRequest` call (messages, tool calls, results, wipes, token counts) as NDJSON to `tmp/lm-trace/` for post-session analysis. Trace files are gitignored.
+
+**Enable (test/dev only):** set the hardcoded trace flag to `true` in code, rebuild/run the extension, then run a `@lineage` chat session. Disable it again before production packaging. Do not add a VS Code setting or command for this toggle.
+
+**Analyse (manual workflow — run in terminal):**
+```
+node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson \
+  --summary --phase --patterns --rejected --loops --wipes \
+  --waste --tools --growth --tool-bloat --detail-metrics --ct
+```
+
+**Generate performance baseline:**
+```
+node tests/tools/generate-ideal.js assets/demo.dacpac
+```
+
+Full flag reference, journal workflow, and ideal-vs-actual comparison: see the **LM traffic tracer** section in [`docs/DEVELOPER_GUIDE.md`](../docs/DEVELOPER_GUIDE.md).
 
 ## Guidelines for AI Generation
 - **Logic**: Use explicit composition and delegation over complex inheritance.

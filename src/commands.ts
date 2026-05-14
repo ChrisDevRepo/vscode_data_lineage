@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { z } from 'zod';
-import { type AiSession } from './ai/session';
-import { DeferredQuestionSchema } from './ai/smTypes';
-import { buildDeferredQuestionsPrompt } from './ai/prompts';
+import { type AiSession } from './ai/session/session';
+import { DeferredQuestionSchema } from './ai/sm/smTypes';
+import { buildDeferredQuestionsPrompt } from './ai/prompting/prompts';
 import { getActivePanel } from './panelProvider';
 import { Logger } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
@@ -21,20 +21,20 @@ const DeferredQuestionArgSchema = z.array(DeferredQuestionSchema).min(1);
 
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
- * 
+ *
  * This includes commands for:
  * - Opening the primary lineage panel (wizard or demo).
  * - Project management (loading, saving, deleting).
  * - Configuration scaffolding (creating YAML templates).
  * - AI integration (view creation, state dumping).
  * - UI controls (overview mode toggle, object search).
- * 
+ *
  * @param context - The extension context.
  * @param getSession - Factory to retrieve the active AI session.
  * @param outputChannel - Log channel for reporting command execution and errors.
  * @param openPanel - Function to open the primary lineage webview.
  * @param buildDebugDump - Function to generate diagnostic information.
- * 
+ *
  * @returns An array of disposables representing the registered commands.
  */
 export function registerCommands(
@@ -51,8 +51,8 @@ export function registerCommands(
     // --- Primary Entry Points ---
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
-    
-    /** 
+
+    /**
      * Programmatic entry point for automated testing or deep-linking.
      * Loads a specific project by its ID.
      */
@@ -81,7 +81,7 @@ export function registerCommands(
       }
     }),
 
-    /** 
+    /**
      * Dumps the current AI State Machine (SM) state to a JSON file in the workspace.
      * Used for debugging deep-trace behavior and non-deterministic AI failures.
      */
@@ -149,11 +149,18 @@ export function registerCommands(
         // If it was never sent (present_result errored/skipped) or the webview lost state,
         // reveal alone would show a stale/empty panel.
         const rg = sess.resultGraph;
-        const badges = (rg.suggested_labels ?? []).map(l => ({ nodeId: l.node_id, text: l.text }));
+        const labelToNumber = new Map<string, number>();
+        const badges = (rg.sections ?? []).flatMap((section, index) => {
+          const label = section.label.replace(/^\d+[\.]?\s+/, '').trim();
+          if (!label) return [];
+          if (!labelToNumber.has(label)) labelToNumber.set(label, index + 1);
+          const n = labelToNumber.get(label)!;
+          return (section.node_ids ?? []).map(nodeId => ({ nodeId, text: `${n} ${label}` }));
+        });
         const notes = (rg.notes ?? [])
           .filter(n => n.summary)
           .map(n => ({ nodeId: n.nodeId, text: n.summary }));
-        const name = (originalPrompt || 'AI Lineage View').length > 200 
+        const name = (originalPrompt || 'AI Lineage View').length > 200
           ? (originalPrompt || 'AI Lineage View').slice(0, 200) + '\u2026'
           : (originalPrompt || 'AI Lineage View');
         panel.webview.postMessage({
@@ -230,17 +237,7 @@ export function registerCommands(
       });
     }),
 
-    // --- UI Controls ---
-    vscode.commands.registerCommand('dataLineageViz.toggleOverviewMode', () => {
-      const panel = getActivePanel();
-      if (!panel) {
-        vscode.window.showWarningMessage('Data Lineage: Open a graph first to toggle overview mode.');
-        return;
-      }
-      panel.webview.postMessage({ type: 'toggle-overview' });
-    }),
-
-    /** 
+    /**
      * Launches a Quick Pick search interface for all SQL objects in the current model.
      */
     vscode.commands.registerCommand('dataLineageViz.searchObjects', async () => {
@@ -269,14 +266,14 @@ export function registerCommands(
       qp.show();
     }),
 
-    /** 
+    /**
      * Command intended for testing/integration that forces a .dacpac file load into the active session.
      */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
       configLogger.info(`Forcing project load from: ${uri.fsPath}`);
       try {
         const { extractDacpac } = await import('./engine/dacpacExtractor');
-        const { buildBareGraph } = await import('./ai/graphUtils');
+        const { buildBareGraph } = await import('./ai/infra/graphUtils');
 
         const buffer = await vscode.workspace.fs.readFile(uri);
         const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
@@ -298,7 +295,7 @@ export function registerCommands(
 
 /**
  * Creates a YAML configuration file in the workspace root by copying a template from the extension assets.
- * 
+ *
  * @param context - The extension context.
  * @param fileName - The name of the file to create in the workspace.
  * @param sourceAsset - The name of the template file in the extension's `assets/` folder.
