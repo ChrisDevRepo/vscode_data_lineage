@@ -2,6 +2,9 @@
 
 ## [1.0.1] - 2026-05-20
 
+### Added
+- **Detail Search: scope dimming.** Results from schemas/nodes outside the active filter now render dimmed with a ⊘ "Not in current view" separator, consistent with Quick Jump.
+
 ### Fixed
 - SM BB-mode: `bb_field_unknown` guard now fires before Zod parsing; corrective injection includes a BB-mode reminder so the AI does not resubmit `column_flow` after a forced bounded wipe
 - SM route validation: `route_validation_failed` hint now identifies graph-absent nodes explicitly, preventing casing-variant retry loops that exhaust the 3-error budget
