@@ -6,8 +6,8 @@ Post-session diagnostic scripts for `src/ai/infra/lmTracer.ts`. These tools anal
 
 ## Prerequisites
 
-1. Set `ENABLED = true` at the top of [`src/ai/infra/lmTracer.ts`](../../src/ai/infra/lmTracer.ts) (disabled by default).
-2. Rebuild the extension and run a `@lineage` chat session.
+1. Run the **Data Lineage: Enable AI Trace Logging for This Session** command (`dataLineageViz.enableAiTraceLogging`) — the tracer ([`src/ai/infra/lmTracer.ts`](../../src/ai/infra/lmTracer.ts)) is off by default and the toggle is in-memory (resets on reload).
+2. Run a `@lineage` chat session.
 3. The trace file appears at `tmp/lm-trace/trace-{iso}.ndjson` (gitignored).
 
 ## trace-analyze.js
