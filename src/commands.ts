@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { type AiSession } from './ai/session/session';
 import { DeferredQuestionSchema } from './ai/sm/smTypes';
 import { buildDeferredQuestionsPrompt } from './ai/prompting/prompts';
+import { LmTracer } from './ai/infra/lmTracer';
 import { getActivePanel } from './panelProvider';
 import { Logger } from './utils/log';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
@@ -79,6 +80,18 @@ export function registerCommands(
         configLogger.error('Copy debug info', err);
         vscode.window.showErrorMessage('Data Lineage: Failed to copy debug info.');
       }
+    }),
+
+    vscode.commands.registerCommand('dataLineageViz.enableAiTraceLogging', () => {
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
+      const tracePath = LmTracer.enable(workspaceRoot);
+      if (!tracePath) {
+        configLogger.warn('AI trace logging could not be enabled: failed to prepare tmp/lm-trace');
+        vscode.window.showErrorMessage('Data Lineage: Failed to enable AI trace logging.');
+        return;
+      }
+      configLogger.info(`AI trace logging enabled for this VS Code session: ${tracePath}`);
+      vscode.window.showInformationMessage(`Data Lineage: AI trace logging enabled for this session. Writing to ${tracePath}`);
     }),
 
     /**

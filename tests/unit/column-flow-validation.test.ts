@@ -134,7 +134,7 @@ function ctEngine(targetColumns = ['amount']) {
   assert('error' in result && result.error === 'ct_prune_forbidden', 'CT rejects prune_neighbors');
 }
 
-// ── Test 4: out_col not in active_columns → route_validation_failed ──
+// ── Test 4: out_col not in active_columns → out_col_not_on_node (guided order + valid set) ──
 {
   const engine = ctEngine(['amount']); // active = ['amount']
   const result = engine.submitFindings({
@@ -144,15 +144,18 @@ function ctEngine(targetColumns = ['amount']) {
     verdict: 'analyze',
     column_flow: [{ out_col: 'wrong_col', contributors: [] }],
   });
-  assert('error' in result && result.error === 'route_validation_failed', 'out_col not in active_columns → route_validation_failed');
-  if ('error' in result && 'detail' in result) {
-    const detail = JSON.stringify(result.detail);
-    assert(detail.includes('column_flow_invalid'), 'detail contains column_flow_invalid');
+  assert('error' in result && result.error === 'out_col_not_on_node', 'out_col not active → out_col_not_on_node');
+  if ('error' in result) {
+    const hint = result.hint ?? '';
+    assert(/declare column_flow only for an active tracked column/i.test(hint), 'hint is a verb-led order');
+    assert(!/\bdo not\b|\bnever\b|\bdon't\b/i.test(hint), 'hint avoids negative framing');
+    const detail = JSON.stringify('detail' in result ? result.detail : '');
     assert(detail.includes('wrong_col'), 'detail names the offending out_col');
+    assert(detail.includes('amount'), 'detail lists the valid active column as data');
   }
 }
 
-// ── Test 5: out_col in active_columns but not on focus node → route_validation_failed ──
+// ── Test 5: out_col active but not on focus node → out_col_not_on_node (lists node columns) ──
 {
   // init with a column NOT in origin_view.columns
   const engine = ctEngine(['missing_col']);
@@ -163,14 +166,18 @@ function ctEngine(targetColumns = ['amount']) {
     verdict: 'analyze',
     column_flow: [{ out_col: 'missing_col', contributors: [] }],
   });
-  assert('error' in result && result.error === 'route_validation_failed', 'out_col not on node → route_validation_failed');
-  if ('error' in result && 'detail' in result) {
-    const detail = JSON.stringify(result.detail);
-    assert(detail.includes('column_flow_validation_failed'), 'detail contains column_flow_validation_failed');
+  assert('error' in result && result.error === 'out_col_not_on_node', 'out_col not on node → out_col_not_on_node');
+  if ('error' in result) {
+    const detail = JSON.stringify('detail' in result ? result.detail : '');
+    assert(detail.includes('missing_col'), 'detail names the offending out_col');
+    assert(detail.includes('amount') && detail.includes('region'), 'detail lists the focus node columns as data');
   }
 }
 
-// ── Test 6: contributor from_node not in graph → route_validation_failed ──
+// ── Test 6: contributor from_node absent from model → drop-with-notice (Finding 3) ──
+// An unresolvable contributor is no longer a hard reject (which burned the error budget and
+// stalled the session). The engine records it as an unresolved reference and the hop proceeds;
+// no dangling edge is staged for the absent node.
 {
   const engine = ctEngine(['amount']);
   const result = engine.submitFindings({
@@ -183,14 +190,12 @@ function ctEngine(targetColumns = ['amount']) {
       contributors: [{ from_node: 'nonexistent_table', from_col: 'any_col', role: 'formula' as const }],
     }],
   });
-  assert('error' in result && result.error === 'route_validation_failed', 'from_node not in graph → route_validation_failed');
-  if ('error' in result) {
-    const ids = 'unresolved_route_target_ids' in result ? result.unresolved_route_target_ids : undefined;
-    assert(Array.isArray(ids) && ids.includes('nonexistent_table'), 'unresolved_route_target_ids includes nonexistent_table');
-  }
+  assert('ok' in result && result.ok === true, 'absent contributor → hop proceeds (drop-with-notice, not route_validation_failed)');
+  const edges = engine.columnAspect?.edges ?? [];
+  assert(edges.length === 0, 'no dangling edge staged for the unresolved contributor');
 }
 
-// ── Test 7: contributor from_col not on from_node → route_validation_failed ──
+// ── Test 7: contributor from_col not on source → contributor_col_not_on_source (lists columns) ──
 {
   const engine = ctEngine(['amount']);
   // base_table only has 'raw_amount' — 'wrong_col' does not exist
@@ -204,10 +209,12 @@ function ctEngine(targetColumns = ['amount']) {
       contributors: [{ from_node: 'base_table', from_col: 'wrong_col', role: 'formula' as const }],
     }],
   });
-  assert('error' in result && result.error === 'route_validation_failed', 'from_col not on from_node → route_validation_failed');
-  if ('error' in result && 'detail' in result) {
-    const detail = JSON.stringify(result.detail);
-    assert(detail.includes('column_flow_validation_failed'), 'detail contains column_flow_validation_failed for from_col');
+  assert('error' in result && result.error === 'contributor_col_not_on_source', 'from_col not on source → contributor_col_not_on_source');
+  if ('error' in result) {
+    const hint = result.hint ?? '';
+    assert(/set from_col to a column the source provides/i.test(hint), 'hint is a verb-led order');
+    const detail = JSON.stringify('detail' in result ? result.detail : '');
+    assert(detail.includes('raw_amount'), 'detail lists the valid source column as data');
   }
 }
 

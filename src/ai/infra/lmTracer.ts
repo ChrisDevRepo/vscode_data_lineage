@@ -4,7 +4,7 @@
  * @internal
  * @remarks
  * Development observability tool — not part of the extension's public API and never
- * active in release builds unless explicitly enabled via configuration.
+ * active unless explicitly enabled for the current VS Code session.
  *
  * Captures the full traffic of every `vscode.lm.sendRequest` call as NDJSON to
  * `tmp/lm-trace/trace-{iso}.ndjson` for post-session diagnostic analysis:
@@ -12,8 +12,8 @@
  * response quality metrics.
  *
  * Lifecycle:
- * - enabled=true  → trace file is created on {@link LmTracer.init}, all events written.
- * - enabled=false → every method is a no-op; no file is created (default).
+ * - {@link LmTracer.enable} → trace file is created, all later events are written.
+ * - default/off            → every method is a no-op; no file is created.
  *
  * Analyse a captured trace:
  * ```
@@ -52,17 +52,36 @@ export class LmTracer {
    * @param enabled - explicit runtime toggle (false by default)
    */
   static init(workspaceRoot: string, enabled: boolean): void {
-    this.enabledFlag = enabled;
-    if (!this.enabledFlag) return;
+    this.enabledFlag = false;
+    this.filePath = null;
+    if (!enabled) return;
+    this.enable(workspaceRoot);
+  }
+
+  /**
+   * Enables tracing for the current extension-host session.
+   *
+   * @returns The trace file path when enabled, otherwise `null` if the file could not be prepared.
+   */
+  static enable(workspaceRoot: string): string | null {
     const dir = path.join(workspaceRoot, 'tmp', 'lm-trace');
     try {
       fs.mkdirSync(dir, { recursive: true });
     } catch {
       // If the directory can't be created, all writes will silently no-op.
-      return;
+      this.enabledFlag = false;
+      this.filePath = null;
+      return null;
     }
     const iso = new Date().toISOString().replace(/[:.]/g, '-');
     this.filePath = path.join(dir, `trace-${iso}.ndjson`);
+    this.enabledFlag = true;
+    return this.filePath;
+  }
+
+  /** True when trace logging is enabled for this extension-host session. */
+  static isEnabled(): boolean {
+    return this.enabledFlag;
   }
 
   /** Serializes a VS Code LM message array to a plain JSON-safe structure. */

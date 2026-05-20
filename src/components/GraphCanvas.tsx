@@ -1003,6 +1003,7 @@ export function GraphCanvas({
                         bodyScript: modelNodeMap.get(n.id)?.bodyScript,
                         columns: modelNodeMap.get(n.id)?.columns,
                       }))}
+                      visibleNodeIds={visibleNodeIds}
                       onResultClick={(nodeId, searchTerm) => {
                         if (graphMode === 'overview') {
                           const node = model?.nodes.find(n => n.id === nodeId);

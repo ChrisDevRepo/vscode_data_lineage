@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.1] - 2026-05-20
+
+### Added
+- **Detail Search: scope dimming.** Results from schemas/nodes outside the active filter now render dimmed with a ⊘ "Not in current view" separator, consistent with Quick Jump.
+- **AI preview descriptions** can now be maximized and resized for easier reading.
+
+### Fixed
+- **AI lineage tracing no longer stalls.** When the assistant references an object or column that isn't in the loaded model, it now notes it and moves on — instead of retrying until it gave up with a half-finished ("partial") trace.
+
+### Changed
+- **Clearer AI self-correction.** When the assistant makes a genuine mistake (such as a column that doesn't exist on an object), it now gets a specific, actionable correction with the valid options instead of a generic failure — improving trace accuracy.
+
 ## [1.0.0] - 2026-05-12
 
 ### Changed

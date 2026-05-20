@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -136,6 +136,11 @@
         "command": "dataLineageViz.copyDebugInfo",
         "title": "Data Lineage: Copy Debug Info",
         "icon": "$(bug)"
+      },
+      {
+        "command": "dataLineageViz.enableAiTraceLogging",
+        "title": "Data Lineage: Enable AI Trace Logging for This Session",
+        "icon": "$(record)"
       },
       {
         "command": "dataLineageViz.aiResolveGate",
@@ -1125,7 +1130,7 @@
                 "properties": {
                   "nodeId": {
                     "type": "string",
-                    "description": "Exact, schema-qualified neighbor ID to visit (e.g. `[schema].[name]`). Must come VERBATIM from a prior tool result's `next_hop` / `neighbors[]` data, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Inventing or guessing an id (even a small typo) causes a `route_validation_failed` rejection — the rejection envelope returns up to 3 fuzzy candidates per unresolved id; reuse the matching candidate verbatim, or call `lineage_search_objects` with the un-bracketed name to find the real id."
+                    "description": "Exact, schema-qualified neighbor ID to visit (e.g. `[schema].[name]`). Must come VERBATIM from the `neighbors[]` list in the current hop context. If a target ID cannot be resolved, omit it from route_requests and document it as an unresolved upstream reference in sections[].text — do not retry with variant casing."
                   },
                   "question": {
                     "type": "string",
@@ -1136,7 +1141,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Specific columns to follow in next hop."
+                    "description": "Specific columns to follow in next hop (Column Trace only). BB mode rejects this field at the schema boundary."
                   }
                 },
                 "required": [
@@ -1219,7 +1224,7 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/schemaColors.test.ts && tsx tests/unit/repeat-reject-guard.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts && tsx tests/unit/followup-confirmation.test.ts && tsx tests/unit/transient-retry.test.ts && tsx tests/unit/column-flow-validation.test.ts && tsx tests/unit/submit-findings-schema.test.ts && tsx tests/unit/toolPolicy.test.ts && tsx tests/unit/prompt-composition.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts && tsx tests/unit/navigation-engine-synthesis-regression.test.ts && tsx tests/unit/present-result-closure.test.ts && tsx tests/unit/log-normalization.test.ts && tsx tests/unit/ai-preview-rendering.test.ts",
+    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/schemaColors.test.ts && tsx tests/unit/repeat-reject-guard.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts && tsx tests/unit/followup-confirmation.test.ts && tsx tests/unit/transient-retry.test.ts && tsx tests/unit/column-flow-validation.test.ts && tsx tests/unit/submit-findings-schema.test.ts && tsx tests/unit/toolPolicy.test.ts && tsx tests/unit/prompt-composition.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts && tsx tests/unit/navigation-engine-synthesis-regression.test.ts && tsx tests/unit/present-result-closure.test.ts && tsx tests/unit/log-normalization.test.ts && tsx tests/unit/ai-preview-rendering.test.ts && vitest run --config vitest.config.ts tests/unit/components/ai-description-overlay.test.tsx",
     "test:unit": "npm run test",
     "test:parser": "tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/tsql-complex.test.ts",
     "test:graph": "tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/graphAnalysis.test.ts",
