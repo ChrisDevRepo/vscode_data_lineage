@@ -4,6 +4,7 @@
 
 ### Added
 - **Detail Search: scope dimming.** Results from schemas/nodes outside the active filter now render dimmed with a ⊘ "Not in current view" separator, consistent with Quick Jump.
+- **AI preview descriptions** can now be maximized and resized for easier reading.
 
 ### Fixed
 - SM BB-mode: `bb_field_unknown` guard now fires before Zod parsing; corrective injection includes a BB-mode reminder so the AI does not resubmit `column_flow` after a forced bounded wipe
