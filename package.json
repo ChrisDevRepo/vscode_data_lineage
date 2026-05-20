@@ -138,6 +138,11 @@
         "icon": "$(bug)"
       },
       {
+        "command": "dataLineageViz.enableAiTraceLogging",
+        "title": "Data Lineage: Enable AI Trace Logging for This Session",
+        "icon": "$(record)"
+      },
+      {
         "command": "dataLineageViz.aiResolveGate",
         "title": "Data Lineage: Resolve AI Gate"
       },
