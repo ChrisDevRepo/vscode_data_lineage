@@ -1141,7 +1141,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Specific columns to follow in next hop."
+                    "description": "Specific columns to follow in next hop (Column Trace only). BB mode rejects this field at the schema boundary."
                   }
                 },
                 "required": [

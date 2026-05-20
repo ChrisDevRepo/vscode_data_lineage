@@ -113,6 +113,26 @@ const graph = makeGraph(nodes, edges);
   assert(rejections[0].nodeId === 'NON_EXISTENT', 'nodeId matched');
 }
 
+// BB route to a model-absent node → drop-with-notice (Finding 3): the hop PROCEEDS instead of
+// hard-rejecting, so an unresolvable reference can never burn the error budget and stall the
+// session. The reference is surfaced as a route_outcome (reason=unresolved) and recorded.
+{
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  engine.init({ origin: 'origin', question: 'test', direction: 'downstream' });
+
+  engine.getHopContext();
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'NON_EXISTENT', question: '?' }],
+  });
+  assert('ok' in result && result.ok === true, 'BB absent route → hop proceeds (no route_validation_failed)');
+  const outcomes = ('ok' in result && result.route_outcomes) ? result.route_outcomes : [];
+  assert(outcomes.some(o => o.nodeId === 'NON_EXISTENT' && o.reason === 'unresolved'), 'absent route surfaced as route_outcome reason=unresolved');
+}
+
 // Route target IDs resolve across casing/bracket normalization before rejection
 {
   const mixedNodes: LineageNode[] = [

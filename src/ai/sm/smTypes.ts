@@ -331,8 +331,9 @@ export interface RouteOutcome {
    * Reason for deferral:
    * - `schema` / `depth` / `schema_and_depth` — route target is outside the approved border; user will see it as a follow-up offer.
    * - `depth_contracted_beyond_budget` — route target was a non-bodied node (table) whose bipartite contraction reached bodied neighbours that fell outside the active BFS scope, so no hop was enqueued. The route is structurally valid but produced no new agenda item.
+   * - `unresolved` — route target does not exist in the loaded graph model. Recorded and skipped (drop-with-notice), not a hard reject; the hop still proceeds.
    */
-  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget';
+  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget' | 'unresolved';
 }
 
 /**
@@ -368,21 +369,6 @@ export type SubmitResult =
       current_status?: SmStatus;
       /** Next-action hint for the AI. */
       hint?: string;
-      /**
-       * Subset of `route_requests[].nodeId` values that did not resolve to a
-       * real graph node. Surfaced separately on `route_validation_failed` so
-       * the AI gets a clean handle on which ids to re-resolve via
-       * `lineage_search_objects` / `lineage_get_neighbor_columns`.
-       */
-      unresolved_route_target_ids?: string[];
-      /**
-       * For each unresolved route target, up to 3 closest in-scope candidate
-       * node ids (lower-cased, schema-qualified) ranked by fuzzy similarity.
-       * Empty array when no candidate scored above the noise floor. Populated
-       * on `route_validation_failed` so the AI can pick a real id without an
-       * extra `lineage_search_objects` round-trip when the typo is small.
-       */
-      route_target_candidates?: Record<string, string[]>;
     };
 
 /**

@@ -31,6 +31,100 @@ const SILENT_DEPTH_HEADROOM = 2;
 /** Ring-buffer size for `recent_rejections` surfaced in working memory. */
 const RECENT_REJECTION_CAP = 5;
 
+/**
+ * Why a `route_requests` / `column_flow` reference failed validation.
+ *
+ * @remarks
+ * Replaces the former free-text `/not found/i` partition. Classification is structural,
+ * so the rejection layer never re-derives mode from message text. Two facets:
+ * - **absent** (`absent_route`, `absent_contributor`) — the id resolves to no model node.
+ *   These are *non-fatal* (recorded + skipped, hop proceeds); see drop-with-notice in
+ *   {@link NavigationEngine.submitFindings}.
+ * - **content** (`bad_route_columns`, `bad_out_col`, `bad_contributor_col`) — a real node
+ *   with a wrong column. These are correctable, so they hard-reject. All three arise only
+ *   under `columnAspect` (CT), which is why a BB session can never produce a route hard-reject.
+ */
+type InvalidRouteKind =
+  | 'absent_route'
+  | 'absent_contributor'
+  | 'bad_route_columns'
+  | 'bad_out_col'
+  | 'bad_contributor_col';
+
+/** One validation failure against a submitted route / column reference. */
+interface InvalidRoute {
+  /** Structural cause — drives mode-pure guidance. */
+  kind: InvalidRouteKind;
+  /** Offending id, verbatim from the submission (not lowercased). */
+  id: string;
+  /** Facts-only explanation (bad value + node) surfaced in the `detail` array. */
+  reason: string;
+  /** The valid column set as grounding data — present for the column-error kinds. */
+  available_columns?: string[];
+}
+
+/** True for the non-fatal (drop-with-notice) kinds — see Finding 3. */
+function isAbsentKind(kind: InvalidRouteKind): boolean {
+  return kind === 'absent_route' || kind === 'absent_contributor';
+}
+
+/**
+ * Per-kind corrective order. Keyed by {@link InvalidRouteKind} so a new kind is a compile
+ * error. Each value is a self-contained, **verb-led imperative** — positive, with the
+ * legitimate alternative built in so the model never has to guess the nearest match. Used for
+ * both the content-error hint and the non-fatal absent-reference notice. The offending value
+ * and the valid set live in `detail` (facts/data), not here (the order).
+ */
+const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
+  absent_route:
+    'Record it as an unresolved upstream source in your analysis — it is not in the loaded model.',
+  absent_contributor:
+    'Record it as an unresolved source in your analysis and keep the contributors that resolve — it is not in the loaded model.',
+  bad_route_columns:
+    'Request only columns that exist on the route target (see available_columns).',
+  bad_out_col:
+    'Declare column_flow only for an active tracked column this node produces, or submit column_flow: [] if it produces none.',
+  bad_contributor_col:
+    'Set from_col to a column the source provides (see available_columns), or remove the contributor.',
+};
+
+/**
+ * Machine error code per content kind. Used when one kind dominates the rejection so the
+ * model gets a specific, structured classification; mixed kinds fall back to the generic code.
+ * Absent kinds are non-fatal and never reach the rejection envelope.
+ */
+const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
+  absent_route: 'route_validation_failed',
+  absent_contributor: 'route_validation_failed',
+  bad_route_columns: 'route_columns_not_on_target',
+  bad_out_col: 'out_col_not_on_node',
+  bad_contributor_col: 'contributor_col_not_on_source',
+};
+
+/**
+ * Builds the content-error rejection envelope (`{ error, hint, detail }`) for *content* errors
+ * only.
+ *
+ * @remarks
+ * Absent references never reach here (they are handled non-fatally). Every content kind is
+ * CT-only, so this is mode-pure without a mode branch. `error` is the specific per-kind code
+ * when one kind dominates; `hint` is the verb-led order(s); `detail` carries the facts + the
+ * valid column set.
+ */
+function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitResult {
+  const distinctKinds = [...new Set(errors.map(e => e.kind))];
+  const error = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : 'route_validation_failed';
+  const hint = distinctKinds.map(k => ROUTE_REJECTION_DIRECTIVE[k]).join(' ');
+  return {
+    error,
+    hint,
+    detail: errors.map(e => ({
+      id: e.id,
+      reason: e.reason,
+      ...(e.available_columns ? { available_columns: e.available_columns } : {}),
+    })),
+  };
+}
 
 export type { SmStatus, HopNeighbor, HopContext, HopSubmission, SmResult, SubmitResult } from '../sm/smTypes';
 export type { BoundaryFlag } from '../sm/smTypes';
@@ -1264,6 +1358,14 @@ export class NavigationEngine implements IHopStateMachine {
    * `ct_prune_forbidden`, and column continuity is enforced by requiring
    * `column_flow` on every CT finding.
    *
+   * Route/column validation classifies failures into a structural {@link InvalidRouteKind}.
+   * *Content* errors (real node, wrong column — CT-only) hard-reject via
+   * {@link buildRouteValidationRejection}. *Absent* references (`absent_route` /
+   * `absent_contributor`) are non-fatal: recorded in `recent_rejections` (and, for routes,
+   * `route_outcomes` with `reason: 'unresolved'`) and skipped so the hop proceeds — never
+   * a hard reject that could exhaust the error budget. Hints are mode-pure (never derived
+   * from message text).
+   *
    * @param params - Submission details including focus, verdict, and routing data.
    * @returns Information summarizing the operation's outcome.
    */
@@ -1283,7 +1385,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.lastHopColumnFlowEntries = 0;
     let totalCascadedCount = 0;
 
-    const allInvalidRoutes: Array<{ id: string; reason: string; available_columns?: string[] }> = [];
+    const invalidRoutes: InvalidRoute[] = [];
     const routeOutcomes: RouteOutcome[] = [];
     const finding = params;
     const focusId = resolveModelNodeId(finding.focus_node_id, this.nodeMap) ?? finding.focus_node_id?.toLowerCase();
@@ -1336,7 +1438,7 @@ export class NavigationEngine implements IHopStateMachine {
         const nid = resolveModelNodeId(req.nodeId, this.nodeMap);
         const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nNode || !nid) {
-          allInvalidRoutes.push({ id: req.nodeId, reason: 'Node absent from graph model — not a casing issue, retrying with variant casing will fail. Omit from route_requests.' });
+          invalidRoutes.push({ kind: 'absent_route', id: req.nodeId, reason: 'Route target absent from the loaded graph model — recorded as an unresolved reference and skipped.' });
           continue;
         }
 
@@ -1380,9 +1482,10 @@ export class NavigationEngine implements IHopStateMachine {
           const invalidCols = req.columns.filter((c: string) => !validCols.has(c.toLowerCase()));
           if (invalidCols.length > 0) {
             const available = Array.from(validCols).sort();
-            allInvalidRoutes.push({
+            invalidRoutes.push({
+              kind: 'bad_route_columns',
               id: req.nodeId,
-              reason: `Columns not found: ${invalidCols.join(', ')}`,
+              reason: `columns not on ${req.nodeId}: ${invalidCols.join(', ')}`,
               available_columns: available.length > 0 ? available : undefined,
             });
           }
@@ -1431,14 +1534,14 @@ export class NavigationEngine implements IHopStateMachine {
       for (const entry of finding.column_flow) {
         // out_col must be one of the active CT columns
         if (!activeLower.includes(entry.out_col.toLowerCase())) {
-          allInvalidRoutes.push({ id: focusId, reason: `column_flow_invalid: out_col "${entry.out_col}" is not in active_columns [${this._columnAspect.active_columns.join(', ')}]. Only declare column_flow for the tracked columns.` });
+          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this._columnAspect.active_columns] });
           continue;
         }
 
         // out_col must exist on the focus node when column metadata is available.
         // Procedures have no output-column metadata; size=0 skips the check.
         if (validFocusCols.size > 0 && !validFocusCols.has(entry.out_col.toLowerCase())) {
-          allInvalidRoutes.push({ id: focusId, reason: `column_flow_validation_failed: column "${entry.out_col}" does not exist on focus node. Hint: If this node does not interact with the traced columns, submit verdict='pass' and do not route downstream from it.` });
+          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, available_columns: [...validFocusCols].sort() });
           continue;
         }
 
@@ -1446,7 +1549,7 @@ export class NavigationEngine implements IHopStateMachine {
           const neighborId = resolveModelNodeId(cont.from_node, this.nodeMap);
           const neighbor = neighborId ? this.nodeMap.get(neighborId) : null;
           if (!neighbor) {
-            allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor node "${cont.from_node}" not found in graph.` });
+            invalidRoutes.push({ kind: 'absent_contributor', id: cont.from_node, reason: `Contributor node "${cont.from_node}" is absent from the loaded model — column edge skipped, recorded as unresolved.` });
             continue;
           }
           if (neighbor.type === 'procedure') {
@@ -1459,13 +1562,13 @@ export class NavigationEngine implements IHopStateMachine {
               getNodeColumns(inId, this.nodeMap, this.store ?? undefined)?.forEach(c => inboundCols.add(c.name.toLowerCase()));
             }
             if (inboundCols.size > 0 && !inboundCols.has(cont.from_col.toLowerCase())) {
-              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist in any inbound source of procedure "${cont.from_node}".` });
+              invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.from_node, reason: `from_col "${cont.from_col}" is not in any inbound source of procedure "${cont.from_node}"`, available_columns: [...inboundCols].sort() });
             }
           } else {
             // Tables, views, functions: validate from_col directly against their own column schemas.
             const validNeighborCols = new Set(getNodeColumns(neighbor.id, this.nodeMap, this.store ?? undefined)?.map(c => c.name.toLowerCase()));
             if (validNeighborCols.size > 0 && !validNeighborCols.has(cont.from_col.toLowerCase())) {
-              allInvalidRoutes.push({ id: cont.from_node, reason: `column_flow_validation_failed: contributor column "${cont.from_col}" does not exist on node "${cont.from_node}".` });
+              invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.from_node, reason: `from_col "${cont.from_col}" does not exist on "${cont.from_node}"`, available_columns: [...validNeighborCols].sort() });
             }
           }
         }
@@ -1553,7 +1656,10 @@ export class NavigationEngine implements IHopStateMachine {
           }
           for (const cont of entry.contributors) {
             if (cont.role === 'filter_only') continue;
-            const fromNode = resolveModelNodeId(cont.from_node, this.nodeMap) ?? cont.from_node.toLowerCase();
+            const fromNode = resolveModelNodeId(cont.from_node, this.nodeMap);
+            // Unresolved contributor — recorded as an unresolved reference above; never stage a
+            // dangling edge to a non-existent node (Finding 3 drop-with-notice).
+            if (!fromNode) continue;
             const fromNodeObj = this.nodeMap.get(fromNode);
             if (fromNodeObj && !SCRIPT_TYPES.has(fromNodeObj.type)) {
               this.markNodeState(fromNode, 'pass', 'engine', 'non_bodied_passthrough', {
@@ -1576,28 +1682,27 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    if (allInvalidRoutes.length > 0) {
-      this.lastRoutedRejected = allInvalidRoutes.length;
-      for (const r of allInvalidRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-      // Partition reasons so the AI gets a corrective signal naming the
-      // right next-action tool, mirroring the `unknown_node_ids` envelope on
-      // start_exploration. Unknown-id rejections are the most common and
-      // most actionable failure mode — without a structured hint here the AI
-      // typically loops on the same focus and the exploration stalls
-      // (observed in bb-q1-employee bridge JSONL 2026-04-27).
-      const unknownIds = allInvalidRoutes
-        .filter(r => /not found/i.test(r.reason))
-        .map(r => r.id);
-      const otherReasons = allInvalidRoutes.filter(r => !/not found/i.test(r.reason));
-      const hint = unknownIds.length > 0
-        ? `${unknownIds.map(id => `\`${id}\``).join(', ')} ${unknownIds.length === 1 ? 'is' : 'are'} absent from the loaded graph model (not a casing error — retrying with variant casing will fail). Omit ${unknownIds.length === 1 ? 'it' : 'them'} from route_requests and note ${unknownIds.length === 1 ? 'it' : 'them'} as unresolved upstream references in sections[].text.`
-        : 'One or more route_requests / column references failed validation. Inspect `detail` for the per-id reason and re-submit with corrections.';
-      return {
-        error: 'route_validation_failed',
-        hint,
-        unresolved_route_target_ids: unknownIds,
-        detail: otherReasons.length > 0 ? otherReasons : allInvalidRoutes,
-      };
+    // Content errors (real node, wrong column) are correctable → hard-reject with a mode-pure,
+    // per-kind hint built from the locked classification's reachable kinds. Every content kind
+    // arises only under columnAspect (CT), so a BB session never produces a route hard-reject.
+    const contentErrors = invalidRoutes.filter(r => !isAbsentKind(r.kind));
+    if (contentErrors.length > 0) {
+      this.lastRoutedRejected = contentErrors.length;
+      for (const r of contentErrors) this.memory.recordRejection(r.id, r.reason, this.hopCount);
+      return buildRouteValidationRejection(contentErrors);
+    }
+
+    // Finding 3 — drop-with-notice. An unresolvable reference (absent route target or absent
+    // column contributor) is NOT fatal: it is recorded so the gap stays visible
+    // (recent_rejections, plus route_outcomes for routes) and the hop proceeds. This removes
+    // the budget-burn → stall path; absent_route is the only invalid-route kind a BB session
+    // can produce, so after this BB has no route hard-reject path at all.
+    for (const u of invalidRoutes) {
+      this.memory.recordRejection(u.id, `\`${u.id}\`: ${ROUTE_REJECTION_DIRECTIVE[u.kind]}`, this.hopCount);
+      if (u.kind === 'absent_route') {
+        routeOutcomes.push({ nodeId: u.id, accepted: false, reason: 'unresolved' });
+      }
+      this.log('debug', `[AI] [SM] unresolved ${u.kind} hop=${this.hopCount}: ${u.id} — recorded, skipped (hop proceeds)`);
     }
 
     // Commit route deferrals + scope growth only after full validation passes.

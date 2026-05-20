@@ -7,8 +7,10 @@
 - **AI preview descriptions** can now be maximized and resized for easier reading.
 
 ### Fixed
-- SM BB-mode: `bb_field_unknown` guard now fires before Zod parsing; corrective injection includes a BB-mode reminder so the AI does not resubmit `column_flow` after a forced bounded wipe
-- SM route validation: `route_validation_failed` hint now identifies graph-absent nodes explicitly, preventing casing-variant retry loops that exhaust the 3-error budget
+- **AI lineage tracing no longer stalls.** When the assistant references an object or column that isn't in the loaded model, it now notes it and moves on — instead of retrying until it gave up with a half-finished ("partial") trace.
+
+### Changed
+- **Clearer AI self-correction.** When the assistant makes a genuine mistake (such as a column that doesn't exist on an object), it now gets a specific, actionable correction with the valid options instead of a generic failure — improving trace accuracy.
 
 ## [1.0.0] - 2026-05-12
 

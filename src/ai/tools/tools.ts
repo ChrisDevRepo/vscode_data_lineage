@@ -144,6 +144,17 @@ const CapturedSectionSchema = z.object({
 const RouteRequestSchema = z.object({
   nodeId: z.string(),
   question: z.string(),
+}).strict();
+
+/**
+ * CT route request — adds the optional per-target `columns` to track.
+ *
+ * @remarks
+ * `columns` is meaningful only under Column Trace, so it lives here rather than on the
+ * shared {@link RouteRequestSchema}. A BB session's `submit_findings` schema therefore
+ * never advertises a field the engine would silently ignore.
+ */
+const CtRouteRequestSchema = RouteRequestSchema.extend({
   columns: z.array(z.string()).optional(),
 }).strict();
 
@@ -203,6 +214,8 @@ export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
 export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
   verdict: z.enum(['analyze', 'pass']),
   column_flow: z.array(ColumnFlowEntrySchema),
+  // CT overrides the shared route_requests with the column-bearing variant.
+  route_requests: z.array(CtRouteRequestSchema).optional(),
 }).strict();
 
 /**

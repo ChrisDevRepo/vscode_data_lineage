@@ -143,6 +143,9 @@ Business-capture contract (business mode) is now explicitly `what / why / how`:
 - CT neighbor decisions: `route_requests` for contributors; non-contributors simply omit routes (engine auto-prunes from empty `column_flow`). `prune_neighbors` remains a BB-only AI command.
 - BB and CT both populate `node_states[]` through the same engine lifecycle path. BB prune comes from `verdict:"prune"` or `prune_neighbors[]`; CT prune comes from `column_flow: []` or no active columns; table passthrough comes from non-bodied contraction.
 - Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.
+- Rejection hints are **mode-pure**: built from the gate-locked mode (`columnAspect`) + a structural `InvalidRouteKind`, never from message text. A BB session's hints never mention `column_flow`/contributors.
+- **Rejections are structured guiding orders, not "failed".** Each content error returns a machine `error` code (`out_col_not_on_node` / `contributor_col_not_on_source` / `route_columns_not_on_target`, or `route_validation_failed` for mixed kinds), a **verb-led imperative `hint`** with the legitimate alternative built in (e.g. "Set from_col to a column the source provides, or remove the contributor"), and `detail.available_columns` (the valid set as grounding data, not a pick-menu). Positive framing only — no "do not".
+- **Unresolvable references are non-fatal.** A route target or column contributor that resolves to no model node is recorded (surfaced via `recent_rejections` and, for routes, `route_outcomes` `reason: unresolved`) and skipped — the hop proceeds. This removes the casing-retry/budget-burn stall.
 
 ### `lineage_present_result`
 

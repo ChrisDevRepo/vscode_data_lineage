@@ -82,4 +82,39 @@ resetCounters();
   assert(!parsed.success, 'CT requires column_flow field');
 }
 
+// ── route_requests[].columns is CT-only (Component C — mode-pure schema) ──
+{
+  const parsed = SubmitFindingsBbInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] }],
+  });
+  assert(!parsed.success, 'BB rejects CT-only route_requests[].columns');
+}
+
+{
+  const parsed = SubmitFindingsBbInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace' }],
+  });
+  assert(parsed.success, 'BB accepts route_requests without columns');
+}
+
+{
+  const parsed = SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [],
+    route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] }],
+  });
+  assert(parsed.success, 'CT accepts route_requests[].columns');
+}
+
 printSummary('Submit Findings Schema');
