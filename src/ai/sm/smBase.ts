@@ -1336,7 +1336,7 @@ export class NavigationEngine implements IHopStateMachine {
         const nid = resolveModelNodeId(req.nodeId, this.nodeMap);
         const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nNode || !nid) {
-          allInvalidRoutes.push({ id: req.nodeId, reason: 'Node not found.' });
+          allInvalidRoutes.push({ id: req.nodeId, reason: 'Node absent from graph model — not a casing issue, retrying with variant casing will fail. Omit from route_requests.' });
           continue;
         }
 
@@ -1590,7 +1590,7 @@ export class NavigationEngine implements IHopStateMachine {
         .map(r => r.id);
       const otherReasons = allInvalidRoutes.filter(r => !/not found/i.test(r.reason));
       const hint = unknownIds.length > 0
-        ? `Unknown nodeId(s): ${unknownIds.map(id => `\`${id}\``).join(', ')}. Use exact IDs from neighbors[] in the current focus_node, or call search_objects. Then re-call submit_findings with the corrected list.`
+        ? `${unknownIds.map(id => `\`${id}\``).join(', ')} ${unknownIds.length === 1 ? 'is' : 'are'} absent from the loaded graph model (not a casing error — retrying with variant casing will fail). Omit ${unknownIds.length === 1 ? 'it' : 'them'} from route_requests and note ${unknownIds.length === 1 ? 'it' : 'them'} as unresolved upstream references in sections[].text.`
         : 'One or more route_requests / column references failed validation. Inspect `detail` for the per-id reason and re-submit with corrections.';
       return {
         error: 'route_validation_failed',

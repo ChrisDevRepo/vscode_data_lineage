@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -1125,7 +1125,7 @@
                 "properties": {
                   "nodeId": {
                     "type": "string",
-                    "description": "Exact, schema-qualified neighbor ID to visit (e.g. `[schema].[name]`). Must come VERBATIM from a prior tool result's `next_hop` / `neighbors[]` data, a `lineage_get_neighbor_columns` lookup, or a `lineage_search_objects` result. Inventing or guessing an id (even a small typo) causes a `route_validation_failed` rejection — the rejection envelope returns up to 3 fuzzy candidates per unresolved id; reuse the matching candidate verbatim, or call `lineage_search_objects` with the un-bracketed name to find the real id."
+                    "description": "Exact, schema-qualified neighbor ID to visit (e.g. `[schema].[name]`). Must come VERBATIM from the `neighbors[]` list in the current hop context. If a target ID cannot be resolved, omit it from route_requests and document it as an unresolved upstream reference in sections[].text — do not retry with variant casing."
                   },
                   "question": {
                     "type": "string",

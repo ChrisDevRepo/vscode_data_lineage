@@ -7,11 +7,10 @@ function run() {
   const processedInline = preprocessDescriptionMarkdown(withInline);
   assert.equal(processedInline, withInline, 'inline content is preserved byte-for-byte (lossless normalization)');
 
+  // remark-math + rehype-katex handle $$ natively in AiDescriptionOverlay — preprocessDescriptionMarkdown is a passthrough.
   const withBlock = 'Revenue formula:\n\n$$\\text{TotalRevenue}=\\text{Qty}\\times\\text{UnitPrice}$$';
   const processedBlock = preprocessDescriptionMarkdown(withBlock);
-  assert(processedBlock.includes('```math'), '$$...$$ converts to math fence for KaTeX');
-  assert(!processedBlock.includes('$$\\text{TotalRevenue}'), 'raw $$ block is removed after preprocessing');
-  assert(processedBlock.includes('\\text{TotalRevenue}=\\text{Qty}\\times\\text{UnitPrice}'), 'math payload content is preserved');
+  assert.equal(processedBlock, withBlock, '$$ block math is preserved byte-for-byte (rendered by remark-math/rehype-katex, not pre-processed)');
 
   const flows: CtTooltipFlow[] = [
     { neighborNode: '[ai].[vwPriceList]', direction: 'in', fromCol: 'UnitPrice', toCol: 'TotalRevenue' },

@@ -1269,8 +1269,10 @@ export class LineageParticipant {
               );
               envelope.pushAssistant(replayParts);
             }
+            const isBbMode = !engine?.columnAspect;
             envelope.pushUserText(
               'Free-form responses are outside protocol in the SM hop loop. Call `lineage_submit_findings` for the current focus node now (or `lineage_get_neighbor_columns` first if you need a neighbor\'s columns to decide a prune).'
+              + (isBbMode ? ' Submit verdict + sections + optional route_requests/prune_neighbors. This is BB mode — column_flow is CT-only and not accepted here.' : '')
             );
             continue;
           }

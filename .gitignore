@@ -51,6 +51,8 @@ GEMINI.md
 .aider*
 .continue/
 **/.continue/**
+.agents/
+**/.agents/**
 
 # Internal Developer Docs
 *internal*/

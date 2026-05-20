@@ -599,12 +599,22 @@ class ToolHandler {
       const completeViolation = evaluateExplorationCompleteRule(engine.status);
       if (completeViolation) return this.logAndReturn('submit_findings', completeViolation, input);
 
+      const rawInput = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+
+      // Pre-Zod mode guards — fire before schema parse so the AI gets an unambiguous
+      // mode-specific error rather than a generic `.strict()` failure.
+      if (!engine.columnAspect && rawInput.column_flow !== undefined) {
+        return this.logAndReturn('submit_findings', {
+          error: 'bb_field_unknown',
+          hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
+        }, rawInput);
+      }
+
       const parsed = engine.columnAspect
         ? SubmitFindingsCtInputSchema.safeParse(input)
         : SubmitFindingsBbInputSchema.safeParse(input);
       if (!parsed.success) {
         const isCtMode = !!engine.columnAspect;
-        const rawInput = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
         if (isCtMode && rawInput.prune_neighbors !== undefined) {
           return this.logAndReturn('submit_findings', {
             error: 'bb_field_forbidden_in_ct',
@@ -615,12 +625,6 @@ class ToolHandler {
           return this.logAndReturn('submit_findings', {
             error: 'ct_verdict_forbidden',
             hint: 'CT mode allows verdict only `analyze` or `pass`. Use `column_flow: []` when the node has no tracked column interaction.',
-          }, input);
-        }
-        if (!isCtMode && rawInput.column_flow !== undefined) {
-          return this.logAndReturn('submit_findings', {
-            error: 'bb_field_unknown',
-            hint: 'BB mode does not accept `column_flow`. Submit business/technical sections plus verdict and optional prune/route fields.',
           }, input);
         }
 
