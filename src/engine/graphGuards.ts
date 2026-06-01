@@ -20,7 +20,6 @@ import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path';
 import type { DatabaseModel } from './types';
 
-
 /** Direction in which a shortest path between two endpoints was found. */
 export type ShortestPathDirection = 'source_to_target' | 'target_to_source';
 

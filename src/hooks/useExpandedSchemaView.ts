@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import type Graph from 'graphology';
 import { buildExpandedSchemaViewGraph } from '../engine/graphBuilder';
-import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../engine/expandedSchemaViewCore';
+import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../engine/schemaProjection';
 import type { DatabaseModel, ExtensionConfig, GraphMode } from '../engine/types';
 import { notifyUser } from '../utils/notify';
 

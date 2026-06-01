@@ -460,10 +460,13 @@ export function GraphCanvas({
   const pendingZoomSetAt = useRef<number>(0);
   /** Active timer — guarantees the pendingZoom warning fires even if flowNodes stops changing. */
   const pendingZoomTimerRef = useRef<number | null>(null);
-  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
-  useEffect(() => () => {
-    if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+  const clearPendingZoomTimer = useCallback(() => {
+    if (!pendingZoomTimerRef.current) return;
+    clearTimeout(pendingZoomTimerRef.current);
+    pendingZoomTimerRef.current = null;
   }, []);
+  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
+  useEffect(() => clearPendingZoomTimer, [clearPendingZoomTimer]);
   // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
@@ -568,7 +571,6 @@ export function GraphCanvas({
   );
 
   // Zoom and center on a specific node
-  const log = useCallback((text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level }), []);
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
@@ -582,7 +584,7 @@ export function GraphCanvas({
         notifyUser(`Could not focus "${nodeId}". The node may have been filtered out during a view transition.`);
       }
     });
-  }, [getNode, setCenter, log]);
+  }, [getNode, setCenter]);
 
   // Execute search: find node and zoom to it, expanding its schema from overview when needed.
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
@@ -607,7 +609,7 @@ export function GraphCanvas({
         pendingClickRef.current = { id: modelNode.id };
         pendingZoomSetAt.current = Date.now();
         // Active timeout — guarantees warning fires even if flowNodes stops changing
-        if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+        clearPendingZoomTimer();
         pendingZoomTimerRef.current = window.setTimeout(() => {
           if (pendingZoomRef.current) {
             notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
@@ -622,7 +624,7 @@ export function GraphCanvas({
     } else {
       notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
-  }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onOpenExpandedSchemaViewForNode, log]);
+  }, [clearPendingZoomTimer, flowNodes, zoomToNode, onNodeClick, graphMode, model, onOpenExpandedSchemaViewForNode]);
 
   // Export object nodes in detail views and cluster nodes in schema overview; empty exports no-op.
   const handleExportDrawio = useCallback(() => {
@@ -662,7 +664,7 @@ export function GraphCanvas({
           notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter to include it.`);
           pendingZoomRef.current = null;
           pendingClickRef.current = null;
-          if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
+          clearPendingZoomTimer();
           // Fall through to fitView
         } else {
           return; // Don't consume — wait for the next flowNodes update (silent; fires every render)
@@ -670,7 +672,7 @@ export function GraphCanvas({
       } else {
         pendingZoomRef.current = null;
         pendingClickRef.current = null;
-        if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
+        clearPendingZoomTimer();
         zoomToNode(zoomTarget);
         // Defer click to next frame so highlight lands after the expanded schema nodes render.
         if (clickTarget) {
@@ -689,7 +691,7 @@ export function GraphCanvas({
       fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
     });
     return () => cancelAnimationFrame(raf);
-  }, [flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+  }, [clearPendingZoomTimer, flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);

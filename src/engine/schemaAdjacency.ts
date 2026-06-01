@@ -1,4 +1,5 @@
 import type { DatabaseModel } from './types';
+import { UnionFind } from './unionFind';
 
 const EDGE_KEY_SEPARATOR = '\u0000';
 
@@ -52,34 +53,6 @@ export interface ModelConnectivity {
   components: SchemaComponent[];
   /** Schemas with no inter-schema edge (their own singleton component), sorted. */
   isolatedSchemas: string[];
-}
-
-/** Minimal disjoint-set over string keys for weakly-connected grouping. */
-class UnionFind {
-  private parent = new Map<string, string>();
-
-  add(key: string): void {
-    if (!this.parent.has(key)) this.parent.set(key, key);
-  }
-
-  find(key: string): string {
-    let root = key;
-    while (this.parent.get(root) !== root) root = this.parent.get(root)!;
-    // Path compression keeps repeated lookups flat.
-    let cur = key;
-    while (this.parent.get(cur) !== root) {
-      const next = this.parent.get(cur)!;
-      this.parent.set(cur, root);
-      cur = next;
-    }
-    return root;
-  }
-
-  union(a: string, b: string): void {
-    const ra = this.find(a);
-    const rb = this.find(b);
-    if (ra !== rb) this.parent.set(ra, rb);
-  }
 }
 
 function orderedSchemas(a: string, b: string): [string, string] {
@@ -189,13 +162,14 @@ export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectiv
  */
 export function formatModelConnectivity(conn: ModelConnectivity): string {
   const lines: string[] = [];
+  const countsBySchema = new Map(conn.schemaObjectCounts.map((s) => [s.schema, s.objectCount]));
   lines.push(`  Components: ${conn.components.length}`);
   conn.components.forEach((c, i) => {
-    const counts = new Map(conn.schemaObjectCounts.map((s) => [s.schema, s.objectCount]));
-    const members = c.schemas.map((s) => `${s} (${counts.get(s) ?? 0})`).join(', ');
+    const members = c.schemas.map((s) => `${s} (${countsBySchema.get(s) ?? 0})`).join(', ');
     const tag = c.isolated ? ' — ISOLATED (no inter-schema edges)' : '';
     lines.push(`  [${i + 1}] ${members}${tag}`);
-    const inside = conn.interSchemaEdges.filter((e) => c.schemas.includes(e.source) && c.schemas.includes(e.target));
+    const schemaSet = new Set(c.schemas);
+    const inside = conn.interSchemaEdges.filter((e) => schemaSet.has(e.source) && schemaSet.has(e.target));
     for (const e of inside) {
       const arrow = e.bidirectional ? `↔ (${e.count}/${e.reverseCount})` : `→ (${e.count})`;
       lines.push(`        ${e.source} ${arrow} ${e.target}`);

@@ -15,25 +15,18 @@
   },
   "categories": [
     "Data Science",
-    "Visualization",
-    "Other"
+    "Visualization"
   ],
   "keywords": [
-    "dacpac",
-    "sql",
-    "lineage",
-    "database",
-    "dag",
-    "visualization",
-    "dependency",
-    "schema",
-    "stored-procedure",
+    "ms-sql",
     "sql-server",
+    "azure",
+    "azure-synapse",
+    "fabric-data-warehouse",
+    "data-lineage",
+    "database",
     "azure-sql",
-    "fabric",
-    "synapse",
-    "database-project",
-    "data-lineage"
+    "dependency-analysis"
   ],
   "icon": "images/icon.png",
   "galleryBanner": {
@@ -62,21 +55,6 @@
   },
   "main": "./out/extension.js",
   "contributes": {
-    "languages": [
-      {
-        "id": "dacpac-sql",
-        "aliases": [
-          "DACPAC SQL"
-        ]
-      }
-    ],
-    "grammars": [
-      {
-        "language": "dacpac-sql",
-        "scopeName": "source.dacpac-sql",
-        "path": "./syntaxes/dacpac-sql.json"
-      }
-    ],
     "viewsContainers": {
       "activitybar": [
         {

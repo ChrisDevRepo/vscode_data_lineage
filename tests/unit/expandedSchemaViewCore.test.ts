@@ -3,7 +3,7 @@
  * Execute with: npx tsx tests/unit/expandedSchemaViewCore.test.ts
  */
 
-import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../../src/engine/expandedSchemaViewCore';
+import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../../src/engine/schemaProjection';
 import { makeGraph, assert, assertEq, printSummary } from './helpers/testUtils';
 
 console.log('\n── Expanded Schema View Core ──');

@@ -1,6 +1,8 @@
 import Graph from 'graphology';
 import type { ObjectType } from './types';
 
+const EDGE_KEY_SEPARATOR = '\u0000';
+
 /**
  * Sets of node IDs rendered individually or as collapsed schema clusters.
  */
@@ -134,6 +136,59 @@ function orderedSchemas(a: string, b: string): [string, string] {
   return a.localeCompare(b) <= 0 ? [a, b] : [b, a];
 }
 
+function schemaEdgeKey(sourceSchema: string, targetSchema: string): string {
+  return `${sourceSchema}${EDGE_KEY_SEPARATOR}${targetSchema}`;
+}
+
+function addRawSchemaEdge(rawEdges: Map<string, number>, sourceSchema: string, targetSchema: string): void {
+  const key = schemaEdgeKey(sourceSchema, targetSchema);
+  rawEdges.set(key, (rawEdges.get(key) ?? 0) + 1);
+}
+
+function collapseRawSchemaEdges(rawEdges: ReadonlyMap<string, number>): SchemaProjectionEdge[] {
+  const consumed = new Set<string>();
+  const edges: SchemaProjectionEdge[] = [];
+
+  for (const key of [...rawEdges.keys()].sort((a, b) => a.localeCompare(b))) {
+    if (consumed.has(key)) continue;
+    const [sourceSchema, targetSchema] = key.split(EDGE_KEY_SEPARATOR);
+    const reverseKey = schemaEdgeKey(targetSchema, sourceSchema);
+    const reverseCount = rawEdges.get(reverseKey);
+
+    if (reverseCount !== undefined) {
+      const [source, target] = orderedSchemas(sourceSchema, targetSchema);
+      const forwardKey = schemaEdgeKey(source, target);
+      const backwardKey = schemaEdgeKey(target, source);
+      const count = rawEdges.get(forwardKey) ?? 0;
+      const reverse = rawEdges.get(backwardKey) ?? 0;
+      consumed.add(forwardKey);
+      consumed.add(backwardKey);
+      edges.push({
+        sourceSchema: source,
+        targetSchema: target,
+        count,
+        reverseCount: reverse,
+        totalCount: count + reverse,
+        bidirectional: true,
+      });
+      continue;
+    }
+
+    consumed.add(key);
+    const count = rawEdges.get(key)!;
+    edges.push({
+      sourceSchema,
+      targetSchema,
+      count,
+      reverseCount: 0,
+      totalCount: count,
+      bidirectional: false,
+    });
+  }
+
+  return edges;
+}
+
 function hasIncludedNode(id: string, includedIds?: ReadonlySet<string>): boolean {
   return !includedIds || includedIds.has(id);
 }
@@ -168,7 +223,7 @@ export function partitionBySchema(graph: Graph, expandedSchemas: ReadonlySet<str
  */
 export function projectSchemaQuotient(graph: Graph, includedIds?: ReadonlySet<string>): SchemaProjection {
   const nodes = new Map<string, SchemaProjectionNode>();
-  const rawEdges = new Map<string, { sourceSchema: string; targetSchema: string; count: number }>();
+  const rawEdges = new Map<string, number>();
 
   for (const id of graph.nodes()) {
     if (!hasIncludedNode(id, includedIds)) continue;
@@ -190,54 +245,12 @@ export function projectSchemaQuotient(graph: Graph, includedIds?: ReadonlySet<st
     const sourceSchema = schemaOf(graph, source);
     const targetSchema = schemaOf(graph, target);
     if (!sourceSchema || !targetSchema || sourceSchema === targetSchema) return;
-
-    const key = `${sourceSchema}|${targetSchema}`;
-    const current = rawEdges.get(key);
-    if (current) current.count++;
-    else rawEdges.set(key, { sourceSchema, targetSchema, count: 1 });
+    addRawSchemaEdge(rawEdges, sourceSchema, targetSchema);
   });
-
-  const consumed = new Set<string>();
-  const edges: SchemaProjectionEdge[] = [];
-  const rawKeys = [...rawEdges.keys()].sort((a, b) => a.localeCompare(b));
-
-  for (const key of rawKeys) {
-    if (consumed.has(key)) continue;
-    const edge = rawEdges.get(key)!;
-    const reverseKey = `${edge.targetSchema}|${edge.sourceSchema}`;
-    const reverse = rawEdges.get(reverseKey);
-
-    if (reverse) {
-      const [sourceSchema, targetSchema] = orderedSchemas(edge.sourceSchema, edge.targetSchema);
-      const forward = rawEdges.get(`${sourceSchema}|${targetSchema}`)?.count ?? 0;
-      const backward = rawEdges.get(`${targetSchema}|${sourceSchema}`)?.count ?? 0;
-      consumed.add(`${sourceSchema}|${targetSchema}`);
-      consumed.add(`${targetSchema}|${sourceSchema}`);
-      edges.push({
-        sourceSchema,
-        targetSchema,
-        count: forward,
-        reverseCount: backward,
-        totalCount: forward + backward,
-        bidirectional: true,
-      });
-      continue;
-    }
-
-    consumed.add(key);
-    edges.push({
-      sourceSchema: edge.sourceSchema,
-      targetSchema: edge.targetSchema,
-      count: edge.count,
-      reverseCount: 0,
-      totalCount: edge.count,
-      bidirectional: false,
-    });
-  }
 
   return {
     nodes: new Map([...nodes.entries()].sort(([a], [b]) => a.localeCompare(b))),
-    edges,
+    edges: collapseRawSchemaEdges(rawEdges),
   };
 }
 

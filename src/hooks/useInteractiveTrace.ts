@@ -62,6 +62,11 @@ const createInitialTrace = (config: ExtensionConfig): TraceState => ({
   tracedEdgeIds: new Set(),
 });
 
+const createTrace = (config: ExtensionConfig, overrides: Partial<TraceState>): TraceState => ({
+  ...createInitialTrace(config),
+  ...overrides,
+});
+
 function isDirectNeighborOfScope(
   model: DatabaseModel,
   visibleNodeIds: ReadonlySet<string>,
@@ -132,20 +137,11 @@ export function useInteractiveTrace(
 
   // Phase 1: Start configuring trace (show InlineTraceControls)
   const startTraceConfig = useCallback((nodeId: string) => {
-    setTrace({
+    setTrace(createTrace(config, {
       mode: 'configuring',
       selectedNodeId: nodeId,
-      targetNodeId: null,
-      upstreamLevels: config.trace.defaultUpstreamLevels,
-      downstreamLevels: config.trace.defaultDownstreamLevels,
-      baseNodeIds: new Set(),
-      baseEdgeIds: new Set(),
-      manualAddedNodeIds: new Set(),
-      manualPrunedNodeIds: new Set(),
-      tracedNodeIds: new Set(),
-      tracedEdgeIds: new Set(),
-    });
-  }, [config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels]);
+    }));
+  }, [config]);
 
   // Immediate trace: apply with defaults without showing config UI
   const startTraceImmediate = useCallback((nodeId: string) => {
@@ -175,21 +171,18 @@ export function useInteractiveTrace(
         `[Trace] 0 results for "${nodeId}" — exists in model but has no connections` });
     }
 
-    setTrace({
+    setTrace(createTrace(config, {
       mode: 'filtered',
       selectedNodeId: nodeId,
-      targetNodeId: null,
       upstreamLevels: config.trace.defaultUpstreamLevels,
       downstreamLevels: config.trace.defaultDownstreamLevels,
       baseNodeIds: nodeIds,
       baseEdgeIds: edgeIds,
-      manualAddedNodeIds: new Set(),
-      manualPrunedNodeIds: new Set(),
       tracedNodeIds: nodeIds,
       tracedEdgeIds: edgeIds,
       autoPromoted,
-    });
-  }, [graph, fullGraph, config.trace.defaultUpstreamLevels, config.trace.defaultDownstreamLevels]);
+    }));
+  }, [graph, fullGraph, config]);
 
   // Phase 2: Apply trace with levels (filter graph, keep controls visible briefly)
   const applyTrace = useCallback(
@@ -219,40 +212,30 @@ export function useInteractiveTrace(
         `[Trace] Apply: "${trace.selectedNodeId}" up=${upstreamLevels} down=${downstreamLevels} fullModel=${useFullModelRef.current}${autoPromoted ? ' (auto-promoted)' : ''} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
       });
 
-      setTrace({
+      setTrace(createTrace(config, {
         mode: 'applied',
         selectedNodeId: trace.selectedNodeId,
-        targetNodeId: null,
         upstreamLevels,
         downstreamLevels,
         baseNodeIds: nodeIds,
         baseEdgeIds: edgeIds,
-        manualAddedNodeIds: new Set(),
-        manualPrunedNodeIds: new Set(),
         tracedNodeIds: nodeIds,
         tracedEdgeIds: edgeIds,
         autoPromoted,
-      });
+      }));
     },
-    [graph, fullGraph, trace.selectedNodeId]
+    [config, graph, fullGraph, trace.selectedNodeId]
   );
 
   // Start path finding mode (from right-click "Find Path")
   const startPathFinding = useCallback((nodeId: string) => {
-    setTrace({
+    setTrace(createTrace(config, {
       mode: 'pathfinding',
       selectedNodeId: nodeId,
-      targetNodeId: null,
       upstreamLevels: 0,
       downstreamLevels: 0,
-      baseNodeIds: new Set(),
-      baseEdgeIds: new Set(),
-      manualAddedNodeIds: new Set(),
-      manualPrunedNodeIds: new Set(),
-      tracedNodeIds: new Set(),
-      tracedEdgeIds: new Set(),
-    });
-  }, []);
+    }));
+  }, [config]);
 
   // Compute and apply shortest path — returns true if path found
   // Always prefers fullGraph so paths can traverse nodes hidden by filters.
@@ -280,7 +263,7 @@ export function useInteractiveTrace(
       `[Trace] Path: "${trace.selectedNodeId}" → "${targetNodeId}" found, ${result.nodeIds.size} nodes (${ms}ms)`
     });
 
-    setTrace({
+    setTrace(createTrace(config, {
       mode: 'path-applied',
       selectedNodeId: trace.selectedNodeId,
       targetNodeId,
@@ -288,13 +271,11 @@ export function useInteractiveTrace(
       downstreamLevels: 0,
       baseNodeIds: result.nodeIds,
       baseEdgeIds: result.edgeIds,
-      manualAddedNodeIds: new Set(),
-      manualPrunedNodeIds: new Set(),
       tracedNodeIds: result.nodeIds,
       tracedEdgeIds: result.edgeIds,
-    });
+    }));
     return true;
-  }, [fullGraph, graph, trace.selectedNodeId]);
+  }, [config, fullGraph, graph, trace.selectedNodeId]);
 
   // Apply analysis subset — reuses same rendering as trace/path
   const applyAnalysisSubset = useCallback((
@@ -306,21 +287,18 @@ export function useInteractiveTrace(
     window.vscode?.postMessage({ type: 'log', text:
       `[Trace] Analysis subset: ${analysisType ?? 'unknown'} — ${nodeIds.size} nodes, ${edgeIds.size} edges (flowNodes: ${flowNodes.length})`
     });
-    setTrace({
+    setTrace(createTrace(config, {
       mode: 'analysis',
       analysisType,
       selectedNodeId: originId || null,
-      targetNodeId: null,
       upstreamLevels: 0,
       downstreamLevels: 0,
       baseNodeIds: nodeIds,
       baseEdgeIds: edgeIds,
-      manualAddedNodeIds: new Set(),
-      manualPrunedNodeIds: new Set(),
       tracedNodeIds: nodeIds,
       tracedEdgeIds: edgeIds,
-    });
-  }, [flowNodes.length]);
+    }));
+  }, [config, flowNodes.length]);
 
   // Toggle between filtered and full-model BFS — re-runs trace immediately
   const toggleUseFullModel = useCallback(() => {

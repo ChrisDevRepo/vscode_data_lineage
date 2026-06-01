@@ -1,3 +1,5 @@
+import { UnionFind } from './unionFind';
+
 /**
  * Minimal node shape for rendered-connectivity analysis.
  *
@@ -52,28 +54,6 @@ export interface RenderConnectivity {
 const MAX_COMPONENTS_LISTED = 12;
 /** Member labels kept per listed component before truncating. */
 const MAX_MEMBERS_PER_COMPONENT = 25;
-
-class UnionFind {
-  private parent = new Map<string, string>();
-
-  add(key: string): void {
-    if (!this.parent.has(key)) this.parent.set(key, key);
-  }
-
-  find(key: string): string {
-    let root = key;
-    while ((this.parent.get(root) ?? root) !== root) root = this.parent.get(root)!;
-    return root;
-  }
-
-  union(a: string, b: string): void {
-    this.add(a);
-    this.add(b);
-    const ra = this.find(a);
-    const rb = this.find(b);
-    if (ra !== rb) this.parent.set(ra, rb);
-  }
-}
 
 /**
  * Summarizes the connectivity of the rendered graph.
