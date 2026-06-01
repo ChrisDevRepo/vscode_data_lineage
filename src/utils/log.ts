@@ -50,13 +50,14 @@ function logToTest(cat: LogCategory, msg: string) {
   }
 }
 
-/** Maximum number of recent log lines retained for the debug dump's RECENT LOG tail. */
+/** Maximum number of recent log lines retained in the in-memory diagnostics ring. */
 const MAX_RECENT_LOGS = 200;
 const recentLogs: string[] = [];
 
 /**
- * Appends a single formatted log line to the always-on ring buffer that backs the
- * debug dump's RECENT LOG section. Bounded to {@link MAX_RECENT_LOGS}; oldest evicted.
+ * Appends a single formatted log line to the always-on diagnostics ring.
+ *
+ * Bounded to {@link MAX_RECENT_LOGS}; oldest entries are evicted.
  */
 function recordRecentLog(level: 'info' | 'debug' | 'warn' | 'error', line: string): void {
   recentLogs.push(`${new Date().toISOString()} [${level}] ${line}`);
@@ -64,7 +65,8 @@ function recordRecentLog(level: 'info' | 'debug' | 'warn' | 'error', line: strin
 }
 
 /**
- * Returns the most recent log lines (oldest first) for inclusion in the debug dump.
+ * Returns the most recent log lines, oldest first.
+ *
  * Levels are tagged inline; debug lines are retained even when the channel hides them.
  *
  * @returns Recent formatted log lines, capped at {@link MAX_RECENT_LOGS}.

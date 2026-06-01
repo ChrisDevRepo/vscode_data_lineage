@@ -988,7 +988,7 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`  Phase:        ${sess.phase.kind}`);
   add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
   add(`  Hops:         ${sess.hopCount}`);
-  add(`  Pending gate: ${sess.phase.kind === 'awaiting_gate' ? sess.phase.gate.kind : 'none'}`);
+  add(`  Pending gate: ${sess.phase.kind === 'awaiting_gate' ? sess.phase.gate.gate : 'none'}`);
   add(`  Result nodes: ${sess.resultGraph?.nodeIds.length ?? 0}`);
   add('  Full SM dump: use Data Lineage: Dump SM State');
   add('');
