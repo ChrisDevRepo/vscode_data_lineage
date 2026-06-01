@@ -9,7 +9,7 @@ Three categories carry the suite. Everything else is a narrower guard.
 | Category | Files | Run with |
 |---|---|---|
 | **Parsing** | `parser-edge-cases.test.ts`, `tsql-complex.test.ts`, `snapshot-aw-baseline.ts` | `npm run test:parser` |
-| **BFS / orchestration** | `graphBuilder.test.ts`, `graphAnalysis.test.ts`, `graph-analysis-aw.test.ts`, `navigation-engine*.test.ts`, `refine-loop.test.ts`, `start-exploration-schema.test.ts`, `submit-findings-schema.test.ts`, `present-result-closure.test.ts`, `column-flow-validation.test.ts` | `npm run test:bfs` |
+| **BFS / orchestration** | `graphBuilder.test.ts`, `graphAnalysis.test.ts`, `graph-analysis-aw.test.ts`, `expandedSchemaViewCore.test.ts`, `graphDisplayMode.test.ts`, `navigation-engine*.test.ts`, `refine-loop.test.ts`, `start-exploration-schema.test.ts`, `submit-findings-schema.test.ts`, `present-result-closure.test.ts`, `column-flow-validation.test.ts` | `npm run test:bfs` |
 | **Baseline** | `snapshot-aw-baseline.ts` (parser TSV), `graph-analysis-aw.test.ts` (NetworkX-verified graph JSON) | `npm run test:baseline` |
 
 `npm test` is the full unit gate: it runs `test:core`, `test:support`, and `test:ui`. `test:graph` and `test:hooks` remain compatibility aliases for `test:bfs` and `test:ui`.
@@ -27,7 +27,7 @@ Keep the lean tiers near these current local durations. Re-measure after materia
 |---|---|
 | `npm run test:parser` | about 2s |
 | `npm run test:bfs` | about 12s |
-| `npm run test:support` | about 13s |
+| `npm run test:support` | about 4s |
 | `npm run test:ui` | about 13s |
 
 ## Folder layout
@@ -97,6 +97,7 @@ tests/
 │   │   └── schema-node.test.tsx
 │   └── hooks/                             # React hook unit tests (vitest)
 │       ├── keyboardShortcuts.test.ts
+│       ├── modeCapabilities.test.ts       # Display-mode capability flags (support-ui tier)
 │       ├── save-project.test.tsx
 │       ├── useDacpacLoader.routing.test.tsx
 │       ├── useExpandedSchemaView.test.ts  # Expanded Schema View state/guard extraction
