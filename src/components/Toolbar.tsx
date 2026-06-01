@@ -2,7 +2,7 @@ import { memo, useMemo, useState } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
-import { ObjectType, AnalysisType } from '../engine/types';
+import type { ObjectType, AnalysisType, GraphMode } from '../engine/types';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { HelpModal } from './HelpModal';
@@ -13,6 +13,7 @@ import { ExclusionDropdown } from './ExclusionDropdown';
 import { SavedViewsDropdown } from './SavedViewsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 import type { FilterProfile } from '../engine/projectStore';
+import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 /**
  * Props for the {@link Toolbar} component.
@@ -56,6 +57,11 @@ interface ToolbarProps {
   onExecuteSearch?: (name: string, schema?: string) => void;
   /** Callback to initiate a column-level or table-level lineage trace. */
   onStartTrace?: (nodeId: string) => void;
+  /**
+   * IDs of nodes that are in the working set but collapsed inside a schema cluster.
+   * Passed through to {@link SearchWithAutocomplete} for three-state search partitioning.
+   */
+  collapsedSchemaNodeIds?: Set<string>;
   /** Callback to toggle the full-text SQL search sidebar. */
   onToggleDetailSearch?: () => void;
   /** Whether the detail search sidebar is currently visible. */
@@ -100,8 +106,26 @@ interface ToolbarProps {
   isFilterDirty?: boolean;
   /** Whether UI interactions that would change the graph structure are disabled. */
   isModeLocked?: boolean;
-  /** Whether the graph is in high-level schema-only overview mode. */
+  /** Whether a fresh trace/path/analysis mode can be started from the current view. */
+  canStartNewScopedMode?: boolean;
+  /** Whether Object View / Schema View can be toggled from the current view. */
+  canSwitchGraphMode?: boolean;
+  /** Whether the graph is showing schema clusters only. */
   isOverview?: boolean;
+  /** Explicit Object View / Schema View state. */
+  graphMode?: GraphMode;
+  /** Callback to switch between Object View and Schema View. */
+  onGraphModeChange?: (mode: GraphMode) => void;
+  /** Whether overview currently renders schema clusters and object nodes. */
+  isExpandedSchemaViewActive?: boolean;
+  /** Callback to collapse all expanded schemas and return to Schema View. */
+  onResetExpandedSchemaView?: () => void;
+  /** Whether collapsed schema clusters are visible beside expanded object nodes. */
+  showExpandedSchemaClusters?: boolean;
+  /** Callback to hide/show collapsed schema clusters without changing filters. */
+  onToggleExpandedSchemaClusters?: () => void;
+  /** Number of schemas currently expanded in expanded schema view. */
+  expandedSchemaCount?: number;
   /** Complete list of nodes available in the project model. */
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   /** The set of node IDs that passed through all current filters. */
@@ -113,28 +137,55 @@ interface ToolbarProps {
     rootNodes: number;
     leafNodes: number;
   } | null;
+  /** Number of nodes React Flow is actually rendering (the perf-relevant count). */
+  renderedNodeCount: number;
+  /** Object count above which newly loaded graphs start in Schema View (`dataLineageViz.overview.threshold`). */
+  overviewThreshold: number;
+  /** Rendered-node ceiling above which the graph is replaced by a limit warning (`dataLineageViz.renderLimit`). */
+  renderLimit: number;
+  /**
+   * Set once on initial load/reset: `true` when the loaded model is below the overview threshold.
+   * Disables the Schema View button until the user opts in via settings; never re-derived from filter changes.
+   */
+  schemaViewSoftDisabled?: boolean;
+}
+
+const METRIC_NUMBER_FORMAT = new Intl.NumberFormat();
+
+function formatMetricCount(value: number): string {
+  return METRIC_NUMBER_FORMAT.format(value);
 }
 
 function buildMetricsTooltip(
   allNodes: Array<{ type: ObjectType }>,
-  metrics: { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number }
+  metrics: { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number },
+  renderedNodeCount: number,
+  overviewThreshold: number,
+  renderLimit: number,
+  modeLines: readonly string[] = [],
 ): string {
   const counts: Partial<Record<ObjectType, number>> = {};
   for (const n of allNodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
   const total = allNodes.length;
-  const filtered = total > metrics.totalNodes;
   const typeRows: string[] = [];
-  const pad = String(total).length;
-  if (counts.table)     typeRows.push(`  ${String(counts.table).padStart(pad)} tables`);
-  if (counts.view)      typeRows.push(`  ${String(counts.view).padStart(pad)} views`);
-  if (counts.procedure) typeRows.push(`  ${String(counts.procedure).padStart(pad)} procedures`);
-  if (counts.function)  typeRows.push(`  ${String(counts.function).padStart(pad)} functions`);
-  if (counts.external)  typeRows.push(`  ${String(counts.external).padStart(pad)} external`);
-  const header = filtered
-    ? `Visible: ${metrics.totalNodes} / ${total} objects`
-    : `Objects: ${total}`;
-  return [header, ...typeRows].join('\n');
+  if (counts.table)     typeRows.push(`  ${formatMetricCount(counts.table)} tables`);
+  if (counts.view)      typeRows.push(`  ${formatMetricCount(counts.view)} views`);
+  if (counts.procedure) typeRows.push(`  ${formatMetricCount(counts.procedure)} procedures`);
+  if (counts.function)  typeRows.push(`  ${formatMetricCount(counts.function)} functions`);
+  if (counts.external)  typeRows.push(`  ${formatMetricCount(counts.external)} external`);
+  const header = [
+    `Rendered: ${formatMetricCount(renderedNodeCount)} graph nodes mounted`,
+    `Filtered: ${formatMetricCount(metrics.totalNodes)} catalog objects in scope`,
+    `Total: ${formatMetricCount(total)} loaded catalog objects`,
+    `Initial Schema View threshold ${formatMetricCount(overviewThreshold)}; render limit ${formatMetricCount(renderLimit)}`,
+  ];
+  return [...modeLines, ...(modeLines.length > 0 ? [''] : []), ...header, '', ...typeRows].join('\n');
 }
+
+function expandedSchemaStatusText(expandedSchemaCount: number): string {
+  return expandedSchemaCount === 1 ? '1 schema expanded' : `${expandedSchemaCount} schemas expanded`;
+}
+
 
 /**
  * The main control bar for the lineage visualizer.
@@ -165,6 +216,7 @@ export const Toolbar = memo(function Toolbar({
   hasHighlightedNode = false,
   onExecuteSearch,
   onStartTrace,
+  collapsedSchemaNodeIds,
   onToggleDetailSearch,
   isDetailSearchOpen = false,
   isAnalysisActive = false,
@@ -187,19 +239,64 @@ export const Toolbar = memo(function Toolbar({
   onUpdateView,
   isFilterDirty = false,
   isModeLocked = false,
+  canStartNewScopedMode = !isModeLocked,
+  canSwitchGraphMode = !isModeLocked,
   isOverview = false,
+  graphMode,
+  onGraphModeChange,
+  isExpandedSchemaViewActive = false,
+  onResetExpandedSchemaView,
+  showExpandedSchemaClusters = true,
+  onToggleExpandedSchemaClusters,
+  expandedSchemaCount = 0,
   allNodes = [],
   visibleNodeIds,
   metrics,
+  renderedNodeCount,
+  overviewThreshold,
+  renderLimit,
+  schemaViewSoftDisabled = false,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [confirmingBack, setConfirmingBack] = useState(false);
   const analysis = useDropdown();
 
-  useKeyboardShortcut('?', () => setIsHelpOpen(true));
+  useKeyboardShortcut(SHORTCUT_KEYS.openHelp, () => setIsHelpOpen(true));
+  useKeyboardShortcut(SHORTCUT_KEYS.toggleSchemaView, () => {
+    if (!onGraphModeChange || !canSwitchGraphMode || schemaViewSoftDisabled) return;
+    onGraphModeChange(currentGraphMode === 'overview' ? 'full' : 'overview');
+  });
+  useKeyboardShortcut(SHORTCUT_KEYS.hideExpandedSchemaClusters, () => {
+    if (isExpandedSchemaViewActive && onToggleExpandedSchemaClusters) onToggleExpandedSchemaClusters();
+  });
 
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
+  const currentGraphMode = graphMode ?? (isOverview ? 'overview' : 'full');
+  const graphModeDisabledReason = schemaViewSoftDisabled
+    ? `Schema View is optimised for larger databases (threshold: ${overviewThreshold} objects)`
+    : !onGraphModeChange
+      ? 'Schema View is disabled in settings'
+      : !canSwitchGraphMode
+        ? 'Exit current mode to switch views'
+        : null;
+  const viewModeTooltipLines = isExpandedSchemaViewActive
+    ? [
+        'View: Expanded Schema View',
+        expandedSchemaStatusText(expandedSchemaCount),
+        showExpandedSchemaClusters ? 'Schema clusters visible' : 'Schema clusters hidden',
+      ]
+    : currentGraphMode === 'overview'
+      ? ['View: Schema View', 'Graph is shown as schema clusters. Double-click a schema cluster to expand it.']
+      : ['View: Object View', 'Graph is shown as individual object nodes.'];
+
+  // Render limit is the hard guard; overview threshold is only the initial-view hint.
+  const limitRatio = renderLimit > 0 ? renderedNodeCount / renderLimit : 0;
+  const metricColor = limitRatio >= 0.9
+    ? 'var(--ln-validation-error-border)'
+    : limitRatio >= 0.75
+      ? 'var(--ln-warning-fg)'
+      : undefined;
 
   const activeFilterCount = useMemo(() => [
     selectedSchemas.size < schemas.length && schemas.length > 0,
@@ -238,9 +335,10 @@ export const Toolbar = memo(function Toolbar({
         <div className="flex-1 min-w-[100px] max-w-[340px]">
           <SearchWithAutocomplete
             onExecuteSearch={onExecuteSearch}
-            onStartTrace={isModeLocked || isAnalysisActive ? undefined : onStartTrace}
+            onStartTrace={canStartNewScopedMode ? onStartTrace : undefined}
             allNodes={allNodes}
             visibleNodeIds={visibleNodeIds}
+            collapsedSchemaNodeIds={collapsedSchemaNodeIds}
           />
         </div>
         <Tooltip content="Detail Search (full-text search in SQL bodies)">
@@ -248,6 +346,20 @@ export const Toolbar = memo(function Toolbar({
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 8.25v3m0 0v3m0-3h3m-3 0h-3" />
+            </svg>
+          </Button>
+        </Tooltip>
+        <Tooltip content={graphModeDisabledReason ?? 'Schema View (S)'}>
+          <Button
+            onClick={() => onGraphModeChange?.(currentGraphMode === 'overview' ? 'full' : 'overview')}
+            variant="icon"
+            className={currentGraphMode === 'overview' ? 'ln-btn-icon-active' : ''}
+            disabled={!onGraphModeChange || !canSwitchGraphMode || schemaViewSoftDisabled}
+            aria-label="Schema View"
+            aria-pressed={currentGraphMode === 'overview'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 7.5h15v5.25h-15V7.5ZM7.5 15.75h3.75M12.75 15.75h3.75M9.375 12.75v3M14.625 12.75v3" />
             </svg>
           </Button>
         </Tooltip>
@@ -263,8 +375,8 @@ export const Toolbar = memo(function Toolbar({
           />
         )}
         <div className="relative inline-flex">
-          <Tooltip content={activeFilterCount > 0 ? `Clear All Filters (${activeFilterCount} active)` : 'No active filters'}>
-            <Button onClick={onRefresh} variant="icon" aria-label="Clear All Filters">
+          <Tooltip content={activeFilterCount > 0 ? `Refresh View (${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active)` : 'Refresh View'}>
+            <Button onClick={() => { onRefresh(); onResetExpandedSchemaView?.(); }} variant="icon" aria-label="Refresh View">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
@@ -299,13 +411,13 @@ export const Toolbar = memo(function Toolbar({
         )}
 
         {/* Analysis Dropdown */}
-        <Tooltip content={isModeLocked && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
+        <Tooltip content={!canStartNewScopedMode && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
           <Button
             ref={analysis.refs.setReference}
             onClick={analysis.toggle}
             variant="icon"
             className={isAnalysisActive ? 'ln-btn-icon-active ln-btn-icon-active--analysis' : ''}
-            disabled={isModeLocked && !isAnalysisActive}
+            disabled={!canStartNewScopedMode && !isAnalysisActive}
             aria-label="Graph Analysis"
             aria-pressed={isAnalysisActive}
           >
@@ -390,17 +502,78 @@ export const Toolbar = memo(function Toolbar({
           </Button>
         </Tooltip>
 
-        {/* Metrics — pushed to right */}
+        {/* Compact Expanded Schema View controls. Status lives in tooltips to preserve toolbar space. */}
+        {isExpandedSchemaViewActive && expandedSchemaCount > 0 && onResetExpandedSchemaView && (
+          <>
+            <div className="w-px h-6 ln-divider" />
+            {onToggleExpandedSchemaClusters && (
+              <Tooltip content={[
+                expandedSchemaStatusText(expandedSchemaCount),
+                showExpandedSchemaClusters ? 'Schema clusters visible — hide (H)' : 'Schema clusters hidden — show (H)',
+              ].join('\n')} multiline>
+                <Button
+                  onClick={onToggleExpandedSchemaClusters}
+                  variant="icon"
+                  className={!showExpandedSchemaClusters ? 'ln-btn-icon-active' : ''}
+                  aria-label={showExpandedSchemaClusters ? 'Hide schema clusters' : 'Show schema clusters'}
+                  aria-pressed={!showExpandedSchemaClusters}
+                >
+                  {showExpandedSchemaClusters ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12Z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58M9.1 5.52A8.96 8.96 0 0 1 12 5.25c6 0 9.75 6.75 9.75 6.75a16.6 16.6 0 0 1-3.02 3.69M6.35 7.35A17.28 17.28 0 0 0 2.25 12S6 18.75 12 18.75a9.2 9.2 0 0 0 4.1-.98" />
+                    </svg>
+                  )}
+                </Button>
+              </Tooltip>
+            )}
+            <Tooltip content={[
+              expandedSchemaStatusText(expandedSchemaCount),
+              showExpandedSchemaClusters ? 'Schema clusters visible' : 'Schema clusters hidden',
+              'Collapse all expanded schemas and return to Schema View',
+            ].join('\n')} multiline>
+              <Button onClick={onResetExpandedSchemaView} variant="icon" aria-label="Collapse all schemas">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+                </svg>
+              </Button>
+            </Tooltip>
+          </>
+        )}
+
+        {/* Metrics — pushed to right. Shows the rendered-node count gauged toward the render limit,
+            with a tick at the initial Schema View threshold. */}
         {metrics && (
           <>
             <div className="ml-auto w-px h-6 flex-shrink-0 ln-divider" />
-            <Tooltip content={buildMetricsTooltip(allNodes, metrics)} delay={400} multiline>
-              <div className="flex-shrink-0 text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-center gap-1 pr-1 cursor-default select-none">
-                <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>{metrics.totalNodes}</span>
-                {allNodes.length > metrics.totalNodes && (
-                  <span className="opacity-40">/ {allNodes.length}</span>
-                )}
-                <span className="opacity-60">objects</span>
+            <Tooltip content={buildMetricsTooltip(allNodes, metrics, renderedNodeCount, overviewThreshold, renderLimit, viewModeTooltipLines)} delay={400} multiline>
+              <div
+                className="flex-shrink-0 flex items-center gap-2 pr-1 cursor-default select-none"
+                aria-label={isExpandedSchemaViewActive
+                  ? `Rendered ${renderedNodeCount}, filtered ${metrics.totalNodes}, total ${allNodes.length}`
+                  : `${metrics.totalNodes} filtered nodes`}
+              >
+                <span className="text-xs ln-text-muted whitespace-nowrap tabular-nums flex items-baseline gap-1">
+                  {isExpandedSchemaViewActive ? (
+                    <>
+                      <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(renderedNodeCount)}</span>
+                      <span className="opacity-45">/</span>
+                      <span className="font-medium">{formatMetricCount(metrics.totalNodes)}</span>
+                      <span className="opacity-45">/</span>
+                      <span>{formatMetricCount(allNodes.length)}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(metrics.totalNodes)}</span>
+                      <span className="opacity-60">nodes</span>
+                    </>
+                  )}
+                </span>
               </div>
             </Tooltip>
           </>

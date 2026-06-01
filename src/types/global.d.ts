@@ -1,7 +1,4 @@
-// monaco-editor publishes types only for its main entry point.
-// The ESM subpath import ('monaco-editor/esm/vs/editor/editor.api') used in
-// MonacoSqlView.tsx avoids bundling all language workers (~9 MB), but TS
-// cannot resolve its types. Re-export from the main declaration to fix that.
+// Re-export Monaco's main types for the ESM editor.api subpath used by MonacoSqlView.tsx.
 declare module 'monaco-editor/esm/vs/editor/editor.api' {
   export * from 'monaco-editor';
 }

@@ -12,6 +12,10 @@ tmp_*
 # Pattern intentionally globs `out/test*/**` so orphaned timestamped dirs
 # like `out/test.stale.1777052232/` don't leak into the VSIX.
 out/test*/**
+out/*.js
+out/**/*.js
+!out/extension.js
+out/*.d.ts
 out/**/*.d.ts
 
 # Config files
@@ -22,6 +26,7 @@ vite.config.ts
 vitest.config.ts
 tailwind.config.js
 postcss.config.js
+postcss.config.cjs
 esbuild.config.mjs
 
 # Dev artifacts
@@ -35,6 +40,7 @@ CONTRIBUTING.md
 
 # Internal test and documentation infrastructure (must not leak into VSIX)
 **/*internal*/**
+.agents/**
 
 # Environment files (must never be packaged)
 .env

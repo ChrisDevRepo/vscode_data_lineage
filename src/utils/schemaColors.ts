@@ -24,6 +24,15 @@ export const TYPE_LABELS: Record<ObjectType, string> = {
   external: 'External Table',
 };
 
+/** Abbreviated type labels for compact UI surfaces (picker, badges). */
+export const SHORT_TYPE_LABELS: Record<ObjectType, string> = {
+  table: 'Table',
+  view: 'View',
+  procedure: 'SP',
+  function: 'Fn',
+  external: 'Ext',
+};
+
 /**
  * 15-entry categorical color palette for light themes.
  * Colors 1–10 are saturated base hues; colors 11–15 are lighter variants
@@ -116,6 +125,9 @@ const SCHEMA_COLORS_DARK_EXT = [
   ...SCHEMA_COLORS_DARK.map(c => shiftL(c, -12)),
 ];
 
+/**
+ * Resolved schema-color assignments keyed by schema name.
+ */
 export type SchemaColorMap = Map<string, string>;
 
 function requireSchemaName(schema: string): string {
@@ -157,6 +169,11 @@ export function getSchemaColor(schema: string, forceLight?: boolean): string {
 /**
  * Computes the stable preferred palette slot for a schema.
  * The final avalanche improves distribution before reducing to the small palette.
+ *
+ * @param schema - Schema name to query.
+ * @param paletteSize - Available palette size.
+ *
+ * @returns Computed numeric value.
  */
 export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_EXT.length): number {
   return hashString(schemaKey(requireSchemaName(schema))) % paletteSize;
@@ -165,6 +182,11 @@ export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_
 /**
  * Builds a deterministic loaded-set color map keyed by normalized schema name.
  * Collisions are spread across free palette slots before any color is reused.
+ *
+ * @param schemas - Schema names to map.
+ * @param forceLight - Whether to force the light palette.
+ *
+ * @returns a deterministic loaded-set color map keyed by normalized schema name.
  */
 export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean): SchemaColorMap {
   const palette = getSchemaPalette(forceLight);
@@ -197,6 +219,14 @@ export function createSchemaColorMap(schemas: readonly string[], forceLight?: bo
   return map;
 }
 
+/**
+ * Resolves the display color for a schema from a precomputed color map.
+ *
+ * @param schema - Schema name to query.
+ * @param colorMap - Precomputed schema-color lookup.
+ *
+ * @returns String result.
+ */
 export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap): string {
   const key = schemaKey(requireSchemaName(schema));
   const color = colorMap.get(key);
@@ -204,6 +234,37 @@ export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap):
     throw new Error(`No schema color assigned for "${schema}"`);
   }
   return color;
+}
+
+/**
+ * Returns true when a schema/type aggregate represents only external objects.
+ *
+ * External-only buckets are rendered as external system clusters and must not
+ * consume a schema palette slot.
+ */
+export function isExternalOnlyTypeBreakdown(typeBreakdown: Partial<Record<ObjectType, number>> | undefined): boolean {
+  if (!typeBreakdown) return false;
+  const externalCount = typeBreakdown.external ?? 0;
+  if (externalCount <= 0) return false;
+  return (Object.keys(TYPE_LABELS) as ObjectType[])
+    .filter(type => type !== 'external')
+    .every(type => (typeBreakdown[type] ?? 0) === 0);
+}
+
+/**
+ * Resolves the display color for a rendered schema-like node.
+ *
+ * Real schemas use the deterministic schema palette. External-only aggregates
+ * use the fixed external color from the main object-node contract.
+ */
+export function getSchemaDisplayColor(
+  schema: string,
+  colorMap: SchemaColorMap,
+  typeBreakdown?: Partial<Record<ObjectType, number>>,
+): string {
+  return isExternalOnlyTypeBreakdown(typeBreakdown)
+    ? getExternalNodeColor()
+    : getSchemaColorFromMap(schema, colorMap);
 }
 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */

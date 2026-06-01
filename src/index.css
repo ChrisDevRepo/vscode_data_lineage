@@ -92,6 +92,7 @@
   /* Shadows */
   --ln-node-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --ln-node-shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.18);
   --ln-dropdown-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
 
   /* Wizard (start screen) — always dark/black palette regardless of VS Code theme.
@@ -149,6 +150,7 @@ body[data-vscode-theme-kind="vscode-dark"] {
   --ln-node-border: rgba(255, 255, 255, 0.2);
   --ln-node-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.15);
+  --ln-node-shadow-elevated: 0 4px 14px rgba(0, 0, 0, 0.55);
   --ln-dropdown-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
   --ln-hover-bg: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
   --ln-highlight-yellow: #b25000;
@@ -178,6 +180,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-node-border: var(--vscode-contrastBorder, #6fc3df);
   --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
   --ln-node-shadow-dimmed: none;
+  --ln-node-shadow-elevated: 0 0 0 3px var(--vscode-contrastBorder, #6fc3df);
   --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
   --ln-border: var(--vscode-contrastBorder, #6fc3df);
   --ln-highlight-yellow: #fbbf24;
@@ -207,6 +210,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-node-border: var(--vscode-contrastBorder, #0f4a85);
   --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
   --ln-node-shadow-dimmed: none;
+  --ln-node-shadow-elevated: 0 0 0 3px var(--vscode-contrastBorder, #0f4a85);
   --ln-dropdown-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
   --ln-border: var(--vscode-contrastBorder, #0f4a85);
   --ln-highlight-yellow: #ca8a04;
@@ -656,6 +660,148 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 .ln-node-remove-btn:hover {
   opacity: 1;
   color: var(--ln-validation-error-border);
+}
+
+/* Schema cluster (expanded schema view): elevate on hover/selection so the two node kinds read apart.
+   The steady categorical cue is the filled body + 3px border set inline in SchemaNode. */
+.ln-schema-cluster {
+  transition: box-shadow 150ms ease;
+}
+.ln-schema-cluster:hover,
+.react-flow__node.selected .ln-schema-cluster {
+  box-shadow: var(--ln-node-shadow-elevated);
+}
+
+/* Schema cluster on-node action toolbar (replaces the old right-click context window) */
+.ln-schema-toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ln-border);
+  border-radius: 8px;
+  background: var(--ln-bg-elevated);
+  box-shadow: var(--ln-dropdown-shadow);
+}
+.ln-schema-toolbar__btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--ln-fg);
+  white-space: nowrap;
+}
+.ln-schema-toolbar__btn:hover {
+  background: var(--ln-hover-bg);
+}
+
+/* Interactive trace add/prune controls */
+.ln-trace-node-action {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.72));
+  color: var(--vscode-button-foreground, #ffffff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 12;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.26), 0 0 0 2px var(--ln-node-bg);
+  transition: box-shadow 0.15s, filter 0.15s, transform 0.15s;
+}
+.ln-trace-node-action__icon {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+}
+.ln-trace-node-action:hover:not(:disabled) {
+  transform: scale(1.08);
+  filter: brightness(1.08);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.34), 0 0 0 2px var(--ln-node-bg);
+}
+.ln-trace-node-action:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: 2px;
+}
+.ln-trace-node-action--in {
+  left: -28px;
+}
+.ln-trace-node-action--out {
+  right: -28px;
+}
+.ln-trace-node-action--add {
+  top: 10px;
+  background: var(--vscode-charts-green, #188038);
+}
+.ln-trace-node-action--prune {
+  top: 38px;
+  background: var(--vscode-charts-red, #c5221f);
+}
+
+.ln-trace-node-picker {
+  min-width: 220px;
+  max-width: 420px;
+  border: 1px solid var(--ln-border);
+  border-radius: 6px;
+  background: var(--ln-bg-elevated);
+  color: var(--ln-fg);
+  box-shadow: var(--ln-dropdown-shadow);
+  overflow: hidden;
+}
+.ln-trace-node-picker__header {
+  height: 26px;
+  padding: 0 6px 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--ln-border-light);
+  color: var(--ln-fg-muted);
+}
+.ln-trace-node-picker__close {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--ln-fg-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ln-trace-node-picker__close:hover {
+  background: var(--ln-hover-bg);
+  color: var(--ln-fg);
+}
+.ln-trace-node-picker__row {
+  width: 100%;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ln-fg);
+}
+.ln-trace-node-picker__row:hover {
+  background: var(--ln-hover-bg);
+}
+.ln-trace-node-picker__type {
+  flex-shrink: 0;
+  min-width: 54px;
+  color: var(--ln-fg-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.ln-trace-node-picker__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Error boundary */
@@ -1364,6 +1510,21 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 .ln-analysis-group-item:focus-visible {
   outline: 2px solid var(--ln-focus-border);
   outline-offset: -2px;
+}
+
+/* Render-count gauge bar */
+.ln-gauge-track {
+  width: 64px;
+  height: 4px;
+  background: var(--ln-border, rgba(127, 127, 127, 0.25));
+}
+.ln-gauge-fill {
+  transition: width 0.2s ease;
+}
+.ln-gauge-tick {
+  width: 1px;
+  background: var(--ln-fg-muted);
+  opacity: 0.7;
 }
 
 /* #endregion */

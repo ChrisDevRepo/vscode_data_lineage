@@ -125,8 +125,7 @@ function main(): void {
 
   const targetedDir = testPath('sql/targeted');
   if (!existsSync(targetedDir)) {
-    console.error('test/sql/targeted/ not found');
-    process.exit(1);
+    throw new Error('tests/fixtures/sql/targeted not found');
   }
 
   const files = readdirSync(targetedDir).filter(f => f.endsWith('.sql')).sort();

@@ -1,4 +1,7 @@
 
+/**
+ * Supported lineage object kinds.
+ */
 export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
 
 /**
@@ -249,6 +252,9 @@ export interface XmlReference {
 }
 
 
+/**
+ * Maps DACPAC element types to lineage object kinds.
+ */
 export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
   SqlTable: 'table',
   SqlView: 'view',
@@ -260,6 +266,9 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
   SqlExternalTable: 'external',  // PolyBase / data virtualization ET in dacpac XML
 };
 
+/**
+ * DACPAC element types that should produce lineage nodes.
+ */
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
 
 
@@ -304,6 +313,13 @@ export interface ForeignKeyInfo {
 /**
  * Format a SQL type name with length/precision/scale modifiers.
  * Handles nvarchar/nchar byte→char conversion and fixed-type detection.
+ *
+ * @param typeName - SQL type name.
+ * @param maxLength - Declared max length.
+ * @param precision - Declared precision.
+ * @param scale - Declared scale.
+ *
+ * @returns Formatted SQL type string.
  */
 export function formatColumnType(
   typeName: string, maxLength: string, precision: string, scale: string
@@ -337,7 +353,20 @@ export function formatColumnType(
   return typeName;
 }
 
-/** Build a ColumnDef from raw metadata — single code path for both dacpac and DMV. */
+/**
+ * Build a ColumnDef from raw metadata — single code path for both dacpac and DMV.
+ *
+ * @param name - Name to use.
+ * @param typeName - SQL type name.
+ * @param nullable - Whether the column is nullable.
+ * @param isIdentity - Whether the column is an identity column.
+ * @param isComputed - Whether the column is computed.
+ * @param maxLength - Declared max length.
+ * @param precision - Declared precision.
+ * @param scale - Declared scale.
+ *
+ * @returns Normalized column definition.
+ */
 export function buildColumnDef(
   name: string,
   typeName: string,
@@ -359,6 +388,9 @@ export function buildColumnDef(
 }
 
 
+/**
+ * Constraint lookups keyed by normalized table and column identifiers.
+ */
 export interface ConstraintMaps {
   /** Key: "schema.table.column" (lowercase) → UQ constraint name */
   uqColMap: Map<string, string>;
@@ -370,7 +402,15 @@ export interface ConstraintMaps {
   pkOrdinalMap: Map<string, number>;
 }
 
-/** Enrich columns with UQ/CK/PK flags and return FK list for a table. */
+/**
+ * Enrich columns with UQ/CK/PK flags and return FK list for a table.
+ *
+ * @param columns - Columns to enrich.
+ * @param tableKey - Normalized table key.
+ * @param maps - Constraint lookup tables.
+ *
+ * @returns Foreign-key metadata discovered for the table.
+ */
 export function enrichColumnsWithConstraints(
   columns: ColumnDef[], tableKey: string, maps: ConstraintMaps
 ): ForeignKeyInfo[] {
@@ -432,6 +472,9 @@ export interface ExternalRef {
 }
 
 
+/**
+ * Maps SQL Server DMV object codes to lineage object kinds.
+ */
 export const DMV_TYPE_MAP: Record<string, ObjectType> = {
   'U':  'table',
   'V':  'view',
@@ -462,6 +505,9 @@ export interface LayoutConfig {
   edgeStyle: EdgeStyle;
 }
 
+/**
+ * Supported edge rendering styles.
+ */
 export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
 
 /**
@@ -517,13 +563,12 @@ export interface ExternalRefsConfig {
 }
 
 /**
- * Configuration for the schema-level overview mode.
+ * Configuration for Schema View.
  */
 export interface OverviewConfig {
-  /** When false, schema overview mode is completely disabled — graph always shows full object view. */
+  /** When false, Schema View is disabled and new loads open in Object View until the hard render limit. */
   enabled: boolean;
-  /** Node count above which overview auto-activates on initial load (post-filter).
-   *  Also used as the dagre-skip threshold — no point computing layout for nodes shown as schema bubbles. */
+  /** Loaded-model object count above which the initial graph opens in Schema View. */
   threshold: number;
 }
 
@@ -559,9 +604,12 @@ export interface ExtensionConfig {
 /** Fabric Data Warehouse engineEditionId — used for platform-specific query branching. */
 export const ENGINE_EDITION_FABRIC = 11;
 
+/**
+ * Default extension configuration values.
+ */
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
-  maxNodes: 750,
+  maxNodes: 2000,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
   analysis: { hubMinDegree: 8, islandMaxSize: 500, longestPathMinNodes: 5 },
@@ -573,24 +621,74 @@ export const DEFAULT_CONFIG = {
 } satisfies ExtensionConfig;
 
 
+/**
+ * Supported top-level graph display modes.
+ */
 export type GraphMode = 'full' | 'overview';
 
-/** Data for a schema-level super-node rendered in overview mode. */
+/** Data for a schema-level super-node rendered in Schema View. */
 export interface SchemaNodeData extends Record<string, unknown> {
+  /**
+   * Schema name rendered by the schema node.
+   */
   schemaName: string;
+  /**
+   * Number of objects represented by the schema node.
+   */
   objectCount: number;
+  /**
+   * Object counts keyed by lineage object type.
+   */
   typeBreakdown: Partial<Record<ObjectType, number>>;
+  /**
+   * Display color for the schema node.
+   */
   color: string;
+  /**
+   * True when this node represents only external objects. External-only clusters
+   * use the fixed external color, not the schema palette.
+   */
+  isExternalOnly?: boolean;
+  /** Set when this schema box is a collapsed cluster inside expanded schema view (shown alongside object
+   * nodes). Triggers the stacked-cards backing + expand glyph so it reads as an openable group. */
+  isExpandedSchemaViewCluster?: boolean;
 }
 
+/**
+ * Durable graph filter state applied to the current model.
+ */
 export interface FilterState {
+  /**
+   * Schemas currently included by the filter.
+   */
   schemas: Set<string>;
+  /**
+   * Object types currently included by the filter.
+   */
   types: Set<ObjectType>;
+  /**
+   * Free-text search term applied to the graph.
+   */
   searchTerm: string;
+  /**
+   * Whether isolated nodes are hidden.
+   */
   hideIsolated: boolean;
+  /**
+   * Schemas emphasized in the current view.
+   */
   focusSchemas: Set<string>;
+  /**
+   * Whether external reference nodes are shown.
+   */
   showExternalRefs: boolean;
+  /**
+   * Enabled categories of external references.
+   */
   externalRefTypes: Set<'file' | 'db'>;
+  /**
+   * User-defined exclusion patterns.
+   */
   exclusionPatterns: string[];
   /**
    * Allowlist: when non-empty, only these node IDs are shown (applied after all other filters).
@@ -599,42 +697,122 @@ export interface FilterState {
   allowlistNodeIds?: Set<string>;
 }
 
+/**
+ * Interactive trace state for the current graph session.
+ */
 export interface TraceState {
+  /**
+   * Current trace mode.
+   */
   mode: 'none' | 'configuring' | 'applied' | 'filtered' | 'pathfinding' | 'path-applied' | 'analysis';
+  /**
+   * Analysis type when the trace is in analysis mode.
+   */
   analysisType?: AnalysisType;
+  /**
+   * Origin node ID for the trace.
+   */
   selectedNodeId: string | null;
+  /**
+   * Target node ID for pathfinding traces.
+   */
   targetNodeId: string | null;
+  /**
+   * Configured upstream traversal depth.
+   */
   upstreamLevels: number;
+  /**
+   * Configured downstream traversal depth.
+   */
   downstreamLevels: number;
+  /** Original BFS node scope before interactive trace add/prune edits. */
+  baseNodeIds: Set<string>;
+  /** Original BFS edge scope before interactive trace add/prune edits. */
+  baseEdgeIds: Set<string>;
+  /** Direct-neighbor nodes manually added to the active trace. */
+  manualAddedNodeIds: Set<string>;
+  /** Nodes manually removed from the active trace. */
+  manualPrunedNodeIds: Set<string>;
+  /**
+   * Node IDs currently included in the rendered trace.
+   */
   tracedNodeIds: Set<string>;
+  /**
+   * Edge IDs currently included in the rendered trace.
+   */
   tracedEdgeIds: Set<string>;
   /** BFS auto-promoted to fullGraph because the target node was filtered out. */
   autoPromoted?: boolean;
 }
 
 
+/**
+ * Supported graph analysis modes.
+ */
 export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles' | 'external-refs';
 
+/**
+ * Grouped analysis result for a related set of nodes.
+ */
 export interface AnalysisGroup {
+  /**
+   * Stable identifier for the analysis group.
+   */
   id: string;
+  /**
+   * Display label for the analysis group.
+   */
   label: string;
+  /**
+   * Node IDs assigned to the group.
+   */
   nodeIds: string[];
+  /**
+   * Optional metadata for the analysis group.
+   */
   meta?: Record<string, string | number>;
 }
 
+/**
+ * Result payload returned by a graph analysis run.
+ */
 export interface AnalysisResult {
+  /**
+   * Analysis type that produced this result.
+   */
   type: AnalysisType;
+  /**
+   * Grouped analysis results.
+   */
   groups: AnalysisGroup[];
+  /**
+   * Human-readable summary of the analysis result.
+   */
   summary: string;
 }
 
+/**
+ * Active analysis view state.
+ */
 export interface AnalysisMode {
+  /**
+   * Analysis type currently displayed.
+   */
   type: AnalysisType;
+  /**
+   * Analysis result currently displayed.
+   */
   result: AnalysisResult;
+  /**
+   * Selected analysis group, or `null` when none is active.
+   */
   activeGroupId: string | null;
 }
 
 
+/**
+ * Messages exchanged between the extension host and webviews.
+ */
 export type ExtensionMessage =
   | { type: 'config-only'; config: ExtensionConfig }
   | { type: 'projects-list'; projects: import('./projectStore').Project[]; lastOpenedId: string | null }
@@ -649,5 +827,4 @@ export type ExtensionMessage =
   | { type: 'db-error'; message: string; phase: string }
   | { type: 'db-cancelled' }
   | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
-  | { type: 'table-stats-error'; message: string }
-  | { type: 'toggle-overview' };
+  | { type: 'table-stats-error'; message: string };

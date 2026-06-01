@@ -86,10 +86,13 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
 /**
  * Constructs a fully resolved DatabaseModel from DMV query results.
  *
- * @param results - Aggregate raw DMV results.
- * @param currentDatabase - Context of the current database for name resolution.
- * @param externalRefsEnabled - Whether to model unresolved dependencies as external nodes.
- * @param maxNodes - Safety limit for the number of nodes in the graph.
+ *
+ * @param results - Raw DMV query results to assemble.
+ * @param currentDatabase - Current database name for local-object resolution.
+ * @param externalRefsEnabled - Whether external reference nodes should be emitted.
+ * @param maxNodes - Configured node cap for the generated model.
+ * @param onDebugLog - Debug logger callback.
+ *
  * @returns A resolved DatabaseModel including the graph and metadata.
  */
 export function buildModelFromDmv(

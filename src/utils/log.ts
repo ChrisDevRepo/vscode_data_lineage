@@ -50,6 +50,29 @@ function logToTest(cat: LogCategory, msg: string) {
   }
 }
 
+/** Maximum number of recent log lines retained for the debug dump's RECENT LOG tail. */
+const MAX_RECENT_LOGS = 200;
+const recentLogs: string[] = [];
+
+/**
+ * Appends a single formatted log line to the always-on ring buffer that backs the
+ * debug dump's RECENT LOG section. Bounded to {@link MAX_RECENT_LOGS}; oldest evicted.
+ */
+function recordRecentLog(level: 'info' | 'debug' | 'warn' | 'error', line: string): void {
+  recentLogs.push(`${new Date().toISOString()} [${level}] ${line}`);
+  if (recentLogs.length > MAX_RECENT_LOGS) recentLogs.shift();
+}
+
+/**
+ * Returns the most recent log lines (oldest first) for inclusion in the debug dump.
+ * Levels are tagged inline; debug lines are retained even when the channel hides them.
+ *
+ * @returns Recent formatted log lines, capped at {@link MAX_RECENT_LOGS}.
+ */
+export function getRecentLogs(): readonly string[] {
+  return recentLogs;
+}
+
 function normalizeLogMessage(msg: string): string {
   return sanitizeForLog(msg);
 }
@@ -67,6 +90,7 @@ function normalizeLogMessage(msg: string): string {
 export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeLogMessage(msg);
   logToTest(cat, norm);
+  recordRecentLog('info', `[${cat}] ${norm}`);
   ch.info(`[${cat}] ${norm}`);
 }
 
@@ -83,6 +107,7 @@ export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
 export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeLogMessage(msg);
   logToTest(cat, norm);
+  recordRecentLog('debug', `[${cat}] ${norm}`);
   ch.debug(`[${cat}] ${norm}`);
 }
 
@@ -99,6 +124,7 @@ export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): v
 export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeLogMessage(msg);
   logToTest(cat, norm);
+  recordRecentLog('warn', `[${cat}] ${norm}`);
   ch.warn(`[${cat}] ${norm}`);
 }
 
@@ -119,20 +145,40 @@ export class Logger {
     private readonly cat: LogCategory
   ) {}
 
-  /**
+    /**
    * Factory method to create a new Logger.
+   *
+   * @param ch - Output channel to write to.
+   * @param cat - cat.
    */
   static create(ch: LogOutputChannel, cat: LogCategory): Logger {
     return new Logger(ch, cat);
   }
 
-  /** Logs an info-level message. */
+    /**
+   * Logs an info-level message.
+   *
+   * @param msg - msg.
+   */
   info(msg: string): void { logInfo(this.ch, this.cat, msg); }
-  /** Logs a debug-level message. */
+    /**
+   * Logs a debug-level message.
+   *
+   * @param msg - msg.
+   */
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
-  /** Logs a warning-level message. */
+    /**
+   * Logs a warning-level message.
+   *
+   * @param msg - msg.
+   */
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
-  /** Logs an error-level message with error details. */
+    /**
+   * Logs an error-level message with error details.
+   *
+   * @param op - op.
+   * @param err - err.
+   */
   error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
 
   /**
@@ -148,10 +194,15 @@ export class Logger {
 /**
  * Emits already-prefixed text verbatim at the given level.
  *
+ *
  * @remarks
  * For text that carries its own `[Category]` prefix (e.g. webview log messages
  * relayed through the bridge). Avoids double-tagging. All other callers should
  * use {@link logInfo} / {@link logDebug} / {@link logWarn} / {@link logError}.
+ *
+ * @param ch - Output channel to write to.
+ * @param level - Log level to emit.
+ * @param text - Raw text to append.
  */
 export function logRaw(
   ch: LogOutputChannel,
@@ -159,6 +210,7 @@ export function logRaw(
   text: string,
 ): void {
   const norm = normalizeLogMessage(text);
+  recordRecentLog(level, norm);
   switch (level) {
     case 'info':  ch.info(norm);  return;
     case 'warn':  ch.warn(norm);  return;
@@ -217,8 +269,11 @@ export function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err
   const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
   const msg = `FAILED: ${op} — ${detail}`;
   logToTest(cat, msg);
+  recordRecentLog('error', `[${cat}] ${msg}`);
   ch.error(`[${cat}] ${msg}`);
   if (err instanceof Error && err.stack) {
-    ch.error(`[${cat}] Stack: ${normalizeLogMessage(err.stack)}`);
+    const stackLine = `Stack: ${normalizeLogMessage(err.stack)}`;
+    recordRecentLog('error', `[${cat}] ${stackLine}`);
+    ch.error(`[${cat}] ${stackLine}`);
   }
 }

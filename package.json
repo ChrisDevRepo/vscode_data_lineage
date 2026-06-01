@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -108,6 +108,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "dataLineageViz.refresh",
+        "title": "Data Lineage: Refresh Lineage View",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "dataLineageViz.openSettings",
         "title": "Data Lineage: Settings",
         "icon": "$(gear)"
@@ -148,7 +153,7 @@
       },
       {
         "command": "dataLineageViz.dumpSmState",
-        "title": "Data Lineage: Dump SM State"
+        "title": "Data Lineage: Dump AI Session State"
       },
       {
         "command": "dataLineageViz.searchObjects",
@@ -172,17 +177,17 @@
         "properties": {
           "dataLineageViz.maxNodes": {
             "type": "number",
-            "default": 750,
+            "default": 2000,
             "minimum": 10,
-            "maximum": 10000,
-            "markdownDescription": "Maximum number of database objects to load. The graph rendering is separately capped by `renderLimit`. Values above 1000 are supported for AI/data queries but the GUI will show schema overview or a limit warning.",
+            "maximum": 2000,
+            "markdownDescription": "Maximum number of database objects to load. The graph rendering is separately capped by `renderLimit`. Values above 1000 are supported for AI/data queries but the GUI may start in Schema View or show a limit warning.",
             "scope": "resource"
           },
           "dataLineageViz.renderLimit": {
             "type": "number",
             "default": 750,
             "minimum": 100,
-            "maximum": 5000,
+            "maximum": 1500,
             "markdownDescription": "Maximum rendered nodes before showing a warning instead of the graph. Prevents browser performance issues with very large visualizations. AI tools and BFS operate on the full model regardless of this limit.",
             "scope": "resource"
           },
@@ -204,7 +209,7 @@
           "dataLineageViz.overview.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Enable schema overview mode. When enabled and the graph exceeds `overview.threshold` nodes, the initial view shows schema-level bubbles instead of all objects. Set to `false` to always show the full object graph.",
+            "markdownDescription": "Enable Schema View. When enabled and a loaded graph exceeds `overview.threshold` nodes, the graph starts in schema-level cluster nodes; at or below the threshold it starts in Object View. After load, the toolbar Object View / Schema View toggle controls the surface until Reset All or a new load.",
             "scope": "resource"
           },
           "dataLineageViz.overview.threshold": {
@@ -212,7 +217,7 @@
             "default": 150,
             "minimum": 10,
             "maximum": 1000,
-            "markdownDescription": "Node count above which schema overview mode auto-activates on initial load. Only applies when `overview.enabled` is `true`.",
+            "markdownDescription": "Loaded-model object count above which the graph initially opens in Schema View. This is evaluated only on load or Reset All. After that, filters and exclusions do not auto-switch the current view; `renderLimit` remains the post-load safety gate.",
             "scope": "resource"
           },
           "dataLineageViz.parseRulesFile": {
@@ -458,7 +463,7 @@
             "default": 10000,
             "minimum": 1000,
             "maximum": 100000,
-            "markdownDescription": "Token budget for `lineage_get_context` deciding whether to inline the full catalog or return a summary. Unrelated to the discovery scope budget above."
+            "markdownDescription": "Token budget for `lineage_get_context` deciding whether exact catalog/current-view/bookmark context fits or must return a complete:false summary. Unrelated to the discovery scope budget above."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
@@ -1224,14 +1229,19 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "tsx tests/unit/dacpacExtractor.test.ts && tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/graphAnalysis.test.ts && tsx tests/unit/graph-analysis-aw.test.ts && tsx tests/unit/dmvExtractor.test.ts && tsx tests/unit/tsql-complex.test.ts && tsx tests/unit/projectStore.test.ts && tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/ai-tool-registration.test.ts && tsx tests/unit/schemaColors.test.ts && tsx tests/unit/repeat-reject-guard.test.ts && tsx tests/unit/classification.test.ts && tsx tests/unit/start-exploration-schema.test.ts && tsx tests/unit/chatResponseWriter.test.ts && tsx tests/unit/messageEnvelope.test.ts && tsx tests/unit/refine-loop.test.ts && tsx tests/unit/followup-confirmation.test.ts && tsx tests/unit/transient-retry.test.ts && tsx tests/unit/column-flow-validation.test.ts && tsx tests/unit/submit-findings-schema.test.ts && tsx tests/unit/toolPolicy.test.ts && tsx tests/unit/prompt-composition.test.ts && tsx tests/unit/navigation-engine.test.ts && tsx tests/unit/navigation-engine-cascade.test.ts && tsx tests/unit/navigation-engine-bipartite.test.ts && tsx tests/unit/navigation-engine-supplement.test.ts && tsx tests/unit/navigation-engine-synthesis-regression.test.ts && tsx tests/unit/present-result-closure.test.ts && tsx tests/unit/log-normalization.test.ts && tsx tests/unit/ai-preview-rendering.test.ts && vitest run --config vitest.config.ts tests/unit/components/ai-description-overlay.test.tsx",
+    "test": "node tests/tools/run-vitest.mjs run --project parser --project bfs --project support-node --project support-ui --project ui",
     "test:unit": "npm run test",
-    "test:parser": "tsx tests/unit/parser-edge-cases.test.ts && tsx tests/unit/tsql-complex.test.ts",
-    "test:graph": "tsx tests/unit/graphBuilder.test.ts && tsx tests/unit/graphAnalysis.test.ts",
-    "test:baseline": "tsx tests/unit/snapshot-aw-baseline.ts && tsx tests/unit/graph-analysis-aw.test.ts",
-    "test:hooks": "vitest run --config vitest.config.ts",
-    "test:snapshot": "tsx tests/unit/snapshot-aw-baseline.ts",
-    "test:snapshot:update": "tsx tests/unit/snapshot-aw-baseline.ts --update",
+    "test:core": "node tests/tools/run-vitest.mjs run --project parser --project bfs",
+    "test:parser": "node tests/tools/run-vitest.mjs run --project parser",
+    "test:bfs": "node tests/tools/run-vitest.mjs run --project bfs",
+    "test:graph": "npm run test:bfs",
+    "test:support": "node tests/tools/run-vitest.mjs run --project support-node --project support-ui",
+    "test:ui": "node tests/tools/run-vitest.mjs run --project ui",
+    "test:hooks": "npm run test:ui",
+    "test:baseline": "node tests/tools/run-vitest.mjs run --project baseline",
+    "test:snapshot": "node tests/tools/run-vitest.mjs run --project snapshot",
+    "test:snapshot:update": "node tests/tools/run-vitest.mjs run --project snapshot-update",
+    "test:list": "node tests/tools/run-vitest.mjs list --project parser --project bfs --project support-node --project support-ui --project ui",
     "package": "npx @vscode/vsce package"
   },
   "dependencies": {

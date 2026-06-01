@@ -1,5 +1,6 @@
 import React, { memo, useState, useEffect } from 'react';
-import { createSchemaColorMap, getSchemaColorFromMap, type SchemaColorMap } from '../utils/schemaColors';
+import { createSchemaColorMap, type SchemaColorMap } from '../utils/schemaColors';
+import { schemaKey } from '../utils/sql';
 
 /**
  * Props for the {@link Legend} component.
@@ -72,7 +73,8 @@ export const Legend = memo(function Legend({ schemas, schemaColorMap, isSidebarO
               {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT))
                 .filter(s => !!s && s.trim().length > 0)
                 .map((schema) => {
-                  const color = getSchemaColorFromMap(schema, colors);
+                  const color = colors.get(schemaKey(schema));
+                  if (!color) throw new Error(`No legend color assigned for "${schema}"`);
                   return (
                     <div key={schema} className="flex items-center gap-2">
                       <div

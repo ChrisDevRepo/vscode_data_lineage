@@ -7,9 +7,13 @@ interface ErrorBoundaryProps {
   /** The child components to be rendered and monitored for errors. */
   children: ReactNode;
   /** Optional custom fallback UI to display when an error occurs. */
-  fallback?: ReactNode;
+  fallback?: ReactNode | ((args: { error: Error | null; reset: () => void }) => ReactNode);
   /** Optional callback triggered when an error is caught. */
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
+  /** Changes when the guarded surface should retry after a previous render failure. */
+  resetKey?: string;
+  /** Structured diagnostic context sent to the extension Output channel. */
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -20,6 +24,7 @@ interface ErrorBoundaryState {
   hasError: boolean;
   /** The error object captured from the failing component. */
   error: Error | null;
+  resetKey?: string;
 }
 
 /**
@@ -35,7 +40,7 @@ interface ErrorBoundaryState {
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, resetKey: props.resetKey };
   }
 
   /**
@@ -46,6 +51,16 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
    */
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
+  }
+
+  static getDerivedStateFromProps(props: ErrorBoundaryProps, state: ErrorBoundaryState): Partial<ErrorBoundaryState> | null {
+    if (state.hasError && props.resetKey !== state.resetKey) {
+      return { hasError: false, error: null, resetKey: props.resetKey };
+    }
+    if (props.resetKey !== state.resetKey) {
+      return { resetKey: props.resetKey };
+    }
+    return null;
   }
 
   /**
@@ -64,6 +79,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         error: error.message,
         stack: error.stack,
         componentStack: errorInfo.componentStack ?? undefined,
+        context: this.props.context,
         timestamp: Date.now()
       });
     }
@@ -80,6 +96,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   render() {
     if (this.state.hasError) {
       if (this.props.fallback) {
+        if (typeof this.props.fallback === 'function') {
+          return this.props.fallback({
+            error: this.state.error,
+            reset: () => this.setState({ hasError: false, error: null, resetKey: this.props.resetKey }),
+          });
+        }
         return this.props.fallback;
       }
 

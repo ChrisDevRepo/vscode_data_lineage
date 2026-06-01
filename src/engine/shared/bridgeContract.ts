@@ -182,6 +182,19 @@ export const SerializedFilterStateSchema = z.object({
   allowlistNodeIds: z.array(z.string()).optional(),
 });
 
+const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
+
+const AIHighlightGroupSchema = z.object({
+  label: z.string(),
+  color: AIHighlightColorSchema,
+  nodeIds: z.array(z.string()),
+});
+
+const AINodeTextSchema = z.object({
+  nodeId: z.string(),
+  text: z.string(),
+});
+
 /**
  * Zod schema defining AI-generated metadata for enhancing the lineage graph UI.
  *
@@ -193,19 +206,9 @@ export const AIViewMetadataSchema = z.object({
   description: z.string().optional(),
   createdAt: z.string(),
   modelName: z.string(),
-  highlightGroups: z.array(z.object({
-    label: z.string(),
-    color: z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']),
-    nodeIds: z.array(z.string()),
-  })),
-  badges: z.array(z.object({
-    nodeId: z.string(),
-    text: z.string(),
-  })),
-  notes: z.array(z.object({
-    nodeId: z.string(),
-    text: z.string(),
-  })).optional(),
+  highlightGroups: z.array(AIHighlightGroupSchema),
+  badges: z.array(AINodeTextSchema),
+  notes: z.array(AINodeTextSchema).optional(),
   layoutDirection: z.enum(['LR', 'TB']).optional(),
   /** Column trace edges. Each edge carries the analyzing hop node plus source/destination so every result node can show column flow data. Only present during CT sessions. */
   columnAspect: z.object({
@@ -280,9 +283,9 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
     stack: z.string().optional(),
     componentStack: z.string().optional(),
     source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
     timestamp: z.number().optional(),
   }),
-  z.object({ type: z.literal('toggle-overview') }),
 ]);
 
 /**
@@ -312,6 +315,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
   z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
   z.object({ type: z.literal('filter-changed'), uiState: z.any() }),
+  z.object({ type: z.literal('render-state'), renderState: z.any() }),
   z.object({ type: z.literal('db-connect') }),
   z.object({ type: z.literal('check-mssql') }),
   z.object({ type: z.literal('save-view'), projectId: z.string(), profile: z.any() }),
@@ -326,7 +330,6 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('overview-mode-changed'),
     mode: z.enum(['full', 'overview']),
-    enteredFocusFromOverview: z.boolean().optional(),
   }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'error', 'debug']).optional(), text: z.string() }),
   z.object({
@@ -335,6 +338,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
     stack: z.string().optional(),
     componentStack: z.string().optional(),
     source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
     timestamp: z.number().optional(),
   }),
   z.object({ type: z.literal('show-warning'), text: z.string() }),
@@ -352,19 +356,3 @@ export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.any(), columns: z.array(z.any()) }),
   z.object({ type: z.literal('close-detail') }),
 ]);
-
-/** Messages sent from the detail-panel webview to the extension host. */
-export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsgSchema>;
-
-/**
- * Legacy full union of every webview→extension message type across both
- * webviews. Prefer {@link MainPanelToExtensionMsgSchema} or
- * {@link DetailPanelToExtensionMsgSchema} for boundary validation.
- */
-export const WebviewToExtensionMsgSchema = z.discriminatedUnion('type', [
-  ...MainPanelToExtensionMsgSchema.options,
-  ...DetailPanelToExtensionMsgSchema.options,
-]);
-
-/** Inferred type of the legacy combined webview→extension union. */
-export type WebviewToExtensionMsg = z.infer<typeof WebviewToExtensionMsgSchema>;

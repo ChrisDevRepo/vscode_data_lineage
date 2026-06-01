@@ -143,8 +143,10 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
  * (Open Wizard, Open Demo, Settings) to improve discoverability.
  */
 export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  /**
+    /**
    * Returns a tree item representation for a specific element.
+   *
+   * @param element - element.
    */
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
 

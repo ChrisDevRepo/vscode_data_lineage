@@ -48,6 +48,10 @@ interface NodeContextMenuProps {
   onShowDetails: (nodeId: string) => void;
   /** Callback to add a new exclusion rule based on this node's name. */
   onExcludeNode?: (pattern: string) => void;
+  /** Whether exclusion/delete actions are allowed in the current mode. */
+  canExcludeNode?: boolean;
+  /** Callback to collapse this node's schema in Expanded Schema View. */
+  onCollapseSchema?: (schema: string) => void;
 }
 
 /**
@@ -79,6 +83,8 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   onViewDdl,
   onShowDetails,
   onExcludeNode,
+  canExcludeNode = true,
+  onCollapseSchema,
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
 
@@ -183,7 +189,22 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           Show Details
         </button>
 
-        {onExcludeNode && externalType !== 'file' && externalType !== 'db' && (
+        {onCollapseSchema && (
+          <>
+            <div className="my-1 ln-border-top" />
+            <button
+              onClick={() => { onCollapseSchema(schema); onClose(); }}
+              className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M4.5 4.5h15v15h-15v-15Z" />
+              </svg>
+              Collapse schema
+            </button>
+          </>
+        )}
+
+        {canExcludeNode && onExcludeNode && externalType !== 'file' && externalType !== 'db' && (
           <>
             <div className="my-1 ln-border-top" />
             <button

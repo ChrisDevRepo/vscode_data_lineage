@@ -1,0 +1,51 @@
+import * as vscode from 'vscode';
+import { Logger, sanitizeForLog } from './log';
+
+type NotifyContext = Record<string, unknown>;
+
+function formatContext(context?: NotifyContext): string {
+  if (!context || Object.keys(context).length === 0) return '';
+  const parts = Object.entries(context)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => {
+      const rendered = Array.isArray(value)
+        ? value.join(', ')
+        : value instanceof Error
+          ? value.message
+          : value && typeof value === 'object'
+            ? JSON.stringify(value)
+            : String(value);
+      return `${key}=${sanitizeForLog(rendered)}`;
+    });
+  return parts.length > 0 ? ` — ${parts.join('; ')}` : '';
+}
+
+/**
+ * Logs detailed error diagnostics before showing a concise VS Code error toast.
+ */
+export function notifyError(
+  logger: Logger,
+  operation: string,
+  userMessage: string,
+  error?: unknown,
+  context?: NotifyContext,
+  showErrorMessage: (message: string) => unknown = vscode.window.showErrorMessage,
+): void {
+  const detail = `notification="${userMessage}"${formatContext(context)}`;
+  logger.error(`${operation} — ${detail}`, error ?? new Error(userMessage));
+  showErrorMessage(userMessage);
+}
+
+/**
+ * Logs detailed warning diagnostics before showing a concise VS Code warning toast.
+ */
+export function notifyWarning(
+  logger: Logger,
+  operation: string,
+  userMessage: string,
+  context?: NotifyContext,
+  showWarningMessage: (message: string) => unknown = vscode.window.showWarningMessage,
+): void {
+  logger.warn(`${operation} — notification="${userMessage}"${formatContext(context)}`);
+  showWarningMessage(userMessage);
+}

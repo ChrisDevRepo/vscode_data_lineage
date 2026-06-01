@@ -13,11 +13,19 @@
 
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
-import { bidirectional } from 'graphology-shortest-path';
+import { findShortestPathOrdered } from './graphGuards';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';
-import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
+import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData, ObjectType } from './types';
+import { createSchemaColorMap, getExternalNodeColor, getSchemaColorFromMap, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
+import {
+  projectExpandedSchemaView,
+  projectSchemaQuotient,
+  type ExpandedSchemaViewRenderOptions,
+  type SchemaBridgeEdge,
+  type SchemaProjectionEdge,
+  type SchemaProjectionNode,
+} from './schemaProjection';
 import { notifyUser } from '../utils/notify';
 
 /** Width of a standard graph node in pixels. */
@@ -96,6 +104,45 @@ export interface GraphResult {
   graph: Graph;
 }
 
+type LineageFlowNodeSource = {
+  id: string;
+  label: string;
+  schema: string;
+  fullName: string;
+  objectType: ObjectType;
+  externalType?: string;
+  externalUrl?: string;
+  externalDatabase?: string;
+};
+
+function buildLineageFlowNode(
+  source: LineageFlowNodeSource,
+  graph: Graph,
+  position: { x: number; y: number },
+  options?: { highlighted?: boolean; schemaColor?: string },
+): FlowNode {
+  return {
+    id: source.id,
+    type: 'lineageNode',
+    position,
+    draggable: true,
+    selectable: true,
+    data: {
+      label: source.label,
+      schema: source.schema,
+      fullName: source.fullName,
+      objectType: source.objectType,
+      inDegree: graph.hasNode(source.id) ? graph.inDegree(source.id) : 0,
+      outDegree: graph.hasNode(source.id) ? graph.outDegree(source.id) : 0,
+      ...(source.externalType && { externalType: source.externalType }),
+      ...(source.externalUrl && { externalUrl: source.externalUrl }),
+      ...(source.externalDatabase && { externalDatabase: source.externalDatabase }),
+      ...(options?.highlighted !== undefined && { highlighted: options.highlighted }),
+      ...(options?.schemaColor && { schemaColor: options.schemaColor }),
+    },
+  };
+}
+
 /**
  * Builds a directed graphology graph from a database model.
  * 
@@ -135,25 +182,21 @@ function toFlowResult(
   positions: Map<string, { x: number; y: number }>,
   config: ExtensionConfig
 ): GraphResult {
-  const flowNodes: FlowNode[] = model.nodes.map((node) => ({
-    id: node.id,
-    type: 'lineageNode',
-    position: positions.get(node.id) || { x: 0, y: 0 },
-    draggable: true,
-    selectable: true,
-    data: {
+  const flowNodes: FlowNode[] = model.nodes.map((node) => buildLineageFlowNode(
+    {
+      id: node.id,
       label: node.name,
       schema: node.schema,
       fullName: node.fullName,
       objectType: node.type,
-      inDegree: graph.hasNode(node.id) ? graph.inDegree(node.id) : 0,
-      outDegree: graph.hasNode(node.id) ? graph.outDegree(node.id) : 0,
-      ...(node.externalType && { externalType: node.externalType }),
-      ...(node.externalUrl && { externalUrl: node.externalUrl }),
-      ...(node.externalDatabase && { externalDatabase: node.externalDatabase }),
+      externalType: node.externalType,
+      externalUrl: node.externalUrl,
+      externalDatabase: node.externalDatabase,
     },
-  }));
-  const flowEdges: FlowEdge[] = buildFlowEdges(model, graph, config);
+    graph,
+    positions.get(node.id) || { x: 0, y: 0 },
+  ));
+  const flowEdges: FlowEdge[] = buildFlowEdges(model.edges, graph, config);
   return { flowNodes, flowEdges, graph };
 }
 
@@ -268,8 +311,11 @@ export function traceNodeWithLevels(
 }
 
 /**
- * Calculates the shortest directed path between two nodes, retrying in reverse
- * if the forward direction yields no path.
+ * Calculates the shortest directed path between two nodes as node/edge id sets.
+ *
+ * @remarks
+ * Delegates path-finding to the shared {@link findShortestPathOrdered} (bidirectional
+ * retry) so the GUI "Find Path" feature has a single source of truth for path lookup.
  *
  * @param graph - The graphology computational graph.
  * @param sourceId - Path start node.
@@ -282,14 +328,10 @@ export function computeShortestPath(
   sourceId: string,
   targetId: string
 ): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
-  if (!graph.hasNode(sourceId) || !graph.hasNode(targetId)) return null;
+  const result = findShortestPathOrdered(graph, sourceId, targetId);
+  if (!result) return null;
 
-  let path = bidirectional(graph, sourceId, targetId);
-  if (!path) {
-    path = bidirectional(graph, targetId, sourceId);
-  }
-  if (!path) return null;
-
+  const { path } = result;
   const nodeIds = new Set(path);
   const edgeIds = new Set<string>();
   for (let i = 0; i < path.length - 1; i++) {
@@ -447,6 +489,15 @@ function layoutTraceFlow(
 
 /**
  * Applies active trace state to the visual graph, filtering and re-layouting as needed.
+ *
+ * @param flowNodes - Flow nodes to decorate.
+ * @param flowEdges - Flow edges to decorate.
+ * @param trace - Current trace state to serialize.
+ * @param config - Rendering configuration for the trace view.
+ * @param model - Database model to inspect.
+ * @param synthesizeOutOfFilter - Whether to synthesize hidden out-of-filter nodes.
+ *
+ * @returns Array of matching values.
  */
 export function applyTraceToFlow(
   flowNodes: FlowNode[],
@@ -574,6 +625,10 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
 
 /**
  * Calculates graph metrics for diagnostic purposes.
+ *
+ * @param graph - Graph instance to traverse.
+ *
+ * @returns Computed numeric value.
  */
 export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } {
   let rootNodes = 0;
@@ -609,8 +664,8 @@ function canonicalDirection(graph: Graph, a: string, b: string): [string, string
 /**
  * Transforms relational model edges into React Flow edges, handling bidirectionality.
  */
-function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
-  const valid = model.edges.filter(
+function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
+  const valid = edges.filter(
     (e) => graph.hasNode(e.source) && graph.hasNode(e.target)
   );
 
@@ -663,66 +718,14 @@ function buildFlowEdges(model: DatabaseModel, graph: Graph, config: ExtensionCon
 }
 
 /**
- * Aggregates object edges into schema-to-schema weights.
+ * Returns schema-to-schema quotient edges from the current filtered graph.
+ *
+ * @param graph - Graph instance to traverse.
+ *
+ * @returns Array of matching values.
  */
-export function buildSchemaEdges(
-  model: DatabaseModel,
-  visibleSchemas: Set<string>
-): Map<string, Map<string, number>> {
-  const raw = new Map<string, Map<string, number>>();
-  const nodeSchemaMap = new Map<string, string>();
-  const nodeTypeMap = new Map<string, string>();
-  for (const n of model.nodes) {
-    nodeSchemaMap.set(n.id, n.schema);
-    nodeTypeMap.set(n.id, n.type);
-  }
-
-  for (const e of model.edges) {
-    const srcSchema = nodeSchemaMap.get(e.source);
-    const tgtSchema = nodeSchemaMap.get(e.target);
-    if (!srcSchema || !tgtSchema) continue;
-    if (!visibleSchemas.has(srcSchema) && !visibleSchemas.has(tgtSchema)) continue;
-    if (srcSchema === tgtSchema) continue;
-
-    if (!raw.has(srcSchema)) raw.set(srcSchema, new Map());
-    raw.get(srcSchema)!.set(tgtSchema, (raw.get(srcSchema)!.get(tgtSchema) ?? 0) + 1);
-  }
-
-  const schemaProcSet = new Set<string>();
-  for (const n of model.nodes) {
-    if (n.type === 'procedure' || n.type === 'function') schemaProcSet.add(n.schema);
-  }
-
-  const result = new Map<string, Map<string, number>>();
-  const consumed = new Set<string>();
-
-  for (const [src, targets] of raw) {
-    for (const [tgt, count] of targets) {
-      const key = `${src}→${tgt}`;
-      if (consumed.has(key)) continue;
-
-      const revCount = raw.get(tgt)?.get(src) ?? 0;
-      if (revCount > 0) {
-        const srcHasProc = schemaProcSet.has(src);
-        const tgtHasProc = schemaProcSet.has(tgt);
-        let canonSrc = src;
-        let canonTgt = tgt;
-        if (tgtHasProc && !srcHasProc) { canonSrc = tgt; canonTgt = src; }
-        else if (!srcHasProc && !tgtHasProc && src > tgt) { canonSrc = tgt; canonTgt = src; }
-
-        consumed.add(key);
-        consumed.add(`${tgt}→${src}`);
-        if (!result.has(canonSrc)) result.set(canonSrc, new Map());
-        result.get(canonSrc)!.set(canonTgt, count + revCount);
-      } else {
-        consumed.add(key);
-        if (!result.has(src)) result.set(src, new Map());
-        result.get(src)!.set(tgt, count);
-      }
-    }
-  }
-
-  return result;
+export function buildSchemaEdges(graph: Graph): SchemaProjectionEdge[] {
+  return projectSchemaQuotient(graph).edges;
 }
 
 /**
@@ -733,37 +736,36 @@ function schemaEdgeStroke(count: number): { strokeWidth: number; opacity: number
   return { strokeWidth: 0.8 + t * 2.2, opacity: 0.55 + t * 0.45 };
 }
 
+function schemaNamesFromGraph(graph: Graph): string[] {
+  const present = new Set<string>();
+  graph.forEachNode((id) => {
+    const schema = String(graph.getNodeAttribute(id, 'schema') ?? '');
+    const type = graph.getNodeAttribute(id, 'type');
+    if (schema && type !== 'external') present.add(schema);
+  });
+  return [...present].sort((a, b) => a.localeCompare(b));
+}
+
 /**
- * Builds the macro-level schema overview graph.
- * 
- * @param model - Complete database model.
- * @param visibleSchemas - Filtered set of schemas to display.
- * @returns React Flow nodes and edges for the schema overview.
+ * Builds the working-set schema color map shared by every overview surface.
  */
-export function buildSchemaGraph(
-  model: DatabaseModel,
-  visibleSchemas: Set<string>
-): { nodes: FlowNode<SchemaNodeData>[]; edges: FlowEdge[] } {
-  const schemaEdgeCounts = buildSchemaEdges(model, visibleSchemas);
+function buildOverviewColorMap(graph: Graph): SchemaColorMap {
+  return createSchemaColorMap(schemaNamesFromGraph(graph));
+}
 
-  const schemaMeta = new Map<string, { count: number; types: Partial<Record<string, number>> }>();
-  for (const n of model.nodes) {
-    if (!visibleSchemas.has(n.schema)) continue;
-    if (!schemaMeta.has(n.schema)) schemaMeta.set(n.schema, { count: 0, types: {} });
-    const meta = schemaMeta.get(n.schema)!;
-    meta.count++;
-    meta.types[n.type] = (meta.types[n.type] ?? 0) + 1;
-  }
-
-  const schemaIdSet = new Set([...visibleSchemas].filter(s => schemaMeta.has(s)));
+/**
+ * Builds the macro-level Schema View graph.
+ *
+ * @param graph - The current filtered Graphology working graph.
+ * @returns React Flow nodes and edges for Schema View.
+ */
+export function buildSchemaGraph(graph: Graph): { nodes: FlowNode<SchemaNodeData>[]; edges: FlowEdge[] } {
+  const projection = projectSchemaQuotient(graph);
+  const schemaIdSet = new Set(projection.nodes.keys());
   const schemaIds = [...schemaIdSet];
-  const schemaColorMap = createSchemaColorMap(schemaIds);
+  const schemaColorMap = buildOverviewColorMap(graph);
   const edgesForLayout: Array<{ source: string; target: string }> = [];
-  for (const [src, targets] of schemaEdgeCounts) {
-    for (const tgt of targets.keys()) {
-      edgesForLayout.push({ source: src, target: tgt });
-    }
-  }
+  for (const edge of projection.edges) edgesForLayout.push({ source: edge.sourceSchema, target: edge.targetSchema });
 
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: 'LR', ranksep: 160, nodesep: 80, marginx: 30, marginy: 30 });
@@ -782,7 +784,7 @@ export function buildSchemaGraph(
 
   const nodes: FlowNode<SchemaNodeData>[] = schemaIds.map((schema) => {
     const pos = g.node(schema);
-    const meta = schemaMeta.get(schema)!;
+    const meta = projection.nodes.get(schema)!;
     return {
       id: `__schema__${schema}`,
       type: 'schemaNode',
@@ -793,40 +795,37 @@ export function buildSchemaGraph(
       selectable: true,
       data: {
         schemaName: schema,
-        objectCount: meta.count,
-        typeBreakdown: meta.types as Partial<Record<string, number>>,
-        color: getSchemaColorFromMap(schema, schemaColorMap),
+        objectCount: meta.objectCount,
+        typeBreakdown: meta.typeBreakdown,
+        color: getSchemaDisplayColor(schema, schemaColorMap, meta.typeBreakdown),
+        isExternalOnly: isExternalOnlyTypeBreakdown(meta.typeBreakdown),
       },
     };
   });
 
   const edges: FlowEdge[] = [];
-  for (const [src, targets] of schemaEdgeCounts) {
-    for (const [tgt, count] of targets) {
-      const srcId = `__schema__${src}`;
-      const tgtId = `__schema__${tgt}`;
-      if (!schemaIdSet.has(src) || !schemaIdSet.has(tgt)) continue;
+  for (const edge of projection.edges) {
+    const srcId = `__schema__${edge.sourceSchema}`;
+    const tgtId = `__schema__${edge.targetSchema}`;
+    if (!schemaIdSet.has(edge.sourceSchema) || !schemaIdSet.has(edge.targetSchema)) continue;
 
-      const revCount = schemaEdgeCounts.get(tgt)?.get(src);
-      const isBidi = revCount !== undefined;
-      const { strokeWidth, opacity } = schemaEdgeStroke(count);
-
-      edges.push({
-        id: isBidi ? `__schema__${src}↔${tgt}` : `__schema__${src}→${tgt}`,
-        source: srcId,
-        target: tgtId,
-        label: `${count}`,
-        labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
-        labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
-        labelBgPadding: LABEL_BG_PAD,
-        style: { stroke: 'var(--ln-edge-color)', strokeWidth, opacity },
-        markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
-        ...(isBidi && {
-          label: `⇄ ${count}`,
-          markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },
-        }),
-      });
-    }
+    const { strokeWidth, opacity } = schemaEdgeStroke(edge.totalCount);
+    edges.push({
+      id: edge.bidirectional
+        ? `__schema__${edge.sourceSchema}↔${edge.targetSchema}`
+        : `__schema__${edge.sourceSchema}→${edge.targetSchema}`,
+      source: srcId,
+      target: tgtId,
+      label: edge.bidirectional ? `⇄ ${edge.totalCount}` : `${edge.count}`,
+      labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
+      labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
+      labelBgPadding: LABEL_BG_PAD,
+      style: { stroke: 'var(--ln-edge-color)', strokeWidth, opacity },
+      markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
+      ...(edge.bidirectional && {
+        markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },
+      }),
+    });
   }
 
   return { nodes, edges };
@@ -876,4 +875,239 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
   }
 
   return positions;
+}
+
+/** Prefix for an expanded-schema-view schema-cluster node id. */
+const EXPANDED_SCHEMA_VIEW_CLUSTER_PREFIX = '__expandedschemaviewcluster__';
+
+type LayoutEdge = { source: string; target: string };
+
+function expandedSchemaViewClusterId(schema: string): string {
+  return `${EXPANDED_SCHEMA_VIEW_CLUSTER_PREFIX}${schema}`;
+}
+
+function toBridgeLayoutEdge(bridge: SchemaBridgeEdge): LayoutEdge {
+  return bridge.dir === 'down'
+    ? { source: bridge.nearId, target: expandedSchemaViewClusterId(bridge.schema) }
+    : { source: expandedSchemaViewClusterId(bridge.schema), target: bridge.nearId };
+}
+
+function collectConnectedIds(edges: readonly LayoutEdge[]): Set<string> {
+  const connectedIds = new Set<string>();
+  for (const edge of edges) {
+    connectedIds.add(edge.source);
+    connectedIds.add(edge.target);
+  }
+  return connectedIds;
+}
+
+function buildExpandedSchemaViewPositions(
+  individualIds: readonly string[],
+  clusterSchemas: readonly string[],
+  individualEdges: readonly LayoutEdge[],
+  bridges: ReadonlyMap<string, SchemaBridgeEdge>,
+  schemaClusterEdges: readonly SchemaProjectionEdge[],
+  config: ExtensionConfig,
+): Map<string, { x: number; y: number }> {
+  const clusterNodeIds = clusterSchemas.map(expandedSchemaViewClusterId);
+  const bridgeLayoutEdges = [...bridges.values()].map(toBridgeLayoutEdge);
+  const schemaClusterLayoutEdges = schemaClusterEdges.map((edge) => ({
+    source: expandedSchemaViewClusterId(edge.sourceSchema),
+    target: expandedSchemaViewClusterId(edge.targetSchema),
+  }));
+
+  const layoutEdges = [...individualEdges, ...bridgeLayoutEdges, ...schemaClusterLayoutEdges];
+  const connectedIds = collectConnectedIds(layoutEdges);
+  const candidateIds = [...individualIds, ...clusterNodeIds];
+  const positions = dagreLayout({
+    nodeIds: candidateIds.filter((id) => connectedIds.has(id)),
+    edges: layoutEdges,
+    config,
+  });
+
+  const isolatedIds = candidateIds.filter((id) => !connectedIds.has(id));
+  if (isolatedIds.length === 0) return positions;
+
+  let maxY = 0;
+  for (const position of positions.values()) {
+    if (position.y + NODE_HEIGHT > maxY) maxY = position.y + NODE_HEIGHT;
+  }
+
+  const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
+  const cellW = NODE_WIDTH + GRID_CELL_PADDING;
+  isolatedIds.forEach((id, index) => positions.set(id, { x: index * cellW, y: rowY }));
+  return positions;
+}
+
+function buildExpandedSchemaViewFlowNodes(
+  individualIds: readonly string[],
+  clusterMeta: ReadonlyMap<string, SchemaProjectionNode>,
+  positions: ReadonlyMap<string, { x: number; y: number }>,
+  graph: Graph,
+  colorMap: SchemaColorMap,
+  focusId: string | null,
+  hideClusters = false,
+): FlowNode[] {
+  const flowNodes: FlowNode[] = [];
+
+  for (const id of individualIds) {
+    if (!graph.hasNode(id)) continue;
+    const n = graph.getNodeAttributes(id) as {
+      id?: string;
+      name?: string;
+      schema?: string;
+      fullName?: string;
+      type?: ObjectType;
+      externalType?: string;
+      externalUrl?: string;
+      externalDatabase?: string;
+    };
+    const source: LineageFlowNodeSource = {
+      id: String(n.id ?? id),
+      label: String(n.name ?? id),
+      schema: String(n.schema ?? ''),
+      fullName: String(n.fullName ?? id),
+      objectType: n.type ?? 'table',
+      externalType: n.externalType,
+      externalUrl: n.externalUrl,
+      externalDatabase: n.externalDatabase,
+    };
+    flowNodes.push(buildLineageFlowNode(
+      source,
+      graph,
+      positions.get(id) ?? { x: 0, y: 0 },
+      {
+        highlighted: id === focusId,
+        schemaColor: source.objectType === 'external' ? getExternalNodeColor() : getSchemaColorFromMap(source.schema, colorMap),
+      },
+    ));
+  }
+
+  for (const [schema, meta] of clusterMeta) {
+    flowNodes.push({
+      id: expandedSchemaViewClusterId(schema),
+      type: 'schemaNode',
+      position: positions.get(expandedSchemaViewClusterId(schema)) ?? { x: 0, y: 0 },
+      draggable: true,
+      selectable: true,
+      ...(hideClusters && { hidden: true }),
+      data: {
+        schemaName: schema,
+        objectCount: meta.objectCount,
+        typeBreakdown: meta.typeBreakdown,
+        color: getSchemaDisplayColor(schema, colorMap, meta.typeBreakdown),
+        isExternalOnly: isExternalOnlyTypeBreakdown(meta.typeBreakdown),
+        isExpandedSchemaViewCluster: true,
+      } satisfies SchemaNodeData,
+    });
+  }
+
+  return flowNodes;
+}
+
+function buildMixedBridgeEdges(bridges: Iterable<SchemaBridgeEdge>): FlowEdge[] {
+  return [...bridges].map((bridge) => {
+    const cluster = expandedSchemaViewClusterId(bridge.schema);
+    const [source, target] = bridge.dir === 'down' ? [bridge.nearId, cluster] : [cluster, bridge.nearId];
+    return {
+      id: `__bridge__${source}→${target}`,
+      source,
+      target,
+      label: `${bridge.count}`,
+      labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
+      labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
+      labelBgPadding: LABEL_BG_PAD,
+      style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.0, strokeDasharray: '4 3', opacity: 0.5 },
+      markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
+    };
+  });
+}
+
+function buildMixedClusterEdges(
+  schemaClusterEdges: readonly SchemaProjectionEdge[],
+): FlowEdge[] {
+  return schemaClusterEdges.map((edge) => {
+    const source = expandedSchemaViewClusterId(edge.sourceSchema);
+    const target = expandedSchemaViewClusterId(edge.targetSchema);
+    const { strokeWidth, opacity } = schemaEdgeStroke(edge.totalCount);
+    return {
+      id: edge.bidirectional ? `__clusteredge__${edge.sourceSchema}↔${edge.targetSchema}` : `__clusteredge__${edge.sourceSchema}→${edge.targetSchema}`,
+      source,
+      target,
+      label: edge.bidirectional ? `⇄ ${edge.totalCount}` : `${edge.count}`,
+      labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
+      labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
+      labelBgPadding: LABEL_BG_PAD,
+      style: { stroke: 'var(--ln-edge-color)', strokeWidth, strokeDasharray: '4 3', opacity },
+      markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
+      ...(edge.bidirectional && {
+        markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },
+      }),
+    };
+  });
+}
+
+function buildExpandedSchemaViewFlowEdges(
+  graph: Graph,
+  individualEdges: readonly LayoutEdge[],
+  bridges: ReadonlyMap<string, SchemaBridgeEdge>,
+  schemaClusterEdges: readonly SchemaProjectionEdge[],
+  config: ExtensionConfig,
+  hideClusters = false,
+): FlowEdge[] {
+  return [
+    ...buildFlowEdges(individualEdges, graph, config),
+    ...buildMixedBridgeEdges(bridges.values()).map(e => hideClusters ? { ...e, hidden: true } : e),
+    ...buildMixedClusterEdges(schemaClusterEdges).map(e => hideClusters ? { ...e, hidden: true } : e),
+  ];
+}
+
+/**
+ * Builds the expanded schema view flow graph.
+ *
+ * @remarks
+ * Objects whose schema is in `expandedSchemas` are shown in full (individual); every remaining
+ * schema is collapsed into one schema-cluster node (the regular schema-view node, flagged
+ * `isExpandedSchemaViewCluster`), joined
+ * to the individual nodes or other schema clusters by aggregated bridge edges.
+ * One dagre pass positions the connected core;
+ * isolated individual nodes and unconnected clusters drop into a peripheral row (same as
+ * {@link computeLayout}). The filter is never consulted — the caller passes the already-filtered
+ * working-set graph.
+ *
+ * @param graph - The filtered working-set graphology graph.
+ * @param expandedSchemas - Schemas shown as individual objects; all others collapse per schema.
+ * @param focusId - The node opened in expanded schema view (for highlight + centering); `null` when entered via a
+ *   schema double-click, in which case no node is highlighted.
+ * @param config - Extension configuration (layout).
+ * @param options - Render-only options such as hiding collapsed schema clusters without changing filters.
+ * @returns React Flow nodes (individual + schema-cluster nodes) and edges (real + bridge).
+ */
+export function buildExpandedSchemaViewGraph(
+  graph: Graph,
+  expandedSchemas: ReadonlySet<string>,
+  focusId: string | null,
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  options: ExpandedSchemaViewRenderOptions = {},
+): { flowNodes: FlowNode[]; flowEdges: FlowEdge[] } {
+  // Always include clusters so Dagre receives the same node set regardless of visibility —
+  // cache key stays stable → positions don't shift when the hide toggle fires.
+  const projection = projectExpandedSchemaView(graph, expandedSchemas,
+    { ...options, includeCollapsedSchemaClusters: true });
+  const hideClusters = options.hideClusters ?? false;
+  const colorMap = buildOverviewColorMap(graph);
+  const individualIds = [...projection.individual];
+  const positions = buildExpandedSchemaViewPositions(
+    individualIds,
+    [...projection.collapsedSchemas.keys()],
+    projection.individualEdges,
+    projection.bridges,
+    projection.schemaClusterEdges,
+    config,
+  );
+
+  return {
+    flowNodes: buildExpandedSchemaViewFlowNodes(individualIds, projection.collapsedSchemas, positions, graph, colorMap, focusId, hideClusters),
+    flowEdges: buildExpandedSchemaViewFlowEdges(graph, projection.individualEdges, projection.bridges, projection.schemaClusterEdges, config, hideClusters),
+  };
 }

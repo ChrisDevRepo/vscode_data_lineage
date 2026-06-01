@@ -15,6 +15,9 @@ const variantClasses: Record<ButtonVariant, string> = {
   default: '',
 };
 
+/**
+ * Shared button component with the repository variant styling.
+ */
 export const Button = memo(forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'secondary',
   children,

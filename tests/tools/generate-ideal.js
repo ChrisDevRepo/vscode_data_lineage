@@ -25,8 +25,6 @@ const projectRoot = path.resolve(path.join(path.dirname(dacpacPath), '..'));
 const outDir  = path.join(projectRoot, 'tmp', 'lm-ideal');
 const outFile = path.join(outDir, 'ideal-run.md');
 
-// ── Extract dacpac (ZIP) to temp dir ─────────────────────────────────────────
-
 const tmpDir = path.join(os.tmpdir(), `lm-ideal-${Date.now()}`);
 console.log(`Extracting ${dacpacPath} → ${tmpDir}`);
 
@@ -90,10 +88,7 @@ console.log('Top 15 element types in model.xml:');
 for (const [t, n] of topTypes) console.log(`  ${String(n).padStart(5)}  ${t}`);
 console.log(`Counted: tables=${tables}  views=${views}  procs=${procs}  functions=${functions}  schemas=${schemas}  dep_edges=${depEdges}`);
 
-// ── Calibrate from latest trace file (if available) ───────────────────────────
-// Sums all ROUND events across all phases to get full session token totals.
-// SESSION_END.cumInTok only covers the primary (discover) invocation and misses
-// SM phases (active/synthesis/completed) that run in subsequent turns.
+// Rebuild token totals from ROUND events because SESSION_END only covers the initial discover invocation.
 
 let traceBaseline = null;
 const traceDir = path.join(projectRoot, 'tmp', 'lm-trace');
@@ -175,7 +170,6 @@ if (traceBaseline) {
 
 const avgEdgesPerObj = totalObjects > 0 ? (depEdges / totalObjects).toFixed(1) : '?';
 
-// Cleanup temp dir
 try { execSync(`powershell -NoProfile -Command "Remove-Item -Recurse -Force '${tmpDir}'"`, { stdio: 'ignore' }); } catch {}
 
 // ── Write ideal-run.md ────────────────────────────────────────────────────────

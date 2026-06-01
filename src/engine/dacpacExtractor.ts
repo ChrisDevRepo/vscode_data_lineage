@@ -56,8 +56,13 @@ function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 
  * Extracts a complete DatabaseModel from a .dacpac file buffer.
  * Performs a full, unfiltered extraction of all tracked objects.
  *
- * @param buffer - The raw ArrayBuffer of the .dacpac file.
+ *
+ * @param buffer - DACPAC archive buffer to extract.
+ * @param onDebugLog - Debug logger callback.
+ * @param onInfoLog - Info logger callback.
+ *
  * @returns A Promise resolving to the extracted DatabaseModel.
+ *
  * @throws {Error} If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
  */
 export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: string) => void, onInfoLog?: (msg: string) => void): Promise<DatabaseModel> {
@@ -115,10 +120,13 @@ export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
  * Performs a Phase 2 full extraction filtered to a specific set of schemas.
  * Uses pre-parsed XML elements from Phase 1 to significantly improve performance.
  *
- * @param elements - The array of pre-parsed XML elements from Phase 1.
- * @param selectedSchemas - A Set of schema names to include (case-insensitive).
- * @param dspName - Optional Data Schema Provider (DSP) name.
- * @param onDebugLog - Optional debug logging callback.
+ *
+ * @param elements - Pre-parsed DACPAC elements to filter.
+ * @param selectedSchemas - Schemas selected for extraction.
+ * @param dspName - Source DSP name from the DACPAC metadata.
+ * @param onDebugLog - Debug logger callback.
+ * @param onInfoLog - Info logger callback.
+ *
  * @returns The resulting DatabaseModel containing only the filtered objects.
  */
 export function extractDacpacFiltered(

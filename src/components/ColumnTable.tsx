@@ -24,15 +24,15 @@ interface ColumnTableProps {
 
 /**
  * Renders a tabular list of columns for a specific database object.
- * 
+ *
  * @remarks
  * This component provides:
  * - High-fidelity rendering of SQL Server column metadata (Name, Type, Nullability).
  * - Automatic badge generation for Primary Keys (PK) and Unique constraints (UQ).
  * - Truncation with tooltips for long column names and types.
  * - Integration with the global search highlight system.
- * 
- * @param props - The component props.
+ *
+ * @returns Structured result.
  */
 export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: ColumnTableProps) {
   if (columns.length === 0) {

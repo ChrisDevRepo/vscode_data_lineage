@@ -1,11 +1,12 @@
 import { memo, useMemo, useCallback, useState } from 'react';
 import { FloatingPortal, useFloating, offset, flip, shift, size, autoUpdate } from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
-import { filterSuggestions } from '../utils/autocomplete';
+import { filterSuggestions, type AutocompleteNode } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { SuggestionList } from './ui/SuggestionList';
 import { Tooltip } from './ui/Tooltip';
+import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 /**
  * Props for the {@link SearchWithAutocomplete} component.
@@ -24,11 +25,16 @@ interface SearchWithAutocompleteProps {
   onStartTrace?: (nodeId: string) => void;
   /** Flattened list of all nodes in the project for autocomplete suggestions. */
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
-  /** 
-   * Authoritative set of node IDs currently rendered in the graph. 
+  /**
+   * Authoritative set of node IDs currently rendered in the graph.
    * Used to partition suggestions into "In View" and "Other" (filtered out).
    */
   visibleNodeIds: Set<string>;
+  /**
+   * IDs of nodes that are in the working set but currently collapsed inside a schema cluster.
+   * When provided, these nodes form a third suggestion partition: "In Schema Cluster".
+   */
+  collapsedSchemaNodeIds?: Set<string>;
 }
 
 /**
@@ -50,28 +56,33 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   onStartTrace,
   allNodes = [],
   visibleNodeIds,
+  collapsedSchemaNodeIds,
 }: SearchWithAutocompleteProps) {
   // Search term is local state — keystrokes only re-render this component,
   // not the entire App/GraphCanvas tree. The parent is notified only on Enter.
   const [searchTerm, setSearchTerm] = useState('');
 
-  const inViewIds = visibleNodeIds;
   const allSuggestions = useMemo(
     () => filterSuggestions(allNodes, searchTerm),
     [allNodes, searchTerm],
   );
-  const suggestions = useMemo(
-    () => allSuggestions.filter(n => inViewIds.has(n.id)),
-    [allSuggestions, inViewIds],
-  );
-  const otherSuggestions = useMemo(
-    () => allSuggestions.filter(n => !inViewIds.has(n.id)),
-    [allSuggestions, inViewIds],
-  );
+
+  // Three-partition split: rendered on canvas / collapsed in schema cluster / filtered out.
+  const { suggestions, collapsedSuggestions, otherSuggestions } = useMemo(() => {
+    const rendered: typeof allSuggestions = [];
+    const collapsed: typeof allSuggestions = [];
+    const filtered: typeof allSuggestions = [];
+    for (const n of allSuggestions) {
+      if (!visibleNodeIds.has(n.id)) filtered.push(n);
+      else if (collapsedSchemaNodeIds?.has(n.id)) collapsed.push(n);
+      else rendered.push(n);
+    }
+    return { suggestions: rendered, collapsedSuggestions: collapsed, otherSuggestions: filtered };
+  }, [allSuggestions, visibleNodeIds, collapsedSchemaNodeIds]);
 
   const allVisibleSuggestions = useMemo(
-    () => [...suggestions, ...otherSuggestions],
-    [suggestions, otherSuggestions],
+    () => [...suggestions, ...collapsedSuggestions, ...otherSuggestions],
+    [suggestions, collapsedSuggestions, otherSuggestions],
   );
   const {
     selectedIndex,
@@ -105,7 +116,21 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     refs.setFloating(node);
   }, [dropdownRef, refs]);
 
-  useKeyboardShortcut('/', () => inputRef.current?.focus(), true);
+  useKeyboardShortcut(SHORTCUT_KEYS.quickJump, () => inputRef.current?.focus(), true);
+
+  const closeSearch = useCallback(() => {
+    setSearchTerm('');
+    setIsOpen(false);
+  }, [setIsOpen]);
+
+  const executeSearch = useCallback((name: string, schema?: string) => {
+    onExecuteSearch?.(name, schema);
+    closeSearch();
+  }, [onExecuteSearch, closeSearch]);
+
+  const selectSuggestion = useCallback((node: AutocompleteNode) => {
+    executeSearch(node.name, node.schema);
+  }, [executeSearch]);
 
   return (
     <div className="relative" ref={refs.setReference}>
@@ -119,16 +144,12 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
           if (e.key === 'Enter' && onExecuteSearch) {
             e.preventDefault();
             if (allVisibleSuggestions.length > 0) {
-              const selected = allVisibleSuggestions[selectedIndex];
-              onExecuteSearch(selected.name, selected.schema);
+              selectSuggestion(allVisibleSuggestions[selectedIndex]);
             } else if (searchTerm.trim()) {
-              onExecuteSearch(searchTerm.trim());
+              executeSearch(searchTerm.trim());
             }
-            setSearchTerm('');
-            setIsOpen(false);
           } else if (e.key === 'Escape') {
-            setSearchTerm('');
-            setIsOpen(false);
+            closeSearch();
           }
         }}
         placeholder="Quick Jump..."
@@ -156,15 +177,10 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
         <FloatingPortal>
           <SuggestionList
             suggestions={suggestions}
+            collapsedSuggestions={collapsedSuggestions}
             otherSuggestions={otherSuggestions}
             selectedIndex={selectedIndex}
-            onSelect={(node) => {
-              if (onExecuteSearch) {
-                onExecuteSearch(node.name, node.schema);
-                setSearchTerm('');
-                setIsOpen(false);
-              }
-            }}
+            onSelect={selectSuggestion}
             onHover={setSelectedIndex}
             dropdownRef={mergedDropdownRef}
             portal

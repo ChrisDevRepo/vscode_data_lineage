@@ -97,6 +97,10 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
 
 /**
  * Extracts the base type name from a complex type string (e.g., 'varchar(max)' -> 'varchar').
+ *
+ * @param typeStr - SQL type text to inspect.
+ *
+ * @returns String result.
  */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
@@ -104,6 +108,10 @@ export function extractBaseType(typeStr: string): string {
 
 /**
  * Classifies a column definition into a profiling category.
+ *
+ * @param col - Column definition to classify.
+ *
+ * @returns Structured result.
  */
 export function classifyColumn(col: ColumnDef): ColCategory {
   if (col.extra === 'COMPUTED') return 'skip';
@@ -122,8 +130,17 @@ function qi(name: string): string {
  * Pair of column name and its generated SQL aggregation fragments.
  */
 export interface ColumnAggregation {
+  /**
+   * Column name represented by this aggregation bucket.
+   */
   colName: string;
+  /**
+   * Expression fragments collected for the column.
+   */
   fragments: string[];
+  /**
+   * Derived aggregation category for the column.
+   */
   category: ColCategory;
 }
 
@@ -244,6 +261,11 @@ function qiStr(name: string): string {
 
 /**
  * Generates an efficient row count query using `sys.partitions`.
+ *
+ * @param schema - Schema name to query.
+ * @param tableName - Table name to query.
+ *
+ * @returns String result.
  */
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
@@ -254,6 +276,12 @@ WHERE p.object_id = OBJECT_ID('${qiStr(schema)}.${qiStr(tableName)}')
 
 /**
  * Calculates the required sampling percentage for `TABLESAMPLE`.
+ *
+ * @param _engineEdition - Database engine edition.
+ * @param sampleSize - Requested sample size.
+ * @param rowCount - Known row count.
+ *
+ * @returns Computed numeric value.
  */
 export function computeSamplePercent(_engineEdition: number, sampleSize: number, rowCount: number): number {
   if (rowCount <= 0) return 100;
@@ -262,6 +290,10 @@ export function computeSamplePercent(_engineEdition: number, sampleSize: number,
 
 /**
  * Formats a raw database datetime string into a compact, UI-friendly format.
+ *
+ * @param raw - Raw input value to normalize.
+ *
+ * @returns String result.
  */
 export function compactDate(raw: string): string {
   if (!raw || raw === 'NULL') return raw;
@@ -298,6 +330,10 @@ const TYPE_BADGE_LABELS: Record<string, string> = {
 
 /**
  * Returns a 3-4 letter badge label for a SQL type.
+ *
+ * @param typeStr - SQL type text to inspect.
+ *
+ * @returns String result.
  */
 export function typeBadgeLabel(typeStr: string): string {
   const base = extractBaseType(typeStr);

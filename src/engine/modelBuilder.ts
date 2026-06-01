@@ -61,12 +61,15 @@ function makeParseTraceCallback(
 /**
  * Builds a complete DatabaseModel from extracted objects and dependencies.
  *
- * @param objects - Objects within the selected schemas.
- * @param deps - Extracted object dependencies.
- * @param allObjects - Full catalog for resolving cross-schema neighbors.
- * @param currentDatabase - Active database name for 3-part name resolution.
- * @param externalRefsEnabled - Whether to create virtual nodes for external systems.
- * @param maxNodes - Budget for total nodes to prevent browser crashes.
+ *
+ * @param objects - Extracted objects to include in the model.
+ * @param deps - Extracted dependencies between objects.
+ * @param allObjects - Catalog of all known objects in scope.
+ * @param currentDatabase - Current database name for local-object resolution.
+ * @param externalRefsEnabled - Whether external reference nodes should be emitted.
+ * @param maxNodes - Configured node cap for the generated model.
+ * @param onDebugLog - Debug logger callback.
+ *
  * @returns A fully assembled DatabaseModel.
  */
 export function buildModel(
@@ -194,6 +197,10 @@ function buildNeighborIndex(
 
 /**
  * Parses a full SQL name into schema and object components, respecting bracketed identifiers.
+ *
+ * @param fullName - Fully qualified name to parse.
+ *
+ * @returns String result.
  */
 export function parseName(fullName: string): { schema: string; objectName: string } {
   const parts = splitSqlName(fullName).map(p => stripBrackets(p));
@@ -205,6 +212,10 @@ export function parseName(fullName: string): { schema: string; objectName: strin
 
 /**
  * Normalizes a SQL name to a lowercase `[schema].[object]` format for consistent comparison.
+ *
+ * @param name - Name to use.
+ *
+ * @returns String result.
  */
 export function normalizeName(name: string): string {
   const parts = splitSqlName(name).map(p => stripBrackets(p));
@@ -902,11 +913,7 @@ function createVirtualNodes(
     }
   }
 
-  // XML metadata carries no direction info. Mirror the local-XML convention:
-  //   non-SP source → read direction (target → source)
-  //   SP source     → infer from body (matches processSpEdges at line 587-595)
-  // Without this, every cross-DB metaDep would emit a write edge — colliding with the
-  // direction-aware regex pass above and producing spurious bidirectional ⇄ glyphs.
+  // XML metaDeps infer direction only for procedures; other sources stay read-only to avoid duplicate write edges.
   const metaDepsNodeMap = new Map(nodes.map(n => [n.id, n]));
   for (const [sourceId, rawTargets] of crossDbMetaDeps) {
     const sourceNode = metaDepsNodeMap.get(sourceId);

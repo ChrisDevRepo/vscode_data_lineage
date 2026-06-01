@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.2] - 2026-06-01
+
+### Added
+- **Schema View for large graphs** — expand and collapse schemas in place; opening several at once is additive.
+- **Edit a trace by hand** — add or remove neighbours with ＋ / －; the trace always stays connected.
+- **Refresh command** — resync display settings without reloading the data.
+- **draw.io export** now covers the schema overview and expanded views.
+
+### Changed
+- Large graphs open in Schema View; default object limit raised 750 → 2000.
+- Display settings apply live, with no reload.
+- Redesigned large-graph overview and unified keyboard shortcuts.
+
+### Fixed
+- External-only schemas no longer crash the graph.
+- The panel auto-recovers after a display crash, with clearer error messages.
+- Schema View is steadier (collapse on rebuild, *Clear All Filters*, schema-node clicks).
+
 ## [1.0.1] - 2026-05-20
 
 ### Added

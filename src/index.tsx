@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import './index.css';
+import { notifyUser } from './utils/notify';
 
 const root = document.getElementById('root');
 if (!root) {
@@ -14,7 +15,21 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     import('./components/ErrorBoundary'),
   ]).then(([{ DetailApp }, { ErrorBoundary }]) => {
     createRoot(root).render(
-      <ErrorBoundary>
+      <ErrorBoundary
+        onError={() => {
+          // Crash is already logged by ErrorBoundary.componentDidCatch; surface it to the
+          // user before recovery so a real crash is never a silent flicker.
+          notifyUser('The detail panel hit an error and was closed — see the output channel for details.');
+          // Close it via the existing 'close-detail' bridge message.
+          // 800 ms delay lets the fallback render before disposal.
+          setTimeout(() => window.vscode?.postMessage({ type: 'close-detail' }), 800);
+        }}
+        fallback={
+          <div className="px-4 py-3 text-xs" style={{ color: 'var(--vscode-descriptionForeground)' }}>
+            Detail panel encountered an error — closing…
+          </div>
+        }
+      >
         <DetailApp />
       </ErrorBoundary>
     );
@@ -54,7 +69,19 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     });
 
     createRoot(root).render(
-      <ErrorBoundary>
+      <ErrorBoundary
+        onError={() => {
+          // The error toast + detailed Output log are emitted by ErrorBoundary.componentDidCatch
+          // → bridge 'error' handler (error level). Here we only auto-reopen the panel.
+          // 800 ms delay lets the fallback render before the panel is recycled.
+          setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
+        }}
+        fallback={
+          <div className="px-4 py-3 text-xs" style={{ color: 'var(--vscode-descriptionForeground)' }}>
+            App encountered an error — recovering…
+          </div>
+        }
+      >
         <VsCodeProvider api={vscodeApi}>
           <App />
         </VsCodeProvider>
