@@ -9,7 +9,7 @@ Three categories carry the suite. Everything else is a narrower guard.
 | Category | Files | Run with |
 |---|---|---|
 | **Parsing** | `parser-edge-cases.test.ts`, `tsql-complex.test.ts`, `snapshot-aw-baseline.ts` | `npm run test:parser` |
-| **Graph / BFS** | `graphBuilder.test.ts`, `graphAnalysis.test.ts`, `graph-analysis-aw.test.ts`, `graphDisplayMode.test.ts`, `expandedSchemaViewCore.test.ts` | `npm run test:bfs` |
+| **BFS / orchestration** | `graphBuilder.test.ts`, `graphAnalysis.test.ts`, `graph-analysis-aw.test.ts`, `navigation-engine*.test.ts`, `refine-loop.test.ts`, `start-exploration-schema.test.ts`, `submit-findings-schema.test.ts`, `present-result-closure.test.ts`, `column-flow-validation.test.ts` | `npm run test:bfs` |
 | **Baseline** | `snapshot-aw-baseline.ts` (parser TSV), `graph-analysis-aw.test.ts` (NetworkX-verified graph JSON) | `npm run test:baseline` |
 
 `npm test` is the full unit gate: it runs `test:core`, `test:support`, and `test:ui`. `test:graph` and `test:hooks` remain compatibility aliases for `test:bfs` and `test:ui`.
@@ -60,11 +60,32 @@ tests/
 │   ├── snapshot-aw-baseline.ts            # Parser regression baseline (TSV)
 │   ├── graph-analysis-aw.test.ts          # AW graph-analysis baseline (Snapshot Pattern)
 │   │
-│   │  — Support guards (Zod / policy / state / rendering) —
+│   │  — SM / NavigationEngine invariants —
+│   ├── navigation-engine.test.ts          # Lifecycle, tally, route rejection, archive counter, complete-flag contract
+│   ├── navigation-engine-cascade.test.ts  # Cascade-prune + connector-closure guard + viewPrune.prunePreserveOnly
+│   ├── navigation-engine-bipartite.test.ts # Bipartite agenda rule
+│   ├── navigation-engine-supplement.test.ts # Supplement-agenda flow
+│   ├── navigation-engine-synthesis-regression.test.ts # Reject diagnostics + synthesis grounding invariants
+│   ├── present-result-closure.test.ts     # present_result add/prune closed-graph validation helper
+│   ├── column-flow-validation.test.ts     # CT column_flow validation
+│   ├── prompt-composition.test.ts         # Prompt assembly invariants
+│   ├── ai-preview-rendering.test.ts       # AI preview markdown / math rendering guard
+│   │
+│   │  — Boundary guards (Zod / policy / state) —
+│   ├── classification.test.ts             # Classification axis lock + AiSession setter
+│   ├── start-exploration-schema.test.ts   # Zod boundary for start_exploration
+│   ├── messageEnvelope.test.ts            # Sliding-wipe envelope contract
+│   ├── toolPolicy.test.ts                 # Tool × phase policy
+│   ├── submit-findings-schema.test.ts     # submit_findings mode schema guard
+│   ├── ai-tool-registration.test.ts       # Manifest ↔ registration guard
+│   ├── schemaColors.test.ts               # Stable schema color allocation
+│   ├── repeat-reject-guard.test.ts        # Idempotency counter (abort on 3 identical failures)
+│   ├── transient-retry.test.ts            # Transient-network classifier
+│   ├── chatResponseWriter.test.ts         # ChatResponseStream lifecycle (cancel, close)
 │   ├── notifications.test.ts              # notifyError / notifyWarning output-channel + toast contract
 │   ├── log-normalization.test.ts          # Output-channel single-line normalization guard
-│   ├── schemaColors.test.ts               # Stable schema color allocation
-│   ├── ai-preview-rendering.test.ts       # AI preview markdown / math rendering guard
+│   ├── refine-loop.test.ts                # Discovery-phase refinement loop
+│   ├── followup-confirmation.test.ts      # Completed-phase follow-up confirmation routing
 │   ├── projectStore.test.ts               # Migration, serialization
 │   │
 │   ├── helpers/testUtils.ts               # Shared assertions + dacpac loader

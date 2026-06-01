@@ -9,8 +9,7 @@ const snapshotRunner = 'tests/unit/runners/snapshot.test.ts';
 const snapshotUpdateRunner = 'tests/unit/runners/snapshot-update.test.ts';
 
 const supportUiTests = [
-  'tests/unit/hooks/hostSync.test.ts',
-  'tests/unit/hooks/scopeSelection.test.ts',
+  'tests/unit/hooks/modeCapabilities.test.ts',
 ];
 
 const uiTests = [

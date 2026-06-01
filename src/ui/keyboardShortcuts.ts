@@ -19,17 +19,11 @@ export type KeyboardShortcutId =
  * Display metadata for a documented keyboard shortcut.
  */
 export interface KeyboardShortcutDoc {
-  /**
-   * id.
-   */
+  /** Stable registry key used by tests and help/documentation alignment checks. */
   id: KeyboardShortcutId;
-  /**
-   * keys.
-   */
+  /** Human-readable key labels rendered in help and docs. */
   keys: string[];
-  /**
-   * label.
-   */
+  /** User-facing action label for the shortcut. */
   label: string;
 }
 

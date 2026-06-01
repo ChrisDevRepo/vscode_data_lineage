@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { type AiSession } from '../ai/session/session';
-import { Logger, trunc, sanitizeForLog, logRaw, getRecentLogs } from '../utils/log';
+import { Logger, trunc, sanitizeForLog, logRaw } from '../utils/log';
 import { notifyError, notifyWarning } from '../utils/notifications';
 import { type BridgeHost } from './host';
 import {
@@ -46,6 +46,41 @@ export type WebviewMessageHandlers = {
 };
 
 declare const __BUILD_TIMESTAMP__: string;
+
+/** Maximum number of recent webview errors retained for diagnostics. */
+const MAX_LAST_ERRORS = 10;
+
+interface WebviewErrorEntry {
+  timestamp: number;
+  source: string;
+  message: string;
+  stack?: string;
+  componentStack?: string;
+  context?: unknown;
+}
+
+interface UiDiagnosticsState {
+  renderState: unknown | null;
+  lastUiSyncAt: number | null;
+  lastErrors: WebviewErrorEntry[];
+}
+
+const uiDiagnosticsBySession = new WeakMap<AiSession, UiDiagnosticsState>();
+
+function getUiDiagnostics(sess: AiSession): UiDiagnosticsState {
+  let state = uiDiagnosticsBySession.get(sess);
+  if (!state) {
+    state = { renderState: null, lastUiSyncAt: null, lastErrors: [] };
+    uiDiagnosticsBySession.set(sess, state);
+  }
+  return state;
+}
+
+function recordWebviewError(sess: AiSession, entry: WebviewErrorEntry): void {
+  const state = getUiDiagnostics(sess);
+  state.lastErrors.push(entry);
+  if (state.lastErrors.length > MAX_LAST_ERRORS) state.lastErrors.shift();
+}
 
 /**
  * Storage key for the project store in VS Code's global state.
@@ -442,16 +477,16 @@ export function createMessageHandlers(
         sess.graphMode = msg.uiState.graphMode;
         sess.filteredCount = msg.uiState.filteredCount;
         sess.renderLimitHit = msg.uiState.renderLimitHit;
-        sess.lastUiSyncAt = Date.now();
+        getUiDiagnostics(sess).lastUiSyncAt = Date.now();
         if (prevCount !== msg.uiState.filteredCount || prevHit !== msg.uiState.renderLimitHit) {
           host.log('debug', 'Filter', `State sync — ${msg.uiState.filteredCount ?? '?'} nodes, renderLimitHit=${msg.uiState.renderLimitHit ?? 0}`);
         }
       }
     },
     'render-state': (msg) => {
-      const sess = getSession();
-      sess.renderState = msg.renderState ?? null;
-      sess.lastUiSyncAt = Date.now();
+      const state = getUiDiagnostics(getSession());
+      state.renderState = msg.renderState ?? null;
+      state.lastUiSyncAt = Date.now();
     },
     'db-connect': () => {
       host.log('info', 'Bridge', 'Database connect requested');
@@ -547,7 +582,7 @@ export function createMessageHandlers(
 
       // Retain for the debug dump's LAST ERRORS section — the context carries the full
       // current-screen snapshot, so a crash is reproducible from the dump alone.
-      getSession().recordWebviewError({
+      recordWebviewError(getSession(), {
         timestamp: msg.timestamp ?? Date.now(),
         source,
         message: msg.error,
@@ -848,16 +883,16 @@ function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri)
 }
 
 /**
- * Builds a diagnostic snapshot for the current extension and AI session.
+ * Builds a GUI diagnostic snapshot for the current extension state.
  *
  * @param context - Extension context for global state and subscriptions.
- * @param getSession - Factory for retrieving the current AI session.
- * @param outputChannel - Output channel used for logging.
+ * @param getSession - Factory for retrieving the current session-backed GUI state.
  *
- * @returns String result.
+ * @returns Diagnostic text focused on the user-visible graph, filters, render state, and settings.
  */
-export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel): string {
+export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession): string {
   const sess = getSession();
+  const uiDiagnostics = getUiDiagnostics(sess);
   const lines: string[] = [];
   const add = (s: string) => lines.push(s);
   const version = (context.extension.packageJSON as { version: string }).version ?? 'unknown';
@@ -865,8 +900,8 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
 
   add(`Data Lineage Viz — Debug Info`);
   add(`Generated: ${new Date().toISOString()}`);
-  add(`Last UI sync: ${sess.lastUiSyncAt ? new Date(sess.lastUiSyncAt).toISOString() : '(never — webview has not reported state)'}`);
-  add(`Webview errors captured: ${sess.lastErrors.length}`);
+  add(`Last UI sync: ${uiDiagnostics.lastUiSyncAt ? new Date(uiDiagnostics.lastUiSyncAt).toISOString() : '(never — webview has not reported state)'}`);
+  add(`Webview errors captured: ${uiDiagnostics.lastErrors.length}`);
   add('');
 
   // ── ENVIRONMENT ──
@@ -918,15 +953,15 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
 
   // ── RENDER STATE (current on-screen graph) ──
   add('RENDER STATE (current screen)');
-  if (sess.renderState) {
-    add(JSON.stringify(sess.renderState, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
+  if (uiDiagnostics.renderState) {
+    add(JSON.stringify(uiDiagnostics.renderState, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
   } else {
     add('    (no render-state reported — graph not rendered, or render-limit mode)');
   }
   add('');
 
   // ── RENDERED CONNECTIVITY (what the user currently sees) ──
-  const renderConnectivity = (sess.renderState as { connectivity?: RenderConnectivity } | undefined)?.connectivity;
+  const renderConnectivity = (uiDiagnostics.renderState as { connectivity?: RenderConnectivity } | undefined)?.connectivity;
   if (renderConnectivity) {
     add('RENDERED CONNECTIVITY (current screen)');
     add(formatRenderConnectivity(renderConnectivity));
@@ -934,11 +969,11 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
 
   // ── LAST ERRORS (newest last) ──
-  add(`LAST ERRORS (${sess.lastErrors.length})`);
-  if (sess.lastErrors.length === 0) {
+  add(`LAST ERRORS (${uiDiagnostics.lastErrors.length})`);
+  if (uiDiagnostics.lastErrors.length === 0) {
     add('    (none captured this session)');
   } else {
-    for (const e of sess.lastErrors) {
+    for (const e of uiDiagnostics.lastErrors) {
       add(`  [${new Date(e.timestamp).toISOString()}] source=${e.source}`);
       add(`    message:   ${e.message}`);
       if (e.componentStack) add(`    component: ${e.componentStack}`);
@@ -948,25 +983,18 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
   add('');
 
-  // ── AI SESSION ──
-  add('AI SESSION');
-  add(`  Model:          ${sess.modelName || '(none)'}`);
-  add(`  Session ID:     ${sess.id}`);
-  add(`  Status:         ${sess.stateMachine?.status ?? 'idle'}`);
-  add(`  Hops:           ${sess.hopCount}`);
-  if (sess.stateMachine) {
-    add('');
-    add('STATE MACHINE DUMP (JSON)');
-    try {
-      add(JSON.stringify(sess.stateMachine.toJSON(), null, 2));
-    } catch (err) {
-      add(`  Error dumping SM: ${err}`);
-    }
-  }
+  // ── SM SUMMARY (overview only; full dump is a separate command) ──
+  add('SM SUMMARY');
+  add(`  Phase:        ${sess.phase.kind}`);
+  add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
+  add(`  Hops:         ${sess.hopCount}`);
+  add(`  Pending gate: ${sess.phase.kind === 'awaiting_gate' ? sess.phase.gate.kind : 'none'}`);
+  add(`  Result nodes: ${sess.resultGraph?.nodeIds.length ?? 0}`);
+  add('  Full SM dump: use Data Lineage: Dump SM State');
   add('');
 
   // ── SETTINGS ──
-  add('SETTINGS (dataLineageViz.*)');
+  add('SETTINGS (dataLineageViz.*, excluding ai.*)');
   try {
     const cfg = vscode.workspace.getConfiguration('dataLineageViz');
     const pkg = context.extension.packageJSON;
@@ -975,22 +1003,13 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     for (const section of configSections) {
       for (const key of Object.keys(section.properties || {})) {
         const shortKey = key.replace('dataLineageViz.', '');
+        if (shortKey === 'ai' || shortKey.startsWith('ai.')) continue;
         allSettings[shortKey] = cfg.get(shortKey);
       }
     }
     add(JSON.stringify(allSettings, null, 2));
   } catch (err) {
     add(`  Error reading settings: ${err}`);
-  }
-  add('');
-
-  // ── RECENT LOG (tail, all levels incl. debug) ──
-  const recent = getRecentLogs();
-  add(`RECENT LOG (last ${recent.length} lines)`);
-  if (recent.length === 0) {
-    add('    (log buffer empty)');
-  } else {
-    for (const line of recent) add(`    ${line}`);
   }
   add('');
 

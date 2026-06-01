@@ -9,28 +9,6 @@ import type { HopLogEntry, SmResult } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
 
-/** Maximum number of recent webview errors retained for diagnostics. */
-const MAX_LAST_ERRORS = 10;
-
-/**
- * One captured webview error, retained in {@link AiSession.lastErrors} for the
- * debug dump's LAST ERRORS section.
- */
-export interface WebviewErrorEntry {
-  /** Epoch ms when the error reached the extension host. */
-  timestamp: number;
-  /** Origin tag: `error-boundary` | `window-error` | `unhandled-rejection` | `unknown`. */
-  source: string;
-  /** The error message. */
-  message: string;
-  /** Truncated stack, when present. */
-  stack?: string;
-  /** Truncated React component tree, when present. */
-  componentStack?: string;
-  /** Structured render/context snapshot attached to the error. */
-  context?: unknown;
-}
-
 /**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
  *
@@ -74,30 +52,6 @@ export class AiSession {
   public filteredCount = 0;
   /** >0 when the render limit was exceeded (from webview). */
   public renderLimitHit = 0;
-  /**
-   * Live snapshot of the currently rendered screen (display mode, rendered node/edge
-   * counts, expanded schemas …) mirrored from the webview. Powers the RENDER STATE
-   * section of the debug dump so a crash can be reproduced from the dump alone.
-   */
-  public renderState: unknown = null;
-  /** Epoch ms of the last UI/render-state sync from the webview (dump staleness marker). */
-  public lastUiSyncAt: number | null = null;
-  /**
-   * Bounded ring of the most recent webview errors (newest last), captured from the
-   * bridge `'error'` message and surfaced in the debug dump's LAST ERRORS section.
-   */
-  public readonly lastErrors: WebviewErrorEntry[] = [];
-
-  /**
-   * Records a webview error into the bounded {@link lastErrors} ring, evicting the
-   * oldest entry past {@link MAX_LAST_ERRORS}.
-   *
-   * @param entry - The captured error to retain.
-   */
-  recordWebviewError(entry: WebviewErrorEntry): void {
-    this.lastErrors.push(entry);
-    if (this.lastErrors.length > MAX_LAST_ERRORS) this.lastErrors.shift();
-  }
   /** Friendly label for the currently loaded parse rules. */
   public parseRulesLabel = 'built-in rules';
   /** Human-readable label for the data source origin (filename or server/db). */
@@ -331,7 +285,11 @@ export class AiSession {
    */
   public enterGate(gate: PendingGate): void {
     this.phase = { kind: 'awaiting_gate', gate };
-    // Keep discovery context until gate resolution so approval can compose the discovery summary.
+    // Discovery context is intentionally preserved here — the post-approval
+    // discovery-summary composition round (Wave 3) reads it after the user
+    // approves the gate. The SM-offer pill is gated by `phase.kind === 'idle'`
+    // in the followup provider, so it disappears as soon as the gate is
+    // pending; on cancel, `resetExploration()` runs and clears these fields.
   }
 
   /**
@@ -389,7 +347,10 @@ export class AiSession {
       verdicts[n.id] = (n.role as NodeRole) || 'noted';
     }
 
-    // Preserve synthesized body fields across supplement rounds until present_result overwrites them.
+    // B-1: preserve any synthesized body fields written by a prior present_result call.
+    // storeSmResult fires at exploration completion AND on supplement rounds; in the
+    // supplement case the prior description should survive until the new present_result
+    // overwrites it explicitly. Without this guard, follow-up rounds blank the description.
     const prior = this.resultGraph;
     this.resultGraph = {
       nodeIds: fullResult.fullNodes.map(n => n.id),

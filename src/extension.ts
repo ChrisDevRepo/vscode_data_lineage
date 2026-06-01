@@ -81,7 +81,7 @@ export async function activate(context: vscode.ExtensionContext) {
         demo
       );
     },
-    (ctx) => buildDebugDump(ctx, getSession, outputChannel)
+    (ctx) => buildDebugDump(ctx, getSession)
   ));
 
   // Register AI tools for Copilot Chat integration.

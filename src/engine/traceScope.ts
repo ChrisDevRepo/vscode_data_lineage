@@ -78,7 +78,7 @@ function edgeId(source: string, target: string): string {
  * @param edges - Edges available for traversal.
  * @param nodeIds - Node IDs to inspect.
  *
- * @returns String result.
+ * @returns Edge IDs whose source and target are both inside the node scope.
  */
 export function collectScopeEdgeIds(
   edges: ReadonlyArray<LineageEdge>,
@@ -101,7 +101,7 @@ export function collectScopeEdgeIds(
  * @param manualPrunedNodeIds - Nodes manually removed from the trace.
  * @param edges - Edges available for traversal.
  *
- * @returns String result.
+ * @returns Visible node IDs plus the edge IDs connecting those visible nodes.
  */
 export function buildVisibleTraceScope(
   baseNodeIds: ReadonlySet<string>,
@@ -130,7 +130,7 @@ export function buildVisibleTraceScope(
  * @param visibleNodeIds - Currently visible node IDs.
  * @param candidateNodeId - Node ID being tested.
  *
- * @returns Structured result.
+ * @returns Prune verdict with a stable rejection reason when unsafe.
  */
 export function canPruneTraceNode(
   graph: Graph,

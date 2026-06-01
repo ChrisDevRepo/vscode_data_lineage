@@ -149,35 +149,23 @@ export class Logger {
    * Factory method to create a new Logger.
    *
    * @param ch - Output channel to write to.
-   * @param cat - cat.
+   * @param cat - Functional category prefix (e.g. `'Config'`, `'Bridge'`) prepended to every log line.
    */
   static create(ch: LogOutputChannel, cat: LogCategory): Logger {
     return new Logger(ch, cat);
   }
 
-    /**
-   * Logs an info-level message.
-   *
-   * @param msg - msg.
-   */
+  /** Logs an info-level message. */
   info(msg: string): void { logInfo(this.ch, this.cat, msg); }
-    /**
-   * Logs a debug-level message.
-   *
-   * @param msg - msg.
-   */
+  /** Logs a debug-level message. */
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
-    /**
-   * Logs a warning-level message.
-   *
-   * @param msg - msg.
-   */
+  /** Logs a warning-level message. */
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
-    /**
-   * Logs an error-level message with error details.
+  /**
+   * Logs an error-level message with full stack detail.
    *
-   * @param op - op.
-   * @param err - err.
+   * @param op - Operation label prepended to the error message.
+   * @param err - Caught error or unknown value; stack is extracted when available.
    */
   error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
 
