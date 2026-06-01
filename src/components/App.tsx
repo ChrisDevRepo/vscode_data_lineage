@@ -1034,6 +1034,7 @@ export function App() {
             ...DEFAULT_CONFIG,
             ...msg.config,
             layout: { ...DEFAULT_CONFIG.layout, ...msg.config.layout },
+            overview: { ...DEFAULT_CONFIG.overview, ...msg.config.overview },
             trace: { ...DEFAULT_CONFIG.trace, ...msg.config.trace },
             analysis: { ...DEFAULT_CONFIG.analysis, ...msg.config.analysis },
           };

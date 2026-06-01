@@ -570,6 +570,8 @@ export interface OverviewConfig {
   enabled: boolean;
   /** Loaded-model object count above which the initial graph opens in Schema View. */
   threshold: number;
+  /** Schema-node double-click behavior in Schema View. */
+  schemaDoubleClickBehavior: 'expand' | 'expandOnly';
 }
 
 /**
@@ -616,7 +618,7 @@ export const DEFAULT_CONFIG = {
   tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
   dmvQueryTimeout: 120,
   externalRefs: { enabled: true },
-  overview: { enabled: true, threshold: 150 },
+  overview: { enabled: true, threshold: 150, schemaDoubleClickBehavior: 'expandOnly' },
   renderLimit: 750,
 } satisfies ExtensionConfig;
 

@@ -490,9 +490,14 @@ export function GraphCanvas({
       if (graphMode !== 'overview' || node.type !== 'schemaNode') return;
       event.preventDefault();
       setLocalNodes((nds) => nds.map((n) => n.selected ? { ...n, selected: false } : n));
-      onExpandExpandedSchemaViewSchema?.((node.data as SchemaNodeData).schemaName);
+      const schemaName = (node.data as SchemaNodeData).schemaName;
+      if (config.overview.schemaDoubleClickBehavior === 'expand') {
+        onExpandExpandedSchemaViewSchema?.(schemaName);
+      } else {
+        onCenterExpandedSchemaViewSchema?.(schemaName);
+      }
     },
-    [graphMode, onExpandExpandedSchemaViewSchema]
+    [config.overview.schemaDoubleClickBehavior, graphMode, onCenterExpandedSchemaViewSchema, onExpandExpandedSchemaViewSchema]
   );
 
   const handleFitView = useCallback(() => {

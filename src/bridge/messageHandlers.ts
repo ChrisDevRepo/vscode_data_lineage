@@ -858,7 +858,11 @@ export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record
       edgeStyle: cfg.get<string>('layout.edgeStyle'),
     },
     externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled') },
-    overview: { enabled: cfg.get<boolean>('overview.enabled'), threshold: cfg.get<number>('overview.threshold') },
+    overview: {
+      enabled: cfg.get<boolean>('overview.enabled'),
+      threshold: cfg.get<number>('overview.threshold'),
+      schemaDoubleClickBehavior: cfg.get<string>('overview.schemaDoubleClickBehavior'),
+    },
     renderLimit: cfg.get<number>('renderLimit'),
     trace: {
       defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels'),

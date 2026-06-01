@@ -11,7 +11,7 @@ console.log('\n-- Graph Display Mode --');
 
 const config: ExtensionConfig = {
   ...DEFAULT_CONFIG,
-  overview: { enabled: true, threshold: 150 },
+  overview: { enabled: true, threshold: 150, schemaDoubleClickBehavior: 'expandOnly' },
   renderLimit: 750,
 };
 
@@ -40,9 +40,15 @@ assertEq(
 );
 
 assertEq(
-  deriveInitialGraphMode({ filteredCount: 151, config: { ...config, overview: { enabled: false, threshold: 150 } } }),
+  deriveInitialGraphMode({ filteredCount: 151, config: { ...config, overview: { ...config.overview, enabled: false, threshold: 150 } } }),
   'full',
   'overview.enabled=false seeds Object View',
+);
+
+assertEq(
+  DEFAULT_CONFIG.overview.schemaDoubleClickBehavior,
+  'expandOnly',
+  'schema double-click defaults to Expand Only',
 );
 
 assertEq(

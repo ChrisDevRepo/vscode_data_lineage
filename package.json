@@ -198,6 +198,20 @@
             "markdownDescription": "Loaded-model object count above which the graph initially opens in Schema View. This is evaluated only on load or Reset All. After that, filters and exclusions do not auto-switch the current view; `renderLimit` remains the post-load safety gate.",
             "scope": "resource"
           },
+          "dataLineageViz.overview.schemaDoubleClickBehavior": {
+            "type": "string",
+            "enum": [
+              "expand",
+              "expandOnly"
+            ],
+            "enumDescriptions": [
+              "Double-clicking a schema adds it to Expanded Schema View.",
+              "Double-clicking a schema makes it the only expanded schema."
+            ],
+            "default": "expandOnly",
+            "markdownDescription": "Controls what double-clicking a schema node does in Schema View. `expand` adds the schema to Expanded Schema View; `expandOnly` makes the clicked schema the only expanded schema.",
+            "scope": "resource"
+          },
           "dataLineageViz.parseRulesFile": {
             "type": "string",
             "default": "",

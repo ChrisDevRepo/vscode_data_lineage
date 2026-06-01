@@ -149,7 +149,7 @@ function TraceNeighborPickerToolbar({
   onSelect: (option: TraceNeighborOption) => void;
 }) {
   return (
-    <NodeToolbar position={Position.Top} align="center" offset={22} isVisible>
+    <NodeToolbar position={Position.Bottom} align="center" offset={22} isVisible>
       <div className="ln-trace-node-picker" onClick={(e) => e.stopPropagation()}>
         <div className="ln-trace-node-picker__header">
           <span>{picker.action === 'add' ? 'Add neighbor' : 'Prune neighbor'}</span>

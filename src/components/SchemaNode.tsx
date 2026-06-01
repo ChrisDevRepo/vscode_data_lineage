@@ -54,7 +54,7 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
     .join('  ');
 
   // On a selected cluster, surface its actions as an attached toolbar (replaces the old right-click menu).
-  const clusterToolbar = isExpandedSchemaViewCluster && (canExpand || canExpandOnly) ? (
+  const clusterToolbar = (canExpand || canExpandOnly) ? (
     <NodeToolbar position={Position.Top} align="center" offset={8} isVisible={!!selected}>
       <div className="ln-schema-toolbar" onClick={(e) => e.stopPropagation()}>
         {canExpand && (

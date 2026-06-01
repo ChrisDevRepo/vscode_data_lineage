@@ -211,9 +211,10 @@ function renderGraphCanvas(overrides: Partial<React.ComponentProps<typeof GraphC
 }
 
 describe('GraphCanvas schema node interactions', () => {
-  it('double-click expands a schema node and clears stale toolbar selection', async () => {
+  it('double-click uses Expand Only by default and clears stale toolbar selection', async () => {
     const onExpandExpandedSchemaViewSchema = vi.fn();
-    renderGraphCanvas({ onExpandExpandedSchemaViewSchema });
+    const onCenterExpandedSchemaViewSchema = vi.fn();
+    renderGraphCanvas({ onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema });
 
     const node = screen.getByTestId('flow-node-__schema__sales');
     fireEvent.contextMenu(node);
@@ -221,10 +222,30 @@ describe('GraphCanvas schema node interactions', () => {
 
     fireEvent.doubleClick(node);
 
-    expect(onExpandExpandedSchemaViewSchema).toHaveBeenCalledTimes(1);
-    expect(onExpandExpandedSchemaViewSchema).toHaveBeenCalledWith('sales');
+    expect(onCenterExpandedSchemaViewSchema).toHaveBeenCalledTimes(1);
+    expect(onCenterExpandedSchemaViewSchema).toHaveBeenCalledWith('sales');
+    expect(onExpandExpandedSchemaViewSchema).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Expand Only' })).toBeNull());
   }, 15000);
+
+  it('double-click uses additive Expand when configured', () => {
+    const onExpandExpandedSchemaViewSchema = vi.fn();
+    const onCenterExpandedSchemaViewSchema = vi.fn();
+    renderGraphCanvas({
+      config: {
+        ...DEFAULT_CONFIG,
+        overview: { ...DEFAULT_CONFIG.overview, schemaDoubleClickBehavior: 'expand' },
+      },
+      onExpandExpandedSchemaViewSchema,
+      onCenterExpandedSchemaViewSchema,
+    });
+
+    fireEvent.doubleClick(screen.getByTestId('flow-node-__schema__sales'));
+
+    expect(onExpandExpandedSchemaViewSchema).toHaveBeenCalledTimes(1);
+    expect(onExpandExpandedSchemaViewSchema).toHaveBeenCalledWith('sales');
+    expect(onCenterExpandedSchemaViewSchema).not.toHaveBeenCalled();
+  });
 
   it('right-click selects a schema node and exposes schema actions', async () => {
     const onNodeContextMenu = vi.fn();
@@ -235,6 +256,26 @@ describe('GraphCanvas schema node interactions', () => {
     expect(await screen.findByRole('button', { name: 'Expand' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Expand Only' })).toBeTruthy();
     expect(onNodeContextMenu).toHaveBeenCalledWith(expect.objectContaining({ id: '__schema__sales' }), 0, 0);
+  });
+
+  it('right-click exposes schema actions in initial schema-only view', async () => {
+    renderGraphCanvas({
+      flowNodes: [{
+        ...schemaNode,
+        data: {
+          ...schemaNode.data,
+          isExpandedSchemaViewCluster: undefined,
+        } satisfies SchemaNodeData,
+      }],
+      filteredObjectIds: new Set([objectNode.id]),
+      isExpandedSchemaViewActive: false,
+      expandedSchemaCount: 0,
+    });
+
+    fireEvent.contextMenu(screen.getByTestId('flow-node-__schema__sales'));
+
+    expect(await screen.findByRole('button', { name: 'Expand' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Expand Only' })).toBeTruthy();
   });
 
   it('keeps object-node right-click routed to the object context menu handler', () => {

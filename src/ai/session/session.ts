@@ -210,9 +210,11 @@ export class AiSession {
    *
    * @remarks
    * The participant routes on `phase.kind` at turn entry: `awaiting_gate` runs gate
-   * resolution, `exploring` resumes the hop loop, `idle` and `synthesis` enter the
-   * normal discovery / synthesis paths. Transitions go through {@link enterGate},
-   * {@link enterExploring}, and {@link enterIdle} — never mutate this field directly.
+   * resolution, `exploring` resumes the hop loop, `idle` enters discovery. The
+   * `synthesis` variant exists in the type union but `sess.phase` never transitions
+   * through it — synthesis is tracked locally in the participant's hop loop via
+   * `activePhase`. Transitions go through {@link enterGate}, {@link enterExploring},
+   * {@link enterIdle}, and {@link enterCompleted} — never assign this field directly.
    */
   public phase: SessionPhase = { kind: 'idle' };
 
