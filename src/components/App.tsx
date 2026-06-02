@@ -1129,10 +1129,30 @@ export function App() {
       graphMode,
       filteredCount,
       renderLimitHit,
+      // Mode state the GraphCanvas render-state sync does not carry, so the debug dump can
+      // explain analytics/bookmark views standalone (trace/selection ride render-state).
+      screenState: {
+        analytics: analysisMode
+          ? {
+              type: analysisMode.type,
+              activeGroupId: analysisMode.activeGroupId,
+              groups: analysisMode.result.groups.map(g => ({ id: g.id, label: g.label, nodeIds: g.nodeIds })),
+            }
+          : null,
+        bookmark: activeAdvancedProfile
+          ? {
+              id: activeAdvancedProfile.id,
+              name: activeAdvancedProfile.name,
+              source: activeAdvancedProfile.source ?? null,
+              allowlistNodeIds: activeAdvancedProfile.filter.allowlistNodeIds ?? [],
+            }
+          : null,
+        detailOpen: isDetailOpen,
+      },
     };
     vscodeApi.postMessage({ type: 'filter-changed', uiState });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKeyForHost, filterProfiles, model, vscodeApi, expandedSchemaView, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted, graphMode, filteredCount, renderLimitHit]);
+  }, [filterKeyForHost, filterProfiles, model, vscodeApi, expandedSchemaView, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted, graphMode, filteredCount, renderLimitHit, analysisMode, activeAdvancedProfile, isDetailOpen]);
 
   const isViewModified = useMemo(() => {
     if (!activeViewId) return false;

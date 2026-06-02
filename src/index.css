@@ -720,10 +720,18 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   stroke-width: 2.6;
   stroke-linecap: round;
 }
-.ln-trace-node-action:hover:not(:disabled) {
+.ln-trace-node-action:hover:not(.ln-trace-node-action--disabled) {
   transform: scale(1.08);
   filter: brightness(1.08);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.34), 0 0 0 2px var(--ln-node-bg);
+}
+/* Grayed, non-interactive state — shown (not hidden) so the tooltip can explain why. */
+.ln-trace-node-action--disabled {
+  background: var(--vscode-disabledForeground, #9aa0a6);
+  border-color: var(--vscode-contrastBorder, rgba(255, 255, 255, 0.4));
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18), 0 0 0 2px var(--ln-node-bg);
 }
 .ln-trace-node-action:focus-visible {
   outline: 2px solid var(--ln-focus-border);

@@ -29,6 +29,7 @@ import { buildBareGraph } from '../ai/infra/graphUtils';
 import { populateColumnStore } from '../engine/modelBuilder';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
 import { formatRenderConnectivity, type RenderConnectivity } from '../engine/renderConnectivity';
+import { formatScreenStateSections, type RenderStateSnapshot, type ScreenStateExtras } from './debugDumpScreenState';
 import {
   DetailPanelToExtensionMsgSchema,
   type MainPanelToExtensionMsg,
@@ -971,6 +972,14 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add(formatRenderConnectivity(renderConnectivity));
     add('');
   }
+
+  // ── SELECTION & AFFORDANCES / TRACE SCOPE / DETAIL PANEL / ANALYTICS / BOOKMARK ──
+  // Explains why the selected node shows or grays its +/- trace controls, standalone.
+  add(formatScreenStateSections(
+    uiDiagnostics.renderState as RenderStateSnapshot | null,
+    (sess.uiState as { screenState?: ScreenStateExtras } | null)?.screenState ?? null,
+    sess.model ?? null,
+  ));
 
   // ── LAST ERRORS (newest last) ──
   add(`LAST ERRORS (${uiDiagnostics.lastErrors.length})`);

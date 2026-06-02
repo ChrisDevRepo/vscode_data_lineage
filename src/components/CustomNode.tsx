@@ -37,6 +37,10 @@ export type TraceSideControls = {
   addDisabledReason: string;
   /** Reason prune controls are disabled, or an empty string when enabled. */
   pruneDisabledReason: string;
+  /** Total direct neighbors on this side (drives hide-vs-disable for add). */
+  neighborCount: number;
+  /** Direct neighbors on this side already in the trace (drives hide-vs-disable for prune). */
+  visibleNeighborCount: number;
 };
 
 type TraceNeighborPicker = {
@@ -104,16 +108,22 @@ function TraceActionButton({
   action,
   side,
   options,
+  hasContext,
   disabledReason,
   onAction,
 }: {
   action: TraceNeighborAction;
   side: NeighborSide;
   options: TraceNeighborOption[];
+  /** Whether this side has any relevant neighbor — when false the button is hidden, not grayed. */
+  hasContext: boolean;
   disabledReason: string;
   onAction: (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => void;
 }) {
-  if (options.length === 0) return null;
+  const enabled = options.length > 0;
+  // Smart-hide: only suppress the control when the side has nothing to act on at all;
+  // otherwise show it grayed with a tooltip explaining why the action is unavailable.
+  if (!enabled && !hasContext) return null;
 
   const label = traceActionLabel(action, side);
   return (
@@ -121,9 +131,11 @@ function TraceActionButton({
       <button
         type="button"
         aria-label={label}
-        className={`ln-trace-node-action ln-trace-node-action--${side} ln-trace-node-action--${action}`}
+        aria-disabled={!enabled}
+        className={`ln-trace-node-action ln-trace-node-action--${side} ln-trace-node-action--${action}${enabled ? '' : ' ln-trace-node-action--disabled'}`}
         onClick={(e) => {
           e.stopPropagation();
+          if (!enabled) return;
           onAction(action, side, options);
         }}
       >
@@ -350,10 +362,10 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           )}
           {data.traceControls && (
             <>
-              <TraceActionButton action="add" side="in" options={data.traceControls.in.add} disabledReason={data.traceControls.in.addDisabledReason} onAction={applyTraceAction} />
-              <TraceActionButton action="prune" side="in" options={data.traceControls.in.prune} disabledReason={data.traceControls.in.pruneDisabledReason} onAction={applyTraceAction} />
-              <TraceActionButton action="add" side="out" options={data.traceControls.out.add} disabledReason={data.traceControls.out.addDisabledReason} onAction={applyTraceAction} />
-              <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
+              <TraceActionButton action="add" side="in" options={data.traceControls.in.add} hasContext={data.traceControls.in.neighborCount > 0} disabledReason={data.traceControls.in.addDisabledReason} onAction={applyTraceAction} />
+              <TraceActionButton action="prune" side="in" options={data.traceControls.in.prune} hasContext={data.traceControls.in.visibleNeighborCount > 0} disabledReason={data.traceControls.in.pruneDisabledReason} onAction={applyTraceAction} />
+              <TraceActionButton action="add" side="out" options={data.traceControls.out.add} hasContext={data.traceControls.out.neighborCount > 0} disabledReason={data.traceControls.out.addDisabledReason} onAction={applyTraceAction} />
+              <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} hasContext={data.traceControls.out.visibleNeighborCount > 0} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
             </>
           )}
           <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />

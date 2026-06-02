@@ -20,7 +20,7 @@ import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
 import { useVsCode } from '../contexts/VsCodeContext';
 
-import { CustomNode, type CustomNodeData, type TraceNeighborOption, type TraceNodeControls } from './CustomNode';
+import { CustomNode, type CustomNodeData, type TraceNeighborOption, type TraceNodeControls, type TraceSideControls } from './CustomNode';
 import { SchemaNode } from './SchemaNode';
 import type { SchemaNodeData, GraphMode } from '../engine/types';
 import { Legend } from './Legend';
@@ -42,7 +42,7 @@ import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseMode
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getExternalNodeColor, isDarkTheme, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
-import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit } from '../engine/traceScope';
+import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
@@ -95,6 +95,30 @@ function buildTraceNeighborOptions(
     .sort((a, b) => traceNeighborSortKey(a).localeCompare(traceNeighborSortKey(b)));
 }
 
+/**
+ * Derives an accurate, human-readable reason the prune control is unavailable.
+ *
+ * @remarks
+ * Distinguishes the three blocking cases so the grayed button's tooltip is truthful:
+ * the only candidate is the trace origin, pruning would disconnect the trace, or
+ * there is simply nothing in the trace to remove on this side.
+ *
+ * @param pruneChecks - Per visible-neighbor prune-safety verdicts on this side.
+ * @param sideLabel - "upstream" or "downstream", for the empty-context message.
+ * @returns Empty string when at least one neighbor is prunable, else the reason copy.
+ */
+function derivePruneDisabledReason(
+  pruneChecks: ReadonlyArray<{ check: TracePruneCheck }>,
+  sideLabel: string,
+): string {
+  if (pruneChecks.some(p => p.check.safe)) return '';
+  if (pruneChecks.length === 0) return `No ${sideLabel} node in the trace to remove`;
+  const reasons = new Set(pruneChecks.map(p => p.check.reason));
+  if (reasons.has('disconnected')) return 'Removing this would disconnect the trace from its source';
+  if (reasons.has('origin')) return 'This is the trace source — it cannot be removed';
+  return 'These nodes cannot be removed without breaking the trace';
+}
+
 function buildTraceSideControls(
   model: DatabaseModel,
   graph: Graph,
@@ -112,19 +136,58 @@ function buildTraceSideControls(
   );
   const add = neighborOptions.filter(option => !visibleIds.has(option.id));
   const visibleNeighbors = neighborOptions.filter(option => visibleIds.has(option.id));
-  const prune = visibleNeighbors.filter(option =>
-    canPruneTraceNode(graph, originNodeId, visibleIds, option.id).safe
-  );
-  const sideLabel = side === 'in' ? 'inbound' : 'outbound';
+  const pruneChecks = visibleNeighbors.map(option => ({
+    option,
+    check: canPruneTraceNode(graph, originNodeId, visibleIds, option.id),
+  }));
+  const prune = pruneChecks.filter(p => p.check.safe).map(p => p.option);
+  const sideLabel = side === 'in' ? 'upstream' : 'downstream';
 
   return {
     add,
     prune,
-    addDisabledReason: `No hidden ${sideLabel} neighbors`,
-    pruneDisabledReason: visibleNeighbors.length > 0
-      ? 'Pruning would disconnect the trace'
-      : `No visible ${sideLabel} neighbors to prune`,
+    addDisabledReason: `All ${sideLabel} neighbors are already shown`,
+    pruneDisabledReason: derivePruneDisabledReason(pruneChecks, sideLabel),
+    neighborCount: neighborOptions.length,
+    visibleNeighborCount: visibleNeighbors.length,
   };
+}
+
+/** Serializable, function-free snapshot of one side's trace controls for the debug dump. */
+type SideAffordanceSnapshot = {
+  add: string[];
+  prune: string[];
+  addDisabledReason: string;
+  pruneDisabledReason: string;
+  neighborCount: number;
+  visibleNeighborCount: number;
+};
+
+/** Serializable snapshot of the highlighted node's add/prune affordances, mirrored to the host. */
+export type TraceAffordanceSnapshot = {
+  nodeId: string;
+  in: SideAffordanceSnapshot;
+  out: SideAffordanceSnapshot;
+};
+
+function serializeSideAffordance(side: TraceSideControls): SideAffordanceSnapshot {
+  return {
+    add: side.add.map(o => o.id),
+    prune: side.prune.map(o => o.id),
+    addDisabledReason: side.addDisabledReason,
+    pruneDisabledReason: side.pruneDisabledReason,
+    neighborCount: side.neighborCount,
+    visibleNeighborCount: side.visibleNeighborCount,
+  };
+}
+
+/**
+ * Flattens the live {@link TraceNodeControls} (which carry React callbacks) into a
+ * plain, postMessage-safe object so the debug dump can report exactly which add/prune
+ * buttons the user saw, and why a control was grayed.
+ */
+function serializeTraceAffordances(nodeId: string, controls: TraceNodeControls): TraceAffordanceSnapshot {
+  return { nodeId, in: serializeSideAffordance(controls.in), out: serializeSideAffordance(controls.out) };
 }
 
 /**
@@ -967,13 +1030,33 @@ export function GraphCanvas({
   );
 
   // Mirror the current-screen snapshot to the host so the debug dump can reproduce what
-  // the user sees (display mode, rendered counts, expanded schemas). graphErrorContext is
-  // recomputed every render; resync only when the scope key changes.
+  // the user sees: rendered counts, the highlighted node, its add/prune affordances (with the
+  // reason each is grayed), and the live trace scope. Resync on view, selection, or scope change.
   useEffect(() => {
     if (!graphErrorContext) return;
-    window.vscode?.postMessage({ type: 'render-state', renderState: graphErrorContext });
+    const highlighted = highlightedNodeId ?? null;
+    const controls = highlighted ? traceControlsByNode.get(highlighted) : undefined;
+    const traceScope = trace.mode !== 'none'
+      ? {
+          mode: trace.mode,
+          origin: trace.selectedNodeId,
+          baseNodeIds: Array.from(trace.baseNodeIds),
+          manualAddedNodeIds: Array.from(trace.manualAddedNodeIds),
+          manualPrunedNodeIds: Array.from(trace.manualPrunedNodeIds),
+          tracedNodeIds: Array.from(trace.tracedNodeIds),
+        }
+      : null;
+    window.vscode?.postMessage({
+      type: 'render-state',
+      renderState: {
+        ...graphErrorContext,
+        highlightedNodeId: highlighted,
+        affordances: highlighted && controls ? serializeTraceAffordances(highlighted, controls) : null,
+        traceScope,
+      },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphErrorResetKey]);
+  }, [graphErrorResetKey, highlightedNodeId, traceControlsByNode, trace.tracedNodeIds.size]);
 
   return (
     <div className="flex flex-col h-screen">
