@@ -4,7 +4,7 @@
 [![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
 
-Visualise SQL dependencies right inside VS Code. Ask `@lineage` in Copilot Chat to explore your lineage graph in natural language — or browse interactively with search, trace, and Schema View.
+Visualise SQL dependencies right inside VS Code. Browse your lineage graph with search, trace, and Schema View — and, if you use GitHub Copilot, ask `@lineage` to explore the loaded model in natural language.
 
 Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
@@ -22,7 +22,7 @@ No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to expl
 
 ## Explore your lineage
 
-Once your model loads, browse it interactively — no Copilot required:
+Once your model loads, the visual graph is ready to use — no Copilot required:
 
 - **Search & jump** — Quick Jump (`/`) or **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly.
 - **Trace dependencies** — follow sources upstream or consumers downstream from any node; find the shortest path between two objects.
@@ -31,9 +31,9 @@ Once your model loads, browse it interactively — no Copilot required:
 
 ![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
 
-## AI lineage with `@lineage`
+## Optional AI lineage with `@lineage`
 
-Use `@lineage` in GitHub Copilot Chat to explore dependencies in natural language. The assistant answers from your loaded data model — never from general knowledge.
+If GitHub Copilot is installed, `@lineage` adds natural-language exploration on top of the visual graph. The assistant answers from your loaded data model — never from general knowledge.
 
 ```text
 @lineage trace from Sales.SalesOrderDetail upstream to the source tables
@@ -41,7 +41,7 @@ Use `@lineage` in GitHub Copilot Chat to explore dependencies in natural languag
 @lineage which objects are hubs with the most connections?
 ```
 
-The assistant can trace dependencies, build bookmarked graph views, and — where the metadata allows — follow column mappings and explain SQL logic.
+Use it to ask dependency questions, open bookmarked graph views, and — where the metadata allows — follow column mappings or explain SQL logic.
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
@@ -50,16 +50,16 @@ The assistant can trace dependencies, build bookmarked graph views, and — wher
 - **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered directly in chat from deterministic tools.
 - **Structured walkthrough** — when you ask for a graph in the side panel, request a column trace, or open a scope too large for chat, the assistant first shows the planned scope (nodes, schemas, depth) and asks for confirmation. Once approved, it walks the graph hop-by-hop and colours source / transform / target nodes in the result.
 
-Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
+Only the `@lineage` chat experience requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without Copilot.
 
 ## Features
 
-- **`@lineage` AI** — trace lineage, follow column mappings where the metadata allows, explain SQL logic, and build bookmarked graph views from the loaded model.
-- **Search & trace** — Quick Jump (`/`), Command Palette **Data Lineage: Search Objects**, upstream / downstream tracing, shortest-path between nodes.
-- **Graph analysis** — islands, hubs, orphans, circular dependencies, longest chains.
+- **Interactive graph** — search objects, trace upstream or downstream, and find shortest paths between nodes.
+- **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
-- **SQL preview** — click any node to view DDL with syntax highlighting; full-text search across procedure / view bodies.
-- **Multiple sources** — SSDT and SDK-style `.dacpac`, live database connections, external tables, virtual external refs (OPENROWSET, cross-DB, CETAS).
+- **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
+- **Optional `@lineage` AI** — use GitHub Copilot Chat to ask lineage questions, follow column mappings where the metadata allows, and build bookmarked graph views.
+- **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).
 - **Export** — Draw.io diagram generation.
