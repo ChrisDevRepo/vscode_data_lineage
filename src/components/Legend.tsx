@@ -95,7 +95,8 @@ export const Legend = memo(function Legend({
                         style={{ backgroundColor: color }}
                       />
                       <span
-                        className={`text-[11px] ${isCollapsedSchemaCluster ? 'ln-text-muted' : 'ln-text'}`}
+                        className="text-[11px] ln-text"
+                        style={isCollapsedSchemaCluster ? { opacity: 0.4 } : undefined}
                         title={isExpandedSchemaViewActive ? schemaStateLabel : undefined}
                         data-schema-state={isExpandedSchemaViewActive ? (isCollapsedSchemaCluster ? 'collapsed' : 'expanded') : undefined}
                       >

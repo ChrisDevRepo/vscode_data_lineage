@@ -44,7 +44,9 @@ export function deriveLegendSchemas(
     for (const n of nodes) {
       let schema: string | undefined;
       if (n.type === 'schemaNode') {
-        schema = (n.data as SchemaNodeData).schemaName;
+        const sd = n.data as SchemaNodeData;
+        if (sd.isExternalOnly) continue;
+        schema = sd.schemaName;
       } else {
         const data = n.data as CustomNodeData;
         if (data.objectType === 'external') continue;
@@ -89,7 +91,9 @@ export function deriveLegendColorMap(nodes: readonly LegendNode[]): SchemaColorM
   for (const node of nodes) {
     if (node.type === 'schemaNode') {
       const data = node.data as SchemaNodeData;
-      colors.set(schemaKey(data.schemaName), data.color);
+      if (!data.isExternalOnly) {
+        colors.set(schemaKey(data.schemaName), data.color);
+      }
       continue;
     }
     const data = node.data as CustomNodeData;
