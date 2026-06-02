@@ -1421,6 +1421,7 @@ export function App() {
         onExpandExpandedSchemaViewSchema={handleExpandExpandedSchemaViewSchema}
         onCenterExpandedSchemaViewSchema={handleCenterExpandedSchemaViewSchema}
         isExpandedSchemaViewActive={displayMode === 'schemaExpanded' && !!expandedSchemaViewGraph}
+        expandedSchemas={expandedSchemaView?.expandedSchemas}
         onResetExpandedSchemaView={clearExpandedSchemaView}
         showExpandedSchemaClusters={showExpandedSchemaClusters}
         onToggleExpandedSchemaClusters={handleToggleExpandedSchemaClusters}

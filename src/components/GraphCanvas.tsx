@@ -325,6 +325,8 @@ interface GraphCanvasProps {
   onCenterExpandedSchemaViewSchema?: (schemaName: string) => void;
   /** True when overview renders both schema and object granularities. */
   isExpandedSchemaViewActive?: boolean;
+  /** Schemas currently expanded into object nodes in Expanded Schema View. */
+  expandedSchemas?: ReadonlySet<string>;
   /** Collapses all expanded schemas and returns to Schema View. */
   onResetExpandedSchemaView?: () => void;
   /** Whether collapsed schema clusters are currently rendered beside expanded object nodes. */
@@ -444,6 +446,7 @@ export function GraphCanvas({
   onExpandExpandedSchemaViewSchema,
   onCenterExpandedSchemaViewSchema,
   isExpandedSchemaViewActive,
+  expandedSchemas,
   onResetExpandedSchemaView,
   showExpandedSchemaClusters = true,
   onToggleExpandedSchemaClusters,
@@ -1241,7 +1244,13 @@ export function GraphCanvas({
           </div>
         )}
 
-        <Legend schemas={legendSchemas} schemaColorMap={legendColorMap} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        <Legend
+          schemas={legendSchemas}
+          schemaColorMap={legendColorMap}
+          isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
+          expandedSchemas={expandedSchemas}
+          isSidebarOpen={isDetailSearchOpen || !!analysisMode}
+        />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (
