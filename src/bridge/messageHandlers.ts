@@ -944,29 +944,11 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
 
   // ── SCHEMA LEGEND ──
   if (sess.model) {
-    const uiCast = sess.uiState as { expandedSchemaView?: { expandedSchemas?: string[] } | null } | null;
-    const filterSchemas = sess.filter?.schemas ?? [];
-    const filterSet = new Set(filterSchemas);
-    const esv = uiCast?.expandedSchemaView;
-    const expandedSet = new Set(esv?.expandedSchemas ?? []);
-
-    const legendSchemas = sess.model.schemas.filter(s => {
-      const ext = s.types['external'] ?? 0;
-      if (ext > 0 && s.nodeCount === ext) return false; // external-only — not shown in legend
-      if (filterSet.size > 0 && !filterSet.has(s.name)) return false;
-      return true;
-    });
-
+    const names = sess.model.schemas
+      .filter(s => !(s.types['external'] > 0 && s.nodeCount === s.types['external']))
+      .map(s => s.name);
     add('SCHEMA LEGEND');
-    if (legendSchemas.length === 0) {
-      add('  (no schemas in legend)');
-    } else if (esv) {
-      for (const s of legendSchemas) {
-        add(`  ${s.name}  [${expandedSet.has(s.name) ? 'expanded' : 'collapsed'}]`);
-      }
-    } else {
-      add(`  ${legendSchemas.map(s => s.name).join(', ')}`);
-    }
+    add(`  ${names.join(', ') || '(none)'}`);
     add('');
   }
 
