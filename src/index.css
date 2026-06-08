@@ -699,8 +699,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 /* Interactive trace add/prune controls */
 .ln-trace-node-action {
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   border-radius: 999px;
   border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.72));
   color: var(--vscode-button-foreground, #ffffff);
@@ -713,8 +713,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   transition: box-shadow 0.15s, filter 0.15s, transform 0.15s;
 }
 .ln-trace-node-action__icon {
-  width: 13px;
-  height: 13px;
+  width: 10px;
+  height: 10px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2.6;
@@ -738,17 +738,17 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   outline-offset: 2px;
 }
 .ln-trace-node-action--in {
-  left: -28px;
+  left: -22px;
 }
 .ln-trace-node-action--out {
-  right: -28px;
+  right: -22px;
 }
 .ln-trace-node-action--add {
   top: 10px;
   background: var(--vscode-charts-green, #188038);
 }
 .ln-trace-node-action--prune {
-  top: 38px;
+  top: 32px;
   background: var(--vscode-charts-red, #c5221f);
 }
 

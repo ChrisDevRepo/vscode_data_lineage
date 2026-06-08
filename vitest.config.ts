@@ -1,5 +1,13 @@
+import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, defineProject } from 'vitest/config';
+
+// `vscode` only exists in the extension host; alias it to a stub so source files
+// that import it (e.g. src/utils/notifications.ts) resolve under unit tests.
+// vitest 4 inline projects do not inherit the root `resolve`, so apply this on each
+// native-vitest (jsdom) project that loads vscode-importing source.
+const vscodeStub = fileURLToPath(new URL('./tests/stubs/vscode.ts', import.meta.url));
+const nativeTestResolve = { alias: { vscode: vscodeStub } };
 
 const parserRunner = 'tests/unit/runners/parser.test.ts';
 const bfsRunner = 'tests/unit/runners/bfs.test.ts';
@@ -10,6 +18,8 @@ const snapshotUpdateRunner = 'tests/unit/runners/snapshot-update.test.ts';
 
 const supportUiTests = [
   'tests/unit/hooks/modeCapabilities.test.ts',
+  // Native describe/it + vi.mock('vscode') — runs here, not via the node-suite wrapper.
+  'tests/unit/notifications.test.ts',
 ];
 
 const uiTests = [
@@ -53,6 +63,7 @@ export default defineConfig({
         },
       }),
       defineProject({
+        resolve: nativeTestResolve,
         test: {
           name: 'support-ui',
           environment: 'jsdom',
@@ -60,6 +71,7 @@ export default defineConfig({
         },
       }),
       defineProject({
+        resolve: nativeTestResolve,
         test: {
           name: 'ui',
           environment: 'jsdom',

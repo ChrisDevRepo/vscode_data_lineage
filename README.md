@@ -24,8 +24,8 @@ No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to expl
 
 Once your model loads, the visual graph is ready to use — no Copilot required:
 
-- **Search & jump** — Quick Jump (`/`) or **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly.
-- **Trace dependencies** — follow sources upstream or consumers downstream from any node; find the shortest path between two objects.
+- **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly.
+- **Trace dependencies** — follow sources upstream or consumers downstream from any node.
 - **See the blast radius** — spot hubs, islands, orphans, and circular dependencies before you change anything.
 - **Read the SQL** — click any node for DDL with syntax highlighting; full-text search across procedure and view bodies.
 

@@ -28,11 +28,11 @@ describe('Legend', () => {
     const ops = screen.getByText('ops');
     const sales = screen.getByText('sales');
 
-    expect(ops.className).toContain('ln-text-muted');
+    expect(ops.style.opacity).toBe('0.4');
     expect(ops.getAttribute('data-schema-state')).toBe('collapsed');
     expect(ops.getAttribute('title')).toBe('Collapsed schema cluster');
     expect(sales.className).toContain('ln-text');
-    expect(sales.className).not.toContain('ln-text-muted');
+    expect(sales.style.opacity).toBe('');
     expect(sales.getAttribute('data-schema-state')).toBe('expanded');
     expect(sales.getAttribute('title')).toBe('Expanded schema');
   });
