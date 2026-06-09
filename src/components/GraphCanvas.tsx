@@ -70,6 +70,10 @@ const PENDING_ZOOM_TIMEOUT_MS = 5000;
 
 type ModelNode = DatabaseModel['nodes'][number];
 
+/** Separator that cannot appear in schema/object names, for composite lookup keys. */
+const SEARCH_KEY_SEP = '\u0000';
+const searchKey = (schema: string, name: string) => `${schema}${SEARCH_KEY_SEP}${name}`;
+
 function traceNeighborSortKey(option: TraceNeighborOption): string {
   return `[${option.schema}].${option.label}`;
 }
@@ -660,12 +664,38 @@ export function GraphCanvas({
     });
   }, [getNode, setCenter]);
 
+  // O(1) lookups for search and pending-zoom checks. First-wins maps preserve `.find()` semantics.
+  const flowNodeLookup = useMemo(() => {
+    const ids = new Set<string>();
+    const byLabel = new Map<string, FlowNode>();
+    const bySchemaLabel = new Map<string, FlowNode>();
+    for (const n of flowNodes) {
+      ids.add(n.id);
+      const label = String(n.data.label ?? '');
+      if (!byLabel.has(label)) byLabel.set(label, n);
+      const key = searchKey(String(n.data.schema ?? ''), label);
+      if (!bySchemaLabel.has(key)) bySchemaLabel.set(key, n);
+    }
+    return { ids, byLabel, bySchemaLabel };
+  }, [flowNodes]);
+
+  const modelNodeNameLookup = useMemo(() => {
+    const byName = new Map<string, ModelNode>();
+    const bySchemaName = new Map<string, ModelNode>();
+    for (const n of model?.nodes ?? []) {
+      if (!byName.has(n.name)) byName.set(n.name, n);
+      const key = searchKey(n.schema, n.name);
+      if (!bySchemaName.has(key)) bySchemaName.set(key, n);
+    }
+    return { byName, bySchemaName };
+  }, [model]);
+
   // Execute search: find node and zoom to it, expanding its schema from overview when needed.
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const label = schema ? `[${schema}].[${name}]` : name;
     const foundNode = schema
-      ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
-      : flowNodes.find(n => n.data.label === name);
+      ? flowNodeLookup.bySchemaLabel.get(searchKey(schema, name))
+      : flowNodeLookup.byLabel.get(name);
 
     if (foundNode) {
       onNodeClick(foundNode.id);
@@ -676,8 +706,8 @@ export function GraphCanvas({
     // Overview mode: node not in flowNodes — expand its schema in expanded schema view (filter untouched).
     if (graphMode === 'overview' && model) {
       const modelNode = schema
-        ? model.nodes.find(n => n.name === name && n.schema === schema)
-        : model.nodes.find(n => n.name === name);
+        ? modelNodeNameLookup.bySchemaName.get(searchKey(schema, name))
+        : modelNodeNameLookup.byName.get(name);
       if (modelNode) {
         pendingZoomRef.current = modelNode.id;
         pendingClickRef.current = { id: modelNode.id };
@@ -698,12 +728,16 @@ export function GraphCanvas({
     } else {
       notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
-  }, [clearPendingZoomTimer, flowNodes, zoomToNode, onNodeClick, graphMode, model, onOpenExpandedSchemaViewForNode]);
+  }, [clearPendingZoomTimer, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
 
   // Export object nodes in detail views and cluster nodes in schema overview; empty exports no-op.
   const handleExportDrawio = useCallback(() => {
-    const objectNodes = flowNodes.filter(n => n.type !== 'schemaNode') as FlowNode<CustomNodeData>[];
-    const clusterNodes = flowNodes.filter(n => n.type === 'schemaNode') as FlowNode<SchemaNodeData>[];
+    const objectNodes: FlowNode<CustomNodeData>[] = [];
+    const clusterNodes: FlowNode<SchemaNodeData>[] = [];
+    for (const n of flowNodes) {
+      if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
+      else objectNodes.push(n as FlowNode<CustomNodeData>);
+    }
     import('../export/drawioExporter').then(({ exportToDrawio, exportSchemaOverviewToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
       const xml = (objectNodes.length === 0 && clusterNodes.length > 0)
@@ -731,7 +765,7 @@ export function GraphCanvas({
       // Verify the target node exists in the current flowNodes before consuming.
       // During overview expansion, React may render with stale flowNodes before the expanded schema graph
       // arrives. Keep the ref set until the correct flowNodes land, or expire after timeout.
-      const nodeExists = flowNodes.some(n => n.id === zoomTarget);
+      const nodeExists = flowNodeLookup.ids.has(zoomTarget);
       const elapsed = Date.now() - pendingZoomSetAt.current;
       if (!nodeExists) {
         if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
