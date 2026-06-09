@@ -15,7 +15,7 @@ const config: ExtensionConfig = {
   renderLimit: 750,
 };
 
-function displayMode(overrides: Partial<Parameters<typeof deriveGraphDisplayMode>[0]>) {
+function displayState(overrides: Partial<Parameters<typeof deriveGraphDisplayMode>[0]>) {
   return deriveGraphDisplayMode({
     graphMode: 'full',
     filteredCount: 0,
@@ -25,6 +25,10 @@ function displayMode(overrides: Partial<Parameters<typeof deriveGraphDisplayMode
     schemaOverviewRenderedCount: 0,
     ...overrides,
   });
+}
+
+function displayMode(overrides: Partial<Parameters<typeof deriveGraphDisplayMode>[0]>) {
+  return displayState(overrides).mode;
 }
 
 assertEq(
@@ -97,6 +101,24 @@ assertEq(
   displayMode({ graphMode: 'full' as GraphMode, filteredCount: 751, renderLimitHit: 751, schemaOverviewRenderedCount: 2 }),
   'renderLimit',
   'Object View over renderLimit shows limit screen instead of silently switching views',
+);
+
+assertEq(
+  displayState({ graphMode: 'overview' as GraphMode, filteredCount: 5000, renderLimitHit: 5000, expandedSchemaCount: 3, schemaOverviewRenderedCount: 10, expandedSchemaViewRenderedCount: 751 }).renderedCount,
+  751,
+  'blocked Expanded Schema View reports its projected rendered count',
+);
+
+assertEq(
+  displayState({ graphMode: 'full' as GraphMode, filteredCount: 751, renderLimitHit: 751, schemaOverviewRenderedCount: 2 }).renderedCount,
+  751,
+  'blocked Object View reports the render-limited node count',
+);
+
+assertEq(
+  displayState({ graphMode: 'overview' as GraphMode, filteredCount: 150, schemaOverviewRenderedCount: 2 }).renderedCount,
+  2,
+  'Schema View reports the rendered cluster count',
 );
 
 printSummary('Graph Display Mode');

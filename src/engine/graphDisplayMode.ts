@@ -16,6 +16,20 @@ interface GraphModeInput {
   config: ExtensionConfig;
 }
 
+/**
+ * Display surface decision plus the projected node count that produced it.
+ */
+export interface GraphDisplayState {
+  /** The display surface the canvas should render. */
+  mode: GraphDisplayMode;
+  /**
+   * Projected React Flow node count of the selected base surface — the number the
+   * render-limit screen reports. For `scoped` mode it is the base-surface count
+   * (the scope renders its own node set).
+   */
+  renderedCount: number;
+}
+
 interface GraphDisplayModeInput {
   graphMode: GraphMode;
   filteredCount: number;
@@ -45,7 +59,7 @@ export function deriveInitialGraphMode({ filteredCount, config }: GraphModeInput
  * and render before base graph limit checks. Expanded Schema View and Schema View compare their
  * projected rendered-node counts, not the raw object count.
  *
- * @returns The display mode the canvas should render.
+ * @returns The display mode the canvas should render and the rendered-node count behind the decision.
  */
 export function deriveGraphDisplayMode({
   graphMode,
@@ -56,18 +70,18 @@ export function deriveGraphDisplayMode({
   schemaOverviewRenderedCount,
   expandedSchemaViewRenderedCount,
   scopedModeActive = false,
-}: GraphDisplayModeInput): GraphDisplayMode {
-  if (scopedModeActive) return 'scoped';
+}: GraphDisplayModeInput): GraphDisplayState {
+  const renderedCount =
+    graphMode === 'overview'
+      ? (expandedSchemaCount > 0
+          ? (expandedSchemaViewRenderedCount ?? filteredCount)
+          : schemaOverviewRenderedCount)
+      : (renderLimitHit > 0 ? renderLimitHit : filteredCount);
 
+  if (scopedModeActive) return { mode: 'scoped', renderedCount };
+  if (renderedCount > config.renderLimit) return { mode: 'renderLimit', renderedCount };
   if (graphMode === 'overview') {
-    if (expandedSchemaCount > 0) {
-      const renderedCount = expandedSchemaViewRenderedCount ?? filteredCount;
-      return renderedCount > config.renderLimit ? 'renderLimit' : 'schemaExpanded';
-    }
-    return schemaOverviewRenderedCount > config.renderLimit ? 'renderLimit' : 'schemaOverview';
+    return { mode: expandedSchemaCount > 0 ? 'schemaExpanded' : 'schemaOverview', renderedCount };
   }
-
-  const fullRenderedCount = renderLimitHit > 0 ? renderLimitHit : filteredCount;
-  if (fullRenderedCount > config.renderLimit) return 'renderLimit';
-  return 'full';
+  return { mode: 'full', renderedCount };
 }
