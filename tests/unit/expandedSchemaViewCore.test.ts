@@ -1,5 +1,5 @@
 /**
- * Tests for the expanded schema view partition (engine/expandedSchemaViewCore).
+ * Tests for the expanded schema view partition (engine/schemaProjection).
  * Execute with: npx tsx tests/unit/expandedSchemaViewCore.test.ts
  */
 
