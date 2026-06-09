@@ -1,20 +1,10 @@
-import { type DatabaseModel } from '../engine/types';
+import { type DatabaseModel, type TraceAffordanceSnapshot, type TraceAffordanceSideSnapshot } from '../engine/types';
 import { directNeighborIds } from '../engine/graphGuards';
-
-/** One side (in/out) of the highlighted node's serialized add/prune affordances. */
-export interface AffordanceSide {
-  add: string[];
-  prune: string[];
-  addDisabledReason: string;
-  pruneDisabledReason: string;
-  neighborCount: number;
-  visibleNeighborCount: number;
-}
 
 /** Subset of the `render-state` payload the dump reads to explain trace/affordance questions. */
 export interface RenderStateSnapshot {
   highlightedNodeId?: string | null;
-  affordances?: { nodeId: string; in: AffordanceSide; out: AffordanceSide } | null;
+  affordances?: TraceAffordanceSnapshot | null;
   traceScope?: {
     mode: string;
     origin: string | null;
@@ -40,7 +30,7 @@ export function formatIdList(ids: readonly string[], cap = 40): string {
 }
 
 /** Formats one lineage side's add/prune affordances, surfacing the grayed-control reason. */
-function formatAffordanceSide(label: string, side: AffordanceSide): string {
+function formatAffordanceSide(label: string, side: TraceAffordanceSideSnapshot): string {
   const parts = [
     `  ${label}: +add [${side.add.join(', ') || '—'}]  −prune [${side.prune.join(', ') || '—'}]  (neighbors=${side.neighborCount}, in-trace=${side.visibleNeighborCount})`,
   ];

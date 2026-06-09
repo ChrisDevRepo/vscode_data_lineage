@@ -22,7 +22,7 @@ import { useVsCode } from '../contexts/VsCodeContext';
 
 import { CustomNode, type CustomNodeData, type TraceNeighborOption, type TraceNodeControls, type TraceSideControls } from './CustomNode';
 import { SchemaNode } from './SchemaNode';
-import type { SchemaNodeData, GraphMode } from '../engine/types';
+import type { SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot } from '../engine/types';
 import { Legend } from './Legend';
 import { deriveLegendSchemas, deriveLegendColorMap } from './legendDerivation';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -157,24 +157,7 @@ function buildTraceSideControls(
   };
 }
 
-/** Serializable, function-free snapshot of one side's trace controls for the debug dump. */
-type SideAffordanceSnapshot = {
-  add: string[];
-  prune: string[];
-  addDisabledReason: string;
-  pruneDisabledReason: string;
-  neighborCount: number;
-  visibleNeighborCount: number;
-};
-
-/** Serializable snapshot of the highlighted node's add/prune affordances, mirrored to the host. */
-export type TraceAffordanceSnapshot = {
-  nodeId: string;
-  in: SideAffordanceSnapshot;
-  out: SideAffordanceSnapshot;
-};
-
-function serializeSideAffordance(side: TraceSideControls): SideAffordanceSnapshot {
+function serializeSideAffordance(side: TraceSideControls): TraceAffordanceSideSnapshot {
   return {
     add: side.add.map(o => o.id),
     prune: side.prune.map(o => o.id),

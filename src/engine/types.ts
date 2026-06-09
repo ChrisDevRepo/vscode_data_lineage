@@ -747,6 +747,27 @@ export interface TraceState {
   autoPromoted?: boolean;
 }
 
+/**
+ * One side (in/out) of the highlighted node's serialized add/prune trace affordances.
+ * Function-free so it survives postMessage; shared by the webview serializer and the
+ * host-side debug dump so the two cannot drift.
+ */
+export interface TraceAffordanceSideSnapshot {
+  add: string[];
+  prune: string[];
+  addDisabledReason: string;
+  pruneDisabledReason: string;
+  neighborCount: number;
+  visibleNeighborCount: number;
+}
+
+/** Serializable snapshot of the highlighted node's add/prune affordances, mirrored host-side via `render-state`. */
+export interface TraceAffordanceSnapshot {
+  nodeId: string;
+  in: TraceAffordanceSideSnapshot;
+  out: TraceAffordanceSideSnapshot;
+}
+
 
 /**
  * Supported graph analysis modes.
