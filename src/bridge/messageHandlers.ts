@@ -693,7 +693,12 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const resultMap = await executeDmvQueriesFiltered(connectionUri, queries, schemas, outputChannel, (step, total, label) => {
     host.postMessage({ type: 'db-progress', step, total, label });
   }, timeoutMs);
-  const dmvResults: DmvResults = { nodes: resultMap.get('nodes')!, columns: resultMap.get('columns')!, dependencies: resultMap.get('dependencies')!, allObjects, platformInfo };
+  const requireResult = (name: 'nodes' | 'columns' | 'dependencies'): SimpleExecuteResult => {
+    const result = resultMap.get(name);
+    if (!result) throw new Error(`No '${name}' result from Phase 2 DMV queries`);
+    return result;
+  };
+  const dmvResults: DmvResults = { nodes: requireResult('nodes'), columns: requireResult('columns'), dependencies: requireResult('dependencies'), allObjects, platformInfo };
   const config = await readExtensionConfig(host);
   const logger = Logger.create(outputChannel, 'Parse');
   logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
