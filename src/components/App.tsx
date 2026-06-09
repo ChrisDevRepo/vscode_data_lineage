@@ -161,8 +161,6 @@ export function App() {
     exclusionPatterns: [],
   });
   const [graphMode, setGraphMode] = useState<GraphMode>('full');
-  const graphModeRef = useRef(graphMode);
-  graphModeRef.current = graphMode;
   const [schemaViewSoftDisabled, setSchemaViewSoftDisabled] = useState(false);
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
@@ -187,18 +185,21 @@ export function App() {
    * @param f - The filters to apply.
    * @param cfg - Optional configuration override.
    * @param forceLayout - If true, performs a synchronous layout calculation (bypassing transition).
+   * @param modeOverride - Graph view mode to build for when the caller sets a new mode in the same tick
+   *   (state has not committed yet); defaults to the current `graphMode`.
    * @returns The number of nodes in the resulting graph.
    */
   const rebuild = useCallback(
-    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false): number => {
+    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false, modeOverride?: GraphMode): number => {
       // When forceLayout is true, run synchronously for callers that need the count immediately.
       if (forceLayout) {
         return buildFromModel(m, f, cfg || config, false);
       }
-      startTransition(() => { buildFromModel(m, f, cfg || config, graphModeRef.current === 'overview'); });
+      const mode = modeOverride ?? graphMode;
+      startTransition(() => { buildFromModel(m, f, cfg || config, mode === 'overview'); });
       return 0; // Count unavailable for deferred builds; callers requiring count use forceLayout
     },
-    [buildFromModel, config]
+    [buildFromModel, config, graphMode]
   );
 
   /**
@@ -230,12 +231,11 @@ export function App() {
       const f = getResetFilter(trimmed);
       setFilter(f);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: trimmed.nodes.length, config });
-      graphModeRef.current = initialGraphMode;
       setGraphMode(initialGraphMode);
       setSchemaViewSoftDisabled(trimmed.nodes.length <= config.overview.threshold);
       setExpandedSchemaView(null);
       setActiveViewId(null);
-      rebuild(trimmed, f, config, initialGraphMode === 'full');
+      rebuild(trimmed, f, config, initialGraphMode === 'full', initialGraphMode);
       setLoadingPhase('generate');
     },
     [rebuild, config, vscodeApi]
@@ -547,12 +547,11 @@ export function App() {
       const f = getResetFilter(model);
       setFilter(f);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: model.nodes.length, config });
-      graphModeRef.current = initialGraphMode;
       setGraphMode(initialGraphMode);
       setSchemaViewSoftDisabled(model.nodes.length <= config.overview.threshold);
       setExpandedSchemaView(null);
       clearTrace(() => {
-        rebuild(model, f, config, initialGraphMode === 'full');
+        rebuild(model, f, config, initialGraphMode === 'full', initialGraphMode);
       });
     }
   }, [model, config, rebuild, clearTrace]);
@@ -718,20 +717,18 @@ export function App() {
   // ── Graph view mode (object-level view or schema-level view) ───────────────
 
   const handleGraphModeChange = useCallback((mode: GraphMode) => {
-    if (mode === graphModeRef.current) return;
-    graphModeRef.current = mode;
+    if (mode === graphMode) return;
     setGraphMode(mode);
     if (mode === 'full' && model) {
       rebuild(model, filter, config, true);
     }
-  }, [model, filter, config, rebuild]);
+  }, [graphMode, model, filter, config, rebuild]);
 
   useEffect(() => {
-    if (config.overview.enabled || graphModeRef.current === 'full') return;
-    graphModeRef.current = 'full';
+    if (config.overview.enabled || graphMode === 'full') return;
     setGraphMode('full');
     if (model) rebuild(model, filter, config, true);
-  }, [config, filter, model, rebuild]);
+  }, [config, filter, graphMode, model, rebuild]);
 
   const { schemaNodes, schemaEdges } = useMemo(() => {
     if (!graph) return { schemaNodes: [], schemaEdges: [] };
@@ -856,7 +853,7 @@ export function App() {
       const nextFilter = { ...currentFilter, hideIsolated: false };
       setFilter(nextFilter);
       pendingAnalysisRef.current = 'orphans';
-      if (model) buildFromModel(model, nextFilter, config, graphModeRef.current === 'overview');
+      if (model) buildFromModel(model, nextFilter, config, graphMode === 'overview');
       return;
     }
 
@@ -866,7 +863,7 @@ export function App() {
       window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis run: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
       setAnalysisMode({ type, result, activeGroupId: null });
     }
-  }, [endTrace, model, graph, config, buildFromModel]);
+  }, [endTrace, model, graph, graphMode, config, buildFromModel]);
 
   useEffect(() => {
     if (pendingAnalysisRef.current && graph) {
@@ -1056,13 +1053,12 @@ export function App() {
             if (preModFilterRef.current) preModFilterRef.current = { ...f, allowlistNodeIds: undefined };
             setFilter(f);
             const mode = deriveInitialGraphMode({ filteredCount: modelRef.current.nodes.length, config: merged });
-            graphModeRef.current = mode;
             setGraphMode(mode);
             setSchemaViewSoftDisabled(modelRef.current.nodes.length <= merged.overview.threshold);
-            rebuildRef.current(modelRef.current, f, merged, mode === 'full');
+            rebuildRef.current(modelRef.current, f, merged, mode === 'full', mode);
           } else if (modelRef.current && rebuildRef.current) {
             // Normal config-only sync (Rebuild button, live settings change): keep current filter.
-            if (graphModeRef.current === 'overview') setExpandedSchemaView(null);
+            if (graphMode === 'overview') setExpandedSchemaView(null);
             rebuildRef.current(modelRef.current, filterRef.current, merged);
           }
 
@@ -1097,7 +1093,7 @@ export function App() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [view, handleApplyView]);
+  }, [view, graphMode, handleApplyView]);
 
   useEffect(() => {
     if (view === 'graph') {
