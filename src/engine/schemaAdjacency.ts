@@ -1,7 +1,6 @@
 import type { DatabaseModel } from './types';
-import { UnionFind } from './unionFind';
-
-const EDGE_KEY_SEPARATOR = '\u0000';
+import { groupByWeaklyConnected } from './unionFind';
+import { addRawSchemaEdge, collapseRawSchemaEdges } from './schemaEdgeHelpers';
 
 /**
  * Aggregated dependency relation between two schemas.
@@ -55,14 +54,6 @@ export interface ModelConnectivity {
   isolatedSchemas: string[];
 }
 
-function orderedSchemas(a: string, b: string): [string, string] {
-  return a.localeCompare(b) <= 0 ? [a, b] : [b, a];
-}
-
-function edgeKey(sourceSchema: string, targetSchema: string): string {
-  return `${sourceSchema}${EDGE_KEY_SEPARATOR}${targetSchema}`;
-}
-
 /**
  * Computes the schema-level connectivity of the entire model.
  *
@@ -93,55 +84,21 @@ export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectiv
     const src = nodeSchema.get(edge.source);
     const tgt = nodeSchema.get(edge.target);
     if (!src || !tgt || src === tgt) continue;
-    const key = edgeKey(src, tgt);
-    rawEdges.set(key, (rawEdges.get(key) ?? 0) + 1);
+    addRawSchemaEdge(rawEdges, src, tgt);
   }
 
   // collapse antiparallel pairs into single bidirectional entries
-  const consumed = new Set<string>();
-  const interSchemaEdges: SchemaInterEdge[] = [];
-  for (const key of [...rawEdges.keys()].sort((a, b) => a.localeCompare(b))) {
-    if (consumed.has(key)) continue;
-    const [src, tgt] = key.split(EDGE_KEY_SEPARATOR);
-    const forwardKey = key;
-    const reverseKey = edgeKey(tgt, src);
-    const reverse = rawEdges.get(reverseKey);
-
-    if (reverse !== undefined) {
-      const [a, b] = orderedSchemas(src, tgt);
-      const normalizedForwardKey = edgeKey(a, b);
-      const normalizedReverseKey = edgeKey(b, a);
-      const count = rawEdges.get(normalizedForwardKey) ?? 0;
-      const reverseCount = rawEdges.get(normalizedReverseKey) ?? 0;
-      consumed.add(normalizedForwardKey);
-      consumed.add(normalizedReverseKey);
-      interSchemaEdges.push({
-        source: a, target: b, count, reverseCount, totalCount: count + reverseCount, bidirectional: true,
-      });
-      continue;
-    }
-
-    consumed.add(forwardKey);
-    const count = rawEdges.get(forwardKey)!;
-    interSchemaEdges.push({ source: src, target: tgt, count, reverseCount: 0, totalCount: count, bidirectional: false });
-  }
+  const interSchemaEdges: SchemaInterEdge[] = collapseRawSchemaEdges(rawEdges).map((e) => ({
+    source: e.sourceSchema, target: e.targetSchema, count: e.count, reverseCount: e.reverseCount, totalCount: e.totalCount, bidirectional: e.bidirectional,
+  }));
   interSchemaEdges.sort((x, y) => x.source.localeCompare(y.source) || x.target.localeCompare(y.target));
 
   // weakly-connected components over the undirected schema graph
-  const uf = new UnionFind();
-  for (const schema of schemaUniverse) uf.add(schema);
-  for (const edge of interSchemaEdges) uf.union(edge.source, edge.target);
-
-  const groups = new Map<string, string[]>();
-  for (const schema of schemaUniverse) {
-    const root = uf.find(schema);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root)!.push(schema);
-  }
-
-  const components: SchemaComponent[] = [...groups.values()]
-    .map((schemas) => ({ schemas: schemas.sort((a, b) => a.localeCompare(b)), isolated: schemas.length === 1 }))
-    .sort((a, b) => b.schemas.length - a.schemas.length || a.schemas[0].localeCompare(b.schemas[0]));
+  const components: SchemaComponent[] = groupByWeaklyConnected(
+    [...schemaUniverse],
+    interSchemaEdges.map((e) => [e.source, e.target] as const),
+    (schema) => schema,
+  ).map((schemas) => ({ schemas, isolated: schemas.length === 1 }));
 
   const isolatedSchemas = components.filter((c) => c.isolated).map((c) => c.schemas[0]).sort((a, b) => a.localeCompare(b));
 

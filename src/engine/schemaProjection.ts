@@ -1,7 +1,6 @@
 import Graph from 'graphology';
 import type { ObjectType } from './types';
-
-const EDGE_KEY_SEPARATOR = '\u0000';
+import { addRawSchemaEdge, collapseRawSchemaEdges, type CollapsedSchemaEdge } from './schemaEdgeHelpers';
 
 /**
  * Sets of node IDs rendered individually or as collapsed schema clusters.
@@ -44,26 +43,7 @@ export interface SchemaProjectionNode {
 /**
  * Schema-level dependency edge aggregated from object-level edges.
  */
-export interface SchemaProjectionEdge {
-  /**
-   * Source schema for the aggregated dependency edge.
-   */
-  sourceSchema: string;
-  /**
-   * Target schema for the aggregated dependency edge.
-   */
-  targetSchema: string;
-  /** Directed edge count from `sourceSchema` to `targetSchema`. */
-  count: number;
-  /** Directed edge count in the opposite direction. */
-  reverseCount: number;
-  /** Total count across both directions. */
-  totalCount: number;
-  /**
-   * Whether edges exist in both directions between the schemas.
-   */
-  bidirectional: boolean;
-}
+export type SchemaProjectionEdge = CollapsedSchemaEdge;
 
 /**
  * Schema-level quotient projection of the object graph.
@@ -130,63 +110,6 @@ function schemaOf(graph: Graph, id: string): string {
 function typeOf(graph: Graph, id: string): ObjectType | null {
   const type = graph.getNodeAttribute(id, 'type');
   return typeof type === 'string' && type.length > 0 ? type as ObjectType : null;
-}
-
-function orderedSchemas(a: string, b: string): [string, string] {
-  return a.localeCompare(b) <= 0 ? [a, b] : [b, a];
-}
-
-function schemaEdgeKey(sourceSchema: string, targetSchema: string): string {
-  return `${sourceSchema}${EDGE_KEY_SEPARATOR}${targetSchema}`;
-}
-
-function addRawSchemaEdge(rawEdges: Map<string, number>, sourceSchema: string, targetSchema: string): void {
-  const key = schemaEdgeKey(sourceSchema, targetSchema);
-  rawEdges.set(key, (rawEdges.get(key) ?? 0) + 1);
-}
-
-function collapseRawSchemaEdges(rawEdges: ReadonlyMap<string, number>): SchemaProjectionEdge[] {
-  const consumed = new Set<string>();
-  const edges: SchemaProjectionEdge[] = [];
-
-  for (const key of [...rawEdges.keys()].sort((a, b) => a.localeCompare(b))) {
-    if (consumed.has(key)) continue;
-    const [sourceSchema, targetSchema] = key.split(EDGE_KEY_SEPARATOR);
-    const reverseKey = schemaEdgeKey(targetSchema, sourceSchema);
-    const reverseCount = rawEdges.get(reverseKey);
-
-    if (reverseCount !== undefined) {
-      const [source, target] = orderedSchemas(sourceSchema, targetSchema);
-      const forwardKey = schemaEdgeKey(source, target);
-      const backwardKey = schemaEdgeKey(target, source);
-      const count = rawEdges.get(forwardKey) ?? 0;
-      const reverse = rawEdges.get(backwardKey) ?? 0;
-      consumed.add(forwardKey);
-      consumed.add(backwardKey);
-      edges.push({
-        sourceSchema: source,
-        targetSchema: target,
-        count,
-        reverseCount: reverse,
-        totalCount: count + reverse,
-        bidirectional: true,
-      });
-      continue;
-    }
-
-    consumed.add(key);
-    const count = rawEdges.get(key)!;
-    edges.push({
-      sourceSchema,
-      targetSchema,
-      count,
-      reverseCount: 0,
-      totalCount: count,
-      bidirectional: false,
-    });
-  }
-
-  return edges;
 }
 
 function hasIncludedNode(id: string, includedIds?: ReadonlySet<string>): boolean {

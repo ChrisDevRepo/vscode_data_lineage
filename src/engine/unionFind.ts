@@ -37,3 +37,36 @@ export class UnionFind {
     if (ra !== rb) this.parent.set(ra, rb);
   }
 }
+
+/**
+ * Groups items into weakly-connected components.
+ *
+ * @param items - Items to group; each contributes one singleton set up front.
+ * @param edges - Undirected key pairs that merge the sets containing both endpoints.
+ * @param keyOf - Maps an item to its union-find key.
+ * @param labelOf - Maps an item to the label emitted in the result; defaults to `keyOf`.
+ *
+ * @returns Label groups with each group's labels sorted ascending; groups sorted
+ * largest first, then by first label ascending.
+ */
+export function groupByWeaklyConnected<T>(
+  items: readonly T[],
+  edges: Iterable<readonly [string, string]>,
+  keyOf: (item: T) => string,
+  labelOf: (item: T) => string = keyOf,
+): string[][] {
+  const uf = new UnionFind();
+  for (const item of items) uf.add(keyOf(item));
+  for (const [a, b] of edges) uf.union(a, b);
+
+  const groups = new Map<string, string[]>();
+  for (const item of items) {
+    const root = uf.find(keyOf(item));
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(labelOf(item));
+  }
+
+  return [...groups.values()]
+    .map((g) => g.sort((a, b) => a.localeCompare(b)))
+    .sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+}

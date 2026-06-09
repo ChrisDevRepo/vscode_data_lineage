@@ -1,4 +1,4 @@
-import { UnionFind } from './unionFind';
+import { groupByWeaklyConnected } from './unionFind';
 
 /**
  * Minimal node shape for rendered-connectivity analysis.
@@ -73,32 +73,24 @@ export function summarizeRenderedConnectivity(
   const degree = new Map<string, number>();
   for (const node of nodes) degree.set(node.id, 0);
 
-  const uf = new UnionFind();
-  for (const node of nodes) uf.add(node.id);
+  const knownEdges: Array<readonly [string, string]> = [];
   for (const edge of edges) {
     // Edges may reference endpoints not in the node set defensively; only group known ones.
     if (!labelOf.has(edge.source) || !labelOf.has(edge.target)) continue;
-    uf.union(edge.source, edge.target);
+    knownEdges.push([edge.source, edge.target]);
     degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
     degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
   }
 
-  const groups = new Map<string, string[]>();
-  for (const node of nodes) {
-    const root = uf.find(node.id);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root)!.push(labelOf.get(node.id)!);
-  }
+  const groups = groupByWeaklyConnected(nodes, knownEdges, (n) => n.id, (n) => labelOf.get(n.id)!);
 
-  const components: RenderComponent[] = [...groups.values()]
-    .map((members) => ({ size: members.length, nodes: members.sort((a, b) => a.localeCompare(b)) }))
-    .sort((a, b) => b.size - a.size || a.nodes[0].localeCompare(b.nodes[0]))
+  const components: RenderComponent[] = groups
     .slice(0, MAX_COMPONENTS_LISTED)
-    .map((c) => ({
-      size: c.size,
-      nodes: c.nodes.length > MAX_MEMBERS_PER_COMPONENT
-        ? [...c.nodes.slice(0, MAX_MEMBERS_PER_COMPONENT), `… +${c.nodes.length - MAX_MEMBERS_PER_COMPONENT} more`]
-        : c.nodes,
+    .map((members) => ({
+      size: members.length,
+      nodes: members.length > MAX_MEMBERS_PER_COMPONENT
+        ? [...members.slice(0, MAX_MEMBERS_PER_COMPONENT), `… +${members.length - MAX_MEMBERS_PER_COMPONENT} more`]
+        : members,
     }));
 
   const isolatedNodes = nodes
@@ -109,7 +101,7 @@ export function summarizeRenderedConnectivity(
   return {
     nodeCount: nodes.length,
     edgeCount: edges.length,
-    componentCount: groups.size,
+    componentCount: groups.length,
     components,
     isolatedNodes,
   };
