@@ -742,6 +742,7 @@ export function App() {
     clearExpandedSchemaView,
     collapsedSchemaNodeIds,
     collapseExpandedSchemaViewSchema: handleCollapseExpandedSchemaViewSchema,
+    expandAllSchemas,
     expandedSchemaCount,
     expandedSchemaViewGraph,
     expandedSchemaViewRenderedCount,
@@ -761,6 +762,10 @@ export function App() {
     setShowExpandedSchemaClusters,
     showExpandedSchemaClusters,
   });
+
+  const handleExpandAllSchemas = useCallback(() => {
+    expandAllSchemas(model?.schemas.map(s => s.name) ?? []);
+  }, [expandAllSchemas, model]);
 
   /** Toggles whether external references (file sources, cross-DB) are visible. */
   const handleToggleExternalRefs = useCallback(() => {
@@ -1446,6 +1451,7 @@ export function App() {
         showExpandedSchemaClusters={showExpandedSchemaClusters}
         onToggleExpandedSchemaClusters={handleToggleExpandedSchemaClusters}
         expandedSchemaCount={expandedSchemaCount}
+        onExpandAllSchemas={handleExpandAllSchemas}
         collapsedSchemaNodeIds={collapsedSchemaNodeIds}
         trace={trace}
         filter={filter}

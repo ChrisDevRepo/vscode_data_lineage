@@ -398,6 +398,8 @@ interface GraphCanvasProps {
   onToggleExpandedSchemaClusters?: () => void;
   /** Number of schemas currently expanded in expanded schema view; shown in compact control tooltips. */
   expandedSchemaCount?: number;
+  /** Expands all schemas at once and enters Expanded Schema View. */
+  onExpandAllSchemas?: () => void;
   /**
    * IDs of nodes in the working set that are collapsed inside a schema cluster.
    * Passed to the toolbar search for three-state partitioning.
@@ -514,6 +516,7 @@ export function GraphCanvas({
   showExpandedSchemaClusters = true,
   onToggleExpandedSchemaClusters,
   expandedSchemaCount = 0,
+  onExpandAllSchemas,
   collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
@@ -1119,6 +1122,7 @@ export function GraphCanvas({
         showExpandedSchemaClusters={showExpandedSchemaClusters}
         onToggleExpandedSchemaClusters={onToggleExpandedSchemaClusters}
         expandedSchemaCount={expandedSchemaCount}
+        onExpandAllSchemas={onExpandAllSchemas}
         collapsedSchemaNodeIds={collapsedSchemaNodeIds}
       />
 

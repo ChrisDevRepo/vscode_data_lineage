@@ -89,7 +89,7 @@ export function useExpandedSchemaView({
   const applyExpandedSchemaViewSchemas = useCallback((
     expandedSchemas: Set<string>,
     focusNodeId: string | null,
-    changedSchema: string,
+    label: string,
   ) => {
     if (!graph) {
       notifyUser('Expanded Schema View is still rebuilding. Try again after the graph finishes loading.');
@@ -101,8 +101,9 @@ export function useExpandedSchemaView({
       { includeCollapsedSchemaClusters: showExpandedSchemaClusters },
     );
     if (projectedCount > config.renderLimit) {
+      const subject = label === 'all' ? 'all schemas' : `schema "${label}"`;
       notifyUser(
-        `Cannot expand schema "${changedSchema}": Expanded Schema View would render ${projectedCount} nodes, over the render limit of ${config.renderLimit}.`
+        `Cannot expand ${subject}: Expanded Schema View would render ${projectedCount} nodes, over the render limit of ${config.renderLimit}.`
       );
       return;
     }
@@ -135,6 +136,11 @@ export function useExpandedSchemaView({
     setShowExpandedSchemaClusters((previous) => !previous);
   }, [preserveViewportOnNextGraphChange, setShowExpandedSchemaClusters]);
 
+  /** Expand all visible schemas at once; rejected with a toast if it would exceed the render limit. */
+  const expandAllSchemas = useCallback((allSchemaNames: string[]) => {
+    applyExpandedSchemaViewSchemas(new Set(allSchemaNames), null, 'all');
+  }, [applyExpandedSchemaViewSchemas]);
+
   /** Collapse one expanded schema; clearing the last schema returns to Schema View. */
   const collapseExpandedSchemaViewSchema = useCallback((schema: string) => {
     preserveViewportOnNextGraphChange();
@@ -163,6 +169,7 @@ export function useExpandedSchemaView({
     clearExpandedSchemaView,
     collapsedSchemaNodeIds,
     collapseExpandedSchemaViewSchema,
+    expandAllSchemas,
     expandedSchemaCount: expandedSchemaView?.expandedSchemas.size ?? 0,
     expandedSchemaViewGraph,
     expandedSchemaViewRenderedCount,
