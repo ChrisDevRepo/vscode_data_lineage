@@ -28,6 +28,27 @@ const uiTests = [
   'tests/unit/hooks/**/*.test.ts',
 ];
 
+interface ProjectSpec {
+  name: string;
+  include: string[];
+  /** Defaults to 'node'. */
+  environment?: 'node' | 'jsdom';
+  exclude?: string[];
+  /** jsdom projects loading vscode-importing source need the stub alias. */
+  resolve?: typeof nativeTestResolve;
+}
+
+const projectSpecs: ProjectSpec[] = [
+  { name: 'parser', include: [parserRunner] },
+  { name: 'bfs', include: [bfsRunner] },
+  { name: 'support-node', include: [supportRunner] },
+  { name: 'support-ui', include: supportUiTests, environment: 'jsdom', resolve: nativeTestResolve },
+  { name: 'ui', include: uiTests, environment: 'jsdom', exclude: supportUiTests, resolve: nativeTestResolve },
+  { name: 'baseline', include: [baselineRunner] },
+  { name: 'snapshot', include: [snapshotRunner] },
+  { name: 'snapshot-update', include: [snapshotUpdateRunner] },
+];
+
 export default defineConfig({
   plugins: [react()],
   define: {
@@ -40,66 +61,10 @@ export default defineConfig({
       include: ['src/engine/**', 'src/hooks/**'],
       reporter: ['text', 'html'],
     },
-    projects: [
+    projects: projectSpecs.map(({ name, include, environment = 'node', exclude, resolve }) =>
       defineProject({
-        test: {
-          name: 'parser',
-          environment: 'node',
-          include: [parserRunner],
-        },
-      }),
-      defineProject({
-        test: {
-          name: 'bfs',
-          environment: 'node',
-          include: [bfsRunner],
-        },
-      }),
-      defineProject({
-        test: {
-          name: 'support-node',
-          environment: 'node',
-          include: [supportRunner],
-        },
-      }),
-      defineProject({
-        resolve: nativeTestResolve,
-        test: {
-          name: 'support-ui',
-          environment: 'jsdom',
-          include: supportUiTests,
-        },
-      }),
-      defineProject({
-        resolve: nativeTestResolve,
-        test: {
-          name: 'ui',
-          environment: 'jsdom',
-          include: uiTests,
-          exclude: supportUiTests,
-        },
-      }),
-      defineProject({
-        test: {
-          name: 'baseline',
-          environment: 'node',
-          include: [baselineRunner],
-        },
-      }),
-      defineProject({
-        test: {
-          name: 'snapshot',
-          environment: 'node',
-          include: [snapshotRunner],
-        },
-      }),
-      defineProject({
-        test: {
-          name: 'snapshot-update',
-          environment: 'node',
-          include: [snapshotUpdateRunner],
-        },
-      }),
-    ],
+        ...(resolve ? { resolve } : {}),
+        test: { name, environment, include, ...(exclude ? { exclude } : {}) },
+      })),
   },
 });
