@@ -274,7 +274,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('last-dacpac-gone') }),
   z.object({ type: z.literal('mssql-status'), available: z.boolean() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
-  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.string() }),
+  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
   z.object({ type: z.literal('table-stats-error'), message: z.string() }),
   z.object({ type: z.literal('auto-visualize-start') }),
   z.object({
@@ -324,7 +324,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('rebuild') }),
   z.object({ type: z.literal('reload') }),
   z.object({ type: z.literal('request-projects') }),
-  z.object({ type: z.literal('open-external'), url: z.string() }),
+  z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
   z.object({
@@ -353,6 +353,6 @@ export type MainPanelToExtensionMsg = z.infer<typeof MainPanelToExtensionMsgSche
  */
 export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-ready'), findQuery: z.string().optional() }),
-  z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.any(), columns: z.array(z.any()) }),
+  z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.enum(['quick', 'standard']), columns: z.array(ColumnDefSchema) }),
   z.object({ type: z.literal('close-detail') }),
 ]);

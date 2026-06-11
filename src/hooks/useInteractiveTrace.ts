@@ -309,7 +309,7 @@ export function useInteractiveTrace(
     const isTraceActive = isEditableTraceMode(trace.mode);
     if (!isTraceActive || !trace.selectedNodeId) return;
 
-    const { bfsGraph } = resolveBfsGraph(trace.selectedNodeId, next, graph, fullGraph);
+    const { bfsGraph, autoPromoted } = resolveBfsGraph(trace.selectedNodeId, next, graph, fullGraph);
     if (!bfsGraph) return;
 
     const t0 = performance.now();
@@ -334,6 +334,7 @@ export function useInteractiveTrace(
         baseEdgeIds: edgeIds,
         tracedNodeIds: scope.nodeIds,
         tracedEdgeIds: scope.edgeIds,
+        autoPromoted,
       };
     });
   }, [graph, fullGraph, model, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels]);
