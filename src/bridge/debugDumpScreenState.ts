@@ -4,22 +4,34 @@ import { trunc } from '../utils/log';
 
 /** Subset of the `render-state` payload the dump reads to explain trace/affordance questions. */
 export interface RenderStateSnapshot {
+  /** Node currently selected or highlighted on the canvas. */
   highlightedNodeId?: string | null;
+  /** Serialized add/prune affordances for the highlighted trace node. */
   affordances?: TraceAffordanceSnapshot | null;
+  /** Active trace scope mirrored from the graph renderer. */
   traceScope?: {
+    /** Current trace mode used by the renderer. */
     mode: string;
+    /** Starting node for the trace, when one has been selected. */
     origin: string | null;
+    /** Original BFS node scope before manual trace edits. */
     baseNodeIds: string[];
+    /** Direct-neighbor nodes manually added to the trace. */
     manualAddedNodeIds: string[];
+    /** Nodes manually removed from the trace. */
     manualPrunedNodeIds: string[];
+    /** Node IDs currently rendered as part of the trace. */
     tracedNodeIds: string[];
   } | null;
 }
 
 /** Analytics/bookmark mode state carried on `uiState.screenState` (not in render-state). */
 export interface ScreenStateExtras {
+  /** Active graph-analysis panel state used to explain scoped analysis views. */
   analytics?: { type: string; activeGroupId: string | null; groups: { id: string; label: string; nodeIds: string[] }[] } | null;
+  /** Active saved view or AI-authored view used to explain allowlist rendering. */
   bookmark?: { id: string; name: string; source: string | null; allowlistNodeIds: string[] } | null;
+  /** Whether the selected node detail panel is open in the webview. */
   detailOpen?: boolean;
 }
 

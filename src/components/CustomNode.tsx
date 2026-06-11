@@ -7,10 +7,28 @@ import type { ObjectType } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
 
 /** One column-level flow row shown in a node tooltip. */
-export type CtTooltipFlow = { neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string };
+export type CtTooltipFlow = {
+  /** Neighbor node that contributes or receives the traced column value. */
+  neighborNode: string;
+  /** Lineage side where the neighbor participates in the column trace. */
+  direction: 'in' | 'out';
+  /** Source-side column shown in the tooltip flow row. */
+  fromCol: string;
+  /** Target-side column shown in the tooltip flow row. */
+  toCol: string;
+};
 
 /** One selectable direct neighbor for interactive trace add/prune controls. */
-export type TraceNeighborOption = { id: string; label: string; schema: string; objectType: ObjectType };
+export type TraceNeighborOption = {
+  /** Stable node ID passed back to trace edit handlers. */
+  id: string;
+  /** Display name shown in the neighbor picker. */
+  label: string;
+  /** Schema displayed with the neighbor label. */
+  schema: string;
+  /** Object kind used for compact type badges in the picker. */
+  objectType: ObjectType;
+};
 
 /** User action supported by the interactive trace node controls. */
 export type TraceNeighborAction = 'add' | 'prune';
@@ -194,24 +212,43 @@ function TraceNeighborPickerToolbar({
  * The business data associated with a single node in the React Flow canvas.
  */
 export type CustomNodeData = {
+  /** Display label rendered inside the node. */
   label: string;
+  /** Schema name used for grouping, color selection, and tooltips. */
   schema: string;
+  /** Fully qualified object name used by detail and debug surfaces. */
   fullName: string;
+  /** Object kind that drives icon, color, and tooltip behavior. */
   objectType: ObjectType;
+  /** Count of upstream dependencies shown in node metadata. */
   inDegree: number;
+  /** Count of downstream dependents shown in node metadata. */
   outDegree: number;
+  /** Whether the node is de-emphasized in the current scoped view. */
   dimmed?: boolean;
+  /** Highlight state applied by search, trace, or AI presentation. */
   highlighted?: boolean | 'yellow';
+  /** External reference subtype for file, database, or external-table nodes. */
   externalType?: 'et' | 'file' | 'db';
+  /** File or URL target displayed for file-based external references. */
   externalUrl?: string;
+  /** Database name displayed for cross-database external references. */
   externalDatabase?: string;
+  /** Resolved schema color supplied by the parent graph projection. */
   schemaColor?: string;
+  /** AI-authored badge rendered above the node. */
   aiBadge?: { text: string };
+  /** AI-authored note rendered below the node. */
   aiNote?: { text: string };
+  /** AI-authored highlight styling applied to the node border and glow. */
   aiHighlight?: { color: string; glow: string; shadow: string };
+  /** Column-trace rows rendered in the node tooltip. */
   ctColumnFlows?: CtTooltipFlow[];
+  /** Whether the scoped-view remove control is shown. */
   showRemoveButton?: boolean;
+  /** Removes the node from the active allowlist-backed view. */
   onRemoveFromView?: (nodeId: string) => void;
+  /** Interactive trace controls for adding or pruning direct neighbors. */
   traceControls?: TraceNodeControls;
 };
 

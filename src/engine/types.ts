@@ -597,7 +597,7 @@ export interface ExtensionConfig {
   tableStatistics: TableStatsConfig;
   /** External reference settings. */
   externalRefs: ExternalRefsConfig;
-  /** Overview mode settings. */
+  /** Schema View settings stored under the legacy `overview` configuration key. */
   overview: OverviewConfig;
   /** Max rendered nodes before showing a limit-reached warning instead of the graph. */
   renderLimit: number;
@@ -624,7 +624,7 @@ export const DEFAULT_CONFIG = {
 
 
 /**
- * Supported top-level graph display modes.
+ * Supported top-level graph display modes for Object View and Schema View.
  */
 export type GraphMode = 'full' | 'overview';
 
@@ -651,8 +651,7 @@ export interface SchemaNodeData extends Record<string, unknown> {
    * use the fixed external color, not the schema palette.
    */
   isExternalOnly?: boolean;
-  /** Set when this schema box is a collapsed cluster inside expanded schema view (shown alongside object
-   * nodes). Triggers the stacked-cards backing + expand glyph so it reads as an openable group. */
+  /** Marks a collapsed schema cluster shown alongside object nodes in Expanded Schema View. */
   isExpandedSchemaViewCluster?: boolean;
 }
 
@@ -753,18 +752,27 @@ export interface TraceState {
  * host-side debug dump so the two cannot drift.
  */
 export interface TraceAffordanceSideSnapshot {
+  /** Direct-neighbor node IDs that can be added on this lineage side. */
   add: string[];
+  /** Visible trace node IDs that can be pruned on this lineage side. */
   prune: string[];
+  /** Explanation shown when add controls are disabled. */
   addDisabledReason: string;
+  /** Explanation shown when prune controls are disabled. */
   pruneDisabledReason: string;
+  /** Total direct-neighbor count on this lineage side. */
   neighborCount: number;
+  /** Direct-neighbor count already visible in the trace on this lineage side. */
   visibleNeighborCount: number;
 }
 
 /** Serializable snapshot of the highlighted node's add/prune affordances, mirrored host-side via `render-state`. */
 export interface TraceAffordanceSnapshot {
+  /** Highlighted node ID these affordances were computed for. */
   nodeId: string;
+  /** Inbound-side add/prune affordances. */
   in: TraceAffordanceSideSnapshot;
+  /** Outbound-side add/prune affordances. */
   out: TraceAffordanceSideSnapshot;
 }
 
