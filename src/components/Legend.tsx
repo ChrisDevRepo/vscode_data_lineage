@@ -1,5 +1,5 @@
 import React, { memo, useState, useEffect } from 'react';
-import { createSchemaColorMap, type SchemaColorMap } from '../utils/schemaColors';
+import { createSchemaColorMap, getSchemaColorFromMap, type SchemaColorMap } from '../utils/schemaColors';
 import { schemaKey } from '../utils/sql';
 
 /**
@@ -84,8 +84,7 @@ export const Legend = memo(function Legend({
               {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT))
                 .filter(s => !!s && s.trim().length > 0)
                 .map((schema) => {
-                  const color = colors.get(schemaKey(schema));
-                  if (!color) throw new Error(`No legend color assigned for "${schema}"`);
+                  const color = getSchemaColorFromMap(schema, colors);
                   const isCollapsedSchemaCluster = isExpandedSchemaViewActive && !expandedSchemaKeys.has(schemaKey(schema));
                   const schemaStateLabel = isCollapsedSchemaCluster ? 'Collapsed schema cluster' : 'Expanded schema';
                   return (

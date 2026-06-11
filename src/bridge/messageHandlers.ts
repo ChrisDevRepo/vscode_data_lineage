@@ -111,7 +111,7 @@ export interface MessageHandlerBundle {
  * @param loadDemoFlag - Whether demo data should be loaded instead of a persisted project.
  * @param setDetailPanel - Setter for the current detail panel reference.
  *
- * @returns Structured result.
+ * @returns The per-message-type handler map plus the panel-dispose cleanup function.
  */
 export function createMessageHandlers(
   host: BridgeHost,

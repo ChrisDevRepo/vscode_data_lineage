@@ -7,7 +7,7 @@
  *
  * @param description - Description markdown to preprocess.
  *
- * @returns String result.
+ * @returns The markdown unchanged (pass-through until a transform is needed).
  */
 export function preprocessDescriptionMarkdown(description: string): string {
   return description;

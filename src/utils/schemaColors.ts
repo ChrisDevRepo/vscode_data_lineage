@@ -173,7 +173,7 @@ export function getSchemaColor(schema: string, forceLight?: boolean): string {
  * @param schema - Schema name to query.
  * @param paletteSize - Available palette size.
  *
- * @returns Computed numeric value.
+ * @returns Palette slot index in `[0, paletteSize)`, stable for a given schema name.
  */
 export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_EXT.length): number {
   return hashString(schemaKey(requireSchemaName(schema))) % paletteSize;
@@ -225,7 +225,7 @@ export function createSchemaColorMap(schemas: readonly string[], forceLight?: bo
  * @param schema - Schema name to query.
  * @param colorMap - Precomputed schema-color lookup.
  *
- * @returns String result.
+ * @returns The assigned color pair; throws when the schema has no map entry.
  */
 export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap): string {
   const key = schemaKey(requireSchemaName(schema));

@@ -100,7 +100,7 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
  *
  * @param typeStr - SQL type text to inspect.
  *
- * @returns String result.
+ * @returns Lowercase base type name with any length/precision suffix removed.
  */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
@@ -111,7 +111,7 @@ export function extractBaseType(typeStr: string): string {
  *
  * @param col - Column definition to classify.
  *
- * @returns Structured result.
+ * @returns Profiling category for the column; `skip` for computed/unprofilable types.
  */
 export function classifyColumn(col: ColumnDef): ColCategory {
   if (col.extra === 'COMPUTED') return 'skip';
@@ -265,7 +265,7 @@ function qiStr(name: string): string {
  * @param schema - Schema name to query.
  * @param tableName - Table name to query.
  *
- * @returns String result.
+ * @returns T-SQL statement summing `sys.partitions` rows for the heap/clustered index.
  */
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
@@ -281,7 +281,7 @@ WHERE p.object_id = OBJECT_ID('${qiStr(schema)}.${qiStr(tableName)}')
  * @param sampleSize - Requested sample size.
  * @param rowCount - Known row count.
  *
- * @returns Computed numeric value.
+ * @returns Sampling percentage in `[1, 100]`; 100 when the row count is unknown or zero.
  */
 export function computeSamplePercent(_engineEdition: number, sampleSize: number, rowCount: number): number {
   if (rowCount <= 0) return 100;
@@ -293,7 +293,8 @@ export function computeSamplePercent(_engineEdition: number, sampleSize: number,
  *
  * @param raw - Raw input value to normalize.
  *
- * @returns String result.
+ * @returns Date-only string when the time part is midnight, otherwise `date hh:mm`;
+ * non-datetime input is returned unchanged.
  */
 export function compactDate(raw: string): string {
   if (!raw || raw === 'NULL') return raw;
@@ -333,7 +334,7 @@ const TYPE_BADGE_LABELS: Record<string, string> = {
  *
  * @param typeStr - SQL type text to inspect.
  *
- * @returns String result.
+ * @returns Known badge label for the base type, else the first 4 letters uppercased.
  */
 export function typeBadgeLabel(typeStr: string): string {
   const base = extractBaseType(typeStr);

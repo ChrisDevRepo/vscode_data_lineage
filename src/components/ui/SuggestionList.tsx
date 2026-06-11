@@ -74,7 +74,7 @@ function SuggestionRow({
 /**
  * Renders the keyboard-navigable autocomplete suggestion list.
  *
- * @returns Structured result.
+ * @returns The suggestion listbox, or `null` when all partitions are empty.
  */
 export function SuggestionList({
   suggestions,

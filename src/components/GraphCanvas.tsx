@@ -1262,8 +1262,6 @@ export function GraphCanvas({
                 event.preventDefault();
                 if (node.type === 'schemaNode') {
                   setLocalNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
-                  onNodeContextMenu(node, event.clientX, event.clientY);
-                  return;
                 }
                 onNodeContextMenu(node, event.clientX, event.clientY);
               }}
@@ -1329,8 +1327,7 @@ export function GraphCanvas({
                         collapsedSchemaNodeIds={collapsedSchemaNodeIds}
                         onResultClick={(nodeId, searchTerm) => {
                           if (graphMode === 'overview') {
-                            const node = model?.nodes.find(n => n.id === nodeId);
-                            if (node) {
+                            if (modelNodeMap.has(nodeId)) {
                             pendingZoomRef.current = nodeId;
                             pendingClickRef.current = { id: nodeId, searchTerm };
                             onOpenExpandedSchemaViewForNode?.(nodeId);

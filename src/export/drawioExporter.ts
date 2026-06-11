@@ -383,7 +383,7 @@ function buildSchemaClusterObject(
  * @param edges - Aggregated edges between schema clusters.
  * @param schemas - Schema names for the legend.
  *
- * @returns String result.
+ * @returns Draw.io XML document, or an empty string when no schema nodes exist.
  */
 export function exportSchemaOverviewToDrawio(
   nodes: FlowNode<SchemaNodeData>[],

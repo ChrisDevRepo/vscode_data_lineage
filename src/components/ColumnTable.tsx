@@ -32,7 +32,7 @@ interface ColumnTableProps {
  * - Truncation with tooltips for long column names and types.
  * - Integration with the global search highlight system.
  *
- * @returns Structured result.
+ * @returns The column table, or a placeholder note when no columns are loaded.
  */
 export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: ColumnTableProps) {
   if (columns.length === 0) {

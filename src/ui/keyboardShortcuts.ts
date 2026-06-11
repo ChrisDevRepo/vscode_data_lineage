@@ -29,10 +29,14 @@ export interface KeyboardShortcutDoc {
 
 /**
  * Display strings for the supported keyboard shortcuts.
+ *
+ * @remarks
+ * `useKeyboardShortcut` matches case-insensitively — list each letter key once;
+ * never add upper/lowercase duplicates.
  */
 export const SHORTCUT_KEYS = {
   quickJump: '/',
-  fitView: ['f', 'F'],
+  fitView: 'f',
   openHelp: '?',
   excludeHighlightedNode: 'Delete',
   exitMode: 'Escape',

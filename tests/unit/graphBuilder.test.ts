@@ -12,11 +12,11 @@ import {
   traceNode,
   traceNodeWithLevels,
   getGraphMetrics,
-  buildSchemaEdges,
   buildSchemaGraph,
   buildGraphologyGraph,
   buildExpandedSchemaViewGraph,
 } from '../../src/engine/graphBuilder';
+import { projectSchemaQuotient } from '../../src/engine/schemaProjection';
 import { buildModel } from '../../src/engine/modelBuilder';
 import type { DatabaseModel } from '../../src/engine/types';
 import { getExternalNodeColor } from '../../src/utils/schemaColors';
@@ -689,10 +689,10 @@ function testClrMethodVirtualNodeSuppression() {
   assert(dbNodesReal[0].externalDatabase === 'otherdb', 'CLR-NonCLR: correct database name stored');
 }
 
-// ─── buildSchemaEdges ────────────────────────────────────────────────────────
+// ─── projectSchemaQuotient edges ─────────────────────────────────────────────
 
-function testBuildSchemaEdges() {
-  console.log('\n── buildSchemaEdges ──');
+function testSchemaQuotientEdges() {
+  console.log('\n── projectSchemaQuotient edges ──');
 
   // Model: dbo.ProcA (procedure) writes to sales.TableB, sales.ProcC reads from dbo.TableD
   const nodes: DatabaseModel['nodes'] = [
@@ -708,7 +708,7 @@ function testBuildSchemaEdges() {
   const model = { nodes, edges, schemas: [], catalog: new Map(), neighborIndex: new Map() } as unknown as DatabaseModel;
   const graph = buildGraphologyGraph(model);
 
-  const result = buildSchemaEdges(graph);
+  const result = projectSchemaQuotient(graph).edges;
 
   assert(result.length === 1, `Bidirectional dbo↔sales edges collapse to 1 projected edge (got ${result.length})`);
 
@@ -724,7 +724,7 @@ function testBuildSchemaEdges() {
     nodes: nodes.filter(n => dboNodeIds.has(n.id)),
     edges: edges.filter(e => dboNodeIds.has(e.source) && dboNodeIds.has(e.target)),
   };
-  const filtered = buildSchemaEdges(buildGraphologyGraph(dboOnlyModel));
+  const filtered = projectSchemaQuotient(buildGraphologyGraph(dboOnlyModel)).edges;
   assertEq(filtered.length, 0, 'Filtered working graph with only dbo has no cross-schema edges');
 
   // Same-schema edges are dropped (srcSchema === tgtSchema).
@@ -736,7 +736,7 @@ function testBuildSchemaEdges() {
     { source: '[dbo].[proca]', target: '[dbo].[tabled]', type: 'body' },
   ];
   const sameSchemaModel = { nodes: dboOnlySameSchema, edges: sameSchemaEdges, schemas: [], catalog: new Map(), neighborIndex: new Map() } as unknown as DatabaseModel;
-  const sameResult = buildSchemaEdges(buildGraphologyGraph(sameSchemaModel));
+  const sameResult = projectSchemaQuotient(buildGraphologyGraph(sameSchemaModel)).edges;
   assert(sameResult.length === 0, `Same-schema edges are not included in schema edge map (got ${sameResult.length})`);
 }
 
@@ -994,7 +994,7 @@ async function main() {
     const model = await loadAdventureWorksModel();
 
     await testGraphBuilder(model);
-    testBuildSchemaEdges();
+    testSchemaQuotientEdges();
     testBuildSchemaGraph(model);
     testBuildExpandedSchemaViewGraph();
     testTraceNoSiblings();

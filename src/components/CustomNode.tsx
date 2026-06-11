@@ -54,7 +54,7 @@ type TraceNeighborPicker = {
  *
  * @param flows - Column-flow entries to transform.
  *
- * @returns Array of matching values.
+ * @returns Sorted unique column names across all from/to flow endpoints.
  */
 export function buildTableTraceColumns(flows: CtTooltipFlow[]): string[] {
   const cols = new Set<string>();
@@ -70,7 +70,7 @@ export function buildTableTraceColumns(flows: CtTooltipFlow[]): string[] {
  *
  * @param flows - Column-flow entries to transform.
  *
- * @returns Array of matching values.
+ * @returns One group per neighbor node with its de-duplicated flow rows, sorted by neighbor.
  */
 export function groupCtFlowsByNeighbor(flows: CtTooltipFlow[]): Array<{ neighborNode: string; rows: CtTooltipFlow[] }> {
   const groups = new Map<string, CtTooltipFlow[]>();

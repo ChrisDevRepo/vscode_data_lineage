@@ -35,7 +35,8 @@ interface UseExpandedSchemaViewArgs {
  * This hook owns only the feature logic. State still lives in `App` so existing
  * reset points and host-sync behavior can remain unchanged.
  *
- * @returns Structured result.
+ * @returns Expanded-view flow graph, rendered counts, collapsed-cluster IDs, and
+ * the expand/collapse/toggle actions.
  */
 export function useExpandedSchemaView({
   config,

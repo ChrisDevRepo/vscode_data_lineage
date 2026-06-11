@@ -22,7 +22,7 @@ describe('keyboard shortcut registry', () => {
       'hideExpandedSchemaClusters',
     ]);
     expect(SHORTCUT_KEYS.quickJump).toBe('/');
-    expect(SHORTCUT_KEYS.fitView).toEqual(['f', 'F']);
+    expect(SHORTCUT_KEYS.fitView).toBe('f');
     expect(SHORTCUT_KEYS.openHelp).toBe('?');
     expect(SHORTCUT_KEYS.excludeHighlightedNode).toBe('Delete');
     expect(SHORTCUT_KEYS.exitMode).toBe('Escape');

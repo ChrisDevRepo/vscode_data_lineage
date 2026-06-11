@@ -497,7 +497,8 @@ function layoutTraceFlow(
  * @param model - Database model to inspect.
  * @param synthesizeOutOfFilter - Whether to synthesize hidden out-of-filter nodes.
  *
- * @returns Array of matching values.
+ * @returns Trace-scoped nodes and edges, plus a graphology graph over the synthesized
+ * scope when out-of-filter synthesis ran.
  */
 export function applyTraceToFlow(
   flowNodes: FlowNode[],
@@ -628,7 +629,7 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
  *
  * @param graph - Graph instance to traverse.
  *
- * @returns Computed numeric value.
+ * @returns Node and edge totals plus root (in-degree 0) and leaf (out-degree 0) counts.
  */
 export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } {
   let rootNodes = 0;
@@ -715,17 +716,6 @@ function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>
   }
 
   return result;
-}
-
-/**
- * Returns schema-to-schema quotient edges from the current filtered graph.
- *
- * @param graph - Graph instance to traverse.
- *
- * @returns Array of matching values.
- */
-export function buildSchemaEdges(graph: Graph): SchemaProjectionEdge[] {
-  return projectSchemaQuotient(graph).edges;
 }
 
 /**

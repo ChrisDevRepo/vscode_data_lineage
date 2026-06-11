@@ -200,7 +200,7 @@ function buildNeighborIndex(
  *
  * @param fullName - Fully qualified name to parse.
  *
- * @returns String result.
+ * @returns Schema and object name; schema defaults to `dbo` when unqualified.
  */
 export function parseName(fullName: string): { schema: string; objectName: string } {
   const parts = splitSqlName(fullName).map(p => stripBrackets(p));
@@ -215,7 +215,7 @@ export function parseName(fullName: string): { schema: string; objectName: strin
  *
  * @param name - Name to use.
  *
- * @returns String result.
+ * @returns Lowercase `[schema].[object]` key for case-insensitive comparison.
  */
 export function normalizeName(name: string): string {
   const parts = splitSqlName(name).map(p => stripBrackets(p));

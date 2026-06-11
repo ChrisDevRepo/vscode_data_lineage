@@ -125,7 +125,7 @@ type ContextMenuState = ObjectContextMenuState;
  * It coordinates multiple hooks (`useGraphology`, `useInteractiveTrace`, `useDacpacLoader`)
  * to provide a reactive and high-performance graph exploration experience.
  *
- * @returns Structured result.
+ * @returns The root application view for the current model and mode state.
  */
 export function App() {
   const vscodeApi = useVsCode();

@@ -1,5 +1,6 @@
 import { type DatabaseModel, type TraceAffordanceSnapshot, type TraceAffordanceSideSnapshot } from '../engine/types';
 import { directNeighborIds } from '../engine/graphGuards';
+import { trunc } from '../utils/log';
 
 /** Subset of the `render-state` payload the dump reads to explain trace/affordance questions. */
 export interface RenderStateSnapshot {
@@ -25,8 +26,7 @@ export interface ScreenStateExtras {
 /** Truncates a node-id list for dump display, keeping it scannable. */
 export function formatIdList(ids: readonly string[], cap = 40): string {
   if (ids.length === 0) return '(none)';
-  if (ids.length <= cap) return ids.join(', ');
-  return `${ids.slice(0, cap).join(', ')} … (+${ids.length - cap} more)`;
+  return trunc([...ids], cap);
 }
 
 /** Formats one lineage side's add/prune affordances, surfacing the grayed-control reason. */
