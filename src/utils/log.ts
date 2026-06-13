@@ -32,6 +32,7 @@ export type LogCategory =
  * this module might be loaded by different entry points).
  */
 const GLOBAL_LOG_KEY = '__VSCODE_DL_TEST_LOGS__';
+// `as any` is required: globalThis has no index signature for our ad-hoc key (see remark above).
 if (!(globalThis as any)[GLOBAL_LOG_KEY]) {
   (globalThis as any)[GLOBAL_LOG_KEY] = [];
 }

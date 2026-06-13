@@ -104,14 +104,22 @@ export interface GraphResult {
   graph: Graph;
 }
 
+/**
+ * Minimal node shape consumed by {@link buildLineageFlowNode} when constructing a React Flow node.
+ * The `external*` fields are populated only for external references (objects outside the analyzed
+ * project) and are therefore optional; internal objects leave them undefined.
+ */
 type LineageFlowNodeSource = {
   id: string;
   label: string;
   schema: string;
   fullName: string;
   objectType: ObjectType;
+  /** External-reference source kind (e.g. file, db); set only for external nodes. */
   externalType?: string;
+  /** External-reference URL; set only for external nodes that carry one. */
   externalUrl?: string;
+  /** Originating database name for cross-database external references. */
   externalDatabase?: string;
 };
 

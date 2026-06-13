@@ -3,7 +3,6 @@ import { registerModuleSuites } from '../helpers/vitestNodeSuite';
 
 const bfsModules = [
   'column-flow-validation.test.ts',
-  'expandedSchemaViewCore.test.ts',
   'graph-analysis-aw.test.ts',
   'graphAnalysis.test.ts',
   'graphBuilder.test.ts',
@@ -15,6 +14,7 @@ const bfsModules = [
   'navigation-engine.test.ts',
   'present-result-closure.test.ts',
   'refine-loop.test.ts',
+  'schemaProjection.test.ts',
   'start-exploration-schema.test.ts',
   'submit-findings-schema.test.ts',
 ];

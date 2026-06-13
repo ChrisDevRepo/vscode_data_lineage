@@ -6,7 +6,6 @@ import { discoverUnitTestFiles, registerModuleSuites } from '../helpers/vitestNo
 // because the node-suite wrapper forbids declaring a suite inside a test under vitest 4.
 const supportModules = discoverUnitTestFiles([
   'column-flow-validation.test.ts',
-  'expandedSchemaViewCore.test.ts',
   'graph-analysis-aw.test.ts',
   'graphAnalysis.test.ts',
   'graphBuilder.test.ts',
@@ -20,6 +19,7 @@ const supportModules = discoverUnitTestFiles([
   'parser-edge-cases.test.ts',
   'present-result-closure.test.ts',
   'refine-loop.test.ts',
+  'schemaProjection.test.ts',
   'start-exploration-schema.test.ts',
   'submit-findings-schema.test.ts',
   'tsql-complex.test.ts',

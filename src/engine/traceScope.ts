@@ -33,16 +33,16 @@ function sameIdSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
 }
 
 /**
- * Detects an in-place trace-scope edit on top of the same original BFS scope.
+ * Detects (does not apply) an in-place trace-scope edit on top of the same original BFS scope.
  *
- * The graph canvas uses this to preserve the user's viewport while they add or
- * prune trace neighbours. Fresh traces, depth changes, full-model toggles, path
- * changes, and analysis scopes still use the normal fit/zoom behavior.
+ * The graph canvas calls this and, when it returns `true`, preserves the user's viewport while
+ * they add or prune trace neighbours. Fresh traces, depth changes, full-model toggles, path
+ * changes, and analysis scopes return `false` and so use the normal fit/zoom behavior.
  *
  * @param previous - Existing preview state.
  * @param next - Next trace state to compare.
  *
- * @returns Whether manual trace scope edit.
+ * @returns `true` when `next` is the same BFS scope as `previous` with only manual add/prune edits.
  */
 export function isManualTraceScopeEdit(previous: TraceState, next: TraceState): boolean {
   if (!isEditableTraceMode(previous.mode) || !isEditableTraceMode(next.mode)) return false;

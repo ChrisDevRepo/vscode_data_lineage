@@ -15,7 +15,10 @@ export interface ModeCapabilityInput {
 }
 
 /**
- * Centralized UI permissions for graph interaction modes.
+ * Centralized UI permissions for graph interaction modes. The app shell computes this once via
+ * {@link deriveModeCapabilities} and threads the booleans to toolbar/context-menu/canvas controls
+ * so each consumer enables or disables affordances from a single, consistent policy instead of
+ * re-deriving ad-hoc conditions.
  */
 export interface ModeCapabilities {
   /** Whether any scoped mode is active and should lock conflicting controls. */

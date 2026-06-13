@@ -9,7 +9,7 @@ Three categories carry the suite. Everything else is a narrower guard.
 | Category | Files | Run with |
 |---|---|---|
 | **Parsing** | `parser-edge-cases.test.ts`, `tsql-complex.test.ts`, `snapshot-aw-baseline.ts` | `npm run test:parser` |
-| **BFS / orchestration** | `graphBuilder.test.ts`, `graphAnalysis.test.ts`, `graph-analysis-aw.test.ts`, `expandedSchemaViewCore.test.ts`, `graphDisplayMode.test.ts`, `navigation-engine*.test.ts`, `refine-loop.test.ts`, `start-exploration-schema.test.ts`, `submit-findings-schema.test.ts`, `present-result-closure.test.ts`, `column-flow-validation.test.ts` | `npm run test:bfs` |
+| **BFS / orchestration** | `graphBuilder.test.ts`, `graphAnalysis.test.ts`, `graph-analysis-aw.test.ts`, `schemaProjection.test.ts`, `graphDisplayMode.test.ts`, `navigation-engine*.test.ts`, `refine-loop.test.ts`, `start-exploration-schema.test.ts`, `submit-findings-schema.test.ts`, `present-result-closure.test.ts`, `column-flow-validation.test.ts` | `npm run test:bfs` |
 | **Baseline** | `snapshot-aw-baseline.ts` (parser TSV), `graph-analysis-aw.test.ts` (NetworkX-verified graph JSON) | `npm run test:baseline` |
 
 `npm test` is the full unit gate: it runs `test:core`, `test:support`, and `test:ui`. `test:graph` and `test:hooks` remain compatibility aliases for `test:bfs` and `test:ui`.
@@ -49,7 +49,7 @@ tests/
 │   │
 │   │  — Graph engine, schema view & BFS —
 │   ├── graphBuilder.test.ts               # Graph construction, synthetic BFS traces
-│   ├── expandedSchemaViewCore.test.ts     # Pure expanded-schema-view partition rules
+│   ├── schemaProjection.test.ts           # Pure expanded-schema-view partition rules
 │   ├── graphDisplayMode.test.ts           # Initial view seed plus explicit Object / Schema render-mode derivation
 │   ├── graphAnalysis.test.ts              # Algorithmic edge cases (maxSize, cycles)
 │   ├── schemaAdjacency.test.ts            # Schema-pair adjacency / bridge aggregation

@@ -1,6 +1,6 @@
 /**
  * Tests for the expanded schema view partition (engine/schemaProjection).
- * Execute with: npx tsx tests/unit/expandedSchemaViewCore.test.ts
+ * Execute with: npx tsx tests/unit/schemaProjection.test.ts
  */
 
 import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../../src/engine/schemaProjection';
