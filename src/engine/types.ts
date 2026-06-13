@@ -1,8 +1,15 @@
 
 /**
+ * Canonical list of supported lineage object kinds. Single source of truth — the
+ * {@link ObjectType} union is derived from it, and the bridge contract's
+ * `ObjectTypeSchema` reuses it so the runtime schema can never drift from the type.
+ */
+export const OBJECT_TYPES = ['table', 'view', 'procedure', 'function', 'external'] as const;
+
+/**
  * Supported lineage object kinds.
  */
-export type ObjectType = 'table' | 'view' | 'procedure' | 'function' | 'external';
+export type ObjectType = typeof OBJECT_TYPES[number];
 
 /**
  * Represents a single node in the lineage graph.
@@ -611,6 +618,9 @@ export const ENGINE_EDITION_FABRIC = 11;
  */
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
+  // Must mirror the `dataLineageViz.maxNodes` default in package.json. Raised 750 → 2000 alongside
+  // Schema View so large models open without truncation (Schema View collapses them; renderLimit
+  // remains the hard render-side safety gate).
   maxNodes: 2000,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },

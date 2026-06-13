@@ -618,9 +618,6 @@ export function createMessageHandlers(
         { messageType: 'show-warning', text },
       );
     },
-    'overview-mode-changed': (msg) => {
-      host.log('debug', 'Bridge', `overview-mode-changed: mode=${msg.mode}`);
-    },
   };
 
   return {

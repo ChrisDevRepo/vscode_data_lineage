@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { OBJECT_TYPES } from '../types';
 
 /**
  * ─── Bridge Contract ────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ import { z } from 'zod';
  * const type = ObjectTypeSchema.parse('table');
  * ```
  */
-export const ObjectTypeSchema = z.enum(['table', 'view', 'procedure', 'function', 'external']);
+export const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
 /**
  * Zod schema mirroring the runtime {@link import('../types').ColumnDef} shape.
@@ -309,16 +310,33 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('open-dacpac') }),
   z.object({ type: z.literal('load-project'), id: z.string() }),
+  // `project` is validated at the handler by `isValidProject` (runtime guard) before it is
+  // persisted; the connection payload carries deep MS-SQL types we deliberately keep generic here.
   z.object({ type: z.literal('save-project'), project: z.any() }),
   z.object({ type: z.literal('delete-project'), id: z.string() }),
   z.object({ type: z.literal('load-demo') }),
   z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
   z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
+  // `uiState` is a structurally-accessed passthrough buffer mirrored verbatim onto the session for
+  // debug dumps; the webview owns its shape. `renderState` is stored opaquely and cast at the dump
+  // site, so `unknown` (not `any`) keeps it from leaking untyped access elsewhere.
   z.object({ type: z.literal('filter-changed'), uiState: z.any() }),
-  z.object({ type: z.literal('render-state'), renderState: z.any() }),
+  z.object({ type: z.literal('render-state'), renderState: z.unknown() }),
   z.object({ type: z.literal('db-connect') }),
   z.object({ type: z.literal('check-mssql') }),
-  z.object({ type: z.literal('save-view'), projectId: z.string(), profile: z.any() }),
+  // Validate the persistence-critical fields (these are always present and go straight to disk) while
+  // passing through the complex optional bits (`source`, `positions`, `viewport`, `aiMetadata`) so a
+  // valid AI/trace bookmark is never rejected. Guards against corrupting the project store.
+  z.object({
+    type: z.literal('save-view'),
+    projectId: z.string(),
+    profile: z.object({
+      id: z.string(),
+      name: z.string(),
+      createdAt: z.string(),
+      filter: SerializedFilterStateSchema,
+    }).passthrough(),
+  }),
   z.object({ type: z.literal('save-wizard-view'), view: z.enum(['main', 'projects']) }),
   z.object({ type: z.literal('delete-view'), projectId: z.string(), profileId: z.string() }),
   z.object({ type: z.literal('rebuild') }),
@@ -327,10 +345,6 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
-  z.object({
-    type: z.literal('overview-mode-changed'),
-    mode: z.enum(['full', 'overview']),
-  }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'error', 'debug']).optional(), text: z.string() }),
   z.object({
     type: z.literal('error'),

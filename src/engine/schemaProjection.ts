@@ -1,5 +1,7 @@
 import Graph from 'graphology';
-import type { ObjectType } from './types';
+import { OBJECT_TYPES, type ObjectType } from './types';
+
+const OBJECT_TYPE_SET: ReadonlySet<string> = new Set(OBJECT_TYPES);
 import { addRawSchemaEdge, collapseRawSchemaEdges, type CollapsedSchemaEdge } from './schemaEdgeHelpers';
 
 /**
@@ -109,7 +111,9 @@ function schemaOf(graph: Graph, id: string): string {
 
 function typeOf(graph: Graph, id: string): ObjectType | null {
   const type = graph.getNodeAttribute(id, 'type');
-  return typeof type === 'string' && type.length > 0 ? type as ObjectType : null;
+  // Validate against the canonical set rather than blindly asserting — a corrupted or
+  // unexpected `type` attribute must not propagate as a bogus ObjectType downstream.
+  return typeof type === 'string' && OBJECT_TYPE_SET.has(type) ? type as ObjectType : null;
 }
 
 function hasIncludedNode(id: string, includedIds?: ReadonlySet<string>): boolean {
