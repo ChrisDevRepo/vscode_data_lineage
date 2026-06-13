@@ -184,19 +184,27 @@ export function App() {
    * @param m - The database model to use.
    * @param f - The filters to apply.
    * @param cfg - Optional configuration override.
-   * @param forceLayout - If true, performs a synchronous layout calculation (bypassing transition).
-   * @param modeOverride - Graph view mode to build for when the caller sets a new mode in the same tick
-   *   (state has not committed yet); defaults to the current `graphMode`.
-   * @returns The number of nodes in the resulting graph.
+   * @param forceLayout - If true, builds synchronously (bypassing the transition) so the caller can
+   *   read the resulting node count immediately. Independent of whether Dagre runs — that is decided
+   *   by the resolved mode (Schema View skips Dagre).
+   * @param modeOverride - Graph view mode to build for when the caller flips the mode in the same tick
+   *   (state has not committed yet); defaults to the current `graphMode`. Callers switching to a mode
+   *   must pass this so the correct layout path (Dagre vs. Schema View) is chosen.
+   * @returns The number of nodes in the resulting graph (0 for deferred/transition builds).
    */
   const rebuild = useCallback(
     (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false, modeOverride?: GraphMode): number => {
+      // `forceLayout` controls *scheduling* (synchronous vs. transition); `skipLayout` controls
+      // *what* is built (Schema View skips Dagre). They are orthogonal — derive skipLayout from the
+      // intended mode so a synchronous rebuild in Schema View does not fall back to full Dagre.
+      // Callers that flip the mode in the same tick must pass `modeOverride` (state is still stale here).
+      const mode = modeOverride ?? graphMode;
+      const skipLayout = mode === 'overview';
       // When forceLayout is true, run synchronously for callers that need the count immediately.
       if (forceLayout) {
-        return buildFromModel(m, f, cfg || config, false);
+        return buildFromModel(m, f, cfg || config, skipLayout);
       }
-      const mode = modeOverride ?? graphMode;
-      startTransition(() => { buildFromModel(m, f, cfg || config, mode === 'overview'); });
+      startTransition(() => { buildFromModel(m, f, cfg || config, skipLayout); });
       return 0; // Count unavailable for deferred builds; callers requiring count use forceLayout
     },
     [buildFromModel, config, graphMode]
@@ -720,14 +728,14 @@ export function App() {
     if (mode === graphMode) return;
     setGraphMode(mode);
     if (mode === 'full' && model) {
-      rebuild(model, filter, config, true);
+      rebuild(model, filter, config, true, 'full');
     }
   }, [graphMode, model, filter, config, rebuild]);
 
   useEffect(() => {
     if (config.overview.enabled || graphMode === 'full') return;
     setGraphMode('full');
-    if (model) rebuild(model, filter, config, true);
+    if (model) rebuild(model, filter, config, true, 'full');
   }, [config, filter, graphMode, model, rebuild]);
 
   const { schemaNodes, schemaEdges } = useMemo(() => {
@@ -1094,12 +1102,6 @@ export function App() {
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, [view, graphMode, handleApplyView]);
-
-  useEffect(() => {
-    if (view === 'graph') {
-      vscodeApi.postMessage({ type: 'overview-mode-changed', mode: graphMode });
-    }
-  }, [graphMode, view, vscodeApi]);
 
   // ── Saved Views ─────────────────────────────────────────────────────────────
 
