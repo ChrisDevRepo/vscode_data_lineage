@@ -2,9 +2,8 @@
  * Zod input schemas and lightweight runtime validation for the AI tools.
  *
  * Extracted from `tools.ts` so the schema/contract surface lives apart from the retrieval
- * operations. Zero VS Code imports — pure schema definitions consumed by `tools.ts` and
- * `toolProvider.ts`. `tools.ts` re-exports everything here for backward compatibility, so
- * existing `import { ... } from './tools'` call sites keep working.
+ * operations. Zero VS Code imports — pure schema definitions. Consumers (`tools.ts`,
+ * `toolProvider.ts`, schema unit tests) import directly from this module.
  */
 import { z } from 'zod';
 import type { ColumnFlowRole } from '../sm/smTypes';
