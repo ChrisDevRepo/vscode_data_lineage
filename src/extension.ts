@@ -208,7 +208,12 @@ async function loadAiOutputTemplates(
       }
     }
   } catch (err) {
-    logger.error('load built-in AI templates', err);
+    notifyWarning(
+      logger,
+      'Load built-in AI templates',
+      'Data Lineage: failed to load built-in AI output templates — AI descriptions may be degraded. Check the Output channel for details.',
+      { reason: err instanceof Error ? err.message : String(err), path: builtInUri.fsPath },
+    );
   }
 
   const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
@@ -277,7 +282,12 @@ async function loadParseRules(
     const data = await vscode.workspace.fs.readFile(builtInUri);
     config = yaml.load(new TextDecoder().decode(data)) as ParseRulesConfig;
   } catch (err) {
-    logger.error('load built-in parse rules', err);
+    notifyWarning(
+      logger,
+      'Load built-in parse rules',
+      'Data Lineage: failed to load built-in parse rules — SQL lineage parsing may be degraded. Check the Output channel for details.',
+      { reason: err instanceof Error ? err.message : String(err), path: builtInUri.fsPath },
+    );
   }
 
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');

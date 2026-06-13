@@ -120,7 +120,10 @@ export function openPanel(
     try {
       await handler(msg);
     } catch (err) {
+      // A handler throwing here is unexpected: surface it to the user instead of failing
+      // silently, otherwise user-initiated actions (save/delete/export) appear to succeed.
       bridgeLogger.error(`Handler '${msg.type}' threw unexpectedly`, err);
+      host.showErrorMessage(`Data Lineage: the "${msg.type}" action failed — ${err instanceof Error ? err.message : String(err)}`);
     }
   }, undefined, context.subscriptions);
 }

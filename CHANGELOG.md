@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Failed view/project/export actions now surface an error notification instead of failing silently.
+- A failure to load the built-in AI templates or parse rules now warns the user (features fall back to defaults) instead of failing quietly.
+
 ## [1.0.2] - 2026-06-08
 
 ### Added
