@@ -23,9 +23,11 @@ import {
   getContext, searchObjects, getObjectDetail,
   runAnalysis, searchDdl, getScopeBundle,
   getNeighborColumns,
+} from '../tools/tools';
+import {
   autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
   type PresentResultInput,
-} from '../tools/tools';
+} from '../tools/presentResult';
 import {
   validateToolInput,
   StartExplorationInputSchema,

@@ -23,24 +23,32 @@ All behavior-preserving except the two user-facing feedback fixes. Verified by `
 Settings audit: all 37 declared settings are read; every read is declared; `DEFAULT_CONFIG`
 matches package.json defaults — no unimplemented or stale settings.
 
-## Part 2 — Monolith split (pilot): `tools.ts`
+## Part 2 — Monolith split: `tools.ts` (two move-only steps)
 
-Extracted the AI tool **input-contract schemas** out of the operations file into a dedicated
-module. Pure move — importers point directly at the new module (no re-export shim).
+`tools.ts` was the largest cleanly-divisible pure-function file. Split in two passes, each a
+pure move with consumers pointed directly at the new module (no re-export shim).
+
+**Step 1 — input-contract schemas → `toolSchemas.ts`.** Moved `StartExplorationInputSchema`,
+`GetScopeBundleInputSchema`, `SubmitFindings{Bb,Ct,}InputSchema` (+ shared section/route/
+column-flow schemas), `GetNeighborColumnsInputSchema`, `validateToolInput`, and inferred types.
+
+**Step 2 — present-result contract → `presentResult.ts`.** Moved the AI `present_result`
+types (`PresentResultInput/Request/Error`, `AIHighlightRole`), constants, and the validation +
+deterministic markdown assembly (`orderAndAssemble`, `autoFixPresentResult`,
+`validatePresentResult`, `validateMarkdownFormat`, `findDisconnectedViewNodes`, label helpers).
 
 ### Line counts before / after
 
-| File | Before | After | Δ |
-|---|---:|---:|---:|
-| `src/ai/tools/tools.ts` | 1600 | 1358 | −242 |
-| `src/ai/tools/toolSchemas.ts` (new) | 0 | 250 | +250 |
-| `src/ai/tools/toolProvider.ts` | 1103 | 1105 | +2 (import split) |
-| `tests/unit/start-exploration-schema.test.ts` | — | — | import retargeted |
-| `tests/unit/submit-findings-schema.test.ts` | — | — | import retargeted |
+| File | Before | After step 1 | After step 2 | Δ total |
+|---|---:|---:|---:|---:|
+| `src/ai/tools/tools.ts` | 1600 | 1358 | **827** | −773 |
+| `src/ai/tools/toolSchemas.ts` (new) | 0 | 250 | 250 | +250 |
+| `src/ai/tools/presentResult.ts` (new) | 0 | — | 540 | +540 |
+| `src/ai/tools/toolProvider.ts` | 1103 | 1105 | 1106 | +3 (import split) |
+| test files (2 schema + 1 present-result) | — | — | — | imports retargeted |
 
-Moved to `toolSchemas.ts`: `StartExplorationInputSchema`, `GetScopeBundleInputSchema`,
-`SubmitFindings{Bb,Ct,}InputSchema` (+ shared section/route/column-flow schemas),
-`GetNeighborColumnsInputSchema`, `validateToolInput`, and their inferred types.
+`tools.ts` is now **827 lines of pure retrieval operations** — out of the >1000 "split-candidate"
+band and into the comfortable zone.
 
 ### Verification protocol (before → after, both green)
 
@@ -60,8 +68,8 @@ lines, concentrated in the AI subsystem.
 | `ai/participant/lineageParticipant.ts` | 1869 | extract pure helper block (compaction/extractors, ~460 LOC) |
 | `components/App.tsx` | 1559 | extract effect clusters into hooks |
 | `components/GraphCanvas.tsx` | 1409 | extract effect clusters |
-| `ai/tools/tools.ts` | 1358 | **extract present-result/view-assembly cluster (~430) → `presentResult.ts` → ~930** |
-| `engine/graphBuilder.ts` | 1111 | split `graphLayout.ts` + `traceFlow.ts` |
+| ~~`ai/tools/tools.ts`~~ | ~~1358~~ → **827** | ✅ done — schemas → `toolSchemas.ts`, present-result → `presentResult.ts` |
+| `engine/graphBuilder.ts` | 1111 | split `graphLayout.ts` + `traceFlow.ts` (next pure-fn candidate) |
 | `ai/tools/toolProvider.ts` | 1105 | split the large `startExploration`/`submitFindings` handlers |
 | `bridge/messageHandlers.ts` | 1042 | split handler groups (project/view, db/stats, dacpac) |
 

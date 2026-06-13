@@ -36,7 +36,7 @@ export type TemplateStage = 'discover' | 'active' | 'synthesis';
  * capture keys — the slot body is the canonical surface.
  *
  * `description` is intentionally absent — it is engine output (built by
- * `orderAndAssemble` in `tools.ts` from title + intro + sections[] + closing),
+ * `orderAndAssemble` in `presentResult.ts` from title + intro + sections[] + closing),
  * not an AI-writeable field. Do not add it back without first restoring the
  * full AI-input plumbing in `tools.ts` and resolving the conflict with engine
  * assembly.
