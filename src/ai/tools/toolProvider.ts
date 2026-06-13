@@ -23,15 +23,17 @@ import {
   getContext, searchObjects, getObjectDetail,
   runAnalysis, searchDdl, getScopeBundle,
   getNeighborColumns,
+  autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
+  type PresentResultInput,
+} from '../tools/tools';
+import {
   validateToolInput,
   StartExplorationInputSchema,
   SubmitFindingsBbInputSchema,
   SubmitFindingsCtInputSchema,
   GetScopeBundleInputSchema,
   GetNeighborColumnsInputSchema,
-  autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
-  type PresentResultInput,
-} from '../tools/tools';
+} from '../tools/toolSchemas';
 import { edgeApiType } from '../infra/aiPresenter';
 import { prunePreserveOnly } from '../infra/viewPrune';
 import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNode } from '../../engine/types';

@@ -9,7 +9,7 @@
 import {
   SubmitFindingsBbInputSchema,
   SubmitFindingsCtInputSchema,
-} from '../../src/ai/tools/tools';
+} from '../../src/ai/tools/toolSchemas';
 import { assert, resetCounters, printSummary } from './helpers/testUtils';
 
 console.log('Submit Findings Schema');
