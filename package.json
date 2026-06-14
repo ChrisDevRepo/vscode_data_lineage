@@ -195,7 +195,7 @@
             "default": 150,
             "minimum": 10,
             "maximum": 1000,
-            "markdownDescription": "Loaded-model object count above which the graph initially opens in Schema View. This is evaluated only on load or Reset All. After that, filters and exclusions do not auto-switch the current view; `renderLimit` remains the post-load safety gate.",
+            "markdownDescription": "Controls whether the graph defaults to Schema View or the classic Object View on initial load. If the loaded database has more nodes than this threshold, it starts in Schema View. At or below this threshold, it starts fully expanded in the classic Object View (meaning users with smaller databases will not notice any difference on startup). This is evaluated only on initial load or 'Reset All'.",
             "scope": "resource"
           },
           "dataLineageViz.overview.schemaDoubleClickBehavior": {

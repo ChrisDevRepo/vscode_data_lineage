@@ -71,7 +71,7 @@ The extension separates **data loading** (`maxNodes`) from **graph rendering** (
 |---------|---------|----------|
 | `dataLineageViz.maxNodes` | 2000 | Objects loaded from dacpac / database |
 | `dataLineageViz.renderLimit` | 750 | React Flow nodes the GUI will lay out and render |
-| `dataLineageViz.overview.threshold` | 150 | Starts new loads in Schema View above this count |
+| `dataLineageViz.overview.threshold` | 150 | Above this count, new loads default to Schema View. At or below, they default to classic Object View |
 
 When the selected surface would render more than `renderLimit` React Flow nodes, the graph shows a "limit reached" message instead of rendering that surface. Schema View and Expanded Schema View count collapsed schemas as one rendered node each, and trace/path/analysis scopes render ahead of the base full-graph limit. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
 

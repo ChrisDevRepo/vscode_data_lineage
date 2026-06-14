@@ -18,7 +18,7 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **Blank or stuck graph.** Open Webview Developer Tools, check the console, then reload the window.
 
-**"Node limit reached".** `dataLineageViz.renderLimit` is the hard visual ceiling after load. `dataLineageViz.overview.threshold` only decides whether a new load starts in Schema View or Object View. Raise `dataLineageViz.maxNodes` / `dataLineageViz.renderLimit` if needed.
+**"Node limit reached".** `dataLineageViz.renderLimit` is the hard visual ceiling after load. `dataLineageViz.overview.threshold` only dictates whether a new load defaults to Schema View or fully-expanded Object View. Raise `dataLineageViz.maxNodes` / `dataLineageViz.renderLimit` if needed.
 
 **Theme colours wrong after switching themes.** Reload the window.
 
