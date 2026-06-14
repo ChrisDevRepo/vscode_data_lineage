@@ -96,6 +96,8 @@ export interface MessageHandlerBundle {
   handlers: WebviewMessageHandlers;
   /** Cleanup function to release resources (e.g., database connections) when the panel is disposed. */
   cleanup: () => Promise<void>;
+  /** Function to programmatically trigger the demo load when the panel is already active. */
+  triggerDemoLoad: () => Promise<void>;
 }
 
 /**
@@ -623,6 +625,10 @@ export function createMessageHandlers(
   return {
     handlers,
     cleanup: cleanupStatsConnection,
+    triggerDemoLoad: () => handleLoadDemo(host, getSession, outputChannel, (m) => {
+      setCurrentModel(m, false, null);
+      getSession().projectName = 'Demo';
+    }),
   };
 }
 

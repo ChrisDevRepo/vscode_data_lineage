@@ -9,6 +9,7 @@ import { createMessageHandlers, PROJECT_STORE_KEY } from './bridge/messageHandle
 import { MainPanelToExtensionMsgSchema, type MainPanelToExtensionMsg } from './engine/shared/bridgeContract';
 
 let activePanel: vscode.WebviewPanel | undefined;
+let activeTriggerDemo: (() => Promise<void>) | undefined;
 
 export { PROJECT_STORE_KEY };
 
@@ -52,8 +53,11 @@ export function openPanel(
   if (activePanel) {
     bridgeLogger.info('Revealing existing panel');
     activePanel.reveal();
-    if (loadDemo) {
-      bridgeLogger.info('Open Demo invoked on existing panel — reveal only; close the panel first to reload demo data.');
+    if (loadDemo && activeTriggerDemo) {
+      bridgeLogger.info('Open Demo invoked on existing panel — loading demo data.');
+      activeTriggerDemo().catch(err => bridgeLogger.error(`Failed to trigger demo on active panel`, err));
+    } else if (loadDemo) {
+      bridgeLogger.info('Open Demo invoked on existing panel, but no trigger function was available.');
     }
     return;
   }
@@ -78,6 +82,7 @@ export function openPanel(
   panel.onDidDispose(() => {
     bridgeLogger.info('Panel disposed');
     activePanel = undefined;
+    activeTriggerDemo = undefined;
     detailPanel?.dispose();
 
     const sess = getSession();
@@ -92,7 +97,7 @@ export function openPanel(
     vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
-  const { handlers, cleanup } = createMessageHandlers(
+  const { handlers, cleanup, triggerDemoLoad } = createMessageHandlers(
     host,
     context,
     getSession,
@@ -103,6 +108,8 @@ export function openPanel(
     loadDemo,
     (dp) => detailPanel = dp
   );
+
+  activeTriggerDemo = triggerDemoLoad;
 
   // Ensure that database connections and stats caches are released when the panel is closed.
   panel.onDidDispose(() => {
