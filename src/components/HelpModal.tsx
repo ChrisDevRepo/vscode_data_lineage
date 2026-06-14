@@ -85,6 +85,8 @@ const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ['F'], label: 'Fit graph to view' },
   { keys: ['Delete'], label: 'Exclude highlighted node' },
   { keys: ['?'], label: 'Open Help' },
+  { keys: ['S'], label: 'Toggle Schema View' },
+  { keys: ['H'], label: 'Hide/Show schema clusters' },
   { keys: ['Esc'], label: 'Close active input, then exit the current mode' },
   { keys: ['Enter'], label: 'Select a suggestion or apply the focused action' },
   { keys: ['Space'], label: 'Activate focused graph controls; expand schema clusters' },

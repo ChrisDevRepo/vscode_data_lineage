@@ -7,7 +7,7 @@ import { buildDeferredQuestionsPrompt } from './ai/prompting/prompts';
 import { LmTracer } from './ai/infra/lmTracer';
 import { getActivePanel } from './panelProvider';
 import { Logger } from './utils/log';
-import { notifyError, notifyWarning } from './utils/notifications';
+import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { buildExtensionConfig } from './bridge/messageHandlers';
 
@@ -79,7 +79,7 @@ export function registerCommands(
     vscode.commands.registerCommand('dataLineageViz.refresh', () => {
       const panel = getActivePanel();
       if (!panel) {
-        vscode.window.showInformationMessage('Open a Data Lineage view first.');
+        notifyInfo(configLogger, 'Refresh', 'Open a Data Lineage view first.', { command: 'dataLineageViz.refresh' });
         return;
       }
       getSession().columnStore.clear();
@@ -98,7 +98,7 @@ export function registerCommands(
       try {
         const dump = buildDebugDump(context);
         await vscode.env.clipboard.writeText(dump);
-        vscode.window.showInformationMessage('Data Lineage: Debug info copied to clipboard.');
+        notifyInfo(configLogger, 'Copy debug info', 'Data Lineage: Debug info copied to clipboard.', { command: 'dataLineageViz.copyDebugInfo' });
       } catch (err) {
         notifyError(configLogger, 'Copy debug info', 'Data Lineage: Failed to copy debug info.', err, { command: 'dataLineageViz.copyDebugInfo' });
       }
@@ -117,8 +117,7 @@ export function registerCommands(
         );
         return;
       }
-      configLogger.info(`AI trace logging enabled for this VS Code session: ${tracePath}`);
-      vscode.window.showInformationMessage(`Data Lineage: AI trace logging enabled for this session. Writing to ${tracePath}`);
+      notifyInfo(configLogger, 'Enable AI trace logging', `Data Lineage: AI trace logging enabled for this session. Writing to ${tracePath}`, { command: 'dataLineageViz.enableAiTraceLogging' });
     }),
 
     /**
@@ -371,7 +370,5 @@ async function createYamlScaffold(
 
   const doc = await vscode.workspace.openTextDocument(targetUri);
   await vscode.window.showTextDocument(doc);
-  vscode.window.showInformationMessage(
-    `Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`
-  );
+  notifyInfo(logger, 'Create YAML scaffold', `Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`, { fileName, settingName });
 }

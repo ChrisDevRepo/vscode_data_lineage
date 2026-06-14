@@ -37,6 +37,20 @@ export function notifyError(
 }
 
 /**
+ * Logs detailed information diagnostics before showing a concise VS Code info toast.
+ */
+export function notifyInfo(
+  logger: Logger,
+  operation: string,
+  userMessage: string,
+  context?: NotifyContext,
+  showInformationMessage: (message: string) => unknown = vscode.window.showInformationMessage,
+): void {
+  logger.info(`${operation} — notification="${userMessage}"${formatContext(context)}`);
+  showInformationMessage(userMessage);
+}
+
+/**
  * Logs detailed warning diagnostics before showing a concise VS Code warning toast.
  */
 export function notifyWarning(

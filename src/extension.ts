@@ -131,10 +131,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
       for (const { key, label } of RELOAD_KEYS) {
         if (e.affectsConfiguration(key)) {
-          const pick = await vscode.window.showInformationMessage(
-            `${label} changed. Reload your data source to apply.`,
-            'Reload'
-          );
+          const msg = `${label} changed. Reload your data source to apply.`;
+          configLogger.info(`Config changed — notification="${msg}"`);
+          const pick = await vscode.window.showInformationMessage(msg, 'Reload');
           if (pick === 'Reload') vscode.commands.executeCommand('dataLineageViz.open');
           break;
         }
