@@ -6,7 +6,7 @@ import { registerAiTools } from './ai/tools/toolProvider';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { Logger, testLogCapture } from './utils/log';
-import { notifyWarning } from './utils/notifications';
+import { notifyError, notifyWarning } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/session/types';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
@@ -208,11 +208,12 @@ async function loadAiOutputTemplates(
       }
     }
   } catch (err) {
-    notifyWarning(
+    notifyError(
       logger,
       'Load built-in AI templates',
       'Data Lineage: failed to load built-in AI output templates — AI descriptions may be degraded. Check the Output channel for details.',
-      { reason: err instanceof Error ? err.message : String(err), path: builtInUri.fsPath },
+      err,
+      { path: builtInUri.fsPath },
     );
   }
 
@@ -282,11 +283,12 @@ async function loadParseRules(
     const data = await vscode.workspace.fs.readFile(builtInUri);
     config = yaml.load(new TextDecoder().decode(data)) as ParseRulesConfig;
   } catch (err) {
-    notifyWarning(
+    notifyError(
       logger,
       'Load built-in parse rules',
       'Data Lineage: failed to load built-in parse rules — SQL lineage parsing may be degraded. Check the Output channel for details.',
-      { reason: err instanceof Error ? err.message : String(err), path: builtInUri.fsPath },
+      err,
+      { path: builtInUri.fsPath },
     );
   }
 

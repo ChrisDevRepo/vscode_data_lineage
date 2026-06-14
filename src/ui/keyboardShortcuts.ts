@@ -16,6 +16,25 @@ export type KeyboardShortcutId =
   | 'expandSchemaCluster';
 
 /**
+ * Subset of {@link KeyboardShortcutId} for app-level (always-active) shortcuts —
+ * the ids that carry a concrete key binding in {@link SHORTCUT_KEYS}.
+ *
+ * @remarks
+ * Binding {@link SHORTCUT_KEYS} to `Record<AppShortcutId, string>` turns any drift
+ * between the runtime key map and the documented ids into a compile error.
+ */
+export type AppShortcutId = Extract<
+  KeyboardShortcutId,
+  | 'quickJump'
+  | 'fitView'
+  | 'openHelp'
+  | 'excludeHighlightedNode'
+  | 'exitMode'
+  | 'toggleSchemaView'
+  | 'hideExpandedSchemaClusters'
+>;
+
+/**
  * Display metadata for a documented keyboard shortcut.
  */
 export interface KeyboardShortcutDoc {
@@ -34,7 +53,7 @@ export interface KeyboardShortcutDoc {
  * `useKeyboardShortcut` matches case-insensitively — list each letter key once;
  * never add upper/lowercase duplicates.
  */
-export const SHORTCUT_KEYS = {
+export const SHORTCUT_KEYS: Record<AppShortcutId, string> = {
   quickJump: '/',
   fitView: 'f',
   openHelp: '?',

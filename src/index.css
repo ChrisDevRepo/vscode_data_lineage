@@ -142,6 +142,8 @@
   --ln-minimap-mask: rgba(0, 0, 0, 0.15);
   --ln-minimap-mask-stroke: transparent;
   --ln-minimap-mask-stroke-width: 0;
+  /* Schema-cluster ring on the minimap; HC themes use the contrast border. */
+  --ln-minimap-cluster-stroke: rgba(0, 0, 0, 0.78);
 }
 
 /* Dark Theme Overrides */
@@ -172,6 +174,7 @@ body[data-vscode-theme-kind="vscode-dark"] {
   --ln-ai-gy-glow: rgba(156, 163, 175, 0.65);
   --ln-ai-gy-shadow: rgba(156, 163, 175, 0.45);
   --ln-minimap-mask: rgba(255, 255, 255, 0.12);
+  --ln-minimap-cluster-stroke: rgba(255, 255, 255, 0.92);
 }
 
 /* High Contrast Theme Overrides */
@@ -204,6 +207,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-minimap-mask: rgba(255, 255, 255, 0.2);
   --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
   --ln-minimap-mask-stroke-width: 2;
+  --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
 }
 body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
@@ -234,6 +238,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-minimap-mask: rgba(0, 0, 0, 0.2);
   --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
   --ln-minimap-mask-stroke-width: 2;
+  --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
 }
 
 /* #endregion */

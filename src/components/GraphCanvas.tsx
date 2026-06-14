@@ -40,7 +40,7 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
-import { getSchemaColor, getExternalNodeColor, isDarkTheme, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
+import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
@@ -626,7 +626,7 @@ export function GraphCanvas({
   // Ring only the schema clusters on the minimap so their kind is readable without labels.
   const minimapNodeStrokeColor = useCallback(
     (node: FlowNode) => (node.type === 'schemaNode'
-      ? (isDarkTheme() ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.78)')
+      ? 'var(--ln-minimap-cluster-stroke)'
       : 'transparent'),
     []
   );
