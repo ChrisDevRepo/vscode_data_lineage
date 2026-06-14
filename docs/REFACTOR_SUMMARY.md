@@ -23,6 +23,13 @@ All behavior-preserving except the two user-facing feedback fixes. Verified by `
 Settings audit: all 37 declared settings are read; every read is declared; `DEFAULT_CONFIG`
 matches package.json defaults — no unimplemented or stale settings.
 
+## Part 2 — Monolith Split
+
+Extracted utility functions from `lineageParticipant.ts` into `participantUtils.ts` to significantly reduce the size of the monolith and improve maintainability.
+
+| File | Before Lines | After Lines |
+|---|---|---|
+| `lineageParticipant.ts` | 1765 | 1351 |
 ## Part 2 — Monolith split: `tools.ts` (two move-only steps)
 
 `tools.ts` was the largest cleanly-divisible pure-function file. Split in two passes, each a

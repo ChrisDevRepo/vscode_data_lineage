@@ -13,7 +13,7 @@
 - Display settings apply live, with no reload.
 - Redesigned large-graph overview and unified keyboard shortcuts.
 - Schema View no longer auto-switches back to Object View when filters drop the node count below the threshold — after load, the toolbar toggle is the only thing that changes the view; `renderLimit` remains the sole safety gate.
-
+- Extracted utility functions from `lineageParticipant.ts` into `participantUtils.ts` to reduce the monolith size.
 ### Fixed
 - Clearer error notifications on failed view, project, or export actions.
 - Graceful fallback when built-in templates or parse rules fail to load.
