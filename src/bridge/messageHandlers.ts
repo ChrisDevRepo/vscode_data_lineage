@@ -883,10 +883,51 @@ async function readExtensionConfig(host: BridgeHost): Promise<Record<string, any
   return buildExtensionConfig(host.getConfiguration());
 }
 
+import { buildWebviewCsp } from '../utils/cspBuilder';
+import { getNonce } from '../utils/getNonce';
+
+/**
+ * Generates the root HTML for the secondary Detail Webview.
+ *
+ * This provides the container, strict CSP, and bootloader fallback for the
+ * detail panel.
+ *
+ * @param webview - The vscode.Webview instance for the detail panel.
+ * @param extensionUri - The base URI of the extension for resolving assets.
+ * @returns The complete HTML string.
+ */
 function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><link rel="stylesheet" type="text/css" href="${stylesUri}"><title>Detail</title></head><body class="vscode-body"><div id="root"></div><script>window.__DETAIL_MODE__ = true;</script><script type="module" src="${scriptUri}"></script></body></html>`;
+  const nonce = getNonce();
+  const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <link rel="stylesheet" type="text/css" href="${stylesUri}">
+  <title>Detail</title>
+</head>
+<body class="vscode-body">
+  <div id="root">
+    <div id="bootloader-fallback" style="display: none; padding: 2rem; color: var(--vscode-errorForeground); font-family: var(--vscode-font-family);">
+      <h2>Detail UI Failed to Load</h2>
+      <p>The extension's user interface encountered a fatal error during initialization.</p>
+      <p>Please open the <b>Developer: Toggle Developer Tools</b> command from the Command Palette to view the exact error.</p>
+    </div>
+  </div>
+  <script nonce="${nonce}">
+    window.__DETAIL_MODE__ = true;
+    setTimeout(() => {
+      const fallback = document.getElementById('bootloader-fallback');
+      if (fallback) fallback.style.display = 'block';
+    }, 3000);
+  </script>
+  <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
 }
 
 /**

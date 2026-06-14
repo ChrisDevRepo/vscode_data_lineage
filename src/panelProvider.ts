@@ -128,6 +128,8 @@ export function openPanel(
   }, undefined, context.subscriptions);
 }
 
+import { buildWebviewCsp } from './utils/cspBuilder';
+
 /**
  * Generates the root HTML for the lineage webview.
  */
@@ -136,8 +138,35 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
   const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
   const logoUri = getUri(webview, extensionUri, ["images", "logo.png"]);
   const nonce = getNonce();
-  const csp = `default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: data:; font-src ${webview.cspSource};`;
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="${csp}"><link rel="stylesheet" type="text/css" href="${stylesUri}"><title>Data Lineage Viz</title></head><body class="vscode-body" ${loadDemo ? 'data-auto-visualize="true"' : ''}><div id="root"></div><script nonce="${nonce}">window.LOGO_URI = "${logoUri}";</script><script type="module" nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
+  const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
+  
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <link rel="stylesheet" type="text/css" href="${stylesUri}">
+  <title>Data Lineage Viz</title>
+</head>
+<body class="vscode-body" ${loadDemo ? 'data-auto-visualize="true"' : ''}>
+  <div id="root">
+    <div id="bootloader-fallback" style="display: none; padding: 2rem; color: var(--vscode-errorForeground); font-family: var(--vscode-font-family);">
+      <h2>UI Failed to Load</h2>
+      <p>The extension's user interface encountered a fatal error during initialization.</p>
+      <p>Please open the <b>Developer: Toggle Developer Tools</b> command from the Command Palette to view the exact error.</p>
+    </div>
+  </div>
+  <script nonce="${nonce}">
+    window.LOGO_URI = "${logoUri}";
+    // Display fallback if React hasn't mounted and cleared the root element within 3 seconds
+    setTimeout(() => {
+      const fallback = document.getElementById('bootloader-fallback');
+      if (fallback) fallback.style.display = 'block';
+    }, 3000);
+  </script>
+  <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
 }
 
 /**

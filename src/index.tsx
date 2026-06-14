@@ -35,11 +35,6 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     );
   });
 } else {
-    Promise.all([
-    import('./components/App'),
-    import('./contexts/VsCodeContext'),
-    import('./components/ErrorBoundary'),
-  ]).then(([{ App }, { VsCodeProvider }, { ErrorBoundary }]) => {
     // Acquire VS Code API ONCE — this is the only place it should be called
     const vscodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
     window.vscode = vscodeApi ?? undefined; // Used by ErrorBoundary (class component, can't use context)
@@ -67,6 +62,12 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
         timestamp: Date.now(),
       });
     });
+
+    Promise.all([
+    import('./components/App'),
+    import('./contexts/VsCodeContext'),
+    import('./components/ErrorBoundary'),
+  ]).then(([{ App }, { VsCodeProvider }, { ErrorBoundary }]) => {
 
     createRoot(root).render(
       <ErrorBoundary
