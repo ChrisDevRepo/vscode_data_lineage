@@ -11,7 +11,7 @@ Prompt behavior is split across these files:
 - `src/ai/prompting/prompts.ts` - base/system prompts + phase protocol entrypoint.
 - `src/ai/prompting/smPrompts.ts` - active-phase SM protocol + synthesis reminders.
 - `src/ai/prompting/templateRenderer.ts` - authoritative template routing and gating.
-- `src/ai/tools/tools.ts` + `src/ai/tools/toolProvider.ts` - schema enforcement and deterministic assembly.
+- `src/ai/tools/toolSchemas.ts` (Zod tool input schemas) + `src/ai/tools/toolProvider.ts` (schema enforcement / dispatch) + `src/ai/tools/presentResult.ts` (present_result contract + deterministic assembly).
 - `package.json` - LM tool schema/model descriptions and chat command metadata.
 
 Important correction: YAML is not the only authoritative surface. YAML controls template instructions, but phase prompts and mechanical enforcement are code-owned.
@@ -60,7 +60,7 @@ Reviewer artifact:
 | Owner | Writes/builds | Where enforced |
 |---|---|---|
 | AI | `submit_findings.sections[]` (`business`/`technical` angle text), `summary`, `title`, `intro`, `sections[]`, `closing`, `notes[]`, `highlight_groups[]` | `prompts.ts`, `smPrompts.ts`, tool schemas |
-| Engine | Deterministic markdown assembly, section numbering (`## N`), badge chips, object link headers, validation and rejection envelopes | `orderAndAssemble()` + `validatePresentResult()` in `src/ai/tools/tools.ts` |
+| Engine | Deterministic markdown assembly, section numbering (`## N`), badge chips, object link headers, validation and rejection envelopes | `orderAndAssemble()` + `validatePresentResult()` in `src/ai/tools/presentResult.ts` |
 
 Important correction: in synthesis, final `sections[]` fields are AI-authored. The engine assembles structure deterministically, but does not auto-create missing section text, node links, labels, or captions.
 

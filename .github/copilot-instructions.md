@@ -19,6 +19,7 @@ Canonical repo policy lives in `AGENTS.md`. Use `CONTRIBUTING.md` and `tests/REA
 - AI/Zod rejections are normal AI behavior → `debug`, not error/warn. Render-limit / node-cap reached is capacity guidance → `info`, not an error.
 - Use `dataLineageViz.*` for commands and settings.
 - Use `Expanded Schema View` naming for the schema expansion view.
+- The user solely owns the version number. Never bump/lower or restructure versioning, and never add a CHANGELOG `[Unreleased]` section (the project does not use one); new notes go under the current version heading.
 
 ## Testing And Verification
 - Full gate: `npm test`

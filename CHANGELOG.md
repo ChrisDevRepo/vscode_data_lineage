@@ -1,12 +1,6 @@
 # Changelog
 
-## [Unreleased]
-
-### Fixed
-- Failed view/project/export actions now surface an error notification instead of failing silently.
-- A failure to load the built-in AI templates or parse rules now warns the user (features fall back to defaults) instead of failing quietly.
-
-## [1.0.2] - 2026-06-08
+## [1.0.2] - 2026-06-14
 
 ### Added
 - **Schema View for large graphs** — expand and collapse schemas in place; opening several at once is additive.
@@ -21,6 +15,8 @@
 - Schema View no longer auto-switches back to Object View when filters drop the node count below the threshold — after load, the toolbar toggle is the only thing that changes the view; `renderLimit` remains the sole safety gate.
 
 ### Fixed
+- Clearer error notifications on failed view, project, or export actions.
+- Graceful fallback when built-in templates or parse rules fail to load.
 - External-only schemas no longer crash the graph.
 - The panel auto-recovers after a display crash, with clearer error messages.
 - Schema View is steadier (collapse on rebuild, *Clear All Filters*, schema-node clicks).

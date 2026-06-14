@@ -146,7 +146,7 @@ Low-risk diagnostics added for follow-up routing:
 | `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. |
 | `buildCurrentTaskBlock(task, columns?)` | `prompts.ts` | `<current_task>` XML block; when `columns` are passed (CT active), appends `<column_trace>` sub-block with the structural lineage sub-question. |
 | `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + per-field synthesis keys; classification-gated; `closing` size-gated on slotCount ≥ 5. |
-| `orderAndAssemble` | `tools.ts` | Engine-built description blob from AI's title + intro + sections[] + closing — sole assembly path. |
+| `orderAndAssemble` | `presentResult.ts` | Engine-built description blob from AI's title + intro + sections[] + closing — sole assembly path. |
 | `interaction rules` | `interaction/rules/*.ts` | Central process-rule evaluators (non-Zod): tool phase policy, start/submit/present guards, gate transition mapping. |
 | `buildMissionBriefBlock` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks. |
 | `buildMemoryBlock` | `prompts.ts` | `<short_term_memory>` XML block + tally line. |
