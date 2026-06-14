@@ -82,15 +82,9 @@ function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
 
 const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ['/'], label: 'Focus Quick Jump' },
-  { keys: ['F'], label: 'Fit graph to view' },
-  { keys: ['Delete'], label: 'Exclude highlighted node' },
   { keys: ['?'], label: 'Open Help' },
-  { keys: ['S'], label: 'Toggle Schema View' },
-  { keys: ['H'], label: 'Hide/Show schema clusters' },
   { keys: ['Esc'], label: 'Close active input, then exit the current mode' },
   { keys: ['Enter'], label: 'Select a suggestion or apply the focused action' },
-  { keys: ['Space'], label: 'Activate focused graph controls; expand schema clusters' },
-  { keys: ['↑', '↓'], label: 'Move through Quick Jump and path suggestions' },
 ];
 
 
@@ -108,7 +102,10 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
               <ShortcutRow key={shortcut.keys.join('+')} keys={shortcut.keys} label={shortcut.label} />
             ))}
           </div>
-          <p className="text-xs ln-text-muted">
+          <p className="text-xs ln-text-muted mt-2">
+            <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#keyboard-shortcuts" openExternal={openExternal}>See the full list of keyboard shortcuts in the docs ↗</ExtLink>
+          </p>
+          <p className="text-xs ln-text-muted mt-2">
             Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text. `Esc` first closes the active input or dropdown, then exits the current graph mode.
           </p>
         </div>
