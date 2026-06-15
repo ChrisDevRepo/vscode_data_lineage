@@ -1167,28 +1167,55 @@
                   "writes_to": {
                     "type": "object",
                     "properties": {
-                      "node": { "type": "string" },
-                      "col": { "type": "string" }
+                      "node": {
+                        "type": "string"
+                      },
+                      "col": {
+                        "type": "string"
+                      }
                     },
-                    "required": ["node", "col"]
+                    "required": [
+                      "node",
+                      "col"
+                    ]
                   },
                   "contributors": {
                     "type": "array",
                     "items": {
                       "type": "object",
                       "properties": {
-                        "from_node": { "type": "string" },
-                        "from_col": { "type": "string" },
+                        "from_node": {
+                          "type": "string"
+                        },
+                        "from_col": {
+                          "type": "string"
+                        },
                         "role": {
                           "type": "string",
-                          "enum": ["formula", "rename", "case", "coalesce", "join_value", "aggregate", "filter_only", "source"]
+                          "enum": [
+                            "formula",
+                            "rename",
+                            "case",
+                            "coalesce",
+                            "join_value",
+                            "aggregate",
+                            "filter_only",
+                            "source"
+                          ]
                         }
                       },
-                      "required": ["from_node", "from_col", "role"]
+                      "required": [
+                        "from_node",
+                        "from_col",
+                        "role"
+                      ]
                     }
                   }
                 },
-                "required": ["out_col", "contributors"]
+                "required": [
+                  "out_col",
+                  "contributors"
+                ]
               },
               "description": "CT mode only. Required in CT for every hop (`[]` means no tracked interaction). BB mode rejects this field with bb_field_unknown."
             },
@@ -1234,6 +1261,9 @@
     "test:snapshot": "node tests/tools/run-vitest.mjs run --project snapshot",
     "test:snapshot:update": "node tests/tools/run-vitest.mjs run --project snapshot-update",
     "test:list": "node tests/tools/run-vitest.mjs list --project parser --project bfs --project support-node --project support-ui --project ui",
+    "typecheck": "tsc --noEmit",
+    "pretest:integration": "npm run build && tsc -p tsconfig.integration.json",
+    "test:integration": "vscode-test",
     "package": "npx @vscode/vsce package"
   },
   "dependencies": {
@@ -1249,28 +1279,32 @@
     "graphology-types": "^0.24.8",
     "js-yaml": "^4.1.0",
     "jszip": "^3.10.1",
-      "katex": "^0.16.46",
+    "katex": "^0.16.46",
     "monaco-editor": "^0.53.0",
-      "react": "^19.0.0",
-      "react-dom": "^19.0.0",
-      "react-markdown": "^10.1.0",
-      "rehype-katex": "^7.0.1",
-      "remark-math": "^6.0.0",
-      "remark-gfm": "^4.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4.0.9",
     "@types/jsdom": "^28.0.1",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.95.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^3.0.0",
     "autoprefixer": "^10.4.20",
     "esbuild": "^0.28.1",
     "jsdom": "^29.0.1",
+    "mocha": "^11.7.6",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",

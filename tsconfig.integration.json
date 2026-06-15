@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "outDir": "out/test",
+    "rootDir": "tests",
+    "types": ["node", "mocha"],
+    "lib": ["ES2022"],
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "noEmit": false
+  },
+  "include": ["tests/integration/**/*.ts"]
+}
