@@ -52,3 +52,18 @@ export async function waitFor<T>(fn: () => T | undefined | null, timeoutMs = 300
     await sleep(intervalMs);
   }
 }
+
+/**
+ * Triggers `copyDebugInfo` and returns the debug dump read back from the
+ * clipboard — the canonical state-driven verification surface for feature tests.
+ */
+export async function captureDebugDump(): Promise<string> {
+  await vscode.env.clipboard.writeText('__dump_cleared__');
+  await vscode.commands.executeCommand('dataLineageViz.copyDebugInfo');
+  for (let i = 0; i < 30; i++) {
+    const t = await vscode.env.clipboard.readText();
+    if (t && t.includes('Debug Info')) return t;
+    await sleep(200);
+  }
+  throw new Error('debug dump was not captured from clipboard');
+}

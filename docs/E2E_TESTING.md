@@ -4,8 +4,8 @@ How this extension is verified end-to-end **before UAT**, with the goal of minim
 
 ## Three principles
 
-1. **Programmatic-first.** Drive behavior through the API, not the GUI. Use `vscode.commands.executeCommand(...)` for commands and `window.vscode.postMessage(...)` for bridge actions (filter, trace, detail). GUI automation (clicking DOM, command-palette keystrokes) is a last resort, used only when nothing else reaches the behavior. Ingesting a message into the bridge is cheaper and far less flaky than simulating a click.
-2. **State-driven verification, not pixels.** Assert on structured, machine-readable signals — the **debug dump**, the **log capture**, **session state**, **render-state**, and the **webview console** over CDP. Screenshots are a human-triage artifact only; they are never the assertion.
+1. **Backend-only, no GUI interaction.** Automation exercises everything **behind the GUI** — the engine logic and the host glue — and **never clicks the UI or takes snapshots**. GUI interaction and visual checks are **UAT**, not automation. Drive only via `vscode.commands.executeCommand(...)` (commands) and `window.vscode.postMessage(...)` (bridge-host messages). Ingesting a message into the bridge is the way to simulate a user action; clicking a button is not.
+2. **State-driven verification, not pixels.** Assert on structured, machine-readable signals — the **debug dump**, the **log capture**, **session state**, **render-state**. Goal: catch backend issues or missing parts. Screenshots / visual diffs are UAT only; they are never an automated assertion.
 3. **Out-of-the-box only.** The official Microsoft framework `@vscode/test-cli` + `@vscode/test-electron` (Mocha in a real Extension Development Host) is the backbone. The only addition is the standard Electron `--remote-debugging-port`, which lets the same test read the rendered webview over the Chrome DevTools Protocol — no third-party UI framework, no webview mock.
 
 ## Why this shape
@@ -15,6 +15,18 @@ The webview cannot be reached by the official tooling alone — Microsoft's docs
 The actual algorithms behind search, trace, and filtering are pure engine code already covered by Vitest (`graphBuilder`, `traceScope`, `schemaProjection`, `modelSearch`, `useInteractiveTrace`, …). The e2e layers verify the *integration* — that a user-level action flows through the bridge and produces the expected state — not the math, which the unit layer owns.
 
 ---
+
+## What is automated vs what is UAT
+
+The headline features (analytics, trace view, shortest path, full-text search, exclusion, export, save bookmark) split into two layers that **are** automated and one that is **not**:
+
+| Layer | What | How (automation) |
+|---|---|---|
+| **Backend logic** (the computation behind each feature) | `graphAnalysis`, `traceScope` / `traceNodeWithLevels`, `computeShortestPath`, `modelSearch`, `applyExclusionPatterns`, `drawioExporter`, `projectStore`, `schemaProjection` | **Unit tests** (Vitest) — call the function, assert the result |
+| **Host glue** (what the GUI sends to the host) | bridge handlers: `filter-changed`, `render-state`, `save-view`/`save-project`/`load-project`, `show-detail`, `export-file`, `load-demo`; commands | **Integration** — `executeCommand` + `window.vscode.postMessage`, assert via dump / session / logs. **No clicks.** |
+| **GUI interaction + visual** (clicking the toolbar, typing in search, canvas selection, layout/looks) | the actual on-screen flow | **UAT** — not automated here |
+
+So a feature like *full-text search* is verified by unit-testing `modelSearch` (does the query find the right objects?) and, where it routes through the host, by posting the bridge message — **not** by typing into the search box. Whether the search box *looks* and *feels* right is UAT.
 
 ## Readable diagnostic surfaces (what the agent/test reads)
 

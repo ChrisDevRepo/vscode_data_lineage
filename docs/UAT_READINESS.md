@@ -2,59 +2,59 @@
 
 **Branch:** `claude/code-review-cleanup-038ish` · **Date:** 2026-06-15
 
-## Verdict: **GO for UAT**
+## Verdict: **GO for UAT** — prod GO is **conditional on UAT sign-off** of the GUI/visual + AI + live-DB lanes
 
-The deterministic surface — extension load, dacpac→model pipeline, webview render (CSP), the host↔webview bridge, commands, config handling, diagnostics, and the graph engine — is **automated and green**. UAT can focus its effort on the lanes that are not automatable here: AI (`@lineage`) semantic quality, live-DB import, and visual/UX polish.
+The **backend behind the GUI** — the engine logic of every headline feature plus the host glue — is automated and green. What automation deliberately does **not** cover (GUI interaction, visuals, AI semantics, live DB) is the UAT scope. Prod GO follows once UAT signs those off.
 
-## Test surface (all automated, all green)
+## Test surface (all automated, all green, no clicks/snapshots)
 
 | Layer | Tool | Result |
 |---|---|---|
-| Static | `tsc --noEmit` (src) + `npm run build` (esbuild + vite) | clean |
-| Unit | Vitest (7 projects) | **169 passing** |
-| Integration | `@vscode/test-electron` (real EDH) | **15 passing** |
+| Static | `tsc --noEmit` (src) + `npm run build` | clean |
+| Unit | Vitest (7 projects) | **171 passing** |
+| Integration | `@vscode/test-electron` (real EDH) | **19 passing** |
 
 Run, fully unattended:
 ```
-npm run typecheck      # tsc --noEmit
-npm test               # unit (vitest) — 169
-npm run test:integration   # EDH integration — 15 (downloads VS Code stable once)
+npm run typecheck
+npm test                  # unit — 171
+npm run test:integration  # EDH integration — 19 (downloads VS Code stable once)
 ```
 
-### Integration tests (15) — verified via session state, logs, debug dump, CDP DOM/console (no screenshots)
-- **Webview render smoke (CSP / blank-screen regression)** — real webview renders the demo graph, 0 console errors *(the bug this branch fixed, now guarded)*.
-- **User behavior via bridge** — `filter-changed` round-trips into GUI STATE; `render-state` trace surfaces the origin in the dump.
-- **Diagnostics & scaffolding** — `copyDebugInfo` dump sections + node-count match; `dumpSmState` no-throw + warning; `createParseRules`.
-- **Dacpac → model pipeline** — `openDemo` loads the model; load recorded in the log trail.
-- **Configuration handling** — DISPLAY key → rebuild-config; RELOAD key → notification; `refresh` no-panel guard.
-- **Activation & registration** — API surface; all `dataLineageViz.*` commands registered; log capture live.
+## Feature backend coverage (the "behind the GUI" logic)
 
-## Coverage map
+Each headline feature's **computation** is unit-tested; its **host glue** (where it routes through the extension) is integration-tested via bridge messages / commands. The on-screen **interaction + visuals** are UAT.
 
-| Subsystem | Unit | Integration | Status |
+| Feature | Backend logic (unit) | Host glue (integration) | GUI interaction / visual |
 |---|---|---|---|
-| Activation / command registration | — | ✔ | covered |
-| Dacpac → model pipeline | ✔ (parser, graph) | ✔ | covered |
-| Webview render / CSP (blank-screen) | — | ✔ (CDP) | covered |
-| Host↔webview bridge (filter, render-state, show-detail) | ✔ (contract) | ✔ (CDP sim) | covered |
-| Config reload (RELOAD vs DISPLAY) | — | ✔ | covered |
-| Diagnostics (debug dump, dumpSmState) | ✔ | ✔ | covered |
-| Graph engine (BFS, traceScope, schemaProjection, graphBuilder, display-mode) | ✔ (extensive) | (via pipeline) | covered |
-| React components / hooks | ✔ (jsdom) | (render via CDP) | covered |
-| drawioExporter, profilingEngine | ✔ (new) | — | covered |
-| **AI `@lineage` participant** | partial (Zod/FSM units) | — | **UAT lane** |
-| **Live SQL Server / DMV import** | mocked extraction | — | **UAT / manual** |
+| Analytics (cycles/islands/hubs/longest-path/reachability) | `graphAnalysis.test.ts` ✓ | render-state mirror ✓ | UAT |
+| Trace view (up/down depth BFS) | `traceScope.test.ts` ✓ | render-state ✓ | UAT |
+| Shortest path | `traceScope.test.ts` (findShortestPathOrdered) ✓ | render-state ✓ | UAT |
+| Full-text search | `modelSearch.test.ts` ✓ | show-detail/navigate ✓ | UAT |
+| Exclusion (node/type/schema) | `dacpacExtractor.test.ts` (applyExclusionPatterns) ✓ | filter-changed ✓ | UAT |
+| Export (draw.io) | `drawioExporter.test.ts` ✓ | `export-file` (host save dialog → UAT) | UAT |
+| Save bookmark / view | `projectStore.test.ts` ✓ | `bridge-store.test.ts` (save/load/delete) ✓ | UAT |
+
+## Integration tests (19) — verified via session state, logs, debug dump (no screenshots)
+- Webview load smoke (CSP / blank-screen regression) — bundle executes under the real CSP, 0 console errors.
+- User behavior via bridge — `filter-changed` → GUI STATE; `render-state` trace → origin in dump.
+- Bridge handlers — `show-detail` (host log), `save-project` (session state), `save-view`/`delete-view` (no error), `request-projects`.
+- Diagnostics — `copyDebugInfo` dump sections + node-count match; `dumpSmState` no-throw + warning; `createParseRules`.
+- Dacpac → model pipeline — `openDemo` loads model; load in log trail.
+- Config — DISPLAY→rebuild-config; RELOAD→notification; `refresh` no-panel guard.
+- Activation & registration — API surface; all commands; log capture live.
+
+## What automation does NOT cover (UAT scope)
+
+1. **GUI interaction + visuals** — clicking the toolbar/menus, typing in search, canvas node selection, layout/zoom, theming (Light/Dark/HC), and overall look-and-feel. By design, automation drives via commands + bridge and asserts on state/logs/dump; on-screen behavior and appearance are validated by a human in UAT.
+2. **AI `@lineage` semantic quality** — discovery, SM hop-by-hop, gate, column-trace, synthesis. The deterministic pipeline (Zod boundaries, FSM, dispatch) is unit-tested; semantic correctness needs Copilot in the EDH and is the existing UAT lane (baseline captures + `uat-analyze` / `iteration-review`).
+3. **Live SQL Server / DMV import** — connection, DMV extraction, profiling against a real database (e2e is dacpac-only by decision).
+4. **`export-file`** end-to-end — generation is unit-tested (`drawioExporter`); the host save-dialog write is UAT (a modal dialog blocks automation).
 
 ## Code review
 
-LOW risk (full review in `docs/E2E_TESTING.md` history / plan). Review fixes applied and verified (`tsc` clean, unit green): `img-src` tightened, detail-panel `localResourceRoots`, `participantUtils` dead-import + stray-JSDoc cleanup, `getNonce` doc. No Critical/High findings.
+LOW risk; review fixes applied and verified. No Critical/High. Details in `docs/E2E_TESTING.md` + commit history.
 
-## Residual risks → what UAT should focus on
+## How verification works (CI-ready)
 
-1. **AI `@lineage` semantic quality** (discovery, SM hop-by-hop, gate, column-trace, synthesis). The deterministic pipeline (Zod boundaries, session FSM, tool dispatch) is unit-tested; *semantic correctness* is not automatable (needs Copilot in the EDH) and is the existing UAT lane — use the baseline captures + `uat-analyze` / `iteration-review` skills.
-2. **Live-DB / DMV import** against a real SQL Server (per decision, e2e is dacpac-only). Validate connection, DMV extraction, and profiling manually with a real database.
-3. **Visual / UX across themes** (Light / Dark / High-Contrast) and fine interaction polish — human spot-check; automation here asserts structure/state, not aesthetics.
-
-## How verification works (for re-runs / CI)
-
-Programmatic-first, state-driven (see `docs/E2E_TESTING.md`): drive via `executeCommand` and real bridge messages; assert from `testLogCapture`, `getSession()`, the `copyDebugInfo` dump, and CDP DOM/console. No screenshots in the assertion path. The integration run is CI-ready (headless EDH download + Mocha); only the AI and live-DB lanes remain manual.
+Programmatic-first, state-driven (see `docs/E2E_TESTING.md`): drive via `executeCommand` + real bridge messages; assert from `testLogCapture`, `getSession()`, and the `copyDebugInfo` dump. No clicks, no screenshots. The integration run is headless-automated; only the UAT lanes above remain manual.
