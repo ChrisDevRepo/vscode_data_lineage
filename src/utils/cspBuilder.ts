@@ -25,7 +25,7 @@ export function buildWebviewCsp({ nonce, cspSource }: CspOptions): string {
     `style-src ${cspSource} 'unsafe-inline'`,
     // Note: cspSource is required in script-src so Vite can dynamically import chunks
     `script-src 'nonce-${nonce}' ${cspSource}`,
-    `img-src ${cspSource} https: data:`,
+    `img-src ${cspSource} data:`,
     `font-src ${cspSource}`
   ].join('; ') + ';';
 }

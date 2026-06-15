@@ -1,52 +1,19 @@
 /**
- * `@lineage` chat-participant turn handler.
+ * Pure helper utilities extracted from the `@lineage` chat-participant turn handler.
  *
  * @remarks
- * Implements the agent loop end-to-end:
- * - Resolves history, applies context-pressure eviction, and seeds the
- *   {@link MessageEnvelope} for the LM round.
- * - Composes the per-phase system prompt via `buildStageSystemPrompt`
- *   (stable prefix + dynamic suffix), driving the discover → active →
- *   synthesis → completed FSM in [`sessionPhase.ts`](./sessionPhase.ts).
- * - Runs the multi-round tool loop with `RepeatRejectGuard`, `toolPolicy`
- *   filtering, and a single `dispatchExit` finalizer that owns post-loop
- *   cleanup (gate re-emit, partial result handling, hop-cap rerun message).
- *
- * The hop-loop body and finalizer here are the only places that touch
- * `vscode.lm.sendRequest` and `ChatResponseStream` for the participant —
- * keep stream writes funneled through {@link ChatResponseWriter}.
+ * Stateless functions for tool-call/result field extraction, trailing tool-pair
+ * lookup in rebuilt history, ACTIVE/COMPLETED replay-payload minimization,
+ * follow-up trigger normalization, and transient-LM-error classification. The
+ * participant class and the LM round loop live in
+ * [`lineageParticipant.ts`](./lineageParticipant.ts).
  */
 import * as vscode from 'vscode';
 import { AiSession } from '../session/session';
-import { Logger, trunc, sanitizeForLog } from '../../utils/log';
-import { setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, SCRIPT_TYPES } from '../tools/tools';
-import {
-  buildGeneralSystemPrompt, buildPhasePrompt, buildFollowUpPrompt,
-  buildTracePrompt, buildSearchPrompt, buildActionRequiredGate,
-  buildMissionBriefBlock, buildCurrentTaskBlock, buildMemoryBlock, buildMissionStateBlock,
-  buildDeferredQuestionsPrompt, buildFollowupFallbackPrompt, RECOMMEND_FOLLOWUPS_TRIGGER, SHOW_DESCRIPTION_TRIGGER,
-  START_DEEPER_ANALYSIS_TRIGGER, buildStartDeeperAnalysisTriggerPrompt,
-  buildDiscoverySummaryBlock, buildDiscoverySummaryComposePrompt,
-  ACTION_REQUIRED_PENDING_HINT
-} from '../prompting/prompts';
-import { getToolInvocationLabel } from '../tools/toolLabels';
-import { buildSmProtocol } from '../prompting/smPrompts';
-import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from '../participant/historyManager';
-import { CONTEXT_PRESSURE_THRESHOLD } from '../infra/tokenBudget';
+import { trunc } from '../../utils/log';
 import { NavigationEngine } from '../sm/smBase';
-import { RepeatRejectGuard } from '../participant/repeatRejectGuard';
-import { PendingGateSchema, classifyGateReply, type PendingGate, type HopLoopExit } from '../session/sessionPhase';
-import { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
-import { decideGateTransition } from '../interaction/rules/gateTransitionRules';
-
-import { filterLmTools, activeModeOf } from '../tools/toolPolicy';
-import { resolveStagePrompt } from '../prompting/templateRenderer';
-import { ChatResponseWriter } from '../participant/chatResponseWriter';
-import { PerformanceCollector } from '../infra/diagnostics';
-import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from '../participant/messageEnvelope';
+import { type ToolPair } from '../participant/messageEnvelope';
 import { matchesTransientNetPattern } from '../infra/transientErrors';
-import { LmTracer } from '../infra/lmTracer';
-import { buildConfirmedGraphPresentationEditInstruction, type FollowUpConfirmationPhase } from '../prompting/followUpConfirmation';
 export { classifyGateReply } from '../session/sessionPhase';
 
 /**
@@ -505,17 +472,4 @@ export function renderHopDirective(engine: NavigationEngine | null): string {
 export function isTransientLmError(err: unknown): boolean {
   if (err instanceof vscode.LanguageModelError) return false;
   return matchesTransientNetPattern(err);
-}
-
-/**
- * Orchestrates the interaction between VS Code Chat and the lineage engine.
- *
- * @remarks
- * This class implements the `ChatParticipant` interface, managing the full request lifecycle:
- * 1. **Discovery**: Intent analysis and initial scope mapping.
- * 2. **Active**: State machine execution for graph traversal and data collection.
- * 3. **Synthesis**: Reporting and presentation of findings.
- *
- * It utilizes a "Sliding Memory" protocol to manage large context windows and implements
- * multi-round tool execution with repeat-rejection guards.
- */
+}

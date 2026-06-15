@@ -231,7 +231,10 @@ export function createMessageHandlers(
 
       if (!detailPanel) {
         const title = msg.node ? `Detail: ${msg.node.name}` : 'Detail';
-        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', title, vscode.ViewColumn.Beside, { enableScripts: true });
+        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', title, vscode.ViewColumn.Beside, {
+          enableScripts: true,
+          localResourceRoots: [vscode.Uri.joinPath(host.getExtensionUri(), 'dist'), vscode.Uri.joinPath(host.getExtensionUri(), 'images')],
+        });
         detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, host.getExtensionUri());
         detailPanel.onDidDispose(() => {
           detailPanel = undefined;

@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 
 /**
- * Generates a cryptographically strong, unique alphanumeric identifier (nonce).
+ * Generates a cryptographically strong, unique hexadecimal identifier (nonce).
  *
  * This nonce is essential for enforcing strict Content Security Policies (CSP)
  * within VS Code Webviews. By applying this nonce to script tags, we ensure
