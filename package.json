@@ -1264,6 +1264,7 @@
     "typecheck": "tsc --noEmit",
     "pretest:integration": "npm run build && tsc -p tsconfig.integration.json",
     "test:integration": "vscode-test",
+    "test:parity:update": "tsx tests/unit/engine-parity.test.ts --update",
     "package": "npx @vscode/vsce package"
   },
   "dependencies": {

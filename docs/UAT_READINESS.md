@@ -11,8 +11,10 @@ The **backend behind the GUI** — the engine logic of every headline feature pl
 | Layer | Tool | Result |
 |---|---|---|
 | Static | `tsc --noEmit` (src) + `npm run build` | clean |
-| Unit | Vitest (7 projects) | **171 passing** |
-| Integration | `@vscode/test-electron` (real EDH) | **19 passing** |
+| Unit | Vitest (7 projects) | **172 passing** |
+| Integration | `@vscode/test-electron` (real EDH) | **20 passing** |
+| Parity | unit↔electron golden baseline (`engine-parity-baseline.json`) | byte-match ✓ |
+| CI | GitHub Actions (Ubuntu+Windows, xvfb) runs all of the above per PR | wired |
 
 Run, fully unattended:
 ```
@@ -35,7 +37,8 @@ Each headline feature's **computation** is unit-tested; its **host glue** (where
 | Export (draw.io) | `drawioExporter.test.ts` ✓ | `export-file` (host save dialog → UAT) | UAT |
 | Save bookmark / view | `projectStore.test.ts` ✓ | `bridge-store.test.ts` (save/load/delete) ✓ | UAT |
 
-## Integration tests (19) — verified via session state, logs, debug dump (no screenshots)
+## Integration tests (20) — verified via session state, logs, debug dump (no screenshots)
+- **Engine parity (electron)** — the engine battery computed inside the real bundled extension byte-matches the unit golden baseline (catches integration/bundling/extraction regressions).
 - Webview load smoke (CSP / blank-screen regression) — bundle executes under the real CSP, 0 console errors.
 - User behavior via bridge — `filter-changed` → GUI STATE; `render-state` trace → origin in dump.
 - Bridge handlers — `show-detail` (host log), `save-project` (session state), `save-view`/`delete-view` (no error), `request-projects`.

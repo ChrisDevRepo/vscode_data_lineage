@@ -10,6 +10,7 @@ import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
 import { buildExtensionConfig } from './bridge/messageHandlers';
+import { buildEngineParityReport } from './engine/engineParityReport';
 
 /**
  * Runtime schema for the `dataLineageViz.showDeferredQuestions` command argument.
@@ -150,6 +151,17 @@ export function registerCommands(
         notifyError(aiLogger, 'Dump SM state', 'Data Lineage: Failed to dump SM state.', err, { command: 'dataLineageViz.dumpSmState' });
       }
     }),
+
+    // --- Test-only diagnostic (registered ONLY under VSCODE_EX_TEST; zero prod surface) ---
+    // Returns the deterministic engine-parity report for the loaded model so the
+    // electron integration layer can assert the SAME backend output as the unit
+    // layer (golden-baseline regression net — see docs/E2E_TESTING.md).
+    ...(process.env.VSCODE_EX_TEST === '1'
+      ? [vscode.commands.registerCommand('dataLineageViz.__test.engineReport', () => {
+          const model = getSession().model;
+          return model ? buildEngineParityReport(model) : null;
+        })]
+      : []),
 
     // --- Configuration Scaffolding ---
     vscode.commands.registerCommand('dataLineageViz.createParseRules', () =>

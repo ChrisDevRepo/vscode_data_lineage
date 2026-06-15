@@ -115,6 +115,24 @@ All five keep production behavior unchanged (test-only outputs / additive fields
 
 ---
 
+## Parity regression net (unit ↔ electron golden baseline)
+
+The strongest regression guard: every backend computation we have a known output for is asserted to produce the **same** output in **both** layers, against one committed golden file.
+
+- **Single input:** `assets/demo.dacpac` (the same dacpac the EDH `openDemo` loads).
+- **Single battery:** `buildEngineParityReport(model)` ([src/engine/engineParityReport.ts](../src/engine/engineParityReport.ts)) — deterministic (sets sorted, no timestamps/random): model fingerprint + per-schema breakdown + node-id hash, graph order/size, analysis (cycles/islands/hubs/orphans/longest-path), reachability + up/down trace from a deterministic origin, shortest path, and fixed search queries.
+- **Single golden file:** `tests/fixtures/engine-parity-baseline.json`.
+- **Unit layer** ([tests/unit/engine-parity.test.ts](../tests/unit/engine-parity.test.ts)) computes the report from the fixture and asserts `== baseline`.
+- **Electron layer** ([tests/integration/engine-parity.test.ts](../tests/integration/engine-parity.test.ts)) loads the demo in the real EDH, calls the gated `dataLineageViz.__test.engineReport` command (registered only under `VSCODE_EX_TEST`; returns the report), and asserts the report **byte-matches the same baseline**.
+
+The payoff: **unit-pass + electron-fail = an integration/bundling/extraction regression** — invisible to isolated unit tests, caught here. Intentional output changes are vetted, then the baseline is regenerated and the diff reviewed:
+
+```
+npm run test:parity:update   # regenerate tests/fixtures/engine-parity-baseline.json
+```
+
+This follows the project's existing golden-baseline discipline (`aw-baseline.tsv` via `test:snapshot:update`, `graph-baseline-aw.json`). Golden tests verify **consistency, not correctness** — the baseline was vetted once against those already-verified baselines.
+
 ## Sub-agent orchestration (fan-out)
 
 Test **authoring** is parallelized across **Sonnet** sub-agents; an Opus **lead-test-manager** orchestrates. The rules:
@@ -130,7 +148,10 @@ Test **authoring** is parallelized across **Sonnet** sub-agents; an Opus **lead-
 
 ```
 npm run typecheck            # L0: tsc --noEmit
-npm test                     # L1: vitest (unchanged 7 projects)
-npm run test:integration     # L2+L3: @vscode/test-electron via .vscode-test.mjs
+npm test                     # L1: vitest (unit + engine-parity baseline assert)
+npm run test:integration     # L2+L3: @vscode/test-electron via .vscode-test.mjs (incl. electron parity)
+npm run test:parity:update   # regenerate the engine-parity golden baseline (after a vetted change)
 ```
-Env: `VSCODE_EX_TEST=1` enables `testLogCapture`; `--remote-debugging-port=9222` (in `.vscode-test.mjs` `launchArgs`) enables the CDP read; `--logsPath <dir>` to capture host log files.
+Env: `VSCODE_EX_TEST=1` enables `testLogCapture` and the gated `__test.engineReport` command; `--remote-debugging-port=9222` (in `.vscode-test.mjs` `launchArgs`) enables the CDP read; `--logsPath <dir>` to capture host log files.
+
+CI runs all of the above on every PR/`main`/`testing` push ([.github/workflows/ci.yml](../.github/workflows/ci.yml)): a matrix of Ubuntu + Windows, `xvfb-run -a` wrapping the EDH run on Linux, with the VS Code download cached. Green CI = no regression in the backend behind the GUI.
