@@ -9,6 +9,7 @@ import { useExpandedSchemaView, type ExpandedSchemaViewState } from '../hooks/us
 import { useGraphology } from '../hooks/useGraphology';
 import { buildSchemaGraph } from '../engine/graphBuilder';
 import { deriveGraphDisplayMode, deriveInitialGraphMode } from '../engine/graphDisplayMode';
+import { deriveAiPreviewExpandedSchemas } from '../engine/aiPreviewScope';
 import { summarizeRenderedConnectivity } from '../engine/renderConnectivity';
 import { deriveModeCapabilities } from '../engine/modeCapabilities';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
@@ -1086,6 +1087,9 @@ export function App() {
         };
         if (!preModFilterRef.current) preModFilterRef.current = filterRef.current;
         const allowlist = preview.nodeIds;
+        const previewExpandedSchemas = modelRef.current
+          ? deriveAiPreviewExpandedSchemas(modelRef.current, allowlist)
+          : new Set<string>();
         setFilter(prev => {
           const next: FilterState = {
             ...prev,
@@ -1096,6 +1100,9 @@ export function App() {
           if (modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
           return next;
         });
+        setExpandedSchemaView(graphMode === 'overview' && previewExpandedSchemas.size > 0
+          ? { focusNodeId: null, expandedSchemas: previewExpandedSchemas }
+          : null);
         setAiPreview(preview);
       }
     };
