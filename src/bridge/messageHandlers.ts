@@ -352,7 +352,10 @@ export function createMessageHandlers(
             host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             const logger = Logger.create(outputChannel, 'Parse');
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg));
+            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+              externalRefsEnabled: config.externalRefs.enabled,
+              maxNodes: config.maxNodes,
+            });
             logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
@@ -429,7 +432,10 @@ export function createMessageHandlers(
       }
       const config = await readExtensionConfig(host);
       const logger = Logger.create(outputChannel, 'Parse');
-      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg));
+      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+        externalRefsEnabled: config.externalRefs.enabled,
+        maxNodes: config.maxNodes,
+      });
       logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
@@ -659,7 +665,10 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     const data = await host.readFile(demoUri);
     if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
     const logger = Logger.create(outputChannel, 'Parse');
-    const model = await extractDacpac(data.buffer as ArrayBuffer, (msg) => logger.debug(msg), (msg) => logger.info(msg));
+    const model = await extractDacpac(data.buffer as ArrayBuffer, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+      externalRefsEnabled: config.externalRefs.enabled,
+      maxNodes: config.maxNodes,
+    });
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
     host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);

@@ -327,7 +327,16 @@ export function registerCommands(
         const { buildBareGraph } = await import('./ai/infra/graphUtils');
 
         const buffer = await vscode.workspace.fs.readFile(uri);
-        const model = await extractDacpac(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
+        const config = buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz'));
+        const model = await extractDacpac(
+          buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer,
+          undefined,
+          undefined,
+          {
+            externalRefsEnabled: config.externalRefs.enabled,
+            maxNodes: config.maxNodes,
+          },
+        );
         const sess = getSession();
 
         sess.model = model;

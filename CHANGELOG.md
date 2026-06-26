@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.2] - 2026-06-14
+## [1.0.2] - 2026-06-26
 
 ### Added
 - **Schema View for large graphs** — expand and collapse schemas in place; opening several at once is additive.
