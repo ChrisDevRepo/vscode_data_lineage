@@ -1,82 +1,37 @@
-# Copilot instructions — Data Lineage Viz
+# Copilot Instructions - Public Delta
 
-Guidance for GitHub Copilot when editing in this repo. Root `AGENTS.md` is the canonical policy; this file adds Copilot-specific editing guidance.
+Canonical repo policy lives in `AGENTS.md`. Use `CONTRIBUTING.md` and `tests/README.md` for the current test strategy. If these files conflict, follow `AGENTS.md`, then `CONTRIBUTING.md`, then this file.
 
-## Project Context
-A VS Code extension for visualizing SQL dependencies. Key technologies:
-- **Core**: TypeScript, Node.js (Extension Host).
-- **Visualization**: React, React Flow, Graphology.
-- **AI**: `@lineage` Chat Participant using an autonomous Map & Router architecture.
-- **Parsing**: Multi-pass regex engine with YAML-driven rules.
+## Read First
+- `docs/ARCHITECTURE.md`: runtime architecture, graph contracts, `NavigationEngine`
+- `docs/DEVELOPER_GUIDE.md`: extension, ingestion, and tracer workflows
+- `docs/AI_PROMPTS.md`: `@lineage` prompt/tool/template lifecycle
+- `docs/PARSE_RULES.md` and `docs/DMV_QUERIES.md`: parser and DMV customization
 
-## Documentation Reference (Mandatory for non-trivial changes)
-- [**System Architecture**](../docs/ARCHITECTURE.md): Map & Router, Bipartite analysis, Hourglass context.
-- [**Developer Guide**](../docs/DEVELOPER_GUIDE.md): Prompt builders, builder hierarchy, dual ingestion flows.
-- [**Parse Rules**](../docs/PARSE_RULES.md), [**DMV Queries**](../docs/DMV_QUERIES.md), [**Profiling**](../docs/PROFILING_PATTERNS.md): SQL parser YAML reference, DBA contract, and profiling SQL patterns.
-- [**Contributing**](../CONTRIBUTING.md): Testing tiers, coding standards, snapshot protocol.
+## Core Engineering Rules
+- Keep `@lineage` as the primary user-facing surface.
+- `NavigationEngine` owns BFS scope, agenda, gates, route validation, pruning, closure, and termination.
+- Treat the language model as a semantic worker, not a process-state owner.
+- Validate untrusted boundaries with Zod.
+- Prefer schema/FSM/policy/code guards over prompt-only constraints.
+- Use `src/utils/log.ts` helpers only.
+- Every user-facing error/warning notification must go through `notifyError` / `notifyWarning` (`src/utils/notifications.ts`) so full detail + stack reach the Output channel at the same level as the toast — never demote detail to `debug`. Webview errors funnel through the bridge `'error'` message.
+- AI/Zod rejections are normal AI behavior → `debug`, not error/warn. Render-limit / node-cap reached is capacity guidance → `info`, not an error.
+- Use `dataLineageViz.*` for commands and settings.
+- Use `Expanded Schema View` naming for the schema expansion view.
+- The user solely owns the version number. Never bump/lower or restructure versioning, and never add a CHANGELOG `[Unreleased]` section (the project does not use one); new notes go under the current version heading.
 
-## Engineering Standards
+## Testing And Verification
+- Full gate: `npm test`
+- Core tiers: `npm run test:parser`, `npm run test:bfs`
+- Supporting tiers: `npm run test:support`, `npm run test:ui`, `npm run test:baseline`
+- Discovery audit: `npm run test:list`
+- Parser rule edits require `npm run test:snapshot`, then `npm run test:snapshot:update` only for intentional changes.
+- For structural or code-path changes, run `npx tsc --noEmit`, `npm run build`, and `npm test`.
+- New-test placement (so it is never silently skipped): node tests are self-running scripts (`assert`/`assertEq`/`printSummary` from `tests/unit/helpers/testUtils`, calling `runTests()` at module load) living at root `tests/unit/*.test.ts`. A domain runner under `tests/unit/runners/` collects them: `bfs`/`parser`/`baseline`/`snapshot` use explicit module arrays (add your file there); the `support` runner auto-discovers remaining root-level `*.test.ts` minus its exclude list. A file in a subdirectory (e.g. `tests/unit/ai/`) is NOT discovered. UI/hook tests under `tests/unit/components/` or `tests/unit/hooks/` are vitest `describe`/`it` files, glob-discovered by the `ui`/`support-ui` projects. Confirm a new test ran: its summary appears in `npm test` output and the project's test count increases.
 
-- **TypeScript**: Strict mode is mandatory. Use `npx tsc --noEmit` to verify. Avoid `any` at architectural boundaries.
-- **State Machine**: Follow the **Discriminated Union** pattern for FSM states (see `src/ai/session/sessionPhase.ts`). Use exhaustive `switch` on the `kind` field.
-- **Security**: Never log or commit secrets. Use Zod schemas at every untrusted boundary (IPC, AI tool results, YAML).
-- **Logging**: Use the standard logger in `src/utils/log.ts`.
-  - Extension Host: `logInfo`, `logDebug`, `logWarn`, `logError`.
-  - Webview: Bubbles up via `unhandledrejection` and `error` listeners to the extension log channel.
-- **Styling**: Use CSS variables (`var(--ln-*)` or `var(--vscode-*)`). Never hardcode colors. Schema colors are resolved via `getSchemaColor()` in `src/utils/schemaColors.ts`.
-- **Performance**:
-  - Prefer `graphology.bfsFromNode` for traversals.
-  - Optimize React renders by avoiding state setters inside loops and ensuring stable hook dependencies.
-
-## Coding Conventions
-
-- **Naming**: Use the `dataLineageViz.*` prefix for commands and settings.
-- **IPC**: All messages across the Extension ↔ Webview bridge must be defined in `src/engine/shared/bridgeContract.ts` using Zod.
-- **Parsing**: The regex pipeline in `src/engine/sqlBodyParser.ts` uses the "Best Regex Trick" for cleansing. Rule extraction is driven by `assets/defaultParseRules.yaml`.
-
-## AI Extensibility Direction
-
-- Keep `@lineage` as the primary user-facing chat surface.
-- Treat VS Code Agent Mode, custom agents, Agent Skills, MCP, Foundry Toolkit, and Microsoft Agent Framework as adapter or interoperability surfaces unless a future architecture document explicitly changes this.
-- Do not replace `NavigationEngine`, graph memory, BFS routing, CT validation, or deterministic synthesis assembly with a hosted agent or generic agent memory.
-- Tool metadata should stay concise; durable orchestration policy belongs in code guards, prompt builders, docs, or instruction files.
-
-## Testing & Verification
-
-The regression net rests on three high-priority categories — **parsing, BFS/graph, baseline**. Other tests are narrower guards (Zod boundaries, tool policy, idempotency, classifiers); add to them only when an invariant they protect changes.
-
-- **Snapshot testing**: Any change to `assets/defaultParseRules.yaml` requires `npm run test:snapshot`. Zero lost dependencies allowed.
-- **Tiers**:
-  - `npm test` — full unit suite (parser, graph, baseline, NavigationEngine + cascade + bipartite + supplement, boundary guards).
-  - `npm run test:parser` — SQL parser edge cases + 55 real-world SQL fixtures.
-  - `npm run test:graph` — graph construction, BFS, analysis algorithms.
-  - `npm run test:baseline` — parser TSV + graph-analysis JSON regression net.
-  - `npm run test:hooks` — React hooks (vitest jsdom).
-- **AI quality** beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT baseline captures (`tmp/baseline/`), not unit tests — there is no in-process LM to assert against.
-
-## Dev: LM Traffic Tracer
-
-`src/ai/infra/lmTracer.ts` is a **built-in observability tool** — not part of the extension API. It is an internal developer backdoor for testing only, **off by default** on every VS Code start.
-
-It captures every `vscode.lm.sendRequest` call (messages, tool calls, results, wipes, token counts) as NDJSON to `tmp/lm-trace/` for post-session analysis. Trace files are gitignored.
-
-**Enable (test/dev only):** run the **Data Lineage: Enable AI Trace Logging for This Session** command (`dataLineageViz.enableAiTraceLogging`), then run a `@lineage` chat session. The toggle is in-memory and resets to off when VS Code restarts — no code edit or rebuild needed. Do not add a persistent VS Code setting for it.
-
-**Analyse (manual workflow — run in terminal):**
-```
-node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson \
-  --summary --phase --patterns --rejected --loops --wipes \
-  --waste --tools --growth --tool-bloat --detail-metrics --ct
-```
-
-**Generate performance baseline:**
-```
-node tests/tools/generate-ideal.js assets/demo.dacpac
-```
-
-Full flag reference, journal workflow, and ideal-vs-actual comparison: see the **LM traffic tracer** section in [`docs/DEVELOPER_GUIDE.md`](../docs/DEVELOPER_GUIDE.md).
-
-## Guidelines for AI Generation
-- **Logic**: Use explicit composition and delegation over complex inheritance.
-- **Accuracy**: Ensure generated code aligns strictly with the Map & Router architecture for AI and the Bipartite model for graph traversal.
-- **Conciseness**: Prioritize technical signal over conversational filler in code comments and logs.
+## Security
+- Never commit secrets, `.env*`, customer data, proprietary DACPACs, raw traces, journals, or local assistant artifacts.
+- Never commit `CLAUDE*`, `GEMINI*`, `*internal*`, `.claude/`, `.gemini/`, `.cursor/`, `.continue/`, `.aider*`, `.agents/`, or `tmp/`.
+- Only approved AdventureWorks DACPAC fixtures may be committed under `tests/fixtures/`.
+- LM trace logging stays opt-in per session via `dataLineageViz.enableAiTraceLogging`. Do not add a persistent setting for it.

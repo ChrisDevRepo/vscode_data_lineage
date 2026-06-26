@@ -39,9 +39,14 @@ interface DetailSearchSidebarProps {
   /**
    * IDs of nodes currently rendered in the graph after all active filters.
    * When provided, results whose node ID is absent are rendered dimmed with a
-   * "Not in current view" separator — matching Quick Jump behavior.
+   * "Not in Current Filter" separator — matching Quick Jump behavior.
    */
   visibleNodeIds?: Set<string>;
+  /**
+   * IDs of filter-visible nodes that are currently collapsed into a schema cluster.
+   * These results remain actionable and expand their schema when selected.
+   */
+  collapsedSchemaNodeIds?: Set<string>;
 }
 
 /**
@@ -61,6 +66,8 @@ interface ResultRowProps {
   onResultClick: (nodeId: string, searchTerm: string) => void;
   /** When true, renders at reduced opacity with a ⊘ out-of-scope indicator. */
   dimmed?: boolean;
+  /** When true, indicates the result is filter-visible but collapsed into a schema cluster. */
+  clustered?: boolean;
 }
 
 /** Display labels for grouped search results. */
@@ -115,11 +122,10 @@ function highlightSnippet(snippet: string, term: string): React.ReactNode[] {
  * Single Detail Search result row.
  *
  * @remarks
- * When `dimmed` is true the row renders at 0.5 opacity with a ⊘ prefix,
- * indicating the node is outside the active graph filter — matching the
- * Quick Jump (`SuggestionRow`) treatment.
+ * When `clustered` is true, the row is in filter scope but collapsed into a schema cluster.
+ * When `dimmed` is true, the row is outside the active graph filter.
  */
-function ResultRow({ result, term, onResultClick, dimmed = false }: ResultRowProps) {
+function ResultRow({ result, term, onResultClick, dimmed = false, clustered = false }: ResultRowProps) {
   return (
     <div
       className="ln-detail-search-result"
@@ -130,9 +136,17 @@ function ResultRow({ result, term, onResultClick, dimmed = false }: ResultRowPro
         {dimmed && (
           <span
             className="text-[10px] ln-text-dim select-none mr-1"
-            title="Not visible in current view"
+            title="Not in Current Filter"
           >
             {'⊘'}
+          </span>
+        )}
+        {clustered && (
+          <span
+            className="text-[10px] ln-text-link select-none mr-1"
+            title="In Schema Cluster"
+          >
+            {'⊞'}
           </span>
         )}
         {highlightText(`[${result.node.schema}].${result.node.name}`, term)}
@@ -150,7 +164,7 @@ function ResultRow({ result, term, onResultClick, dimmed = false }: ResultRowPro
  *
  * @remarks
  * Searches within stored procedure / view body scripts and column names. Results from nodes
- * outside the active graph filter are rendered dimmed with a "Not in current view" separator
+ * outside the active graph filter are rendered dimmed with a "Not in Current Filter" separator
  * when `visibleNodeIds` is supplied — consistent with Quick Jump behavior.
  *
  * Performance: `useDeferredValue` prevents UI lock during heavy searches.
@@ -160,6 +174,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   allNodes,
   onResultClick,
   visibleNodeIds,
+  collapsedSchemaNodeIds,
 }: DetailSearchSidebarProps) {
   const [input, setInput] = useState('');
   const deferredInput = useDeferredValue(input);
@@ -172,18 +187,22 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
     return [...bodyResults, ...colResults];
   }, [term, allNodes]);
 
-  // Split flat results on filter visibility, then group each partition by type.
-  const { inScope, outOfScope } = useMemo(() => {
-    if (!visibleNodeIds) return { inScope: results, outOfScope: [] as SearchResult[] };
-    const inScope: SearchResult[] = [];
+  // Split flat results into rendered, clustered, and filtered-out states.
+  const { visible, clustered, outOfScope } = useMemo(() => {
+    if (!visibleNodeIds) return { visible: results, clustered: [] as SearchResult[], outOfScope: [] as SearchResult[] };
+    const visible: SearchResult[] = [];
+    const clustered: SearchResult[] = [];
     const outOfScope: SearchResult[] = [];
     for (const r of results) {
-      (visibleNodeIds.has(r.node.id) ? inScope : outOfScope).push(r);
+      if (!visibleNodeIds.has(r.node.id)) outOfScope.push(r);
+      else if (collapsedSchemaNodeIds?.has(r.node.id)) clustered.push(r);
+      else visible.push(r);
     }
-    return { inScope, outOfScope };
-  }, [results, visibleNodeIds]);
+    return { visible, clustered, outOfScope };
+  }, [results, visibleNodeIds, collapsedSchemaNodeIds]);
 
-  const groupedInScope  = useMemo(() => groupByType(inScope),   [inScope]);
+  const groupedVisible  = useMemo(() => groupByType(visible),    [visible]);
+  const groupedClustered = useMemo(() => groupByType(clustered), [clustered]);
   const groupedOutScope = useMemo(() => groupByType(outOfScope), [outOfScope]);
 
   return (
@@ -208,7 +227,12 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
           ) : (
             <>
               <div className="px-3 pb-1">
-                {[...groupedInScope.entries()].map(([label, items]) => (
+                {visible.length > 0 && (clustered.length > 0 || outOfScope.length > 0) && (
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim">
+                    Visible
+                  </div>
+                )}
+                {[...groupedVisible.entries()].map(([label, items]) => (
                   <div key={label} className="mb-2">
                     <div
                       className="text-[10px] font-semibold uppercase tracking-wide py-1.5 mb-1"
@@ -222,13 +246,37 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                   </div>
                 ))}
 
+                {clustered.length > 0 && (
+                  <>
+                    <div
+                      className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-dim ln-border"
+                      style={{ marginTop: groupedVisible.size > 0 ? '4px' : undefined }}
+                    >
+                      In Schema Cluster {'⊞'}
+                    </div>
+                    {[...groupedClustered.entries()].map(([label, items]) => (
+                      <div key={label} className="mb-2">
+                        <div
+                          className="text-[10px] font-semibold uppercase tracking-wide py-1.5 mb-1"
+                          style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}
+                        >
+                          {label} ({items.length})
+                        </div>
+                        {items.map(r => (
+                          <ResultRow key={r.node.id} result={r} term={term} onResultClick={onResultClick} clustered />
+                        ))}
+                      </div>
+                    ))}
+                  </>
+                )}
+
                 {outOfScope.length > 0 && (
                   <>
                     <div
                       className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-dim ln-border"
-                      style={{ marginTop: groupedInScope.size > 0 ? '4px' : undefined }}
+                      style={{ marginTop: (groupedVisible.size > 0 || groupedClustered.size > 0) ? '4px' : undefined }}
                     >
-                      Not in current view {'⊘'}
+                      Not in Current Filter {'⊘'}
                     </div>
                     {[...groupedOutScope.entries()].map(([label, items]) => (
                       <div key={label} className="mb-2">

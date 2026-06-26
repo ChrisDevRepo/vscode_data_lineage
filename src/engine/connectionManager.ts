@@ -15,6 +15,7 @@ import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExec
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
+import { notifyWarning } from '../utils/notifications';
 
 /**
  * The unique identifier for the Microsoft MSSQL extension.
@@ -93,23 +94,39 @@ export async function loadDmvQueries(
             const loadedNames = new Set(valid.map(q => q.name));
             const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
             if (missingNames.length > 0) {
-              logger.warn(`Custom DMV queries missing known names: ${missingNames.join(', ')} — DB import may fail`);
-              vscode.window.showWarningMessage(`Custom DMV queries missing: ${missingNames.join(', ')}. DB import may fail.`);
+              notifyWarning(
+                logger,
+                'Load custom DMV queries',
+                `Custom DMV queries missing: ${missingNames.join(', ')}. DB import may fail.`,
+                { missingNames, path: resolved, setting: 'dmvQueriesFile' },
+              );
             }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
             logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped.length} skipped`);
             return valid;
           }
         }
-        logger.warn(`Fallback DMV queries custom → built-in: reason=missing or invalid "queries" array at ${resolved}`);
-        vscode.window.showWarningMessage('Custom DMV queries invalid — using built-in defaults.');
+        notifyWarning(
+          logger,
+          'Load custom DMV queries',
+          'Custom DMV queries invalid — using built-in defaults.',
+          { reason: 'missing or invalid queries array', path: resolved, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
+        );
       } catch (err) {
-        logger.warn(`Fallback DMV queries custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${resolved}`);
-        vscode.window.showWarningMessage('Failed to load custom DMV queries — using built-in defaults. Check Output channel.');
+        notifyWarning(
+          logger,
+          'Load custom DMV queries',
+          'Failed to load custom DMV queries — using built-in defaults. Check Output channel.',
+          { reason: err instanceof Error ? err.message : String(err), path: resolved, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
+        );
       }
     } else {
-      logger.warn(`Fallback DMV queries custom → built-in: reason=cannot resolve path "${customPath}"`);
-      vscode.window.showWarningMessage(`Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`);
+      notifyWarning(
+        logger,
+        'Load custom DMV queries',
+        `Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`,
+        { reason: 'cannot resolve path', path: customPath, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
+      );
     }
   }
 

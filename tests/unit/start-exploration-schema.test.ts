@@ -6,7 +6,7 @@
  */
 
 import { assert, printSummary } from './helpers/testUtils';
-import { StartExplorationInputSchema } from '../../src/ai/tools/tools';
+import { StartExplorationInputSchema } from '../../src/ai/tools/toolSchemas';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../../src/ai/infra/inputNormalization';
 import { evaluateAlreadyStartedRule } from '../../src/ai/interaction/rules/startExplorationRules';
 

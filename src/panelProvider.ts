@@ -9,6 +9,7 @@ import { createMessageHandlers, PROJECT_STORE_KEY } from './bridge/messageHandle
 import { MainPanelToExtensionMsgSchema, type MainPanelToExtensionMsg } from './engine/shared/bridgeContract';
 
 let activePanel: vscode.WebviewPanel | undefined;
+let activeTriggerDemo: (() => Promise<void>) | undefined;
 
 export { PROJECT_STORE_KEY };
 
@@ -52,8 +53,11 @@ export function openPanel(
   if (activePanel) {
     bridgeLogger.info('Revealing existing panel');
     activePanel.reveal();
-    if (loadDemo) {
-      bridgeLogger.info('Open Demo invoked on existing panel — reveal only; close the panel first to reload demo data.');
+    if (loadDemo && activeTriggerDemo) {
+      bridgeLogger.info('Open Demo invoked on existing panel — loading demo data.');
+      activeTriggerDemo().catch(err => bridgeLogger.error(`Failed to trigger demo on active panel`, err));
+    } else if (loadDemo) {
+      bridgeLogger.info('Open Demo invoked on existing panel, but no trigger function was available.');
     }
     return;
   }
@@ -78,6 +82,7 @@ export function openPanel(
   panel.onDidDispose(() => {
     bridgeLogger.info('Panel disposed');
     activePanel = undefined;
+    activeTriggerDemo = undefined;
     detailPanel?.dispose();
 
     const sess = getSession();
@@ -92,7 +97,7 @@ export function openPanel(
     vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
-  const { handlers, cleanup } = createMessageHandlers(
+  const { handlers, cleanup, triggerDemoLoad } = createMessageHandlers(
     host,
     context,
     getSession,
@@ -103,6 +108,8 @@ export function openPanel(
     loadDemo,
     (dp) => detailPanel = dp
   );
+
+  activeTriggerDemo = triggerDemoLoad;
 
   // Ensure that database connections and stats caches are released when the panel is closed.
   panel.onDidDispose(() => {
@@ -120,10 +127,15 @@ export function openPanel(
     try {
       await handler(msg);
     } catch (err) {
+      // A handler throwing here is unexpected: surface it to the user instead of failing
+      // silently, otherwise user-initiated actions (save/delete/export) appear to succeed.
       bridgeLogger.error(`Handler '${msg.type}' threw unexpectedly`, err);
+      host.showErrorMessage(`Data Lineage: the "${msg.type}" action failed — ${err instanceof Error ? err.message : String(err)}`);
     }
   }, undefined, context.subscriptions);
 }
+
+import { buildWebviewCsp } from './utils/cspBuilder';
 
 /**
  * Generates the root HTML for the lineage webview.
@@ -133,7 +145,35 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
   const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
   const logoUri = getUri(webview, extensionUri, ["images", "logo.png"]);
   const nonce = getNonce();
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><link rel="stylesheet" type="text/css" href="${stylesUri}"><title>Data Lineage Viz</title></head><body class="vscode-body" ${loadDemo ? 'data-auto-visualize="true"' : ''}><div id="root"></div><script nonce="${nonce}">window.LOGO_URI = "${logoUri}";</script><script type="module" nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
+  const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <link rel="stylesheet" type="text/css" href="${stylesUri}">
+  <title>Data Lineage Viz</title>
+</head>
+<body class="vscode-body" ${loadDemo ? 'data-auto-visualize="true"' : ''}>
+  <div id="root">
+    <div id="bootloader-fallback" style="display: none; padding: 2rem; color: var(--vscode-errorForeground); font-family: var(--vscode-font-family);">
+      <h2>UI Failed to Load</h2>
+      <p>The extension's user interface encountered a fatal error during initialization.</p>
+      <p>Please open the <b>Developer: Toggle Developer Tools</b> command from the Command Palette to view the exact error.</p>
+    </div>
+  </div>
+  <script nonce="${nonce}">
+    window.LOGO_URI = "${logoUri}";
+    // Display fallback if React hasn't mounted and cleared the root element within 3 seconds
+    setTimeout(() => {
+      const fallback = document.getElementById('bootloader-fallback');
+      if (fallback) fallback.style.display = 'block';
+    }, 3000);
+  </script>
+  <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
 }
 
 /**
@@ -143,8 +183,10 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
  * (Open Wizard, Open Demo, Settings) to improve discoverability.
  */
 export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  /**
+    /**
    * Returns a tree item representation for a specific element.
+   *
+   * @param element - element.
    */
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
 

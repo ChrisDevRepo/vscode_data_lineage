@@ -1,9 +1,13 @@
 import React, { memo } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, Position, NodeToolbar, type NodeProps } from '@xyflow/react';
 import type { SchemaNodeData, ObjectType } from '../engine/types';
 import { SCHEMA_NODE_WIDTH, SCHEMA_NODE_HEIGHT } from '../engine/graphBuilder';
 import { TYPE_COLORS, TYPE_LABELS } from '../utils/schemaColors';
-import { Tooltip } from './ui/Tooltip';
+
+type SchemaNodeUiData = SchemaNodeData & {
+  onExpandSchema?: (schemaName: string) => void;
+  onMakeSchemaCenter?: (schemaName: string) => void;
+};
 
 /**
  * A specialized React Flow node component for representing a database schema in the overview mode.
@@ -20,9 +24,24 @@ import { Tooltip } from './ui/Tooltip';
  * @param props - Standard React Flow {@link NodeProps}.
  * @returns A {@link React.JSX.Element} representing the schema node.
  */
-export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
-  const d = data as SchemaNodeData;
-  
+export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps) {
+  const d = data as SchemaNodeUiData;
+  const isExpandedSchemaViewCluster = d.isExpandedSchemaViewCluster === true;
+  const canExpand = typeof d.onExpandSchema === 'function';
+  const canExpandOnly = typeof d.onMakeSchemaCenter === 'function';
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!canExpand || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    d.onExpandSchema?.(d.schemaName);
+  };
+
+  // Expanded schema view clusters are secondary navigation containers beside the expanded object nodes.
+  const clusterBackground = `color-mix(in srgb, ${d.color} 12%, var(--ln-bg-elevated))`;
+  const clusterHeaderBackground = `color-mix(in srgb, ${d.color} 68%, var(--ln-bg-elevated))`;
+  const clusterBorderColor = `color-mix(in srgb, ${d.color} 48%, var(--ln-border))`;
+
   /** Filters out types with zero counts to keep the display clean. */
   const breakdownEntries = Object.entries(d.typeBreakdown ?? {}).filter(([, count]) => count && count > 0);
   
@@ -34,43 +53,76 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
     })
     .join('  ');
 
-  /** Generates the tooltip text content. */
-  const tooltip = [
-    d.schemaName,
-    ...breakdownEntries.map(([type, count]) => `${count} ${TYPE_LABELS[type as ObjectType] ?? type}`),
-  ].join('\n');
+  // On a selected cluster, surface its actions as an attached toolbar (replaces the old right-click menu).
+  const clusterToolbar = (canExpand || canExpandOnly) ? (
+    <NodeToolbar position={Position.Top} align="center" offset={8} isVisible={!!selected}>
+      <div className="ln-schema-toolbar" onClick={(e) => e.stopPropagation()}>
+        {canExpand && (
+          <button type="button" className="ln-schema-toolbar__btn" onClick={() => d.onExpandSchema?.(d.schemaName)}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5M9 3.75v16.5M4.5 4.5h15v15h-15v-15Z" />
+            </svg>
+            Expand
+          </button>
+        )}
+        {canExpandOnly && (
+          <button type="button" className="ln-schema-toolbar__btn" onClick={() => d.onMakeSchemaCenter?.(d.schemaName)}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.75v16.5M3.75 12h16.5M7.5 7.5h9v9h-9v-9Z" />
+            </svg>
+            Expand Only
+          </button>
+        )}
+      </div>
+    </NodeToolbar>
+  ) : null;
 
   return (
-    <Tooltip content={tooltip} multiline placement="top" asChild>
+    <>
+      {clusterToolbar}
       <div
+        className={isExpandedSchemaViewCluster ? 'ln-schema-cluster' : undefined}
+        role={canExpand ? 'button' : undefined}
+        tabIndex={canExpand ? 0 : undefined}
+        aria-label={canExpand ? `Expand schema ${d.schemaName}` : `Schema ${d.schemaName}`}
+        onKeyDown={handleKeyDown}
         style={{
           width: SCHEMA_NODE_WIDTH,
           height: SCHEMA_NODE_HEIGHT,
-          border: `2px solid ${d.color}`,
+          boxSizing: 'border-box',
+          border: `${isExpandedSchemaViewCluster ? 1 : 2}px ${isExpandedSchemaViewCluster ? 'dashed' : 'solid'} ${isExpandedSchemaViewCluster ? clusterBorderColor : d.color}`,
           borderRadius: 10,
-          background: 'var(--ln-bg-elevated)',
+          background: isExpandedSchemaViewCluster ? clusterBackground : 'var(--ln-bg-elevated)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
           cursor: 'pointer',
-          boxShadow: 'var(--ln-node-shadow)',
+          boxShadow: isExpandedSchemaViewCluster ? 'var(--ln-node-shadow-dimmed)' : 'var(--ln-node-shadow)',
         }}
       >
         {/* Header bar with schema color */}
         <div
           style={{
-            background: d.color,
+            background: isExpandedSchemaViewCluster ? clusterHeaderBackground : d.color,
             padding: '4px 8px',
             fontSize: 10,
             fontWeight: 700,
             color: 'var(--ln-button-fg)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
             letterSpacing: '0.02em',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 4,
           }}
         >
-          {d.schemaName}
+          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {d.schemaName}
+          </span>
+          {canExpand && (
+            <span style={{ flexShrink: 0, fontSize: 11, lineHeight: 1, opacity: 0.9 }} aria-hidden="true">
+              ⊞
+            </span>
+          )}
         </div>
 
         {/* Body */}
@@ -103,6 +155,6 @@ export const SchemaNode = memo(function SchemaNode({ data }: NodeProps) {
         <Handle type="target" position={Position.Left} style={{ background: d.color, width: 8, height: 8 }} />
         <Handle type="source" position={Position.Right} style={{ background: d.color, width: 8, height: 8 }} />
       </div>
-    </Tooltip>
+    </>
   );
 });

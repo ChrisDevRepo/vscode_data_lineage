@@ -36,6 +36,9 @@ function extractTitle(text: string, type: StatusType): string {
 
 const MAX_BODY = 120;
 
+/**
+ * Displays a typed status banner with loading, success, or error styling.
+ */
 export const StatusMessage = memo(function StatusMessage({ text, type }: StatusMessageProps) {
   const title = extractTitle(text, type);
   const body = text.length > MAX_BODY ? text.slice(0, MAX_BODY) + '…' : text;

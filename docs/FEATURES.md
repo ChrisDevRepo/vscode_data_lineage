@@ -4,25 +4,76 @@ Capabilities of Data Lineage Viz, with the VS Code settings that control them. F
 
 ---
 
-## Schema overview
+## Commands and entry points
 
-When a graph exceeds a configurable node threshold, the extension auto-activates **schema overview mode** — replacing individual nodes with schema-level bubbles showing object counts and type distribution.
+The main user-facing commands are contributed in `package.json` and available through the Command Palette:
 
-- Double-click any schema bubble to drill into its objects and connected neighbours.
-- Toggle manually via the toolbar.
-- Configure: `dataLineageViz.overview.enabled`, `dataLineageViz.overview.threshold`.
+| Command | Purpose |
+|---------|---------|
+| **Data Lineage: Open Wizard** | Open the import wizard for `.dacpac` or live-database sources. |
+| **Data Lineage: Open Demo** | Load the bundled AdventureWorks demo. |
+| **Data Lineage: Search Objects** | Search loaded tables, views, procedures, and functions from a VS Code Quick Pick. |
+| **Data Lineage: Settings** | Open the Data Lineage settings filter. |
+| **Data Lineage: Create Parse Rules** | Scaffold a local `parseRules.yaml`. |
+| **Data Lineage: Create DMV Queries** | Scaffold a local `dmvQueries.yaml`. |
+| **Data Lineage: Create AI Output Templates** | Scaffold a local `aiOutputTemplates.yaml`. |
+| **Data Lineage: Copy Debug Info** | Copy extension diagnostics for bug reports. |
+
+The Data Lineage activity-bar view exposes quick actions for opening the wizard, opening the demo, and opening settings.
+
+---
+
+## Keyboard shortcuts
+
+Shortcuts are scoped to the graph webview. Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text, and the extension does not register VS Code global keybindings.
+
+| Shortcut | Action |
+|----------|--------|
+| <kbd>/</kbd> | Focus Quick Jump |
+| <kbd>F</kbd> | Fit graph to view |
+| <kbd>?</kbd> | Open Help |
+| <kbd>Delete</kbd> | Exclude highlighted node |
+| <kbd>Esc</kbd> | Exit active trace, path, analysis, bookmark, or AI preview |
+| <kbd>S</kbd> | Toggle Schema View |
+| <kbd>H</kbd> | Hide/Show schema clusters |
+
+Contextual keyboard behavior:
+
+| Shortcut | Context |
+|----------|---------|
+| <kbd>↑</kbd> / <kbd>↓</kbd> | Move through Quick Jump and path suggestions |
+| <kbd>Enter</kbd> | Select a suggestion or apply the current input action |
+| <kbd>Esc</kbd> | Close the active input or dropdown before broader mode exit |
+| <kbd>Enter</kbd> / <kbd>Space</kbd> | Activate focused graph, sidebar, and list controls |
+| <kbd>Enter</kbd> / <kbd>Space</kbd> | Expand a focused schema cluster |
+
+The in-app Help modal renders the canonical shortcut list from `src/ui/keyboardShortcuts.ts`; update that registry whenever a webview shortcut changes.
+
+---
+
+## Schema View
+
+When a loaded graph exceeds a configurable node threshold, the extension starts in **Schema View** - replacing individual object nodes with schema cluster nodes that show object counts and type distribution. At or below the threshold it starts in Object View. After that initial load decision, the toolbar **Schema View** toggle button switches between the two views; filters and exclusions do not re-check the threshold or auto-switch the view. `dataLineageViz.renderLimit` remains the only post-load safety gate for rejecting a selected visual surface that would mount too many React Flow nodes.
+
+- Double-clicking a schema cluster expands that schema as object nodes in place.
+- Selecting a schema cluster shows an on-node toolbar to **Expand** it or **Expand Only**. **Expand** keeps other expanded schemas open; **Expand Only** expands this schema and collapses the others.
+- Quick Jump and Detail Search separate results into **Visible**, **In Schema Cluster**, and **Not in Current Filter**. Selecting an object in a schema cluster expands that schema without changing the active schema filter.
+- Multiple schemas can be expanded at a time while the projected rendered node count stays within `dataLineageViz.renderLimit`.
+- The **Clear All Filters** button also collapses all expanded schemas and returns to Schema View.
+- In Expanded Schema View, schema clusters render as a filled colored tile (vs the lighter object cards) and as ringed blocks on the minimap, so the two node kinds read apart at a glance.
+- Configure: `dataLineageViz.overview.enabled`, `dataLineageViz.overview.threshold`, `dataLineageViz.renderLimit`.
 
 ### Rendering limits
 
 The extension separates **data loading** (`maxNodes`) from **graph rendering** (`renderLimit`). `@lineage` AI tools and BFS query the full loaded model while the GUI stays responsive.
 
-| Setting | Default | Range | Controls |
-|---------|---------|-------|----------|
-| `dataLineageViz.maxNodes` | 750 | up to 10000 | Objects loaded from dacpac / database |
-| `dataLineageViz.renderLimit` | 750 | up to 5000 | Nodes the GUI will lay out and render |
-| `dataLineageViz.overview.threshold` | 150 |  | Auto-activates schema overview |
+| Setting | Default | Controls |
+|---------|---------|----------|
+| `dataLineageViz.maxNodes` | 2000 | Objects loaded from dacpac / database |
+| `dataLineageViz.renderLimit` | 750 | React Flow nodes the GUI will lay out and render |
+| `dataLineageViz.overview.threshold` | 150 | Above this count, new loads default to Schema View. At or below, they default to classic Object View |
 
-When `renderLimit` is exceeded, the graph shows a "limit reached" message instead of rendering. The full lineage model, DDL, and AI chat remain functional — only the visual graph is gated.
+When the selected surface would render more than `renderLimit` React Flow nodes, the graph shows a "limit reached" message instead of rendering that surface. Schema View and Expanded Schema View count collapsed schemas as one rendered node each, and trace/path/analysis scopes render ahead of the base full-graph limit. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
 
 ---
 
@@ -49,7 +100,7 @@ Hide nodes from the graph using pattern-based rules. Rules apply in real time �
 
 1. Open the exclusion dropdown (ban icon in toolbar) and type a pattern.
 2. Right-click any node and select **Exclude from view**.
-3. Select a node and press <kbd>Del</kbd>.
+3. Select a node and press <kbd>Delete</kbd>.
 
 ### Pattern syntax
 
@@ -76,6 +127,17 @@ Right-click a node and select **Trace Levels** to explore upstream (inputs) or d
 - Default depth is configurable: `dataLineageViz.trace.defaultUpstreamLevels`, `dataLineageViz.trace.defaultDownstreamLevels`.
 - Press <kbd>Esc</kbd> to exit trace mode.
 
+### Edit a trace
+
+After running **Trace Levels**, refine the result directly on the graph without re-running it:
+
+- **Add a neighbour** — the **+** control on a node pulls in one of its direct upstream/downstream neighbours that the trace did not already include.
+- **Prune a node** — the **−** control drops a node from the current trace scope.
+- **Safety gating** — the trace origin is an anchor and cannot be pruned, and a prune is rejected when it would disconnect any remaining node from the origin, so the trace always stays connected. Only safe actions are offered.
+- Edits layer on top of the original trace and never change your filters; re-run **Trace Levels** or press <kbd>Esc</kbd> to discard them.
+
+Editing applies to Trace Levels results — a computed shortest path is fixed.
+
 ### Find path
 
 Right-click a node, select **Find Path**, then click a second node. The extension highlights the deterministic shortest dependency path between them.
@@ -84,7 +146,7 @@ Right-click a node, select **Find Path**, then click a second node. The extensio
 
 ## Detail search
 
-Full-text search inside SQL bodies (procedures, views, functions) and column definitions. Toolbar search icon. This is distinct from **Quick Search** (<kbd>/</kbd>), which matches object names only.
+Full-text search inside SQL bodies (procedures, views, functions) and column definitions. Toolbar search icon. This is distinct from **Quick Jump** (<kbd>/</kbd>), which matches object names only, and from Command Palette **Data Lineage: Search Objects**, which opens a VS Code Quick Pick over loaded object names.
 
 ---
 
@@ -147,7 +209,7 @@ Standard mode can be disabled via `dataLineageViz.tableStatistics.standardModeEn
 - Tables above a configurable row threshold are **sampled** instead of fully scanned.
 - **External tables** are skipped by default (they query remote data sources like S3, Blob, or other databases).
 - Each query has a configurable timeout.
-- All generated SQL is logged to the Output channel (`View → Output → Data Lineage Viz`).
+- Profiling lifecycle events and a 300-character SQL preview are logged to the Output channel (`View → Output → Data Lineage Viz`) at DEBUG level.
 
 Full setting reference and SQL examples in [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 

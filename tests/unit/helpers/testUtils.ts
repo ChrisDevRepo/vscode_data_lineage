@@ -45,6 +45,17 @@ export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   return extractDacpac(buffer.buffer as ArrayBuffer);
 }
 
+/**
+ * Full end-to-end: `assets/demo.dacpac` → DatabaseModel — the SAME dacpac and
+ * extractor the Extension Development Host loads via `openDemo`. Used by the
+ * engine-parity baseline so the unit and electron layers compute from one input.
+ */
+export async function loadDemoModel(): Promise<DatabaseModel> {
+  loadParseRules();
+  const buffer = readFileSync(rootPath('assets/demo.dacpac'));
+  return extractDacpac(buffer.buffer as ArrayBuffer);
+}
+
 // ─── Counters & Assertions ──────────────────────────────────────────────────
 
 let passed = 0;
@@ -90,13 +101,15 @@ export function test(name: string, fn: () => void) {
   }
 }
 
-/** Print summary and exit with code 1 if any failures */
+/** Print summary and throw if any failures were recorded */
 export function printSummary(label?: string) {
   const total = passed + failed;
   const pct = total > 0 ? Math.round((passed / total) * 100) : 0;
   const tag = label ? ` ${label}:` : '';
   console.log(`\n═══${tag} ${passed}/${total} passed  (${pct}%) ═══`);
-  if (failed > 0) process.exit(1);
+  if (failed > 0) {
+    throw new Error(`${failed} assertion(s) failed${label ? ` in ${label}` : ''}`);
+  }
 }
 
 // ─── Parse Rules Loading ────────────────────────────────────────────────────

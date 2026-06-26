@@ -41,6 +41,11 @@ import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql';
 import { trunc } from '../utils/log';
 
+interface DacpacExtractionOptions {
+  externalRefsEnabled?: boolean;
+  maxNodes?: number;
+}
+
 /**
  * Counts extracted objects by canonical type. Used for one-line log breakdowns.
  */
@@ -56,11 +61,22 @@ function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 
  * Extracts a complete DatabaseModel from a .dacpac file buffer.
  * Performs a full, unfiltered extraction of all tracked objects.
  *
- * @param buffer - The raw ArrayBuffer of the .dacpac file.
+ *
+ * @param buffer - DACPAC archive buffer to extract.
+ * @param onDebugLog - Debug logger callback.
+ * @param onInfoLog - Info logger callback.
+ * @param options - Runtime extraction settings from VS Code configuration.
+ *
  * @returns A Promise resolving to the extracted DatabaseModel.
+ *
  * @throws {Error} If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
  */
-export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: string) => void, onInfoLog?: (msg: string) => void): Promise<DatabaseModel> {
+export async function extractDacpac(
+  buffer: ArrayBuffer,
+  onDebugLog?: (msg: string) => void,
+  onInfoLog?: (msg: string) => void,
+  options: DacpacExtractionOptions = {},
+): Promise<DatabaseModel> {
   const xml = await extractModelXml(buffer);
   if (onDebugLog) onDebugLog(`Dacpac: ZIP loaded — model.xml=${xml.length} chars`);
 
@@ -76,7 +92,15 @@ export async function extractDacpac(buffer: ArrayBuffer, onDebugLog?: (msg: stri
   if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
   if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
 
-  const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
+  const model = buildModel(
+    objects,
+    deps,
+    allObjects,
+    undefined,
+    options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
+    options.maxNodes ?? DEFAULT_CONFIG.maxNodes,
+    onDebugLog,
+  );
 
   const warnings: string[] = [];
   if (elements.length === 0) {
@@ -115,10 +139,14 @@ export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
  * Performs a Phase 2 full extraction filtered to a specific set of schemas.
  * Uses pre-parsed XML elements from Phase 1 to significantly improve performance.
  *
- * @param elements - The array of pre-parsed XML elements from Phase 1.
- * @param selectedSchemas - A Set of schema names to include (case-insensitive).
- * @param dspName - Optional Data Schema Provider (DSP) name.
- * @param onDebugLog - Optional debug logging callback.
+ *
+ * @param elements - Pre-parsed DACPAC elements to filter.
+ * @param selectedSchemas - Schemas selected for extraction.
+ * @param dspName - Source DSP name from the DACPAC metadata.
+ * @param onDebugLog - Debug logger callback.
+ * @param onInfoLog - Info logger callback.
+ * @param options - Runtime extraction settings from VS Code configuration.
+ *
  * @returns The resulting DatabaseModel containing only the filtered objects.
  */
 export function extractDacpacFiltered(
@@ -127,6 +155,7 @@ export function extractDacpacFiltered(
   dspName?: string,
   onDebugLog?: (msg: string) => void,
   onInfoLog?: (msg: string) => void,
+  options: DacpacExtractionOptions = {},
 ): DatabaseModel {
   if (onDebugLog) onDebugLog(`Dacpac: Filtering by schemas=[${trunc(Array.from(selectedSchemas), 20)}]`);
 
@@ -146,7 +175,15 @@ export function extractDacpacFiltered(
   if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
   if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
 
-  const model = buildModel(objects, deps, allObjects, undefined, true, DEFAULT_CONFIG.maxNodes, onDebugLog);
+  const model = buildModel(
+    objects,
+    deps,
+    allObjects,
+    undefined,
+    options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
+    options.maxNodes ?? DEFAULT_CONFIG.maxNodes,
+    onDebugLog,
+  );
   const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
 
   const warnings: string[] = [];

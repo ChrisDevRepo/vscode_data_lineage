@@ -158,6 +158,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
           ...DEFAULT_CONFIG,
           ...raw,
           layout: { ...DEFAULT_CONFIG.layout, ...raw.layout },
+          overview: { ...DEFAULT_CONFIG.overview, ...raw.overview },
           trace: { ...DEFAULT_CONFIG.trace, ...raw.trace },
           analysis: { ...DEFAULT_CONFIG.analysis, ...raw.analysis },
         });

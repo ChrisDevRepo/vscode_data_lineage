@@ -67,6 +67,26 @@ function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc:
   );
 }
 
+function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
+  return (
+    <div className="grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-3">
+      <span className="flex items-center gap-1.5">
+        {keys.map(key => (
+          <kbd key={key} className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd">{key}</kbd>
+        ))}
+      </span>
+      <span className="min-w-0 text-xs ln-text-muted">{label}</span>
+    </div>
+  );
+}
+
+const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
+  { keys: ['/'], label: 'Focus Quick Jump' },
+  { keys: ['?'], label: 'Open Help' },
+  { keys: ['Esc'], label: 'Close active input, then exit the current mode' },
+  { keys: ['Enter'], label: 'Select a suggestion or apply the focused action' },
+];
+
 
 function TabOverview({ openExternal }: { openExternal: (url: string) => void }) {
   return (
@@ -74,34 +94,33 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
       <section>
         <SectionHeader
           icon={<IconPath d="M12 3a1.5 1.5 0 0 0-1.5 1.5v1.5H9a1.5 1.5 0 0 0 0 3h1.5V12a1.5 1.5 0 0 0 3 0V9H15a1.5 1.5 0 0 0 0-3h-1.5V4.5A1.5 1.5 0 0 0 12 3ZM3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />}
-          title="Keyboard Shortcuts"
+          title="Shortcuts"
         />
-        <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm ln-text-muted">
-          {[
-            { key: '/',   label: 'Focus Quick Search'       },
-            { key: 'F',   label: 'Fit graph to view'        },
-            { key: 'Del', label: 'Exclude highlighted node' },
-            { key: 'Esc', label: 'Close trace or analysis'  },
-            { key: '?',   label: 'Open this Help'           },
-          ].map(({ key, label }) => (
-            <div key={key} className="flex items-center gap-3">
-              <kbd className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd flex-shrink-0">{key}</kbd>
-              <span>{label}</span>
-            </div>
-          ))}
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+            {OVERVIEW_SHORTCUTS.map(shortcut => (
+              <ShortcutRow key={shortcut.keys.join('+')} keys={shortcut.keys} label={shortcut.label} />
+            ))}
+          </div>
+          <p className="text-xs ln-text-muted mt-2">
+            <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#keyboard-shortcuts" openExternal={openExternal}>See the full list of keyboard shortcuts in the docs ↗</ExtLink>
+          </p>
+          <p className="text-xs ln-text-muted mt-2">
+            Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text. `Esc` first closes the active input or dropdown, then exits the current graph mode.
+          </p>
         </div>
       </section>
 
       <section>
         <SectionHeader
           icon={<IconPath d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Zm9.75 0A2.25 2.25 0 0 1 15.75 3.75H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25Zm9.75 0a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z" />}
-          title="Features"
+          title="Core Workflow"
         />
         <div className="grid grid-cols-2 gap-2">
           <FeatureCard
             icon="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"
-            title="Schema Overview"
-            desc="Auto-activates on large graphs — shows schema-level bubbles. Click to zoom into a schema."
+            title="Stable View Modes"
+            desc="The threshold is checked only on load or Reset All. After that, the toolbar toggle owns the view; filters and deletes do not auto-switch it. Render limit remains the safety gate."
           />
           <FeatureCard
             icon="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"
@@ -119,11 +138,6 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
             desc="Full-text search inside SQL bodies and columns — distinct from Quick Search."
           />
           <FeatureCard
-            icon="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"
-            title="Exclusion Rules"
-            desc="Hide nodes by pattern (SQL LIKE wildcards or regex). Rules apply in real-time."
-          />
-          <FeatureCard
             icon="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"
             title="Node Details"
             desc="Right-click any node to inspect connections, DDL, unresolved references, and column metadata."
@@ -132,11 +146,6 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
             icon="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
             title="Export"
             desc="Export to diagrams.net (Draw.io) with colored nodes, edges, and schema legend."
-          />
-          <FeatureCard
-            icon="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"
-            title="Settings"
-            desc="Customize layout, trace depth, analysis thresholds, and more in VS Code Settings."
           />
         </div>
       </section>
@@ -227,7 +236,7 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           <div className="rounded-lg p-3 ln-help-analysis-card">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-xs font-bold ln-text-link">1</span>
-              <span className="text-sm font-semibold ln-text">Schema Overview</span>
+              <span className="text-sm font-semibold ln-text">Schema Scan</span>
             </div>
             <p className="text-xs ln-text-muted">Lightweight scan of all schemas and object counts — select which to load.</p>
           </div>
@@ -382,7 +391,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay" onClick={onClose}>
       <div
-        className="rounded-xl shadow-2xl w-full max-w-2xl flex flex-col ln-modal max-h-[85vh]"
+        className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 flex-shrink-0 ln-help-sep-bottom">

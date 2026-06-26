@@ -32,10 +32,10 @@ interface UseGraphologyReturn {
    * @param model - The database model to filter and build from.
    * @param filter - The current UI filter state.
    * @param config - Optional configuration overrides.
-   * @param forceLayout - Whether to force a full Dagre layout even if the overview threshold is hit.
+   * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
    * @returns The total number of nodes in the resulting graph.
    */
-  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, forceLayout?: boolean) => number;
+  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean) => number;
 }
 
 /**
@@ -45,7 +45,7 @@ interface UseGraphologyReturn {
  * This hook implements a high-performance filtering pipeline that runs on every
  * state change. It supports multiple rendering modes:
  * 1. **Full Mode**: Executes the Dagre layout engine for precise positioning.
- * 2. **Overview Mode**: Skips layout and renders nodes at origin to support massive graphs.
+ * 2. **Schema View**: Skips object layout and lets Schema View render the working set.
  * 3. **Pruned Mode**: Rejects rendering entirely if hard limits are exceeded.
  * 
  * The pipeline follows this order: Schema → Type → Exclusion → Isolation → Allowlist.
@@ -61,7 +61,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [filteredCount, setFilteredCount] = useState(0);
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
-  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, forceLayout = false): number => {
+  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false): number => {
     const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
     
@@ -111,28 +111,31 @@ export function useGraphology(): UseGraphologyReturn {
         };
       });
 
-    // Guard 1: hard render limit — skip everything
+    // Guard 1: full-object render limit. Keep the graphology model available for schema
+    // overview, expanded schema view, trace/path, and analysis surfaces; only the full object
+    // React Flow surface is blocked by render-limit mode.
     if (count > config.renderLimit) {
       log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
-      setFlowNodes([]);
-      setFlowEdges([]);
-      setGraph(null);
-      setMetrics(null);
+      const result = buildGraphNoLayout(allowlistFiltered, config);
+      setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
+      setFlowEdges(result.flowEdges);
+      setGraph(result.graph);
+      setMetrics(getGraphMetrics(result.graph));
       setRenderLimitHit(count);
       return count;
     }
 
     setRenderLimitHit(0);
 
-    // Guard 2: overview threshold — build graph for traces/metrics, skip expensive dagre layout.
-    // Bypassed when forceLayout=true (user manually toggled overview→full or drilled down).
-    if (!forceLayout && count > config.overview.threshold) {
+    // Guard 2: schema/object surface. App owns the initial threshold decision on load/reset;
+    // this hook skips layout only when the caller explicitly asks for Schema View.
+    if (skipLayout) {
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
-      log(`[Filter] Overview mode — ${count} nodes (layout skipped)`, 'info');
+      log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
       return count;
     }
 

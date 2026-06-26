@@ -19,6 +19,7 @@ import { useInteractiveTrace } from '../../../src/hooks/useInteractiveTrace';
 import type { CustomNodeData } from '../../../src/components/CustomNode';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import type { DatabaseModel, LineageNode, LineageEdge } from '../../../src/engine/types';
+import { canPruneTraceNode, isManualTraceScopeEdit } from '../../../src/engine/traceScope';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -399,5 +400,155 @@ describe('Suite I — tracedNodes/tracedEdges memoization', () => {
     act(() => { result.current.startTraceImmediate('B'); });
     act(() => { result.current.endTrace(); });
     expect(result.current.tracedNodes).toEqual(FLOW_NODES);
+  });
+
+  it('synthesizes analysis scope when the base object graph is render-limited', () => {
+    const model = makeModel(CHAIN_NODES, CHAIN_EDGES);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(null, [], [], DEFAULT_CONFIG, model, true)
+    );
+
+    act(() => {
+      result.current.applyAnalysisSubset(new Set(['A', 'B']), new Set(['A→B']), 'A', 'hubs');
+    });
+
+    expect(result.current.trace.mode).toBe('analysis');
+    expect(result.current.tracedNodes.map(n => n.id).sort()).toEqual(['A', 'B']);
+    expect(result.current.tracedEdges.map(e => e.id)).toEqual(['A→B']);
+  });
+});
+
+// ─── Suite J — interactive trace add/prune ───────────────────────────────────
+
+describe('Suite J — interactive trace add/prune', () => {
+  it('adds a direct neighbor outside the original BFS trace scope', () => {
+    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
+    const model = makeModel(CHAIN_NODES, CHAIN_EDGES);
+    const flowNodes = makeFlowNodes(['B']);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(graph, flowNodes, [], DEFAULT_CONFIG, model)
+    );
+
+    act(() => { result.current.startTraceConfig('B'); });
+    act(() => { result.current.applyTrace(0, 0); });
+    expect(result.current.trace.tracedNodeIds.has('C')).toBe(false);
+
+    act(() => { result.current.addTraceNeighbor('C'); });
+    expect(result.current.trace.tracedNodeIds.has('C')).toBe(true);
+    expect(result.current.trace.tracedEdgeIds.has('B→C')).toBe(true);
+  });
+
+  it('rejects adding a node that is not a direct trace neighbor', () => {
+    const graph = makeGraph(['A', 'B', 'C', 'D'], CHAIN_EDGES);
+    const model = makeModel(['A', 'B', 'C', 'D'], CHAIN_EDGES);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(graph, makeFlowNodes(['B']), [], DEFAULT_CONFIG, model)
+    );
+
+    act(() => { result.current.startTraceConfig('B'); });
+    act(() => { result.current.applyTrace(0, 0); });
+    act(() => { result.current.addTraceNeighbor('D'); });
+
+    expect(result.current.trace.tracedNodeIds.has('D')).toBe(false);
+    expect(result.current.trace.manualAddedNodeIds.has('D')).toBe(false);
+  });
+
+  it('prunes a non-origin trace node from the rendered scope', () => {
+    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
+    const model = makeModel(CHAIN_NODES, CHAIN_EDGES);
+    const flowNodes = makeFlowNodes(CHAIN_NODES);
+    const flowEdges = [{ id: 'B→C', source: 'B', target: 'C' }];
+    const { result } = renderHook(() =>
+      useInteractiveTrace(graph, flowNodes, flowEdges, DEFAULT_CONFIG, model)
+    );
+
+    act(() => { result.current.startTraceConfig('B'); });
+    act(() => { result.current.applyTrace(0, 1); });
+    expect(result.current.trace.tracedNodeIds.has('C')).toBe(true);
+
+    act(() => { result.current.pruneTraceNode('C'); });
+    expect(result.current.trace.tracedNodeIds.has('C')).toBe(false);
+    expect(result.current.trace.tracedEdgeIds.has('B→C')).toBe(false);
+  });
+
+  it('does not prune the trace origin', () => {
+    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
+    const model = makeModel(CHAIN_NODES, CHAIN_EDGES);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(graph, makeFlowNodes(CHAIN_NODES), [], DEFAULT_CONFIG, model)
+    );
+
+    act(() => { result.current.startTraceConfig('B'); });
+    act(() => { result.current.applyTrace(1, 1); });
+    act(() => { result.current.pruneTraceNode('B'); });
+    expect(result.current.trace.tracedNodeIds.has('B')).toBe(true);
+  });
+
+  it('rejects pruning a connector that would disconnect the trace', () => {
+    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
+    const model = makeModel(CHAIN_NODES, CHAIN_EDGES);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(graph, makeFlowNodes(CHAIN_NODES), [], DEFAULT_CONFIG, model)
+    );
+
+    act(() => { result.current.startTraceConfig('A'); });
+    act(() => { result.current.applyTrace(0, 2); });
+    act(() => { result.current.pruneTraceNode('B'); });
+
+    expect(result.current.trace.tracedNodeIds.has('B')).toBe(true);
+    expect(result.current.trace.manualPrunedNodeIds.has('B')).toBe(false);
+  });
+
+  it('marks connector pruning unsafe when it would disconnect a visible trace node', () => {
+    const graph = makeGraph(['A', 'B', 'C'], [['A', 'B'], ['B', 'C']]);
+    const visible = new Set(['A', 'B', 'C']);
+
+    expect(canPruneTraceNode(graph, 'A', visible, 'B').safe).toBe(false);
+    expect(canPruneTraceNode(graph, 'A', visible, 'C').safe).toBe(true);
+  });
+});
+
+// ─── Suite K — viewport intent for trace edits ───────────────────────────────
+
+describe('Suite K — trace edit viewport intent', () => {
+  it('classifies manual trace add as viewport-preserving', () => {
+    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
+    const model = makeModel(CHAIN_NODES, CHAIN_EDGES);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(graph, makeFlowNodes(['B']), [], DEFAULT_CONFIG, model)
+    );
+
+    act(() => { result.current.startTraceConfig('B'); });
+    act(() => { result.current.applyTrace(0, 0); });
+    const before = result.current.trace;
+    act(() => { result.current.addTraceNeighbor('C'); });
+
+    expect(isManualTraceScopeEdit(before, result.current.trace)).toBe(true);
+  });
+
+  it('classifies manual trace prune as viewport-preserving', () => {
+    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
+    const model = makeModel(CHAIN_NODES, CHAIN_EDGES);
+    const { result } = renderHook(() =>
+      useInteractiveTrace(graph, makeFlowNodes(CHAIN_NODES), [], DEFAULT_CONFIG, model)
+    );
+
+    act(() => { result.current.startTraceConfig('B'); });
+    act(() => { result.current.applyTrace(0, 1); });
+    const before = result.current.trace;
+    act(() => { result.current.pruneTraceNode('C'); });
+
+    expect(isManualTraceScopeEdit(before, result.current.trace)).toBe(true);
+  });
+
+  it('does not classify a fresh trace or depth change as viewport-preserving', () => {
+    const graph = makeGraph(CHAIN_NODES, CHAIN_EDGES);
+    const { result } = renderHook(() => useInteractiveTrace(graph, [], []));
+
+    const before = result.current.trace;
+    act(() => { result.current.startTraceConfig('B'); });
+    act(() => { result.current.applyTrace(0, 1); });
+
+    expect(isManualTraceScopeEdit(before, result.current.trace)).toBe(false);
   });
 });

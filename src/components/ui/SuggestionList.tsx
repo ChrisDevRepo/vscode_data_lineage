@@ -17,6 +17,11 @@ interface SuggestionListProps {
   style?: CSSProperties;
   /** Nodes that exist in the model but are not visible in the current filtered view. */
   otherSuggestions?: AutocompleteNode[];
+  /**
+   * Nodes in the working set that are currently collapsed inside a schema cluster.
+   * Selecting one uses the same search/navigation callback as other suggestions.
+   */
+  collapsedSuggestions?: AutocompleteNode[];
 }
 
 function SuggestionRow({
@@ -57,7 +62,7 @@ function SuggestionRow({
         </div>
       </Tooltip>
       {dimmed && (
-        <Tooltip content="Not visible in current view">
+        <Tooltip content="Not in Current Filter">
           <span className="text-[10px] ln-text-dim select-none flex-shrink-0">{'\u2298'}</span>
         </Tooltip>
       )}
@@ -66,6 +71,11 @@ function SuggestionRow({
   );
 }
 
+/**
+ * Renders the keyboard-navigable autocomplete suggestion list.
+ *
+ * @returns The suggestion listbox, or `null` when all partitions are empty.
+ */
 export function SuggestionList({
   suggestions,
   selectedIndex,
@@ -77,8 +87,11 @@ export function SuggestionList({
   portal = false,
   style,
   otherSuggestions = [],
+  collapsedSuggestions = [],
 }: SuggestionListProps) {
-  if (suggestions.length === 0 && otherSuggestions.length === 0) return null;
+  const total = suggestions.length + collapsedSuggestions.length + otherSuggestions.length;
+  if (total === 0) return null;
+  const showVisibleHeader = suggestions.length > 0 && (collapsedSuggestions.length > 0 || otherSuggestions.length > 0);
 
   return (
     <div
@@ -87,6 +100,11 @@ export function SuggestionList({
       className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-y-auto ln-dropdown ${className}`}
       style={{ ...style, maxHeight: 320 }}
     >
+      {showVisibleHeader && (
+        <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim">
+          Visible
+        </div>
+      )}
       {suggestions.map((node, index) => (
         <SuggestionRow
           key={node.id}
@@ -98,16 +116,38 @@ export function SuggestionList({
           renderAction={renderAction}
         />
       ))}
+      {collapsedSuggestions.length > 0 && (
+        <>
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim border-t ln-border">
+            In Schema Cluster {'\u229e'}
+          </div>
+          {collapsedSuggestions.map((node, i) => (
+            <SuggestionRow
+              key={node.id}
+              node={node}
+              index={suggestions.length + i}
+              selectedIndex={selectedIndex}
+              onSelect={onSelect}
+              onHover={onHover}
+              renderAction={() => (
+                <Tooltip content={`Expand schema ${node.schema} to view`}>
+                  <span className="text-[10px] ln-text-link select-none flex-shrink-0">{'\u229e'}</span>
+                </Tooltip>
+              )}
+            />
+          ))}
+        </>
+      )}
       {otherSuggestions.length > 0 && (
         <>
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim border-t ln-border">
-            Not in current view {'\u2298'}
+            Not in Current Filter {'\u2298'}
           </div>
           {otherSuggestions.map((node, i) => (
             <SuggestionRow
               key={node.id}
               node={node}
-              index={suggestions.length + i}
+              index={suggestions.length + collapsedSuggestions.length + i}
               selectedIndex={selectedIndex}
               onSelect={onSelect}
               onHover={onHover}

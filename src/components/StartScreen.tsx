@@ -97,6 +97,9 @@ function projectTooltip(project: Project): ReactNode {
   );
 }
 
+/**
+ * Renders the landing screen shown before a model is loaded.
+ */
 export const StartScreen = memo(function StartScreen({
   projects,
   lastOpenedId,

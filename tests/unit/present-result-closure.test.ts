@@ -2,7 +2,7 @@
  * Closed-graph validation guard for present_result add/prune updates.
  */
 
-import { findDisconnectedViewNodes, orderAndAssemble, validatePresentResult } from '../../src/ai/tools/tools';
+import { findDisconnectedViewNodes, orderAndAssemble, validatePresentResult } from '../../src/ai/tools/presentResult';
 import { assert, resetCounters, printSummary } from './helpers/testUtils';
 
 console.log('Present Result Closure');

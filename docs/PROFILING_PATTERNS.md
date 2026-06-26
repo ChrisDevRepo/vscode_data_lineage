@@ -1,12 +1,12 @@
 # Table Profiling — SQL Patterns
 
-This file documents every SQL pattern the profiling engine ([`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts)) generates. Profiling fires only on explicit user action and emits the full query to the **Data Lineage Viz** Output channel — there is no hidden background work.
+This file documents every SQL pattern the profiling engine ([`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts)) generates. Profiling fires only on explicit user action. The **Data Lineage Viz** Output channel logs profiling lifecycle events and a 300-character SQL preview for query hygiene — there is no hidden background work.
 
 ## Prerequisites
 
-- **Permissions**: `SELECT` on profiled tables, plus `db_datareader` (or equivalent) for row counts via `sys.partitions`.
+- **Permissions**: `SELECT` on profiled tables, plus catalog visibility for row counts via `sys.partitions`.
 - **Connection**: Profiling reuses or opens a separate database connection on first click; it stays alive for subsequent profiling and closes on panel dispose, extension deactivation, or query error.
-- **Output channel**: `View → Output → Data Lineage Viz`. Set the channel log level to **Debug** (gear → Set Log Level → Debug) to see the profiling SQL line-by-line.
+- **Output channel**: `View → Output → Data Lineage Viz`. Set the channel log level to **Debug** (gear → Set Log Level → Debug) to see `[Stats]` lifecycle events and `[DB]` query previews.
 
 ## How it works
 
@@ -22,7 +22,7 @@ Nothing fires automatically. With `tableStatistics.enabled = false`, the statist
 - Opens on first profiling click (reuses stored credentials or prompts via the MSSQL extension).
 - Stays alive for subsequent clicks across tables.
 - Closes on panel dispose, extension deactivation, or query error.
-- Every executed SQL is logged to the Output channel via the `[Stats]` and `[DB]` categories at DEBUG level.
+- Every executed profiling query is logged to the Output channel via the `[Stats]` and `[DB]` categories at DEBUG level; SQL text is previewed, not dumped in full.
 
 ## Display
 
@@ -64,7 +64,7 @@ Non-profilable columns are grouped at the bottom under `Not profiled (N)` with d
 
 All settings under `dataLineageViz.tableStatistics.*`. Search "dataLineageViz" in VS Code Settings (`Ctrl+,`). Defaults are taken from [`package.json`](../package.json):
 
-These are the configured defaults. If a setting is missing at runtime, the engine falls back to:
+These are the configured defaults. If the VS Code configuration API returns a missing value, the extension host has a defensive fallback of:
 `sampleThreshold = 500000`, `sampleSize = 1000`, `maxColumns = 100`, `queryTimeout = 60`.
 
 | Setting | Type | Default | Description |

@@ -7,10 +7,20 @@ import { readFileSync } from 'fs';
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 import { extractDacpac } from '../../src/engine/dacpacExtractor';
-import { buildGraph, traceNode, traceNodeWithLevels, getGraphMetrics, buildSchemaEdges, buildSchemaGraph } from '../../src/engine/graphBuilder';
+import {
+  buildGraph,
+  traceNode,
+  traceNodeWithLevels,
+  getGraphMetrics,
+  buildSchemaGraph,
+  buildGraphologyGraph,
+  buildExpandedSchemaViewGraph,
+} from '../../src/engine/graphBuilder';
+import { projectSchemaQuotient } from '../../src/engine/schemaProjection';
 import { buildModel } from '../../src/engine/modelBuilder';
 import type { DatabaseModel } from '../../src/engine/types';
-import { assert, makeGraph, testPath, loadParseRules, printSummary, loadAdventureWorksModel } from './helpers/testUtils';
+import { getExternalNodeColor } from '../../src/utils/schemaColors';
+import { assert, assertEq, makeGraph, testPath, loadParseRules, printSummary, loadAdventureWorksModel } from './helpers/testUtils';
 
 // ─── Graph Builder ──────────────────────────────────────────────────────────
 
@@ -679,10 +689,10 @@ function testClrMethodVirtualNodeSuppression() {
   assert(dbNodesReal[0].externalDatabase === 'otherdb', 'CLR-NonCLR: correct database name stored');
 }
 
-// ─── buildSchemaEdges ────────────────────────────────────────────────────────
+// ─── projectSchemaQuotient edges ─────────────────────────────────────────────
 
-function testBuildSchemaEdges() {
-  console.log('\n── buildSchemaEdges ──');
+function testSchemaQuotientEdges() {
+  console.log('\n── projectSchemaQuotient edges ──');
 
   // Model: dbo.ProcA (procedure) writes to sales.TableB, sales.ProcC reads from dbo.TableD
   const nodes: DatabaseModel['nodes'] = [
@@ -692,52 +702,42 @@ function testBuildSchemaEdges() {
     { id: '[sales].[procc]', name: 'ProcC', schema: 'sales', type: 'procedure', label: 'ProcC', objectType: 'P' } as DatabaseModel['nodes'][number],
   ];
   const edges: DatabaseModel['edges'] = [
-    { source: '[dbo].[proca]', target: '[sales].[tableb]', edgeType: 'write' },
-    { source: '[sales].[procc]', target: '[dbo].[tabled]', edgeType: 'read' },
+    { source: '[dbo].[proca]', target: '[sales].[tableb]', type: 'body' },
+    { source: '[sales].[procc]', target: '[dbo].[tabled]', type: 'body' },
   ];
   const model = { nodes, edges, schemas: [], catalog: new Map(), neighborIndex: new Map() } as unknown as DatabaseModel;
-  const allSchemas = new Set(['dbo', 'sales']);
+  const graph = buildGraphologyGraph(model);
 
-  const result = buildSchemaEdges(model, allSchemas);
+  const result = projectSchemaQuotient(graph).edges;
 
-  // Two cross-schema edges between dbo and sales → bidirectional, merged into one canonical entry
-  let totalEntries = 0;
-  for (const targets of result.values()) totalEntries += targets.size;
-  assert(totalEntries === 1, `Bidirectional dbo↔sales edges collapse to 1 canonical entry (got ${totalEntries})`);
+  assert(result.length === 1, `Bidirectional dbo↔sales edges collapse to 1 projected edge (got ${result.length})`);
 
-  // The merged count should be 2 (1 dbo→sales + 1 sales→dbo)
-  let foundCount = false;
-  for (const targets of result.values()) {
-    for (const count of targets.values()) {
-      if (count === 2) foundCount = true;
-    }
-  }
-  assert(foundCount, 'Merged bidirectional edge count = 2');
+  const projected = result[0];
+  assert(projected.bidirectional, 'Projected schema edge preserves bidirectional metadata');
+  assertEq(projected.count, 1, 'Forward count is preserved separately');
+  assertEq(projected.reverseCount, 1, 'Reverse count is preserved separately');
+  assertEq(projected.totalCount, 2, 'Total bidirectional edge count = 2');
 
-  // visibleSchemas filter: only 'dbo' visible — no cross-schema edges at all
-  const dboOnly = new Set(['dbo']);
-  const filtered = buildSchemaEdges(model, dboOnly);
-  let filteredEntries = 0;
-  for (const targets of filtered.values()) filteredEntries += targets.size;
-  // sales is not in visibleSchemas, edges referencing sales schema are still counted
-  // (edges where at least one side is visible — dbo side IS visible)
-  // Actually the filter keeps edges where at least one side is in visibleSchemas.
-  // Re-check the implementation: it skips only if BOTH sides are not in visibleSchemas.
-  // dbo→sales: dbo is visible → kept. sales→dbo: dbo is visible → kept.
-  // But only 'dbo' in result nodes means sales nodes may still appear as targets.
-  // The key test: same-schema edges are dropped (srcSchema === tgtSchema).
+  const dboNodeIds = new Set(nodes.filter(n => n.schema === 'dbo').map(n => n.id));
+  const dboOnlyModel = {
+    ...model,
+    nodes: nodes.filter(n => dboNodeIds.has(n.id)),
+    edges: edges.filter(e => dboNodeIds.has(e.source) && dboNodeIds.has(e.target)),
+  };
+  const filtered = projectSchemaQuotient(buildGraphologyGraph(dboOnlyModel)).edges;
+  assertEq(filtered.length, 0, 'Filtered working graph with only dbo has no cross-schema edges');
+
+  // Same-schema edges are dropped (srcSchema === tgtSchema).
   const dboOnlySameSchema: DatabaseModel['nodes'] = [
     { id: '[dbo].[proca]', name: 'ProcA', schema: 'dbo', type: 'procedure', label: 'ProcA', objectType: 'P' } as DatabaseModel['nodes'][number],
     { id: '[dbo].[tabled]', name: 'TableD', schema: 'dbo', type: 'table', label: 'TableD', objectType: 'U' } as DatabaseModel['nodes'][number],
   ];
   const sameSchemaEdges: DatabaseModel['edges'] = [
-    { source: '[dbo].[proca]', target: '[dbo].[tabled]', edgeType: 'read' },
+    { source: '[dbo].[proca]', target: '[dbo].[tabled]', type: 'body' },
   ];
   const sameSchemaModel = { nodes: dboOnlySameSchema, edges: sameSchemaEdges, schemas: [], catalog: new Map(), neighborIndex: new Map() } as unknown as DatabaseModel;
-  const sameResult = buildSchemaEdges(sameSchemaModel, new Set(['dbo']));
-  let sameEntries = 0;
-  for (const targets of sameResult.values()) sameEntries += targets.size;
-  assert(sameEntries === 0, `Same-schema edges are not included in schema edge map (got ${sameEntries})`);
+  const sameResult = projectSchemaQuotient(buildGraphologyGraph(sameSchemaModel)).edges;
+  assert(sameResult.length === 0, `Same-schema edges are not included in schema edge map (got ${sameResult.length})`);
 }
 
 // ─── buildSchemaGraph ────────────────────────────────────────────────────────
@@ -745,21 +745,242 @@ function testBuildSchemaEdges() {
 function testBuildSchemaGraph(model: DatabaseModel) {
   console.log('\n── buildSchemaGraph ──');
 
-  const visibleSchemas = new Set(model.schemas.map(s => s.name));
-  const { nodes, edges } = buildSchemaGraph(model, visibleSchemas);
+  const graph = buildGraphologyGraph(model);
+  const { nodes, edges } = buildSchemaGraph(graph);
 
   assert(nodes.length === model.schemas.length, `Schema node count matches: ${nodes.length}`);
 
-  // visibleSchemas filter: only one schema
+  // Filtered working graph: only one schema.
   const firstSchema = model.schemas[0].name;
-  const { nodes: singleNodes } = buildSchemaGraph(model, new Set([firstSchema]));
+  const firstSchemaIds = new Set(model.nodes.filter(n => n.schema === firstSchema).map(n => n.id));
+  const firstSchemaModel = {
+    ...model,
+    nodes: model.nodes.filter(n => firstSchemaIds.has(n.id)),
+    edges: model.edges.filter(e => firstSchemaIds.has(e.source) && firstSchemaIds.has(e.target)),
+  };
+  const { nodes: singleNodes } = buildSchemaGraph(buildGraphologyGraph(firstSchemaModel));
   assert(singleNodes.length === 1, `Single-schema filter produces 1 node`);
+
+  const filteredModel = {
+    ...model,
+    nodes: model.nodes.filter(n => n.schema === firstSchema && n.type === 'table').slice(0, 1),
+    edges: [],
+  };
+  const { nodes: filteredNodes } = buildSchemaGraph(buildGraphologyGraph(filteredModel));
+  assertEq(filteredNodes.length, 1, 'Schema overview uses the filtered working graph schema set');
+  assertEq(filteredNodes[0].data.objectCount, 1, 'Schema overview object count uses only filtered graph nodes');
+  assertEq(filteredNodes[0].data.typeBreakdown.table, 1, 'Schema overview type breakdown uses only filtered graph nodes');
 
   // Edges reference valid schema node ids
   const nodeIds = new Set(nodes.map(n => n.id));
   for (const e of edges) {
     assert(nodeIds.has(e.source), `Edge source ${e.source} is valid`);
     assert(nodeIds.has(e.target), `Edge target ${e.target} is valid`);
+  }
+
+  const bidiNodes: DatabaseModel['nodes'] = [
+    { id: '[a].[p]', name: 'p', schema: 'a', fullName: '[a].[p]', type: 'procedure' },
+    { id: '[b].[t]', name: 't', schema: 'b', fullName: '[b].[t]', type: 'table' },
+  ];
+  const bidiModel = {
+    nodes: bidiNodes,
+    edges: [
+      { source: '[a].[p]', target: '[b].[t]', type: 'body' },
+      { source: '[b].[t]', target: '[a].[p]', type: 'body' },
+    ],
+    schemas: [],
+    catalog: {},
+    neighborIndex: {},
+  } satisfies DatabaseModel;
+  const { edges: bidiEdges } = buildSchemaGraph(buildGraphologyGraph(bidiModel));
+  assertEq(bidiEdges.length, 1, 'Schema View emits one edge for a bidirectional schema pair');
+  assertEq(bidiEdges[0].label, '⇄ 2', 'Schema View labels bidirectional schema edge with total count');
+  assert(!!bidiEdges[0].markerStart, 'Schema View renders reverse marker for bidirectional schema edge');
+}
+
+// ─── buildExpandedSchemaViewGraph ────────────────────────────────────────────────
+
+function testBuildExpandedSchemaViewGraph() {
+  console.log('\n── buildExpandedSchemaViewGraph ──');
+
+  const nodes: DatabaseModel['nodes'] = [
+    { id: '[sales].[orders]', name: 'Orders', schema: 'sales', fullName: '[sales].[Orders]', type: 'table' },
+    { id: '[sales].[customer]', name: 'Customer', schema: 'sales', fullName: '[sales].[Customer]', type: 'table' },
+    { id: '[ops].[loadorders]', name: 'LoadOrders', schema: 'ops', fullName: '[ops].[LoadOrders]', type: 'procedure' },
+    { id: '[audit].[auditorders]', name: 'AuditOrders', schema: 'audit', fullName: '[audit].[AuditOrders]', type: 'table' },
+    { id: '[ref].[lookup]', name: 'Lookup', schema: 'ref', fullName: '[ref].[Lookup]', type: 'table' },
+  ];
+  const edges: DatabaseModel['edges'] = [
+    { source: '[sales].[customer]', target: '[sales].[orders]', type: 'body' },
+    { source: '[ops].[loadorders]', target: '[sales].[orders]', type: 'body' },
+    { source: '[sales].[orders]', target: '[audit].[auditorders]', type: 'body' },
+    { source: '[ops].[loadorders]', target: '[audit].[auditorders]', type: 'body' },
+    { source: '[audit].[auditorders]', target: '[ops].[loadorders]', type: 'body' },
+    { source: '[audit].[auditorders]', target: '[ref].[lookup]', type: 'body' },
+  ];
+  const model = {
+    nodes,
+    edges,
+    schemas: [
+      { name: 'sales', nodeCount: 2, types: { table: 2, view: 0, procedure: 0, function: 0, external: 0 } },
+      { name: 'ops', nodeCount: 1, types: { table: 0, view: 0, procedure: 1, function: 0, external: 0 } },
+      { name: 'audit', nodeCount: 1, types: { table: 1, view: 0, procedure: 0, function: 0, external: 0 } },
+      { name: 'ref', nodeCount: 1, types: { table: 1, view: 0, procedure: 0, function: 0, external: 0 } },
+    ],
+    catalog: {},
+    neighborIndex: {},
+  } satisfies DatabaseModel;
+  const graph = buildGraphologyGraph(model);
+  const fullGraph = buildGraph(model);
+
+  const result = buildExpandedSchemaViewGraph(graph, new Set(['sales']), '[sales].[orders]');
+  const nodeById = new Map(result.flowNodes.map((n) => [n.id, n]));
+  const fullGraphNodeById = new Map(fullGraph.flowNodes.map((n) => [n.id, n]));
+  const salesObjects = result.flowNodes.filter((n) => n.type === 'lineageNode' && n.data.schema === 'sales');
+  assert(salesObjects.length === 2, `Expanded schema view: expanded sales schema renders two object nodes (got ${salesObjects.length})`);
+  assert(!nodeById.has('[ops].[loadorders]'), 'Expanded schema view: collapsed ops object is not rendered individually');
+  assertEq(nodeById.get('[sales].[orders]')?.data.label, fullGraphNodeById.get('[sales].[orders]')?.data.label, 'Expanded schema view: lineage-node label matches full graph');
+  assertEq(nodeById.get('[sales].[orders]')?.data.fullName, fullGraphNodeById.get('[sales].[orders]')?.data.fullName, 'Expanded schema view: lineage-node full name matches full graph');
+  assertEq(nodeById.get('[sales].[orders]')?.data.objectType, fullGraphNodeById.get('[sales].[orders]')?.data.objectType, 'Expanded schema view: lineage-node type matches full graph');
+  assertEq(nodeById.get('[sales].[orders]')?.data.inDegree, fullGraphNodeById.get('[sales].[orders]')?.data.inDegree, 'Expanded schema view: lineage-node indegree matches full graph');
+  assertEq(nodeById.get('[sales].[orders]')?.data.outDegree, fullGraphNodeById.get('[sales].[orders]')?.data.outDegree, 'Expanded schema view: lineage-node outdegree matches full graph');
+
+  const opsCluster = result.flowNodes.find((n) => n.type === 'schemaNode' && n.data.schemaName === 'ops');
+  const auditCluster = result.flowNodes.find((n) => n.type === 'schemaNode' && n.data.schemaName === 'audit');
+  const refCluster = result.flowNodes.find((n) => n.type === 'schemaNode' && n.data.schemaName === 'ref');
+  assert(!!opsCluster && opsCluster.data.isExpandedSchemaViewCluster === true, 'Expanded schema view: collapsed ops schema node is flagged as a schema cluster');
+  assert(!!auditCluster && auditCluster.data.isExpandedSchemaViewCluster === true, 'Expanded schema view: collapsed audit schema node is flagged as a schema cluster');
+  assert(!!refCluster && refCluster.data.isExpandedSchemaViewCluster === true, 'Expanded schema view: collapsed ref schema node is flagged as a schema cluster');
+
+  const bridgeFromOps = result.flowEdges.find((e) => e.source === opsCluster?.id && e.target === '[sales].[orders]');
+  const bridgeToAudit = result.flowEdges.find((e) => e.source === '[sales].[orders]' && e.target === auditCluster?.id);
+  const collapsedClusterEdges = result.flowEdges.filter((e) => e.source.startsWith('__expandedschemaviewcluster__') && e.target.startsWith('__expandedschemaviewcluster__'));
+  const bidirectionalClusterEdges = collapsedClusterEdges.filter((e) => e.id.includes('↔'));
+  const collapsedClusterEdge = bidirectionalClusterEdges.find((e) => e.source === auditCluster?.id && e.target === opsCluster?.id);
+  const unidirectionalClusterEdge = collapsedClusterEdges.find((e) => e.source === auditCluster?.id && e.target === refCluster?.id);
+  assert(!!bridgeFromOps, 'Expanded schema view: emits bridge edge from collapsed upstream schema cluster');
+  assert(!!bridgeToAudit, 'Expanded schema view: emits bridge edge to collapsed downstream schema cluster');
+  assertEq(bidirectionalClusterEdges.length, 1, 'Expanded schema view: bidirectional collapsed schema pair emits one canonical edge');
+  assert(!!collapsedClusterEdge, 'Expanded schema view: preserves aggregate edges between collapsed schema clusters');
+  assertEq(collapsedClusterEdge?.label, '⇄ 2', 'Expanded schema view: bidirectional collapsed schema edge label totals both directions');
+  assert(!!collapsedClusterEdge?.markerStart, 'Expanded schema view: bidirectional collapsed schema edge has a reverse marker');
+  assert(!!unidirectionalClusterEdge, 'Expanded schema view: unidirectional collapsed schema edge is preserved');
+  assertEq(unidirectionalClusterEdge?.label, '1', 'Expanded schema view: unidirectional collapsed schema edge keeps one-way count');
+  assert(nodeById.get('[sales].[orders]')?.data.highlighted === true, 'Expanded schema view: focus node is highlighted when focusNodeId is set');
+
+  const expandedSalesOps = buildExpandedSchemaViewGraph(graph, new Set(['sales', 'ops']), '[sales].[orders]');
+  const expandedNodeById = new Map(expandedSalesOps.flowNodes.map((n) => [n.id, n]));
+  assert(!!expandedNodeById.get('[ops].[loadorders]'), 'Expanded schema view: additive expansion renders the second schema as objects');
+  assert(!!expandedSalesOps.flowEdges.find((e) => e.source === '[ops].[loadorders]' && e.target === '[sales].[orders]'),
+    'Expanded schema view: edges between expanded schemas render as real object edges');
+  const additiveAuditCluster = expandedSalesOps.flowNodes.find((n) => n.type === 'schemaNode' && n.data.schemaName === 'audit');
+  assert(!!additiveAuditCluster, 'Expanded schema view: schemas outside the expanded set remain collapsed');
+  assert(!!expandedSalesOps.flowEdges.find((e) => e.source === '[ops].[loadorders]' && e.target === additiveAuditCluster?.id),
+    'Expanded schema view: expanded objects bridge to remaining collapsed schema clusters');
+
+  const noFocus = buildExpandedSchemaViewGraph(graph, new Set(['sales']), null);
+  assert(!noFocus.flowNodes.some((n) => n.type === 'lineageNode' && n.data.highlighted === true), 'Expanded schema view: no object is highlighted without focusNodeId');
+
+  const hiddenClusters = buildExpandedSchemaViewGraph(
+    graph,
+    new Set(['sales']),
+    null,
+    undefined,
+    { hideClusters: true },
+  );
+  assert(!hiddenClusters.flowNodes.some((n) => n.type === 'schemaNode' && !n.hidden), 'Expanded schema view: hidden clusters are not rendered as schema nodes');
+  assert(!hiddenClusters.flowEdges.some((e) => (e.id.startsWith('__bridge__') || e.id.startsWith('__clusteredge__')) && !e.hidden), 'Expanded schema view: hidden clusters remove bridge and cluster edges');
+  assert(!!hiddenClusters.flowEdges.find((e) => e.source === '[sales].[customer]' && e.target === '[sales].[orders]'),
+    'Expanded schema view: hidden clusters preserve real edges between expanded object nodes');
+
+  {
+    const externalNode = { id: '[ext].[externalfile]', name: 'ExternalFile', schema: 'ext', fullName: '[ext].[ExternalFile]', type: 'external' as const, externalType: 'file' as const };
+    const modelWithExternal = {
+      ...model,
+      nodes: [...nodes, externalNode],
+      edges: [...edges, { source: externalNode.id, target: '[sales].[orders]', type: 'body' as const }],
+      schemas: [
+        ...model.schemas,
+        { name: 'ext', nodeCount: 1, types: { table: 0, view: 0, procedure: 0, function: 0, external: 1 } },
+      ],
+    } satisfies DatabaseModel;
+    const graphWithExternal = buildGraphologyGraph(modelWithExternal);
+    const schemaOverview = buildSchemaGraph(graphWithExternal);
+    const extOverviewCluster = schemaOverview.nodes.find((n) => n.data.schemaName === 'ext');
+    assert(!!extOverviewCluster, 'External-only schema overview cluster is rendered');
+    assert(extOverviewCluster?.data.isExternalOnly === true, 'External-only schema overview cluster is marked external-only');
+    assertEq(extOverviewCluster?.data.color, getExternalNodeColor(), 'External-only schema overview cluster uses external color');
+
+    const expandedWithExternal = buildExpandedSchemaViewGraph(graphWithExternal, new Set(['sales', 'ext']), '[sales].[orders]');
+    const expandedExternalNode = expandedWithExternal.flowNodes.find((n) => n.id === externalNode.id);
+    assert(!!expandedExternalNode, 'Expanded Schema View can expand external-only ext schema without crashing');
+    assertEq(expandedExternalNode?.data.schemaColor, getExternalNodeColor(), 'Expanded external object uses external color outside schema palette');
+  }
+
+  // ── Scenario A: I4 — every individual node that connects to a collapsed cluster gets its own bridge ──
+  // Before the fix, only ONE bridge existed per (expanded schema × collapsed schema) pair, anchored to the
+  // first individual node found. The second individual node connecting to the same cluster was silently
+  // dropped — no bridge edge, node appeared as orphan despite having model edges.
+  {
+    const edgesA: DatabaseModel['edges'] = [
+      ...edges,
+      { source: '[sales].[customer]', target: '[audit].[auditorders]', type: 'body' },
+    ];
+    const modelA = { ...model, edges: edgesA };
+    const graphA = buildGraphologyGraph(modelA);
+    const resultA = buildExpandedSchemaViewGraph(graphA, new Set(['sales']), null);
+    const auditClusterA = resultA.flowNodes.find((n) => n.type === 'schemaNode' && n.data.schemaName === 'audit');
+    const bridgeOrdersToAudit = resultA.flowEdges.find((e) => e.source === '[sales].[orders]' && e.target === auditClusterA?.id);
+    const bridgeCustomerToAudit = resultA.flowEdges.find((e) => e.source === '[sales].[customer]' && e.target === auditClusterA?.id);
+    assert(!!bridgeOrdersToAudit, 'I4 Scenario A: [sales].[orders] has its own bridge to audit cluster');
+    assert(!!bridgeCustomerToAudit, 'I4 Scenario A: [sales].[customer] has its own bridge to audit cluster (was orphaned before fix)');
+  }
+
+  // ── Scenario B: I11 — bridge count equals number of edges from that individual node to the cluster ──
+  {
+    const nodesB: DatabaseModel['nodes'] = [
+      ...nodes,
+      { id: '[audit].[auditlog]', name: 'AuditLog', schema: 'audit', fullName: '[audit].[AuditLog]', type: 'table' },
+    ];
+    const edgesB: DatabaseModel['edges'] = [
+      ...edges,
+      { source: '[sales].[orders]', target: '[audit].[auditlog]', type: 'body' },
+    ];
+    const modelB = { ...model, nodes: nodesB, edges: edgesB };
+    const graphB = buildGraphologyGraph(modelB);
+    const resultB = buildExpandedSchemaViewGraph(graphB, new Set(['sales']), null);
+    const auditClusterB = resultB.flowNodes.find((n) => n.type === 'schemaNode' && n.data.schemaName === 'audit');
+    const ordersBridge = resultB.flowEdges.find((e) => e.source === '[sales].[orders]' && e.target === auditClusterB?.id);
+    assertEq(ordersBridge?.label, '2', 'I11 Scenario B: bridge count = 2 when one individual node has two edges to the same collapsed cluster');
+  }
+
+  // ── Scenario C: I4 — upstream bridge: collapsed cluster → individual node ──
+  {
+    const edgesC: DatabaseModel['edges'] = [
+      ...edges,
+      { source: '[ref].[lookup]', target: '[sales].[orders]', type: 'body' },
+    ];
+    const modelC = { ...model, edges: edgesC };
+    const graphC = buildGraphologyGraph(modelC);
+    const resultC = buildExpandedSchemaViewGraph(graphC, new Set(['sales']), null);
+    const refClusterC = resultC.flowNodes.find((n) => n.type === 'schemaNode' && n.data.schemaName === 'ref');
+    const upstreamBridge = resultC.flowEdges.find((e) => e.source === refClusterC?.id && e.target === '[sales].[orders]');
+    assert(!!upstreamBridge, 'I4 Scenario C: upstream bridge from collapsed ref cluster to individual [sales].[orders] exists');
+  }
+
+  // ── Scenario D: I8 — fully expanded: no bridges, no cluster nodes (idempotence) ──
+  {
+    const allExpanded = buildExpandedSchemaViewGraph(graph, new Set(['sales', 'ops', 'audit', 'ref']), null);
+    const hasBridges = allExpanded.flowEdges.some((e) => e.id.startsWith('__bridge__'));
+    const hasClusters = allExpanded.flowNodes.some((n) => n.type === 'schemaNode');
+    assert(!hasBridges, 'I8 Scenario D: no bridge edges when all schemas are individually expanded');
+    assert(!hasClusters, 'I8 Scenario D: no cluster nodes when all schemas are individually expanded');
+  }
+
+  // ── Scenario E: I5 — no self-loops in any configuration ──
+  {
+    const selfLoopFree = result.flowEdges.every((e) => e.source !== e.target);
+    assert(selfLoopFree, 'I5 Scenario E: no self-loop edges in expanded schema view output');
   }
 }
 
@@ -773,8 +994,9 @@ async function main() {
     const model = await loadAdventureWorksModel();
 
     await testGraphBuilder(model);
-    testBuildSchemaEdges();
+    testSchemaQuotientEdges();
     testBuildSchemaGraph(model);
+    testBuildExpandedSchemaViewGraph();
     testTraceNoSiblings();
     testBidirectionalTrace();
     await testSynapseTrace();

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { OBJECT_TYPES } from '../types';
 
 /**
  * ─── Bridge Contract ────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ import { z } from 'zod';
  * const type = ObjectTypeSchema.parse('table');
  * ```
  */
-export const ObjectTypeSchema = z.enum(['table', 'view', 'procedure', 'function', 'external']);
+export const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
 /**
  * Zod schema mirroring the runtime {@link import('../types').ColumnDef} shape.
@@ -182,6 +183,19 @@ export const SerializedFilterStateSchema = z.object({
   allowlistNodeIds: z.array(z.string()).optional(),
 });
 
+const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
+
+const AIHighlightGroupSchema = z.object({
+  label: z.string(),
+  color: AIHighlightColorSchema,
+  nodeIds: z.array(z.string()),
+});
+
+const AINodeTextSchema = z.object({
+  nodeId: z.string(),
+  text: z.string(),
+});
+
 /**
  * Zod schema defining AI-generated metadata for enhancing the lineage graph UI.
  *
@@ -193,19 +207,9 @@ export const AIViewMetadataSchema = z.object({
   description: z.string().optional(),
   createdAt: z.string(),
   modelName: z.string(),
-  highlightGroups: z.array(z.object({
-    label: z.string(),
-    color: z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']),
-    nodeIds: z.array(z.string()),
-  })),
-  badges: z.array(z.object({
-    nodeId: z.string(),
-    text: z.string(),
-  })),
-  notes: z.array(z.object({
-    nodeId: z.string(),
-    text: z.string(),
-  })).optional(),
+  highlightGroups: z.array(AIHighlightGroupSchema),
+  badges: z.array(AINodeTextSchema),
+  notes: z.array(AINodeTextSchema).optional(),
   layoutDirection: z.enum(['LR', 'TB']).optional(),
   /** Column trace edges. Each edge carries the analyzing hop node plus source/destination so every result node can show column flow data. Only present during CT sessions. */
   columnAspect: z.object({
@@ -271,7 +275,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('last-dacpac-gone') }),
   z.object({ type: z.literal('mssql-status'), available: z.boolean() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
-  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.string() }),
+  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
   z.object({ type: z.literal('table-stats-error'), message: z.string() }),
   z.object({ type: z.literal('auto-visualize-start') }),
   z.object({
@@ -280,9 +284,9 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
     stack: z.string().optional(),
     componentStack: z.string().optional(),
     source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
     timestamp: z.number().optional(),
   }),
-  z.object({ type: z.literal('toggle-overview') }),
 ]);
 
 /**
@@ -306,28 +310,41 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('open-dacpac') }),
   z.object({ type: z.literal('load-project'), id: z.string() }),
+  // `project` is validated at the handler by `isValidProject` (runtime guard) before it is
+  // persisted; the connection payload carries deep MS-SQL types we deliberately keep generic here.
   z.object({ type: z.literal('save-project'), project: z.any() }),
   z.object({ type: z.literal('delete-project'), id: z.string() }),
   z.object({ type: z.literal('load-demo') }),
   z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
   z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
+  // `uiState` is a structurally-accessed passthrough buffer mirrored verbatim onto the session for
+  // debug dumps; the webview owns its shape. `renderState` is stored opaquely and cast at the dump
+  // site, so `unknown` (not `any`) keeps it from leaking untyped access elsewhere.
   z.object({ type: z.literal('filter-changed'), uiState: z.any() }),
+  z.object({ type: z.literal('render-state'), renderState: z.unknown() }),
   z.object({ type: z.literal('db-connect') }),
   z.object({ type: z.literal('check-mssql') }),
-  z.object({ type: z.literal('save-view'), projectId: z.string(), profile: z.any() }),
+  // Validate the persistence-critical fields (these are always present and go straight to disk) while
+  // passing through the complex optional bits (`source`, `positions`, `viewport`, `aiMetadata`) so a
+  // valid AI/trace bookmark is never rejected. Guards against corrupting the project store.
+  z.object({
+    type: z.literal('save-view'),
+    projectId: z.string(),
+    profile: z.object({
+      id: z.string(),
+      name: z.string(),
+      createdAt: z.string(),
+      filter: SerializedFilterStateSchema,
+    }).passthrough(),
+  }),
   z.object({ type: z.literal('save-wizard-view'), view: z.enum(['main', 'projects']) }),
   z.object({ type: z.literal('delete-view'), projectId: z.string(), profileId: z.string() }),
   z.object({ type: z.literal('rebuild') }),
   z.object({ type: z.literal('reload') }),
   z.object({ type: z.literal('request-projects') }),
-  z.object({ type: z.literal('open-external'), url: z.string() }),
+  z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
-  z.object({
-    type: z.literal('overview-mode-changed'),
-    mode: z.enum(['full', 'overview']),
-    enteredFocusFromOverview: z.boolean().optional(),
-  }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'error', 'debug']).optional(), text: z.string() }),
   z.object({
     type: z.literal('error'),
@@ -335,6 +352,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
     stack: z.string().optional(),
     componentStack: z.string().optional(),
     source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
     timestamp: z.number().optional(),
   }),
   z.object({ type: z.literal('show-warning'), text: z.string() }),
@@ -349,22 +367,6 @@ export type MainPanelToExtensionMsg = z.infer<typeof MainPanelToExtensionMsgSche
  */
 export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-ready'), findQuery: z.string().optional() }),
-  z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.any(), columns: z.array(z.any()) }),
+  z.object({ type: z.literal('table-stats-request'), schema: z.string(), objectName: z.string(), mode: z.enum(['quick', 'standard']), columns: z.array(ColumnDefSchema) }),
   z.object({ type: z.literal('close-detail') }),
 ]);
-
-/** Messages sent from the detail-panel webview to the extension host. */
-export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsgSchema>;
-
-/**
- * Legacy full union of every webview→extension message type across both
- * webviews. Prefer {@link MainPanelToExtensionMsgSchema} or
- * {@link DetailPanelToExtensionMsgSchema} for boundary validation.
- */
-export const WebviewToExtensionMsgSchema = z.discriminatedUnion('type', [
-  ...MainPanelToExtensionMsgSchema.options,
-  ...DetailPanelToExtensionMsgSchema.options,
-]);
-
-/** Inferred type of the legacy combined webview→extension union. */
-export type WebviewToExtensionMsg = z.infer<typeof WebviewToExtensionMsgSchema>;

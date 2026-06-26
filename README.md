@@ -4,11 +4,13 @@
 [![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
 
-Visualise SQL dependencies right inside VS Code. Ask `@lineage` in Copilot Chat to explore your lineage graph in natural language — or browse interactively with search, trace, and schema overview.
+Visualise SQL dependencies right inside VS Code. Browse your lineage graph with search, trace, and Schema View — and, if you use GitHub Copilot, ask `@lineage` to explore the loaded model in natural language.
 
 Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
-![Data Lineage Viz — search, trace, and preview DDL](images/viz-search-screenshot.png)
+[![Data Lineage Viz — search, trace, and preview DDL](images/viz-search-screenshot.png)](https://www.youtube.com/watch?v=2Ybg2daCrB0)
+
+▶ **[Watch the demo](https://www.youtube.com/watch?v=2Ybg2daCrB0)**
 
 ## Get started
 
@@ -16,11 +18,22 @@ Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric
 2. Pick a `.dacpac` file — or **Connect to Database** via the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql).
 3. Select schemas and click **Visualize**.
 
-No data? Click **Try with demo data** to explore the AdventureWorks sample.
+No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to explore the AdventureWorks sample.
 
-## AI lineage with `@lineage`
+## Explore your lineage
 
-Use `@lineage` in GitHub Copilot Chat to explore dependencies in natural language. The assistant answers from your loaded data model — never from general knowledge.
+Once your model loads, the visual graph is ready to use — no Copilot required:
+
+- **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly.
+- **Trace dependencies** — follow sources upstream or consumers downstream from any node.
+- **See the blast radius** — spot hubs, islands, orphans, and circular dependencies before you change anything.
+- **Read the SQL** — click any node for DDL with syntax highlighting; full-text search across procedure and view bodies.
+
+![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
+
+## Optional AI lineage with `@lineage`
+
+If GitHub Copilot is installed, `@lineage` adds natural-language exploration on top of the visual graph. The assistant answers from your loaded data model — never from general knowledge.
 
 ```text
 @lineage trace from Sales.SalesOrderDetail upstream to the source tables
@@ -28,25 +41,25 @@ Use `@lineage` in GitHub Copilot Chat to explore dependencies in natural languag
 @lineage which objects are hubs with the most connections?
 ```
 
-The assistant can trace dependencies, build bookmarked graph views, and analyse column mappings and SQL logic from the available metadata.
+Use it to ask dependency questions, open bookmarked graph views, and — where the metadata allows — follow column mappings or explain SQL logic.
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
 `@lineage` has two modes of operation:
 
-- **Discovery (chat)** — the default. Most lineage questions are answered directly in chat, including multi-object dependency questions like "trace upstream from X two levels" or "what feeds Y". Each visited node gets its own heading with business meaning, technical execution, formulas in math fences, column-rename tables, and ⚠️ data-quality flags inline.
-- **Structured walkthrough (graph render + column tracing)** — when you ask for a graph rendered in the side panel, request a column trace, or open a scope too large for chat, the assistant first shows you the planned scope (nodes, schemas, depth) and asks for confirmation. Once approved, it walks the graph hop-by-hop and renders the result with origin / transformer / terminal nodes coloured.
+- **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered directly in chat from deterministic tools.
+- **Structured walkthrough** — when you ask for a graph in the side panel, request a column trace, or open a scope too large for chat, the assistant first shows the planned scope (nodes, schemas, depth) and asks for confirmation. Once approved, it walks the graph hop-by-hop and colours source / transform / target nodes in the result.
 
-Requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Tools activate automatically when a graph is loaded.
+Only the `@lineage` chat experience requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without Copilot.
 
 ## Features
 
-- **`@lineage` AI** — trace lineage, analyse column mappings, explain SQL logic, and build bookmarked graph views from the loaded model.
-- **Search & trace** — autocomplete object lookup, upstream / downstream tracing, shortest-path between nodes.
-- **Graph analysis** — islands, hubs, orphans, circular dependencies, longest chains.
-- **Schema overview** — large graphs auto-summarise at schema level; double-click to drill in.
-- **SQL preview** — click any node to view DDL with syntax highlighting; full-text search across procedure / view bodies.
-- **Multiple sources** — SSDT and SDK-style `.dacpac`, live database connections, external tables, virtual external refs (OPENROWSET, cross-DB, CETAS).
+- **Interactive graph** — search objects, trace upstream or downstream, and find shortest paths between nodes.
+- **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
+- **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
+- **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
+- **Optional `@lineage` AI** — use GitHub Copilot Chat to ask lineage questions, follow column mappings where the metadata allows, and build bookmarked graph views.
+- **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).
 - **Export** — Draw.io diagram generation.
@@ -55,12 +68,12 @@ For the full feature catalogue, settings, and customisation paths see [`docs/FEA
 
 ## Limitations
 
-The extension covers **intra-database DDL only**. The following are out of scope:
+The extension is built from database DDL/catalog metadata only. The following are out of scope:
 
 - **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source. Target tables appear as leaves; the upstream pipeline does not.
-- **Cross-database / cross-server flow** — surfaced only when the SQL body uses a fully qualified three- or four-part name; the remote side appears as an external-reference node, not a fully traced sub-graph.
+- **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected.
 - **Dynamic SQL** — `EXEC(@sql)` and `sp_executesql` cannot be analysed statically.
-- **Unqualified references** — references without a schema prefix are excluded.
+- **Unqualified references** — references without a schema prefix are ambiguous; metadata may resolve some known dependencies, but dynamic/default-schema cases are not guaranteed.
 
 ## FAQ
 
@@ -68,10 +81,10 @@ The extension covers **intra-database DDL only**. The following are out of scope
 No — connect directly to a database. If you prefer a `.dacpac`, extract one from Visual Studio, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications).
 
 **Why are some dependencies missing?**
-Dynamic SQL cannot be analysed statically. Only compile-time dependencies are detected.
+Dynamic SQL cannot be analysed statically. Only dependencies visible in compiled metadata or parseable SQL bodies are detected.
 
-**Why are unqualified references excluded?**
-Unqualified names depend on the caller's default schema, which the catalog does not record reliably. Schema-qualified names are the only way to be sure.
+**Why are unqualified references unreliable?**
+Unqualified names depend on caller default schema and context. Schema-qualified names are the only reliable source for static lineage.
 
 ## Documentation
 

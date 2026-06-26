@@ -1,4 +1,0 @@
-{
-  "scopeName": "source.dacpac-sql",
-  "patterns": [{ "include": "source.sql" }]
-}

@@ -1,7 +1,8 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData } from '../components/CustomNode';
-import { TYPE_COLORS, createSchemaColorMap, getSchemaColorFromMap, getExternalNodeColor, type SchemaColorMap } from '../utils/schemaColors';
+import type { SchemaNodeData } from '../engine/types';
+import { TYPE_COLORS, createSchemaColorMap, getSchemaColorFromMap, getExternalNodeColor, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
 /**
@@ -84,7 +85,7 @@ function buildLabel(d: CustomNodeData): string {
  * @param startId - The starting ID for XML elements in this section.
  * @returns An object containing the generated cells and the next available ID.
  */
-function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number): { cells: MxCell[]; nextId: number } {
+function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number, externalSchemas: ReadonlySet<string> = new Set()): { cells: MxCell[]; nextId: number } {
   const cells: MxCell[] = [];
   let id = startId;
 
@@ -120,7 +121,7 @@ function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: numbe
 
   for (let i = 0; i < schemas.length; i++) {
     const y = padY + headerH + i * rowH + 10;
-    const color = getSchemaColorFromMap(schemas[i], colorMap);
+    const color = externalSchemas.has(schemas[i]) ? getExternalNodeColor() : getSchemaColorFromMap(schemas[i], colorMap);
 
     cells.push({
       '@_id': String(id++),
@@ -212,10 +213,17 @@ export function exportToDrawio(
     .map(n => n.data as CustomNodeData)
     .filter(d => d.objectType !== 'external')
     .map(d => d.schema);
-  const exportSchemas = Array.from(new Set([...schemas, ...realNodeSchemas])).filter(s => !!s && s.trim().length > 0).sort();
-  const schemaColorMap = createSchemaColorMap(exportSchemas, true);
+  const realSchemaSet = new Set(realNodeSchemas);
+  const externalSchemas = new Set(nodes
+    .map(n => n.data as CustomNodeData)
+    .filter(d => d.objectType === 'external' && d.schema && !realSchemaSet.has(d.schema))
+    .map(d => d.schema));
+  const exportSchemas = Array.from(new Set([...schemas, ...realNodeSchemas]))
+    .filter(s => !!s && s.trim().length > 0)
+    .sort();
+  const schemaColorMap = createSchemaColorMap(exportSchemas.filter(schema => !externalSchemas.has(schema)), true);
 
-  const legend = buildLegend(exportSchemas, schemaColorMap, nextId);
+  const legend = buildLegend(exportSchemas, schemaColorMap, nextId, externalSchemas);
   nextId = legend.nextId;
 
   const nodeObjects: MxObject[] = [];
@@ -279,10 +287,16 @@ export function exportToDrawio(
     edgeCells.push(buildEdge(edge, String(nextId++), src, tgt));
   }
 
-  const baseCells = [
+  const baseCells: MxCell[] = [
     { '@_id': '0' },
     { '@_id': '1', '@_parent': '0' },
   ];
+  return buildMxFile([...baseCells, ...legend.cells, ...colorBandCells, ...edgeCells], nodeObjects);
+}
+
+function buildMxFile(cells: MxCell[], objects: MxObject[]): string {
+  const root: Record<string, unknown> = { mxCell: cells };
+  if (objects.length > 0) root['object'] = objects;
 
   const data = {
     mxfile: {
@@ -293,24 +307,11 @@ export function exportToDrawio(
         '@_name': 'Data Lineage',
         '@_id': 'lineage',
         mxGraphModel: {
-          '@_dx': '0',
-          '@_dy': '0',
-          '@_grid': '1',
-          '@_gridSize': '10',
-          '@_guides': '1',
-          '@_tooltips': '1',
-          '@_connect': '0',
-          '@_arrows': '1',
-          '@_fold': '1',
-          '@_page': '1',
-          '@_pageScale': '1',
-          '@_pageWidth': '1169',
-          '@_pageHeight': '827',
-          '@_background': '#ffffff',
-          root: {
-            mxCell: [...baseCells, ...legend.cells, ...colorBandCells, ...edgeCells],
-            object: nodeObjects,
-          },
+          '@_dx': '0', '@_dy': '0', '@_grid': '1', '@_gridSize': '10',
+          '@_guides': '1', '@_tooltips': '1', '@_connect': '0', '@_arrows': '1',
+          '@_fold': '1', '@_page': '1', '@_pageScale': '1',
+          '@_pageWidth': '1169', '@_pageHeight': '827', '@_background': '#ffffff',
+          root,
         },
       },
     },
@@ -324,6 +325,110 @@ export function exportToDrawio(
     suppressEmptyNode: true,
     suppressBooleanAttributes: false,
   });
-
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + builder.build(data);
+}
+
+function buildSchemaClusterObject(
+  node: FlowNode<SchemaNodeData>,
+  nodeId: string,
+  bandId: string,
+  color: string,
+): { obj: MxObject; band: MxCell } {
+  const d = node.data;
+  const label =
+    `<b style="font-size:12px;color:#333333;">${escHtml(d.schemaName)}</b><br>` +
+    `<span style="font-size:9px;color:#999999;">${d.objectCount} OBJECTS</span>`;
+
+  const obj: MxObject = {
+    '@_id': nodeId,
+    '@_label': label,
+    '@_tooltip': `${d.schemaName}\nObjects: ${d.objectCount}`,
+    '@_fullName': d.schemaName,
+    '@_inputCount': '0',
+    '@_outputCount': '0',
+    mxCell: {
+      '@_style':
+        'rounded=1;whiteSpace=wrap;html=1;overflow=hidden;container=1;' +
+        'fillColor=#FFFFFF;strokeColor=#E0E0E0;strokeWidth=1;' +
+        'align=left;verticalAlign=top;' +
+        `spacing=0;spacingLeft=${COLOR_BAND_W + 6};spacingRight=4;spacingTop=4;spacingBottom=0;`,
+      '@_vertex': '1',
+      '@_parent': '1',
+      mxGeometry: {
+        '@_x': String(Math.round(node.position.x + GRAPH_OFFSET_X)),
+        '@_y': String(Math.round(node.position.y + 20)),
+        '@_width': '160',
+        '@_height': '56',
+        '@_as': 'geometry',
+      },
+    },
+  };
+
+  const band: MxCell = {
+    '@_id': bandId,
+    '@_value': '',
+    '@_style': `fillColor=${color};strokeColor=none;rounded=0;resizable=0;movable=0;deletable=0;editable=0;connectable=0;`,
+    '@_vertex': '1',
+    '@_parent': nodeId,
+    mxGeometry: { '@_x': '0', '@_y': '0', '@_width': String(COLOR_BAND_W), '@_height': '56', '@_as': 'geometry' },
+  };
+
+  return { obj, band };
+}
+
+/**
+ * Converts schema-overview cluster nodes into a Draw.io diagram showing schema-level dependencies.
+ *
+ * @param nodes - Schema cluster nodes from the schemaOverview display mode.
+ * @param edges - Aggregated edges between schema clusters.
+ * @param schemas - Schema names for the legend.
+ *
+ * @returns Draw.io XML document, or an empty string when no schema nodes exist.
+ */
+export function exportSchemaOverviewToDrawio(
+  nodes: FlowNode<SchemaNodeData>[],
+  edges: FlowEdge[],
+  schemas: string[],
+): string {
+  if (nodes.length === 0) return '';
+
+  let nextId = 2;
+  const idMap = new Map<string, string>();
+
+  const externalSchemas = new Set(nodes
+    .filter(n => n.data.isExternalOnly || isExternalOnlyTypeBreakdown(n.data.typeBreakdown))
+    .map(n => n.data.schemaName));
+  const exportSchemas = Array.from(
+    new Set([...schemas, ...nodes.map(n => n.data.schemaName)])
+  ).filter(Boolean).sort();
+  const realSchemas = exportSchemas.filter(schema => !externalSchemas.has(schema));
+  const colorMap = createSchemaColorMap(realSchemas, true);
+  const legend = buildLegend(exportSchemas, colorMap, nextId, externalSchemas);
+  nextId = legend.nextId;
+
+  const schemaObjects: MxObject[] = [];
+  const bandCells: MxCell[] = [];
+  for (const node of nodes) {
+    const nodeId = String(nextId++);
+    const bandId = String(nextId++);
+    idMap.set(node.id, nodeId);
+    const color = getSchemaDisplayColor(node.data.schemaName, colorMap, node.data.typeBreakdown);
+    const { obj, band } = buildSchemaClusterObject(node, nodeId, bandId, color);
+    schemaObjects.push(obj);
+    bandCells.push(band);
+  }
+
+  const edgeCells: MxCell[] = [];
+  for (const edge of edges) {
+    const src = idMap.get(edge.source);
+    const tgt = idMap.get(edge.target);
+    if (!src || !tgt) continue;
+    edgeCells.push(buildEdge(edge, String(nextId++), src, tgt));
+  }
+
+  const baseCells: MxCell[] = [
+    { '@_id': '0' },
+    { '@_id': '1', '@_parent': '0' },
+  ];
+  return buildMxFile([...baseCells, ...legend.cells, ...bandCells, ...edgeCells], schemaObjects);
 }

@@ -17,7 +17,7 @@ import type { ColumnStore } from '../../engine/columnStore';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from '../tools/tools';
 import { edgeApiType } from '../infra/aiPresenter';
-import { bfsDepthMap, wouldOrphanNotedNode, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../sm/smGuards';
+import { bfsDepthMap, wouldOrphanNotedNode, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../../engine/graphGuards';
 import { trunc } from '../../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../infra/inputNormalization';

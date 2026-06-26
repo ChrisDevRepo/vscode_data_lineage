@@ -12,6 +12,9 @@ export default defineConfig({
   root: 'src',
   base: './',
   build: {
+    // Webview only runs in VS Code's current-Electron Chromium; a modern target
+    // keeps esbuild from down-leveling natively-supported syntax (e.g. destructuring).
+    target: 'es2022',
     outDir: '../dist',
     emptyOutDir: true,
     rollupOptions: {

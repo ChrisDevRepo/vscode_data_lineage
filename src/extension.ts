@@ -6,6 +6,7 @@ import { registerAiTools } from './ai/tools/toolProvider';
 import { registerCommands } from './commands';
 import { openPanel, getActivePanel, SidebarProvider, PROJECT_STORE_KEY, buildDebugDump } from './panelProvider';
 import { Logger, testLogCapture } from './utils/log';
+import { notifyError, notifyWarning } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES } from './ai/session/types';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
@@ -13,6 +14,7 @@ import { LmTracer } from './ai/infra/lmTracer';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules, type ParseRulesConfig } from './engine/sqlBodyParser';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
+import { buildExtensionConfig } from './bridge/messageHandlers';
 
 declare const __BUILD_TIMESTAMP__: string;
 
@@ -79,7 +81,7 @@ export async function activate(context: vscode.ExtensionContext) {
         demo
       );
     },
-    (ctx) => buildDebugDump(ctx, getSession, outputChannel)
+    (ctx) => buildDebugDump(ctx, getSession)
   ));
 
   // Register AI tools for Copilot Chat integration.
@@ -96,6 +98,19 @@ export async function activate(context: vscode.ExtensionContext) {
     { key: 'dataLineageViz.dmvQueriesFile', label: 'DMV queries file' },
     { key: 'dataLineageViz.maxNodes', label: 'Max nodes' },
     { key: 'dataLineageViz.renderLimit', label: 'Render limit' },
+  ];
+
+  // Display-only settings that can be applied to an open panel without reloading data.
+  const DISPLAY_KEYS = [
+    'dataLineageViz.layout.direction',          'dataLineageViz.layout.rankSeparation',
+    'dataLineageViz.layout.nodeSeparation',     'dataLineageViz.layout.edgeAnimation',
+    'dataLineageViz.layout.highlightAnimation', 'dataLineageViz.layout.minimapEnabled',
+    'dataLineageViz.layout.edgeStyle',          'dataLineageViz.overview.enabled',
+    'dataLineageViz.overview.threshold',        'dataLineageViz.overview.schemaDoubleClickBehavior',
+    'dataLineageViz.externalRefs.enabled',
+    'dataLineageViz.trace.defaultUpstreamLevels', 'dataLineageViz.trace.defaultDownstreamLevels',
+    'dataLineageViz.analysis.hubMinDegree',     'dataLineageViz.analysis.islandMaxSize',
+    'dataLineageViz.analysis.longestPathMinNodes', 'dataLineageViz.excludePatterns',
   ];
 
   context.subscriptions.push(
@@ -116,12 +131,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
       for (const { key, label } of RELOAD_KEYS) {
         if (e.affectsConfiguration(key)) {
-          const pick = await vscode.window.showInformationMessage(
-            `${label} changed. Reload your data source to apply.`,
-            'Reload'
-          );
+          const msg = `${label} changed. Reload your data source to apply.`;
+          configLogger.info(`Config changed — notification="${msg}"`);
+          const pick = await vscode.window.showInformationMessage(msg, 'Reload');
           if (pick === 'Reload') vscode.commands.executeCommand('dataLineageViz.open');
           break;
+        }
+      }
+
+      if (DISPLAY_KEYS.some(k => e.affectsConfiguration(k))) {
+        const panel = getActivePanel();
+        if (panel) {
+          const config = buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz'));
+          panel.webview.postMessage({ type: 'rebuild-config', config });
+          configLogger.debug('Display settings changed — pushed rebuild-config to panel');
         }
       }
     })
@@ -184,7 +207,13 @@ async function loadAiOutputTemplates(
       }
     }
   } catch (err) {
-    logger.error('load built-in AI templates', err);
+    notifyError(
+      logger,
+      'Load built-in AI templates',
+      'Data Lineage: failed to load built-in AI output templates — AI descriptions may be degraded. Check the Output channel for details.',
+      err,
+      { path: builtInUri.fsPath },
+    );
   }
 
   const cfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
@@ -218,8 +247,12 @@ async function loadAiOutputTemplates(
     }
     logger.info(`Applied AI templates: ${builtInKeys.length} loaded from built-in, ${overlaid.length} overlaid from custom (${overlaid.join(', ') || 'none'})`);
   } catch (err) {
-    logger.warn(`Fallback AI templates custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${customPath}`);
-    vscode.window.showWarningMessage(`Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`);
+    notifyWarning(
+      logger,
+      'Load custom AI output templates',
+      `Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`,
+      { reason: err instanceof Error ? err.message : String(err), path: customPath, fallback: 'built-in defaults' },
+    );
   }
 
   return builtIn;
@@ -249,7 +282,13 @@ async function loadParseRules(
     const data = await vscode.workspace.fs.readFile(builtInUri);
     config = yaml.load(new TextDecoder().decode(data)) as ParseRulesConfig;
   } catch (err) {
-    logger.error('load built-in parse rules', err);
+    notifyError(
+      logger,
+      'Load built-in parse rules',
+      'Data Lineage: failed to load built-in parse rules — SQL lineage parsing may be degraded. Check the Output channel for details.',
+      err,
+      { path: builtInUri.fsPath },
+    );
   }
 
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
@@ -266,12 +305,20 @@ async function loadParseRules(
           source = 'custom';
           await persistAbsolutePath('parseRulesFile', customPath, resolved);
         } else {
-          logger.warn(`Fallback parse rules custom → built-in: reason=missing or invalid "rules" array at ${resolved}`);
-          vscode.window.showWarningMessage(`Custom parse rules invalid at "${resolved}" — using built-in defaults.`);
+          notifyWarning(
+            logger,
+            'Load custom parse rules',
+            `Custom parse rules invalid at "${resolved}" — using built-in defaults.`,
+            { reason: 'missing or invalid rules array', path: resolved, setting: 'parseRulesFile', fallback: 'built-in defaults' },
+          );
         }
       } catch (err) {
-        logger.warn(`Fallback parse rules custom → built-in: reason=${err instanceof Error ? err.message : String(err)} at ${resolved}`);
-        vscode.window.showWarningMessage(`Failed to load custom parse rules from "${resolved}" — using built-in defaults. Check Output channel for details.`);
+        notifyWarning(
+          logger,
+          'Load custom parse rules',
+          `Failed to load custom parse rules from "${resolved}" — using built-in defaults. Check Output channel for details.`,
+          { reason: err instanceof Error ? err.message : String(err), path: resolved, setting: 'parseRulesFile', fallback: 'built-in defaults' },
+        );
       }
     } else {
       logger.warn(`Fallback parse rules custom → built-in: reason=cannot resolve path "${customPath}"`);
@@ -293,8 +340,12 @@ async function loadParseRules(
 
   for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
   if (result.loaded === 0 && result.skipped.length > 0) {
-    logger.warn(`Fallback parse rules ${source} → empty: reason=no valid rules in config`);
-    vscode.window.showWarningMessage('Data Lineage: Parse rules config invalid — check Output channel.');
+    notifyWarning(
+      logger,
+      'Apply parse rules',
+      'Data Lineage: Parse rules config invalid — check Output channel.',
+      { source, reason: 'no valid rules in config', skipped: result.skipped.length },
+    );
   } else {
     logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
   }

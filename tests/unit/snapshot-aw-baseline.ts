@@ -118,17 +118,17 @@ async function main() {
     // First run: auto-create baseline so contributors aren't blocked
     writeFileSync(BASELINE_PATH, current.join('\n') + '\n', 'utf-8');
     console.log(`✓ Baseline created: ${BASELINE_PATH} (${current.length - 1} SP rows)`);
-    console.log(`  Commit test/aw-baseline.tsv to lock in this snapshot.`);
+    console.log(`  Commit tests/fixtures/aw-baseline.tsv to lock in this snapshot.`);
     return;
   }
 
   const baseline = readFileSync(BASELINE_PATH, 'utf-8').replace(/\r/g, '').split('\n').filter(Boolean);
   const ok = reportDiff(baseline, current);
 
-  if (!ok) process.exit(1);
+  if (!ok) throw new Error('Snapshot diff detected');
 }
 
 main().catch(err => {
   console.error('\n✗ Fatal error:', err);
-  process.exit(1);
+  throw err;
 });

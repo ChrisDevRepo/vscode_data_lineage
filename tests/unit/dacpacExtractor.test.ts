@@ -9,6 +9,21 @@ import { assert, assertEq, loadParseRules, testPath, printSummary, loadAdventure
 
 loadParseRules();
 
+async function makeExternalRefDacpac(): Promise<ArrayBuffer> {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  zip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
+      <Model>
+        <Element Type="SqlProcedure" Name="[dbo].[LoadExternal]">
+          <Property Name="BodyScript" Value="SELECT * FROM OPENROWSET(BULK 'https://storage.example/orders.csv', FORMAT='CSV') AS rows" />
+        </Element>
+      </Model>
+    </DataSchemaModel>`);
+  const bytes = await zip.generateAsync({ type: 'uint8array' });
+  return bytes.buffer as ArrayBuffer;
+}
+
 // ─── Extraction ─────────────────────────────────────────────────────────────
 
 async function testExtraction() {
@@ -456,6 +471,38 @@ async function testPhase1Phase2Bridge() {
   assertEq(emptyModel.nodes.length, 0, 'Phase 2 empty schema set: 0 nodes (no crash)');
 }
 
+async function testDacpacExtractionOptions() {
+  console.log('\n── DACPAC Extraction Options ──');
+  const buffer = await makeExternalRefDacpac();
+
+  const enabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true, maxNodes: 2 });
+  assert(enabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
+    'Full extract: externalRefsEnabled=true creates virtual file node');
+
+  const disabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: false, maxNodes: 2 });
+  assert(!disabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
+    'Full extract: externalRefsEnabled=false suppresses virtual file node');
+
+  const capped = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true, maxNodes: 1 });
+  assert(!capped.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
+    'Full extract: maxNodes caps virtual file nodes');
+
+  const { elements, dspName } = await extractSchemaPreview(buffer);
+  const filteredEnabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
+    externalRefsEnabled: true,
+    maxNodes: 2,
+  });
+  assert(filteredEnabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
+    'Filtered extract: externalRefsEnabled=true creates virtual file node');
+
+  const filteredDisabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
+    externalRefsEnabled: false,
+    maxNodes: 2,
+  });
+  assert(!filteredDisabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
+    'Filtered extract: externalRefsEnabled=false suppresses virtual file node');
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -472,6 +519,7 @@ async function main() {
     await testDbPlatformInModel();
     await testPkOrdinalInModel();
     await testPhase1Phase2Bridge();
+    await testDacpacExtractionOptions();
   } catch (err) {
     console.error('\n✗ Fatal error:', err);
   }

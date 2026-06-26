@@ -18,7 +18,7 @@ import {
 import { buildGraph, traceNode } from '../../src/engine/graphBuilder';
 import { filterBySchemas } from '../../src/engine/dacpacExtractor';
 import { applyExclusionFilter, applyIsolationFilter } from '../../src/engine/modelFilters';
-import { bfsReachable } from '../../src/ai/sm/smGuards';
+import { bfsReachable } from '../../src/engine/graphGuards';
 import { assert, assertEq, loadAdventureWorksModel, printSummary } from './helpers/testUtils';
 import { bidirectional } from 'graphology-shortest-path';
 
@@ -97,5 +97,5 @@ async function main() {
 
 main().catch(err => {
   console.error('\n✗ Fatal error:', err);
-  process.exit(1);
+  throw err;
 });

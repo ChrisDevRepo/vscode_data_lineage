@@ -1,12 +1,79 @@
-import { memo, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
-import { TYPE_COLORS, TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
+import { TYPE_COLORS, TYPE_LABELS, SHORT_TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
+import { CloseIcon } from './ui/CloseIcon';
 import type { ObjectType } from '../engine/types';
+import type { NeighborSide } from '../engine/graphGuards';
 
-export type CtTooltipFlow = { neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string };
+/** One column-level flow row shown in a node tooltip. */
+export type CtTooltipFlow = {
+  /** Neighbor node that contributes or receives the traced column value. */
+  neighborNode: string;
+  /** Lineage side where the neighbor participates in the column trace. */
+  direction: 'in' | 'out';
+  /** Source-side column shown in the tooltip flow row. */
+  fromCol: string;
+  /** Target-side column shown in the tooltip flow row. */
+  toCol: string;
+};
 
-/** Returns sorted unique columns for table-style CT tooltip display. */
+/** One selectable direct neighbor for interactive trace add/prune controls. */
+export type TraceNeighborOption = {
+  /** Stable node ID passed back to trace edit handlers. */
+  id: string;
+  /** Display name shown in the neighbor picker. */
+  label: string;
+  /** Schema displayed with the neighbor label. */
+  schema: string;
+  /** Object kind used for compact type badges in the picker. */
+  objectType: ObjectType;
+};
+
+/** User action supported by the interactive trace node controls. */
+export type TraceNeighborAction = 'add' | 'prune';
+
+/** Per-node callbacks and candidate lists for interactive trace editing. */
+export type TraceNodeControls = {
+  /** Controls for upstream direct-neighbor trace edits. */
+  in: TraceSideControls;
+  /** Controls for downstream direct-neighbor trace edits. */
+  out: TraceSideControls;
+  /** Adds the selected direct neighbor to the current trace scope. */
+  onAdd: (nodeId: string) => void;
+  /** Removes the selected node from the current trace scope when safe. */
+  onPrune: (nodeId: string) => void;
+};
+
+/** Add/prune candidates and disabled-copy for one lineage side of a node. */
+export type TraceSideControls = {
+  /** Direct neighbors that can be added on this side. */
+  add: TraceNeighborOption[];
+  /** Visible trace nodes that can be pruned on this side. */
+  prune: TraceNeighborOption[];
+  /** Reason add controls are disabled, or an empty string when enabled. */
+  addDisabledReason: string;
+  /** Reason prune controls are disabled, or an empty string when enabled. */
+  pruneDisabledReason: string;
+  /** Total direct neighbors on this side (drives hide-vs-disable for add). */
+  neighborCount: number;
+  /** Direct neighbors on this side already in the trace (drives hide-vs-disable for prune). */
+  visibleNeighborCount: number;
+};
+
+type TraceNeighborPicker = {
+  action: TraceNeighborAction;
+  side: NeighborSide;
+  options: TraceNeighborOption[];
+};
+
+/**
+ * Returns sorted unique columns for table-style CT tooltip display.
+ *
+ * @param flows - Column-flow entries to transform.
+ *
+ * @returns Sorted unique column names across all from/to flow endpoints.
+ */
 export function buildTableTraceColumns(flows: CtTooltipFlow[]): string[] {
   const cols = new Set<string>();
   for (const f of flows) {
@@ -16,7 +83,13 @@ export function buildTableTraceColumns(flows: CtTooltipFlow[]): string[] {
   return Array.from(cols).sort((a, b) => a.localeCompare(b));
 }
 
-/** Groups CT flows by neighbor with deterministic ordering and de-duplication. */
+/**
+ * Groups CT flows by neighbor with deterministic ordering and de-duplication.
+ *
+ * @param flows - Column-flow entries to transform.
+ *
+ * @returns One group per neighbor node with its de-duplicated flow rows, sorted by neighbor.
+ */
 export function groupCtFlowsByNeighbor(flows: CtTooltipFlow[]): Array<{ neighborNode: string; rows: CtTooltipFlow[] }> {
   const groups = new Map<string, CtTooltipFlow[]>();
   for (const f of flows) {
@@ -31,28 +104,152 @@ export function groupCtFlowsByNeighbor(flows: CtTooltipFlow[]): Array<{ neighbor
     .map((neighborNode) => ({ neighborNode, rows: groups.get(neighborNode) ?? [] }));
 }
 
+function traceActionLabel(action: TraceNeighborAction, side: NeighborSide): string {
+  return `${action === 'add' ? 'Add' : 'Prune'} ${side === 'in' ? 'inbound' : 'outbound'} neighbor`;
+}
+
+function traceActionTooltip(
+  action: TraceNeighborAction,
+  side: NeighborSide,
+  options: TraceNeighborOption[],
+  disabledReason: string,
+): string {
+  if (options.length === 0) return disabledReason;
+
+  const label = traceActionLabel(action, side);
+  return options.length === 1
+    ? `${label}: ${options[0].schema}.${options[0].label}`
+    : `${label}: choose one of ${options.length}`;
+}
+
+function TraceActionButton({
+  action,
+  side,
+  options,
+  hasContext,
+  disabledReason,
+  onAction,
+}: {
+  action: TraceNeighborAction;
+  side: NeighborSide;
+  options: TraceNeighborOption[];
+  /** Whether this side has any relevant neighbor — when false the button is hidden, not grayed. */
+  hasContext: boolean;
+  disabledReason: string;
+  onAction: (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => void;
+}) {
+  const enabled = options.length > 0;
+  // Smart-hide: only suppress the control when the side has nothing to act on at all;
+  // otherwise show it grayed with a tooltip explaining why the action is unavailable.
+  if (!enabled && !hasContext) return null;
+
+  const label = traceActionLabel(action, side);
+  return (
+    <Tooltip content={traceActionTooltip(action, side, options, disabledReason)} placement="top" asChild>
+      <button
+        type="button"
+        aria-label={label}
+        aria-disabled={!enabled}
+        className={`ln-trace-node-action ln-trace-node-action--${side} ln-trace-node-action--${action}${enabled ? '' : ' ln-trace-node-action--disabled'}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!enabled) return;
+          onAction(action, side, options);
+        }}
+      >
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="ln-trace-node-action__icon">
+          {action === 'add' ? (
+            <path d="M8 3v10M3 8h10" />
+          ) : (
+            <path d="M3 8h10" />
+          )}
+        </svg>
+      </button>
+    </Tooltip>
+  );
+}
+
+function TraceNeighborPickerToolbar({
+  picker,
+  onClose,
+  onSelect,
+}: {
+  picker: TraceNeighborPicker;
+  onClose: () => void;
+  onSelect: (option: TraceNeighborOption) => void;
+}) {
+  return (
+    <NodeToolbar position={Position.Bottom} align="center" offset={22} isVisible>
+      <div className="ln-trace-node-picker" onClick={(e) => e.stopPropagation()}>
+        <div className="ln-trace-node-picker__header">
+          <span>{picker.action === 'add' ? 'Add neighbor' : 'Prune neighbor'}</span>
+          <button
+            type="button"
+            aria-label="Close"
+            className="ln-trace-node-picker__close"
+            onClick={onClose}
+          >
+            <CloseIcon className="w-3 h-3" />
+          </button>
+        </div>
+        {picker.options.map(option => (
+          <button
+            key={option.id}
+            type="button"
+            className="ln-trace-node-picker__row"
+            onClick={() => onSelect(option)}
+          >
+            <span className="ln-trace-node-picker__type">{SHORT_TYPE_LABELS[option.objectType]}</span>
+            <span className="ln-trace-node-picker__name">[{option.schema}].{option.label}</span>
+          </button>
+        ))}
+      </div>
+    </NodeToolbar>
+  );
+}
+
 /**
  * The business data associated with a single node in the React Flow canvas.
  */
 export type CustomNodeData = {
+  /** Display label rendered inside the node. */
   label: string;
+  /** Schema name used for grouping, color selection, and tooltips. */
   schema: string;
+  /** Fully qualified object name used by detail and debug surfaces. */
   fullName: string;
+  /** Object kind that drives icon, color, and tooltip behavior. */
   objectType: ObjectType;
+  /** Count of upstream dependencies shown in node metadata. */
   inDegree: number;
+  /** Count of downstream dependents shown in node metadata. */
   outDegree: number;
+  /** Whether the node is de-emphasized in the current scoped view. */
   dimmed?: boolean;
+  /** Highlight state applied by search, trace, or AI presentation. */
   highlighted?: boolean | 'yellow';
+  /** External reference subtype for file, database, or external-table nodes. */
   externalType?: 'et' | 'file' | 'db';
+  /** File or URL target displayed for file-based external references. */
   externalUrl?: string;
+  /** Database name displayed for cross-database external references. */
   externalDatabase?: string;
+  /** Resolved schema color supplied by the parent graph projection. */
   schemaColor?: string;
+  /** AI-authored badge rendered above the node. */
   aiBadge?: { text: string };
+  /** AI-authored note rendered below the node. */
   aiNote?: { text: string };
+  /** AI-authored highlight styling applied to the node border and glow. */
   aiHighlight?: { color: string; glow: string; shadow: string };
+  /** Column-trace rows rendered in the node tooltip. */
   ctColumnFlows?: CtTooltipFlow[];
+  /** Whether the scoped-view remove control is shown. */
   showRemoveButton?: boolean;
+  /** Removes the node from the active allowlist-backed view. */
   onRemoveFromView?: (nodeId: string) => void;
+  /** Interactive trace controls for adding or pruning direct neighbors. */
+  traceControls?: TraceNodeControls;
 };
 
 function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {
@@ -115,8 +312,38 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
 
   const tooltipContent: string | ReactNode = buildCtTooltipContent();
 
+  const [picker, setPicker] = useState<TraceNeighborPicker | null>(null);
+
+  useEffect(() => {
+    if (!data.traceControls) setPicker(null);
+  }, [data.traceControls]);
+
+  const applyTraceAction = (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => {
+    if (!data.traceControls || options.length === 0) return;
+    if (options.length === 1) {
+      if (action === 'add') data.traceControls.onAdd(options[0].id);
+      else data.traceControls.onPrune(options[0].id);
+      setPicker(null);
+      return;
+    }
+    setPicker(prev => (
+      prev?.action === action && prev.side === side ? null : { action, side, options }
+    ));
+  };
+
   return (
     <>
+      {picker && (
+        <TraceNeighborPickerToolbar
+          picker={picker}
+          onClose={() => setPicker(null)}
+          onSelect={(option) => {
+            if (picker.action === 'add') data.traceControls?.onAdd(option.id);
+            else data.traceControls?.onPrune(option.id);
+            setPicker(null);
+          }}
+        />
+      )}
       {data.aiBadge && (
         <NodeToolbar position={Position.Top} align="center" offset={2} isVisible>
           <Tooltip content={data.aiBadge.text} placement="top">
@@ -170,6 +397,14 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
               </button>
             </Tooltip>
           )}
+          {data.traceControls && (
+            <>
+              <TraceActionButton action="add" side="in" options={data.traceControls.in.add} hasContext={data.traceControls.in.neighborCount > 0} disabledReason={data.traceControls.in.addDisabledReason} onAction={applyTraceAction} />
+              <TraceActionButton action="prune" side="in" options={data.traceControls.in.prune} hasContext={data.traceControls.in.visibleNeighborCount > 0} disabledReason={data.traceControls.in.pruneDisabledReason} onAction={applyTraceAction} />
+              <TraceActionButton action="add" side="out" options={data.traceControls.out.add} hasContext={data.traceControls.out.neighborCount > 0} disabledReason={data.traceControls.out.addDisabledReason} onAction={applyTraceAction} />
+              <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} hasContext={data.traceControls.out.visibleNeighborCount > 0} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
+            </>
+          )}
           <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
           <div className="px-3 pt-1 pb-1 flex flex-col h-full">
             <div className="flex items-center justify-between gap-1.5 whitespace-nowrap" style={{ lineHeight: 1 }}>
@@ -188,4 +423,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   );
 }
 
+/**
+ * Renders an object or schema node inside the React Flow canvas.
+ */
 export const CustomNode = memo(CustomNodeComponent);

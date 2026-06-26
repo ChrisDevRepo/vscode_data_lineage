@@ -1,18 +1,62 @@
 /**
- * Shared State Machine Guards — graph integrity functions for CT and BB.
+ * Shared graph-integrity guards — pure graph algorithms for scope edits.
  *
- * Pure graph algorithms: accept graph + sets as parameters, no SM-specific coupling.
- * Used by NavigationEngine for:
- * - Prune validation (orphan guard, cascade guard)
+ * Pure graph algorithms: accept graph + sets as parameters, no SM- or
+ * view-specific coupling. The single source of truth for the add/prune rules
+ * used by BOTH the AI NavigationEngine (hop-by-hop route/prune) and the
+ * webview interactive trace editing (user-triggered add/prune):
+ * - Prune validation (orphan guard, cascade guard, disconnect guard)
  * - Node reference validation (reject hallucinated names)
  * - Bridge node injection (reconnect orphan noted nodes in result graph)
+ * - Direct-neighbor lookup (add must target an adjacent node)
  *
  * All BFS operations are O(V+E) — fast even for 10K+ node graphs.
  *
- * Zero VS Code imports. No side effects.
+ * Zero VS Code imports. No side effects. Safe to bundle in both the extension
+ * host and the webview.
  */
 
 import type Graph from 'graphology';
+import { bidirectional } from 'graphology-shortest-path';
+import type { DatabaseModel } from './types';
+
+/** Direction in which a shortest path between two endpoints was found. */
+export type ShortestPathDirection = 'source_to_target' | 'target_to_source';
+
+/** Ordered shortest path plus the direction in which it was found. */
+export interface OrderedShortestPath {
+  /** Ordered node ids along the directed path, in the found direction. */
+  path: string[];
+  /** Whether the directed path runs source→target or (on reverse retry) target→source. */
+  direction: ShortestPathDirection;
+}
+
+/**
+ * Finds the shortest directed dependency path between two endpoints, trying both directions.
+ *
+ * @remarks
+ * Single source of truth for shortest-path lookup, consumed by the GUI "Find Path" feature
+ * ({@link computeShortestPath}). Tries `source → target` first; on no directed path, retries `target → source` so the
+ * result matches what the GUI surfaces. Returns `null` only when the two nodes are not
+ * connected in either direction (or an endpoint is absent).
+ *
+ * @param graph - Graphology directed dependency graph.
+ * @param sourceId - First endpoint (canonical, lowercase).
+ * @param targetId - Second endpoint (canonical, lowercase).
+ * @returns The ordered path and the direction it was found in, or `null` when disconnected.
+ */
+export function findShortestPathOrdered(
+  graph: Graph,
+  sourceId: string,
+  targetId: string,
+): OrderedShortestPath | null {
+  if (!graph.hasNode(sourceId) || !graph.hasNode(targetId)) return null;
+  const forward = bidirectional(graph, sourceId, targetId);
+  if (forward) return { path: forward, direction: 'source_to_target' };
+  const reverse = bidirectional(graph, targetId, sourceId);
+  if (reverse) return { path: reverse, direction: 'target_to_source' };
+  return null;
+}
 
 
 /**
@@ -23,6 +67,9 @@ import type Graph from 'graphology';
  * dedicated channels with notification escalation.
  */
 export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
+
+/** Directional side of a lineage node when listing direct neighbors. */
+export type NeighborSide = 'in' | 'out';
 
 
 /**
@@ -123,6 +170,37 @@ export function firstDisconnectedRequiredNode(
     if (!reachable.has(id)) return id;
   }
   return null;
+}
+
+/**
+ * Returns exact direct neighbors for one node and lineage side.
+ *
+ * @remarks
+ * The single add-guard primitive: an add must target a node directly adjacent to
+ * the current scope. Reads the precomputed `neighborIndex` (case-insensitive),
+ * falling back to an edge scan. Shared by the AI neighbor-column validator and
+ * the webview trace add-neighbor control.
+ *
+ * @param model - Database model to inspect.
+ * @param nodeId - Node ID to inspect.
+ * @param side - Neighbor direction to collect.
+ * @returns Array of matching neighbor ids (deduplicated).
+ */
+export function directNeighborIds(
+  model: DatabaseModel,
+  nodeId: string,
+  side: NeighborSide,
+): string[] {
+  const indexed = model.neighborIndex?.[nodeId] ?? model.neighborIndex?.[nodeId.toLowerCase()];
+  const fromIndex = indexed?.[side];
+  if (fromIndex) return Array.from(new Set(fromIndex));
+
+  const ids: string[] = [];
+  for (const edge of model.edges) {
+    if (side === 'in' && edge.target === nodeId) ids.push(edge.source);
+    if (side === 'out' && edge.source === nodeId) ids.push(edge.target);
+  }
+  return Array.from(new Set(ids));
 }
 
 /**

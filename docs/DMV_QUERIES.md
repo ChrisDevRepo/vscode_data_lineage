@@ -24,7 +24,7 @@ Every executed DMV query is logged to the **Data Lineage Viz** Output channel wi
 3. Open the wizard and run an import.
 4. Each query is logged on execution as `[DB] Executing <name> (step/total) — SQL: <first 300 chars>`. Copy / paste into SSMS to validate before scaling to a production server.
 
-The 300-character cap is intentional for log hygiene; for the full SQL refer to [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) — the YAML in the Output log is the verbatim text the extension just executed (with `{{SCHEMAS}}` already expanded).
+The 300-character cap is intentional for log hygiene. For the full built-in SQL, read [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml); custom SQL is whatever your configured YAML contains after `{{SCHEMAS}}` expansion.
 
 Nothing runs automatically in the background. The seven queries fire only during import and follow this two-phase order:
 
@@ -223,10 +223,10 @@ Column contracts are enforced at runtime. If a required column is missing, the e
 | Limitation | Reason |
 |------------|--------|
 | Dynamic SQL dependencies not captured | `sys.sql_expression_dependencies` only tracks static references. |
-| Cross-database references not captured | DMVs are database-scoped. |
-| Unresolved references excluded | `WHERE d.referenced_schema_name IS NOT NULL AND d.referenced_entity_name IS NOT NULL` filters unqualified / unresolved references. |
+| Remote database internals not introspected | Three- or four-part references can surface as virtual cross-database nodes when metadata exposes database/schema/object names, but DMV import remains scoped to the connected database. |
+| Unqualified / unresolved references may be excluded | Built-in dependency SQL filters unresolved rows; parser fallback can recover some schema-qualified references from SQL bodies, but default-schema ambiguity is not reliable. |
 
-These match `.dacpac` ingestion behaviour exactly — not new gaps.
+These are metadata-source limits rather than UI-only gaps.
 
 ## Reference
 

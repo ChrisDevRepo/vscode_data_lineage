@@ -32,6 +32,7 @@ export type LogCategory =
  * this module might be loaded by different entry points).
  */
 const GLOBAL_LOG_KEY = '__VSCODE_DL_TEST_LOGS__';
+// `as any` is required: globalThis has no index signature for our ad-hoc key (see remark above).
 if (!(globalThis as any)[GLOBAL_LOG_KEY]) {
   (globalThis as any)[GLOBAL_LOG_KEY] = [];
 }
@@ -48,6 +49,31 @@ function logToTest(cat: LogCategory, msg: string) {
   if (process.env.VSCODE_EX_TEST) {
     testLogCapture.push(`[${cat}] ${msg}`);
   }
+}
+
+/** Maximum number of recent log lines retained in the in-memory diagnostics ring. */
+const MAX_RECENT_LOGS = 200;
+const recentLogs: string[] = [];
+
+/**
+ * Appends a single formatted log line to the always-on diagnostics ring.
+ *
+ * Bounded to {@link MAX_RECENT_LOGS}; oldest entries are evicted.
+ */
+function recordRecentLog(level: 'info' | 'debug' | 'warn' | 'error', line: string): void {
+  recentLogs.push(`${new Date().toISOString()} [${level}] ${line}`);
+  if (recentLogs.length > MAX_RECENT_LOGS) recentLogs.shift();
+}
+
+/**
+ * Returns the most recent log lines, oldest first.
+ *
+ * Levels are tagged inline; debug lines are retained even when the channel hides them.
+ *
+ * @returns Recent formatted log lines, capped at {@link MAX_RECENT_LOGS}.
+ */
+export function getRecentLogs(): readonly string[] {
+  return recentLogs;
 }
 
 function normalizeLogMessage(msg: string): string {
@@ -67,6 +93,7 @@ function normalizeLogMessage(msg: string): string {
 export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeLogMessage(msg);
   logToTest(cat, norm);
+  recordRecentLog('info', `[${cat}] ${norm}`);
   ch.info(`[${cat}] ${norm}`);
 }
 
@@ -83,6 +110,7 @@ export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
 export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeLogMessage(msg);
   logToTest(cat, norm);
+  recordRecentLog('debug', `[${cat}] ${norm}`);
   ch.debug(`[${cat}] ${norm}`);
 }
 
@@ -99,6 +127,7 @@ export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): v
 export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeLogMessage(msg);
   logToTest(cat, norm);
+  recordRecentLog('warn', `[${cat}] ${norm}`);
   ch.warn(`[${cat}] ${norm}`);
 }
 
@@ -119,8 +148,11 @@ export class Logger {
     private readonly cat: LogCategory
   ) {}
 
-  /**
+    /**
    * Factory method to create a new Logger.
+   *
+   * @param ch - Output channel to write to.
+   * @param cat - Functional category prefix (e.g. `'Config'`, `'Bridge'`) prepended to every log line.
    */
   static create(ch: LogOutputChannel, cat: LogCategory): Logger {
     return new Logger(ch, cat);
@@ -132,7 +164,12 @@ export class Logger {
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
   /** Logs a warning-level message. */
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
-  /** Logs an error-level message with error details. */
+  /**
+   * Logs an error-level message with full stack detail.
+   *
+   * @param op - Operation label prepended to the error message.
+   * @param err - Caught error or unknown value; stack is extracted when available.
+   */
   error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
 
   /**
@@ -148,10 +185,15 @@ export class Logger {
 /**
  * Emits already-prefixed text verbatim at the given level.
  *
+ *
  * @remarks
  * For text that carries its own `[Category]` prefix (e.g. webview log messages
  * relayed through the bridge). Avoids double-tagging. All other callers should
  * use {@link logInfo} / {@link logDebug} / {@link logWarn} / {@link logError}.
+ *
+ * @param ch - Output channel to write to.
+ * @param level - Log level to emit.
+ * @param text - Raw text to append.
  */
 export function logRaw(
   ch: LogOutputChannel,
@@ -159,6 +201,7 @@ export function logRaw(
   text: string,
 ): void {
   const norm = normalizeLogMessage(text);
+  recordRecentLog(level, norm);
   switch (level) {
     case 'info':  ch.info(norm);  return;
     case 'warn':  ch.warn(norm);  return;
@@ -217,8 +260,11 @@ export function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err
   const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
   const msg = `FAILED: ${op} — ${detail}`;
   logToTest(cat, msg);
+  recordRecentLog('error', `[${cat}] ${msg}`);
   ch.error(`[${cat}] ${msg}`);
   if (err instanceof Error && err.stack) {
-    ch.error(`[${cat}] Stack: ${normalizeLogMessage(err.stack)}`);
+    const stackLine = `Stack: ${normalizeLogMessage(err.stack)}`;
+    recordRecentLog('error', `[${cat}] ${stackLine}`);
+    ch.error(`[${cat}] ${stackLine}`);
   }
 }

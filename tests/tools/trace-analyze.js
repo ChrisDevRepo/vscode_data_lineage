@@ -155,7 +155,7 @@ function extractTexts(messages) {
           results.push({ msgIdx: mi, partIdx: pi, role: msg.role, type: 'tool_result', text: c });
         }
       } else if (part.type === 'tool_call' && part.input) {
-        // Replay-compacted tool calls are historical context, not fresh model intent.
+        // Replay-compacted tool calls describe replay state, not fresh model intent.
         // Exclude them from redundancy/pattern text analysis to avoid false positives.
         if (part.input.replay_compacted === true || part.input.trace_replay === true) continue;
         results.push({ msgIdx: mi, partIdx: pi, role: msg.role, type: 'tool_call', text: JSON.stringify(part.input) });
@@ -393,10 +393,7 @@ if (flags.has('--journal-metrics')) {
       ...(loops > 0 ? [`loop:${loops}`] : []),
     ];
 
-    // Reconstruct token totals from ROUND events to capture all phases.
-    // SESSION_END.cumInTok only covers the primary (discover) session invocation;
-    // SM phases (active/synthesis/completed) run in subsequent turns and add to ROUND events
-    // but are not reflected in SESSION_END.
+    // Rebuild token totals from ROUND events because SESSION_END misses later SM turns.
     const cumIn  = rounds.reduce((s, r) => s + (r.inTok  || 0), 0);
     const cumOut = rounds.reduce((s, r) => s + (r.outTok || 0), 0);
     const peak   = rounds.length > 0 ? Math.max(...rounds.map(r => r.inTok || 0)) : 0;
@@ -630,7 +627,7 @@ if (flags.has('--report')) {
         for (const l of lines) console.log(`  ${l}`);
       }
 
-      // ── WIPES BEFORE THIS ROUND ─────────────────────────────────────────────
+      // ── WIPES FOR THIS ROUND ────────────────────────────────────────────────
       if (wipes.length > 0) {
         console.log(`\nWIPES (${wipes.length}):`);
         for (const w of wipes) {
@@ -1488,7 +1485,7 @@ if (flags.has('--ct')) {
     console.log(`  CT session  |  columns tracked (${trackedCols.length}): ${trackedCols.join(', ')}\n`);
 
     // CT-specific rejections
-    const CT_CODES = ['ct_requires_sm', 'column_flow_required', 'column_flow_validation_failed'];
+    const CT_CODES = ['ct_field_required', 'ct_verdict_forbidden', 'bb_field_forbidden_in_ct', 'ct_prune_forbidden', 'column_flow_required'];
     const ctRejects = evs.filter(e => e.ev === 'TOOL_RESULT' && CT_CODES.includes(e.errCode));
     const byCode = {};
     for (const r of ctRejects) byCode[r.errCode] = (byCode[r.errCode] || 0) + 1;
@@ -1514,7 +1511,6 @@ if (flags.has('--ct')) {
         const errCode = result ? result.errCode : undefined;
         let status;
         if      (errCode === 'column_flow_required')          status = 'VIOLATION (flow missing)';
-        else if (errCode === 'column_flow_validation_failed') status = `REJECTED (validation failed)`;
         else if (errCode)                                     status = `REJECTED (${errCode})`;
         else if (isPrune)                                     status = 'OK (prune)';
         else if (flows.length === 0)                          status = 'WARN (no flow, accepted)';

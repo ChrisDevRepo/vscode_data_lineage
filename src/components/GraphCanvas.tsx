@@ -20,10 +20,12 @@ import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
 import { useVsCode } from '../contexts/VsCodeContext';
 
-import { CustomNode, type CustomNodeData } from './CustomNode';
+import { CustomNode, type CustomNodeData, type TraceNeighborOption, type TraceNodeControls, type TraceSideControls } from './CustomNode';
 import { SchemaNode } from './SchemaNode';
-import type { SchemaNodeData, GraphMode } from '../engine/types';
+import type { SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot } from '../engine/types';
 import { Legend } from './Legend';
+import { deriveLegendSchemas, deriveLegendColorMap } from './legendDerivation';
+import { ErrorBoundary } from './ErrorBoundary';
 import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner } from './TracedFilterBanner';
 import { PathFinderBar } from './PathFinderBar';
@@ -38,10 +40,12 @@ import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
-import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor, type SchemaColorMap } from '../utils/schemaColors';
-import { schemaKey } from '../utils/sql';
-import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
+import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
+import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
+import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
+import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
+import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 /**
  * Mapping of custom node types for React Flow.
@@ -63,6 +67,115 @@ const FIT_VIEW_DURATION = 250;
  * giving up and showing a warning.
  */
 const PENDING_ZOOM_TIMEOUT_MS = 5000;
+
+type ModelNode = DatabaseModel['nodes'][number];
+
+/** Separator that cannot appear in schema/object names, for composite lookup keys. */
+const SEARCH_KEY_SEP = '\u0000';
+const searchKey = (schema: string, name: string) => `${schema}${SEARCH_KEY_SEP}${name}`;
+
+function traceNeighborSortKey(option: TraceNeighborOption): string {
+  return `[${option.schema}].${option.label}`;
+}
+
+function resolveTraceNeighborOption(
+  id: string,
+  modelNodeMap: ReadonlyMap<string, ModelNode>,
+  modelNodeMapLower: ReadonlyMap<string, ModelNode>,
+): TraceNeighborOption | null {
+  const node = modelNodeMap.get(id) ?? modelNodeMapLower.get(id.toLowerCase());
+  if (!node) return null;
+  return { id: node.id, label: node.name, schema: node.schema, objectType: node.type };
+}
+
+function buildTraceNeighborOptions(
+  ids: string[],
+  modelNodeMap: ReadonlyMap<string, ModelNode>,
+  modelNodeMapLower: ReadonlyMap<string, ModelNode>,
+): TraceNeighborOption[] {
+  return ids
+    .map(id => resolveTraceNeighborOption(id, modelNodeMap, modelNodeMapLower))
+    .filter((option): option is TraceNeighborOption => !!option)
+    .sort((a, b) => traceNeighborSortKey(a).localeCompare(traceNeighborSortKey(b)));
+}
+
+/**
+ * Derives an accurate, human-readable reason the prune control is unavailable.
+ *
+ * @remarks
+ * Distinguishes the three blocking cases so the grayed button's tooltip is truthful:
+ * the only candidate is the trace origin, pruning would disconnect the trace, or
+ * there is simply nothing in the trace to remove on this side.
+ *
+ * @param pruneChecks - Per visible-neighbor prune-safety verdicts on this side.
+ * @param sideLabel - "upstream" or "downstream", for the empty-context message.
+ * @returns Empty string when at least one neighbor is prunable, else the reason copy.
+ */
+function derivePruneDisabledReason(
+  pruneChecks: ReadonlyArray<{ check: TracePruneCheck }>,
+  sideLabel: string,
+): string {
+  if (pruneChecks.some(p => p.check.safe)) return '';
+  if (pruneChecks.length === 0) return `No ${sideLabel} node in the trace to remove`;
+  const reasons = new Set(pruneChecks.map(p => p.check.reason));
+  if (reasons.has('disconnected')) return 'Removing this would disconnect the trace from its source';
+  if (reasons.has('origin')) return 'This is the trace source — it cannot be removed';
+  return 'These nodes cannot be removed without breaking the trace';
+}
+
+function buildTraceSideControls(
+  model: DatabaseModel,
+  graph: Graph,
+  nodeId: string,
+  side: NeighborSide,
+  visibleIds: ReadonlySet<string>,
+  originNodeId: string,
+  modelNodeMap: ReadonlyMap<string, ModelNode>,
+  modelNodeMapLower: ReadonlyMap<string, ModelNode>,
+): TraceNodeControls['in'] {
+  const neighborOptions = buildTraceNeighborOptions(
+    directNeighborIds(model, nodeId, side),
+    modelNodeMap,
+    modelNodeMapLower,
+  );
+  const add = neighborOptions.filter(option => !visibleIds.has(option.id));
+  const visibleNeighbors = neighborOptions.filter(option => visibleIds.has(option.id));
+  const pruneChecks = visibleNeighbors.map(option => ({
+    option,
+    check: canPruneTraceNode(graph, originNodeId, visibleIds, option.id),
+  }));
+  const prune = pruneChecks.filter(p => p.check.safe).map(p => p.option);
+  const sideLabel = side === 'in' ? 'upstream' : 'downstream';
+
+  return {
+    add,
+    prune,
+    addDisabledReason: `All ${sideLabel} neighbors are already shown`,
+    pruneDisabledReason: derivePruneDisabledReason(pruneChecks, sideLabel),
+    neighborCount: neighborOptions.length,
+    visibleNeighborCount: visibleNeighbors.length,
+  };
+}
+
+function serializeSideAffordance(side: TraceSideControls): TraceAffordanceSideSnapshot {
+  return {
+    add: side.add.map(o => o.id),
+    prune: side.prune.map(o => o.id),
+    addDisabledReason: side.addDisabledReason,
+    pruneDisabledReason: side.pruneDisabledReason,
+    neighborCount: side.neighborCount,
+    visibleNeighborCount: side.visibleNeighborCount,
+  };
+}
+
+/**
+ * Flattens the live {@link TraceNodeControls} (which carry React callbacks) into a
+ * plain, postMessage-safe object so the debug dump can report exactly which add/prune
+ * buttons the user saw, and why a control was grayed.
+ */
+function serializeTraceAffordances(nodeId: string, controls: TraceNodeControls): TraceAffordanceSnapshot {
+  return { nodeId, in: serializeSideAffordance(controls.in), out: serializeSideAffordance(controls.out) };
+}
 
 /**
  * Props for the {@link GraphCanvas} component.
@@ -87,7 +200,7 @@ interface GraphCanvasProps {
   /** Callback fired when a node is clicked. */
   onNodeClick: (nodeId: string, findQuery?: string) => void;
   /** Callback fired when a node is right-clicked. */
-  onNodeContextMenu: (nodeId: string, x: number, y: number) => void;
+  onNodeContextMenu: (node: FlowNode, x: number, y: number) => void;
   /** Callback to start a trace immediately from a node. */
   onStartTraceImmediate: (nodeId: string) => void;
   /** Callback to apply a trace configuration (upstream/downstream levels). */
@@ -122,6 +235,10 @@ interface GraphCanvasProps {
   availableSchemas?: string[];
   /** Schemas with at least one node after all filters — for legend display. */
   renderedSchemas?: string[];
+  /** Diagnostic context forwarded to the canvas ErrorBoundary (current-screen snapshot). */
+  graphErrorContext?: Record<string, unknown>;
+  /** Reset key that clears the canvas ErrorBoundary when the rendered scope changes. */
+  graphErrorResetKey?: string;
   /** Callback to refresh the current project data. */
   onRefresh: () => void;
   /** Callback to trigger a full graph rebuild (e.g. after filter change). */
@@ -176,15 +293,28 @@ interface GraphCanvasProps {
   isFilterDirty?: boolean;
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
+  /** Whether the current scoped view supports removing individual nodes via the node X. */
+  canRemoveNodeFromScopedView?: boolean;
+  /** Whether the current trace scope supports manual add/prune controls. */
+  canEditTraceScope?: boolean;
+  /** Whether a fresh trace/path/analysis mode can be started from the current view. */
+  canStartNewScopedMode?: boolean;
+  /** Whether Object View / Schema View can be toggled from the current view. */
+  canSwitchGraphMode?: boolean;
   /** The current graph abstraction level (full object graph or overview schema graph). */
   graphMode?: GraphMode;
+  /** Callback to switch between Object View and Schema View. */
+  onGraphModeChange?: (mode: GraphMode) => void;
+  /**
+   * Set once on initial load/reset — `true` when the loaded model is below the overview threshold.
+   * Disables the Schema View button; never re-derived from filter changes.
+   */
+  schemaViewSoftDisabled?: boolean;
   /**
    * Object-level node IDs that passed all filters (from useGraphology flowNodes).
    * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth.
    */
   filteredObjectIds?: Set<string>;
-  /** Callback for double-clicking a schema node (triggers drill-down). */
-  onSchemaNodeDoubleClick?: (schemaName: string) => void;
   /** Called when user saves a trace/path result as an advanced bookmark. */
   onSaveTraceBookmark?: (
     name: string,
@@ -223,6 +353,8 @@ interface GraphCanvasProps {
   pendingPositions?: Record<string, { x: number; y: number }>;
   /** Saved ReactFlow viewport — restored together with pendingPositions. */
   pendingViewport?: { x: number; y: number; zoom: number };
+  /** Incremented when the next graph-data update should keep the current viewport. */
+  viewportPreserveVersion?: number;
   /** Called after pendingPositions have been applied so the parent can clear them. */
   onPendingPositionsApplied?: () => void;
   /** Whether trace BFS uses the full (unfiltered) model. */
@@ -231,6 +363,35 @@ interface GraphCanvasProps {
   onToggleFullModel?: () => void;
   /** Number of trace nodes hidden by the active filter. */
   filteredOutCount?: number;
+  /** Adds a direct neighbor to the current trace scope. */
+  onTraceAddNeighbor?: (nodeId: string) => void;
+  /** Prunes one safe node from the current trace scope. */
+  onTracePruneNode?: (nodeId: string) => void;
+  /** Opens expanded schema view for a node's schema without changing the schema filter. */
+  onOpenExpandedSchemaViewForNode?: (nodeId: string) => void;
+  /** Expands a collapsed schema cluster into individual objects without changing the schema filter. */
+  onExpandExpandedSchemaViewSchema?: (schemaName: string) => void;
+  /** Replaces the expanded-schema-view expansion set with this single schema. */
+  onCenterExpandedSchemaViewSchema?: (schemaName: string) => void;
+  /** True when overview renders both schema and object granularities. */
+  isExpandedSchemaViewActive?: boolean;
+  /** Schemas currently expanded into object nodes in Expanded Schema View. */
+  expandedSchemas?: ReadonlySet<string>;
+  /** Collapses all expanded schemas and returns to Schema View. */
+  onResetExpandedSchemaView?: () => void;
+  /** Whether collapsed schema clusters are currently rendered beside expanded object nodes. */
+  showExpandedSchemaClusters?: boolean;
+  /** Toggles the visual-only rendering of collapsed schema clusters in Expanded Schema View. */
+  onToggleExpandedSchemaClusters?: () => void;
+  /** Number of schemas currently expanded in expanded schema view; shown in compact control tooltips. */
+  expandedSchemaCount?: number;
+  /** Expands all schemas at once and enters Expanded Schema View. */
+  onExpandAllSchemas?: () => void;
+  /**
+   * IDs of nodes in the working set that are collapsed inside a schema cluster.
+   * Passed to the toolbar search for three-state partitioning.
+   */
+  collapsedSchemaNodeIds?: Set<string>;
 }
 
 /**
@@ -244,7 +405,7 @@ interface GraphCanvasProps {
  * - Graph layout and viewport control (fit view, zoom to node).
  * - Multi-layered filtering (types, schemas, exclusions).
  * - Selection and highlighting logic.
- * - Drill-down transitions between Overview (schema) and Full (object) modes.
+ * - In-place schema expansion from overview to Expanded Schema View.
  * - State management for advanced bookmarks and AI-generated views.
  *
  * @param props - The component props.
@@ -278,6 +439,8 @@ export function GraphCanvas({
   onRemoveExclusionPattern,
   availableSchemas,
   renderedSchemas,
+  graphErrorContext,
+  graphErrorResetKey,
   onRefresh,
   onRebuild,
   onBack,
@@ -305,9 +468,14 @@ export function GraphCanvas({
   onUpdateView,
   isFilterDirty,
   isModeLocked = false,
+  canRemoveNodeFromScopedView = false,
+  canEditTraceScope = false,
+  canStartNewScopedMode = false,
+  canSwitchGraphMode = false,
   graphMode = 'full',
+  onGraphModeChange,
+  schemaViewSoftDisabled = false,
   filteredObjectIds,
-  onSchemaNodeDoubleClick,
   onSaveTraceBookmark,
   onSaveAnalysisBookmark,
   aiPreview,
@@ -319,34 +487,73 @@ export function GraphCanvas({
   onExitAdvancedBookmark,
   pendingPositions,
   pendingViewport,
+  viewportPreserveVersion = 0,
   onPendingPositionsApplied,
   useFullModel,
   onToggleFullModel,
   filteredOutCount,
+  onTraceAddNeighbor,
+  onTracePruneNode,
+  onOpenExpandedSchemaViewForNode,
+  onExpandExpandedSchemaViewSchema,
+  onCenterExpandedSchemaViewSchema,
+  isExpandedSchemaViewActive,
+  expandedSchemas,
+  onResetExpandedSchemaView,
+  showExpandedSchemaClusters = true,
+  onToggleExpandedSchemaClusters,
+  expandedSchemaCount = 0,
+  onExpandAllSchemas,
+  collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
 
-  // Pending actions for post-rebuild drill-down (overview → full + zoom to node)
+  // Pending actions after overview schema expansion (zoom to the revealed object)
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
   /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
   const pendingZoomSetAt = useRef<number>(0);
   /** Active timer — guarantees the pendingZoom warning fires even if flowNodes stops changing. */
   const pendingZoomTimerRef = useRef<number | null>(null);
-  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
-  useEffect(() => () => {
-    if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+  const clearPendingZoomTimer = useCallback(() => {
+    if (!pendingZoomTimerRef.current) return;
+    clearTimeout(pendingZoomTimerRef.current);
+    pendingZoomTimerRef.current = null;
   }, []);
+  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
+  useEffect(() => clearPendingZoomTimer, [clearPendingZoomTimer]);
   // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
+  const currentTraceRef = useRef(trace);
+  currentTraceRef.current = trace;
+  const traceAtLastGraphChangeRef = useRef(trace);
+  const viewportPreserveVersionRef = useRef(viewportPreserveVersion);
+  viewportPreserveVersionRef.current = viewportPreserveVersion;
+  const consumedViewportPreserveVersionRef = useRef(viewportPreserveVersion);
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
+      if (graphMode === 'overview' && node.type === 'schemaNode') return;
       onNodeClick(node.id);
     },
-    [onNodeClick]
+    [graphMode, onNodeClick]
+  );
+
+  const handleNodeDoubleClick: NodeMouseHandler = useCallback(
+    (event, node) => {
+      if (graphMode !== 'overview' || node.type !== 'schemaNode') return;
+      event.preventDefault();
+      setLocalNodes((nds) => nds.map((n) => n.selected ? { ...n, selected: false } : n));
+      const schemaName = (node.data as SchemaNodeData).schemaName;
+      if (config.overview.schemaDoubleClickBehavior === 'expand') {
+        onExpandExpandedSchemaViewSchema?.(schemaName);
+      } else {
+        onCenterExpandedSchemaViewSchema?.(schemaName);
+      }
+    },
+    [config.overview.schemaDoubleClickBehavior, graphMode, onCenterExpandedSchemaViewSchema, onExpandExpandedSchemaViewSchema]
   );
 
   const handleFitView = useCallback(() => {
@@ -357,9 +564,12 @@ export function GraphCanvas({
     if (!onSaveTraceBookmark) return;
     const nodeIds = Array.from(trace.tracedNodeIds);
     if (withPositions) {
+      const nodeIdSet = new Set(nodeIds);
       const nodes = getNodes();
       const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodes) pos[n.id] = n.position;
+      for (const n of nodes) {
+        if (nodeIdSet.has(n.id)) pos[n.id] = n.position;
+      }
       onSaveTraceBookmark(name, nodeIds, 'trace', pos, getViewport());
     } else {
       onSaveTraceBookmark(name, nodeIds, 'trace');
@@ -396,31 +606,32 @@ export function GraphCanvas({
     }
   }, [onSaveAiBookmark, getNodes, getViewport]);
 
-  useKeyboardShortcut(['f', 'F'], handleFitView);
+  useKeyboardShortcut(SHORTCUT_KEYS.fitView, handleFitView);
 
   const minimapNodeColor = useCallback(
     (node: FlowNode) => {
       // Schema nodes (overview mode) carry SchemaNodeData with a pre-computed color
-      if (node.type === 'schemaNode') return (node.data as SchemaNodeData).color;
+      if (node.type === 'schemaNode') {
+        const color = (node.data as SchemaNodeData).color;
+        return isExpandedSchemaViewActive
+          ? `color-mix(in srgb, ${color} 28%, transparent)`
+          : color;
+      }
       const d = node.data as CustomNodeData;
-      if (d.objectType === 'external') return getExternalNodeColor();
-      return d.schemaColor ?? getSchemaColor(String(d.schema));
+      return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema)));
     },
+    [isExpandedSchemaViewActive]
+  );
+
+  // Ring only the schema clusters on the minimap so their kind is readable without labels.
+  const minimapNodeStrokeColor = useCallback(
+    (node: FlowNode) => (node.type === 'schemaNode'
+      ? 'var(--ln-minimap-cluster-stroke)'
+      : 'transparent'),
     []
   );
 
-  const handleNodeDoubleClick: NodeMouseHandler = useCallback(
-    (_event, node) => {
-      if (graphMode === 'overview' && node.type === 'schemaNode') {
-        const schemaName = (node.data as SchemaNodeData).schemaName;
-        onSchemaNodeDoubleClick?.(schemaName);
-      }
-    },
-    [graphMode, onSchemaNodeDoubleClick]
-  );
-
   // Zoom and center on a specific node
-  const log = useCallback((text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level }), []);
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
@@ -434,14 +645,40 @@ export function GraphCanvas({
         notifyUser(`Could not focus "${nodeId}". The node may have been filtered out during a view transition.`);
       }
     });
-  }, [getNode, setCenter, log]);
+  }, [getNode, setCenter]);
 
-  // Execute search: find node and zoom to it (drills down from overview if needed)
+  // O(1) lookups for search and pending-zoom checks. First-wins maps preserve `.find()` semantics.
+  const flowNodeLookup = useMemo(() => {
+    const ids = new Set<string>();
+    const byLabel = new Map<string, FlowNode>();
+    const bySchemaLabel = new Map<string, FlowNode>();
+    for (const n of flowNodes) {
+      ids.add(n.id);
+      const label = String(n.data.label ?? '');
+      if (!byLabel.has(label)) byLabel.set(label, n);
+      const key = searchKey(String(n.data.schema ?? ''), label);
+      if (!bySchemaLabel.has(key)) bySchemaLabel.set(key, n);
+    }
+    return { ids, byLabel, bySchemaLabel };
+  }, [flowNodes]);
+
+  const modelNodeNameLookup = useMemo(() => {
+    const byName = new Map<string, ModelNode>();
+    const bySchemaName = new Map<string, ModelNode>();
+    for (const n of model?.nodes ?? []) {
+      if (!byName.has(n.name)) byName.set(n.name, n);
+      const key = searchKey(n.schema, n.name);
+      if (!bySchemaName.has(key)) bySchemaName.set(key, n);
+    }
+    return { byName, bySchemaName };
+  }, [model]);
+
+  // Execute search: find node and zoom to it, expanding its schema from overview when needed.
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const label = schema ? `[${schema}].[${name}]` : name;
     const foundNode = schema
-      ? flowNodes.find(n => n.data.label === name && n.data.schema === schema)
-      : flowNodes.find(n => n.data.label === name);
+      ? flowNodeLookup.bySchemaLabel.get(searchKey(schema, name))
+      : flowNodeLookup.byLabel.get(name);
 
     if (foundNode) {
       onNodeClick(foundNode.id);
@@ -449,19 +686,17 @@ export function GraphCanvas({
       return;
     }
 
-    // Overview mode: node not in flowNodes — drill down to its schema.
-    // enterFocusFromOverview now rebuilds synchronously with forceLayout=true,
-    // so flowNodes will be ready on the next render when the useEffect fires.
+    // Overview mode: node not in flowNodes — expand its schema in expanded schema view (filter untouched).
     if (graphMode === 'overview' && model) {
       const modelNode = schema
-        ? model.nodes.find(n => n.name === name && n.schema === schema)
-        : model.nodes.find(n => n.name === name);
+        ? modelNodeNameLookup.bySchemaName.get(searchKey(schema, name))
+        : modelNodeNameLookup.byName.get(name);
       if (modelNode) {
         pendingZoomRef.current = modelNode.id;
         pendingClickRef.current = { id: modelNode.id };
         pendingZoomSetAt.current = Date.now();
         // Active timeout — guarantees warning fires even if flowNodes stops changing
-        if (pendingZoomTimerRef.current) clearTimeout(pendingZoomTimerRef.current);
+        clearPendingZoomTimer();
         pendingZoomTimerRef.current = window.setTimeout(() => {
           if (pendingZoomRef.current) {
             notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
@@ -469,55 +704,58 @@ export function GraphCanvas({
             pendingClickRef.current = null;
           }
         }, PENDING_ZOOM_TIMEOUT_MS);
-        onSchemaNodeDoubleClick?.(modelNode.schema);
+        onOpenExpandedSchemaViewForNode?.(modelNode.id);
       } else {
         notifyUser(`"${label}" was not found in the loaded model.`);
       }
     } else {
       notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
-  }, [flowNodes, zoomToNode, onNodeClick, graphMode, model, onSchemaNodeDoubleClick, log]);
+  }, [clearPendingZoomTimer, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
 
-  // Export current graph to Draw.io format (disabled in overview mode)
+  // Export object nodes in detail views and cluster nodes in schema overview; empty exports no-op.
   const handleExportDrawio = useCallback(() => {
-    if (graphMode === 'overview') return;
-    import('../export/drawioExporter').then(({ exportToDrawio }) => {
+    const objectNodes: FlowNode<CustomNodeData>[] = [];
+    const clusterNodes: FlowNode<SchemaNodeData>[] = [];
+    for (const n of flowNodes) {
+      if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
+      else objectNodes.push(n as FlowNode<CustomNodeData>);
+    }
+    import('../export/drawioExporter').then(({ exportToDrawio, exportSchemaOverviewToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
-      const xml = exportToDrawio(flowNodes as FlowNode<CustomNodeData>[], flowEdges, schemas);
+      const xml = (objectNodes.length === 0 && clusterNodes.length > 0)
+        ? exportSchemaOverviewToDrawio(clusterNodes, flowEdges, schemas)
+        : exportToDrawio(objectNodes, flowEdges, schemas);
+      if (!xml) return;
       const base = (sourceName?.replace(/\.dacpac$/i, '') || 'lineage').trim().replace(/[\\/:*?"<>|]/g, '_');
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi, graphMode]);
+  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
-  // Auto-fit view whenever the graph data changes — skipped when saved positions are being restored.
-  // If a pending drill-down zoom target exists (overview → full), zoom to that node instead of fitView.
-  // flowNodes reference only changes on rebuild — not on highlight.
-  //
-  // IMPORTANT: Only consume pendingZoomRef when the target node actually exists in the current
-  // flowNodes. During overview→full transitions the graphMode change can trigger a render with
-  // stale flowNodes before the rebuild's new nodes arrive. If we consumed the ref at that point
-  // the zoom would silently fail and be lost. By checking existence first, we keep the ref set
-  // until the correct flowNodes arrive on a subsequent render.
+  // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    const previousTrace = traceAtLastGraphChangeRef.current;
+    const currentTrace = currentTraceRef.current;
+    traceAtLastGraphChangeRef.current = currentTrace;
+
     if (pendingPositions && Object.keys(pendingPositions).length > 0) return;
     const zoomTarget = pendingZoomRef.current;
     const clickTarget = pendingClickRef.current;
     if (zoomTarget) {
       // Verify the target node exists in the current flowNodes before consuming.
-      // During overview→full transitions the graphMode change may trigger a render
-      // with stale flowNodes before the rebuild arrives. Keep the ref set until the
-      // correct flowNodes land, or expire after PENDING_ZOOM_TIMEOUT_MS.
-      const nodeExists = flowNodes.some(n => n.id === zoomTarget);
+      // During overview expansion, React may render with stale flowNodes before the expanded schema graph
+      // arrives. Keep the ref set until the correct flowNodes land, or expire after timeout.
+      const nodeExists = flowNodeLookup.ids.has(zoomTarget);
       const elapsed = Date.now() - pendingZoomSetAt.current;
       if (!nodeExists) {
         if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
           notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter to include it.`);
           pendingZoomRef.current = null;
           pendingClickRef.current = null;
-          if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
+          clearPendingZoomTimer();
           // Fall through to fitView
         } else {
           return; // Don't consume — wait for the next flowNodes update (silent; fires every render)
@@ -525,21 +763,26 @@ export function GraphCanvas({
       } else {
         pendingZoomRef.current = null;
         pendingClickRef.current = null;
-        if (pendingZoomTimerRef.current) { clearTimeout(pendingZoomTimerRef.current); pendingZoomTimerRef.current = null; }
+        clearPendingZoomTimer();
         zoomToNode(zoomTarget);
-        // Defer click to next frame so highlight survives the filter-changed rebuild
-        // that may still be in-flight from the overview→full transition.
+        // Defer click to next frame so highlight lands after the expanded schema nodes render.
         if (clickTarget) {
           requestAnimationFrame(() => onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm));
         }
         return;
       }
     }
+    const preserveVersion = viewportPreserveVersionRef.current;
+    if (preserveVersion !== consumedViewportPreserveVersionRef.current) {
+      consumedViewportPreserveVersionRef.current = preserveVersion;
+      return;
+    }
+    if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     const raf = requestAnimationFrame(() => {
       fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
     });
     return () => cancelAnimationFrame(raf);
-  }, [flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+  }, [clearPendingZoomTimer, flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   // Local state preserves drag positions across highlight changes
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
@@ -567,7 +810,11 @@ export function GraphCanvas({
   }, [flowEdges]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
+    (changes) => setLocalNodes((nds) => {
+      const schemaNodeIds = new Set(nds.filter(n => n.type === 'schemaNode').map(n => n.id));
+      const nonSchemaSelectionChanges = changes.filter(change => !(change.type === 'select' && schemaNodeIds.has(change.id)));
+      return applyNodeChanges(nonSchemaSelectionChanges, nds) as FlowNode[];
+    }),
     []
   );
 
@@ -591,6 +838,12 @@ export function GraphCanvas({
     for (const n of model.nodes) map.set(n.id, n);
     return map;
   }, [model]);
+
+  const modelNodeMapLower = useMemo(() => {
+    const map = new Map<string, DatabaseModel['nodes'][number]>();
+    for (const n of modelNodeMap.values()) map.set(n.id.toLowerCase(), n);
+    return map;
+  }, [modelNodeMap]);
 
   // ── Display layer: highlight/dim applied on top of local positions ──
 
@@ -682,18 +935,60 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
+  // Full-model graph backing the shared prune-safety guard; scope is bounded per call.
+  const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
+
+  const traceControlsByNode = useMemo((): Map<string, TraceNodeControls> => {
+    const controls = new Map<string, TraceNodeControls>();
+    const isEditableTrace = canEditTraceScope && isEditableTraceMode(trace.mode);
+    if (!model || !modelGraph || !trace.selectedNodeId || !isEditableTrace || !onTraceAddNeighbor || !onTracePruneNode) {
+      return controls;
+    }
+    // Only the highlighted (clicked) node shows edit controls — keeps the four +/- buttons off every
+    // other node (no clutter) and bounds the per-node prune-safety BFS to a single node.
+    const targetNode = highlightedNodeId
+      ? localNodes.find(n => n.id === highlightedNodeId && n.type === 'lineageNode')
+      : undefined;
+    if (!targetNode) return controls;
+
+    const visibleIds = new Set(localNodes.filter(n => n.type === 'lineageNode').map(n => n.id));
+
+    controls.set(targetNode.id, {
+      in: buildTraceSideControls(model, modelGraph, targetNode.id, 'in', visibleIds, trace.selectedNodeId, modelNodeMap, modelNodeMapLower),
+      out: buildTraceSideControls(model, modelGraph, targetNode.id, 'out', visibleIds, trace.selectedNodeId, modelNodeMap, modelNodeMapLower),
+      onAdd: onTraceAddNeighbor,
+      onPrune: onTracePruneNode,
+    });
+    return controls;
+  }, [localNodes, model, modelGraph, modelNodeMap, modelNodeMapLower, onTraceAddNeighbor, onTracePruneNode, trace.mode, trace.selectedNodeId, highlightedNodeId, canEditTraceScope]);
+
   const displayNodes = useMemo((): FlowNode[] => {
     return localNodes.map(node => {
+      if (node.type === 'schemaNode') {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            onExpandSchema: graphMode === 'overview' ? onExpandExpandedSchemaViewSchema : undefined,
+            onMakeSchemaCenter: graphMode === 'overview' ? onCenterExpandedSchemaViewSchema : undefined,
+          },
+        };
+      }
+
       const isHighlighted = highlightedNodeId === node.id;
-      const shouldBeDimmed = highlightedNodeId && !isHighlighted && !level1Neighbors.has(node.id);
+      const isTraceOrigin = node.id === trace.selectedNodeId && (
+        trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied'
+      );
+      const shouldBeDimmed = highlightedNodeId && !isHighlighted && !isTraceOrigin && !level1Neighbors.has(node.id);
       return {
         ...node,
         data: {
           ...node.data,
-          highlighted: isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
+          highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
           dimmed: !!shouldBeDimmed,
-          showRemoveButton: isBookmarkMode,
-          onRemoveFromView: isBookmarkMode ? onRemoveFromView : undefined,
+          showRemoveButton: isBookmarkMode && canRemoveNodeFromScopedView,
+          onRemoveFromView: isBookmarkMode && canRemoveNodeFromScopedView ? onRemoveFromView : undefined,
+          traceControls: traceControlsByNode.get(node.id),
           aiHighlight: aiHighlightMap.get(node.id),
           aiBadge: aiBadgeMap.get(node.id),
           aiNote: notesVisible ? aiNoteMap.get(node.id) : undefined,
@@ -701,7 +996,7 @@ export function GraphCanvas({
         },
       };
     });
-  }, [localNodes, highlightedNodeId, level1Neighbors, isBookmarkMode, onRemoveFromView, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, ctEdgeMap]);
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, ctEdgeMap, trace.mode, trace.selectedNodeId]);
 
   const displayEdges = useMemo(() => {
     if (!highlightedNodeId) return localEdges;
@@ -727,16 +1022,15 @@ export function GraphCanvas({
   }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
 
   // Stable allNodes list for autocomplete/search — derived from full model catalog,
-  // not displayNodes (which only contains schemaNode entries in overview mode).
+  // not displayNodes (which only contains Schema Cluster entries in Schema View).
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),
     [model],
   );
 
-  // IDs of nodes currently rendered in the graph (after all filters: type, focus-schema,
-  // search, maxNodes cap). Used by NodeInfoBar to show ⊘ on neighbors not in view,
-  // and by quick search to split "in view" vs "not in current view" suggestions.
-  // In overview mode localNodes are schema aggregates — use filteredObjectIds instead.
+  // IDs of objects in the current filter scope. Used by NodeInfoBar to show ⊘ on neighbors
+  // outside the filter scope, and by quick search to split visible/clustered/out-of-filter results.
+  // In Schema View, localNodes are Schema Clusters — use filteredObjectIds instead.
   const visibleNodeIds = useMemo(
     () => (graphMode === 'overview' && filteredObjectIds) ? filteredObjectIds : new Set(localNodes.map(n => n.id)),
     [localNodes, graphMode, filteredObjectIds],
@@ -749,49 +1043,44 @@ export function GraphCanvas({
 
   // Derive visible schemas for the Legend — externals are excluded from the colorful legend
   // list but remain in the underlying model/filters so they don't disappear from the graph.
-  const legendSchemas = useMemo(() => {
-    // In overview mode localNodes are SchemaNodeData buckets; read schemaName directly.
-    if (graphMode === 'overview') {
-      return localNodes
-        .filter(n => n.type === 'schemaNode')
-        .map(n => (n.data as SchemaNodeData).schemaName)
-        .filter(s => !!s && s.trim().length > 0)
-        .sort();
-    }
+  const legendSchemas = useMemo(
+    () => deriveLegendSchemas(localNodes, graphMode, trace.mode, renderedSchemas),
+    [graphMode, trace.mode, localNodes, renderedSchemas],
+  );
 
-    const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
-      || trace.mode === 'filtered' || trace.mode === 'analysis';
+  const legendColorMap = useMemo(
+    () => deriveLegendColorMap(localNodes),
+    [localNodes],
+  );
 
-    // We only show schemas in the legend if they contain at least one non-external object.
-    const schemasWithRealObjects = new Set(
-      localNodes
-        .map(n => n.data as CustomNodeData)
-        .filter(d => d.objectType !== 'external')
-        .map(d => d.schema)
-        .filter(s => !!s && s.trim().length > 0)
-    );
-
-    if (!isTraceActive) {
-      return (renderedSchemas || []).filter(s => schemasWithRealObjects.has(s));
-    }
-    return Array.from(schemasWithRealObjects).filter(Boolean).sort();
-  }, [graphMode, trace.mode, localNodes, renderedSchemas]);
-
-  const legendColorMap = useMemo((): SchemaColorMap => {
-    const colors: SchemaColorMap = new Map();
-    for (const node of localNodes) {
-      if (node.type === 'schemaNode') {
-        const data = node.data as SchemaNodeData;
-        colors.set(schemaKey(data.schemaName), data.color);
-        continue;
-      }
-      const data = node.data as CustomNodeData;
-      if (data.objectType !== 'external') {
-        colors.set(schemaKey(data.schema), data.schemaColor ?? getSchemaColor(data.schema));
-      }
-    }
-    return colors;
-  }, [localNodes]);
+  // Mirror the current-screen snapshot to the host so the debug dump can reproduce what
+  // the user sees: rendered counts, the highlighted node, its add/prune affordances (with the
+  // reason each is grayed), and the live trace scope. Resync on view, selection, or scope change.
+  useEffect(() => {
+    if (!graphErrorContext) return;
+    const highlighted = highlightedNodeId ?? null;
+    const controls = highlighted ? traceControlsByNode.get(highlighted) : undefined;
+    const traceScope = trace.mode !== 'none'
+      ? {
+          mode: trace.mode,
+          origin: trace.selectedNodeId,
+          baseNodeIds: Array.from(trace.baseNodeIds),
+          manualAddedNodeIds: Array.from(trace.manualAddedNodeIds),
+          manualPrunedNodeIds: Array.from(trace.manualPrunedNodeIds),
+          tracedNodeIds: Array.from(trace.tracedNodeIds),
+        }
+      : null;
+    window.vscode?.postMessage({
+      type: 'render-state',
+      renderState: {
+        ...graphErrorContext,
+        highlightedNodeId: highlighted,
+        affordances: highlighted && controls ? serializeTraceAffordances(highlighted, controls) : null,
+        traceScope,
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphErrorResetKey, highlightedNodeId, traceControlsByNode, trace.tracedNodeIds.size]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -830,6 +1119,9 @@ export function GraphCanvas({
         allNodes={allNodes}
         visibleNodeIds={visibleNodeIds}
         metrics={metrics}
+        renderedNodeCount={flowNodes.length}
+        overviewThreshold={config.overview.threshold}
+        renderLimit={config.renderLimit}
         filterProfiles={filterProfiles}
         activeProjectId={activeProjectId}
         activeViewId={activeViewId}
@@ -840,7 +1132,19 @@ export function GraphCanvas({
         onUpdateView={onUpdateView}
         isFilterDirty={isFilterDirty}
         isModeLocked={isModeLocked}
+        canStartNewScopedMode={canStartNewScopedMode}
+        canSwitchGraphMode={canSwitchGraphMode}
         isOverview={graphMode === 'overview'}
+        graphMode={graphMode}
+        onGraphModeChange={onGraphModeChange}
+        schemaViewSoftDisabled={schemaViewSoftDisabled}
+        isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
+        onResetExpandedSchemaView={onResetExpandedSchemaView}
+        showExpandedSchemaClusters={showExpandedSchemaClusters}
+        onToggleExpandedSchemaClusters={onToggleExpandedSchemaClusters}
+        expandedSchemaCount={expandedSchemaCount}
+        onExpandAllSchemas={onExpandAllSchemas}
+        collapsedSchemaNodeIds={collapsedSchemaNodeIds}
       />
 
       {/* Advanced bookmark banner — shown whenever an allowlist view is active */}
@@ -919,6 +1223,21 @@ export function GraphCanvas({
         />
       )}
 
+      <ErrorBoundary
+        resetKey={graphErrorResetKey}
+        context={graphErrorContext}
+        onError={() => {
+          // Detail + the VS Code error toast are already emitted by ErrorBoundary.componentDidCatch
+          // → bridge 'error' handler (error-level Output log). Here we only auto-reload so the user
+          // never stares at a dead canvas; the navbar stays mounted above this boundary.
+          setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
+        }}
+        fallback={
+          <div className="flex-1 flex items-center justify-center text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
+            The graph view hit an error and is reloading…
+          </div>
+        }
+      >
       <div className="flex-1 flex flex-row overflow-hidden min-h-0">
         <div className="flex-1 relative overflow-hidden min-w-0">
         {isRebuilding && (
@@ -945,7 +1264,10 @@ export function GraphCanvas({
               onNodeDoubleClick={handleNodeDoubleClick}
               onNodeContextMenu={(event, node) => {
                 event.preventDefault();
-                onNodeContextMenu(node.id, event.clientX, event.clientY);
+                if (node.type === 'schemaNode') {
+                  setLocalNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
+                }
+                onNodeContextMenu(node, event.clientX, event.clientY);
               }}
               fitView
               fitViewOptions={{ padding: 0.15 }}
@@ -977,6 +1299,8 @@ export function GraphCanvas({
                   zoomable
                   position="bottom-right"
                   nodeColor={minimapNodeColor}
+                  nodeStrokeColor={minimapNodeStrokeColor}
+                  nodeStrokeWidth={2}
                   nodeBorderRadius={4}
                   ariaLabel="Graph minimap"
                 />
@@ -993,24 +1317,24 @@ export function GraphCanvas({
                       onSwitchAnalysis={onOpenAnalysis}
                     />
                   ) : onToggleDetailSearch ? (
-                    <DetailSearchSidebar
-                      onClose={onToggleDetailSearch}
-                      allNodes={allNodes.map(n => ({
-                        id: n.id,
-                        name: n.name,
-                        schema: n.schema,
-                        type: n.type,
-                        bodyScript: modelNodeMap.get(n.id)?.bodyScript,
-                        columns: modelNodeMap.get(n.id)?.columns,
-                      }))}
-                      visibleNodeIds={visibleNodeIds}
-                      onResultClick={(nodeId, searchTerm) => {
-                        if (graphMode === 'overview') {
-                          const node = model?.nodes.find(n => n.id === nodeId);
-                          if (node) {
+                      <DetailSearchSidebar
+                        onClose={onToggleDetailSearch}
+                        allNodes={allNodes.map(n => ({
+                          id: n.id,
+                          name: n.name,
+                          schema: n.schema,
+                          type: n.type,
+                          bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                          columns: modelNodeMap.get(n.id)?.columns,
+                        }))}
+                        visibleNodeIds={visibleNodeIds}
+                        collapsedSchemaNodeIds={collapsedSchemaNodeIds}
+                        onResultClick={(nodeId, searchTerm) => {
+                          if (graphMode === 'overview') {
+                            if (modelNodeMap.has(nodeId)) {
                             pendingZoomRef.current = nodeId;
                             pendingClickRef.current = { id: nodeId, searchTerm };
-                            onSchemaNodeDoubleClick?.(node.schema);
+                            onOpenExpandedSchemaViewForNode?.(nodeId);
                             return;
                           }
                         }
@@ -1025,7 +1349,13 @@ export function GraphCanvas({
           </div>
         )}
 
-        <Legend schemas={legendSchemas} schemaColorMap={legendColorMap} isSidebarOpen={isDetailSearchOpen || !!analysisMode} />
+        <Legend
+          schemas={legendSchemas}
+          schemaColorMap={legendColorMap}
+          isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
+          expandedSchemas={expandedSchemas}
+          isSidebarOpen={isDetailSearchOpen || !!analysisMode}
+        />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}
         {activeAdvancedProfile && isBookmarkMode && (
@@ -1066,6 +1396,7 @@ export function GraphCanvas({
         )}
         </div>
       </div>
+      </ErrorBoundary>
 
       {infoBarNodeId && model && (
         <NodeInfoBar

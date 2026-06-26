@@ -5,7 +5,11 @@ interface WizardPanelProps {
   footer?: ReactNode;
 }
 
-/** Shared shell for all wizard screens: dark panel, centered, logo header. */
+/**
+ * Shared shell for all wizard screens: dark panel, centered, logo header.
+ *
+ * @returns The wizard frame wrapping `children`, with an optional pinned footer.
+ */
 export function WizardPanel({ children, footer }: WizardPanelProps) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">

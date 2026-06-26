@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { type AiSession } from '../ai/session/session';
 import { Logger, trunc, sanitizeForLog, logRaw } from '../utils/log';
+import { notifyError, notifyWarning } from '../utils/notifications';
 import { type BridgeHost } from './host';
 import {
   type DatabaseModel, type XmlElement, type LineageNode, type ColumnDef, type ParseStats
@@ -26,6 +27,9 @@ import {
 } from '../engine/projectStore';
 import { buildBareGraph } from '../ai/infra/graphUtils';
 import { populateColumnStore } from '../engine/modelBuilder';
+import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
+import { formatRenderConnectivity, type RenderConnectivity } from '../engine/renderConnectivity';
+import { formatScreenStateSections, type RenderStateSnapshot, type ScreenStateExtras } from './debugDumpScreenState';
 import {
   DetailPanelToExtensionMsgSchema,
   type MainPanelToExtensionMsg,
@@ -44,6 +48,41 @@ export type WebviewMessageHandlers = {
 
 declare const __BUILD_TIMESTAMP__: string;
 
+/** Maximum number of recent webview errors retained for diagnostics. */
+const MAX_LAST_ERRORS = 10;
+
+interface WebviewErrorEntry {
+  timestamp: number;
+  source: string;
+  message: string;
+  stack?: string;
+  componentStack?: string;
+  context?: unknown;
+}
+
+interface UiDiagnosticsState {
+  renderState: unknown | null;
+  lastUiSyncAt: number | null;
+  lastErrors: WebviewErrorEntry[];
+}
+
+const uiDiagnosticsBySession = new WeakMap<AiSession, UiDiagnosticsState>();
+
+function getUiDiagnostics(sess: AiSession): UiDiagnosticsState {
+  let state = uiDiagnosticsBySession.get(sess);
+  if (!state) {
+    state = { renderState: null, lastUiSyncAt: null, lastErrors: [] };
+    uiDiagnosticsBySession.set(sess, state);
+  }
+  return state;
+}
+
+function recordWebviewError(sess: AiSession, entry: WebviewErrorEntry): void {
+  const state = getUiDiagnostics(sess);
+  state.lastErrors.push(entry);
+  if (state.lastErrors.length > MAX_LAST_ERRORS) state.lastErrors.shift();
+}
+
 /**
  * Storage key for the project store in VS Code's global state.
  */
@@ -57,10 +96,24 @@ export interface MessageHandlerBundle {
   handlers: WebviewMessageHandlers;
   /** Cleanup function to release resources (e.g., database connections) when the panel is disposed. */
   cleanup: () => Promise<void>;
+  /** Function to programmatically trigger the demo load when the panel is already active. */
+  triggerDemoLoad: () => Promise<void>;
 }
 
 /**
  * Factory for creating the IPC (Inter-Process Communication) bridge between the Extension Host and the Webview.
+ *
+ * @param host - Bridge host used to interact with VS Code.
+ * @param context - Extension context for global state and subscriptions.
+ * @param getSession - Factory for retrieving the current AI session.
+ * @param outputChannel - Output channel used for logging.
+ * @param loadProjectStore - Loader for the persisted project store.
+ * @param saveProjectStore - Persister for project-store updates.
+ * @param migrateFromWorkspaceState - Migration helper for legacy workspace state.
+ * @param loadDemoFlag - Whether demo data should be loaded instead of a persisted project.
+ * @param setDetailPanel - Setter for the current detail panel reference.
+ *
+ * @returns The per-message-type handler map plus the panel-dispose cleanup function.
  */
 export function createMessageHandlers(
   host: BridgeHost,
@@ -178,7 +231,10 @@ export function createMessageHandlers(
 
       if (!detailPanel) {
         const title = msg.node ? `Detail: ${msg.node.name}` : 'Detail';
-        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', title, vscode.ViewColumn.Beside, { enableScripts: true });
+        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', title, vscode.ViewColumn.Beside, {
+          enableScripts: true,
+          localResourceRoots: [vscode.Uri.joinPath(host.getExtensionUri(), 'dist'), vscode.Uri.joinPath(host.getExtensionUri(), 'images')],
+        });
         detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, host.getExtensionUri());
         detailPanel.onDidDispose(() => {
           detailPanel = undefined;
@@ -248,7 +304,7 @@ export function createMessageHandlers(
       if (uris && uris.length > 0) {
         host.log('info', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
         const data = await host.readFile(uris[0]);
-        if (isDacpacTooLarge(data.byteLength, host)) return;
+        if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
         const config = await readExtensionConfig(host);
         const { preview, elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
         cachedElements = elements; cachedDspName = dspName;
@@ -282,7 +338,7 @@ export function createMessageHandlers(
           const fileUri = vscode.Uri.file(project.connection.path);
           host.log('info', 'Bridge', `Reading dacpac file: ${fileUri.fsPath}`);
           const data = await host.readFile(fileUri);
-          if (isDacpacTooLarge(data.byteLength, host)) return;
+          if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
 
           const refreshed = { ...project, updatedAt: new Date().toISOString() };
           const updatedStore = updateProject(store, refreshed);
@@ -296,7 +352,10 @@ export function createMessageHandlers(
             host.log('info', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
             const { elements, dspName } = await extractSchemaPreview(data.buffer as ArrayBuffer);
             const logger = Logger.create(outputChannel, 'Parse');
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg));
+            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+              externalRefsEnabled: config.externalRefs.enabled,
+              maxNodes: config.maxNodes,
+            });
             logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
@@ -373,7 +432,10 @@ export function createMessageHandlers(
       }
       const config = await readExtensionConfig(host);
       const logger = Logger.create(outputChannel, 'Parse');
-      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg));
+      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+        externalRefsEnabled: config.externalRefs.enabled,
+        maxNodes: config.maxNodes,
+      });
       logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
@@ -419,14 +481,24 @@ export function createMessageHandlers(
     'filter-changed': (msg) => {
       const sess = getSession();
       if (msg.uiState) {
+        const prevCount = sess.filteredCount;
+        const prevHit = sess.renderLimitHit;
         sess.uiState = msg.uiState;
         sess.filter = msg.uiState.filter;
         sess.traceState = msg.uiState.trace;
         sess.graphMode = msg.uiState.graphMode;
         sess.filteredCount = msg.uiState.filteredCount;
         sess.renderLimitHit = msg.uiState.renderLimitHit;
-        host.log('debug', 'Filter', `State sync — ${msg.uiState.filteredCount ?? '?'} nodes, renderLimitHit=${msg.uiState.renderLimitHit ?? 0}`);
+        getUiDiagnostics(sess).lastUiSyncAt = Date.now();
+        if (prevCount !== msg.uiState.filteredCount || prevHit !== msg.uiState.renderLimitHit) {
+          host.log('debug', 'Filter', `State sync — ${msg.uiState.filteredCount ?? '?'} nodes, renderLimitHit=${msg.uiState.renderLimitHit ?? 0}`);
+        }
       }
+    },
+    'render-state': (msg) => {
+      const state = getUiDiagnostics(getSession());
+      state.renderState = msg.renderState ?? null;
+      state.lastUiSyncAt = Date.now();
     },
     'db-connect': () => {
       host.log('info', 'Bridge', 'Database connect requested');
@@ -465,6 +537,7 @@ export function createMessageHandlers(
     },
     'rebuild': async () => {
       host.log('info', 'Bridge', 'Rebuild requested');
+      getSession().columnStore.clear();
       const config = await readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },
@@ -507,39 +580,80 @@ export function createMessageHandlers(
     },
     'error': (msg) => {
       const source = msg.source ?? 'unknown';
+      const logger = Logger.create(outputChannel, 'Bridge');
       // Reconstruct an Error carrying the webview's original stack so downstream
       // consumers see the real throw site, not the rethrow point in the extension.
       const err = new Error(msg.error);
       if (msg.stack) err.stack = msg.stack;
-      host.log('error', 'Bridge', `Webview ${source}`, err);
       const componentLine = msg.componentStack
         ? trunc(sanitizeForLog(msg.componentStack), 300)
         : '(no React tree)';
-      host.log('debug', 'Bridge', `Component path: ${componentLine}`);
-      host.showErrorMessage(`Data Lineage Error: ${msg.error}`);
+      const contextLine = msg.context
+        ? trunc(JSON.stringify(msg.context), 500)
+        : '(no context)';
+
+      // Retain for the debug dump's LAST ERRORS section — the context carries the full
+      // current-screen snapshot, so a crash is reproducible from the dump alone.
+      recordWebviewError(getSession(), {
+        timestamp: msg.timestamp ?? Date.now(),
+        source,
+        message: msg.error,
+        stack: msg.stack ? trunc(sanitizeForLog(msg.stack), 600) : undefined,
+        componentStack: componentLine,
+        context: msg.context,
+      });
+
+      // A render-boundary crash auto-reloads the panel — say so plainly. Other sources
+      // (window error, unhandled rejection) just report the failure.
+      const userMessage = source === 'error-boundary'
+        ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
+        : `Data Lineage Error: ${msg.error}`;
+
+      // Full detail (message + stack + component tree + screen context) is written to the
+      // Output channel at error level by notifyError, before the concise toast.
+      notifyError(
+        logger,
+        `Webview ${source}`,
+        userMessage,
+        err,
+        { messageType: 'error', source, component: componentLine, context: contextLine },
+        host.showErrorMessage,
+      );
     },
     'show-warning': (msg) => {
       const text = typeof msg.text === 'string' ? msg.text : '';
-      host.log('warn', 'Bridge', `show-warning: ${text}`);
-      vscode.window.showWarningMessage(`Data Lineage: ${text}`);
-    },
-    'overview-mode-changed': (msg) => {
-      host.log('debug', 'Bridge', `overview-mode-changed: mode=${msg.mode} enteredFocusFromOverview=${msg.enteredFocusFromOverview ?? false}`);
+      notifyWarning(
+        Logger.create(outputChannel, 'Bridge'),
+        'Webview warning notification',
+        `Data Lineage: ${text}`,
+        { messageType: 'show-warning', text },
+      );
     },
   };
 
   return {
     handlers,
     cleanup: cleanupStatsConnection,
+    triggerDemoLoad: () => handleLoadDemo(host, getSession, outputChannel, (m) => {
+      setCurrentModel(m, false, null);
+      getSession().projectName = 'Demo';
+    }),
   };
 }
 
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 
-function isDacpacTooLarge(bytes: number, host: BridgeHost): boolean {
+function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode.LogOutputChannel): boolean {
   if (bytes <= MAX_DACPAC_BYTES) return false;
   const mb = (bytes / 1024 / 1024).toFixed(1);
-  host.showErrorMessage(`Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`);
+  notifyError(
+    Logger.create(outputChannel, 'Dacpac'),
+    'Validate dacpac size',
+    `Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`,
+    new Error(`DACPAC size ${bytes} exceeds ${MAX_DACPAC_BYTES}`),
+    { bytes, maxBytes: MAX_DACPAC_BYTES },
+    host.showErrorMessage,
+  );
   return true;
 }
 
@@ -549,17 +663,26 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     const demoUri = vscode.Uri.joinPath(host.getExtensionUri(), 'assets', 'demo.dacpac');
     host.log('info', 'Dacpac', `Loading demo dacpac from: ${demoUri.fsPath}`);
     const data = await host.readFile(demoUri);
-    if (isDacpacTooLarge(data.byteLength, host)) return;
+    if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
     const logger = Logger.create(outputChannel, 'Parse');
-    const model = await extractDacpac(data.buffer as ArrayBuffer, (msg) => logger.debug(msg), (msg) => logger.info(msg));
+    const model = await extractDacpac(data.buffer as ArrayBuffer, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+      externalRefsEnabled: config.externalRefs.enabled,
+      maxNodes: config.maxNodes,
+    });
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
     host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
     host.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
   } catch (err) {
-    host.log('error', 'Dacpac', 'Load demo', err);
     const msg = err instanceof Error ? err.message : String(err);
-    host.showErrorMessage(`Data Lineage: Failed to load demo — ${msg}`);
+    notifyError(
+      Logger.create(outputChannel, 'Dacpac'),
+      'Load demo',
+      `Data Lineage: Failed to load demo — ${msg}`,
+      err,
+      { asset: 'assets/demo.dacpac' },
+      host.showErrorMessage,
+    );
   }
 }
 
@@ -585,7 +708,12 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const resultMap = await executeDmvQueriesFiltered(connectionUri, queries, schemas, outputChannel, (step, total, label) => {
     host.postMessage({ type: 'db-progress', step, total, label });
   }, timeoutMs);
-  const dmvResults: DmvResults = { nodes: resultMap.get('nodes')!, columns: resultMap.get('columns')!, dependencies: resultMap.get('dependencies')!, allObjects, platformInfo };
+  const requireResult = (name: 'nodes' | 'columns' | 'dependencies'): SimpleExecuteResult => {
+    const result = resultMap.get(name);
+    if (!result) throw new Error(`No '${name}' result from Phase 2 DMV queries`);
+    return result;
+  };
+  const dmvResults: DmvResults = { nodes: requireResult('nodes'), columns: requireResult('columns'), dependencies: requireResult('dependencies'), allObjects, platformInfo };
   const config = await readExtensionConfig(host);
   const logger = Logger.create(outputChannel, 'Parse');
   logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
@@ -676,6 +804,9 @@ async function handleTableStatsRequestHost(
         throw sampleErr;
       }
     }
+    if (!profilingResult.rows.length) {
+      throw new Error(`Profiling query returned no rows for ${schema}.${objectName}`);
+    }
     const resultRow: Record<string, string> = {};
     for (let i = 0; i < profilingResult.columnInfo.length; i++) {
       resultRow[profilingResult.columnInfo[i].columnName] = profilingResult.rows[0][i].displayValue;
@@ -727,8 +858,14 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   }
 }
 
-async function readExtensionConfig(host: BridgeHost): Promise<any> {
-  const cfg = host.getConfiguration();
+/**
+ * Reads display and behaviour settings from a VS Code workspace configuration
+ * and returns the serialisable config snapshot sent to the webview.
+ *
+ * @param cfg - Workspace configuration scoped to `dataLineageViz`.
+ * @returns Config snapshot for the webview (same shape as {@link ExtensionConfigSchema}).
+ */
+export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record<string, any> {
   return {
     excludePatterns: cfg.get<string[]>('excludePatterns'),
     maxNodes: cfg.get<number>('maxNodes'),
@@ -742,7 +879,11 @@ async function readExtensionConfig(host: BridgeHost): Promise<any> {
       edgeStyle: cfg.get<string>('layout.edgeStyle'),
     },
     externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled') },
-    overview: { enabled: cfg.get<boolean>('overview.enabled'), threshold: cfg.get<number>('overview.threshold') },
+    overview: {
+      enabled: cfg.get<boolean>('overview.enabled'),
+      threshold: cfg.get<number>('overview.threshold'),
+      schemaDoubleClickBehavior: cfg.get<string>('overview.schemaDoubleClickBehavior'),
+    },
     renderLimit: cfg.get<number>('renderLimit'),
     trace: {
       defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels'),
@@ -756,14 +897,68 @@ async function readExtensionConfig(host: BridgeHost): Promise<any> {
   };
 }
 
+async function readExtensionConfig(host: BridgeHost): Promise<Record<string, any>> {
+  return buildExtensionConfig(host.getConfiguration());
+}
+
+import { buildWebviewCsp } from '../utils/cspBuilder';
+import { getNonce } from '../utils/getNonce';
+
+/**
+ * Generates the root HTML for the secondary Detail Webview.
+ *
+ * This provides the container, strict CSP, and bootloader fallback for the
+ * detail panel.
+ *
+ * @param webview - The vscode.Webview instance for the detail panel.
+ * @param extensionUri - The base URI of the extension for resolving assets.
+ * @returns The complete HTML string.
+ */
 function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><link rel="stylesheet" type="text/css" href="${stylesUri}"><title>Detail</title></head><body class="vscode-body"><div id="root"></div><script>window.__DETAIL_MODE__ = true;</script><script type="module" src="${scriptUri}"></script></body></html>`;
+  const nonce = getNonce();
+  const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <link rel="stylesheet" type="text/css" href="${stylesUri}">
+  <title>Detail</title>
+</head>
+<body class="vscode-body">
+  <div id="root">
+    <div id="bootloader-fallback" style="display: none; padding: 2rem; color: var(--vscode-errorForeground); font-family: var(--vscode-font-family);">
+      <h2>Detail UI Failed to Load</h2>
+      <p>The extension's user interface encountered a fatal error during initialization.</p>
+      <p>Please open the <b>Developer: Toggle Developer Tools</b> command from the Command Palette to view the exact error.</p>
+    </div>
+  </div>
+  <script nonce="${nonce}">
+    window.__DETAIL_MODE__ = true;
+    setTimeout(() => {
+      const fallback = document.getElementById('bootloader-fallback');
+      if (fallback) fallback.style.display = 'block';
+    }, 3000);
+  </script>
+  <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
 }
 
-export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel): string {
+/**
+ * Builds a GUI diagnostic snapshot for the current extension state.
+ *
+ * @param context - Extension context for global state and subscriptions.
+ * @param getSession - Factory for retrieving the current session-backed GUI state.
+ *
+ * @returns Diagnostic text focused on the user-visible graph, filters, render state, and settings.
+ */
+export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession): string {
   const sess = getSession();
+  const uiDiagnostics = getUiDiagnostics(sess);
   const lines: string[] = [];
   const add = (s: string) => lines.push(s);
   const version = (context.extension.packageJSON as { version: string }).version ?? 'unknown';
@@ -771,6 +966,8 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
 
   add(`Data Lineage Viz — Debug Info`);
   add(`Generated: ${new Date().toISOString()}`);
+  add(`Last UI sync: ${uiDiagnostics.lastUiSyncAt ? new Date(uiDiagnostics.lastUiSyncAt).toISOString() : '(never — webview has not reported state)'}`);
+  add(`Webview errors captured: ${uiDiagnostics.lastErrors.length}`);
   add('');
 
   // ── ENVIRONMENT ──
@@ -799,6 +996,21 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add('  Schemas:');
     add(JSON.stringify(sess.model.schemas, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
     add('');
+
+    // ── MODEL CONNECTIVITY (full model, filter-independent) ──
+    add('MODEL CONNECTIVITY (full model, filter-independent)');
+    add(formatModelConnectivity(summarizeModelConnectivity(sess.model)));
+    add('');
+  }
+
+  // ── SCHEMA LEGEND ──
+  if (sess.model) {
+    const names = sess.model.schemas
+      .filter(s => !(s.types['external'] > 0 && s.nodeCount === s.types['external']))
+      .map(s => s.name);
+    add('SCHEMA LEGEND');
+    add(`  ${names.join(', ') || '(none)'}`);
+    add('');
   }
 
   // ── PARSE STATS ──
@@ -815,25 +1027,58 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add('');
   }
 
-  // ── AI SESSION ──
-  add('AI SESSION');
-  add(`  Model:          ${sess.modelName || '(none)'}`);
-  add(`  Session ID:     ${sess.id}`);
-  add(`  Status:         ${sess.stateMachine?.status ?? 'idle'}`);
-  add(`  Hops:           ${sess.hopCount}`);
-  if (sess.stateMachine) {
+  // ── RENDER STATE (current on-screen graph) ──
+  add('RENDER STATE (current screen)');
+  if (uiDiagnostics.renderState) {
+    add(JSON.stringify(uiDiagnostics.renderState, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
+  } else {
+    add('    (no render-state reported — graph not rendered, or render-limit mode)');
+  }
+  add('');
+
+  // ── RENDERED CONNECTIVITY (what the user currently sees) ──
+  const renderConnectivity = (uiDiagnostics.renderState as { connectivity?: RenderConnectivity } | undefined)?.connectivity;
+  if (renderConnectivity) {
+    add('RENDERED CONNECTIVITY (current screen)');
+    add(formatRenderConnectivity(renderConnectivity));
     add('');
-    add('STATE MACHINE DUMP (JSON)');
-    try {
-      add(JSON.stringify(sess.stateMachine.toJSON(), null, 2));
-    } catch (err) {
-      add(`  Error dumping SM: ${err}`);
+  }
+
+  // ── SELECTION & AFFORDANCES / TRACE SCOPE / DETAIL PANEL / ANALYTICS / BOOKMARK ──
+  // Explains why the selected node shows or grays its +/- trace controls, standalone.
+  add(formatScreenStateSections(
+    uiDiagnostics.renderState as RenderStateSnapshot | null,
+    (sess.uiState as { screenState?: ScreenStateExtras } | null)?.screenState ?? null,
+    sess.model ?? null,
+  ));
+
+  // ── LAST ERRORS (newest last) ──
+  add(`LAST ERRORS (${uiDiagnostics.lastErrors.length})`);
+  if (uiDiagnostics.lastErrors.length === 0) {
+    add('    (none captured this session)');
+  } else {
+    for (const e of uiDiagnostics.lastErrors) {
+      add(`  [${new Date(e.timestamp).toISOString()}] source=${e.source}`);
+      add(`    message:   ${e.message}`);
+      if (e.componentStack) add(`    component: ${e.componentStack}`);
+      if (e.context !== undefined) add(`    context:   ${trunc(JSON.stringify(e.context), 800)}`);
+      if (e.stack) add(`    stack:     ${e.stack}`);
     }
   }
   add('');
 
+  // ── SM SUMMARY (overview only; full dump is a separate command) ──
+  add('SM SUMMARY');
+  add(`  Phase:        ${sess.phase.kind}`);
+  add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
+  add(`  Hops:         ${sess.hopCount}`);
+  add(`  Pending gate: ${sess.phase.kind === 'awaiting_gate' ? sess.phase.gate.gate : 'none'}`);
+  add(`  Result nodes: ${sess.resultGraph?.nodeIds.length ?? 0}`);
+  add('  Full SM dump: use Data Lineage: Dump SM State');
+  add('');
+
   // ── SETTINGS ──
-  add('SETTINGS (dataLineageViz.*)');
+  add('SETTINGS (dataLineageViz.*, excluding ai.*)');
   try {
     const cfg = vscode.workspace.getConfiguration('dataLineageViz');
     const pkg = context.extension.packageJSON;
@@ -842,6 +1087,7 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     for (const section of configSections) {
       for (const key of Object.keys(section.properties || {})) {
         const shortKey = key.replace('dataLineageViz.', '');
+        if (shortKey === 'ai' || shortKey.startsWith('ai.')) continue;
         allSettings[shortKey] = cfg.get(shortKey);
       }
     }

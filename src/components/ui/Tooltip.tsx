@@ -64,10 +64,13 @@ export const Tooltip = memo(function Tooltip({
   const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss]);
 
   const trigger = asChild && isValidElement(children)
-    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
-        ref: refs.setReference,
-        ...getReferenceProps(),
-      })
+    ? (() => {
+        const child = children as ReactElement<Record<string, unknown>>;
+        return cloneElement(child, {
+          ...getReferenceProps(child.props),
+          ref: refs.setReference,
+        });
+      })()
     : (
       <span ref={refs.setReference} {...getReferenceProps()} style={{ display: 'inline-flex', alignItems: 'center' }}>
         {children}
