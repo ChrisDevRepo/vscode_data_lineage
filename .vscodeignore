@@ -1,5 +1,6 @@
 # Source files (bundled into out/ and dist/)
 src/**
+scripts/**
 test/**
 tests/**
 test-results/**
@@ -22,6 +23,8 @@ out/**/*.d.ts
 .gitignore
 tsconfig.json
 tsconfig.extension.json
+tsconfig.integration.json
+.vscode-test.mjs
 vite.config.ts
 vitest.config.ts
 tailwind.config.js
@@ -46,7 +49,7 @@ CONTRIBUTING.md
 .env
 .env.*
 
-# Claude Code session temp files (created by Claude CLI — must not leak into VSIX)
+# Assistant session temp files must not leak into VSIX.
 tmpclaude-*
 
 # Unreferenced screenshot (superseded by viz-search/viz-ai variants).

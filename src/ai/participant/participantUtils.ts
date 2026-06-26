@@ -472,4 +472,4 @@ export function renderHopDirective(engine: NavigationEngine | null): string {
 export function isTransientLmError(err: unknown): boolean {
   if (err instanceof vscode.LanguageModelError) return false;
   return matchesTransientNetPattern(err);
-}
+}

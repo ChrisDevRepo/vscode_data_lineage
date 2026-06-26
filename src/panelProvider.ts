@@ -146,7 +146,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
   const logoUri = getUri(webview, extensionUri, ["images", "logo.png"]);
   const nonce = getNonce();
   const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
-  
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

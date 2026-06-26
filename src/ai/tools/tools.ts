@@ -823,5 +823,3 @@ export function searchDdl(
   }
   return { results, total: results.length };
 }
-
-
