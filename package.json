@@ -1318,6 +1318,8 @@
     "fast-xml-builder": "^1.1.7",
     "dompurify": "^3.4.1",
     "serialize-javascript": "^7.0.5",
-    "picomatch": "4.0.4"
+    "picomatch": "4.0.4",
+    "undici": "^7.28.0",
+    "diff": "^8.0.3"
   }
 }
