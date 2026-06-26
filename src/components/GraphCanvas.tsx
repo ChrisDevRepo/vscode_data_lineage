@@ -810,7 +810,11 @@ export function GraphCanvas({
   }, [flowEdges]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
+    (changes) => setLocalNodes((nds) => {
+      const schemaNodeIds = new Set(nds.filter(n => n.type === 'schemaNode').map(n => n.id));
+      const nonSchemaSelectionChanges = changes.filter(change => !(change.type === 'select' && schemaNodeIds.has(change.id)));
+      return applyNodeChanges(nonSchemaSelectionChanges, nds) as FlowNode[];
+    }),
     []
   );
 

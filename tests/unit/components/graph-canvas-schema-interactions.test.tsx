@@ -45,6 +45,7 @@ vi.mock('@xyflow/react', async () => {
       onNodeClick,
       onNodeDoubleClick,
       onNodeContextMenu,
+      onNodesChange,
       children,
     }: {
       nodes: Array<{ id: string; type?: string; data: unknown; selected?: boolean }>;
@@ -52,6 +53,7 @@ vi.mock('@xyflow/react', async () => {
       onNodeClick?: (event: React.MouseEvent, node: unknown) => void;
       onNodeDoubleClick?: (event: React.MouseEvent, node: unknown) => void;
       onNodeContextMenu?: (event: React.MouseEvent, node: unknown) => void;
+      onNodesChange?: (changes: Array<{ id: string; type: 'select'; selected: boolean }>) => void;
       children?: ReactNode;
     }) => (
       <div data-testid="react-flow">
@@ -62,7 +64,10 @@ vi.mock('@xyflow/react', async () => {
               key={node.id}
               data-testid={`flow-node-${node.id}`}
               data-selected={String(!!node.selected)}
-              onClick={(event) => onNodeClick?.(event, node)}
+              onClick={(event) => {
+                onNodesChange?.([{ id: node.id, type: 'select', selected: true }]);
+                onNodeClick?.(event, node);
+              }}
               onDoubleClick={(event) => onNodeDoubleClick?.(event, node)}
               onContextMenu={(event) => onNodeContextMenu?.(event, node)}
             >
@@ -256,6 +261,16 @@ describe('GraphCanvas schema node interactions', () => {
     expect(await screen.findByRole('button', { name: 'Expand' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Expand Only' })).toBeTruthy();
     expect(onNodeContextMenu).toHaveBeenCalledWith(expect.objectContaining({ id: '__schema__sales' }), 0, 0);
+  });
+
+  it('does not expose schema actions on left-click', async () => {
+    renderGraphCanvas();
+
+    fireEvent.click(screen.getByTestId('flow-node-__schema__sales'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Expand Only' })).toBeNull();
   });
 
   it('right-click exposes schema actions in initial schema-only view', async () => {
