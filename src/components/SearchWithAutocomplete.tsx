@@ -153,7 +153,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
           }
         }}
         placeholder="Quick Jump..."
-        className="h-9 w-full pl-3 pr-9 text-sm rounded transition-colors focus:outline-none ln-input"
+        className="h-9 w-full pl-3 pr-9 text-sm rounded-sm transition-colors focus:outline-hidden ln-input"
       />
       {searchTerm ? (
         <button
@@ -194,7 +194,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
                     setSearchTerm('');
                     setIsOpen(false);
                   }}
-                  className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded hover:opacity-70 ln-text-link"
+                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-sm hover:opacity-70 ln-text-link"
                 >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />

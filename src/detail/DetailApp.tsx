@@ -95,6 +95,9 @@ export function DetailApp() {
           findQuery: msg.findQuery,
           config:    msg.config ?? DEFAULT_DETAIL_CONFIG,
         });
+      } else if (msg.type === 'detail-clear') {
+        setStatsState({ phase: 'idle' });
+        setDetail(null);
       } else if (msg.type === 'table-stats-result') {
         setStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
       } else if (msg.type === 'table-stats-error') {
@@ -121,7 +124,7 @@ export function DetailApp() {
           fontSize: 13,
         }}
       >
-        Select a node in the graph to view details.
+        Select an object to view DDL / SQL source.
       </div>
     );
   }

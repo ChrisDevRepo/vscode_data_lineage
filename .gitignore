@@ -40,10 +40,13 @@ nul
 # AI assistant config — NEVER commit to public repo
 # These folders contain local context, prompts, credentials, and internal instructions.
 AGENTS.md
+.AGENTS.md
 CLAUDE.md
+.CLAUDE.md
 .claude/
 **/.claude/**
 GEMINI.md
+.GEMINI.md
 .gemini/
 **/.gemini/**
 .cursor/

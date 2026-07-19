@@ -198,8 +198,9 @@ export function exportToDrawio(
   nodes: FlowNode<CustomNodeData>[],
   edges: FlowEdge[],
   schemas: string[],
+  clusterNodes?: FlowNode<SchemaNodeData>[],
 ): string {
-  if (nodes.length === 0) return '';
+  if (nodes.length === 0 && (!clusterNodes || clusterNodes.length === 0)) return '';
 
   const idMap = new Map<string, string>();
   let nextId = 2; // 0 and 1 are reserved base cells
@@ -279,6 +280,17 @@ export function exportToDrawio(
     });
   }
 
+  const clusterObjects: MxObject[] = [];
+  const clusterBandCells: MxCell[] = [];
+  for (const node of clusterNodes ?? []) {
+    const nodeId = String(nextId++);
+    const bandId = String(nextId++);
+    idMap.set(node.id, nodeId);
+    const { obj, band } = buildSchemaClusterObject(node, nodeId, bandId, node.data.color);
+    clusterObjects.push(obj);
+    clusterBandCells.push(band);
+  }
+
   const edgeCells: MxCell[] = [];
   for (const edge of edges) {
     const src = idMap.get(edge.source);
@@ -291,7 +303,10 @@ export function exportToDrawio(
     { '@_id': '0' },
     { '@_id': '1', '@_parent': '0' },
   ];
-  return buildMxFile([...baseCells, ...legend.cells, ...colorBandCells, ...edgeCells], nodeObjects);
+  return buildMxFile(
+    [...baseCells, ...legend.cells, ...colorBandCells, ...clusterBandCells, ...edgeCells],
+    [...nodeObjects, ...clusterObjects],
+  );
 }
 
 function buildMxFile(cells: MxCell[], objects: MxObject[]): string {

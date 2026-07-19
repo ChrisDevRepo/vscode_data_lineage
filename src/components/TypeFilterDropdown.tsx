@@ -84,13 +84,13 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
               return (
                 <div
                   key={type}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item"
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
                 >
                   <input
                     type="checkbox"
                     checked={types.has(type)}
                     onChange={() => onToggleType(type)}
-                    className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
+                    className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
                   />
                   <span className="text-sm" style={{ color: 'var(--ln-fg-dim)' }}>{TYPE_COLORS[type].icon}</span>
                   <span className="text-sm ln-text">{TYPE_LABELS[type]}</span>

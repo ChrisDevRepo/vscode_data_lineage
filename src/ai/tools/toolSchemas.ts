@@ -29,9 +29,19 @@ export const StartExplorationInputSchema = z.object({
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
   depth: z.coerce.number().int().positive().optional(),
   /** Asymmetric override for upstream traversal depth — only honored when `direction='bidirectional'`. */
-  upstream_depth: z.coerce.number().int().min(0).optional(),
+  upstream_depth: z.preprocess((val) => {
+    if (val === null || val === undefined) return val;
+    if (val === 'all') return val;
+    const n = Number(val);
+    return isNaN(n) ? val : n;
+  }, z.union([z.number().int().min(0), z.literal('all')])).nullish(),
   /** Asymmetric override for downstream traversal depth — only honored when `direction='bidirectional'`. */
-  downstream_depth: z.coerce.number().int().min(0).optional(),
+  downstream_depth: z.preprocess((val) => {
+    if (val === null || val === undefined) return val;
+    if (val === 'all') return val;
+    const n = Number(val);
+    return isNaN(n) ? val : n;
+  }, z.union([z.number().int().min(0), z.literal('all')])).nullish(),
   depth_enforcement: z.enum(['strict', 'soft', 'silent']).optional(),
   excludeTypes: z.array(z.string()).optional(),
   /**
@@ -87,8 +97,18 @@ export const GetScopeBundleInputSchema = z.object({
   origin: z.string().min(1),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional(),
   depth: z.coerce.number().int().min(0).optional(),
-  upstream_depth: z.coerce.number().int().min(0).optional(),
-  downstream_depth: z.coerce.number().int().min(0).optional(),
+  upstream_depth: z.preprocess((val) => {
+    if (val === null || val === undefined) return val;
+    if (val === 'all') return val;
+    const n = Number(val);
+    return isNaN(n) ? val : n;
+  }, z.union([z.number().int().min(0), z.literal('all')])).nullish(),
+  downstream_depth: z.preprocess((val) => {
+    if (val === null || val === undefined) return val;
+    if (val === 'all') return val;
+    const n = Number(val);
+    return isNaN(n) ? val : n;
+  }, z.union([z.number().int().min(0), z.literal('all')])).nullish(),
   include_ddl: z.boolean().optional(),
 });
 
@@ -149,7 +169,8 @@ const HopFindingBaseSchema = z.object({
    * classification) or 2 (`both`). BB prune findings may submit length 0.
    */
   sections: z.array(CapturedSectionSchema).max(2),
-  summary: z.string().max(500),
+  // No length cap: summary is prose, and length must never be a hard prose-rejection axis.
+  summary: z.string(),
   /**
    * Optional list of neighbors to queue for the next hops. Each entry's
    * `nodeId` must already be a real id you have seen.
@@ -198,6 +219,30 @@ export const SubmitFindingsInputSchema = z.union([
 export type SubmitFindingsBbInput = z.infer<typeof SubmitFindingsBbInputSchema>;
 export type SubmitFindingsCtInput = z.infer<typeof SubmitFindingsCtInputSchema>;
 export type SubmitFindingsInput = z.infer<typeof SubmitFindingsInputSchema>;
+
+/** Patch-only retry for a held BB finding. Omitted fields retain their held values. */
+export const SubmitFindingsBbRepairPatchSchema = z.object({
+  repair: z.literal(true),
+  route_requests: z.array(RouteRequestSchema).optional(),
+  prune_neighbors: z.array(z.string()).optional(),
+}).strict().refine(
+  value => value.route_requests !== undefined || value.prune_neighbors !== undefined,
+  { message: 'A repair patch must include route_requests or prune_neighbors.' },
+);
+
+/** Patch-only retry for a held CT finding. Omitted fields retain their held values. */
+export const SubmitFindingsCtRepairPatchSchema = z.object({
+  repair: z.literal(true),
+  route_requests: z.array(CtRouteRequestSchema).optional(),
+  column_flow: z.array(ColumnFlowEntrySchema).optional(),
+}).strict().refine(
+  value => value.route_requests !== undefined || value.column_flow !== undefined,
+  { message: 'A repair patch must include route_requests or column_flow.' },
+);
+
+export type SubmitFindingsRepairPatch =
+  | z.infer<typeof SubmitFindingsBbRepairPatchSchema>
+  | z.infer<typeof SubmitFindingsCtRepairPatchSchema>;
 
 /**
  * Zod schema for `get_neighbor_columns` tool input.

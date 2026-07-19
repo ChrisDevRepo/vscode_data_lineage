@@ -5,6 +5,7 @@
  * consumed directly by `toolProvider.ts` and the present-result unit tests.
  */
 import type { DatabaseModel } from '../../engine/types';
+import { z } from 'zod';
 
 /** Char cap on the AI-supplied `name` field in `present_result` — guards against pathological prompt injection or runaway labels. */
 const PRESENT_RESULT_NAME_MAX_LENGTH = 200;
@@ -71,6 +72,76 @@ export type PresentResultInput = {
   }>;
 };
 
+const PresentHighlightGroupSchema = z.object({
+  label: z.string(),
+  color: z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']),
+  node_ids: z.array(z.string()),
+}).strict();
+
+const PresentSectionSchema = z.object({
+  label: z.string(),
+  node_ids: z.array(z.string()).optional(),
+  text: z.string(),
+}).strict();
+
+const PresentNoteSchema = z.object({
+  node_id: z.string(),
+  text: z.string(),
+}).strict();
+
+/** Strict runtime boundary for untrusted `present_result` input. */
+export const PresentResultBoundarySchema = z.object({
+  name: z.string(),
+  summary: z.string(),
+  title: z.string().optional(),
+  intro: z.string().optional(),
+  closing: z.string().optional(),
+  prune_node_ids: z.array(z.string()).optional(),
+  add_node_ids: z.array(z.string()).optional(),
+  is_update: z.boolean().optional(),
+  layout_direction: z.enum(['LR', 'TB']).optional(),
+  highlight_groups: z.array(PresentHighlightGroupSchema).optional(),
+  sections: z.array(PresentSectionSchema).optional(),
+  notes: z.array(PresentNoteSchema).optional(),
+}).strict() satisfies z.ZodType<PresentResultInput>;
+
+export const PRESENT_RESULT_REPAIR_FIELDS = [
+  'name',
+  'summary',
+  'title',
+  'intro',
+  'closing',
+  'layout_direction',
+  'highlight_groups',
+  'sections',
+  'notes',
+] as const;
+
+export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[number];
+
+const PresentResultRepairPatchBaseSchema = PresentResultBoundarySchema
+  .pick(Object.fromEntries(PRESENT_RESULT_REPAIR_FIELDS.map(field => [field, true])) as Record<PresentResultRepairField, true>)
+  .partial()
+  .extend({ repair: z.literal(true) })
+  .strict();
+
+/** Builds a strict patch schema exposing only fields authorized by the rejection. */
+export function presentResultRepairPatchSchemaForFields(fields: readonly PresentResultRepairField[]) {
+  const mask = Object.fromEntries([...new Set(fields)].map(field => [field, true]));
+  return PresentResultRepairPatchBaseSchema.pick({
+    ...mask,
+    repair: true,
+  } as Partial<Record<keyof typeof PresentResultRepairPatchBaseSchema.shape, true>>).strict();
+}
+
+/** Converts Zod issue paths into unique top-level repairable fields. */
+export function presentResultRepairFieldsFromPaths(paths: readonly PropertyKey[][]): PresentResultRepairField[] {
+  const allowed = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
+  return [...new Set(paths
+    .map(path => String(path[0] ?? ''))
+    .filter((field): field is PresentResultRepairField => allowed.has(field)))];
+}
+
 /**
  * The validated, engine-assembled result ready for the UI.
  *
@@ -92,7 +163,13 @@ export type PresentResultRequest = {
   notes: Array<{ node_id: string; text: string }>;
 };
 
-export type PresentResultError = { success: false; errors: string[]; hint: string };
+export type PresentResultError = {
+  success: false;
+  errors: string[];
+  hint: string;
+  repair_fields?: PresentResultRepairField[];
+  issue_paths?: string[];
+};
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
@@ -233,8 +310,22 @@ export function autoFixPresentResult(
   const fixes: string[] = [];
   let fixed = { ...input };
 
-  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args)
-  const unescapeNewlines = (s: string): string => s.replace(/\\n/g, '\n');
+  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args),
+  //    but never inside LaTeX math spans ($$…$$ / $…$): there a "\n…" is a control
+  //    word (\not, \ne, \neq, \nabla, \ni, \nu, …) that must survive verbatim — a blind
+  //    replace would collapse it to a newline and corrupt the formula.
+  const MATH_SPAN = /\$\$[\s\S]*?\$\$|\$[^$\n]*?\$/g;
+  const unescapeNewlines = (s: string): string => {
+    let out = '';
+    let last = 0;
+    for (const m of s.matchAll(MATH_SPAN)) {
+      const idx = m.index ?? 0;
+      out += s.slice(last, idx).replace(/\\n/g, '\n'); // outside math → unescape
+      out += m[0];                                     // inside math → verbatim
+      last = idx + m[0].length;
+    }
+    return out + s.slice(last).replace(/\\n/g, '\n');
+  };
   if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
   if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
   if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
@@ -455,8 +546,7 @@ export function validatePresentResult(
       else if (e.startsWith('title ')) failedFields.add('title');
       else if (e.startsWith('closing ')) failedFields.add('closing');
       else if (e.includes('summary')) failedFields.add('summary');
-      else if (e.includes('sections')) failedFields.add('sections');
-      else if (e.startsWith('Section ')) failedFields.add('sections');
+      else if (e.includes('section') || e.startsWith('Section ') || e.startsWith('Duplicate section')) failedFields.add('sections');
       else if (e.startsWith('Note for ')) failedFields.add('notes');
       else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
       else if (e.includes('No nodes')) failedFields.add('nodes');
@@ -468,7 +558,7 @@ export function validatePresentResult(
     if (failedFields.has('sections')) {
       hint = `${hint} ${SECTION_NODE_ID_HINT}`;
     }
-    return { success: false, errors, hint };
+    return { success: false, errors, hint, repair_fields: fieldList.filter((field): field is PresentResultRepairField => PRESENT_RESULT_REPAIR_FIELDS.includes(field as PresentResultRepairField)) };
   }
 
   return {

@@ -9,7 +9,6 @@ import { useExpandedSchemaView, type ExpandedSchemaViewState } from '../hooks/us
 import { useGraphology } from '../hooks/useGraphology';
 import { buildSchemaGraph } from '../engine/graphBuilder';
 import { deriveGraphDisplayMode, deriveInitialGraphMode } from '../engine/graphDisplayMode';
-import { deriveAiPreviewExpandedSchemas } from '../engine/aiPreviewScope';
 import { summarizeRenderedConnectivity } from '../engine/renderConnectivity';
 import { deriveModeCapabilities } from '../engine/modeCapabilities';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
@@ -20,6 +19,8 @@ import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis, getNeighborSchemas } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
+import { reconcileAiView } from './aiViewReconcile';
+import { ExtensionToWebviewMsgSchema } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
@@ -251,7 +252,6 @@ export function App() {
   );
 
   // pendingVisualize / pendingAutoVisualize → triggers handleVisualize → then view→graph
-  const prevModelRef = useRef<DatabaseModel | null>(null);
   useEffect(() => {
     if (!dacpacLoader.model || dacpacLoader.isLoading) return;
 
@@ -530,7 +530,9 @@ export function App() {
       preModFilterRef.current = null;
       if (saved && modelRef.current) {
         setFilter(saved);
-        rebuildRef.current(modelRef.current, saved, configRef.current);
+        const mode = deriveInitialGraphMode({ filteredCount: modelRef.current.nodes.length, config: configRef.current });
+        setGraphMode(mode);
+        rebuildRef.current(modelRef.current, saved, configRef.current, false, mode);
       }
     }
   }, [isModeLocked]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -618,6 +620,12 @@ export function App() {
     },
     [model, vscodeApi, isDetailOpen, highlightedNodeId]
   );
+
+  const handleSchemaNodeSelect = useCallback(() => {
+    setHighlightedNodeId(null);
+    setInfoBarNodeId(null);
+    if (isDetailOpen) vscodeApi.postMessage({ type: 'update-detail' });
+  }, [isDetailOpen, vscodeApi]);
 
   /** Applies a lineage trace from a specific node. */
   const handleTraceApply = useCallback((config: { upstreamLevels: number; downstreamLevels: number }) => {
@@ -1018,26 +1026,28 @@ export function App() {
   // ── Message handler (stats + projects-list) ─────────────────────────────────
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      const msg = e.data;
-      if (msg?.type === 'detail-closed') {
+      const parsed = ExtensionToWebviewMsgSchema.safeParse(e.data);
+      if (!parsed.success) return;
+      const msg = parsed.data;
+      if (msg.type === 'detail-closed') {
         setIsDetailOpen(false);
-      } else if (msg?.type === 'auto-visualize-start') {
+      } else if (msg.type === 'auto-visualize-start') {
         setSourceName('AdventureWorks (demo)');
         setLoadingPhase('load');
         setLoadingStats(null);
         setLoadingError(null);
         setActiveProjectId(null);
         setView('visualizing');
-      } else if (msg?.type === 'projects-list') {
-        const updatedProjects: Project[] = msg.projects ?? [];
+      } else if (msg.type === 'projects-list') {
+        const updatedProjects: Project[] = (msg.projects ?? []) as Project[];
         setProjects(updatedProjects);
         setLastOpenedId(msg.lastOpenedId ?? null);
-        if (msg.lastWizardView) setLastWizardView(msg.lastWizardView);
+        if (msg.lastWizardView) setLastWizardView(msg.lastWizardView as 'main' | 'projects');
         setLoadingProjectId(null);
         if (view === 'visualizing' && msg.lastOpenedId) {
           setActiveProjectId(msg.lastOpenedId);
         }
-      } else if (msg?.type === 'rebuild-config') {
+      } else if (msg.type === 'rebuild-config') {
         if (!msg.config) {
           setIsRebuilding(false);
         } else {
@@ -1079,30 +1089,42 @@ export function App() {
             setTimeout(() => setIsRebuilding(false), MIN_REBUILD_SPINNER_MS - elapsed);
           }
         }
-      } else if (msg?.type === 'ai-view-preview') {
+      } else if (msg.type === 'ai-view-preview') {
+        const renderModel = modelRef.current;
+        let resolvedIds = msg.nodeIds;
+        let unresolved: string[] = [];
+        let metadata = msg.aiMetadata as AIViewMetadata;
+        if (renderModel) {
+          const reconciled = reconcileAiView(msg.nodeIds, metadata, renderModel);
+          resolvedIds = reconciled.nodeIds;
+          unresolved = reconciled.unresolved;
+          metadata = reconciled.metadata;
+        }
+        window.vscode?.postMessage({ type: 'view-render-result', rendered: resolvedIds.length, of: msg.nodeIds.length, unresolved });
         const preview: AiPreview = {
           name: msg.name,
-          nodeIds: new Set<string>(msg.nodeIds),
-          aiMetadata: msg.aiMetadata,
+          nodeIds: new Set<string>(resolvedIds),
+          aiMetadata: metadata,
         };
         if (!preModFilterRef.current) preModFilterRef.current = filterRef.current;
+        setActiveAdvancedProfile(null);
         const allowlist = preview.nodeIds;
-        const previewExpandedSchemas = modelRef.current
-          ? deriveAiPreviewExpandedSchemas(modelRef.current, allowlist)
-          : new Set<string>();
         setFilter(prev => {
           const next: FilterState = {
             ...prev,
             allowlistNodeIds: allowlist,
-            schemas: modelRef.current ? new Set(modelRef.current.schemas.map(s => s.name)) : prev.schemas,
+            schemas: renderModel ? new Set(renderModel.schemas.map(s => s.name)) : prev.schemas,
             types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
+            exclusionPatterns: [],
+            hideIsolated: false,
           };
-          if (modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
+          if (renderModel) {
+            setGraphMode('full');
+            rebuildRef.current(renderModel, next, configRef.current, false, 'full');
+          }
           return next;
         });
-        setExpandedSchemaView(graphMode === 'overview' && previewExpandedSchemas.size > 0
-          ? { focusNodeId: null, expandedSchemas: previewExpandedSchemas }
-          : null);
+        setExpandedSchemaView(null);
         setAiPreview(preview);
       }
     };
@@ -1372,7 +1394,7 @@ export function App() {
     expandedSchemaCount,
     schemaOverviewRenderedCount: schemaNodes.length,
     expandedSchemaViewRenderedCount,
-    scopedModeActive: isTraceActive,
+    scopedModeActive: isTraceActive || !!aiPreview,
   });
 
   if (displayMode === 'renderLimit') {
@@ -1462,6 +1484,7 @@ export function App() {
         isDetailSearchOpen={isDetailSearchOpen}
         onToggleDetailSearch={() => setIsDetailSearchOpen(prev => !prev)}
         onNodeClick={handleNodeClick}
+        onSchemaNodeSelect={handleSchemaNodeSelect}
         onNodeContextMenu={handleNodeContextMenu}
         onStartTraceImmediate={startTraceImmediate}
         onTraceApply={handleTraceApply}
@@ -1526,8 +1549,9 @@ export function App() {
         onTraceAddNeighbor={addTraceNeighbor}
         onTracePruneNode={pruneTraceNode}
         onOpenDdlViewer={() => {
-          if (highlightedNodeId) {
-            handleViewDdl(highlightedNodeId);
+          const node = highlightedNodeId ? model?.nodes.find(candidate => candidate.id === highlightedNodeId) : undefined;
+          if (node) {
+            handleViewDdl(node.id);
           } else {
             vscodeApi.postMessage({ type: 'show-detail' });
             setIsDetailOpen(true);

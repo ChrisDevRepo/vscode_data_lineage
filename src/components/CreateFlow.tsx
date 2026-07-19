@@ -4,6 +4,7 @@ import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
 import { SchemaSelector } from './SchemaSelector';
+import { Spinner } from './ui/Spinner';
 import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
 import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
 import { generateProjectName } from '../engine/projectStore';
@@ -121,18 +122,18 @@ export const CreateFlow = memo(function CreateFlow({
 
       {/* Source selection — locked once source is loaded */}
       {hasSource && !isPhase1Loading ? (
-        <div className="flex items-center gap-2 px-3 py-2.5 rounded text-sm ln-file-picker" style={{ opacity: 0.7, cursor: 'default' }}>
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm ln-file-picker" style={{ opacity: 0.7, cursor: 'default' }}>
           {loader.filePath ? (
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
             </svg>
           ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
             </svg>
           )}
           <span className="truncate flex-1">{loader.fileName}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--ln-fg-dim)' }}>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--ln-fg-dim)' }}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
           </svg>
         </div>
@@ -140,11 +141,11 @@ export const CreateFlow = memo(function CreateFlow({
         <div className="space-y-2">
           {/* Open Dacpac — full width */}
           <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 rounded text-sm text-left ln-file-picker ln-list-item"
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm text-left ln-file-picker ln-list-item"
             onClick={loader.openFile}
             disabled={loader.isLoading}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
             </svg>
             <span className="truncate">
@@ -165,11 +166,11 @@ export const CreateFlow = memo(function CreateFlow({
               ? 'Requires the SQL Server (mssql) extension'
               : 'Connect to database'} asChild>
             <button
-              className="w-full flex items-center gap-2 px-3 py-2.5 rounded text-sm text-left ln-file-picker ln-list-item"
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm text-left ln-file-picker ln-list-item"
               onClick={loader.connectToDatabase}
               disabled={loader.isLoading || loader.mssqlAvailable !== true}
             >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
             </svg>
             <span className="truncate">
@@ -196,7 +197,7 @@ export const CreateFlow = memo(function CreateFlow({
               value={displayName}
               onChange={(e) => setProjectName(e.target.value)}
               placeholder="e.g. AdventureWorks 2026-03-24 14:35"
-              className="w-full h-8 px-2 text-sm rounded ln-input"
+              className="w-full h-8 px-2 text-sm rounded-sm ln-input"
             />
           </div>
 
@@ -204,7 +205,7 @@ export const CreateFlow = memo(function CreateFlow({
             const schemas = (loader.schemaPreview ?? loader.model)!.schemas;
             if (schemas.length === 0) {
               return (
-                <div className="ln-status-warning text-xs px-3 py-2 rounded">
+                <div className="ln-status-warning text-xs px-3 py-2 rounded-sm">
                   {loader.status?.text ?? 'No schemas found — the file may be empty or damaged.'}
                 </div>
               );
@@ -223,7 +224,7 @@ export const CreateFlow = memo(function CreateFlow({
                   onClearAll={loader.clearAllSchemas}
                 />
                 <div
-                  className={`text-xs px-1 ${overLimit ? 'ln-status-warning rounded px-2 py-1' : ''}`}
+                  className={`text-xs px-1 ${overLimit ? 'ln-status-warning rounded-sm px-2 py-1' : ''}`}
                   style={{ color: overLimit ? undefined : 'var(--ln-wizard-fg-dim)' }}
                 >
                   {overLimit
@@ -243,10 +244,5 @@ export const CreateFlow = memo(function CreateFlow({
  * A simple inline spinning SVG used to indicate loading progress within wizard buttons.
  */
 function InlineSpinner() {
-  return (
-    <svg className="animate-spin w-4 h-4 ml-auto flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
+  return <Spinner className="w-4 h-4 ml-auto shrink-0" />;
 }

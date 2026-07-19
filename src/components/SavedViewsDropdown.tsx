@@ -125,10 +125,10 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
             {/* Save new view */}
             {!isAdding ? (
               <button
-                className="w-full text-left px-2 py-1.5 text-xs rounded transition-colors ln-list-item flex items-center gap-2"
+                className="w-full text-left px-2 py-1.5 text-xs rounded-sm transition-colors ln-list-item flex items-center gap-2"
                 onClick={() => setIsAdding(true)}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>
                 Save current view
@@ -145,7 +145,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                     if (e.key === 'Escape') { setIsAdding(false); setNewName(''); }
                   }}
                   placeholder="View name…"
-                  className="w-full h-7 px-2 text-xs rounded ln-input"
+                  className="w-full h-7 px-2 text-xs rounded-sm ln-input"
                 />
                 <div className="flex gap-1">
                   <Button variant="primary" className="h-6 px-2 text-xs" onClick={handleSave} disabled={!newName.trim()}>
@@ -191,12 +191,12 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                   return (
                     <div
                       key={profile.id}
-                      className="flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors ln-list-item"
+                      className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
                       role="menuitem"
                       style={isActive ? { background: 'var(--ln-selection-bg)' } : undefined}
                     >
                       {/* Fixed-width icon slot for vertical alignment */}
-                      <span className="w-3 flex-shrink-0 flex items-center justify-center">
+                      <span className="w-3 shrink-0 flex items-center justify-center">
                         {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 ? (
                           <Tooltip content="Advanced bookmark">
                             <svg
@@ -224,12 +224,12 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                           {profile.name}
                         </span>
                       </Tooltip>
-                      <span className="ml-auto flex gap-1 flex-shrink-0">
+                      <span className="ml-auto flex gap-1 shrink-0">
                         {isModified && onUpdateView && (
                           <Tooltip content={`Update "${profile.name}" with current filters`}>
                             <button
                               type="button"
-                              className="px-1.5 py-0 text-[10px] rounded font-medium"
+                              className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
                               style={{
                                 background: 'var(--ln-warning-fg)',
                                 color: 'var(--vscode-button-foreground, #fff)',
@@ -244,7 +244,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                         <Tooltip content={isActive ? `Reapply "${profile.name}"` : `Apply "${profile.name}"`}>
                           <button
                             type="button"
-                            className="px-1.5 py-0 text-[10px] rounded font-medium"
+                            className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
                             style={{
                               background: 'var(--ln-button-bg)',
                               color: 'var(--ln-button-fg)',
@@ -259,7 +259,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                       <Tooltip content={`Delete "${profile.name}"`}>
                         <button
                           type="button"
-                          className="flex-shrink-0 p-0.5 rounded ln-list-item"
+                          className="shrink-0 p-0.5 rounded-sm ln-list-item"
                           onClick={() => setConfirmDeleteId(profile.id)}
                           aria-label={`Delete ${profile.name}`}
                         >

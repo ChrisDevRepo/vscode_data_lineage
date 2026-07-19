@@ -96,14 +96,14 @@ export const PathFinderBar = memo(function PathFinderBar({
   return (
     <div className="ln-trace-config flex items-center justify-between gap-4 px-4 py-2.5">
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="text-sm font-medium ln-text">From:</span>
           <span className="text-sm font-semibold ln-text-link">{sourceNodeName}</span>
         </div>
 
-        <span className="text-sm ln-text-muted flex-shrink-0">&rarr;</span>
+        <span className="text-sm ln-text-muted shrink-0">&rarr;</span>
 
-        <div className="relative flex-shrink-0" ref={refs.setReference}>
+        <div className="relative shrink-0" ref={refs.setReference}>
           <input
             ref={inputRef}
             type="text"
@@ -122,7 +122,7 @@ export const PathFinderBar = memo(function PathFinderBar({
               }
             }}
             placeholder="Type target node..."
-            className="h-9 w-56 pl-3 pr-3 text-sm rounded transition-colors focus:outline-none ln-input"
+            className="h-9 w-56 pl-3 pr-3 text-sm rounded-sm transition-colors focus:outline-hidden ln-input"
           />
 
           {isOpen && (
@@ -142,12 +142,12 @@ export const PathFinderBar = memo(function PathFinderBar({
 
         {/* Result status */}
         {pathResult && pathResult.found && (
-          <span className="text-xs ln-text-muted flex-shrink-0">
+          <span className="text-xs ln-text-muted shrink-0">
             <span className="font-bold">{pathResult.nodeCount} nodes · {pathResult.edgeCount} edges</span>
           </span>
         )}
         {noConnection && (
-          <span role="status" className="text-xs flex-shrink-0 ln-text-warning">
+          <span role="status" className="text-xs shrink-0 ln-text-warning">
             No connection found
           </span>
         )}
@@ -156,7 +156,7 @@ export const PathFinderBar = memo(function PathFinderBar({
       <Tooltip content="Close Path Finder">
         <button
           onClick={onClose}
-          className="h-8 w-8 flex items-center justify-center rounded transition-colors ln-btn-secondary flex-shrink-0"
+          className="h-8 w-8 flex items-center justify-center rounded-sm transition-colors ln-btn-secondary shrink-0"
         >
           <CloseIcon />
         </button>

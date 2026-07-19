@@ -14,7 +14,7 @@ export function WizardPanel({ children, footer }: WizardPanelProps) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">
       <div className="w-full max-w-md ln-panel flex flex-col" style={{ borderRadius: 6, minHeight: 360 }}>
-        <div className="flex items-center justify-center px-4 py-4 ln-border-bottom flex-shrink-0">
+        <div className="flex items-center justify-center px-4 py-4 ln-border-bottom shrink-0">
           <img
             src={window.LOGO_URI}
             alt="Data Lineage Viz"
@@ -26,7 +26,7 @@ export function WizardPanel({ children, footer }: WizardPanelProps) {
           {children}
         </div>
         {footer && (
-          <div className="px-4 pb-4 pt-2 ln-border-top flex-shrink-0">
+          <div className="px-4 pb-4 pt-2 ln-border-top shrink-0">
             {footer}
           </div>
         )}

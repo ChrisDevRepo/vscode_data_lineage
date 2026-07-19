@@ -104,7 +104,7 @@ export function buildDiscoveryPrompt(): string {
     '- (a) The user explicitly asks for visual graph render (graph/diagram/canvas/panel/show it in graph).',
     '- (b) The user requests column tracing (`targetColumns`).',
     '- (c) Discovery returns `over_discovery_budget` from `lineage_get_scope_bundle`.',
-    '- (d) The user explicitly requests deeper hop-by-hop analysis.',
+    '- (d) The user explicitly requests deeper hop-by-hop analysis. The `/trace` slash command always satisfies (d) — route it to Class S and call `lineage_start_exploration` even when the scope fits discovery budget; never answer a `/trace` request directly in chat.',
     '',
     '**Column Trace selection:** if the user names a specific column (`[Object].[Column]` or "the X column"), extract it directly as `targetColumns`. If the user names intent without naming columns ("salary columns", "revenue calculations"), call `lineage_get_object_detail` on the origin first to inspect its columns, then select matching columns and pass them as `targetColumns`.',
     '',
@@ -128,9 +128,9 @@ export function buildDiscoveryPrompt(): string {
     '</example>',
     '',
     '<example>',
-    'User: "Trace all dependencies upstream from [dbo].[spProcA] all levels up and one level down"',
+    'User (free-text, not the /trace command): "Trace all dependencies upstream from [dbo].[spProcA] all levels up and one level down"',
     'Class: D',
-    "Action: resolve id with `lineage_search_objects`, call `lineage_get_scope_bundle` (explicit finite depth + include_ddl), answer in chat when in budget; call `lineage_start_exploration` if `over_discovery_budget`.",
+    "Action: resolve id with `lineage_search_objects`, call `lineage_get_scope_bundle` (explicit finite depth + include_ddl), answer in chat when in budget; call `lineage_start_exploration` if `over_discovery_budget`. (If the same request arrives via the /trace command, it is Class S — call `lineage_start_exploration`.)",
     '</example>',
     '',
     '<example>',
@@ -162,7 +162,7 @@ export function buildActivePhasePrompt(): string {
     'Mode: SLIDING MEMORY: Analyze nodes sequentially as presented.',
     '',
     '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
-    '2. MATHEMATICS: Write formulas in LaTeX (`$...$` inline, `$$...$$` block). Do not use backticks or plain prose for formulas.',
+    '2. MATHEMATICS: Write formulas only as `$$...$$` block math; avoid backticks, plain prose, and single `$` (collides with @params and dollar amounts).',
     '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` for focus-node analysis. Submit `sections[]` per locked classification (one entry per fired `*_capture`) with full-depth text.',
     '4. DECISION SOURCE: Use the SM Neighbor Decision Contract for all route/prune choices.',
     '5. ACTIVE-PHASE TOOL BOUNDARY: In the hop loop, use only active-hop tools. Do not call catalog lookup or rendering tools until synthesis/completed phase.',
@@ -198,6 +198,7 @@ export function buildSynthesisPrompt(): string {
     'Your job: call `lineage_present_result` with `summary`, `title`, `intro`, **`sections[]`**, and optional `closing` / `notes` / `highlight_groups`. The engine assembles the rendered document (section numbering, badge chips, object link headers, verbatim section bodies) deterministically from your structural decisions. `intro` is a 2–4 sentence headline, not the whole report.',
     '',
     '## sections[] — REQUIRED',
+    'STRICT KEYS: each section uses ONLY `label`, `node_ids`, `text` (plus the optional fields listed below). NEVER include an `angle` key — `angle` belongs to the hop `lineage_submit_findings` tool, not `lineage_present_result`. Copying the hop section shape here (with `angle`) will be rejected and waste a repair round.',
     'Group QUESTION-FIRST: choose sections that best answer the user\'s question and produce a clear narrative.',
     '- Final sections are the only authoritative graph/detail link surface.',
     '- Hop `badge_label` values are advisory helper signals only; use them when helpful, but final labels are authored here.',
@@ -207,8 +208,7 @@ export function buildSynthesisPrompt(): string {
     '',
     'For each section:',
     '- `label`: short section pointer, 2-3 words. It becomes the detail heading and graph badge for linked nodes. Use semantic labels like "Source Tables", "Revenue Calc", "Price Inputs", "Report Output".',
-    '- `angle`: `"business"` or `"technical"` — which capture angle this section represents.',
-    '- `node_ids[]`: optional AI-owned links. Include nodes needed to answer the question. Nodes with `pass` state, especially tables, may have no `detail_slot`; you may still link, label, caption, or highlight them when `node_states[]`, `suggested_sections[]`, final graph topology, or `columnAspect.edges[]` make them part of the answer.',
+    '- `node_ids[]`: optional AI-owned links. Include nodes needed to answer the question. Only cite node_ids that are in the current view/scope; NEVER cite pruned or out-of-scope nodes — those are rejected. Nodes with `pass` state, especially tables, may have no `detail_slot`; you may still link, label, caption, or highlight them when `node_states[]`, `suggested_sections[]`, final graph topology, or `columnAspect.edges[]` make them part of the answer.',
     '- `text`: required detail body for this exact label. Use `detail_slots[]` for analyzed-node explanation; use `node_states[]` and `columnAspect.edges[]` for concise structural/source/target facts about nodes without detail text.',
     '- Business-detail carryover (business angle): when present in captured slots, preserve decision triggers/predicates, thresholds, fallback order, lifecycle/status transitions, audit-trail meaning, and downstream business impact. Compress duplicate prose, not these evidence classes.',
     '- Depth policy: adapt to node complexity and mission relevance. Brief is acceptable for trivial logic; complex procedures should retain full business-rule detail.',
@@ -246,9 +246,11 @@ export function buildFollowUpPrompt(): string {
     'starting over.',
     '',
     'Choose one route using this decision order:',
-    '1) DEFAULT: Route A (adjust/extend current graph).',
-    '2) Route B only when the user explicitly changes origin, direction, or scope semantics.',
-    'If uncertain, stay in Route A.',
+    '1) DEFAULT: Route T (answer in text only). Most follow-ups are questions — answer from the archive and context above in chat prose. DO NOT call `lineage_present_result` and DO NOT redraw the graph.',
+    '2) Route A (adjust/redraw the current graph) ONLY when the user explicitly asks to render, redraw, update, relabel, recolor, highlight, prune, or add nodes to the graph.',
+    '3) Route B only when the user explicitly changes origin, direction, or scope semantics.',
+    'If uncertain between Route T and Route A, stay in Route T (text answer).',
+    'When you answer via Route T, close with this hint on its own final line: `_Say "render the graph" to update the view._`',
     'Section labels remain the authoritative final grouping/linking surface. Treat prior `badge_label` values as advisory hints only.',
     '',
     'Route A - Adjust the existing graph (same topic):',
@@ -283,11 +285,29 @@ export function buildFollowUpPrompt(): string {
 /**
  * Transforms raw user input into a structured lineage tracing request.
  *
+ * @remarks
+ * `/trace` is the explicit hop-by-hop request. It is hardwired to Class S
+ * trigger (d) — "the user explicitly requests deeper hop-by-hop analysis" —
+ * so discovery must route to `lineage_start_exploration` and fire the
+ * `confirm_sm_start` approval gate regardless of scope size. It must never
+ * be answered directly in chat via `lineage_get_scope_bundle`; that Class D
+ * path is reserved for free-text discovery questions.
+ *
  * @param userInput - The entity or relationship the user wants to trace.
  * @returns A formatted prompt for the `/trace` command.
  */
 export function buildTracePrompt(userInput: string): string {
-  return `Trace the data lineage for: ${userInput}.`;
+  return [
+    `The user invoked the /trace command and is explicitly requesting deeper`,
+    `hop-by-hop lineage analysis (Class S trigger d) for: ${userInput}.`,
+    '',
+    'This is a Class S request. Do not answer in chat and do not call',
+    '`lineage_get_scope_bundle` for a direct answer. Resolve every user-named',
+    'identifier with `lineage_search_objects` first, then call',
+    '`lineage_start_exploration` this turn. The engine emits the',
+    '`confirm_sm_start` consent gate for the user to review scope before',
+    'analysis runs — that is the expected control flow.',
+  ].join('\n');
 }
 
 /**

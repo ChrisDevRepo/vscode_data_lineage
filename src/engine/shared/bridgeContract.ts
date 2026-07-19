@@ -266,6 +266,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
   z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
   z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: z.any() }),
+  z.object({ type: z.literal('detail-clear') }),
   z.object({ type: z.literal('detail-closed') }),
   z.object({ type: z.literal('dacpac-schema-preview'), preview: z.any(), config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional() }),
   z.object({ type: z.literal('db-schema-preview'), preview: z.any(), config: ExtensionConfigSchema, sourceName: z.string() }),
@@ -278,6 +279,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
   z.object({ type: z.literal('table-stats-error'), message: z.string() }),
   z.object({ type: z.literal('auto-visualize-start') }),
+  z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
   z.object({
     type: z.literal('error'),
     error: z.string(),
@@ -356,6 +358,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
     timestamp: z.number().optional(),
   }),
   z.object({ type: z.literal('show-warning'), text: z.string() }),
+  z.object({ type: z.literal('view-render-result'), rendered: z.number(), of: z.number(), unresolved: z.array(z.string()) }),
 ]);
 
 /** Messages sent from the main lineage-graph webview to the extension host. */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
@@ -21,6 +21,7 @@ import Graph from 'graphology';
 import { useVsCode } from '../contexts/VsCodeContext';
 
 import { CustomNode, type CustomNodeData, type TraceNeighborOption, type TraceNodeControls, type TraceSideControls } from './CustomNode';
+import { Spinner } from './ui/Spinner';
 import { SchemaNode } from './SchemaNode';
 import type { SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot } from '../engine/types';
 import { Legend } from './Legend';
@@ -34,7 +35,6 @@ import { AnalysisSidebar } from './AnalysisSidebar';
 import { AiViewBanner } from './AiViewBanner';
 import { BookmarkBanner } from './BookmarkBanner';
 import { BookmarkInfoCard } from './BookmarkInfoCard';
-import { AiDescriptionOverlay } from './AiDescriptionOverlay';
 import { Toolbar } from './Toolbar';
 import { NodeInfoBar } from './NodeInfoBar';
 import { DetailSearchSidebar } from './DetailSearchSidebar';
@@ -55,6 +55,11 @@ import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
  * severe performance degradation and loss of state.
  */
 const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode } satisfies NodeTypes;
+
+const AiDescriptionOverlay = lazy(async () => {
+  const module = await import('./AiDescriptionOverlay');
+  return { default: module.AiDescriptionOverlay };
+});
 
 /** Padding factor applied when fitting the graph view. */
 const FIT_VIEW_PADDING = 0.15;
@@ -199,6 +204,8 @@ interface GraphCanvasProps {
   config: ExtensionConfig;
   /** Callback fired when a node is clicked. */
   onNodeClick: (nodeId: string, findQuery?: string) => void;
+  /** Callback fired when a schema cluster is selected. */
+  onSchemaNodeSelect?: (nodeId: string) => void;
   /** Callback fired when a node is right-clicked. */
   onNodeContextMenu: (node: FlowNode, x: number, y: number) => void;
   /** Callback to start a trace immediately from a node. */
@@ -421,6 +428,7 @@ export function GraphCanvas({
   graph,
   config,
   onNodeClick,
+  onSchemaNodeSelect,
   onNodeContextMenu,
   onStartTraceImmediate,
   onTraceApply,
@@ -506,7 +514,7 @@ export function GraphCanvas({
   onExpandAllSchemas,
   collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
-  const { fitView, getNode, setCenter, getNodes, getViewport, setViewport } = useReactFlow();
+  const { fitView, getNode, setCenter, getNodes, getEdges, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
 
   // Pending actions after overview schema expansion (zoom to the revealed object)
@@ -535,10 +543,18 @@ export function GraphCanvas({
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
-      if (graphMode === 'overview' && node.type === 'schemaNode') return;
+      if (graphMode === 'overview' && node.type === 'schemaNode') {
+        onSchemaNodeSelect?.(node.id);
+        setLocalNodes((nds) => nds.map((n) =>
+          n.type === 'schemaNode' && (n.data as SchemaNodeData).toolbarActive
+            ? { ...n, data: { ...n.data, toolbarActive: false } }
+            : n
+        ));
+        return;
+      }
       onNodeClick(node.id);
     },
-    [graphMode, onNodeClick]
+    [graphMode, onNodeClick, onSchemaNodeSelect]
   );
 
   const handleNodeDoubleClick: NodeMouseHandler = useCallback(
@@ -717,22 +733,24 @@ export function GraphCanvas({
   const handleExportDrawio = useCallback(() => {
     const objectNodes: FlowNode<CustomNodeData>[] = [];
     const clusterNodes: FlowNode<SchemaNodeData>[] = [];
-    for (const n of flowNodes) {
+    const exportNodes = getNodes();
+    const exportEdges = getEdges();
+    for (const n of exportNodes) {
       if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
       else objectNodes.push(n as FlowNode<CustomNodeData>);
     }
     import('../export/drawioExporter').then(({ exportToDrawio, exportSchemaOverviewToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
       const xml = (objectNodes.length === 0 && clusterNodes.length > 0)
-        ? exportSchemaOverviewToDrawio(clusterNodes, flowEdges, schemas)
-        : exportToDrawio(objectNodes, flowEdges, schemas);
+        ? exportSchemaOverviewToDrawio(clusterNodes, exportEdges, schemas)
+        : exportToDrawio(objectNodes, exportEdges, schemas, clusterNodes);
       if (!xml) return;
       const base = (sourceName?.replace(/\.dacpac$/i, '') || 'lineage').trim().replace(/[\\/:*?"<>|]/g, '_');
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [flowNodes, flowEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [getNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -810,11 +828,7 @@ export function GraphCanvas({
   }, [flowEdges]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setLocalNodes((nds) => {
-      const schemaNodeIds = new Set(nds.filter(n => n.type === 'schemaNode').map(n => n.id));
-      const nonSchemaSelectionChanges = changes.filter(change => !(change.type === 'select' && schemaNodeIds.has(change.id)));
-      return applyNodeChanges(nonSchemaSelectionChanges, nds) as FlowNode[];
-    }),
+    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
     []
   );
 
@@ -1242,10 +1256,7 @@ export function GraphCanvas({
         <div className="flex-1 relative overflow-hidden min-w-0">
         {isRebuilding && (
           <div className="absolute inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--ln-bg)', opacity: 0.85 }}>
-            <svg className="animate-spin h-8 w-8" style={{ color: 'var(--ln-fg-muted)' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Spinner className="h-8 w-8" style={{ color: 'var(--ln-fg-muted)' }} />
           </div>
         )}
         {flowNodes.length === 0 && !isRebuilding ? (
@@ -1265,7 +1276,14 @@ export function GraphCanvas({
               onNodeContextMenu={(event, node) => {
                 event.preventDefault();
                 if (node.type === 'schemaNode') {
-                  setLocalNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === node.id })));
+                  onSchemaNodeSelect?.(node.id);
+                  setLocalNodes((nds) => nds.map((n) => ({
+                    ...n,
+                    selected: n.id === node.id,
+                    data: n.type === 'schemaNode'
+                      ? { ...n.data, toolbarActive: n.id === node.id }
+                      : n.data,
+                  })));
                 }
                 onNodeContextMenu(node, event.clientX, event.clientY);
               }}
@@ -1383,16 +1401,18 @@ export function GraphCanvas({
         )}
         {/* AI description overlay — collapsible markdown panel at top-center */}
         {activeAiMetadata?.description && (
-          <AiDescriptionOverlay
-            viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
-            description={activeAiMetadata.description}
-            defaultExpanded={
-              (aiPreview && aiPreview.nodeIds.size === 0) ||
-              (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
-              ? true : false
-            }
-            onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
-          />
+          <Suspense fallback={null}>
+            <AiDescriptionOverlay
+              viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
+              description={activeAiMetadata.description}
+              defaultExpanded={
+                (aiPreview && aiPreview.nodeIds.size === 0) ||
+                (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
+                ? true : false
+              }
+              onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
+            />
+          </Suspense>
         )}
         </div>
       </div>

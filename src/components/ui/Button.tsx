@@ -26,7 +26,7 @@ export const Button = memo(forwardRef<HTMLButtonElement, ButtonProps>(function B
   style,
   ...props
 }, ref) {
-  const combinedStyles = `inline-flex items-center justify-center font-semibold rounded transition-colors focus:outline-none disabled:cursor-not-allowed ln-btn-disabled ${variantClasses[variant]} ${className}`;
+  const combinedStyles = `inline-flex items-center justify-center font-semibold rounded-sm transition-colors focus:outline-hidden disabled:cursor-not-allowed ln-btn-disabled ${variantClasses[variant]} ${className}`;
 
   return (
     <button

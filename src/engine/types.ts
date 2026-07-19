@@ -663,6 +663,8 @@ export interface SchemaNodeData extends Record<string, unknown> {
   isExternalOnly?: boolean;
   /** Marks a collapsed schema cluster shown alongside object nodes in Expanded Schema View. */
   isExpandedSchemaViewCluster?: boolean;
+  /** Right-click-only selection flag controlling the attached schema toolbar. */
+  toolbarActive?: boolean;
 }
 
 /**

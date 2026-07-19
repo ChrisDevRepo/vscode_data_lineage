@@ -128,7 +128,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
           {/* Stale objects warning */}
           {hasStale && (
             <div
-              className="text-[9px] rounded px-2 py-1.5"
+              className="text-[9px] rounded-sm px-2 py-1.5"
               style={{
                 background: 'var(--ln-validation-warning-bg)',
                 border: '1px solid var(--ln-validation-warning-border)',

@@ -543,8 +543,12 @@ export function getScopeBundle(
   const direction = input.direction ?? 'bidirectional';
   const includeDdl = input.include_ddl ?? false;
   const defaultDepth = input.depth ?? 2;
-  const upstreamDepth = direction === 'bidirectional' ? (input.upstream_depth ?? defaultDepth) : undefined;
-  const downstreamDepth = direction === 'bidirectional' ? (input.downstream_depth ?? defaultDepth) : undefined;
+  const resolveDepth = (val: number | 'all' | null | undefined, def: number) => {
+    if (val === 'all') return 9999;
+    return val ?? def;
+  };
+  const upstreamDepth = direction === 'bidirectional' ? resolveDepth(input.upstream_depth, defaultDepth) : undefined;
+  const downstreamDepth = direction === 'bidirectional' ? resolveDepth(input.downstream_depth, defaultDepth) : undefined;
   const singleDepth = input.depth ?? 2;
 
   const scopeIds = new Set<string>([origin]);

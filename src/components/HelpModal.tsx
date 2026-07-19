@@ -27,7 +27,7 @@ const ICON_SIZE: Record<number, string> = { 3: 'w-3 h-3', 4: 'w-4 h-4' };
 
 function IconPath({ d, size = 4 }: { d: string; size?: number }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`${ICON_SIZE[size] ?? 'w-4 h-4'} flex-shrink-0 ln-text-muted`}>
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`${ICON_SIZE[size] ?? 'w-4 h-4'} shrink-0 ln-text-muted`}>
       <path strokeLinecap="round" strokeLinejoin="round" d={d} />
     </svg>
   );
@@ -72,7 +72,7 @@ function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
     <div className="grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-3">
       <span className="flex items-center gap-1.5">
         {keys.map(key => (
-          <kbd key={key} className="px-1.5 py-0.5 text-xs font-mono rounded border ln-kbd">{key}</kbd>
+          <kbd key={key} className="px-1.5 py-0.5 text-xs font-mono rounded-sm border ln-kbd">{key}</kbd>
         ))}
       </span>
       <span className="min-w-0 text-xs ln-text-muted">{label}</span>
@@ -214,7 +214,7 @@ function TabAnalysis() {
         Click any group in the sidebar to zoom into that subset.
       </p>
       <p className="text-xs ln-text-muted mt-1">
-        Thresholds are configurable — search <code className="font-mono px-1 py-0.5 rounded ln-kbd">dataLineageViz.analysis</code> in VS Code Settings.
+        Thresholds are configurable — search <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">dataLineageViz.analysis</code> in VS Code Settings.
       </p>
     </div>
   );
@@ -297,7 +297,7 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           </div>
         </div>
         <p className="mt-2 text-xs ln-text-muted">
-          Search <code className="font-mono px-1 py-0.5 rounded ln-kbd">dataLineageViz</code> in VS Code Settings for all options including import caps, timeouts, layout, and trace depth.
+          Search <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">dataLineageViz</code> in VS Code Settings for all options including import caps, timeouts, layout, and trace depth.
         </p>
       </section>
     </div>
@@ -310,7 +310,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
     <div className="space-y-4">
       <div className="rounded-lg p-4 ln-help-analysis-card">
         <div className="flex items-center gap-2 mb-3">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 ln-text-link flex-shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 ln-text-link shrink-0">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
           </svg>
           <h3 className="text-sm font-semibold ln-text">GitHub Copilot Chat</h3>
@@ -319,7 +319,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         <p className="text-sm mb-3 ln-text-muted">
           Type <span className="font-bold font-mono ln-text-link">@lineage</span> in GitHub Copilot Chat to query your loaded graph. Answers come from your actual data — never from general knowledge.
         </p>
-        <div className="rounded p-3 space-y-1.5 font-mono text-xs ln-help-code-block">
+        <div className="rounded-sm p-3 space-y-1.5 font-mono text-xs ln-help-code-block">
           {[
             'trace from Sales.SalesOrderDetail upstream to the source tables',
             'how is sales calculated — show me the lineage up to source in the app',
@@ -330,7 +330,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
             <div key={q}><span className="font-bold ln-text-link">@lineage </span><span className="ln-text">{q}</span></div>
           ))}
         </div>
-        <p className="text-xs mt-3 ln-text-muted">Requires GitHub Copilot extension &amp; VS Code 1.95+. Tools are inactive when no graph is loaded.</p>
+        <p className="text-xs mt-3 ln-text-muted">Requires GitHub Copilot extension &amp; VS Code 1.101+. Tools are inactive when no graph is loaded.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -394,24 +394,24 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
         className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3 flex-shrink-0 ln-help-sep-bottom">
+        <div className="flex items-center justify-between px-5 py-3 shrink-0 ln-help-sep-bottom">
           <div className="flex items-center gap-2">
             <img src={window.LOGO_URI} alt="" className="h-8 w-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             <span className="text-xs ln-text-muted opacity-60">v{__APP_VERSION__}</span>
           </div>
           <Tooltip content="Close">
-            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded transition-colors ln-list-item ln-text">
+            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text">
             <CloseIcon className="w-4 h-4" />
           </button>
           </Tooltip>
         </div>
 
-        <div className="flex items-center gap-0.5 px-4 py-2 flex-shrink-0 ln-help-sep-bottom">
+        <div className="flex items-center gap-0.5 px-4 py-2 shrink-0 ln-help-sep-bottom">
           {TABS.map(({ id, label }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
-              className={`px-3 py-1.5 text-xs rounded transition-colors ${tab === id ? 'ln-btn-primary font-medium' : 'ln-text-muted hover:ln-list-item'}`}
+              className={`px-3 py-1.5 text-xs rounded-sm transition-colors ${tab === id ? 'ln-btn-primary font-medium' : 'ln-text-muted hover:ln-list-item'}`}
             >
               {label}
             </button>
@@ -425,7 +425,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           {tab === 'ai'        && <TabAI openExternal={openExternal} />}
         </div>
 
-        <div className="flex items-center justify-between px-5 py-2.5 flex-shrink-0 ln-help-sep-top">
+        <div className="flex items-center justify-between px-5 py-2.5 shrink-0 ln-help-sep-top">
           <button
             onClick={() => vscodeApi.postMessage({ type: 'open-settings' })}
             className="flex items-center gap-1.5 text-xs ln-text-muted hover:underline cursor-pointer"

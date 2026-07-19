@@ -193,7 +193,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
             <button
               onClick={onClose}
               aria-label="Close detail panel"
-              className="opacity-60 hover:opacity-100 cursor-pointer flex-shrink-0 ml-2"
+              className="opacity-60 hover:opacity-100 cursor-pointer shrink-0 ml-2"
               style={{ color: 'var(--ln-fg)', background: 'none', border: 'none', padding: 0 }}
             >
             <CloseIcon className="w-3.5 h-3.5" />

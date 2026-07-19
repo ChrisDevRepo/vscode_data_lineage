@@ -60,7 +60,7 @@ export const BookmarkBanner = memo(function BookmarkBanner({
     <div className="ln-bookmark-banner px-4 py-2 flex items-center justify-between">
       <div className="flex items-center gap-2 min-w-0">
         <span
-          className="text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0"
+          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm shrink-0"
           style={{
             border: `1px solid ${chipColor}`,
             color: chipColor,
@@ -73,14 +73,14 @@ export const BookmarkBanner = memo(function BookmarkBanner({
             {profile.name}
           </span>
         </Tooltip>
-        <span className="text-xs ln-text-muted flex-shrink-0">
+        <span className="text-xs ln-text-muted shrink-0">
           — {shownCount === totalCount ? `${totalCount} objects` : `${shownCount} of ${totalCount} objects`}
         </span>
       </div>
 
       <button
         onClick={onExit}
-        className="h-7 px-3 text-xs rounded font-medium transition-colors ln-btn-secondary flex-shrink-0 ml-3"
+        className="h-7 px-3 text-xs rounded-sm font-medium transition-colors ln-btn-secondary shrink-0 ml-3"
       >
         ✕ Exit View
       </button>

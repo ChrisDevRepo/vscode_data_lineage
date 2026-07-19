@@ -31,7 +31,7 @@ export type TraceNeighborOption = {
 };
 
 /** User action supported by the interactive trace node controls. */
-export type TraceNeighborAction = 'add' | 'prune';
+type TraceNeighborAction = 'add' | 'prune';
 
 /** Per-node callbacks and candidate lists for interactive trace editing. */
 export type TraceNodeControls = {
@@ -389,7 +389,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             <Tooltip content="Remove from view" placement="top" asChild>
               <button
                 aria-label="Remove from view"
-                className="absolute flex items-center justify-center text-[9px] rounded ln-node-remove-btn"
+                className="absolute flex items-center justify-center text-[9px] rounded-sm ln-node-remove-btn"
                 style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
                 onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
               >
@@ -405,18 +405,18 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
               <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} hasContext={data.traceControls.out.visibleNeighborCount > 0} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
             </>
           )}
-          <Handle type="target" position={Position.Left} className="!w-2 !h-2 ln-handle" />
+          <Handle type="target" position={Position.Left} className="w-2! h-2! ln-handle" />
           <div className="px-3 pt-1 pb-1 flex flex-col h-full">
             <div className="flex items-center justify-between gap-1.5 whitespace-nowrap" style={{ lineHeight: 1 }}>
               <span className="text-base font-medium whitespace-nowrap leading-none" style={{ color: 'var(--ln-fg-muted)' }}>{displayIcon}</span>
-              <span className="text-[9px] flex-shrink-0 whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)' }}>{data.inDegree}↓ {data.outDegree}↑</span>
+              <span className="text-[9px] shrink-0 whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)' }}>{data.inDegree}↓ {data.outDegree}↑</span>
             </div>
             <div className="text-[11px] overflow-hidden text-ellipsis whitespace-nowrap mt-0.5" style={{ color: 'var(--ln-fg)' }}>{data.label}</div>
             <div className="text-[9px] overflow-hidden text-ellipsis whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)', lineHeight: 1.1 }}>
               {data.externalType === 'file' ? 'File Source' : data.externalType === 'db' ? `↗ ${data.externalDatabase || 'Cross-DB'}` : data.schema}
             </div>
           </div>
-          <Handle type="source" position={Position.Right} className="!w-2 !h-2 ln-handle" />
+          <Handle type="source" position={Position.Right} className="w-2! h-2! ln-handle" />
         </div>
       </Tooltip>
     </>
