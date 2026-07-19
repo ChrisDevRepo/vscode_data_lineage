@@ -275,7 +275,7 @@ For traces, the assistant picks one of three depth-enforcement modes based on yo
 ### Requirements
 
 - [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) extension.
-- VS Code 1.95 or later.
+- VS Code 1.101 or later.
 
 ### Disable
 

@@ -121,7 +121,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Pattern, e.g. %tmp% or ^dbo\.stg_"
-                className="flex-1 text-xs rounded px-2 py-1.5 min-w-0 ln-input"
+                className="flex-1 text-xs rounded-sm px-2 py-1.5 min-w-0 ln-input"
                 style={inputError ? { outline: '1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground))' } : undefined}
                 aria-label="Enter exclusion pattern"
                 aria-invalid={inputError}
@@ -130,7 +130,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
               <Tooltip content="Add pattern (Enter)">
                 <button
                   onClick={handleAdd}
-                  className="px-2.5 py-1 text-xs rounded font-medium transition-colors ln-btn-primary"
+                  className="px-2.5 py-1 text-xs rounded-sm font-medium transition-colors ln-btn-primary"
                 >
                   Add
                 </button>
@@ -146,10 +146,10 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             <div className="px-2 pb-1">
               <button
                 onClick={() => setTipsOpen(prev => !prev)}
-                className="w-full flex items-center gap-1 px-1 py-1 text-xs rounded ln-list-item ln-text-muted"
+                className="w-full flex items-center gap-1 px-1 py-1 text-xs rounded-sm ln-list-item ln-text-muted"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
-                  className="w-3 h-3 flex-shrink-0 transition-transform"
+                  className="w-3 h-3 shrink-0 transition-transform"
                   style={{ transform: tipsOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
@@ -187,7 +187,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                   return (
                     <div
                       key={pattern}
-                      className="flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors ln-list-item group"
+                      className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item group"
                     >
                       <Tooltip content={pattern} asChild>
                         <span className="flex-1 text-xs font-mono truncate ln-text">
@@ -197,7 +197,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                       {isWildcard && (
                         <Tooltip content="Uses % wildcard">
                           <span
-                            className="text-[10px] px-1 rounded flex-shrink-0"
+                            className="text-[10px] px-1 rounded-sm shrink-0"
                             style={{ background: 'var(--ln-bg-secondary)', color: 'var(--ln-fg-dim)' }}
                           >
                             %
@@ -207,7 +207,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                       <Tooltip content={`Remove: ${pattern}`}>
                         <button
                           onClick={() => onRemovePattern(pattern)}
-                          className="flex-shrink-0 w-4 h-4 flex items-center justify-center rounded transition-colors ln-text-muted hover:opacity-80"
+                          className="shrink-0 w-4 h-4 flex items-center justify-center rounded-sm transition-colors ln-text-muted hover:opacity-80"
                           aria-label={`Remove exclusion pattern: ${pattern}`}
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3">

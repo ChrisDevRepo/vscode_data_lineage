@@ -15,8 +15,8 @@ import type { CaptureAngle, CapturedSection, DetailSlot, MemoryStateSnapshot } f
  */
 export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
 
-/** Live progress for the hop loop: completed AI hops, queued nodes, and total acknowledged nodes. */
-export type HopProgress = { current: number; open: number; total: number };
+/** Live progress for the hop loop: completed AI hops, queued nodes, display-safe total work, and cumulative prunes. */
+export type HopProgress = { current: number; open: number; total: number; pruned: number; added: number };
 
 /**
  * Flags identifying structural boundaries encountered during graph traversal.
@@ -187,9 +187,9 @@ export interface HopNeighbor {
  * Structured envelope for a user-confirmation gate emitted by the engine.
  *
  * @remarks
- * Implements the LangGraph `interrupt_on` pattern: the engine halts with a structured
- * reason, the participant surfaces it in chat, and the user's next reply resumes or
- * aborts. One envelope can carry multiple violations (schema + depth in a single gate).
+ * The engine halts with a structured gate reason; the participant surfaces it in chat
+ * as VS Code chat buttons, and the user's next reply resumes or aborts. One envelope
+ * can carry multiple violations (schema + depth in a single gate).
  */
 export interface ActionRequiredGate {
   /** Discriminator for participant routing. */
@@ -468,9 +468,9 @@ export interface ScopeSummary {
   /** Depth budget set at `start_exploration`; `null` when unbounded. */
   depth: number | null;
   /** Asymmetric upstream depth override captured at start, when provided. */
-  upstreamDepth: number | null;
+  upstreamDepth: number | 'all' | null;
   /** Asymmetric downstream depth override captured at start, when provided. */
-  downstreamDepth: number | null;
+  downstreamDepth: number | 'all' | null;
   /** Exploration direction set at `start_exploration`. */
   direction: 'upstream' | 'downstream' | 'bidirectional';
   /** True when the session has `targetColumns` (column-trace aspect). */

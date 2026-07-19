@@ -1,6 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* Tailwind v4 defaults borders to currentColor. Preserve the v3 visual contract
+   until every consumer carries an explicit border-color utility. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 /* #region Theme Variables */
 
@@ -704,8 +714,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 /* Interactive trace add/prune controls */
 .ln-trace-node-action {
   position: absolute;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.72));
   color: var(--vscode-button-foreground, #ffffff);
@@ -718,8 +728,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   transition: box-shadow 0.15s, filter 0.15s, transform 0.15s;
 }
 .ln-trace-node-action__icon {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2.6;
@@ -743,17 +753,17 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   outline-offset: 2px;
 }
 .ln-trace-node-action--in {
-  left: -22px;
+  left: -20px;
 }
 .ln-trace-node-action--out {
-  right: -22px;
+  right: -20px;
 }
 .ln-trace-node-action--add {
-  top: 10px;
+  top: 11px;
   background: var(--vscode-charts-green, #188038);
 }
 .ln-trace-node-action--prune {
-  top: 32px;
+  top: 31px;
   background: var(--vscode-charts-red, #c5221f);
 }
 

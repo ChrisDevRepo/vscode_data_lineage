@@ -22,7 +22,9 @@ import { trunc } from '../../utils/log';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import { resolveModelNodeId, sanitizeMissionBrief } from '../infra/inputNormalization';
 import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult } from '../sm/smTypes';
+import type { SubmitFindingsRepairPatch } from '../tools/toolSchemas';
 import { estimateTokens } from '../infra/tokenBudget';
+import { RepairDraftStore } from '../support/repairDraftStore';
 
 /** Depth-cap offset for `soft` mode — one level past the user-declared budget. */
 const SOFT_DEPTH_HEADROOM = 1;
@@ -205,6 +207,8 @@ export interface IHopStateMachine {
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
   /** Current focus node id (node the AI must analyse this hop) — null before the first hop. */
   readonly currentFocus: string | null;
+  /** Current focus holding a patch-repair draft, or `null` when no repair is active. */
+  readonly heldFindingFocus: string | null;
   /** Live hop progress: completed AI hops, queued nodes, and total acknowledged nodes. */
   readonly hopProgress: HopProgress;
 
@@ -214,6 +218,9 @@ export interface IHopStateMachine {
    * @returns The contextual data needed for the next exploration step.
    */
   getHopContext(): HopContext;
+
+  /** Returns the unchanged current-hop payload for a compact repair retry. */
+  getCurrentHopContext(): HopContext | null;
 
   /**
    * Submits the findings for the current step and calculates the next state.
@@ -303,6 +310,48 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly edgeTypeMap: Map<string, string>;
   /** Memory manager for state retention. */
   protected readonly memory: AiMemoryManager;
+  /** Valid authored content retained only for a repairable rejection on the unchanged focus. */
+  private readonly heldFindingDraft = new RepairDraftStore<HopSubmission, SubmitFindingsRepairPatch>();
+
+  /** Canonical focus id for the held finding, or `null` when no repair is active. */
+  public get heldFindingFocus(): string | null {
+    const held = this.heldFindingDraft.get();
+    if (!held) return null;
+    return resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
+  }
+
+  /**
+   * Restores valid prose when a retry keeps the focus and sends an empty sections array.
+   * The merged finding still passes through the complete validation and atomic commit path.
+   */
+  public applyHeldContent(incoming: HopSubmission): HopSubmission {
+    const held = this.heldFindingDraft.get();
+    if (!held) return incoming;
+    const heldFocus = resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
+    const incomingFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap) ?? incoming.focus_node_id.toLowerCase();
+    if (heldFocus !== incomingFocus || incomingFocus !== this.currentFocusNodeId) return incoming;
+    if (incoming.sections.length > 0) return incoming;
+    return {
+      ...incoming,
+      sections: held.sections,
+      summary: held.summary,
+      verdict: held.verdict,
+      badge_label: held.badge_label,
+      note_caption: held.note_caption,
+    };
+  }
+
+  /**
+   * Applies an authorized field-only patch to the held finding for the current focus.
+   * Returns `null` when no matching repair draft exists.
+   */
+  public applyHeldPatch(patch: SubmitFindingsRepairPatch): HopSubmission | null {
+    if (this.heldFindingFocus === null || this.heldFindingFocus !== this.currentFocusNodeId) return null;
+    return this.heldFindingDraft.merge(patch, (draft, authorizedPatch) => {
+      const { repair: _repair, ...fields } = authorizedPatch;
+      return { ...draft, ...fields } as HopSubmission;
+    });
+  }
 
   /** Optional session identifier for tracking logs across rounds. */
   public sessionId?: string;
@@ -328,6 +377,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected agendaIds = new Set<string>();
   /** Identifier of the node currently in focus. */
   protected currentFocusNodeId: string | null = null;
+  /** Exact current-hop payload retained until the focus advances or the session resets. */
+  protected currentHopContext: HopContext | null = null;
   /** Agenda-entry `question` captured at dequeue so it survives the splice and can label the slot. */
   protected currentFocusQuestion: string | null = null;
   /** Total number of hops executed. */
@@ -369,7 +420,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   protected passNodeIds: Set<string> = new Set();
   /** Last `init` params kept for refine re-run — origin/direction/depth/etc survive across the gate cycle. */
-  protected initSnapshot: { question: string; origin: string; targetColumns?: string[]; direction: 'upstream' | 'downstream' | 'bidirectional'; depth?: number; upstream_depth?: number; downstream_depth?: number; depth_enforcement?: 'strict' | 'soft' | 'silent'; mission_brief?: string } | null = null;
+  protected initSnapshot: { question: string; origin: string; targetColumns?: string[]; direction: 'upstream' | 'downstream' | 'bidirectional'; depth?: number; upstream_depth?: number | 'all' | null; downstream_depth?: number | 'all' | null; depth_enforcement?: 'strict' | 'soft' | 'silent'; mission_brief?: string } | null = null;
 
   /**
    * Compressed AI-composed memo of the discovery walk's findings + user-stated
@@ -724,9 +775,16 @@ export class NavigationEngine implements IHopStateMachine {
     return this._bodiedScopeSize;
   }
 
-  /** Gets live hop progress: completed AI hops, queued nodes, and total acknowledged nodes. */
+  /** Gets live hop progress: completed AI hops, queued nodes, display-safe total work, cumulative prunes, and the last hop's newly-routed (added) count. */
   public get hopProgress(): HopProgress {
-    return { current: this.hopCount, open: this.agenda.length, total: this._totalNodes };
+    // Every prune path (verdict=prune, BB prune_neighbor) marks node-state 'prune', so counting them is
+    // the single source for the cumulative prune tally surfaced in the chat status. `added` mirrors it
+    // with the per-hop new-route count (`lastRoutedNew`, reset each submit) for the symmetric "+N added".
+    let pruned = 0;
+    for (const s of this.nodeStates.values()) if (s.action === 'prune') pruned++;
+    const open = this.agenda.length;
+    const total = Math.max(this._totalNodes, this.hopCount + open);
+    return { current: this.hopCount, open, total, pruned, added: this.lastRoutedNew };
   }
 
   private set bodiedScopeSize(v: number) {
@@ -754,12 +812,12 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** Asymmetric upstream depth captured at {@link init}, when set; otherwise null. */
-  public get currentUpstreamDepth(): number | null {
+  public get currentUpstreamDepth(): number | 'all' | null {
     return this.initSnapshot?.upstream_depth ?? null;
   }
 
   /** Asymmetric downstream depth captured at {@link init}, when set; otherwise null. */
-  public get currentDownstreamDepth(): number | null {
+  public get currentDownstreamDepth(): number | 'all' | null {
     return this.initSnapshot?.downstream_depth ?? null;
   }
 
@@ -993,8 +1051,8 @@ export class NavigationEngine implements IHopStateMachine {
     targetColumns?: string[];
     direction?: 'upstream' | 'downstream' | 'bidirectional';
     depth?: number;
-    upstream_depth?: number;
-    downstream_depth?: number;
+    upstream_depth?: number | 'all' | null;
+    downstream_depth?: number | 'all' | null;
     depth_enforcement?: 'strict' | 'soft' | 'silent';
     excludeTypes?: string[];
     excludeSchemas?: string[];
@@ -1009,6 +1067,8 @@ export class NavigationEngine implements IHopStateMachine {
     this.agenda = [];
     this.agendaIds.clear();
     this.nodeStates.clear();
+    this.heldFindingDraft.clear();
+    this.currentHopContext = null;
     this.memory.reset();
     this.memory.setUserQuestion(params.question);
     const sanitizedMission = params.mission_brief ? sanitizeMissionBrief(params.mission_brief) : null;
@@ -1282,12 +1342,14 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (!entry) {
       this._status = 'complete';
+      this.currentHopContext = null;
       this.logLabelDiversity();
       return { done: true };
     }
 
     this.visited.add(entry.nodeId);
     this.hopCount++;
+    if (this.currentFocusNodeId !== entry.nodeId) this.heldFindingDraft.clear();
     this.currentFocusNodeId = entry.nodeId;
     this.currentFocusQuestion = entry.question ?? null;
 
@@ -1340,7 +1402,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     this._lastCurrentTask = entry.question;
     this._status = 'awaiting_findings';
-    return {
+    this.currentHopContext = {
       sm_status: 'awaiting_findings' as const,
       hop: this.hopCount,
       agenda_remaining: this.agenda.length,
@@ -1348,6 +1410,12 @@ export class NavigationEngine implements IHopStateMachine {
       neighbors: this.buildNeighborList(entry.nodeId),
       working_memory: workingMemory,
     };
+    return structuredClone(this.currentHopContext);
+  }
+
+  /** Returns a cloned current-hop payload without dequeuing or advancing the agenda. */
+  public getCurrentHopContext(): HopContext | null {
+    return this.currentHopContext ? structuredClone(this.currentHopContext) : null;
   }
 
   /**
@@ -1379,6 +1447,8 @@ export class NavigationEngine implements IHopStateMachine {
       return { error: 'invalid_status', current_status: this._status, hint };
     }
 
+    // A prior hold survives only through applyHeldContent immediately before this call.
+    this.heldFindingDraft.clear();
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
     this.lastRoutedDeferred = 0;
@@ -1689,6 +1759,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (contentErrors.length > 0) {
       this.lastRoutedRejected = contentErrors.length;
       for (const r of contentErrors) this.memory.recordRejection(r.id, r.reason, this.hopCount);
+      this.heldFindingDraft.hold(structuredClone(finding));
       return buildRouteValidationRejection(contentErrors);
     }
 
@@ -1815,6 +1886,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    this.heldFindingDraft.clear();
     this._status = 'exploring';
     const outcomes = routeOutcomes.length > 0 ? { route_outcomes: routeOutcomes } : {};
 
@@ -1853,16 +1925,21 @@ export class NavigationEngine implements IHopStateMachine {
     startId: string,
     direction: string,
     maxDepth: number,
-    upstreamDepth?: number,
-    downstreamDepth?: number,
+    upstreamDepth?: number | 'all' | null,
+    downstreamDepth?: number | 'all' | null,
   ): Set<string> {
     const seen = new Set<string>();
     this.depthFromOrigin.clear();
 
+    const resolveDepth = (val: number | 'all' | null | undefined, def: number) => {
+      if (val === 'all') return 9999;
+      return val ?? def;
+    };
+
     const hasAsymmetric = direction === 'bidirectional' && (upstreamDepth !== undefined || downstreamDepth !== undefined);
     if (hasAsymmetric) {
-      const upCap = upstreamDepth ?? maxDepth;
-      const downCap = downstreamDepth ?? maxDepth;
+      const upCap = resolveDepth(upstreamDepth, maxDepth);
+      const downCap = resolveDepth(downstreamDepth, maxDepth);
       if (upCap > 0) {
         bfsFromNode(this.graph, startId, (key, _attr, depth) => {
           seen.add(key);

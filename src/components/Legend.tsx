@@ -70,7 +70,7 @@ export const Legend = memo(function Legend({
         onClick={() => setCollapsed(!collapsed)}
         aria-expanded={!collapsed}
         aria-label="Toggle schema legend"
-        className="w-full flex items-center justify-between px-3 py-2 hover:bg-opacity-80 transition-colors text-left ln-legend-header"
+        className="w-full flex items-center justify-between px-3 py-2 transition-colors text-left ln-legend-header"
       >
         <span className="text-[10px] font-normal uppercase tracking-wider">SCHEMAS</span>
         <span className="text-[10px] opacity-70 ml-1.5">{collapsed ? '▼' : '▲'}</span>
@@ -90,7 +90,7 @@ export const Legend = memo(function Legend({
                   return (
                     <div key={schema} className="flex items-center gap-2">
                       <div
-                        className="w-4 h-4 rounded flex-shrink-0"
+                        className="w-4 h-4 rounded-sm shrink-0"
                         style={{ backgroundColor: color }}
                       />
                       <span

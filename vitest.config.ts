@@ -20,6 +20,10 @@ const supportUiTests = [
   'tests/unit/hooks/modeCapabilities.test.ts',
   // Native describe/it + vi.mock('vscode') — runs here, not via the node-suite wrapper.
   'tests/unit/notifications.test.ts',
+  // Imports participantUtils (which imports `vscode`); needs the stub alias.
+  'tests/unit/present-result-error-code.test.ts',
+  // Imports participantUtils builders; needs the stub alias.
+  'tests/unit/minimal-tool-pair.test.ts',
 ];
 
 const uiTests = [

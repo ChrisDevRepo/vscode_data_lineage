@@ -121,3 +121,36 @@ export function buildEvictionStub(evictedCount: number): string {
     hint: 'Earlier conversation was removed to fit context window. Key context from those turns may be missing.',
   });
 }
+
+/** Result of token-bounding an ordered chat history. */
+export interface BoundedHistory<T> {
+  messages: T[];
+  evictedCount: number;
+  tokenCount: number;
+}
+
+/**
+ * Evicts oldest messages until the serialized request fits the supplied token budget.
+ * A leading orphan tool-result is removed together with its missing assistant call.
+ */
+export async function boundHistoryByTokens<T>(options: {
+  messages: readonly T[];
+  minMessages: number;
+  budgetTokens: number;
+  countTokens: (messages: readonly T[]) => PromiseLike<number>;
+  isToolResult: (message: T) => boolean;
+}): Promise<BoundedHistory<T>> {
+  const bounded = options.messages.slice();
+  let tokenCount = await options.countTokens(bounded);
+  let evictedCount = 0;
+  while (tokenCount > options.budgetTokens && bounded.length > options.minMessages) {
+    bounded.shift();
+    evictedCount++;
+    if (bounded.length > 0 && options.isToolResult(bounded[0])) {
+      bounded.shift();
+      evictedCount++;
+    }
+    tokenCount = await options.countTokens(bounded);
+  }
+  return { messages: bounded, evictedCount, tokenCount };
+}

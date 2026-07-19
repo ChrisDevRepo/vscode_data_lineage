@@ -1,7 +1,7 @@
 # Data Lineage Viz
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/vscode-1.95+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
+[![VS Code](https://img.shields.io/badge/vscode-1.101+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
 
 Visualise SQL dependencies right inside VS Code. Browse your lineage graph with search, trace, and Schema View — and, if you use GitHub Copilot, ask `@lineage` to explore the loaded model in natural language.

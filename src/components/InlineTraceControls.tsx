@@ -24,6 +24,42 @@ interface InlineTraceControlsProps {
   onClose: () => void;
 }
 
+/** Numeric depth input paired with an exhaustive-depth toggle. */
+function DepthInput({
+  label,
+  value,
+  isAll,
+  onChange,
+  onToggleAll,
+}: {
+  label: string;
+  value: number;
+  isAll: boolean;
+  onChange: (value: number) => void;
+  onToggleAll: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sm font-medium ln-text">{label}:</span>
+      <input
+        type="number"
+        min="0"
+        max="99"
+        value={value}
+        onChange={(event) => onChange(parseInt(event.target.value) || 0)}
+        disabled={isAll}
+        className="w-16 h-9 px-2 text-sm text-center rounded-sm transition-colors focus:outline-hidden disabled:opacity-50 ln-input"
+      />
+      <button
+        onClick={onToggleAll}
+        className={`h-9 px-3 rounded-sm text-sm font-medium transition-colors ${isAll ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
+      >
+        All
+      </button>
+    </div>
+  );
+}
+
 /**
  * A configuration bar for setting up a lineage trace.
  * 
@@ -57,68 +93,40 @@ export const InlineTraceControls = memo(function InlineTraceControls({
 
   return (
     <div className="ln-trace-config flex items-center justify-between gap-4 px-4 py-2.5">
-      <div className="flex items-center gap-4 flex-shrink-0">
+      <div className="flex items-center gap-4 shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium ln-text">From:</span>
           <span className="text-sm font-semibold ln-text-link">{startNodeName}</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium ln-text">Upstream:</span>
-          <input
-            type="number"
-            min="0"
-            max="99"
-            value={upstream}
-            onChange={(e) => {
-              setUpstream(parseInt(e.target.value) || 0);
-              setIsUpstreamAll(false);
-            }}
-            disabled={isUpstreamAll}
-            className="w-16 h-9 px-2 text-sm text-center rounded transition-colors focus:outline-none disabled:opacity-50 ln-input"
-          />
-          <button
-            onClick={() => setIsUpstreamAll(!isUpstreamAll)}
-            className={`h-9 px-3 rounded text-sm font-medium transition-colors ${isUpstreamAll ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
-          >
-            All
-          </button>
-        </div>
+        <DepthInput
+          label="Upstream"
+          value={upstream}
+          isAll={isUpstreamAll}
+          onChange={(value) => { setUpstream(value); setIsUpstreamAll(false); }}
+          onToggleAll={() => setIsUpstreamAll(!isUpstreamAll)}
+        />
 
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium ln-text">Downstream:</span>
-          <input
-            type="number"
-            min="0"
-            max="99"
-            value={downstream}
-            onChange={(e) => {
-              setDownstream(parseInt(e.target.value) || 0);
-              setIsDownstreamAll(false);
-            }}
-            disabled={isDownstreamAll}
-            className="w-16 h-9 px-2 text-sm text-center rounded transition-colors focus:outline-none disabled:opacity-50 ln-input"
-          />
-          <button
-            onClick={() => setIsDownstreamAll(!isDownstreamAll)}
-            className={`h-9 px-3 rounded text-sm font-medium transition-colors ${isDownstreamAll ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
-          >
-            All
-          </button>
-        </div>
+        <DepthInput
+          label="Downstream"
+          value={downstream}
+          isAll={isDownstreamAll}
+          onChange={(value) => { setDownstream(value); setIsDownstreamAll(false); }}
+          onToggleAll={() => setIsDownstreamAll(!isDownstreamAll)}
+        />
       </div>
 
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
         <button
           onClick={handleApply}
-          className="h-9 px-4 rounded text-sm font-medium transition-colors ln-btn-primary"
+          className="h-9 px-4 rounded-sm text-sm font-medium transition-colors ln-btn-primary"
         >
           Apply
         </button>
         <Tooltip content="Close Trace Configuration">
           <button
             onClick={onClose}
-            className="h-8 w-8 flex items-center justify-center rounded transition-colors ln-btn-secondary"
+            className="h-8 w-8 flex items-center justify-center rounded-sm transition-colors ln-btn-secondary"
           >
             <CloseIcon />
           </button>

@@ -45,20 +45,20 @@ export const StatusMessage = memo(function StatusMessage({ text, type }: StatusM
   const needsTooltip = text.length > MAX_BODY;
 
   const content = (
-    <div className={`flex items-start gap-2 px-3 py-2 rounded ln-status-${type}`}>
+    <div className={`flex items-start gap-2 px-3 py-2 rounded-sm ln-status-${type}`}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
         strokeWidth={1.5}
         stroke="currentColor"
-        className="w-4 h-4 flex-shrink-0 mt-0.5"
+        className="w-4 h-4 shrink-0 mt-0.5"
       >
         <path strokeLinecap="round" strokeLinejoin="round" d={ICONS[type]} />
       </svg>
       <div className="min-w-0">
         <div className="text-xs font-semibold">{title}</div>
-        <div className="text-xs mt-0.5 break-words ln-status-body">
+        <div className="text-xs mt-0.5 wrap-break-word ln-status-body">
           {body}
         </div>
       </div>

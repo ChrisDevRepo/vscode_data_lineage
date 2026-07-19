@@ -75,25 +75,25 @@ export const SchemaSelector = memo(function SchemaSelector({
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Search schemas..."
-          className="w-full h-7 px-2 text-xs rounded ln-input mb-1"
+          className="w-full h-7 px-2 text-xs rounded-sm ln-input mb-1"
         />
       )}
-      <div className="space-y-0.5 h-52 overflow-y-auto p-1.5 rounded ln-schema-list">
+      <div className="space-y-0.5 h-52 overflow-y-auto p-1.5 rounded-sm ln-schema-list">
         {filteredSchemas.map((schema) => {
           const color = getSchemaDisplayColor(schema.name, schemaColorMap, schema.types);
           return (
             <label
               key={schema.name}
-              className="flex items-center gap-2 cursor-pointer px-2 py-1 rounded transition-colors ln-list-item"
+              className="flex items-center gap-2 cursor-pointer px-2 py-1 rounded-sm transition-colors ln-list-item"
             >
               <input
                 type="checkbox"
                 checked={selectedSchemas.has(schema.name)}
                 onChange={() => onToggle(schema.name)}
-                className="rounded ln-checkbox"
+                className="rounded-sm ln-checkbox"
               />
               <span
-                className="inline-block rounded-full flex-shrink-0"
+                className="inline-block rounded-full shrink-0"
                 style={{ width: 8, height: 8, backgroundColor: color }}
               />
               <span className="text-xs flex-1 truncate">{schema.name}</span>

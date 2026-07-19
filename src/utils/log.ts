@@ -6,6 +6,7 @@
  * asynchronous boundaries of the extension, bridge, and engine.
  */
 import type { LogOutputChannel } from 'vscode';
+import { getGlobalSingleton } from './globalSingleton';
 
 /**
  * Canonical log categories used to tag all log entries.
@@ -32,15 +33,11 @@ export type LogCategory =
  * this module might be loaded by different entry points).
  */
 const GLOBAL_LOG_KEY = '__VSCODE_DL_TEST_LOGS__';
-// `as any` is required: globalThis has no index signature for our ad-hoc key (see remark above).
-if (!(globalThis as any)[GLOBAL_LOG_KEY]) {
-  (globalThis as any)[GLOBAL_LOG_KEY] = [];
-}
 
 /**
  * Shared array containing all logs captured during the current test session.
  */
-export const testLogCapture: string[] = (globalThis as any)[GLOBAL_LOG_KEY];
+export const testLogCapture = getGlobalSingleton<string[]>(GLOBAL_LOG_KEY, () => []);
 
 /**
  * Internal helper to route logs to the test capture buffer when in test mode.
@@ -65,19 +62,18 @@ function recordRecentLog(level: 'info' | 'debug' | 'warn' | 'error', line: strin
   if (recentLogs.length > MAX_RECENT_LOGS) recentLogs.shift();
 }
 
-/**
- * Returns the most recent log lines, oldest first.
- *
- * Levels are tagged inline; debug lines are retained even when the channel hides them.
- *
- * @returns Recent formatted log lines, capped at {@link MAX_RECENT_LOGS}.
- */
-export function getRecentLogs(): readonly string[] {
-  return recentLogs;
-}
-
 function normalizeLogMessage(msg: string): string {
   return sanitizeForLog(msg);
+}
+
+/** Removes stale manual category tags before the structured logger adds the canonical one. */
+function normalizeCategorizedLogMessage(cat: LogCategory, msg: string): string {
+  let norm = normalizeLogMessage(msg);
+  const prefix = `[${cat}]`;
+  while (norm === prefix || norm.startsWith(`${prefix} `)) {
+    norm = norm.slice(prefix.length).trimStart();
+  }
+  return norm;
 }
 
 /**
@@ -91,7 +87,7 @@ function normalizeLogMessage(msg: string): string {
  * @param msg - The message to log. Format: `Operation — key result (timing)`
  */
 export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
-  const norm = normalizeLogMessage(msg);
+  const norm = normalizeCategorizedLogMessage(cat, msg);
   logToTest(cat, norm);
   recordRecentLog('info', `[${cat}] ${norm}`);
   ch.info(`[${cat}] ${norm}`);
@@ -108,7 +104,7 @@ export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
  * @param msg - The message to log. Format: `Detail — context, parameters, timing`
  */
 export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
-  const norm = normalizeLogMessage(msg);
+  const norm = normalizeCategorizedLogMessage(cat, msg);
   logToTest(cat, norm);
   recordRecentLog('debug', `[${cat}] ${norm}`);
   ch.debug(`[${cat}] ${norm}`);
@@ -125,7 +121,7 @@ export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): v
  * @param msg - The message to log. Format: `What happened — what system did → recovery hint`
  */
 export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
-  const norm = normalizeLogMessage(msg);
+  const norm = normalizeCategorizedLogMessage(cat, msg);
   logToTest(cat, norm);
   recordRecentLog('warn', `[${cat}] ${norm}`);
   ch.warn(`[${cat}] ${norm}`);
@@ -148,7 +144,7 @@ export class Logger {
     private readonly cat: LogCategory
   ) {}
 
-    /**
+  /**
    * Factory method to create a new Logger.
    *
    * @param ch - Output channel to write to.
@@ -158,11 +154,23 @@ export class Logger {
     return new Logger(ch, cat);
   }
 
-  /** Logs an info-level message. */
+  /**
+   * Logs an info-level message.
+   *
+   * @param msg - Message body to emit under this logger's category.
+   */
   info(msg: string): void { logInfo(this.ch, this.cat, msg); }
-  /** Logs a debug-level message. */
+  /**
+   * Logs a debug-level message.
+   *
+   * @param msg - Message body to emit under this logger's category.
+   */
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
-  /** Logs a warning-level message. */
+  /**
+   * Logs a warning-level message.
+   *
+   * @param msg - Message body to emit under this logger's category.
+   */
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
   /**
    * Logs an error-level message with full stack detail.
@@ -171,20 +179,10 @@ export class Logger {
    * @param err - Caught error or unknown value; stack is extracted when available.
    */
   error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
-
-  /**
-   * Specialized bridge log: suppress noisy types, log others concisely.
-   * @param type - The incoming message type from the webview.
-   */
-  bridgeIncoming(type: string): void {
-    if (type === 'filter-changed') return;
-    this.debug(`Incoming: ${type}`);
-  }
 }
 
 /**
  * Emits already-prefixed text verbatim at the given level.
- *
  *
  * @remarks
  * For text that carries its own `[Category]` prefix (e.g. webview log messages
@@ -209,6 +207,12 @@ export function logRaw(
     case 'debug': ch.debug(norm); return;
   }
 }
+
+/** Truncation cap for content text (prompts, questions, reasoning, SQL previews) — logging.md truncation table. */
+export const LOG_TRUNC_CONTENT = 200;
+
+/** Truncation cap for JSON payloads (tool I/O, webview messages) — logging.md truncation table. */
+export const LOG_TRUNC_JSON = 300;
 
 /**
  * Truncates a string or an array of items for log previews.
@@ -245,8 +249,8 @@ export function sanitizeForLog(s: string): string {
 /**
  * Logs a critical failure or unhandled exception.
  *
- * Automatically extracts message from `Error` objects and logs stack
- * traces to the debug stream when available.
+ * Automatically extracts message from `Error` objects and logs both the
+ * `FAILED:` line and the stack trace at **error** level.
  *
  * @param ch - The VS Code `LogOutputChannel` to write to.
  * @param cat - The functional category of the log.
@@ -258,7 +262,7 @@ export function sanitizeForLog(s: string): string {
  */
 export function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
   const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
-  const msg = `FAILED: ${op} — ${detail}`;
+  const msg = `FAILED: ${normalizeCategorizedLogMessage(cat, op)} — ${detail}`;
   logToTest(cat, msg);
   recordRecentLog('error', `[${cat}] ${msg}`);
   ch.error(`[${cat}] ${msg}`);

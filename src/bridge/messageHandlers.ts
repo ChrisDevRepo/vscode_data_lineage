@@ -227,7 +227,11 @@ export function createMessageHandlers(
     },
     'show-detail': async (msg) => {
       host.log('info', 'Bridge', `Node detail opened — ${msg.node?.id || '(no node)'}`);
-      if (msg.node) lastDetailNode = msg.node;
+      if (msg.node) {
+        lastDetailNode = msg.node;
+      } else {
+        lastDetailNode = null;
+      }
 
       if (!detailPanel) {
         const title = msg.node ? `Detail: ${msg.node.name}` : 'Detail';
@@ -259,6 +263,8 @@ export function createMessageHandlers(
                   findQuery: m.findQuery || msg.findQuery,
                   config: await getDetailConfig()
                 });
+              } else {
+                detailPanel?.webview.postMessage({ type: 'detail-clear' });
               }
             } else if (m.type === 'table-stats-request') {
               await handleTableStatsRequestHost(host, lastConnectionInfo, statsConnState, detailPanel!, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
@@ -279,19 +285,31 @@ export function createMessageHandlers(
             findQuery: msg.findQuery,
             config: await getDetailConfig()
           });
+        } else {
+          detailPanel.title = 'Detail';
+          detailPanel.webview.postMessage({ type: 'detail-clear' });
         }
       }
     },
     'update-detail': async (msg) => {
-      if (msg.node) lastDetailNode = msg.node;
-      if (detailPanel && msg.node) {
-        detailPanel.title = `Detail: ${msg.node.name}`;
-        detailPanel.webview.postMessage({
-          type: 'detail-update',
-          node: enrichNodeForDetail(msg.node),
-          findQuery: msg.findQuery,
-          config: await getDetailConfig()
-        });
+      if (msg.node) {
+        lastDetailNode = msg.node;
+      } else {
+        lastDetailNode = null;
+      }
+      if (detailPanel) {
+        if (msg.node) {
+          detailPanel.title = `Detail: ${msg.node.name}`;
+          detailPanel.webview.postMessage({
+            type: 'detail-update',
+            node: enrichNodeForDetail(msg.node),
+            findQuery: msg.findQuery,
+            config: await getDetailConfig()
+          });
+        } else {
+          detailPanel.title = 'Detail';
+          detailPanel.webview.postMessage({ type: 'detail-clear' });
+        }
       }
     },
     'open-dacpac': async () => {
@@ -628,6 +646,17 @@ export function createMessageHandlers(
         `Data Lineage: ${text}`,
         { messageType: 'show-warning', text },
       );
+    },
+    'view-render-result': (msg) => {
+      const logger = Logger.create(outputChannel, 'Bridge');
+      if (msg.of === 0) return;
+      if (msg.rendered === msg.of) {
+        logger.debug(`AI view rendered — ${msg.rendered}/${msg.of} nodes resolved`);
+      } else if (msg.rendered > 0) {
+        logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model: ${trunc(msg.unresolved.join(', '), 200)}`);
+      } else {
+        logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model. unresolved: ${trunc(msg.unresolved.join(', '), 200)}`);
+      }
     },
   };
 

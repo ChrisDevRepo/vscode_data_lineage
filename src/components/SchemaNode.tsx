@@ -2,7 +2,7 @@ import React, { memo } from 'react';
 import { Handle, Position, NodeToolbar, type NodeProps } from '@xyflow/react';
 import type { SchemaNodeData, ObjectType } from '../engine/types';
 import { SCHEMA_NODE_WIDTH, SCHEMA_NODE_HEIGHT } from '../engine/graphBuilder';
-import { TYPE_COLORS, TYPE_LABELS } from '../utils/schemaColors';
+import { TYPE_COLORS } from '../utils/schemaColors';
 
 type SchemaNodeUiData = SchemaNodeData & {
   onExpandSchema?: (schemaName: string) => void;
@@ -55,7 +55,7 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
 
   // On a selected cluster, surface its actions as an attached toolbar (replaces the old right-click menu).
   const clusterToolbar = (canExpand || canExpandOnly) ? (
-    <NodeToolbar position={Position.Top} align="center" offset={8} isVisible={!!selected}>
+    <NodeToolbar position={Position.Top} align="center" offset={8} isVisible={!!(selected && d.toolbarActive)}>
       <div className="ln-schema-toolbar" onClick={(e) => e.stopPropagation()}>
         {canExpand && (
           <button type="button" className="ln-schema-toolbar__btn" onClick={() => d.onExpandSchema?.(d.schemaName)}>

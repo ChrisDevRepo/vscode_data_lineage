@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 import pkg from './package.json';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   define: {
     // Inject version at build time — single source of truth from package.json
     __APP_VERSION__: JSON.stringify(pkg.version),
@@ -35,6 +36,8 @@ export default defineConfig({
     chunkSizeWarningLimit: 3000,
   },
   resolve: {
+    // Prefer TypeScript source when generated JavaScript artifacts are present locally.
+    extensions: ['.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
     alias: {
       '@': resolve(__dirname, 'src'),
     },

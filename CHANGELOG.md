@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.3] - 2026-07-19
+
+### Added
+- Copilot Chat buttons (Approve & Proceed, Refine scope, Cancel) for gate resolution.
+- Post-approval discovery memo to carry semantic intent across SM hops.
+- Runtime schema expansion during the scope gate.
+- Transactional repair for AI tool calls (validates and merges exact field patches via a held draft).
+- Closed-stream guard on the chat response writer to handle cancellation and unexpected stream closures.
+
+### Changed
+- Bounded AI memory using sliding-window token eviction and post-walkthrough hop compaction.
+- Completed session turns now replay only the minimal trailing tool-pair.
+- Migrated webview UI to Tailwind CSS v4.
+
+### Fixed
+- Fixed new-chat isolation to prevent inheriting state from previous sessions.
+- Fixed cancellation propagation to correctly terminate background analysis when "Stop" is clicked.
+- Fixed stale detail panel data persisting after schema deselection.
+- Fixed silent failures on unresolved column references during AI previews.
+- Fixed synthesis phase by injecting a one-shot corrective if `present_result` is skipped, with fallback to a deterministic archive render.
+
 ## [1.0.2] - 2026-06-26
 
 ### Added

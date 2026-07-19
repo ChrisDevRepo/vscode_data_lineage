@@ -95,7 +95,7 @@ function NeighborHoverList({
           <div
             ref={refs.setFloating}
             style={floatingStyles}
-            className="z-50 min-w-[260px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover"
+            className="z-50 min-w-[260px] rounded-sm shadow-lg py-1.5 px-2 text-xs ln-popover"
             {...getFloatingProps()}
           >
             {sortedSchemas.map(([schema, items]) => (
@@ -166,7 +166,7 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
           <div
             ref={refs.setFloating}
             style={floatingStyles}
-            className="z-50 min-w-[240px] rounded shadow-lg py-1.5 px-2 text-xs ln-popover"
+            className="z-50 min-w-[240px] rounded-sm shadow-lg py-1.5 px-2 text-xs ln-popover"
             {...getFloatingProps()}
           >
             {items.map((item) => (

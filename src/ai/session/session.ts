@@ -8,6 +8,8 @@ import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, SmResult } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
+import { RepairDraftStore } from '../support/repairDraftStore';
+import type { PresentResultRepairField } from '../tools/presentResult';
 
 /**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
@@ -23,6 +25,12 @@ export class AiSession {
   public id: string;
   /** Orchestrates short-term narrative and long-term technical memory. */
   public readonly memory: AiMemoryManager;
+  /** Same-turn held presentation draft for exact failed-field repair. */
+  public readonly presentResultRepairDraft = new RepairDraftStore<
+    Record<string, unknown>,
+    Record<string, unknown>,
+    readonly PresentResultRepairField[]
+  >();
 
   // ── Environment State ──
   /** The current database model (nodes/edges) extracted from DDL. */
@@ -243,6 +251,7 @@ export class AiSession {
    * `phase` directly.
    */
   public resetExploration(): void {
+    this.presentResultRepairDraft.clear();
     this.memory.reset();
     this.stateMachine = null;
     this.resultGraph = null;

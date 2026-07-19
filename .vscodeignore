@@ -67,8 +67,11 @@ ai/**
 # Misc
 PLAN*.md
 AGENTS.md
+.AGENTS.md
 CLAUDE.md
+.CLAUDE.md
 GEMINI.md
+.GEMINI.md
 SECURITY.md
 CODE_OF_CONDUCT.md
 *.vsix

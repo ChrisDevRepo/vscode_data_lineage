@@ -3,18 +3,9 @@ import type { TableStats, ColumnStats, StatsMode } from '../engine/profilingEngi
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { Spinner } from './ui/Spinner';
 import { CompletenessBar, UniquenessIndicator, TypeBadge } from './StatsMicroCharts';
 
-
-function Spinner() {
-  return (
-    <svg className="animate-spin h-4 w-4 inline-block" style={{ color: 'var(--ln-fg-muted)' }}
-      xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
-}
 
 
 function SortArrow({ dir }: { dir: 'asc' | 'desc' }) {
@@ -387,7 +378,7 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
       <div className="flex items-center justify-between mb-2">
         <div className="ln-section-label flex items-center gap-2">
           <span>STATISTICS</span>
-          {isLoading && <Spinner />}
+          {isLoading && <Spinner className="h-4 w-4 inline-block" style={{ color: 'var(--ln-fg-muted)' }} />}
         </div>
         <div className="flex gap-1">
           <Button
@@ -417,7 +408,7 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
         </div>
       )}
       {statsState.phase === 'error' && (
-        <div className="text-xs px-2 py-1.5 rounded"
+        <div className="text-xs px-2 py-1.5 rounded-sm"
           style={{
             background: 'var(--ln-validation-error-bg)',
             border: '1px solid var(--ln-validation-error-border)',

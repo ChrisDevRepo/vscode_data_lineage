@@ -214,7 +214,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
           onChange={e => setInput(e.target.value)}
           placeholder="Search SQL bodies..."
           autoFocus
-          className="w-full h-7 px-2 text-xs rounded ln-input"
+          className="w-full h-7 px-2 text-xs rounded-sm ln-input"
         />
       </div>
 

@@ -123,7 +123,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
               <Tooltip key={type} content={typeInfo.title}>
                 <button
                   onClick={() => onSwitchAnalysis(type)}
-                  className={`w-7 h-7 flex items-center justify-center rounded ln-btn-icon${isActive ? ' ln-btn-icon-active' : ''}`}
+                  className={`w-7 h-7 flex items-center justify-center rounded-sm ln-btn-icon${isActive ? ' ln-btn-icon-active' : ''}`}
                 >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                   <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
@@ -175,7 +175,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
           <span>Viewing subset</span>
           <button
             onClick={onClearGroup}
-            className="text-[11px] px-1.5 py-0.5 rounded hover:opacity-80"
+            className="text-[11px] px-1.5 py-0.5 rounded-sm hover:opacity-80"
             style={{ color: 'var(--ln-text-link)' }}
           >
             Show all
@@ -228,7 +228,7 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
           {group.label}
         </span>
         {analysisType !== 'hubs' && (
-          <span className="text-[11px] ml-2 flex-shrink-0" style={{ color: 'var(--ln-fg-muted)' }}>
+          <span className="text-[11px] ml-2 shrink-0" style={{ color: 'var(--ln-fg-muted)' }}>
             {group.nodeIds.length} node{group.nodeIds.length !== 1 ? 's' : ''}
           </span>
         )}

@@ -3,6 +3,7 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
+import { Spinner } from './ui/Spinner';
 import type { Project, FilterProfile } from '../engine/projectStore';
 
 interface StartScreenProps {
@@ -146,7 +147,7 @@ export const StartScreen = memo(function StartScreen({
         <div className="flex items-center gap-2">
           <Tooltip content="Back" className="ln-tooltip--wizard">
             <button
-              className="ln-list-item rounded p-1 flex-shrink-0"
+              className="ln-list-item rounded-sm p-1 shrink-0"
               onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
             >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -168,7 +169,7 @@ export const StartScreen = memo(function StartScreen({
           {confirmDeleteAll && (
             <div className="flex items-center gap-1.5">
               <button
-                className="text-xs px-2 py-0.5 rounded ln-wizard-error-btn"
+                className="text-xs px-2 py-0.5 rounded-sm ln-wizard-error-btn"
                 onClick={() => { onDeleteAllProjects(); setConfirmDeleteAll(false); }}
               >
                 Confirm
@@ -194,15 +195,15 @@ export const StartScreen = memo(function StartScreen({
 
             if (isConfirming) {
               return (
-                <div key={project.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded ln-file-picker">
+                <div key={project.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-sm ln-file-picker">
                   <span className="text-sm truncate">Delete &ldquo;{project.name}&rdquo;?</span>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
-                      className="text-xs px-2 py-1 rounded ln-list-item ln-wizard-text-error"
+                      className="text-xs px-2 py-1 rounded-sm ln-list-item ln-wizard-text-error"
                       onClick={(e) => { e.stopPropagation(); onDeleteProject(project.id); setConfirmDeleteId(null); }}
                     >Delete</button>
                     <button
-                      className="text-xs px-2 py-1 rounded ln-list-item"
+                      className="text-xs px-2 py-1 rounded-sm ln-list-item"
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
                     >Cancel</button>
                   </div>
@@ -213,13 +214,13 @@ export const StartScreen = memo(function StartScreen({
             return (
               <div
                 key={project.id}
-                className="flex items-center gap-3 px-3 py-2 rounded cursor-pointer ln-file-picker ln-list-item"
+                className="flex items-center gap-3 px-3 py-2 rounded-sm cursor-pointer ln-file-picker ln-list-item"
                 onClick={() => !isLoading && onOpenProject(project.id)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenProject(project.id); }}
               >
-                <span className="text-base flex-shrink-0" aria-hidden="true">
+                <span className="text-base shrink-0" aria-hidden="true">
                   {isLoading ? <Spinner className="w-4 h-4" /> : (
                     <span style={{
                       background: 'var(--ln-wizard-btn-bg)',
@@ -281,35 +282,35 @@ export const StartScreen = memo(function StartScreen({
         asChild
       >
         <button
-          className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-sm text-sm text-left ln-file-picker ln-list-item"
           onClick={onOpenLatest}
           disabled={!latestProject || !!loadingProjectId}
           style={{ opacity: latestProject ? 1 : 0.45 }}
         >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
         </svg>
         <span className="truncate flex-1">
           {latestProject ? latestProject.name : 'No recent project'}
         </span>
-        {loadingProjectId === latestProject?.id && <Spinner className="w-4 h-4 ml-auto flex-shrink-0" />}
+        {loadingProjectId === latestProject?.id && <Spinner className="w-4 h-4 ml-auto shrink-0" />}
       </button>
       </Tooltip>
 
       {/* Load Projects button — only shown when projects exist */}
       {sorted.length > 0 && (
         <button
-          className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded text-sm text-left ln-file-picker ln-list-item"
+          className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-sm text-sm text-left ln-file-picker ln-list-item"
           onClick={() => switchView('projects')}
         >
           <div className="flex items-center gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0A2.25 2.25 0 0 1 19.5 16.5h-15a2.25 2.25 0 0 1-2.25-2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 16.91a2.25 2.25 0 0 1-1.07-1.916V14.25" />
             </svg>
             <span>Load Projects</span>
           </div>
           <span
-            className="text-xs px-1.5 py-0.5 rounded flex-shrink-0"
+            className="text-xs px-1.5 py-0.5 rounded-sm shrink-0"
             style={{ background: 'var(--ln-wizard-btn-bg)', opacity: 0.8 }}
           >
             {sorted.length}
@@ -319,15 +320,6 @@ export const StartScreen = memo(function StartScreen({
     </WizardPanel>
   );
 });
-
-function Spinner({ className = 'w-4 h-4' }: { className?: string }) {
-  return (
-    <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
-}
 
 function IconClose() {
   return (

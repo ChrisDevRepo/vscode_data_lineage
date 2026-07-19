@@ -113,20 +113,20 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search schemas..."
-                className="flex-1 h-8 px-2 text-sm rounded ln-input"
+                className="flex-1 h-8 px-2 text-sm rounded-sm ln-input"
               />
               {onSelectAll && onSelectNone && (
                 <>
                   <Tooltip content="Select all visible schemas">
                     <button
                       onClick={() => onSelectAll(filteredSchemas)}
-                      className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
+                      className="px-2 h-8 text-xs rounded-sm ln-btn-secondary whitespace-nowrap"
                     >All</button>
                   </Tooltip>
                   <Tooltip content="Deselect all visible schemas">
                     <button
                       onClick={() => onSelectNone(filteredSchemas)}
-                      className="px-2 h-8 text-xs rounded ln-btn-secondary whitespace-nowrap"
+                      className="px-2 h-8 text-xs rounded-sm ln-btn-secondary whitespace-nowrap"
                     >None</button>
                   </Tooltip>
                 </>
@@ -138,20 +138,20 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                 return (
                   <div
                     key={schema}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item"
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
                   >
                     {onToggleSchema && (
                       <input
                         type="checkbox"
                         checked={selectedSchemas.has(schema)}
                         onChange={() => onToggleSchema(schema)}
-                        className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
+                        className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
                       />
                     )}
                     <Tooltip content={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}>
                       <button
                         onClick={() => onToggleFocusSchema(schema)}
-                        className="p-1 rounded transition-colors"
+                        className="p-1 rounded-sm transition-colors"
                         style={{
                         color: focusSchemas.has(schema)
                           ? 'var(--vscode-symbolIcon-functionForeground)'

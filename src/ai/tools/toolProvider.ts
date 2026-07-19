@@ -24,18 +24,19 @@ import {
   runAnalysis, searchDdl, getScopeBundle,
   getNeighborColumns,
 } from '../tools/tools';
+import { readToolError } from '../support/toolErrorEnvelope';
 import {
   autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
-  type PresentResultInput,
+  PresentResultBoundarySchema, presentResultRepairFieldsFromPaths, presentResultRepairPatchSchemaForFields,
+  type PresentResultInput, type PresentResultRepairField,
 } from '../tools/presentResult';
 import {
   validateToolInput,
   StartExplorationInputSchema,
-  SubmitFindingsBbInputSchema,
-  SubmitFindingsCtInputSchema,
   GetScopeBundleInputSchema,
   GetNeighborColumnsInputSchema,
 } from '../tools/toolSchemas';
+import { prepareSubmitFinding } from './submitFindingPreparation';
 import { edgeApiType } from '../infra/aiPresenter';
 import { prunePreserveOnly } from '../infra/viewPrune';
 import { type ObjectType, type AnalysisType, type DatabaseModel, type LineageNode } from '../../engine/types';
@@ -147,7 +148,7 @@ class ToolHandler {
 
     sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
-    const rejection = this.extractRejectionInfo(data);
+    const rejection = readToolError(data);
     if (rejection) {
       const reason = trunc(sanitizeForLog(rejection.reason), 220);
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), 220)}` : '';
@@ -171,33 +172,8 @@ class ToolHandler {
     };
   }
 
-  private extractRejectionInfo(data: object): { code: string; reason: string; hint?: string } | null {
-    const anyData = data as {
-      success?: unknown;
-      error?: unknown;
-      errors?: unknown;
-      hint?: unknown;
-      message?: unknown;
-      detail?: unknown;
-    };
-    const hasError = typeof anyData.error === 'string';
-    const hasFailedSuccess = anyData.success === false;
-    const hasErrors = Array.isArray(anyData.errors) && anyData.errors.length > 0;
-    if (!hasError && !hasFailedSuccess && !hasErrors) return null;
-
-    const code = hasError ? String(anyData.error) : 'validation';
-    let reason = '';
-    if (hasErrors) reason = String((anyData.errors as unknown[])[0] ?? '');
-    if (!reason && typeof anyData.message === 'string') reason = anyData.message;
-    if (!reason && typeof anyData.detail === 'string') reason = anyData.detail;
-    if (!reason && hasError) reason = String(anyData.error);
-    if (!reason) reason = 'tool returned failure envelope';
-    const hint = typeof anyData.hint === 'string' ? anyData.hint : undefined;
-    return { code, reason, hint };
-  }
-
   private notePresentResultFailure(sess: AiSession, data: object): void {
-    const rejection = this.extractRejectionInfo(data);
+    const rejection = readToolError(data);
     if (!rejection) return;
     sess.presentResultFailureCountThisTurn += 1;
     const reason = rejection.hint
@@ -603,59 +579,19 @@ class ToolHandler {
       const completeViolation = evaluateExplorationCompleteRule(engine.status);
       if (completeViolation) return this.logAndReturn('submit_findings', completeViolation, input);
 
-      const rawInput = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
-
-      // Pre-Zod mode guards — fire before schema parse so the AI gets an unambiguous
-      // mode-specific error rather than a generic `.strict()` failure.
-      if (!engine.columnAspect && rawInput.column_flow !== undefined) {
-        return this.logAndReturn('submit_findings', {
-          error: 'bb_field_unknown',
-          hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
-        }, rawInput);
-      }
-
-      const parsed = engine.columnAspect
-        ? SubmitFindingsCtInputSchema.safeParse(input)
-        : SubmitFindingsBbInputSchema.safeParse(input);
-      if (!parsed.success) {
-        const isCtMode = !!engine.columnAspect;
-        if (isCtMode && rawInput.prune_neighbors !== undefined) {
-          return this.logAndReturn('submit_findings', {
-            error: 'bb_field_forbidden_in_ct',
-            hint: 'CT mode forbids `prune_neighbors`. Submit `column_flow` (or `column_flow: []` for no interaction) and use route_requests for contributors.',
-          }, input);
-        }
-        if (isCtMode && rawInput.verdict === 'prune') {
-          return this.logAndReturn('submit_findings', {
-            error: 'ct_verdict_forbidden',
-            hint: 'CT mode allows verdict only `analyze` or `pass`. Use `column_flow: []` when the node has no tracked column interaction.',
-          }, input);
-        }
-
-        // Surface specific field paths so the model can correct the right field on retry.
-        const seen = new Set<string>();
-        const fieldErrors: string[] = [];
-        for (const issue of parsed.error.issues) {
-          if (issue.path.length === 0) continue;
-          const key = issue.path.join('.');
-          if (seen.has(key)) continue;
-          seen.add(key);
-          fieldErrors.push(`${key}: ${issue.message}`);
-          if (fieldErrors.length >= 3) break;
-        }
-        const modeLabel = isCtMode ? 'CT' : 'BB';
-        const hint = fieldErrors.length > 0
-          ? `Invalid ${modeLabel} submit_findings input — ${fieldErrors.join('; ')}.`
-          : `Invalid ${modeLabel} submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
-        return this.logAndReturn('submit_findings', {
-          error: isCtMode ? 'ct_field_required' : 'invalid_input',
-          hint,
-        }, input);
-      }
+      const prepared = prepareSubmitFinding(input, {
+        isCtMode: Boolean(engine.columnAspect),
+        heldFindingFocus: engine.heldFindingFocus,
+        currentFocus: engine.currentFocus,
+        applyHeldPatch: patch => engine.applyHeldPatch(patch),
+        applyHeldContent: finding => engine.applyHeldContent(finding),
+      });
+      if (!prepared.success) return this.logAndReturn('submit_findings', prepared.rejection, input);
 
       // The agreement-phase gate locks `sess.classification`. Each finding's
       // sections[] must match the lock; verdict=prune may submit length 0.
-      const findings = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+      const finding = prepared.finding;
+      const findings = [finding];
       for (const f of findings) {
         const violation = validateSectionsAgainstClassification(f.sections, f.verdict, sess.classification);
         if (violation) {
@@ -668,10 +604,10 @@ class ToolHandler {
 
       // Identity guard: submitted focus_node_id must match the engine's current focus.
       const engineFocus = engine.currentFocus;
-      const focusViolation = evaluateFocusMismatchRule(engineFocus, parsed.data.focus_node_id);
+      const focusViolation = evaluateFocusMismatchRule(engineFocus, finding.focus_node_id);
       if (focusViolation) return this.logAndReturn('submit_findings', focusViolation, input);
 
-      const result = engine.submitFindings(parsed.data);
+      const result = engine.submitFindings(finding);
       if ('error' in result) {
         // Log each rejection reason untruncated — the detail array is buried past the 300-char JSON cap.
         const detail = (result as { detail?: Array<{ id?: string; reason?: string }> }).detail;
@@ -679,6 +615,21 @@ class ToolHandler {
           for (const d of detail) {
             if (d.reason) this.logger.debug(`[AI] [CT] rejection: id=${d.id ?? '?'} — ${d.reason}`);
           }
+        }
+        const repairFields = result.error === 'route_columns_not_on_target'
+          ? ['route_requests']
+          : result.error === 'out_col_not_on_node' || result.error === 'contributor_col_not_on_source'
+            ? ['column_flow']
+            : result.error === 'route_validation_failed'
+              ? ['route_requests', 'column_flow']
+              : [];
+        if (repairFields.length > 0 && engine.heldFindingFocus) {
+          return this.logAndReturn('submit_findings', {
+            ...result,
+            repair: true,
+            repair_fields: repairFields,
+            hint: `${result.hint ?? 'Correct the rejected fields.'} Retry with only {"repair":true, ${repairFields.map(field => `"${field}":...`).join(', ')}}; accepted sections, summary, verdict, focus, and DDL context are held server-side.`,
+          }, input);
         }
         return this.logAndReturn('submit_findings', result, input);
       }
@@ -737,19 +688,84 @@ class ToolHandler {
     } catch (err) { return this.toolError('submit_findings', err); }
   }
 
-  public async presentResult(input: PresentResultInput) {
+  public async presentResult(input: unknown) {
     try {
       if (!this.isAiEnabled()) return this.disabled();
       const sess = this.getSession();
       sess.presentResultAttemptCountThisTurn += 1;
       const model = this.requireModel();
 
-      if (input.sections !== undefined && !Array.isArray(input.sections)) input.sections = undefined;
-      if (input.notes !== undefined && !Array.isArray(input.notes)) input.notes = undefined;
-      if (input.add_node_ids !== undefined && !Array.isArray(input.add_node_ids)) input.add_node_ids = undefined;
-      if (input.prune_node_ids !== undefined && !Array.isArray(input.prune_node_ids)) input.prune_node_ids = undefined;
-      if (input.highlight_groups !== undefined && !Array.isArray(input.highlight_groups)) input.highlight_groups = undefined;
-      if (sess.phase.kind === 'completed' && input.is_update === undefined) input.is_update = true;
+      const rawInput = input && typeof input === 'object' && !Array.isArray(input)
+        ? input as Record<string, unknown>
+        : {};
+      const heldAuthorization = sess.presentResultRepairDraft.getAuthorization();
+      let candidate: unknown = rawInput;
+      if (sess.presentResultRepairDraft.hasRepairableDraft()) {
+        const patchSchema = presentResultRepairPatchSchemaForFields(heldAuthorization ?? []);
+        // Backfill the repair marker when the model sent the authorized fields but omitted the
+        // flag (patch schema requires repair: literal(true)). Mirrors the completed-phase
+        // is_update backfill below — normalize-with-log, never a silent rewrite.
+        let patchInput: Record<string, unknown> = rawInput;
+        if (rawInput.repair === undefined) {
+          patchInput = { ...rawInput, repair: true };
+          this.logger.debug('[present_result] Backfilled repair:true on held-draft turn (model omitted the flag)');
+        }
+        const patch = patchSchema.safeParse(patchInput);
+        if (patch.success) {
+          candidate = sess.presentResultRepairDraft.merge(
+            patch.data as Record<string, unknown>,
+            (draft, repairPatch) => {
+              const { repair: _repair, ...fields } = repairPatch;
+              return { ...draft, ...fields };
+            },
+          );
+        } else if (PresentResultBoundarySchema.safeParse(rawInput).success) {
+          // Supersede: a full payload that fails the patch schema but parses cleanly against the
+          // full boundary schema is a complete replacement of the held draft, not a broken patch.
+          // Accept it (normalize-with-log) and fall through to the normal validation/assembly path
+          // instead of forcing a patch the model will not send.
+          this.logger.debug(`[present_result] Full valid payload superseded held repair draft (was awaiting: ${(heldAuthorization ?? []).join(', ') || 'none'})`);
+          sess.presentResultRepairDraft.clear();
+          candidate = sess.phase.kind === 'completed' && rawInput.is_update === undefined
+            ? { ...rawInput, is_update: true }
+            : rawInput;
+        } else {
+          const paths = patch.error.issues.map(issue => issue.path);
+          return this.logAndReturn('present_result', {
+            success: false,
+            errors: patch.error.issues.map(issue => `${issue.path.join('.') || 'input'}: ${issue.message}`),
+            issue_paths: paths.map(path => path.join('.')).filter(Boolean),
+            repair_fields: heldAuthorization ?? [],
+            hint: `Send only the authorized repair fields: ${(heldAuthorization ?? []).join(', ')} with repair:true.`,
+          }, rawInput);
+        }
+      } else if (sess.phase.kind === 'completed' && rawInput.is_update === undefined) {
+        candidate = { ...rawInput, is_update: true };
+      }
+
+      const boundary = PresentResultBoundarySchema.safeParse(candidate);
+      if (!boundary.success) {
+        const issuePaths = boundary.error.issues.map(issue => issue.path);
+        const repairFields = presentResultRepairFieldsFromPaths(issuePaths);
+        if (repairFields.length > 0 && candidate && typeof candidate === 'object') {
+          const { repair: _r, ...draftObj } = candidate as Record<string, unknown>;
+          sess.presentResultRepairDraft.hold(structuredClone(draftObj), repairFields);
+        } else {
+          sess.presentResultRepairDraft.clear();
+        }
+        const failure = {
+          success: false,
+          errors: boundary.error.issues.map(issue => `${issue.path.join('.') || 'input'}: ${issue.message}`),
+          issue_paths: issuePaths.map(path => path.join('.')).filter(Boolean),
+          repair_fields: repairFields,
+          hint: repairFields.length > 0
+            ? `Retry only {"repair":true, ${repairFields.map(field => `"${field}":...`).join(', ')}}. All other presentation fields are held server-side.`
+            : 'Submit a complete present_result object matching the strict schema.',
+        };
+        this.notePresentResultFailure(sess, failure);
+        return this.logAndReturn('present_result', failure, rawInput);
+      }
+      const parsedInput: PresentResultInput = boundary.data;
 
       const presentPrecondition = evaluatePresentResultPreconditionsRule(!!sess.resultGraph);
       if (presentPrecondition) {
@@ -763,9 +779,9 @@ class ToolHandler {
       const graphSource = resultGraph.source;
       const modelNodeMap = new Map(model.nodes.map(n => [n.id, n]));
 
-      if (input.is_update && input.add_node_ids?.length) {
+      if (parsedInput.is_update && parsedInput.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
-        const addResolution = resolveModelNodeIds(input.add_node_ids, modelNodeMap);
+        const addResolution = resolveModelNodeIds(parsedInput.add_node_ids, modelNodeMap);
         if (addResolution.unresolved.length > 0) {
           const failure = {
             success: false,
@@ -775,7 +791,8 @@ class ToolHandler {
             ],
           };
           this.notePresentResultFailure(sess, failure);
-          return this.logAndReturn('present_result', failure, input);
+          sess.presentResultRepairDraft.clear();
+          return this.logAndReturn('present_result', failure, parsedInput);
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
         resolvedNodeIds.push(...toAdd);
@@ -785,8 +802,8 @@ class ToolHandler {
           .map(e => [e.source, e.target, edgeApiType(e.type)] as [string, string, string]);
       }
 
-      if (input.prune_node_ids?.length) {
-        const pruneResolution = resolveModelNodeIds(input.prune_node_ids, modelNodeMap);
+      if (parsedInput.prune_node_ids?.length) {
+        const pruneResolution = resolveModelNodeIds(parsedInput.prune_node_ids, modelNodeMap);
         if (pruneResolution.unresolved.length > 0) {
           const failure = {
             success: false,
@@ -796,15 +813,16 @@ class ToolHandler {
             ],
           };
           this.notePresentResultFailure(sess, failure);
-          return this.logAndReturn('present_result', failure, input);
+          sess.presentResultRepairDraft.clear();
+          return this.logAndReturn('present_result', failure, parsedInput);
         }
         const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
         resolvedEdges = pruned.edges;
       }
 
-      if (Array.isArray(input.sections) && input.sections.length > 0) {
-        input.sections = input.sections.map((sec) => {
+      if (Array.isArray(parsedInput.sections) && parsedInput.sections.length > 0) {
+        parsedInput.sections = parsedInput.sections.map((sec) => {
           if (!Array.isArray(sec.node_ids) || sec.node_ids.length === 0) return sec;
           const normalizedNodeIds = sec.node_ids.map((id) => resolveModelNodeId(id, modelNodeMap) ?? id);
           return { ...sec, node_ids: normalizedNodeIds };
@@ -824,16 +842,17 @@ class ToolHandler {
             ],
           };
           this.notePresentResultFailure(sess, failure);
-          return this.logAndReturn('present_result', failure, input);
+          sess.presentResultRepairDraft.clear();
+          return this.logAndReturn('present_result', failure, parsedInput);
         }
       }
 
-      this.logger.debug(`presentResult section[0] preview: ${trunc(input.sections?.[0]?.text ?? '(empty)', 200)}`);
+      this.logger.debug(`presentResult section[0] preview: ${trunc(parsedInput.sections?.[0]?.text ?? '(empty)', 200)}`);
 
       // Auto-fix AI output artifacts (newline unescaping, length truncation) before assembly.
       // Markdown math rendering is handled in AiDescriptionOverlay via
       // react-markdown + remark-math + rehype-katex.
-      const { input: fixedInput } = autoFixPresentResult(model, input, resolvedNodeIds);
+      const { input: fixedInput } = autoFixPresentResult(model, parsedInput, resolvedNodeIds);
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       let assembledDescription: string | undefined = undefined;
@@ -855,7 +874,9 @@ class ToolHandler {
           hint: 'Fix CT source presentation only. Keep existing section text where possible; add the terminal source table(s) to the source section or source highlight group.',
         };
         this.notePresentResultFailure(sess, failure);
-        return this.logAndReturn('present_result', failure, input);
+        const repairFields: PresentResultRepairField[] = ['sections', 'highlight_groups'];
+        sess.presentResultRepairDraft.hold(structuredClone(fixedInput as unknown as Record<string, unknown>), repairFields);
+        return this.logAndReturn('present_result', { ...failure, repair_fields: repairFields }, parsedInput);
       }
 
       this.logger.info(
@@ -866,7 +887,14 @@ class ToolHandler {
 
       if (!validation.success) {
         this.notePresentResultFailure(sess, validation);
-        return this.logAndReturn('present_result', validation, input);
+        const repairFields = validation.repair_fields ?? [];
+        if (repairFields.length > 0) {
+          const { repair: _r, ...draftObj } = fixedInput as unknown as Record<string, unknown>;
+          sess.presentResultRepairDraft.hold(structuredClone(draftObj), repairFields);
+        } else {
+          sess.presentResultRepairDraft.clear();
+        }
+        return this.logAndReturn('present_result', validation, parsedInput);
       }
 
       const aiMetadata: AIViewMetadata = {
@@ -897,7 +925,7 @@ class ToolHandler {
         panel.reveal(vscode.ViewColumn.One);
       }
 
-      if (input.is_update) {
+      if (parsedInput.is_update) {
         resultGraph.nodeIds = resolvedNodeIds;
         resultGraph.edges = resolvedEdges;
         const existingNotes = new Map((resultGraph.notes ?? []).map(n => [n.nodeId, n]));
@@ -912,11 +940,11 @@ class ToolHandler {
       {
         resultGraph.description = validation.description ?? undefined;
         resultGraph.summary = validation.summary ?? undefined;
-        resultGraph.title = input.title ?? undefined;
-        resultGraph.intro = input.intro ?? undefined;
-        resultGraph.closing = input.closing ?? undefined;
-        if (Array.isArray(input.sections)) {
-          resultGraph.sections = input.sections.map(s => ({
+        resultGraph.title = parsedInput.title ?? undefined;
+        resultGraph.intro = parsedInput.intro ?? undefined;
+        resultGraph.closing = parsedInput.closing ?? undefined;
+        if (Array.isArray(parsedInput.sections)) {
+          resultGraph.sections = parsedInput.sections.map(s => ({
             label: s.label,
             node_ids: s.node_ids,
             text: s.text,
@@ -927,10 +955,14 @@ class ToolHandler {
       sess.lastPresentResultSummary = validation.summary ?? null;
       // Signal the button gate in dispatchExit that a graph was built this turn.
       sess.presentResultCalledThisTurn = true;
+      sess.presentResultRepairDraft.clear();
 
       this.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${fixedInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'}`);
-      return this.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, input);
-    } catch (err) { return this.toolError('present_result', err); }
+      return this.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, parsedInput);
+    } catch (err) {
+      this.getSession().presentResultRepairDraft.clear();
+      return this.toolError('present_result', err);
+    }
   }
 
   public getObjectDetail(input: unknown) {

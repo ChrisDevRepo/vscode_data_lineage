@@ -31,7 +31,7 @@ import {
 } from '../prompting/prompts';
 import { getToolInvocationLabel } from '../tools/toolLabels';
 import { buildSmProtocol } from '../prompting/smPrompts';
-import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub } from '../participant/historyManager';
+import { compactNoiseResult, compactStaleHopResult, MIN_HISTORY_MESSAGES, buildEvictionStub, boundHistoryByTokens } from '../participant/historyManager';
 import { CONTEXT_PRESSURE_THRESHOLD } from '../infra/tokenBudget';
 import { NavigationEngine } from '../sm/smBase';
 import { RepeatRejectGuard } from '../participant/repeatRejectGuard';
@@ -44,12 +44,13 @@ import { resolveStagePrompt } from '../prompting/templateRenderer';
 import { ChatResponseWriter } from '../participant/chatResponseWriter';
 import { PerformanceCollector } from '../infra/diagnostics';
 import { MessageEnvelope, MessageEnvelopeInvariantError, type ToolPair } from '../participant/messageEnvelope';
-import { matchesTransientNetPattern } from '../infra/transientErrors';
 import { LmTracer } from '../infra/lmTracer';
 import { buildConfirmedGraphPresentationEditInstruction, type FollowUpConfirmationPhase } from '../prompting/followUpConfirmation';
+import { projectCopilotTools } from './toolSchemaProjection';
+import { gateActions } from './gateActions';
 export { classifyGateReply } from '../session/sessionPhase';
 
-import { extractToolCallFields, hasToolResultParts, hasToolCallParts, findLastToolPairInHistory, appendBlockOnce, sanitizeDescriptionForChat, lastAssistantMarkdownFromHistory, isRecord, minimizeActiveToolResultPayload, buildActiveMinimalToolPair, buildCompletedResultSnapshot, minimizeCompletedToolResultPayload, buildCompletedMinimalToolPair, compactPresentResultReplayInput, compactAssistantReplayParts, extractToolErrorCode, extractToolResultJson, normalizeFollowupTrigger, renderHopDirective, isTransientLmError } from './participantUtils';
+import { extractToolCallFields, hasToolResultParts, hasToolCallParts, findLastToolPairInHistory, appendBlockOnce, sanitizeDescriptionForChat, lastAssistantMarkdownFromHistory, isRecord, minimizeActiveToolResultPayload, buildActiveMinimalToolPair, buildCompletedResultSnapshot, minimizeCompletedToolResultPayload, buildCompletedMinimalToolPair, compactPresentResultReplayInput, compactAssistantReplayParts, extractToolErrorCode, extractToolResultJson, normalizeFollowupTrigger, renderHopDirective, renderHopRepairDirective } from './participantUtils';
 
 export class LineageParticipant {
   private readonly logger: Logger;
@@ -183,17 +184,9 @@ export class LineageParticipant {
     }
 
     if (chatContext.history.length === 0) {
-      const RESULT_GRAFT_WINDOW_MS = 5 * 60 * 1000;
-      const preservedResult = sess.resultGraph;
-      const recent = preservedResult && (Date.now() - sess.startTime) < RESULT_GRAFT_WINDOW_MS;
       sess.regenerateSessionId();
       sess.resetExploration();
-      if (recent && preservedResult) {
-        sess.resultGraph = preservedResult;
-        this.logger.info(`[${sess.id}] New chat session — state rotated; resultGraph preserved (${preservedResult.nodeIds.length} nodes, ${preservedResult.source})`);
-      } else {
-        this.logger.info(`[${sess.id}] New chat session detected — state rotated`);
-      }
+      this.logger.info(`[${sess.id}] New chat session detected — all prior exploration and rendered-result state cleared`);
     }
 
     // Reset the parallel-call guard at every turn entry.
@@ -475,7 +468,7 @@ export class LineageParticipant {
     const isStrictReplay =
       sess.phase.kind === 'exploring' ||
       (sess.phase.kind === 'completed' && !!sess.stateMachine && sess.stateMachine.status === 'complete');
-    const historyMessages: vscode.LanguageModelChatMessage[] =
+    let historyMessages: vscode.LanguageModelChatMessage[] =
       isStrictReplay
         ? (() => {
             const rawPair = findLastToolPairInHistory(rebuiltHistoryMessages);
@@ -626,11 +619,25 @@ export class LineageParticipant {
     const budgetTokens = Math.floor(sess.maxInputTokens * CONTEXT_PRESSURE_THRESHOLD);
     if (budgetTokens > 0 && historyMessages.length > MIN_HISTORY_MESSAGES) {
       try {
-        const fullText = `${systemPrompt}\n${serializeMessages(historyMessages)}\n${effectivePrompt}`;
-        const totalTokens = await model.countTokens(fullText);
+        let totalTokens = await model.countTokens(`${systemPrompt}\n${serializeMessages(historyMessages)}\n${effectivePrompt}`);
         if (totalTokens > budgetTokens) {
           this.logger.debug(`[Performance] Context pressure: ${totalTokens}/${budgetTokens} tokens (${((totalTokens / sess.maxInputTokens) * 100).toFixed(0)}%)`);
           collector.recordEviction();
+          const bounded = await boundHistoryByTokens({
+            messages: historyMessages,
+            minMessages: MIN_HISTORY_MESSAGES,
+            budgetTokens,
+            countTokens: messages => model.countTokens(`${systemPrompt}\n${serializeMessages(messages as vscode.LanguageModelChatMessage[])}\n${effectivePrompt}`),
+            isToolResult: hasToolResultParts,
+          });
+          totalTokens = bounded.tokenCount;
+          if (bounded.evictedCount > 0) {
+            historyMessages = [
+              vscode.LanguageModelChatMessage.User(buildEvictionStub(bounded.evictedCount)),
+              ...bounded.messages,
+            ];
+            this.logger.debug(`[Performance] Context evicted: messages=${bounded.evictedCount} remaining=${bounded.messages.length} tokens=${totalTokens}/${budgetTokens}`);
+          }
         }
       } catch (err) {
         this.logger.debug(`Context pressure check failed: ${err instanceof Error ? err.message : err}`);
@@ -643,7 +650,6 @@ export class LineageParticipant {
     const accumulatedToolResults: Record<string, vscode.LanguageModelToolResult> = {};
     const toolCallCache = new Map<string, vscode.LanguageModelToolResult>();
     let roundCount = 0;
-    let consecutiveErrorRounds = 0;
     let totalToolCallsMade = 0;
     let totalOutputTokens = 0;
     let peakRoundInputTokens = 0;
@@ -657,6 +663,7 @@ export class LineageParticipant {
       sess.presentResultAttemptCountThisTurn = 0;
       sess.presentResultFailureCountThisTurn = 0;
       sess.presentResultLastFailureReasonThisTurn = null;
+      sess.presentResultRepairDraft.clear();
       let actionRequiredPending = false;
       const SEARCH_TOOLS = new Set(['lineage_search_objects', 'lineage_search_ddl', 'lineage_get_context']);
       const repeatGuard = new RepeatRejectGuard();
@@ -689,24 +696,15 @@ export class LineageParticipant {
           this.logger.debug(`[Hop ${roundCount}] engine_status=${st.status} focus=${st.currentFocusNodeId ?? '(null)'}`);
         }
 
-        // Explicit map to LanguageModelChatTool — passing raw vscode.lm.tools objects causes sendRequest to silently drop the tools array.
-        // In CT mode, strip prune_neighbors from submit_findings schema: the field is BB-only and
-        // its presence in the schema causes the AI to submit it even though CT mode rejects it.
         const isCtMode = activePhase === 'active' && sess.stateMachine?.columnAspect !== null;
-        const tools: vscode.LanguageModelChatTool[] = lineageTools.map(t => {
-          let inputSchema = t.inputSchema;
-          if (isCtMode && t.name === 'lineage_submit_findings' && inputSchema) {
-            const schema = structuredClone(inputSchema) as Record<string, unknown>;
-            const props = schema.properties as Record<string, unknown> | undefined;
-            if (props) delete props['prune_neighbors'];
-            inputSchema = schema;
-          }
-          return {
-            name: t.name,
-            description: t.description || (t.tags?.includes('lineage-presentation') ? 'Presents results to user' : 'Lineage tool'),
-            inputSchema,
-          };
-        });
+        // Passing raw vscode.lm.tools objects causes sendRequest to silently drop tools.
+        // Projection also constrains repair turns to only the rejected fields.
+        const tools = projectCopilotTools(lineageTools, {
+          activePhase,
+          isCtMode,
+          hasHeldFinding: Boolean(sess.stateMachine?.heldFindingFocus),
+          presentResultRepairFields: sess.presentResultRepairDraft.getAuthorization() ?? [],
+        }) as vscode.LanguageModelChatTool[];
 
         // Required is only valid with exactly one tool; fall back to Auto for multi-tool sets.
         const toolMode = (requestedMode === vscode.LanguageModelChatToolMode.Required && tools.length > 1)
@@ -721,32 +719,10 @@ export class LineageParticipant {
           writer.progress('Synthesizing the answer…');
           sess.synthesisProgressEmitted = true;
         }
-        // Bounded retry around sendRequest: a single transient network blip before any
-        // tokens stream would otherwise terminate the session and discard a complete archive.
-        // Wraps the request only — once the stream begins, partial markdown has been surfaced
-        // to the user and replay would duplicate output, so mid-stream failures still propagate.
-        const MAX_RETRIES = 1;
-        const RETRY_DELAY_MS = 1500;
-        let response: vscode.LanguageModelChatResponse;
-        let attempt = 0;
-        while (true) {
-          try {
-            LmTracer.request(sess.id, roundCount, activePhase, envelope.toArray() as vscode.LanguageModelChatMessage[], tools.map(t => t.name), toolMode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto');
-            response = await model.sendRequest(envelope.toArray() as vscode.LanguageModelChatMessage[], { tools, toolMode }, token);
-            break;
-          } catch (err) {
-            if (attempt >= MAX_RETRIES || token.isCancellationRequested || !isTransientLmError(err)) {
-              throw err;
-            }
-            attempt++;
-            const code = (err as { code?: string })?.code ?? (err instanceof Error ? err.message : String(err));
-            this.logger.warn(`Transient sendRequest retry — code=${trunc(code, 200)} attempt=${attempt}/${MAX_RETRIES} delay=${RETRY_DELAY_MS}ms`);
-            await new Promise<void>((resolve, reject) => {
-              const timer = setTimeout(resolve, RETRY_DELAY_MS);
-              token.onCancellationRequested(() => { clearTimeout(timer); reject(new Error('cancelled')); });
-            });
-          }
-        }
+        // Exactly one physical Copilot request per round. Provider/network failure is
+        // returned to the user; replaying a request can duplicate streamed text or tools.
+        LmTracer.request(sess.id, roundCount, activePhase, envelope.toArray() as vscode.LanguageModelChatMessage[], tools.map(t => t.name), toolMode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto');
+        const response = await model.sendRequest(envelope.toArray() as vscode.LanguageModelChatMessage[], { tools, toolMode }, token);
         const assistantParts: any[] = [];
         const toolCalls: vscode.LanguageModelToolCallPart[] = [];
         let responseText = '';
@@ -892,9 +868,13 @@ export class LineageParticipant {
 
           let progressLine = getToolInvocationLabel(f.name, f.input);
           if (f.name === 'lineage_submit_findings' && sess.stateMachine) {
-            const { current, total } = sess.stateMachine.hopProgress;
+            const { current, total, added } = sess.stateMachine.hopProgress;
             const shortName = sess.stateMachine.currentFocus?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
-            progressLine = `Hop ${current} / ${total} — analyzing ${shortName}…`;
+            // `added` is the prior hop's newly-routed count (`lastRoutedNew`, reset each submit) — per-hop,
+            // so no cross-hop state is needed. The `−N pruned` delta needs a carried `lastPruned` the inline
+            // loop has no slot for, so it is intentionally omitted until the coordinator arrives via rebase.
+            const addedNote = added > 0 ? ` (+${added} added)` : '';
+            progressLine = `Hop ${current} / ${total} — analyzing ${shortName}…${addedNote}`;
           } else if (f.name === 'lineage_get_neighbor_columns' && sess.stateMachine) {
             const { current, total } = sess.stateMachine.hopProgress;
             const remaining = Math.max(total - current, 0);
@@ -931,18 +911,26 @@ export class LineageParticipant {
           const f = extractToolCallFields(call);
           const res = accumulatedToolResults[f.callId];
           const errorCode = extractToolErrorCode(res);
-          const obs = repeatGuard.observe(f.name, f.input, errorCode !== null);
+          const obs = repeatGuard.observe(f.name, errorCode);
           if (obs.abort) {
             const lastErrorText = errorCode ?? 'unknown';
+            this.logger.debug(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
+            // present_result cannot recover by rewording once armed for repair; drop into the
+            // deterministic archive fallback (its banner reads presentResultFailureCountThisTurn)
+            // rather than looping or emitting a bare error.
+            if (f.name === 'lineage_present_result') {
+              this.logger.debug(`[Bridge] present_result repeat-reject — rendering archive fallback (failures=${sess.presentResultFailureCountThisTurn}/${sess.presentResultAttemptCountThisTurn})`);
+              this.renderArchiveFallback(sess, writer);
+              return { kind: 'final_answer' };
+            }
             const abortPayload = {
               error: 'session_aborted_repeat_reject',
               tool: f.name,
               last_error: lastErrorText,
               repeat_count: obs.count,
-              hint: `The same ${f.name.replace('lineage_', '')} call with the same arguments was rejected ${obs.count} times. The parameters cannot succeed as given. Stop retrying; if you have partial findings, produce a final answer explaining what you found and what was blocked. If no findings, tell the user the request needs different input.`,
+              hint: `The same ${f.name.replace('lineage_', '')} call was rejected ${obs.count} times with the same error. The parameters cannot succeed as given. Stop retrying; if you have partial findings, produce a final answer explaining what you found and what was blocked. If no findings, tell the user the request needs different input.`,
             };
-            this.logger.debug(`[Bridge] Repeat-rejection abort — tool=${f.name} last_error=${lastErrorText} count=${obs.count}`);
-            writer.markdown(`\n\n⚠ Session aborted: the model sent the same \`${f.name.replace('lineage_', '')}\` call ${obs.count} times and it was rejected each time (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
+            writer.markdown(`\n\n⚠ Session aborted: the model's \`${f.name.replace('lineage_', '')}\` call was rejected ${obs.count} times with the same error (\`${lastErrorText}\`). Ask a follow-up to retry with a different approach.`);
             envelope.pushUserText(JSON.stringify(abortPayload));
             return { kind: 'aborted', reason: `repeat_reject:${f.name}:${lastErrorText}` };
           }
@@ -1046,7 +1034,6 @@ export class LineageParticipant {
             }
           }
           if (!anyError) {
-            consecutiveErrorRounds = 0;
             // Rebuild system prompt on every wipe so <current_task> and <short_term_memory> stay current.
             systemPrompt = buildStageSystemPrompt('active');
             // Refresh per-hop directive to match the engine's advanced state — avoids the User-msg slot
@@ -1058,21 +1045,26 @@ export class LineageParticipant {
             this.logger.debug(`[Hop] Sliding memory wipe (${submitParts.length} submit${submitParts.length > 1 ? 's' : ''}, all ok)`);
             this.logger.debug(`[AI] [PromptBudget] hop=${hopCount} system=${systemPrompt.length} dynamic=${effectivePrompt.length} envelope_msgs=${envelope.length}`);
           } else {
-            consecutiveErrorRounds++;
-            if (consecutiveErrorRounds >= 3) {
-              // Bounded error-preserve: after 3 consecutive error rounds, force a wipe
-              // that keeps only the last error result so the AI still sees what broke
-              // but the history does not grow unbounded within MAX_ROUNDS.
-              systemPrompt = buildStageSystemPrompt('active');
-              effectivePrompt = renderHopDirective(sess.stateMachine as NavigationEngine | null);
-              LmTracer.wipe(sess.id, roundCount, 'forced_error_3', envelope.length);
-              envelope.wipeAndSeed(systemPrompt, effectivePrompt, buildActiveMinimalToolPair(envelope.findLastToolPair()));
-              this.logger.debug(`[Hop] 3 consecutive error rounds (last: ${errorSample}) — forced bounded wipe`);
-              consecutiveErrorRounds = 0;
-            } else {
-              this.logger.debug(`[Hop] Tool error detected across ${submitParts.length} submit_findings (sample: ${errorSample}) — history preserved for AI self-correction (${consecutiveErrorRounds}/3)`);
-            }
+            systemPrompt = buildStageSystemPrompt('active');
+            effectivePrompt = renderHopRepairDirective(sess.stateMachine as NavigationEngine | null);
+            LmTracer.wipe(sess.id, roundCount, 'submit_reject_compact', envelope.length);
+            envelope.wipeAndSeed(systemPrompt, effectivePrompt, buildActiveMinimalToolPair(envelope.findLastToolPair()));
+            this.logger.debug(`[Hop] Tool rejection compacted immediately (last: ${errorSample}) — retained only the failed envelope and held hop context`);
           }
+        }
+
+        // Follow-up (completed) phase terminator: a successful present_result render
+        // is the answer. The synthesis terminator above only fires on a toolless
+        // round; in follow-up the model keeps re-rendering the same view, so stop as
+        // soon as it is built once — the same "done after present_result succeeds"
+        // rule, applied here.
+        if (activePhase === 'completed' && sess.presentResultCalledThisTurn) {
+          this.logger.debug(`Round ${roundCount} [COMPLETED] — terminated after present_result success`);
+          const followupIntro = sess.resultGraph?.intro?.trim();
+          if (followupIntro && followupIntro.length > 0 && responseText.indexOf(followupIntro) === -1) {
+            writer.markdown(followupIntro + '\n\n');
+          }
+          return { kind: 'final_answer' };
         }
       }
       return { kind: 'hop_cap' };
@@ -1279,23 +1271,13 @@ export class LineageParticipant {
    * (other gate sub-types are scope-expansion gates with no scope tree to refine).
    */
   private emitGateButtonRow(writer: ChatResponseWriter, gate: PendingGate): void {
-    writer.button({
-      command: 'dataLineageViz.aiResolveGate',
-      title: '$(check) Approve & Proceed',
-      arguments: ['yes'],
-    });
-    if (gate.gate === 'confirm_sm_start') {
+    for (const action of gateActions(gate)) {
       writer.button({
         command: 'dataLineageViz.aiResolveGate',
-        title: '$(edit) Refine scope',
-        arguments: ['refine'],
+        title: action.title,
+        arguments: [action.reply],
       });
     }
-    writer.button({
-      command: 'dataLineageViz.aiResolveGate',
-      title: '$(close) Cancel',
-      arguments: ['no'],
-    });
   }
 
   /**
@@ -1351,14 +1333,13 @@ export class LineageParticipant {
         break;
       }
       case 'cancelled': {
-        sess.enterIdle();
-        this.logger.info(`[${sess.id}] Exit cancelled — session returned to idle`);
+        sess.resetExploration();
+        this.logger.info(`[${sess.id}] Exit cancelled — exploration and held repair state cleared`);
         break;
       }
       case 'hop_cap': {
         const remaining = sess.stateMachine?.getHopDiagnostics().agendaRemaining ?? 0;
-        sess.memory.reset();
-        sess.enterIdle();
+        sess.resetExploration();
         this.logger.info(`Exit hop_cap: hit ${maxRounds}-round cap with ${remaining} agenda items pending — archive discarded`);
         writer.markdown([
           ``,
@@ -1374,8 +1355,8 @@ export class LineageParticipant {
       }
       case 'aborted':
       case 'error': {
-        sess.enterIdle();
         const msg = exit.kind === 'aborted' ? `Exploration aborted — ${exit.reason ?? 'the engine halted before completion'}.` : exit.message;
+        sess.resetExploration();
         this.logger.info(`Exit ${exit.kind}: ${msg}`);
         writer.markdown(`\n\n*Error: ${msg}*`);
         break;

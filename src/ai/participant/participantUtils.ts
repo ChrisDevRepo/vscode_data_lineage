@@ -13,7 +13,6 @@ import { AiSession } from '../session/session';
 import { trunc } from '../../utils/log';
 import { NavigationEngine } from '../sm/smBase';
 import { type ToolPair } from '../participant/messageEnvelope';
-import { matchesTransientNetPattern } from '../infra/transientErrors';
 export { classifyGateReply } from '../session/sessionPhase';
 
 /**
@@ -141,19 +140,10 @@ export function minimizeActiveToolResultPayload(payload: unknown): unknown {
 }
 
 /**
- * Builds an ACTIVE-safe minimal replay pair from a full tool pair.
+ * Compacts a single ACTIVE-phase tool-call input for replay.
  */
-export function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | undefined {
-  if (!pair) return undefined;
-
-  const toolCallParts = (pair.assistant.content as readonly unknown[])
-    .filter((p): p is vscode.LanguageModelToolCallPart => p instanceof vscode.LanguageModelToolCallPart);
-  const firstCall = toolCallParts[0];
-  if (!firstCall) return undefined;
-
-  const rawInput = (firstCall.input as Record<string, unknown>) || {};
-  let compactInput: Record<string, unknown> = { replay_compacted: true, trace_replay: true };
-  if (firstCall.name === 'lineage_submit_findings') {
+function compactActiveReplayInput(name: string, rawInput: Record<string, unknown>): Record<string, unknown> {
+  if (name === 'lineage_submit_findings') {
     const isCtSubmit = Array.isArray(rawInput.column_flow);
     const routeRequestCount = Array.isArray(rawInput.route_requests) ? rawInput.route_requests.length : 0;
     const pruneNeighborCount = Array.isArray(rawInput.prune_neighbors) ? rawInput.prune_neighbors.length : 0;
@@ -163,7 +153,7 @@ export function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair
         .filter(Boolean)
         .slice(0, 12)
       : [];
-    compactInput = {
+    return {
       replay_compacted: true,
       trace_replay: true,
       focus_node_id: rawInput.focus_node_id,
@@ -179,8 +169,9 @@ export function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair
             prune_neighbor_count: pruneNeighborCount,
           }),
     };
-  } else if (firstCall.name === 'lineage_start_exploration') {
-    compactInput = {
+  }
+  if (name === 'lineage_start_exploration') {
+    return {
       replay_compacted: true,
       trace_replay: true,
       origin: rawInput.origin,
@@ -188,10 +179,31 @@ export function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair
       classification: rawInput.classification,
     };
   }
+  return { replay_compacted: true, trace_replay: true };
+}
+
+/**
+ * Builds an ACTIVE-safe minimal replay pair from a full tool pair.
+ *
+ * @remarks
+ * Every tool_use in the source assistant message is retained (inputs compacted),
+ * so a round that issued multiple parallel calls keeps a matching tool_use for
+ * each preserved tool_result — never producing an orphaned result.
+ */
+export function buildActiveMinimalToolPair(pair: ToolPair | undefined): ToolPair | undefined {
+  if (!pair) return undefined;
+
+  const toolCallParts = (pair.assistant.content as readonly unknown[])
+    .filter((p): p is vscode.LanguageModelToolCallPart => p instanceof vscode.LanguageModelToolCallPart);
+  if (toolCallParts.length === 0) return undefined;
 
   const assistant = new vscode.LanguageModelChatMessage(
     vscode.LanguageModelChatMessageRole.Assistant,
-    [new vscode.LanguageModelToolCallPart(firstCall.callId, firstCall.name, compactInput)],
+    toolCallParts.map(tc => new vscode.LanguageModelToolCallPart(
+      tc.callId,
+      tc.name,
+      compactActiveReplayInput(tc.name, (tc.input as Record<string, unknown>) || {}),
+    )),
   );
 
   const compactResults: vscode.LanguageModelToolResultPart[] = [];
@@ -273,20 +285,11 @@ export function minimizeCompletedToolResultPayload(payload: unknown): unknown {
 }
 
 /**
- * Builds a COMPLETED-safe minimal replay pair from a full tool pair.
+ * Compacts a single COMPLETED-phase tool-call input for replay.
  */
-export function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolPair | undefined {
-  if (!pair) return undefined;
-
-  const toolCallParts = (pair.assistant.content as readonly unknown[])
-    .filter((p): p is vscode.LanguageModelToolCallPart => p instanceof vscode.LanguageModelToolCallPart);
-  const firstCall = toolCallParts[0];
-  if (!firstCall) return undefined;
-
-  const rawInput = (firstCall.input as Record<string, unknown>) || {};
-  let compactInput: Record<string, unknown> = { replay_compacted: true };
-  if (firstCall.name === 'lineage_present_result') {
-    compactInput = {
+function compactCompletedReplayInput(name: string, rawInput: Record<string, unknown>): Record<string, unknown> {
+  if (name === 'lineage_present_result') {
+    return {
       replay_compacted: true,
       is_update: rawInput.is_update === true,
       summary: rawInput.summary,
@@ -295,15 +298,17 @@ export function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolP
         ? (rawInput.sections as Array<Record<string, unknown>>).map(s => String(s.label ?? '')).filter(Boolean).slice(0, 8)
         : [],
     };
-  } else if (firstCall.name === 'lineage_submit_findings') {
-    compactInput = {
+  }
+  if (name === 'lineage_submit_findings') {
+    return {
       replay_compacted: true,
       focus_node_id: rawInput.focus_node_id,
       verdict: rawInput.verdict,
       badge_label: rawInput.badge_label,
     };
-  } else if (firstCall.name === 'lineage_start_exploration') {
-    compactInput = {
+  }
+  if (name === 'lineage_start_exploration') {
+    return {
       replay_compacted: true,
       origin: rawInput.origin,
       direction: rawInput.direction,
@@ -311,10 +316,31 @@ export function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolP
       depth: rawInput.depth,
     };
   }
+  return { replay_compacted: true };
+}
+
+/**
+ * Builds a COMPLETED-safe minimal replay pair from a full tool pair.
+ *
+ * @remarks
+ * Every tool_use in the source assistant message is retained (inputs compacted),
+ * so a round that issued multiple parallel calls keeps a matching tool_use for
+ * each preserved tool_result — never producing an orphaned result.
+ */
+export function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolPair | undefined {
+  if (!pair) return undefined;
+
+  const toolCallParts = (pair.assistant.content as readonly unknown[])
+    .filter((p): p is vscode.LanguageModelToolCallPart => p instanceof vscode.LanguageModelToolCallPart);
+  if (toolCallParts.length === 0) return undefined;
 
   const assistant = new vscode.LanguageModelChatMessage(
     vscode.LanguageModelChatMessageRole.Assistant,
-    [new vscode.LanguageModelToolCallPart(firstCall.callId, firstCall.name, compactInput)],
+    toolCallParts.map(tc => new vscode.LanguageModelToolCallPart(
+      tc.callId,
+      tc.name,
+      compactCompletedReplayInput(tc.name, (tc.input as Record<string, unknown>) || {}),
+    )),
   );
 
   const compactResults: vscode.LanguageModelToolResultPart[] = [];
@@ -349,25 +375,11 @@ export function buildCompletedMinimalToolPair(pair: ToolPair | undefined): ToolP
  * into the envelope for subsequent rounds, reducing repeated payload bloat.
  */
 export function compactPresentResultReplayInput(rawInput: Record<string, unknown>): Record<string, unknown> {
-  const sections = Array.isArray(rawInput.sections)
-    ? (rawInput.sections as Array<Record<string, unknown>>)
-      .slice(0, 12)
-      .map((s) => ({
-        label: s.label,
-        angle: s.angle,
-        node_ids: Array.isArray(s.node_ids) ? (s.node_ids as unknown[]).slice(0, 20) : [],
-        text: typeof s.text === 'string' ? trunc(s.text, 240) : '',
-      }))
-    : [];
-
   return {
     replay_compacted: true,
     is_update: rawInput.is_update === true,
-    name: rawInput.name,
-    title: rawInput.title,
-    summary: rawInput.summary,
-    layout_direction: rawInput.layout_direction,
-    sections,
+    submitted_fields: Object.keys(rawInput).filter(key => key !== 'repair').sort(),
+    section_count: Array.isArray(rawInput.sections) ? rawInput.sections.length : 0,
     add_node_ids: Array.isArray(rawInput.add_node_ids) ? (rawInput.add_node_ids as unknown[]).slice(0, 50) : [],
     prune_node_ids: Array.isArray(rawInput.prune_node_ids) ? (rawInput.prune_node_ids as unknown[]).slice(0, 50) : [],
     note_count: Array.isArray(rawInput.notes) ? rawInput.notes.length : 0,
@@ -403,7 +415,10 @@ export function compactAssistantReplayParts(
  *
  * @remarks
  * Inspects the result content for a JSON-formatted error envelope (`{ error: 'code', ... }`).
- * Returns `null` if the result is successful, absent, or does not contain a valid error code.
+ * Also scores structured rejection envelopes that carry no `error` key — `present_result`
+ * failures use `{ success: false, errors: [...], hint }`, so without this they read as
+ * successes and silently reset the repeat-reject guard. Returns `null` for genuine successes,
+ * absent results, or non-JSON parts.
  *
  * @param result - The tool result to inspect.
  * @returns The error code string, or `null` if the result is successful or invalid.
@@ -415,6 +430,8 @@ export function extractToolErrorCode(result: vscode.LanguageModelToolResult | un
     try {
       const data = JSON.parse(p.value);
       if (data && typeof data.error !== 'undefined') return String(data.error);
+      // Structured reject with no `error` key (e.g. present_result validation failure).
+      if (data && data.success === false) return 'validation';
     } catch { /* Ignore non-JSON parts */ }
   }
   return null;
@@ -462,14 +479,14 @@ export function renderHopDirective(engine: NavigationEngine | null): string {
 }
 
 /**
- * Classifies an LM `sendRequest` exception as a transient network failure that is safe to retry.
- *
- * @remarks
- * `vscode.LanguageModelError` codes (Cancelled / NotFound / NoPermissions / Blocked) are
- * intentional model-side decisions and must never be retried. The transient-network text match
- * is delegated to the vscode-free helper so unit tests can exercise it under tsx.
+ * Builds the repair-only user frame from the exact held hop payload.
+ * This reuses the prior focus DDL and neighbors without replaying older hops.
  */
-export function isTransientLmError(err: unknown): boolean {
-  if (err instanceof vscode.LanguageModelError) return false;
-  return matchesTransientNetPattern(err);
+export function renderHopRepairDirective(engine: NavigationEngine | null): string {
+  const hop = engine?.getCurrentHopContext() ?? null;
+  return [
+    renderHopDirective(engine),
+    'Repair only the rejected JSON fields. Accepted finding content is held server-side.',
+    hop ? `<held_hop_context>${JSON.stringify(hop)}</held_hop_context>` : '',
+  ].filter(Boolean).join('\n');
 }

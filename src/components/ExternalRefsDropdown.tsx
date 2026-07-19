@@ -79,12 +79,12 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
             {...getFloatingProps()}
           >
             {/* Master toggle */}
-            <div className="flex items-center gap-2 px-2 py-1.5 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={showExternalRefs}>
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={showExternalRefs}>
               <input
                 type="checkbox"
                 checked={showExternalRefs}
                 onChange={onToggleMaster}
-                className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
+                className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
                 aria-label="Toggle all external references"
               />
               <span className="text-sm ln-text">External Refs</span>
@@ -92,24 +92,24 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
 
             {/* Sub-filters (only interactive when master is ON) */}
             <div className={showExternalRefs ? '' : 'opacity-40'}>
-              <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('file')}>
+              <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded-sm transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('file')}>
                 <input
                   type="checkbox"
                   checked={externalRefTypes.has('file')}
                   onChange={() => onToggleSubType('file')}
                   disabled={!showExternalRefs}
-                  className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
+                  className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
                   aria-label="Toggle file source references"
                 />
                 <span className="text-sm ln-text">File Sources</span>
               </div>
-              <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('db')}>
+              <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded-sm transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('db')}>
                 <input
                   type="checkbox"
                   checked={externalRefTypes.has('db')}
                   onChange={() => onToggleSubType('db')}
                   disabled={!showExternalRefs}
-                  className="w-4 h-4 rounded border cursor-pointer ln-checkbox"
+                  className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
                   aria-label="Toggle cross-database references"
                 />
                 <span className="text-sm ln-text">Cross-Database</span>

@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { Spinner } from './ui/Spinner';
 
 /**
  * Represents the major phases of the application initialization and graph generation process.
@@ -67,7 +68,7 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
   if (status === 'done') {
     return (
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
-        className="w-4 h-4 flex-shrink-0"
+        className="w-4 h-4 shrink-0"
         style={{ color: 'var(--vscode-testing-iconPassed, #73c991)' }}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
       </svg>
@@ -76,24 +77,19 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
   if (status === 'error') {
     return (
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
-        className="w-4 h-4 flex-shrink-0"
+        className="w-4 h-4 shrink-0"
         style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
       </svg>
     );
   }
   if (status === 'active') {
-    return (
-      <svg className="animate-spin w-4 h-4 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
-    );
+    return <Spinner className="w-4 h-4 shrink-0" />;
   }
   // pending
   return (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"
-      className="w-4 h-4 flex-shrink-0"
+      className="w-4 h-4 shrink-0"
       style={{ color: 'var(--ln-fg-dim)' }}>
       <circle cx="12" cy="12" r="9" />
     </svg>
@@ -250,7 +246,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
           </div>
         </div>
         {footer && (
-          <div className="px-5 pb-5 pt-2 ln-border-top flex-shrink-0">
+          <div className="px-5 pb-5 pt-2 ln-border-top shrink-0">
             {footer}
           </div>
         )}
