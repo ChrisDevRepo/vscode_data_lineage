@@ -2,10 +2,9 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.3   | :white_check_mark: |
-| < 1.0.3 | :x:                |
+Security fixes are provided for the latest version published to the Visual
+Studio Marketplace. Earlier versions are unsupported; upgrade to the latest
+release before reporting a vulnerability.
 
 ## Reporting a Vulnerability
 
@@ -22,8 +21,24 @@ Include:
 
 - The extension parses SQL object definitions but does not execute object DDL
 - `.dacpac` parsing is fully offline
-- Live database import runs configured catalog / DMV read queries through the MSSQL extension connection API only when the user starts an import
+- Live database import runs configured catalog / DMV queries through the MSSQL
+  extension connection API only when the user starts an import. Built-in
+  queries are read-only; custom DMV SQL is trusted local configuration and is
+  executed as configured (with `{{SCHEMAS}}` expansion for Phase 2)
 - Table profiling runs row-count and aggregate `SELECT` queries only after an explicit profiling click
-- Scaffolding and export commands write only user-selected local files; import does not modify database objects or user source code
+- YAML scaffolding commands write fixed filenames in the first workspace root
+  and preserve existing files. Draw.io export uses a save dialog. Import does
+  not modify database objects or user source code
 - Strict Content Security Policy on the webview
 - Custom YAML DMV queries, AI templates, and parse-rule regexes are trusted local configuration; avoid loading untrusted YAML files
+- `@lineage` uses the model selected in VS Code. When invoked, the selected
+  model receives the user's prompt, native `@lineage` chat history, and lineage
+  metadata or DDL returned by local snapshot tools. The AI runtime cannot
+  connect to a database, execute SQL, start an import, or start profiling
+- AI trace logging is disabled by default. Enabling it for a session writes full
+  model and tool diagnostics under the VS Code extension log directory. These
+  files can contain database identifiers, SQL, prompts, responses, and tool
+  payloads; review them before sharing
+- **Copy Debug Info** can include project/source/schema names, filter state, GUI
+  state, database-model metadata, and AI session metadata. Review and redact
+  identifiers before sharing it

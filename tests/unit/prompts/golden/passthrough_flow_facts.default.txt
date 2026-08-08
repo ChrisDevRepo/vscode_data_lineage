@@ -1,0 +1,4 @@
+Kept passthrough nodes (engine flow facts). Self-check before calling `lineage_present_result`: every id listed below must appear in `sections[].node_ids`, `highlight_groups[].node_ids`, or `notes[].node_id` — an uncovered kept node is the same class of gap as an unaccounted column, and the only way to drop one from the view is a prune verdict. A value-carrying store, staging table, or bridge that has no detail slot still earns one grounded, uncolored `notes[].node_id` caption built from its writer/reader facts:
+- dbo.dimproduct — table, passthrough: written by (none); read by (none)
+- dbo.factsales — table: written by dbo.sploadfactsales; read by (none)
+- dbo.orderdetaila — table: written by (none); read by dbo.sploadfactsales

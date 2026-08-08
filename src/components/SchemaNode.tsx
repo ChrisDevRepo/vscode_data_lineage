@@ -10,19 +10,7 @@ type SchemaNodeUiData = SchemaNodeData & {
 };
 
 /**
- * A specialized React Flow node component for representing a database schema in the overview mode.
- *
- * @remarks
- * This component visualizes a schema as a consolidated node, displaying:
- * 1. The schema name in a colored header.
- * 2. The total count of objects within that schema.
- * 3. A breakdown of object types (e.g., Tables, Views) using icons and counts.
- *
- * It uses {@link Tooltip} to show a detailed breakdown on hover and includes handles for graph connections.
- * It is designed to work with the `@xyflow/react` (React Flow) library.
- *
- * @param props - Standard React Flow {@link NodeProps}.
- * @returns A {@link React.JSX.Element} representing the schema node.
+ * Renders a schema-level React Flow node with object counts and expansion controls.
  */
 export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps) {
   const d = data as SchemaNodeUiData;
@@ -42,10 +30,8 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
   const clusterHeaderBackground = `color-mix(in srgb, ${d.color} 68%, var(--ln-bg-elevated))`;
   const clusterBorderColor = `color-mix(in srgb, ${d.color} 48%, var(--ln-border))`;
 
-  /** Filters out types with zero counts to keep the display clean. */
   const breakdownEntries = Object.entries(d.typeBreakdown ?? {}).filter(([, count]) => count && count > 0);
-  
-  /** Generates a compact string representation of the object type breakdown. */
+
   const breakdown = breakdownEntries
     .map(([type, count]) => {
       const icon = TYPE_COLORS[type as ObjectType]?.icon ?? type[0].toUpperCase();
@@ -53,7 +39,6 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
     })
     .join('  ');
 
-  // On a selected cluster, surface its actions as an attached toolbar (replaces the old right-click menu).
   const clusterToolbar = (canExpand || canExpandOnly) ? (
     <NodeToolbar position={Position.Top} align="center" offset={8} isVisible={!!(selected && d.toolbarActive)}>
       <div className="ln-schema-toolbar" onClick={(e) => e.stopPropagation()}>
@@ -100,7 +85,6 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
           boxShadow: isExpandedSchemaViewCluster ? 'var(--ln-node-shadow-dimmed)' : 'var(--ln-node-shadow)',
         }}
       >
-        {/* Header bar with schema color */}
         <div
           style={{
             background: isExpandedSchemaViewCluster ? clusterHeaderBackground : d.color,
@@ -125,7 +109,6 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
           )}
         </div>
 
-        {/* Body */}
         <div
           style={{
             flex: 1,

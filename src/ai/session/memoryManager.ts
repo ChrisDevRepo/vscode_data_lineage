@@ -11,17 +11,38 @@
 
 import type { LineageNode } from '../../engine/types';
 
+/**
+ * Node summaries carried forward in the `<short_term_memory>` window.
+ *
+ * @remarks
+ * Three because the window exists to show how the *immediately preceding* hops connect; the full
+ * detail archive stays internal until synthesis, so widening this trades prompt budget for context
+ * the model already committed to engine memory.
+ */
+const RECENT_SUMMARY_WINDOW = 3;
+
+/**
+ * Depth of the recent-rejection ring replayed to the active worker.
+ *
+ * @remarks
+ * Five because the ring exists for self-correction on the *current* routing attempt; rejections
+ * older than that describe routes the engine has already moved past and only crowd the prompt.
+ */
+const MAX_RECENT_REJECTIONS = 5;
+
 
 /**
  * Angle of a captured section — drives YAML render-rule selection at synthesis.
  *
  * @remarks
  * The locked classification (`business | technical | both`) dictates which angles
- * fire at capture time:
- * - `business` → exactly one section with `angle: 'business'`
- * - `technical` → exactly one section with `angle: 'technical'`
- * - `both` → two sections, one of each
- * Mechanically enforced in `toolProvider.validateSectionsAgainstClassification`
+ * are required at capture time:
+ * - `business` → at least one section with `angle: 'business'`
+ * - `technical` → at least one section with `angle: 'technical'`
+ * - `both` → at least one section of each angle
+ * Mechanically enforced in `interaction/rules/submitFindingsRules`
+ * (`validateSectionsAgainstClassification` requires the locked angles;
+ * `filterSectionsForClassification` drops off-classification sections at commit)
  * per the agreement-phase classification contract.
  */
 export type CaptureAngle = 'business' | 'technical';
@@ -60,9 +81,9 @@ export interface DetailSlot {
   /** Object type (e.g. 'table', 'view', 'procedure'). */
   type: string;
   /**
-   * Captured sections — one per fired `*_capture` template. Length 1 for
-   * `business`/`technical` classification; length 2 for `both`. Length 0 only
-   * when verdict was `prune` and no sections were submitted.
+   * Captured sections — one per fired `*_capture` template. The locked
+   * classification defines required angles; optional extra valid angle sections
+   * may also be stored.
    *
    * @remarks
    * Synthesis lifts each section verbatim into `present_result.sections[]` as a
@@ -73,10 +94,8 @@ export interface DetailSlot {
   sections: CapturedSection[];
   /** One-line digest of the whole node (across both angles when both fire), shared across hops via `short_term_memory`. */
   summary: string;
-  /** Optional short role tag used for graph badges. */
+  /** Optional hop-time role hint for synthesis; not rendered directly. */
   badge_label?: string;
-  /** Optional caption shown under the node in the graph. */
-  note_caption?: string;
   /** The specific reason or question that triggered the analysis of this node. */
   reason_for_visit?: string;
 }
@@ -115,8 +134,6 @@ export interface WorkingMemory {
   recent_rejections: Array<{ nodeId: string; reason: string; atHop: number }>;
   /** Schemas currently on the session allowlist. Starts from the user filter; grows when the user confirms an expansion gate. */
   active_schemas: string[];
-  /** Budget pressure flag — surfaced only when the scope-to-budget ratio is tight. "ok" omitted to avoid noise. */
-  budget_pressure?: 'tight' | 'exceeded';
 }
 
 
@@ -131,8 +148,12 @@ export interface MemoryStateSnapshot {
   detailSlots: Record<string, DetailSlot>;
   /** Count of stored detail slots (mirrors `Object.keys(detailSlots).length`). */
   slotCount: number;
-  /** Per-node sub-questions queued by the AI but not yet visited. */
-  pendingQuestions: Array<{ nodeId: string; question: string }>;
+  /** The AI-composed mission brief, surviving sliding-memory wipes. */
+  missionBrief: string;
+  /** Running verdict tally. */
+  verdictCounts: { analyze: number; passthrough: number; prune: number };
+  /** Ring buffer (≤5) of recent route rejections surfaced in working memory. */
+  recentRejections: Array<{ nodeId: string; reason: string; atHop: number }>;
 }
 
 
@@ -145,28 +166,27 @@ export interface MemoryStateSnapshot {
  */
 export class AiMemoryManager {
   private detailSlots = new Map<string, DetailSlot>();
-  private pendingQuestions: Array<{ nodeId: string; question: string }> = [];
   private userQuestion = '';
   private missionBrief = '';
-  private verdictCounts = { analyze: 0, pass: 0, prune: 0 };
+  private verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
   private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
 
   /** Clears every field so the manager can be reused across sessions. */
   public reset(): void {
     this.detailSlots.clear();
-    this.pendingQuestions = [];
     this.userQuestion = '';
     this.missionBrief = '';
-    this.verdictCounts = { analyze: 0, pass: 0, prune: 0 };
+    this.verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
     this.recentRejections = [];
   }
 
   /**
-   * Records one verdict against the running A/P/Pr tally.
+   * Records one verdict against the running A/P/prune tally.
    *
-   * @param verdict - The verdict the model submitted this hop.
+   * @param verdict - The verdict the model submitted this hop (`analyze`, `passthrough`, or `prune` — the AI
+   * may self-prune an irrelevant node; BB self-prune is orphan-guarded by the engine, see `submitFindings`).
    */
-  public recordVerdict(verdict: 'analyze' | 'pass' | 'prune'): void {
+  public recordVerdict(verdict: 'analyze' | 'passthrough' | 'prune'): void {
     this.verdictCounts[verdict]++;
   }
 
@@ -179,8 +199,7 @@ export class AiMemoryManager {
    */
   public recordRejection(nodeId: string, reason: string, atHop: number): void {
     this.recentRejections.push({ nodeId, reason, atHop });
-    // Enforce ring-buffer cap to prevent unbounded growth.
-    if (this.recentRejections.length > 5) this.recentRejections.shift();
+    if (this.recentRejections.length > MAX_RECENT_REJECTIONS) this.recentRejections.shift();
   }
 
   /**
@@ -216,16 +235,17 @@ export class AiMemoryManager {
    * @param node - The node the findings describe.
    * @param sections - Captured sections (one per fired `*_capture` template).
    * @param summary - One-line digest of the whole node, shared across hops via `short_term_memory`.
-   * @param meta - Optional UI metadata — `badge_label`, `note_caption`, `reason_for_visit`.
+   * @param meta - Optional synthesis metadata — `badge_label`, `reason_for_visit`.
    *
    * @remarks
    * Sections are stored verbatim — uniform downstream shape simplifies eval
    * extraction and synthesis lift.
    */
-   public storeDetail(    node: LineageNode,
+  public storeDetail(
+    node: LineageNode,
     sections: CapturedSection[],
     summary: string,
-    meta?: { badge_label?: string; note_caption?: string; reason_for_visit?: string },
+    meta?: { badge_label?: string; reason_for_visit?: string },
   ): void {
     this.detailSlots.set(node.id, {
       nodeId: node.id,
@@ -235,7 +255,6 @@ export class AiMemoryManager {
       sections,
       summary,
       badge_label: meta?.badge_label,
-      note_caption: meta?.note_caption,
       reason_for_visit: meta?.reason_for_visit,
     });
   }
@@ -245,6 +264,7 @@ export class AiMemoryManager {
    *
    * @param hopCount - Hop index (1-based) supplied by the engine.
    * @param scopeSize - Total number of nodes in the exploration scope.
+   * @param extras - Additional progress metrics.
    * @returns A `WorkingMemory` snapshot with `user_question`, checklist metrics, and route rejection history.
    */
   public getWorkingMemory(
@@ -254,7 +274,6 @@ export class AiMemoryManager {
       rounds_used: number;
       scope_growth: number;
       active_schemas: string[];
-      budget_pressure?: 'tight' | 'exceeded';
     } = { rounds_used: hopCount, scope_growth: 0, active_schemas: [] },
   ): WorkingMemory {
     const noted = this.detailSlots.size;
@@ -274,7 +293,6 @@ export class AiMemoryManager {
       recent_rejections: this.recentRejections.slice(),
       active_schemas: extras.active_schemas.slice(),
     };
-    if (extras.budget_pressure) memory.budget_pressure = extras.budget_pressure;
     return memory;
   }
 
@@ -287,21 +305,7 @@ export class AiMemoryManager {
     return { detail_slots: Array.from(this.detailSlots.values()) };
   }
 
-  /**
-   * Returns the verbatim captured text for one node + angle combination.
-   *
-   * @remarks
-   * Used by the synthesis engine to inject archive text into `present_result.sections[]`
-   * when the model omits `text` (structural-decisions-only synthesis protocol).
-   *
-   * @returns The captured section body, or `undefined` when the node has not been
-   *   visited or no section for the requested angle was captured.
-   */
-  public getSectionText(nodeId: string, angle: CaptureAngle): string | undefined {
-    return this.detailSlots.get(nodeId)?.sections.find(s => s.angle === angle)?.text;
-  }
-
-  /** JSON snapshot of the manager's current state — used by telemetry and eval extraction. */
+  /** JSON snapshot used by telemetry, eval extraction, and strict engine-checkpoint assembly. */
   public toJSON(): MemoryStateSnapshot {
     const slots: Record<string, DetailSlot> = {};
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
@@ -309,8 +313,50 @@ export class AiMemoryManager {
       userQuestion: this.userQuestion,
       detailSlots: slots,
       slotCount: this.detailSlots.size,
-      pendingQuestions: this.pendingQuestions,
+      missionBrief: this.missionBrief,
+      verdictCounts: { ...this.verdictCounts },
+      recentRejections: this.recentRejections.slice(),
     };
+  }
+
+  /**
+   * Rehydrates a manager from a {@link toJSON} snapshot.
+   *
+   * @remarks
+   * The inverse of {@link toJSON}: restores the detail archive **in insertion order** (so the
+   * sliding `<short_term_memory>` window and synthesis lift see the same sequence), plus the
+   * mission brief, verdict tally and rejection ring. Engine restore passes a memory snapshot
+   * already validated as part of the strict current-format checkpoint.
+   *
+   * @param snapshot - A prior `toJSON()` payload (typically after a JSON serialize/parse round-trip).
+   * @returns A new manager carrying the restored state.
+   */
+  public static fromJSON(snapshot: MemoryStateSnapshot): AiMemoryManager {
+    const m = new AiMemoryManager();
+    m.userQuestion = snapshot.userQuestion;
+    m.missionBrief = snapshot.missionBrief;
+    m.verdictCounts = { ...snapshot.verdictCounts };
+    m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
+    // Object key order preserves insertion order for the non-integer node-id keys used here.
+    for (const [id, slot] of Object.entries(snapshot.detailSlots)) m.detailSlots.set(id, slot);
+    return m;
+  }
+
+  /**
+   * Replaces this manager's contents with a validated persisted snapshot.
+   *
+   * @remarks
+   * `AiSession.memory` is a stable readonly object shared by prompt builders and the
+   * state machine. Cross-restart graph resume must therefore restore the object in place
+   * rather than swapping the reference.
+   */
+  public restoreFromJSON(snapshot: MemoryStateSnapshot): void {
+    const restored = AiMemoryManager.fromJSON(snapshot);
+    this.detailSlots = restored.detailSlots;
+    this.userQuestion = restored.userQuestion;
+    this.missionBrief = restored.missionBrief;
+    this.verdictCounts = restored.verdictCounts;
+    this.recentRejections = restored.recentRejections;
   }
 
   /** Count of nodes currently stored in the detail archive. */
@@ -323,13 +369,14 @@ export class AiMemoryManager {
     return Array.from(this.detailSlots.keys());
   }
 
-  /** Cloned verdict tally for diagnostics / logging. */
-  public getVerdictCounts(): { analyze: number; pass: number; prune: number } {
+  /** Cloned A/P/prune verdict tally for diagnostics / logging. */
+  public getVerdictCounts(): { analyze: number; passthrough: number; prune: number } {
     return { ...this.verdictCounts };
   }
 
   /**
-   * Returns the last 3 node summaries for injection into the system prompt `<short_term_memory>` block.
+   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the system
+   * prompt `<short_term_memory>` block.
    *
    * @remarks
    * Same sliding window used by `getWorkingMemory` — exposed separately so prompt builders
@@ -337,7 +384,20 @@ export class AiMemoryManager {
    */
   public getShortTermMemory(): Array<{ nodeId: string; summary: string }> {
     return Array.from(this.detailSlots.values())
-      .slice(-3)
+      .slice(-RECENT_SUMMARY_WINDOW)
       .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
+  }
+
+  /**
+   * Returns the recent-rejection ring (max {@link MAX_RECENT_REJECTIONS}) for injection into the
+   * active worker prompt so the model can self-correct from prior rejected hops.
+   *
+   * @remarks
+   * Same ring surfaced in `getWorkingMemory().recent_rejections` — exposed separately so the host
+   * worker's `buildMemoryBlock` can render it without constructing the full working-memory envelope
+   * (the host worker is handed `peekHopContext`, which omits `working_memory`).
+   */
+  public getRecentRejections(): Array<{ nodeId: string; reason: string; atHop: number }> {
+    return this.recentRejections.slice();
   }
 }

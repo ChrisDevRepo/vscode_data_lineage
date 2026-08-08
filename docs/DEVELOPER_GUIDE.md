@@ -12,44 +12,56 @@ Starting point for forking and contributing. The deeper engine concepts live in 
 | [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) | Zod-validated message contract between extension host and webview. |
 | [`src/utils/`](../src/utils/) | Logger, sanitizers, theming helpers. |
 | [`assets/`](../assets/) | YAML knobs: `defaultParseRules.yaml`, `dmvQueries.yaml`, `aiOutputTemplates.yaml`, plus the demo `.dacpac`. |
-| [`tests/`](../tests/) | Unit, integration, and snapshot suites. |
+| [`tests/`](../tests/) | Unit suite plus the optional AI-backend host check. |
 
 ## Build & run
 
 ```bash
 git clone https://github.com/ChrisDevRepo/vscode_data_lineage.git
 cd vscode_data_lineage
-npm install
+npm ci
 ```
 
-Press <kbd>F5</kbd> to launch the Extension Development Host. The webview React bundle and the extension TypeScript are both built by `npm run watch` (started automatically by the launch config).
+Press <kbd>F5</kbd> to build the extension host and webview bundles and launch
+the Extension Development Host. The extension host uses a small activation entry
+that registers Quick Actions before loading its runtime bundle. **Run Extension
+(Watch)** starts the extension-bundle watcher only;
+rebuild the webview with `npm run build:webview` after React/CSS changes.
 
 For a release-style local build:
 
 ```bash
-npx tsc --noEmit              # type-check only
-npm run package               # production webpack bundle
-npx @vscode/vsce package      # produce a .vsix
+npm run typecheck             # type-check only
+npm run build                 # esbuild extension + Vite webview
+npm run package               # package with the pinned local @vscode/vsce
 ```
+
+`@vscode/vsce` is an exact-version development dependency. Both packaging and
+the package-content gate use that installed local CLI; they do not invoke
+`npx`, fetch from the network, or depend on an `npx` cache.
 
 ## Two ingestion paths, one model
 
 Both paths produce the same `DatabaseModel` consumed by `graphBuilder.ts`.
 
-Two ingestion lanes converge on a single regex parser. The DFD shows ownership (lane = source) and phase ordering within the live-database lane.
+Two ingestion lanes converge on a single parser. The DFD shows ownership (lane
+= source) and phase ordering within the live-database lane.
 
 ```mermaid
 flowchart LR
     subgraph DACPAC[DACPAC lane — file-based]
         DP[.dacpac file] -->|dacpacExtractor.ts<br/>unzip| MX[model.xml]
+        MX --> DX["DSP + objects + dependencies<br/>full allObjects catalog retained"]
     end
     subgraph LIVE[Live database lane — DMV-based]
-        SRV[(SQL Server*)] -->|Phase 1: catalog| CAT[Catalog metadata]
-        SRV -->|Phase 2: DDL + columns| DDL[DDL + columns]
-        CAT --> MERGE[Merge + normalize]
-        DDL --> MERGE
+        SRV[(SQL Server*)] -->|Phase 1| CAT[Schema preview]
+        CAT --> SELECT[Schema selection]
+        SELECT --> PI["Platform detection<br/>platform-info → getServerInfo → explicit Unknown"]
+        SRV --> PI
+        PI -->|before model build| DDL["Phase 2<br/>nodes + columns + dependencies"]
+        DDL --> MERGE[Merge + normalize]
     end
-    MX --> PARSE[[Regex parser<br/>sqlBodyParser.ts]]
+    DX --> PARSE[[Regex parser<br/>sqlBodyParser.ts]]
     MERGE --> PARSE
     PARSE --> DM[DatabaseModel<br/>shared schema]
     DM --> GB[graphBuilder] --> G[Directed graph<br/>graphology]
@@ -60,11 +72,18 @@ flowchart LR
 
 *`SQL Server` covers SQL Server, Azure SQL, Fabric, and Synapse — same DMVs, same catalog shape. The cylinder is a UML **datastore** marker; the double-bordered parser is a UML **subroutine / composite activity** (its internals are decomposed in `PARSE_RULES.md`).
 
-The parser has no awareness of the source. Same regex pipeline, same edge-direction inference, same YAML rules.
+The parser has no awareness of the source. Both lanes use the same
+preprocessing, YAML extraction rules, normalization, and edge-direction logic.
 
-- **DACPAC** — [`src/engine/dacpacExtractor.ts`](../src/engine/dacpacExtractor.ts). Streams `model.xml` from the unzipped `.dacpac`. Test fixtures must be AdventureWorks only.
-- **DMV** — [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts) + [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts). Two-phase load defined in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). DBA contract: [`DMV_QUERIES.md`](DMV_QUERIES.md).
-- **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts). Any change to the `Project` or `FilterProfile` types needs a migration in `migrateProjectStore()`.
+Each extractor stamps `DatabaseModel.source` (`'dacpac'` or `'database'`) on the model
+it returns; `buildModel` itself stays lane-agnostic. Anything describing the model to
+the user or the AI must read that field rather than infer provenance from other
+metadata — in particular `dbPlatform` is not a proxy, because a DACPAC derives a
+platform label from its DSP exactly as a live import derives one from the server.
+
+- **DACPAC** — [`src/engine/dacpacExtractor.ts`](../src/engine/dacpacExtractor.ts). Streams `model.xml` from the unzipped `.dacpac`, derives `dbPlatform` from its DSP, and retains the full lightweight `allObjects` catalog for dependency resolution. Known DSPs map to platform labels; completely unrecognized DSP text is preserved raw instead of being labelled SQL Server. Test fixtures must be AdventureWorks only.
+- **DMV** — [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts) + [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts). After schema selection, platform detection completes before the selected-schema model is built: `platform-info` is preferred, authoritative MSSQL `getServerInfo` metadata is the non-failing fallback, and failure of both records `Unknown database platform`. The former database `all-objects` query and result pipeline were unreachable and are removed; this does not remove the active DACPAC `allObjects` catalog. Query definitions and the DBA contract live in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and [`DMV_QUERIES.md`](DMV_QUERIES.md).
+- **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts). Any change to the `Project` or `FilterProfile` types needs a migration in `migrateProjectStore()`. Records that fail validation are discarded, so the read schema and the write path must stay in agreement: `StoredConnectionInfoSchema` is `.strict()` on read, and `stripSensitiveFields()` selects the same schema's declared keys on write rather than removing known secrets. That direction matters — the mssql extension's connection object is wider than the partial `IConnectionInfo` declaration in this repo, so copying the remainder persisted fields the read side then rejected, silently dropping a saved database project. Keep `.strict()`: it is what keeps a future leaked credential out of the store.
 
 ## SQL parsing pipeline
 
@@ -81,9 +100,16 @@ flowchart LR
     SUP --> CAP[Normalised captures<br/>object refs + edge direction]
 ```
 
-`src/engine/sqlBodyParser.ts` is a generic rule-runner — every rule lives in [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). The full reference is [`PARSE_RULES.md`](PARSE_RULES.md). Metadata suppression centralises CLR-method filtering in `src/engine/sqlMetadata.ts`; bracket-quoted identifiers bypass it (intent signal).
+Extraction regexes live in
+[`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml).
+`src/engine/sqlBodyParser.ts` owns the built-in preprocessing passes,
+normalization, rule execution, and dependency resolution. The full reference
+is [`PARSE_RULES.md`](PARSE_RULES.md). Metadata suppression
+centralises CLR-method filtering in
+[`src/engine/shared/sqlMetadata.ts`](../src/engine/shared/sqlMetadata.ts);
+bracket-quoted identifiers bypass it (intent signal).
 
-## The bridge — IPC & Zod validation
+## Host/webview boundary
 
 ```mermaid
 flowchart LR
@@ -91,189 +117,100 @@ flowchart LR
     BC <--> EXT[Extension host<br/>panelProvider.ts]
 ```
 
-Every `postMessage` hits the Zod cage in [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) exactly once in each direction. Inner layers consume parsed types; no re-validation. Routing and handlers live in [`src/panelProvider.ts`](../src/panelProvider.ts).
+Messages crossing the host/webview boundary are parsed with the Zod schemas in
+[`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)
+before handlers consume them. Main-panel routing starts in
+[`src/panelProvider.ts`](../src/panelProvider.ts); detail-panel handlers live
+under [`src/bridge/`](../src/bridge/).
 
-Logging categories standardised across the codebase: `[AI]`, `[Bridge]`, `[Config]`, `[DB]`, `[Dacpac]`, `[Detail]`, `[Filter]`, `[Parse]`, `[Project]`, `[Stats]`. Helpers in [`src/utils/log.ts`](../src/utils/log.ts) — never call `outputChannel.*` directly. Output-channel lines are normalized to single-line text (including stack traces). AI/tool hallucination rejections should be logged as debug (`[Reject] ...`) to avoid error-level log flooding.
+Use the helpers in [`src/utils/log.ts`](../src/utils/log.ts) for extension
+logging. They normalize output-channel text and keep severity/category handling
+consistent. User-facing errors and warnings must go through the notification
+helpers rather than raw output-channel calls.
 
-## AI prompt builder hierarchy
+## AI runtime boundary
 
-`buildStageSystemPrompt` ([`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts)) composes the system prompt in a fixed order. Adding a builder = inserting at the correct step. Adding a phase = extending step 2.
+`@lineage` always uses the exact `ChatRequest.model` selected by VS Code. The
+extension has no provider, endpoint, credential, fallback-model, or model-picker
+configuration. AI dependencies receive the loaded lineage snapshot only; they
+cannot connect to a database, execute SQL, refresh ingestion, or start
+profiling.
 
-```
-1. buildGeneralSystemPrompt          (always — role, platform, schemas, global invariants)
-2. one phase-specific block:
-     discover    → buildPhasePrompt('discover')
-     active      → buildPhasePrompt('active')
-                   + buildSmProtocol(targetColumns?, classification)
-                       — buildColumnAspectPrompt is folded in when targetColumns set (CT)
-     synthesis   → buildPhasePrompt('synthesis')
-     completed   → buildPhasePrompt('completed')
-3. resolveStagePrompt                 (always — YAML keys gated by stage + classification + slotCount; `closing` requires slotCount ≥ 5; `discovery_chat` fires only at discover stage)
-4. buildMissionBriefBlock             (active + completed — <mission_brief>, <current_task>; synthesis emits no <current_task>)
-5. buildMemoryBlock                   (active only — <short_term_memory> + tally)
-```
+The participant in
+[`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts)
+adapts native requests, history, cancellation, progress, and buttons. It does
+not own prompt construction or the exploration loop. The outer graph in
+[`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts) owns phases, semantic retries,
+interrupts, and synthesis; `NavigationEngine` in
+[`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) owns agenda, topology, gates,
+validation, and termination.
 
-**Active-loop request composition (strict sliding-memory).**
-- `discover` / `completed`: normal chat-history replay is allowed.
-- `active`: broad `chatContext.history` replay is disabled; each hop uses the current system prompt, current directive, and a minimal trailing tool pair for continuity.
-- Canonical de-dup keeps hop counters, mission intent, and current-hop evidence in separate fields so prior-hop prose is not replayed verbatim.
+Prompt builders live under [`src/ai/prompting/`](../src/ai/prompting/), with
+stage assembly in
+[`src/ai/agent/stagePrompts.ts`](../src/ai/agent/stagePrompts.ts) and one-call
+planning in
+[`src/ai/agent/instructionPlan.ts`](../src/ai/agent/instructionPlan.ts). Active
+hops use bounded rolling context rather than replaying the full exploration;
+synthesis receives the archived findings and engine-owned lifecycle/provenance
+state. Tool calls go through the canonical registry, phase policy, and strict
+Zod dispatcher under [`src/ai/tools/`](../src/ai/tools/).
 
-**SM lifecycle contract.** `NavigationEngine` owns lifecycle state separately from detail text. A successful hop records one of three actions in `node_states[]`: `analyze`, `pass`, or `prune`. Tables reached through edge contraction are `pass` with an engine reason; detail slots are only analyzed text buckets.
-
-**Synthesis output contract.** The AI submits `present_result` with structured parts: `summary`, `title`, `intro`, `sections[]`, `closing`, `notes[]`, and `highlight_groups[]`. Synthesis receives `detail_slots[]`, `node_states[]`, and CT `columnAspect.edges[]`. The engine assembles the final rendered description; the AI does not write the assembled blob directly.
-
-**Completed follow-up intent split.** In completed phase, treat follow-ups as either (A) refine existing graph or (B) start a new trace. Route A uses `lineage_present_result` (relabel/regroup via `sections[]`; caption updates via `notes[]`; graph edits via `prune_node_ids` / `add_node_ids`). Route B uses `lineage_start_exploration` for new origin/scope semantics; engine routing decides retrace vs fresh discovery.
-
-**Closed-graph enforcement.** The final result must stay connected from `originNodeId`. Reachability-from-origin is enforced across prune commit paths, `NavigationEngine.getResult()`, and follow-up topology edits.
-
-Low-risk diagnostics added for follow-up routing:
-- `fromFollowupDeferredTriggerThisTurn` marks turns expanded from deferred follow-up trigger text.
-- completed-phase warning log fires when that trigger flow attempts fresh `start_exploration` with `origin` and no `supplement`.
-- exact-string block append guard prevents duplicate snapshot injection into one request.
-- prompt metrics log duplicate block removals and per-tool result payload chars.
-
-| Function | File | Concern |
-|----------|------|---------|
-| `buildGeneralSystemPrompt` | `prompts.ts` | Role, platform, schemas, phase label, global invariants. |
-| `buildPhasePrompt(phase)` | `prompts.ts` | Canonical static phase protocol entrypoint (discover/active/synthesis/completed). |
-| `buildDiscoveryPrompt` | `prompts.ts` | Search, mission_brief authoring, `start_exploration` rules. |
-| `buildActivePhasePrompt()` | `prompts.ts` | Hop-loop discipline, verdict semantics, archive contract. |
-| `buildSynthesisPrompt` | `prompts.ts` | Archive + lifecycle + CT provenance lift; assembly + intro/closing anchoring. |
-| `buildFollowUpPrompt` | `prompts.ts` | Refinement vs re-exploration routing. |
-| `buildSmProtocol(targetColumns?, classification)` | `smPrompts.ts` | Active SM protocol (verdict, sections, badges, routing). |
-| `buildModeBlock(targetColumns?, classification)` | `smPrompts.ts` | Compatibility wrapper delegating to `buildSmProtocol(...)`. |
-| `buildColumnAspectPrompt` | `prompts.ts` | CT protocol block — two-channel contract, role table, terminal source rules. Injected into stable system prompt when CT is active. |
-| `buildCtSynthesisBlock(edges)` | `smPrompts.ts` | CT chain summary appended to synthesis reminder. |
-| `buildCurrentTaskBlock(task, columns?)` | `prompts.ts` | `<current_task>` XML block; when `columns` are passed (CT active), appends `<column_trace>` sub-block with the structural lineage sub-question. |
-| `resolveStagePrompt` | `templateRenderer.ts` | YAML capture (active) + per-field synthesis keys; classification-gated; `closing` size-gated on slotCount ≥ 5. |
-| `orderAndAssemble` | `presentResult.ts` | Engine-built description blob from AI's title + intro + sections[] + closing — sole assembly path. |
-| `interaction rules` | `interaction/rules/*.ts` | Central process-rule evaluators (non-Zod): tool phase policy, start/submit/present guards, gate transition mapping. |
-| `buildMissionBriefBlock` | `prompts.ts` | `<mission_brief>` + `<current_task>` XML blocks. |
-| `buildMemoryBlock` | `prompts.ts` | `<short_term_memory>` XML block + tally line. |
-
-**Hybrid format rule.** Markdown headers for static structural sections (protocols, numbered rules); XML tags for dynamic per-hop data so the model can locate them precisely (`<mission_brief>`, `<current_task>`, `<short_term_memory>`, `<column_trace>`).
+The AI authors semantic findings and structured presentation fields. The engine
+validates all mutations, keeps the final graph connected to its origin, and
+assembles the rendered description from structured result parts. See
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for ownership and
+[`AI_PROMPTS.md`](AI_PROMPTS.md) for the customization contract.
 
 ## Testing
 
-High-priority regression net: **parsing, BFS, baseline**. Other tests are narrower guards.
+The framework has three logical suites over two runners: Core and AI use
+Vitest; optional E2E uses VS Code Electron. SQL parsing and graph traversal
+remain protected Core subsets and must not shrink.
 
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Unit** | `npm test` | All `tests/unit/*.test.ts` — parser, graph, baseline, NavigationEngine + cascade + bipartite + supplement, boundary guards. |
-| **Parsing** | `npm run test:parser` | `parser-edge-cases.test.ts` + `tsql-complex.test.ts` (55 SQL fixtures). |
-| **Graph / BFS** | `npm run test:graph` | `graphBuilder.test.ts` + `graphAnalysis.test.ts`. |
-| **Baseline** | `npm run test:baseline` | Parser TSV (`aw-baseline.tsv`) + graph-analysis JSON (`graph-baseline-aw.json`) regression. |
-| **Snapshot** | `npm run test:snapshot` | Parser baseline only. Refresh: `npm run test:snapshot:update`. |
-| **Hooks** | `npm run test:hooks` | React hook tests (jsdom via vitest). |
+| **Full local gate** | `npm run gate` | Type-checking, unit tests, builds, and package checks. Run before push; GitHub does not run tests. |
+| **Unit suite** | `npm test` | Every maintained unit test. Use the runner output for current totals. |
+| **Protected core** | `npm run test:core` | Parser and engine unit projects. |
+| **AI units** | `npm run test:ai` | Deterministic AI-core and state-machine logic with a stubbed VS Code API and model doubles; no external model. |
+| **Core subsets** | `npm run test:parser`, `npm run test:bfs` | Focused parser or graph traversal/analysis verification. |
+| **Test type-checking** | `npm run typecheck:tests` | Type-checks `tests/unit/**` against production source. |
+| **Optional E2E suite** | `npm run test:e2e` | Runs the extension in real VS Code. Two labels deliberately have no model; two use a local scripted provider. No external model is contacted. See [`E2E_TESTING.md`](E2E_TESTING.md). |
 
-AI behaviour beyond pure-function surface is verified via UAT baseline captures (`tmp/baseline/`), not unit tests.
+Run `npm run typecheck` after every structural change; the type system is the
+first line of defence.
 
-`tsc --noEmit` after every structural change; the type system is the first line of defence.
+The AI backend and participant-turn test lanes use deterministic scripted
+language-model fixtures registered through the real public `vscode.lm` API.
+They verify extension/API wiring with fixed responses; they do not perform
+inference, contact an external model provider, or require or read an API key.
+Model reasoning and the rendered Chat UI remain outside the automated suite.
+Real-provider or manual UAT runs are separate lanes and must be started
+explicitly with the required provider credentials.
 
-## LM traffic tracer
+## AI runtime evidence
 
-`src/ai/infra/lmTracer.ts` is a built-in observability tool that captures the full content of every `vscode.lm.sendRequest` call as NDJSON for post-session diagnostic analysis. It is an internal developer backdoor for testing only, enabled temporarily by command and off by default on every VS Code start.
+Production writes no AI NDJSON by default. Run **Data Lineage: Enable AI Trace
+Logging for This Session** from the Command Palette to enable the single
+session-scoped writer in
+[`src/ai/observability/aiTraceWriter.ts`](../src/ai/observability/aiTraceWriter.ts).
+It records lifecycle metadata and full model/tool diagnostics until the
+extension host restarts. An open workspace folder is required; files are written
+under that workspace's `tmp/lm-trace/` directory, and the command reports the
+exact output path in a VS Code notification. Failed provider requests are paired
+with a sanitized `wire-error` record in the same file, so enabling the trace does
+not change the Data Lineage Viz output-channel log level or open VS Code's
+log-level picker. The NDJSON writer resets when the extension host restarts.
 
-### What it captures
-
-Each event is one JSON line (`_: "TX"`) in `tmp/lm-trace/trace-{iso}.ndjson`:
-
-| Event | When emitted | Key fields |
-|---|---|---|
-| `SESSION_START` | Once per chat turn | `modelId`, `maxTokens` |
-| `REQ` | Before every `vscode.lm.sendRequest` | `phase`, `tools`, `mode`, `messages[]` (full serialized) |
-| `TOOL_CALL` | Per tool call part in the response stream | `tool`, `callId`, `input` |
-| `TOOL_INVOKE` | Before `vscode.lm.invokeTool` | `tool`, `callId`, `cached` |
-| `TOOL_RESULT` | After `vscode.lm.invokeTool` returns | `tool`, `result[]`, `ms`, `errCode?`, `hint?` |
-| `ROUND` | After each round drains | `phase`, `ms`, `inTok`, `outTok`, `toolCount` |
-| `WIPE` | Before every `envelope.wipeAndSeed` | `trigger`, `msgsBefore` |
-| `ANSWER_TEXT` | Once for the final text response | `text`, `chars` |
-| `SESSION_END` | After `runHopLoop` returns | `cumInTok`, `cumOutTok`, `peakTok`, `rounds`, `exitKind` |
-
-Token counts (`inTok`, `outTok`) come from `model.countTokens()` — a local estimate; no LLM-side prompt cache instrumentation is available via the VS Code LM API.
-
-### How to enable
-
-Enable tracing only for local test/dev sessions from the Command Palette:
-
-```text
-Data Lineage: Enable AI Trace Logging for This Session
-```
-
-Run a `@lineage` chat session after enabling it. Trace files are written to `tmp/lm-trace/` (gitignored). The toggle is in memory only and resets to off when VS Code restarts.
-
-### Analyzing a trace
-
-Analysis scripts live in [`tests/tools/`](../tests/tools/) (excluded from VSIX via `.vscodeignore`).
-
-**Quick summary:**
-```bash
-node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson --summary
-```
-
-**Full diagnostic (all flags):**
-```bash
-node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson \
-  --summary --phase --patterns --redundancy \
-  --rejected --loops --wipes --waste \
-  --tools --growth --tool-bloat --detail-metrics --ct
-```
-
-**All flags:**
-
-| Flag | Purpose |
-|---|---|
-| `--summary` | Per-session totals — rounds, tokens, tools, rejections (default) |
-| `--phase` | Token spend per phase (discover / active / synthesis / completed) |
-| `--patterns` | Prompt block presence per phase; flags cross-phase anomalies |
-| `--redundancy` | Duplicate content within and across requests |
-| `--rejected` | Tool rejections with error codes and hints |
-| `--loops` | Same-input tool calls called consecutively |
-| `--wipes` | Context wipe events with triggers and message counts |
-| `--waste` | Tokens present at wipe time vs total sent |
-| `--tools` | Tool frequency, duration, cache hits, rejection rate |
-| `--growth` | Per-round context size + growth % (flags runaway rounds >50%) |
-| `--tool-bloat` | Tool result payload sizes — avg/max chars |
-| `--detail-metrics` | Badge/caption Zod limit scan, math violations, response length |
-| `--ct` | Column tracing session analysis: per-hop flow coverage, CT-specific rejections (`ct_field_required`, `ct_verdict_forbidden`, `bb_field_forbidden_in_ct`, `ct_requires_sm`), column propagation edges |
-| `--report` | Full round-by-round narrative including prompt excerpts |
-| `--sizes` | Per-round message composition: system / history / tool_results / prompt |
-| `--timeline` | Chronological event dump |
-| `--journal-metrics` | One compact JSON line to stdout — pipe to `>> tmp/lm-journal/journal.jsonl` |
-
-### Performance baseline and journal
-
-Generate calibrated metric targets from the demo dacpac:
-```bash
-node tests/tools/generate-ideal.js assets/demo.dacpac
-# → writes tmp/lm-ideal/ideal-run.md (commit after a representative session)
-```
-
-Append session metrics to the journal:
-```bash
-node tests/tools/trace-analyze.js tmp/lm-trace/<file>.ndjson --journal-metrics >> tmp/lm-journal/journal.jsonl
-```
-
-### Output locations
-
-| Path | Contents | Gitignored? |
-|---|---|---|
-| `tmp/lm-trace/` | Raw NDJSON trace files | Yes — never commit |
-| `tmp/lm-journal/` | `journal.jsonl` + `journal.md` | Yes — never commit |
-| `tmp/lm-ideal/` | `ideal-run.md` — performance targets | No — commit after baseline run |
-
-### Known limitations
-
-- `SESSION_END.cumInTok` covers only the primary discover-phase invocation. SM phases (active / synthesis / completed) run in subsequent turns; the analysis scripts reconstruct full session totals by summing all ROUND events across all phases.
-- Analysis is always post-session — no real-time streaming.
-- `dedup=hit` in logs = `toolCallCache` in `lineageParticipant.ts`, not Anthropic prompt caching (VS Code LM API does not expose `cached_tokens`).
-- `submit_findings` rejects are now no-op for hop state: a `route_validation_failed` (or other validation reject) requires resubmission and does not persist partial detail/edge/prune mutations from the failed attempt.
+The diagnostics contain prompts, model responses, tool definitions and
+payloads, database identifiers, and SQL. Enable logging only while gathering
+evidence, never commit its output, and review it before sharing.
 
 ## Where to look first
 
 | Changing… | Read these |
 |-----------|------------|
-| SQL parsing rules | [`PARSE_RULES.md`](PARSE_RULES.md), [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml), [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts). Run `npm run test:snapshot` before merge. |
+| SQL parsing rules | [`PARSE_RULES.md`](PARSE_RULES.md), [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml), [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts). Run `npm run test:parser`; there is no snapshot-update workflow. |
 | AI behaviour or prompts | [`AI_PROMPTS.md`](AI_PROMPTS.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`src/ai/prompting/prompts.ts`](../src/ai/prompting/prompts.ts), [`src/ai/prompting/smPrompts.ts`](../src/ai/prompting/smPrompts.ts), [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). |
 | Tool surface, phase routing, or process guards | [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts), [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts), [`src/ai/session/sessionPhase.ts`](../src/ai/session/sessionPhase.ts), [`src/ai/interaction/rules/`](../src/ai/interaction/rules/). |
 | Webview (React Flow, filters, themes) | [`src/panelProvider.ts`](../src/panelProvider.ts), [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts), [`src/components/`](../src/components/). |

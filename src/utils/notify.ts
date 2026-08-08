@@ -9,22 +9,10 @@
 /**
  * Dispatches a warning notification to the VS Code host.
  *
- * Use this function for user-facing errors that require immediate attention
- * but do not halt the entire application (e.g., "Failed to load table stats").
- *
  * @param text - The message body to display.
  *
- * @remarks
- * Architectural Remark:
- * The extension host automatically prefixes all notifications with "Data Lineage: ".
- * Do not include the extension name in the `text` parameter to avoid redundancy.
- *
- * @example
- * ```typescript
- * if (error) {
- *   notifyUser("Unable to connect to SQL Server.");
- * }
- * ```
+ * @remarks The extension host adds the `Data Lineage:` prefix; callers provide only the message
+ * body.
  */
 export function notifyUser(text: string): void {
   window.vscode?.postMessage({ type: 'show-warning', text });

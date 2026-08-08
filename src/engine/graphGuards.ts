@@ -63,10 +63,10 @@ export function findShortestPathOrdered(
  * Logging callback injected into state machines for operational tracing.
  *
  * @remarks
- * Only `info` / `debug` / `warn` are permitted here; `error` flows through
- * dedicated channels with notification escalation.
+ * The optional error argument preserves caught exception stacks at production
+ * adapters without requiring the engine to depend on a concrete logger.
  */
-export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
+export type LogFn = (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void;
 
 /** Directional side of a lineage node when listing direct neighbors. */
 export type NeighborSide = 'in' | 'out';
@@ -112,35 +112,6 @@ export function bfsReachable(
   return reachable;
 }
 
-
-/**
- * Determines if pruning a candidate node would orphan any previously noted nodes from the origin.
- *
- * @remarks
- * This guard prevents the AI from accidentally cutting off access to nodes it has already
- * flagged as important ("noted") during an exploration.
- *
- * @param graph - The graphology instance to check.
- * @param originId - The ID of the exploration's origin node.
- * @param removedSet - The current set of pruned nodes.
- * @param notedIds - The set of nodes previously noted by the AI.
- * @param candidateId - The ID of the node being considered for pruning.
- * @returns The ID of the first orphaned noted node found, or `null` if no orphaning occurs.
- */
-export function wouldOrphanNotedNode(
-  graph: Graph,
-  originId: string,
-  removedSet: ReadonlySet<string>,
-  notedIds: ReadonlySet<string>,
-  candidateId: string,
-): string | null {
-  if (notedIds.size === 0) return null;
-  const reachable = bfsReachable(graph, originId, removedSet, candidateId);
-  for (const id of notedIds) {
-    if (!reachable.has(id)) return id;
-  }
-  return null;
-}
 
 /**
  * Returns the first required node that would become disconnected from origin after removals.

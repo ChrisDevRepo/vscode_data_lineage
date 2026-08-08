@@ -1,10 +1,7 @@
-import React, { memo, useState, useEffect } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { createSchemaColorMap, getSchemaColorFromMap, type SchemaColorMap } from '../utils/schemaColors';
 import { schemaKey } from '../utils/sql';
 
-/**
- * Props for the {@link Legend} component.
- */
 interface LegendProps {
   /** A list of database schema names to display in the legend. */
   schemas: string[];
@@ -22,15 +19,7 @@ interface LegendProps {
 const SCHEMA_DISPLAY_LIMIT = 10;
 
 /**
- * A floating legend component that maps database schema names to their assigned colors.
- *
- * @remarks
- * This component is memoized to prevent unnecessary re-renders during graph manipulation.
- * It features a collapsible body and an expandable list of schemas if the count exceeds {@link SCHEMA_DISPLAY_LIMIT}.
- * The component also listens for VS Code theme changes to ensure color contrast remains optimal.
- *
- * @param props - The component properties.
- * @returns A {@link React.JSX.Element} representing the schema legend.
+ * Maps rendered schemas to colors with collapsible overflow and theme-aware contrast.
  */
 export const Legend = memo(function Legend({
   schemas,
@@ -78,7 +67,6 @@ export const Legend = memo(function Legend({
 
       {!collapsed && (
         <div className="px-3 py-2.5">
-          {/* Schema Colors */}
           <div>
             <div className="space-y-1.5">
               {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT))

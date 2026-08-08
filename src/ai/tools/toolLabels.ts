@@ -1,13 +1,4 @@
-/**
- * Single source of truth for the user-facing label that announces a tool invocation.
- *
- * @remarks
- * Consumed by both `prepareInvocation()` in toolProvider.ts AND the chat participant's
- * progress writer. Keeping one definition prevents the two surfaces from drifting.
- * The `submit_findings` branch returns the static fallback; the participant overrides
- * it with a hop-aware "Hop N / M — analyzing X…" line that needs SM state which
- * `prepareInvocation` cannot see.
- */
+/** Builds invocation labels for externally invoked contributed VS Code LM tools. */
 export function getToolInvocationLabel(name: string, input: unknown): string {
   const inp = input as Record<string, unknown> | null | undefined;
   switch (name) {

@@ -186,7 +186,7 @@ export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_
  * @param schemas - Schema names to map.
  * @param forceLight - Whether to force the light palette.
  *
- * @returns a deterministic loaded-set color map keyed by normalized schema name.
+ * @returns A deterministic loaded-set color map keyed by normalized schema name.
  */
 export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean): SchemaColorMap {
   const palette = getSchemaPalette(forceLight);

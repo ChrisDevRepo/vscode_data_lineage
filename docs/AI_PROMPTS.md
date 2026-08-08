@@ -1,270 +1,275 @@
-# AI Prompting And Templates - Full Crosscheck Guide
-
-This document is the code-accurate reference for prompt behavior in this repository.
-It covers all prompt surfaces (not only YAML), LM tools, commands, table/graph output contracts, and verification tests.
-
-## Scope and source of truth
-
-Prompt behavior is split across these files:
-
-- `assets/aiOutputTemplates.yaml` - editable template instructions.
-- `src/ai/prompting/prompts.ts` - base/system prompts + phase protocol entrypoint.
-- `src/ai/prompting/smPrompts.ts` - active-phase SM protocol + synthesis reminders.
-- `src/ai/prompting/templateRenderer.ts` - authoritative template routing and gating.
-- `src/ai/tools/toolSchemas.ts` (Zod tool input schemas) + `src/ai/tools/toolProvider.ts` (schema enforcement / dispatch) + `src/ai/tools/presentResult.ts` (present_result contract + deterministic assembly).
-- `package.json` - LM tool schema/model descriptions and chat command metadata.
-
-Important correction: YAML is not the only authoritative surface. YAML controls template instructions, but phase prompts and mechanical enforcement are code-owned.
-
-## TS assembly map (post-reorg)
-
-Prompt assembly is now phase-first in TS:
-
-- `buildGeneralSystemPrompt(...)` - shared system baseline.
-- `buildPhasePrompt(phase)` - canonical static protocol per phase (`discover` / `active` / `synthesis` / `completed`).
-- `buildSmProtocol(...)` - active-phase SM-only static guidance (verdicts, section-shape, routing/pruning contracts, CT anchor). BB and CT variants are separated here; CT variant removes all AI pruning vocabulary — engine handles pruning via `column_flow` absence.
-- `resolveStagePrompt(...)` - YAML template injection and gating.
-- Dynamic active-only blocks:
-  - `buildCurrentTaskBlock(...)`
-  - `buildMissionStateBlock(...)`
-  - `buildMemoryBlock(...)`
-
-In `lineageParticipant`, stable assembly is:
-
-1. general system prompt
-2. phase protocol
-3. SM protocol (active only)
-4. YAML stage block
-5. mission/discovery summary metadata blocks
-
-Dynamic assembly is appended only during active hops.
-
-Active-phase context rule: in strict sliding-memory mode, `<short_term_memory>` is the only narrative carry-over channel (last 3 summaries). Prior-hop tool payloads are not broadly replayed in active requests; only minimal protocol continuity data is preserved, with canonical-field de-dup (`<mission_state>` owns hop/focus state, `<mission_brief>` owns mission intent, replay owns only current-hop evidence).
-
-## Active hop decision contract (canonical)
-
-Routing/pruning policy is canonicalized in `buildSmProtocol()` (`src/ai/prompting/smPrompts.ts`) under **Neighbor Decision Contract (Current Hop Only)**.
-
-- Actionable IDs are current-hop `neighbors[]` + current `focus_node`.
-- History (`short_term_memory`, prior hops, archive) is reference-only.
-- Active-phase `prompts.ts` now points to this contract instead of duplicating route/prune policy text.
-- Out-of-scope but mission-relevant routes are still deferred and preserved for post-synthesis follow-up.
-- Lifecycle state is code-owned, not prompt-inferred. The only persisted node actions are `analyze`, `pass`, and `prune`; table passthrough is represented as `pass` with an engine reason, not as a fourth action.
-
-Reviewer artifact:
-- A local reviewer compilation may be generated under `tmp/` for prompt reviews (commands/tools inventory + one 1:1 active-hop prompt example from trace).
-- It is a trace snapshot and may lag behind current prompt code; source-of-truth is the code-owned prompt surfaces in `src/ai/prompting/*` plus template routing in `templateRenderer.ts`.
-
-## AI vs engine ownership
-
-| Owner | Writes/builds | Where enforced |
-|---|---|---|
-| AI | `submit_findings.sections[]` (`business`/`technical` angle text), `summary`, `title`, `intro`, `sections[]`, `closing`, `notes[]`, `highlight_groups[]` | `prompts.ts`, `smPrompts.ts`, tool schemas |
-| Engine | Deterministic markdown assembly, section numbering (`## N`), badge chips, object link headers, validation and rejection envelopes | `orderAndAssemble()` + `validatePresentResult()` in `src/ai/tools/presentResult.ts` |
-
-Important correction: in synthesis, final `sections[]` fields are AI-authored. The engine assembles structure deterministically, but does not auto-create missing section text, node links, labels, or captions.
-
-## Template routing (authoritative)
-
-`templateRenderer.ts` gates templates by stage + classification + CT mode + focus type.
-
-### STAGE_BY_KEY
-
-- discover: `discovery_chat`, `general`
-- active: `business_capture`, `technical_capture`, `structural_summary`, `column_trace_capture`
-- synthesis: `summary`, `title`, `intro`, `closing`, `highlights`, `notes`, `general`, `loading_pattern`
-
-### CLASSIFICATION_GATED
-
-- `business_capture` -> `business`, `both`
-- `technical_capture` -> `technical`, `both`
-- `loading_pattern` -> `technical`, `both`
-
-### CT_MODE_GATED
-
-- `column_trace_capture` fires only when `targetColumns` is active.
-
-### Other mechanical gates
-
-- `closing` only fires when `slotCount >= 5`.
-- `structural_summary` fires on any non-bodied focus hop (table/external), not only the starting hop.
-- On non-bodied hops, `business_capture` and `technical_capture` are gated out.
-
-## Complete YAML key inventory
-
-### Discovery
-
-- `discovery_chat`: direct-answer discovery formatting and grounding.
-
-### Active capture
-
-- `business_capture`
-- `technical_capture`
-- `structural_summary`
-- `column_trace_capture` (CT mode only)
-
-Business-capture contract (business mode) is now explicitly `what / why / how`:
-- What business outcome changes.
-- Why the rule exists (decision objective) when evidenced in current DDL.
-- How the rule executes (conditions, thresholds, formulas).
-- Upstream assumptions and downstream effects when evidenced.
-- Lifecycle/audit meaning and only material, decision-impacting risks.
-
-### Synthesis output
-
-- `summary`
-- `title`
-- `intro`
-- `closing`
-- `highlights`
-- `notes`
-- `loading_pattern` (technical/both only)
-
-### Cross-phase style layer
-
-- `general` (discover + synthesis)
-
-## Start/submit/present mechanical contracts
-
-### `lineage_start_exploration`
-
-- `classification` is required enum: `business | technical | both`.
-- Supports refine loop and post-synthesis supplement path (`supplement.nodeIds`).
-- `targetColumns` activates CT mode.
-
-### `lineage_submit_findings`
-
-- Single tool, mode-dispatched schema:
-  - BB contract: allows `verdict=prune` and `prune_neighbors`.
-  - CT contract: allows only `verdict=analyze|pass`, requires `column_flow`, rejects BB-only fields.
-- `sections[]` count/angles are locked by classification (`submitFindingsRules.ts`).
-- For CT, AI always provides `column_flow` field. Non-empty → node in chain (validation runs). `column_flow: []` (explicit empty) → engine auto-prunes silently. Missing `column_flow` field rejects at boundary (`ct_field_required`). `verdict=prune` rejects at boundary (`ct_verdict_forbidden`). `prune_neighbors` rejects at boundary (`bb_field_forbidden_in_ct`).
-- CT prompts contain no pruning vocabulary — AI is not taught to prune in CT; engine derives all pruning from `column_flow` content.
-- CT neighbor decisions: `route_requests` for contributors; non-contributors simply omit routes (engine auto-prunes from empty `column_flow`). `prune_neighbors` remains a BB-only AI command.
-- BB and CT both populate `node_states[]` through the same engine lifecycle path. BB prune comes from `verdict:"prune"` or `prune_neighbors[]`; CT prune comes from `column_flow: []` or no active columns; table passthrough comes from non-bodied contraction.
-- Atomic commit contract: if validation fails (for example `route_validation_failed`), no hop state is persisted from that call. The model must correct inputs and resubmit.
-- Rejection hints are **mode-pure**: built from the gate-locked mode (`columnAspect`) + a structural `InvalidRouteKind`, never from message text. A BB session's hints never mention `column_flow`/contributors.
-- **Rejections are structured guiding orders, not "failed".** Each content error returns a machine `error` code (`out_col_not_on_node` / `contributor_col_not_on_source` / `route_columns_not_on_target`, or `route_validation_failed` for mixed kinds), a **verb-led imperative `hint`** with the legitimate alternative built in (e.g. "Set from_col to a column the source provides, or remove the contributor"), and `detail.available_columns` (the valid set as grounding data, not a pick-menu). Positive framing only — no "do not".
-- **Unresolvable references are non-fatal.** A route target or column contributor that resolves to no model node is recorded (surfaced via `recent_rejections` and, for routes, `route_outcomes` `reason: unresolved`) and skipped — the hop proceeds. This removes the casing-retry/budget-burn stall.
-
-### `lineage_present_result`
-
-- AI submits structured parts; engine assembles deterministic description.
-- Validation enforces summary/name/sections/highlights and markdown fence integrity.
-- No AI-writeable `description` input field.
-- Follow-up relabel/regroup requests must update final `sections[]` (`label` / `node_ids`), because badge chips are derived from sections.
-- Final `sections[].label` is the authoritative short graph/detail pointer and maps 1:1 to `sections[].text`.
-- Final `sections[].node_ids[]` is optional and AI-owned: a section label may link many nodes, a node may have zero labels, and a node may appear in at most one section.
-- `notes[]` are optional AI-authored per-node captions shown below the graph and do not create or rename section badges.
-- Synthesis must consider all three final evidence surfaces: `detail_slots[]` for analyzed narrative, `node_states[]` for pass/prune/analyze lifecycle, and `columnAspect.edges[]` for CT provenance. A pass-state table may need a label, caption, or source highlight even when it has no detail slot.
-- In CT mode, `present_result` validation rejects missing visible terminal source tables from the final section/highlight surface so the root column source is not silently omitted.
-
-## Tool policy by phase
-
-Defined in `src/ai/tools/toolPolicy.ts` and tested in `tests/unit/toolPolicy.test.ts`.
-
-- discover: `lineage_get_context`, `lineage_search_objects`, `lineage_get_scope_bundle`, `lineage_search_ddl`, `lineage_get_object_detail`, `lineage_detect_graph_patterns`, `lineage_start_exploration`
-- active (`sm_bb` or `sm_ct`): `lineage_submit_findings`, `lineage_get_neighbor_columns`
-- synthesis: `lineage_present_result`
-- completed: `lineage_present_result`, `lineage_get_object_detail`, `lineage_search_ddl`, `lineage_search_objects`, `lineage_start_exploration`
-
-### Completed-phase replay contract
-
-- Completed/follow-up turns run with a compact replay envelope (minimal trailing tool pair), not broad full-history replay.
-- Replayed tool-call envelopes carry `replay_compacted: true` and `trace_replay: true` markers so diagnostics can distinguish replay context from fresh model intent.
-- Replayed `lineage_present_result` history payloads are compacted to summary metadata (`view_name`, `node_count`, `graph_source`) once SM is complete.
-- Follow-up turns inject a compact “current rendered result snapshot” (title/summary/section map + bounded description excerpt) so edits can be made without replaying full prior payloads.
-- If the follow-up recommendation pill is clicked with zero deferred objects, the participant now injects a fallback prompt that asks for at least two concrete, same-topic follow-up questions grounded in the current rendered result (instead of returning internal Route A/Route B protocol prose).
-- Deferred follow-up guidance now distinguishes:
-  - mandatory-now per skipped object (`add_now` or `keep_pruned_now`),
-  - optional-later questions only for non-mandatory future investigation.
-
-## Discovery escalation contract
-
-- Discovery is default. Single-object asks use `lineage_get_object_detail`. Graph-scope asks use `lineage_get_scope_bundle` with explicit finite depth.
-- Escalate to `lineage_start_exploration` only when:
-  - explicit visual graph/render request,
-  - explicit column trace request (`targetColumns`),
-  - explicit post-discovery deeper-analysis intent,
-  - `over_discovery_budget` from `lineage_get_scope_bundle`.
-- Discovery scope budget guarding is enforced at `lineage_get_scope_bundle` when `include_ddl:true` using `discoveryNodeCap` + `discoveryTokenBudget`.
-- `lineage_start_exploration` preflight remains a second safety net and must stay aligned with the scope contract rendered in `confirm_sm_start`.
-- If intent is ambiguous between chat and graph, discovery answers in chat first; the post-discovery deeper-analysis follow-up remains the opt-in path to SM.
-
-## Commands crosscheck
-
-From `src/commands.ts` + `package.json`.
-
-### Prompt/template relevant commands
-
-- `dataLineageViz.createAiOutputTemplates`
-- `dataLineageViz.aiResolveGate`
-- `dataLineageViz.aiCreateView`
-- `dataLineageViz.dumpSmState`
-- `dataLineageViz.copyDebugInfo`
-
-### Chat participant slash commands
-
-- `/trace`
-- `/search`
-
-## Table and graph output contracts
-
-- Graph badges are derived from section labels and numbered by assembly order.
-- Description markdown is assembled as: `title` -> `intro` -> numbered `sections[]` -> `closing`.
-- Object links are injected as `### Objects [name](#focus-node:id)` when node mapping exists.
-- Nodes not discussed in the detail description do not need badges.
-- Nodes without detail slots can still be discussed when lifecycle/provenance makes them central: examples include CT terminal source tables, target tables, and contracted pass-through tables.
-- The follow-up "Show full description" chat replay sanitizes focus anchors to plain object names for readability; overlay rendering keeps interactive focus links.
-- CT-only synthesis guidance (`buildCtSynthesisBlock`) groups by the traced-column answer and keeps pass-through nodes compact.
-
-## Markdown normalization contract
-
-- `src/components/aiDescriptionMarkdown.ts` normalization is **non-destructive**.
-- Math rendering in preview is handled by `react-markdown` with `remark-math` + `rehype-katex`.
-- Supported math syntaxes are inline `$...$`, block `$$...$$`, and fenced ` ```math `.
-- Normalization must never remove, truncate, or silently rewrite business content.
-- If rendering ambiguity exists (for example currency-like `$0$` vs inline math), preserving source text takes priority over formatting convenience.
-
-## Test crosscheck matrix
-
-Prompt/tool behavior is covered by these tests:
-
-- `tests/unit/ai-tool-registration.test.ts` - manifest tools equal registered tools.
-- `tests/unit/toolPolicy.test.ts` - phase tool allow-list.
-- `tests/unit/start-exploration-schema.test.ts` - required classification and schema constraints.
-- `tests/unit/classification.test.ts` - classification lock and session behavior.
-- `tests/unit/column-flow-validation.test.ts` - CT field validation and roles.
-- `tests/unit/navigation-engine*.test.ts` - SM routing, supplement, graph traversal behavior.
-- `tests/unit/refine-loop.test.ts` - gate refine flow.
-- `tests/unit/messageEnvelope.test.ts` - tool_use/tool_result invariants.
-
-Graph/table extraction correctness and parser behavior are covered by:
-
-- `tests/unit/graphBuilder.test.ts`
-- `tests/unit/graphAnalysis.test.ts`
-- `tests/unit/graph-analysis-aw.test.ts`
-- `tests/unit/parser-edge-cases.test.ts`
-- `tests/unit/tsql-complex.test.ts`
-- `tests/unit/snapshot-aw-baseline.ts`
-
-## YAML edit verification workflow
-
-1. Run command palette: `Data Lineage: Create AI Output Templates` (if overlay file is not created yet).
-2. Set `dataLineageViz.ai.outputTemplateFile` to your overlay path.
-3. Reload window (`Developer: Reload Window`).
-4. Run a scenario that exercises changed keys.
-5. In `Output -> Data Lineage Viz` (Debug level), inspect `[AI] [Hop N]` detail/summary char metrics and rejection envelopes.
-6. Verify final chat synthesis + graph chips/notes align with intended key behavior.
-
-## Completion checklist
-
-Use this checklist before claiming prompt-doc completeness:
-
-- All 13 template keys are documented.
-- Stage/classification/CT/non-bodied/slot-count gates are documented.
-- Tool-phase policy is documented and matches tests.
-- Commands and slash routes relevant to prompting are documented.
-- Deterministic table/graph assembly ownership is documented.
-- Verification tests and run commands are documented.
-- TS phase-first assembly map is documented and matches `lineageParticipant`.
+# AI Prompting And Templates
+
+This document describes the durable prompt/customization contract for
+`@lineage`. The tracked TypeScript builders, tool schemas, policy, and tests are
+the source of truth for exact wording and provider-visible shapes.
+
+## Source of truth
+
+- [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml) contains
+  the editable output-template instructions.
+- [`src/ai/prompting/`](../src/ai/prompting/) owns phase prompts, SM guidance,
+  template routing, and completion-envelope rendering.
+- [`src/ai/agent/stagePrompts.ts`](../src/ai/agent/stagePrompts.ts) assembles
+  discovery, active, and synthesis instructions;
+  [`src/ai/agent/instructionPlan.ts`](../src/ai/agent/instructionPlan.ts)
+  compiles one model generation with its phase-valid tools.
+- [`src/ai/tools/toolSchemas.ts`](../src/ai/tools/toolSchemas.ts),
+  [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts), and
+  [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts) own tool
+  shapes, phase availability, strict validation, and dispatch.
+- [`src/ai/tools/presentResult.ts`](../src/ai/tools/presentResult.ts) validates
+  and deterministically assembles the final presentation.
+- `package.json` owns the contributed tool descriptions and chat commands.
+
+YAML is a customization layer, not the whole prompt. Phase instructions and
+mechanical enforcement remain code-owned.
+
+## Assembly and memory contract
+
+The participant does not build prompts or own a tool loop. The outer graph
+selects the stage, the stage builders assemble the instruction, and the model
+bridge sends it to the exact `ChatRequest.model` selected by VS Code.
+
+- Discovery and completed follow-ups can use the retained provider-neutral
+  conversation. The completed follow-up prompt states what that context
+  actually holds: the archive and rendered result graph are not replayed,
+  detail is re-derived through the phase-valid read tools, and a presentation
+  update replaces the section list wholesale — an omitted section is a deleted
+  section.
+- The discovery-summary compose round runs under its own system prompt:
+  every memo clause must come from the supplied question and discovery answer,
+  plain prose, authored for later hops rather than for the user.
+- Active exploration keeps a stable system prefix (protocol, stage block,
+  mission brief, escaped canonical `<original_question>`, and discovery
+  summary) and sends focus, task, capture recipe, escaped hop context, recent
+  summaries, and rejection guidance in a bounded per-hop message. Broad
+  participant history and prior-hop tool payloads are not replayed into every
+  hop. The canonical question is resolved at `start_exploration` from
+  user-authored text (verbatim discovery prompt, then the current turn's
+  prompt) before the model-supplied paraphrase.
+- Synthesis starts from a fresh completion envelope containing the archived
+  findings plus engine-owned lifecycle and column-provenance state.
+
+`NavigationEngine`, not prompt prose, owns agenda, gates, routing validation,
+pruning, closure, and termination. Persisted node actions are `analyze`,
+`passthrough`, and `prune`.
+
+## Template customization contract
+
+`templateRenderer.ts` routes template keys mechanically by stage, answer
+classification, column-trace mode, focus type, and result size. An overlay may
+replace instruction text but cannot change those gates.
+
+The shipped template file groups the public customization surface into:
+
+- discovery answer style (`discovery_chat`);
+- active capture instructions for business, technical, structural/non-bodied,
+  and column-trace evidence;
+- synthesis instructions for summary, title, introduction, closing,
+  highlights, notes, and technical loading patterns;
+- a shared `general` style layer.
+
+Business and technical capture follow the locked classification. Column-trace
+capture is available only in CT mode. Structural capture replaces business and
+technical capture on non-bodied focus nodes. The closing instruction may be
+omitted for small results. Empty template values are skipped. Templates are
+self-contained: no template references another template or a slot that its
+own rendering combination can suppress (the ETL loading-pattern statement
+carries its own fallback destination when no closing is requested).
+
+The exact key set and default prose are intentionally documented in
+[`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml), so this
+guide does not duplicate an inventory that can drift.
+
+## Exploration tool contracts
+
+### Start exploration
+
+A fresh `lineage_start_exploration` proposal requires an origin, an explicit
+analysis mode, and an answer classification. BB traces whole objects and does
+not accept named target columns. CT requires user-named `targetColumns`.
+Pending-gate refinements are strict patch requests tied to the gate revision.
+Omitted origin, question, mission brief, direction, depth, filters, mode,
+classification, and columns are inherited mechanically. The refine stage may
+search objects to resolve a typo, pattern, ambiguity, or newly named object, but
+does not re-resolve the unchanged origin or rerun discovery;
+completed-session supplements carry explicit node IDs and reuse the existing
+archive.
+
+Every fresh SM exploration passes through the consent gate. A bounded visual
+preview is a separate discovery path and does not grant SM mutation authority.
+
+### Submit findings
+
+`lineage_submit_findings` uses a mode-specific strict schema:
+
+- BB accepts the focus verdict, classified sections, routing requests, and
+  optional neighbor pruning. Neighbor pruning applies only to topology-safe
+  adjacent objects outside the approved exploration scope; approved in-scope
+  objects remain protected and can be removed only through their own validated
+  focus verdict.
+- CT accepts the same focus verdicts, requires `column_flow`, and rejects the
+  BB-only neighbor-pruning field. Each active tracked column must be continued
+  or marked terminal; an empty flow is valid only when the focus carries no
+  active tracked-column interaction.
+
+The locked answer classification determines which section angles are required.
+Validation requires the locked angles to be present; off-classification
+sections are then dropped deterministically at commit (not rejected — a
+surplus section is not a field-scoped defect the held-draft repair flow could
+patch), so a business-only answer cannot carry technical sections. Route,
+column, and prune checks run before commit. A rejected submission does
+not partially update findings, lifecycle, or routing state. Rejections return a
+machine-readable error, corrective hint, and relevant valid-set details.
+Unresolvable external references are recorded as notices and skipped when the
+engine can safely continue. A repeated request for an object already removed
+is reported as an already-pruned no-op rather than as an analyzed or retained
+object.
+
+### Present result
+
+`lineage_present_result` receives structured presentation fields for both bounded
+one-pass previews and completed hop-by-hop explorations. Synthesis authors text;
+preview only regroups the cached discovery answer and adds labels, node links,
+verbatim captions, and highlight groups. The engine owns validation, section
+numbering, badge derivation, object links, markdown assembly, and graph closure.
+
+Both stages are validated by the same rules, so both receive the same
+presentation contract. The linking, captioning, and highlight-selection rules are
+authored once and composed into every stage that calls the tool through the
+shared phase dispatcher; only genuinely stage-specific material — the archive
+evidence surfaces for synthesis, the verbatim-reuse constraint for preview, the
+depth and heading rules that license only the text-authoring stages — lives with
+its stage. A stage that reaches the tool without that contract is a stage judged
+by rules it was never given. The contract also states the enforced mechanical
+checks upfront — markdown/math delimiter integrity, unique section labels,
+highlight legend labels, the 1-5 highlight-group cap, and the held-draft
+repair convention — so a first rejection is no longer how a model discovers a
+rule. The CT terminal-source mandate (terminal sources must appear in a
+section's node ids or a source highlight group) is stated in the synthesis
+prompt, matching the validator.
+
+Validation is field-scoped and runs before commit. Malformed fenced or block
+KaTeX, unclosed block-math fences, and unmatched inline-code delimiters reject
+the affected text fields. A held-draft retry may repair only those rejected
+text fields; graph membership, node associations, and highlights remain
+unchanged.
+
+One submission produces one complete rejection. Checks that need context the
+validator does not hold — the cached discovery answer, the result graph — report
+their findings into the same accumulator instead of rejecting on their own, so a
+payload that breaks two rules is told about both in one round. Rejections name
+the offending entry paths, not only the rule, so a repair does not have to
+locate the defect by elimination. Both matter to the attempt budget: each defect
+class disclosed on its own round costs its own semantic-failure charge.
+
+For a new render, sections and highlights are required. A node can belong to at
+most one final section; highlighted nodes must be explained by a section or
+note. Nodes may remain visible without a badge or highlight. In CT mode,
+terminal source nodes reached by the validated column chain must appear in the
+final source presentation surface.
+
+There is no AI-writeable assembled `description` field. The engine builds the
+rendered document from title and numbered section bodies. For preview, the host
+supplies the cached discovery answer and retained bounded scope directly; no
+lookup tool is exposed. The submitted section bodies must partition that answer
+verbatim and in order, and node captions must be exact excerpts. Any rewrite,
+omission, or invented caption is rejected through the existing held-draft repair
+flow, which exposes only the invalid fields on the retry. Synthesis continues to
+author its report from the completed exploration archive.
+
+## Phase policy and completed follow-ups
+
+[`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) is the canonical
+phase/tool map. Discovery tools are read-only; visual preview, SM entry, active
+submission, synthesis, and completed follow-ups each receive only their
+phase-valid tools. Production dispatch is direct through the local registry and
+does not call `vscode.lm.invokeTool`.
+
+After a preview is accepted by the active graph webview, chat emits only a short
+confirmation and does not add a redundant **Show in Graph** action. If automatic
+dispatch did not succeed, the existing action remains available.
+
+Native `ChatContext.history` is adapted into ordered user/assistant text. Tool
+call/result pairs are preserved only when matching native metadata is present;
+orphan tool messages are not fabricated. Completed turns rely on the retained
+conversation plus session-owned result/navigation state.
+
+The **Show the full description** follow-up replays the same cached presentation
+artifact committed by `present_result`, without a model call. Other completed follow-ups can adjust presentation,
+supplement the existing exploration, start a fresh exploration, or answer
+directly according to the phase policy.
+
+## Graph and Markdown output
+
+- Section labels drive numbered graph badges for their linked nodes.
+- Nodes without section links may remain bare; notes provide optional
+  node-specific captions.
+- The final graph contains every retained scope node, including contracted
+  topology-only passthroughs. Styling and separate hop analysis do not control
+  graph membership; only validated pruning removes an object.
+- Contracted in-scope objects are described as retained supporting objects.
+  Schema, depth, and budget limits remain explicit deferred follow-up leads.
+- The overlay keeps focus links interactive, while chat replay removes focus
+  anchors for readability.
+- [`src/components/aiDescriptionMarkdown.ts`](../src/components/aiDescriptionMarkdown.ts)
+  is a non-destructive preprocessing boundary.
+- The overlay renders inline, block, and fenced math through `remark-math` and
+  `rehype-katex`. Preserving source text takes priority over cosmetic rewriting.
+- Heading ownership: the engine owns the document title, numbered section
+  headings, and object link headers (H1-H3). AI-authored section bodies must
+  not emit `#` or `##` headings; use H4 or bold labels inside a body. The
+  shared presentation contract states this rule to the text-authoring stages
+  (synthesis and completed follow-ups); preview is exempt because its bodies
+  are verbatim spans of the cached answer.
+
+## Evidence-status contract (partially live)
+
+Adopted from the 2026-08 AI SQL documentation review. Live today in the
+capture-template grounding blocks: SQL witnesses must be exact substrings of
+the hop's DDL (never paraphrased), and gaps are stated as
+`not established from the available SQL` instead of inferred. The synthesis
+detail contract additionally preserves exact node IDs, parameter names, and
+formulas through compression. The full categorical vocabulary below remains
+the agreed target; extend live templates only through an approved change plus
+e2e replay.
+
+Every captured claim carries one categorical evidence status:
+
+- direct SQL evidence (`static`) — observable in the loaded snapshot;
+- requires schema/index/statistics metadata (`metadata_required`);
+- requires execution-plan or runtime evidence (`runtime_required`);
+- requires business confirmation — intent, prevalence, or realized impact;
+- not established — never filled by plausible inference.
+
+Performance-claim tiering: static SQL may identify a candidate pattern only.
+Sargability, index benefit, join-strategy quality, parameter sniffing, and
+statistics staleness are `metadata_required` or `runtime_required`. On Synapse
+Dedicated SQL Pool and Fabric Warehouse, actual data movement (shuffle/
+broadcast) and its cost are established by distributed plans and runtime
+evidence, never by query text alone. Engine targeting is required — SQL
+Server/Azure SQL, Synapse, and Fabric must not receive identical movement or
+tuning language.
+
+## Editing and verification
+
+1. Run **Data Lineage: Create AI Output Templates** to scaffold an overlay.
+2. Set `dataLineageViz.ai.outputTemplateFile` to the overlay path.
+3. Reload the VS Code window.
+4. Exercise each changed stage/classification/mode combination in the Extension
+   Development Host.
+5. Inspect **Output → Data Lineage Viz** at Debug level for selected templates,
+   hop diagnostics, and structured rejection envelopes.
+6. Verify the final chat answer, graph badges/highlights, and notes together.
+
+Run `npm test` for the full prompt/tool contract suite. Use
+`npm run test:ai` for the AI-core and navigation/state-machine projects, and run a
+focused file with:
+
+```bash
+node tests/tools/run-vitest.mjs run tests/unit/sm/prompt-composition.test.ts
+```
+
+Prompt changes must update matching tests or fixtures. Generated trace snapshots
+are diagnostic evidence, not a source of truth.

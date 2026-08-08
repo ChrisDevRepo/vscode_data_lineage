@@ -8,19 +8,16 @@ import { SuggestionList } from './ui/SuggestionList';
 import { Tooltip } from './ui/Tooltip';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
-/**
- * Props for the {@link SearchWithAutocomplete} component.
- */
 interface SearchWithAutocompleteProps {
-  /** 
-   * Callback to execute a node search/jump. 
-   * @param name The name of the object to search for.
-   * @param schema Optional schema name to disambiguate results.
+  /**
+   * Callback to execute a node search/jump.
+   * @param name - Name of the object to search for.
+   * @param schema - Optional schema name used to disambiguate results.
    */
   onExecuteSearch?: (name: string, schema?: string) => void;
-  /** 
-   * Optional callback to initiate a trace directly from the search result. 
-   * @param nodeId The ID of the node to trace.
+  /**
+   * Optional callback to initiate a trace directly from the search result.
+   * @param nodeId - ID of the node to trace.
    */
   onStartTrace?: (nodeId: string) => void;
   /** Flattened list of all nodes in the project for autocomplete suggestions. */
@@ -37,20 +34,7 @@ interface SearchWithAutocompleteProps {
   collapsedSchemaNodeIds?: Set<string>;
 }
 
-/**
- * A search input component with real-time autocomplete suggestions for rapid graph navigation.
- * 
- * Capabilities:
- * - **Quick Jump**: Instantly focus/zoom to any node by name.
- * - **Visual Partitioning**: Separates search results into "In View" (visible nodes) and 
- *   "Other" (nodes hidden by current filters).
- * - **Trace Shortcut**: Provides an inline action to start an interactive trace from a result.
- * - **Keyboard Optimization**: Supports the `/` hotkey for focus and `Enter`/`ArrowKeys` for selection.
- * 
- * Architectural Remark: This component is optimized for performance by managing its own 
- * local `searchTerm` state. It only triggers expensive parent re-renders when a selection 
- * is finalized.
- */
+/** Searches graph nodes and partitions autocomplete results by their rendered visibility. */
 export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   onExecuteSearch,
   onStartTrace,

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig, ExtensionMessage } from '../engine/types';
+import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '../engine/types';
+import { ExtensionToWebviewMsgSchema } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
 /**
@@ -20,9 +21,9 @@ export type LoadingContext = 'dacpac' | 'database' | null;
 
 /**
  * The full state and action set managed by the project loader hook.
- * 
+ *
  * @remarks
- * This interface defines the bridge between the React frontend and the VS Code 
+ * This interface defines the bridge between the React frontend and the VS Code
  * extension host for all data extraction and project lifecycle events.
  */
 export interface DacpacLoaderState {
@@ -78,13 +79,13 @@ export interface DacpacLoaderState {
 
 /**
  * Orchestrates the project loading lifecycle: from file picking to full lineage extraction.
- * 
+ *
  * @remarks
  * This hook handles the multi-phase extraction process used for both DACPACs and live databases.
  * Phase 1: Rapid metadata extraction to show a schema selector.
  * Phase 2: Full DDL parsing and graph building for the selected scope.
  * It communicates with the VS Code extension host via `postMessage`.
- * 
+ *
  * @param onConfigReceived - Callback triggered when the extension host delivers updated configuration.
  * @returns The project loader state and interactive actions.
  */
@@ -125,7 +126,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     }
   }, []);
 
-  const applyModel = useCallback((result: DatabaseModel, name: string, statusText: string) => {
+  const applyModel = useCallback((result: DatabaseModel, name: string) => {
     setModel(result);
     setSelectedSchemas(new Set(result.schemas.map((s: SchemaInfo) => s.name)));
     setFileName(name);
@@ -143,17 +144,13 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   // Listen for messages from VS Code extension host
   useEffect(() => {
-    const handler = async (event: MessageEvent<ExtensionMessage>) => {
-      const msg = event.data;
-      if (!msg?.type) return;
+    const handler = async (event: MessageEvent) => {
+      // Single validated inbound dispatcher — host→webview messages are Zod-checked here, never read raw.
+      const parsed = ExtensionToWebviewMsgSchema.safeParse(event.data);
+      if (!parsed.success) return;
+      const msg = parsed.data;
 
-      // Theme changes from extension host — update body attribute before React re-renders
-      if (msg.type === 'themeChanged') {
-        document.body.setAttribute('data-vscode-theme-kind', msg.kind);
-        return;
-      }
-
-      const applyConfig = (raw: ExtensionConfig) => {
+      const applyConfig = (raw: Partial<ExtensionConfig>) => {
         onConfigReceived({
           ...DEFAULT_CONFIG,
           ...raw,
@@ -163,11 +160,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
           analysis: { ...DEFAULT_CONFIG.analysis, ...raw.analysis },
         });
       };
-
-      if (msg.type === 'config-only') {
-        if (msg.config) applyConfig(msg.config);
-        return;
-      }
 
       if (msg.type === 'projects-list') {
         return; // Handled at App.tsx level
@@ -214,7 +206,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
         setSchemaPreview(null);  // clear Phase 1 state once Phase 2 model arrives
-        applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`);
+        applyModel(msg.model as DatabaseModel, name);
         setIsLoading(false);
         setLoadingContext(null);
         if (msg.autoVisualize) {
@@ -239,7 +231,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       if (msg.type === 'db-model') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
-        applyModel(msg.model, name, `Loaded from ${name}: ${msg.model.nodes.length} objects, ${msg.model.edges.length} edges`);
+        applyModel(msg.model as DatabaseModel, name);
         setIsLoading(false);
         setLoadingContext(null);
         setPendingVisualize(true);
@@ -337,8 +329,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const clearPendingVisualize = useCallback(() => {
     setPendingVisualize(false);
   }, []);
-
-  const schemas = schemaPreview?.schemas ?? model?.schemas ?? [];
 
   const toggleSchema = useCallback((name: string) => {
     setSelectedSchemas((prev) => {

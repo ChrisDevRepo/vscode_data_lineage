@@ -9,18 +9,19 @@ temp-old-design/**
 tmp/**
 tmp_*
 
-# Test output emitted into out/ folder must not ship.
-# Pattern intentionally globs `out/test*/**` so orphaned timestamped dirs
-# like `out/test.stale.1777052232/` don't leak into the VSIX.
+# Test output emitted into out/ must not ship.
 out/test*/**
 out/*.js
 out/**/*.js
 !out/extension.js
+!out/extensionRuntime.js
 out/*.d.ts
 out/**/*.d.ts
 
 # Config files
 .gitignore
+.gitattributes
+.nvmrc
 tsconfig.json
 tsconfig.extension.json
 tsconfig.integration.json
@@ -34,6 +35,9 @@ esbuild.config.mjs
 
 # Dev artifacts
 node_modules/**
+# Local inert langsmith replacement — resolved via npm override at install time; the shipped
+# bundle is self-contained, so the stub source never belongs in the VSIX.
+stubs/**
 .vscode/**
 **/*.map
 
@@ -52,7 +56,7 @@ CONTRIBUTING.md
 # Assistant session temp files must not leak into VSIX.
 tmpclaude-*
 
-# Unreferenced screenshot (superseded by viz-search/viz-ai variants).
+# Unused screenshot excluded from the VSIX.
 # NOTE: logo.png IS used at runtime by src/panelProvider.ts — keep it.
 images/viz-screenshot.png
 
@@ -76,6 +80,8 @@ SECURITY.md
 CODE_OF_CONDUCT.md
 *.vsix
 debug.log
+# Untracked ad-hoc debug dumps still get packaged by vsce — exclude them explicitly.
+debug*.txt
 .claude/**
 .github/**
 **/.DS_Store

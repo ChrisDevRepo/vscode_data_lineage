@@ -202,7 +202,6 @@ function StatsResults({ stats, mode }: {
 
   return (
     <div className="text-xs" style={{ color: 'var(--ln-fg)' }}>
-      {/* Summary line */}
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2" style={{ color: 'var(--ln-fg-muted)' }}>
         <span className="font-mono" style={{ color: 'var(--ln-fg)', fontWeight: 600, fontSize: '0.8rem' }}>
           {stats.rowCount.toLocaleString()} rows
@@ -233,7 +232,6 @@ function StatsResults({ stats, mode }: {
         )}
       </div>
 
-      {/* Header row */}
       <div
         className="font-medium pb-1"
         style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px', borderBottom: '1px solid var(--ln-border)' }}
@@ -255,13 +253,11 @@ function StatsResults({ stats, mode }: {
         </div>
       </div>
 
-      {/* Body rows */}
       {sortedProfiled.map(col => {
         const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);
         const canExpand = isStandard && hasDetail(col);
         return (
           <div key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-            {/* Metrics grid */}
             <div
               className="py-1"
               style={{
@@ -319,7 +315,6 @@ function StatsResults({ stats, mode }: {
         );
       })}
 
-      {/* Skipped columns */}
       {skipped.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <div className="text-xs" style={{
@@ -348,9 +343,6 @@ function StatsResults({ stats, mode }: {
 }
 
 
-/**
- * Props for the {@link StatsSection} component.
- */
 interface StatsSectionProps {
   /** The current state of table statistics (loading, error, or result). */
   statsState: TableStatsState;
@@ -361,14 +353,7 @@ interface StatsSectionProps {
 }
 
 /**
- * Renders the table statistics section in the detail panel.
- *
- * This component handles the UI for requesting and displaying column-level metrics,
- * supporting both 'quick' (metadata-only or sampled) and 'standard' (full scan)
- * profiling modes.
- *
- * @param props - Component properties.
- * @returns A React element representing the statistics section.
+ * Requests and displays quick or standard column-level profiling metrics.
  */
 export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';

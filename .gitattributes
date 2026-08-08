@@ -1,0 +1,22 @@
+# Line-ending policy: the repository stores LF, and every working tree gets LF.
+#
+# Without this file the behaviour depends on each developer's personal
+# `core.autocrlf`, so a Windows and a macOS checkout of the same commit differ.
+# That per-machine asymmetry is what produced the recurring
+# "LF will be replaced by CRLF the next time Git touches it" warnings, and it is
+# the same class of Windows/POSIX divergence that hid the gate defects fixed in
+# a9bf74d. `eol=lf` removes the conversion entirely rather than configuring it:
+# no conversion, no warning, and identical bytes on both platforms.
+#
+# Every text blob in this repository was already LF when this file was added, so
+# it changes no committed content — only the working-tree checkout and the rules
+# applied from here on.
+* text=auto eol=lf
+
+# Binaries: never inspected, never converted, never diffed as text.
+*.dacpac binary
+*.png    binary
+*.vsix   binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary

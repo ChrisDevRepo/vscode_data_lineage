@@ -21,18 +21,15 @@ export default defineConfig({
     rollupOptions: {
       input: resolve(__dirname, 'src/index.html'),
       output: {
-        // Disable hashing in filenames for webview compatibility
         entryFileNames: `assets/[name].js`,
         chunkFileNames: `assets/[name].js`,
         assetFileNames: `assets/[name].[ext]`,
-        // Code splitting for better performance
         manualChunks: {
           'flow-vendor': ['@xyflow/react'],
           'monaco-vendor': ['monaco-editor/esm/vs/editor/editor.api'],
         },
       },
     },
-    // Increase chunk size warning limit (webview bundles are typically larger)
     chunkSizeWarningLimit: 3000,
   },
   resolve: {

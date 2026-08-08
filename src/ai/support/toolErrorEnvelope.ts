@@ -10,13 +10,12 @@
  * - **Validation-failure shape** `{ success: false, errors: […], hint? }` — emitted by
  *   `present_result`; counted as a semantic failure, never a provider failure.
  *
- * Provider-pure: no `vscode` or framework imports — the VS Code Copilot lane and any
- * future lane can share this module without modification.
+ * Provider-pure: no `vscode` imports, so it stays usable from any model lane.
  */
 import { z } from 'zod';
 
 /** Normalized, typed read of either error envelope. A `null` reader result means "not an error". */
-interface ToolRejection {
+export interface ToolRejection {
   /** Stable machine code — the engine `error` code, or `'validation'` for the `success:false` shape. */
   code: string;
   /** First human-readable reason line (resolved `errors[0]` → `message` → `detail` → `code`). */
@@ -101,8 +100,7 @@ export function readToolError(data: unknown): ToolRejection | null {
   }
   const hasExtraFacts = Object.keys(extraFacts).length > 0;
 
-  // No sibling/multi-error facts to fold: return env.detail exactly as given (reference-preserving,
-  // e.g. an array), matching the pre-existing single-offender contract untouched.
+  // No sibling/multi-error facts: keep env.detail as-is (reference-preserving, e.g. an array).
   let detail: unknown = env.detail;
   if (hasExtraFacts) {
     if (env.detail !== undefined && typeof env.detail === 'object' && env.detail !== null && !Array.isArray(env.detail)) {
@@ -135,6 +133,48 @@ export function makeRejection(input: { code: string; reason: string; hint?: stri
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     ...(input.issuePaths !== undefined ? { issuePaths: input.issuePaths } : {}),
   };
+}
+
+/**
+ * Extracts exact field paths from structured rejection detail without interpreting reason prose.
+ *
+ * @remarks
+ * Lives beside the envelope it reads rather than in any one consumer: the retry path turns these
+ * into bounded correction fragments, and the diagnostic trace records them so two rejections
+ * sharing a `code` stay distinguishable. Both read the same `detail` shape, so deriving the paths
+ * twice would be the drift risk.
+ *
+ * The traversal is bounded (64 nodes, 16 paths) and every accepted value must match the dotted
+ * identifier grammar, so the result is safe to record where prose is not allowed.
+ *
+ * @param detail - The rejection's `detail` field, in any nesting the producing tool chose.
+ * @returns Deduped dotted paths, in first-seen order; empty when the detail names none.
+ */
+export function rejectionIssuePaths(detail: unknown): string[] {
+  const paths: string[] = [];
+  const queue: unknown[] = [detail];
+  let visited = 0;
+  while (queue.length > 0 && visited < 64 && paths.length < 16) {
+    const value = queue.shift();
+    visited++;
+    if (!value || typeof value !== 'object') continue;
+    if (Array.isArray(value)) {
+      queue.push(...value.slice(0, 32));
+      continue;
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.path === 'string'
+      && record.path.length <= 512
+      && /^(?:[A-Za-z_][A-Za-z0-9_-]{0,99}|\d+)(?:\.(?:[A-Za-z_][A-Za-z0-9_-]{0,99}|\d+))*$/.test(record.path)
+    ) {
+      paths.push(record.path);
+    }
+    for (const [key, child] of Object.entries(record)) {
+      if (key !== 'path' && child && typeof child === 'object') queue.push(child);
+    }
+  }
+  return [...new Set(paths)];
 }
 
 /**
@@ -182,17 +222,92 @@ function describeInvalidUnion(issue: InvalidUnionIssue): { line: string; paths: 
 }
 
 /**
+ * Standing repair instruction for a schema-invalid tool call. Truthful for the port-level reject:
+ * nothing is held at that layer, so the model must resend the complete call — the instruction
+ * directs a minimal edit, it does not promise server-side reuse.
+ */
+export const INVALID_TOOL_INPUT_REPAIR_HINT
+  = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged.';
+
+/**
+ * Bounded verbatim echo of one offending scalar. Objects and arrays are never echoed — a scalar
+ * leaf is a bounded correction fragment; anything larger would re-open the full-payload re-echo
+ * the minimal-delta repair contract forbids.
+ */
+const SCALAR_ECHO_MAX_CHARS = 120;
+
+/** Walks `input` down one Zod issue path; `undefined` when the path leaves the object graph. */
+function resolveAtPath(input: unknown, path: readonly PropertyKey[]): unknown {
+  let value: unknown = input;
+  for (const key of path) {
+    if (value === null || typeof value !== 'object') return undefined;
+    value = (value as Record<PropertyKey, unknown>)[key as keyof object];
+  }
+  return value;
+}
+
+/** Measured size of the received value in the unit the model reasons about; `undefined` when unmeasurable. */
+function measuredSize(value: unknown): string | undefined {
+  if (typeof value === 'string') return `${value.length} chars`;
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === 'number') return `${value}`;
+  return undefined;
+}
+
+/** JSON-quoted echo of a scalar leaf, hard-capped; non-scalars return `undefined` and are never echoed. */
+function scalarEcho(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return JSON.stringify(value.length > SCALAR_ECHO_MAX_CHARS ? `${value.slice(0, SCALAR_ECHO_MAX_CHARS)}…` : value);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return undefined;
+}
+
+/**
+ * Composes one reason line for a size violation from the issue's own metadata plus the received
+ * value: measured size, the bound, and — for scalar leaves only — the verbatim text the model
+ * cannot otherwise see (its rejected call is never replayed with arguments). Falls back to the
+ * stock Zod message when the received value is unmeasurable.
+ */
+function describeSizeIssue(
+  issue: Extract<z.core.$ZodIssue, { code: 'too_big' | 'too_small' }>,
+  received: unknown,
+): string | undefined {
+  const size = measuredSize(received);
+  if (size === undefined) return undefined;
+  const bound = issue.code === 'too_big' ? `limit ${issue.maximum}` : `minimum ${issue.minimum}`;
+  const echo = scalarEcho(received);
+  return `${size}, ${bound}${echo !== undefined ? `; sent: ${echo}` : ''}`;
+}
+
+/**
  * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error. Maps
  * each issue to `"<dottedPath>: <message>"` (or just `<message>` for a root-level issue), except an
  * `invalid_union` issue — root or nested — which expands via {@link describeInvalidUnion} into a
  * per-branch required-field breakdown instead of Zod's generic "Invalid input". Joins all issues in
  * issue order (first issue first, so it survives downstream truncation), and carries the dotted
  * paths separately for correction-echo and observability.
+ *
+ * When the caller supplies the parsed `input`, each issue line is enriched from the issue's own
+ * metadata and the received value — Zod v4 issues do not carry the input, so the measurement must
+ * happen here: a `too_big`/`too_small` issue reports the measured size against the bound
+ * (`badge_label: 61 chars, limit 50`) and echoes a scalar leaf verbatim (bounded). Models cannot
+ * count characters, and the rejected call is replayed without arguments, so the measured value and
+ * the sent text are the two facts that turn a blind regeneration into a directed edit. All derived
+ * mechanically from the ZodError issue tree — no per-tool or per-field text.
+ *
+ * @remarks
+ * Callers hand this a bare `z.ZodError`: the `vscode.lm` port validates tool input itself with
+ * `safeParse` and passes `parsed.error` straight through, so there is no wrapper chain to unwrap.
  * @param error - The Zod validation failure.
- * @param opts - `code` to stamp on the rejection; optional remediation `hint`.
+ * @param opts - `code` to stamp on the rejection; optional remediation `hint`; optional `input`
+ * (the value that failed parsing) enabling measured-size and scalar-echo enrichment.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
  */
-export function rejectionFromZodError(error: z.ZodError, opts: { code: string; hint?: string }): ToolRejection {
+export function rejectionFromZodError(
+  error: z.ZodError,
+  opts: { code: string; hint?: string; input?: unknown },
+): ToolRejection {
   const issuePaths: string[] = [];
   const lines = error.issues.map(issue => {
     if (issue.code === 'invalid_union') {
@@ -202,7 +317,17 @@ export function rejectionFromZodError(error: z.ZodError, opts: { code: string; h
     }
     const path = issue.path.join('.');
     if (path) issuePaths.push(path);
-    return path ? `${path}: ${issue.message}` : issue.message;
+    let message = issue.message;
+    if (opts.input !== undefined) {
+      const received = resolveAtPath(opts.input, issue.path);
+      if (issue.code === 'too_big' || issue.code === 'too_small') {
+        message = describeSizeIssue(issue, received) ?? message;
+      } else {
+        const echo = scalarEcho(received);
+        if (echo !== undefined) message = `${message}; sent: ${echo}`;
+      }
+    }
+    return path ? `${path}: ${message}` : message;
   });
   return makeRejection({
     code: opts.code,
@@ -210,31 +335,4 @@ export function rejectionFromZodError(error: z.ZodError, opts: { code: string; h
     hint: opts.hint,
     issuePaths,
   });
-}
-
-/** Bounds the `.cause` walk in {@link unwrapZodError} so an unrelated error shape cannot spin. */
-const MAX_ZOD_CAUSE_HOPS = 5;
-
-/**
- * Unwraps an arbitrary thrown error down to the real `z.ZodError` nested inside it, when present.
- *
- * @remarks
- * Tool-input validation failures can nest a `ZodError` inside one or more `.cause` hops depending
- * on how the LM host wraps schema errors. This helper walks the `.cause` chain up to
- * {@link MAX_ZOD_CAUSE_HOPS} hops — a model-agnostic, encoding-only unwrap that inspects only the
- * error's own `.cause` chain and never changes meaning: a `ZodError` found at any hop depth is
- * exactly the `ZodError` the validator raised.
- * @param error - Any thrown value; only a `z.ZodError` found within {@link MAX_ZOD_CAUSE_HOPS} hops matches.
- * @returns The nested `ZodError`, or `undefined` when none is found within the bound.
- */
-export function unwrapZodError(error: unknown): z.ZodError | undefined {
-  let current: unknown = error;
-  for (let hop = 0; hop < MAX_ZOD_CAUSE_HOPS; hop++) {
-    if (current instanceof z.ZodError) return current;
-    if (!current || typeof current !== 'object') return undefined;
-    const cause = (current as { cause?: unknown }).cause;
-    if (cause === undefined) return undefined;
-    current = cause;
-  }
-  return undefined;
 }

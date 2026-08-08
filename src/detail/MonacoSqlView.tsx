@@ -1,27 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
-// Core editor API only — avoids bundling ts/css/html/json language workers (~9MB)
-// Same pattern as microsoft/vscode-cosmosdb
-// eslint-disable-next-line import/no-internal-modules
+// Core editor API avoids bundling unused language workers.
 import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
 // SQL tokenizer (basic language, no worker) — required for syntax highlighting.
 // editor.api excludes all language contributions; this registers the SQL tokenizer only.
-// eslint-disable-next-line import/no-internal-modules
 import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution';
 import type * as Monaco from 'monaco-editor';
 import type { LineageNode } from '../engine/types';
 
-/** 
- * Configure the @monaco-editor/react loader to use our lightweight ESM bundle.
- * This prevents the extension from bundling massive language workers (TS/HTML/JSON)
- * while still providing robust SQL syntax highlighting.
- */
+/** Configures the React loader with the core editor and SQL tokenizer only. */
 loader.config({ monaco: monacoEditor });
 
 /**
  * Maps the current VS Code theme kind to a corresponding Monaco Editor theme.
- * 
- * @returns 'vs', 'vs-dark', 'hc-black', or 'hc-light'.
+ *
+ * @returns The matching Monaco theme identifier.
  */
 function getMonacoTheme(): string {
   const kind = document.body.getAttribute('data-vscode-theme-kind');
@@ -31,9 +24,6 @@ function getMonacoTheme(): string {
   return 'vs';
 }
 
-/**
- * Props for the `MonacoSqlView` component.
- */
 interface MonacoSqlViewProps {
   /** The SQL lineage node containing the DDL script to display. */
   node: LineageNode;
@@ -42,22 +32,15 @@ interface MonacoSqlViewProps {
 }
 
 /**
- * A read-only SQL editor component powered by Monaco.
- * 
- * This component provides:
- * - High-fidelity SQL syntax highlighting.
- * - Dynamic theme synchronization with VS Code.
- * - Automatic search term highlighting using the Monaco Decorations API.
- * - Automatic scrolling to the first match when a search query is provided.
- * 
- * @param props - Component properties.
- * @returns A containerized Monaco editor for SQL DDL viewing.
+ * Renders read-only SQL with VS Code theme synchronization and search decorations.
  */
 export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const contentListenerRef = useRef<Monaco.IDisposable | null>(null);
+  const findQueryRef = useRef(findQuery);
   const [monacoTheme, setMonacoTheme] = useState(getMonacoTheme);
+  findQueryRef.current = findQuery;
 
   // Synchronize Monaco theme whenever the VS Code environment triggers a theme change.
   useEffect(() => {
@@ -68,7 +51,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
 
   /**
    * Applies inline highlights to the editor based on the provided search query.
-   * 
+   *
    * @param ed - The active Monaco editor instance.
    * @param query - The search term to highlight.
    */
@@ -96,12 +79,10 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     }
   }
 
-  // Reactive effect to re-apply highlights whenever the findQuery prop changes.
   useEffect(() => {
     if (editorRef.current) {
       applyHighlights(editorRef.current, findQuery);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findQuery]);
 
   // Ensure decorations and listeners are correctly disposed of when the component unmounts.
@@ -114,17 +95,15 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     };
   }, []);
 
-  /** 
+  /**
    * Callback invoked when the Monaco editor instance has mounted successfully.
    */
   function handleEditorMount(ed: Monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = ed;
-    // Monitor model content changes to ensure highlights are persistent.
     contentListenerRef.current?.dispose();
     contentListenerRef.current = ed.onDidChangeModelContent(() => {
-      applyHighlights(ed, findQuery);
+      applyHighlights(ed, findQueryRef.current);
     });
-    // Apply initial highlights immediately if a query is already provided.
     applyHighlights(ed, findQuery);
   }
 
@@ -132,7 +111,6 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--ln-bg)' }}>
-      {/* Detail Header showing qualified name and object type */}
       <div
         style={{
           padding: '6px 12px',
@@ -153,7 +131,6 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
         </span>
       </div>
 
-      {/* Primary Editor Surface */}
       <div style={{ flex: 1, minHeight: 0 }}>
         <Editor
           language="sql"

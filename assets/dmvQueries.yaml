@@ -4,12 +4,11 @@ required_permission: "VIEW DEFINITION"
 platforms: [SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool]
 
 # Two-phase loading:
-#   Phase 1 — schema-preview + all-objects run first (unfiltered).
-#     schema-preview  : counts per schema for the schema-selection wizard.
-#     all-objects     : lightweight full object catalog (no DDL, no columns) used in
-#                       Phase 2 to classify SP dependencies as "cross-schema known" vs
-#                       "truly unresolved" and to display correct schema.name pairs in
-#                       the dependency details panel.
+#   Phase 1 — schema-preview runs first (unfiltered) for the schema-selection wizard.
+#   Platform detection — platform-info runs once before the Phase 2 model is built.
+#             It keeps `phase: 1` even though it runs at Phase 2 time: the tag means
+#             "not schema-filtered", and is what excludes the query from the Phase 2
+#             sweep and its {{SCHEMAS}} expansion. Do not retag it as phase 2.
 #   Phase 2 — nodes/columns/constraints/dependencies run after the user selects schemas.
 #             Each Phase 2 query uses {{SCHEMAS}} placeholders that expand to the
 #             selected schema list (e.g. 'dbo', 'Sales'). The SQL author controls
@@ -40,34 +39,6 @@ queries:
         )
       GROUP BY s.name, CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END
       ORDER BY s.name, CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END
-
-  # ── Phase 1: Full Object Catalog ────────────────────────────────────────────
-  - name: all-objects
-    phase: 1
-    description: >
-      Phase 1: complete object catalog across ALL schemas (no DDL, no columns).
-      Runs alongside schema-preview to enable cross-schema reference resolution in Phase 2.
-      When a stored procedure in schema A references a table in schema B (not selected),
-      this catalog classifies that reference as "cross-schema known" rather than
-      "unresolved". Also provides catalog-original schema casing for display in the
-      dependency details panel (In / Out counts and neighbor tooltips).
-    sql: |
-      SELECT
-        s.name AS schema_name,
-        o.name AS object_name,
-        CASE WHEN COALESCE(st.is_external, 0) = 1 THEN 'ET' ELSE RTRIM(o.type) END AS type_code
-      FROM sys.objects o
-      INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-      LEFT JOIN sys.tables st ON o.object_id = st.object_id
-      WHERE o.type IN ('U','V','P','FN','IF','TF','ET')
-        AND o.is_ms_shipped = 0
-        AND s.name NOT IN ('sys','INFORMATION_SCHEMA')
-        AND NOT EXISTS (
-          SELECT 1 FROM sys.extended_properties ep
-          WHERE ep.major_id = o.object_id AND ep.class = 1
-            AND ep.name = 'microsoft_database_tools_support'
-        )
-      ORDER BY s.name, o.name
 
   # ── Phase 2: Full Extraction (filtered by selected schemas) ─────────────────
   - name: nodes
@@ -259,11 +230,11 @@ queries:
         AND (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))
       ORDER BY referencing_schema, referencing_name
 
-  # ── Phase 1 (optional): DB platform detection ────────────────────────────────
+  # ── Platform detection (optional, with MSSQL metadata fallback) ──────────────
   - name: platform-info
     phase: 1
     description: >
-      Optional Phase 1 query: identifies the database platform (SQL Server edition/version,
+      Identifies the database platform (SQL Server edition/version,
       Azure SQL, Synapse, Fabric, etc.) using SERVERPROPERTY. Result is used to populate
       DatabaseModel.dbPlatform for display in the status bar and project card.
       major_version maps on-prem SQL Server version numbers to release years.

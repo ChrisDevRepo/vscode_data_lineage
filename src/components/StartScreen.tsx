@@ -143,7 +143,6 @@ export const StartScreen = memo(function StartScreen({
   if (showProjects) {
     return (
       <WizardPanel footer={footer}>
-        {/* Header */}
         <div className="flex items-center gap-2">
           <Tooltip content="Back" className="ln-tooltip--wizard">
             <button
@@ -184,7 +183,6 @@ export const StartScreen = memo(function StartScreen({
           )}
         </div>
 
-        {/* Scrollable project list */}
         <div className="space-y-2 overflow-y-auto" style={{ maxHeight: '18rem' }}>
           {sorted.map((project) => {
             const isLoading = loadingProjectId === project.id;

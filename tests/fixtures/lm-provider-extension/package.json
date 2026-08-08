@@ -1,0 +1,39 @@
+{
+  "name": "data-lineage-test-model-provider",
+  "displayName": "Data Lineage Deterministic Test Model",
+  "publisher": "data-lineage-test",
+  "version": "0.0.0",
+  "engines": {
+    "vscode": "^1.130.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguageModelChatProvider:lineage-test"
+  ],
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "lineage-test",
+        "displayName": "Lineage Test Model"
+      }
+    ],
+    "commands": [
+      {
+        "command": "lineageTestModel.getRequests",
+        "title": "Lineage Test Model: Get Requests"
+      },
+      {
+        "command": "lineageTestModel.getLaneInfo",
+        "title": "Lineage Test Model: Get Lane Info"
+      },
+      {
+        "command": "lineageTestModel.reset",
+        "title": "Lineage Test Model: Reset"
+      },
+      {
+        "command": "lineageTestModel.setCase",
+        "title": "Lineage Test Model: Set Case"
+      }
+    ]
+  }
+}

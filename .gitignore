@@ -22,7 +22,8 @@ coverage/
 *.lcov
 
 # IDE / local
-.vscode/settings.json
+# Keep the repository workspace settings tracked: they deliberately disable unrelated
+# MCP servers so @lineage remains the only AI tool surface while developing this solution.
 .idea/
 tmp/
 PLAN*.md
@@ -31,6 +32,9 @@ PLAN*.md
 .env
 .env.example
 *.log
+
+# Ad-hoc debug dumps written by tests/tools — never tracked, never packaged
+debug*.txt
 
 # OS
 .DS_Store
@@ -61,6 +65,9 @@ GEMINI.md
 *internal*/
 **/*internal*/**
 
-# Verification scripts and artifacts
-scripts/
+# Verification scripts and artifacts (contents-pattern so tracked build tooling can be re-included:
+# git cannot negate below an excluded directory)
+scripts/*
+# The gate's manifest step runs this — it must be committable.
+!scripts/generate-tool-manifest.mjs
 adventure_works_graph.json

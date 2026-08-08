@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.0] - 2026-08-02
+
+### Added
+- LangChain/LangGraph-based AI backend.
+- Added a request-scoped LangChain bridge for the model provided by VS Code, including automatic, disabled, required, and named tool selection.
+- Added a **Show graph preview** follow-up that opens a bounded, transient lineage preview without starting the full hop-by-hop analysis.
+
+### Changed
+- Scope approval actions now resume or cancel the paused analysis directly instead of submitting the decision as another chat message. Changing scope creates a revised proposal before analysis begins.
+- AI trace logging now includes LangGraph phase and gate lifecycle events plus sanitized provider failures in the existing session trace.
+- Multi-target neighbor pruning uses one batched reachability check when the complete batch is safe.
+- `lineage_get_scope_bundle` now stores its discovery-scope artifact through the session write queue.
+
+### Fixed
+- Saved database projects are no longer dropped when the MSSQL extension supplies additional runtime connection fields.
+
 ## [1.0.3] - 2026-07-19
 
 ### Added

@@ -4,14 +4,53 @@
  * surface lives apart from the retrieval operations. Zero VS Code imports — pure functions
  * consumed directly by `toolProvider.ts` and the present-result unit tests.
  */
-import type { DatabaseModel } from '../../engine/types';
-import { z } from 'zod';
+import katex from 'katex';
+import {
+  PresentResultModelSchema,
+  PresentResultRepairPatchSchema,
+  PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX,
+  PRESENT_RESULT_REPAIR_FIELDS,
+  type PresentResultRepairField,
+} from './toolSchemas';
+import { getAllowedLmToolNames } from './toolPolicy';
+import type { z } from 'zod';
 
-/** Char cap on the AI-supplied `name` field in `present_result` — guards against pathological prompt injection or runaway labels. */
-const PRESENT_RESULT_NAME_MAX_LENGTH = 200;
-/** Char cap on the AI-supplied `summary` field in `present_result` — keeps the badge readable in the chat stream. */
-const PRESENT_RESULT_SUMMARY_HARD_LIMIT = 300;
-const SECTION_NODE_ID_HINT = 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically; if still unresolved, resolve canonical IDs with lineage_search_objects.';
+/**
+ * Input field a validation error is attributed to, declared structurally at each `addError`
+ * site so the repair hint can never desync from a reworded error message. `nodes` covers the
+ * empty-result-graph class, which has no single patchable input field.
+ */
+type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closing' | 'sections' | 'notes' | 'highlight_groups' | 'nodes';
+
+/**
+ * The stage `lineage_present_result` is being called from, as classified by the caller.
+ *
+ * @remarks
+ * Drives stage-aware wording in {@link presentNodeIdHint}: `visual_preview` and `synthesis` never
+ * have `lineage_search_objects` on their tool policy (see `toolPolicy.ts`), so a hint naming it
+ * there is a guaranteed off-policy retry. Only `completed` exposes that tool.
+ */
+export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
+
+/**
+ * Builds the unknown-node-id repair hint for the calling stage.
+ *
+ * @remarks
+ * Derived from {@link getAllowedLmToolNames} rather than hardcoded per stage: `completed` is
+ * currently the only stage whose tool policy includes `lineage_search_objects` (see
+ * `toolPolicy.ts`'s `COMPLETED_TOOLS`), but reading the policy directly means this hint can never
+ * drift from it if a stage's tool set changes. `visual_preview` and `synthesis` expose
+ * `lineage_present_result` only, so naming `lineage_search_objects` there hands the model a
+ * caller-impossible instruction — it retries the off-policy call, burns a turn, and fails again.
+ * Stages without the tool fall back to the same instruction: state the unmatched fact in prose
+ * instead of linking a node.
+ */
+function presentNodeIdHint(stage: PresentResultStage): string {
+  const hasSearchObjects = getAllowedLmToolNames({ kind: stage }).has('lineage_search_objects');
+  return hasSearchObjects
+    ? 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically; if still unresolved, resolve canonical IDs with lineage_search_objects. If no loaded node matches the fact, state it in sections[].text rather than a node_ids field.'
+    : 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically. If a fact has no matching loaded node, state it in sections[].text instead of a node_ids field — no other tool is available this stage.';
+}
 
 /**
  * Semantic role tag for one of the (≤5) `highlight_groups` the AI may attach
@@ -23,7 +62,7 @@ const SECTION_NODE_ID_HINT = 'Use node IDs from the current result graph. Case a
  * AI to pick one palette per result and not mix them. Validated by
  * `AI_HIGHLIGHT_ROLES` in `validatePresentResult`.
  */
-export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
+type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
 /**
  * The AI's submission to `lineage_present_result`.
@@ -42,105 +81,15 @@ export type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn
  * links zero or more graph nodes to that section badge. Nodes omitted from
  * `node_ids[]` intentionally have no final section badge.
  *
- * There is intentionally NO `description` field on this input — that field is
- * engine output, not AI input. If a future change wants to re-add it, fix the
- * template that instructs the AI to write a blob instead.
+ * `description` is intentionally absent because it is engine output, not AI input.
  */
-export type PresentResultInput = {
-  name: string;
-  summary: string;
-  title?: string;       // doc heading (≤80 chars) — names pipeline + key formula
-  intro?: string;       // 2–4 sentence paragraph before the numbered sections
-  closing?: string;     // 1–2 sentence cross-cutting risk/note after the sections
-  prune_node_ids?: string[];
-  add_node_ids?: string[];
-  is_update?: boolean;
-  layout_direction?: 'LR' | 'TB';
-  highlight_groups?: Array<{
-    label: string;
-    color: AIHighlightRole;
-    node_ids: string[];
-  }>;
-  sections?: Array<{
-    label: string;       // AI-owned final section/badge label — unique, short graph pointer
-    node_ids?: string[]; // optional AI-owned node links; nodes omitted here get no badge
-    text: string;        // mandatory detail body for this exact label (1:1 with label)
-  }>;
-  notes?: Array<{
-    node_id: string;
-    text: string;
-  }>;
-};
-
-const PresentHighlightGroupSchema = z.object({
-  label: z.string(),
-  color: z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']),
-  node_ids: z.array(z.string()),
-}).strict();
-
-const PresentSectionSchema = z.object({
-  label: z.string(),
-  node_ids: z.array(z.string()).optional(),
-  text: z.string(),
-}).strict();
-
-const PresentNoteSchema = z.object({
-  node_id: z.string(),
-  text: z.string(),
-}).strict();
-
-/** Strict runtime boundary for untrusted `present_result` input. */
-export const PresentResultBoundarySchema = z.object({
-  name: z.string(),
-  summary: z.string(),
-  title: z.string().optional(),
-  intro: z.string().optional(),
-  closing: z.string().optional(),
-  prune_node_ids: z.array(z.string()).optional(),
-  add_node_ids: z.array(z.string()).optional(),
-  is_update: z.boolean().optional(),
-  layout_direction: z.enum(['LR', 'TB']).optional(),
-  highlight_groups: z.array(PresentHighlightGroupSchema).optional(),
-  sections: z.array(PresentSectionSchema).optional(),
-  notes: z.array(PresentNoteSchema).optional(),
-}).strict() satisfies z.ZodType<PresentResultInput>;
-
-export const PRESENT_RESULT_REPAIR_FIELDS = [
-  'name',
-  'summary',
-  'title',
-  'intro',
-  'closing',
-  'layout_direction',
-  'highlight_groups',
-  'sections',
-  'notes',
-] as const;
-
-export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[number];
-
-const PresentResultRepairPatchBaseSchema = PresentResultBoundarySchema
-  .pick(Object.fromEntries(PRESENT_RESULT_REPAIR_FIELDS.map(field => [field, true])) as Record<PresentResultRepairField, true>)
-  .partial()
-  .extend({ repair: z.literal(true) })
-  .strict();
-
-/** Builds a strict patch schema exposing only fields authorized by the rejection. */
-export function presentResultRepairPatchSchemaForFields(fields: readonly PresentResultRepairField[]) {
-  const mask = Object.fromEntries([...new Set(fields)].map(field => [field, true]));
-  return PresentResultRepairPatchBaseSchema.pick({
-    ...mask,
-    repair: true,
-  } as Partial<Record<keyof typeof PresentResultRepairPatchBaseSchema.shape, true>>).strict();
-}
-
-/** Converts Zod issue paths into unique top-level repairable fields. */
-export function presentResultRepairFieldsFromPaths(paths: readonly PropertyKey[][]): PresentResultRepairField[] {
-  const allowed = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
-  return [...new Set(paths
-    .map(path => String(path[0] ?? ''))
-    .filter((field): field is PresentResultRepairField => allowed.has(field)))];
-}
+export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
+/**
+ * A validated `present_result` repair patch — the single source of truth, inferred from
+ * {@link PresentResultRepairPatchSchema} (itself `.pick().partial()`-derived from the model schema)
+ * so it can never hand-drift out of sync with the fields a full author may emit.
+ */
+export type PresentResultRepairPatch = z.infer<typeof PresentResultRepairPatchSchema>;
 
 /**
  * The validated, engine-assembled result ready for the UI.
@@ -151,25 +100,230 @@ export function presentResultRepairFieldsFromPaths(paths: readonly PropertyKey[]
  * passthrough of any AI-supplied field — the AI does not write the assembled
  * document.
  */
-export type PresentResultRequest = {
+type PresentResultRequest = {
   success: true;
   name: string;
   node_ids: string[];
   summary: string;
-  description?: string;
+  description: string;
   layout_direction: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
   badges: Array<{ node_id: string; text: string }>;
   notes: Array<{ node_id: string; text: string }>;
 };
 
+/**
+ * Error shape returned when presenting the result fails.
+ *
+ * @remarks
+ * `repairable` is set structurally where each error is added inside
+ * {@link validatePresentResult}; downstream code never infers it from message text.
+ */
 export type PresentResultError = {
   success: false;
   errors: string[];
   hint: string;
-  repair_fields?: PresentResultRepairField[];
-  issue_paths?: string[];
+  repairable: boolean;
+  repairFields: PresentResultRepairField[];
+  /**
+   * Offending field paths, as `{ path }` entries the shared correction reader understands.
+   *
+   * @remarks
+   * A rejection that names a rule but not the offender costs a whole repair round to locate — the
+   * model has to guess which of N captions or sections failed. `rejectionIssuePaths` already mines
+   * this exact shape out of any tool's `detail`, so emitting it here reaches both the model's
+   * correction envelope and the diagnostic trace without a second channel.
+   */
+  detail?: ReadonlyArray<{ readonly path: string }>;
 };
+
+/** Splits the cached discovery answer into engine-owned title/summary and verbatim section source. */
+export function discoveryPreviewNarrative(answer: string): {
+  title?: string;
+  body: string;
+  summary: string;
+} {
+  const normalized = answer.replace(/\r\n?/g, '\n').trim();
+  const titleMatch = /^#\s+(.+?)\s*(?:\n|$)/.exec(normalized);
+  const title = titleMatch?.[1]?.trim();
+  const body = titleMatch ? normalized.slice(titleMatch[0].length).trim() : normalized;
+  const summary = body.split('\n')
+    .map(line => line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/, '').trim())
+    .find(Boolean) ?? title ?? 'Lineage graph preview';
+  return { ...(title ? { title } : {}), body, summary };
+}
+
+/**
+ * A defect found outside {@link validatePresentResult} but reported through its accumulator.
+ *
+ * @remarks
+ * Checks that need context the validator does not hold — the cached discovery answer, the result
+ * graph — used to reject on their own and return before the structural rules ever ran. A payload
+ * carrying one of those defects *and* a structural one therefore reported only the first, and the
+ * second stayed latent until a later round, costing one semantic-failure charge per masked defect.
+ * Passing findings in instead keeps every rule on one accumulator and one rejection.
+ */
+export interface PresentResultViolation {
+  readonly field: PresentResultFailedField;
+  readonly messages: readonly string[];
+  readonly repairFields: readonly PresentResultRepairField[];
+  /** Exact offending entry paths, empty when the violation is about the payload as a whole. */
+  readonly paths: readonly string[];
+  /**
+   * Replaces the generic field-list hint when this is the only reported failure.
+   *
+   * @remarks
+   * Same precedent as the unexplained-highlight gap below: a class whose repair is not "resend this
+   * field" needs its own wording, but only while nothing else is wrong — a mixed batch keeps the
+   * generic hint so no single class can misdescribe the others.
+   */
+  readonly soleHint?: string;
+}
+
+/**
+ * Finds every way preview prose departs from the cached discovery answer.
+ *
+ * @remarks
+ * Returns findings rather than a finished rejection so {@link validatePresentResult} can report
+ * them through the same accumulator as every structural rule. Reporting reuse separately — and
+ * returning early on it — hid whatever structural defect the same submission also carried until a
+ * later round, spending one semantic-failure charge per masked defect.
+ *
+ * Notes are matched as a **contiguous** span of the whitespace-compacted answer: a caption stitched
+ * from separated fragments is a new claim about adjacency, which is exactly what verbatim reuse
+ * exists to prevent. Each failing caption is reported by index so the repair does not have to
+ * re-derive which one it was.
+ *
+ * @param sourceBody - The cached discovery answer body, title already split off.
+ * @param input - The sections and notes as submitted.
+ * @returns One violation per departing field; empty when the payload is a faithful regrouping.
+ */
+export function findDiscoveryPreviewReuseViolations(
+  sourceBody: string,
+  input: Pick<PresentResultInput, 'sections' | 'notes'>,
+): PresentResultViolation[] {
+  const compact = (value: string): string => value.replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
+  const source = compact(sourceBody);
+  const sectionText = compact((input.sections ?? []).map(section => section.text).join('\n\n'));
+  const badNoteIndexes = (input.notes ?? []).flatMap(
+    (note, index) => (source.includes(compact(note.text)) ? [] : [index]),
+  );
+  const violations: PresentResultViolation[] = [];
+  if (!source || sectionText !== source) {
+    violations.push({
+      field: 'sections',
+      messages: ['sections[].text must partition the complete cached discovery answer verbatim, in order.'],
+      repairFields: ['sections'],
+      paths: [],
+    });
+  }
+  if (badNoteIndexes.length > 0) {
+    violations.push({
+      field: 'notes',
+      messages: [`notes[].text must each be one unbroken span copied from the cached discovery answer — quote a single continuous passage rather than joining separated phrases. Offending entries: ${badNoteIndexes.map(index => `notes[${index}]`).join(', ')}.`],
+      repairFields: ['notes'],
+      paths: badNoteIndexes.map(index => `notes.${index}`),
+    });
+  }
+  return violations;
+}
+
+/**
+ * Determines whether a failed `present_result` can safely hold its full draft for patch repair.
+ *
+ * @remarks
+ * Reads the structural flag {@link validatePresentResult} computed while building the failure —
+ * true only when every accumulated error was itself marked repairable at its `addError` call site.
+ * Covers structural presentation gaps where the authored prose is otherwise valuable and the repair
+ * can add or relink sections/notes/highlights without changing the locked graph. Shape errors, graph
+ * edits, disconnected views, duplicate labels, and missing required body fields remain full
+ * rejections and clear any held draft.
+ */
+export function isRepairablePresentResultFailure(failure: PresentResultError): boolean {
+  return failure.repairable;
+}
+
+/**
+ * Merges a strict repair patch into a held full `present_result` draft.
+ *
+ * @remarks
+ * Patch fields replace whole presentation collections by design. The model does not send partial
+ * array operations; it sends the corrected sections/notes/highlight_groups collection, and the
+ * normal validation/assembly path checks the merged full draft.
+ */
+export function mergePresentResultRepairPatch(
+  draft: PresentResultInput,
+  patch: PresentResultRepairPatch,
+  allowedFields: readonly PresentResultRepairField[],
+): PresentResultInput {
+  const allowed = new Set<string>(allowedFields);
+  const updates: Partial<PresentResultInput> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === 'is_update') continue;
+    if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
+    Object.assign(updates, { [key]: value });
+  }
+  return {
+    ...draft,
+    ...updates,
+    is_update: draft.is_update,
+  };
+}
+
+/** Structural (not textual) deep-equality: key order, whitespace, and number literal form never matter. */
+function deepValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length
+      && a.every((item, index) => deepValueEqual(item, b[index]));
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const aEntries = Object.entries(a as Record<string, unknown>);
+    const bMap = b as Record<string, unknown>;
+    return aEntries.length === Object.keys(bMap).length
+      && aEntries.every(([key, value]) => deepValueEqual(value, bMap[key]));
+  }
+  return false;
+}
+
+/**
+ * Pre-Zod L1 normalization for a `present_result` repair-turn payload: drops an unauthorized
+ * envelope key (a {@link PRESENT_RESULT_REPAIR_FIELDS} member outside this turn's `allowedFields`,
+ * e.g. `title`/`intro`/`closing`/`summary`) ONLY when the resent value is structurally identical to
+ * the held draft's current value for that key.
+ *
+ * @remarks
+ * A repair-turn model that cannot see its own held draft tends to blindly re-author the FULL prior
+ * envelope rather than a scoped patch (the "blind regeneration" trap) — the resent value is usually
+ * unchanged, and the strict repair-patch schema would otherwise hard-reject the whole call for
+ * touching a field this turn was never authorized to change. Stripping only an unchanged value keeps
+ * the reject meaningful: a value that structurally DIFFERS from the held draft is left in place so
+ * the Zod boundary still rejects it — the model is not authorized to change that field this turn, and
+ * silently accepting a changed-but-unauthorized value would be exactly the silent-overwrite class the
+ * middleware contract forbids.
+ *
+ * @param rawInput - The model's raw repair-turn payload, not yet Zod-parsed.
+ * @param heldDraft - The full draft currently on hold for this session.
+ * @param allowedFields - The exact fields this repair turn is authorized to change.
+ * @returns The (possibly narrowed) input and the list of keys stripped as unchanged.
+ */
+export function stripUnchangedRepairEnvelopeKeys(
+  rawInput: Record<string, unknown>,
+  heldDraft: PresentResultInput,
+  allowedFields: readonly PresentResultRepairField[],
+): { input: Record<string, unknown>; stripped: PresentResultRepairField[] } {
+  const allowed = new Set<string>(allowedFields);
+  const stripped: PresentResultRepairField[] = [];
+  const next: Record<string, unknown> = { ...rawInput };
+  for (const key of PRESENT_RESULT_REPAIR_FIELDS) {
+    if (allowed.has(key) || !Object.prototype.hasOwnProperty.call(next, key)) continue;
+    if (deepValueEqual(next[key], (heldDraft as Record<string, unknown>)[key])) {
+      delete next[key];
+      stripped.push(key);
+    }
+  }
+  return { input: next, stripped };
+}
 
 const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
@@ -183,14 +337,8 @@ const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'go
  * engine numbering artifacts and whitespace/case differences; it does not
  * rewrite semantics or synthesize labels.
  */
-export function normalizePresentSectionLabel(label: string): string {
-  return (label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-/** Counts visible words in a final section label for graph-badge UX limits. */
-function countPresentSectionLabelWords(label: string): number {
-  const normalized = (label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
-  return normalized ? normalized.split(/\s+/).length : 0;
+function normalizePresentSectionLabel(label: string): string {
+  return (typeof label === 'string' ? label : '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
@@ -224,7 +372,7 @@ export function orderAndAssemble(
   },
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
   // Strip leading "N " or "N. " so AI numbers don't interfere with label matching.
-  const stripLeadingNumber = (s: string) => (s ?? '').replace(/^\d+[\.]?\s+/, '').trim();
+  const stripLeadingNumber = (s: string) => (typeof s === 'string' ? s : '').replace(/^\d+[\.]?\s+/, '').trim();
 
   // First occurrence index per label — preserves AI's narrative order
   const labelToAiIndex = new Map<string, number>();
@@ -290,90 +438,71 @@ export function orderAndAssemble(
 }
 
 /**
+ * Reports which non-pruned nodes the AI left bare (linked in neither preview surface) — an
+ * observation for the log, never a payload mutation.
+ *
+ * @remarks
+ * The prompt contract permits bare nodes: "nodes left out of both preview surfaces stay bare" —
+ * they still render in the graph via the engine-owned resolved scope, just without a badge or
+ * color. The engine therefore has no authority to re-link them: a tool boundary accepts, rejects
+ * with a structural hint, or mechanically normalizes with a log — it never silently rewrites an
+ * AI presentation decision (the predecessor of this function injected bare nodes into
+ * `sections[].node_ids`, which badge-labeled every non-pruned node in the rendered view).
+ * Only `prune` removes a node from the view; bare-by-choice is a permitted verdict-respecting
+ * outcome for `analyze`/`passthrough` nodes.
+ *
+ * @param resultGraph - The engine result carrying the locked `node_states` verdicts.
+ * @param input - The (already auto-fixed) present payload. Read-only.
+ * @param resolvedNodeIds - The canonical node-id set for the rendered view.
+ * @returns The non-pruned resolved ids linked in neither `sections[].node_ids` nor
+ * `highlight_groups[].node_ids` (empty when there are no authored sections — update-style calls).
+ */
+export function findBareNonPrunedNodes(
+  resultGraph: {
+    node_states?: Array<{ nodeId: string; action: string }>;
+  } | null | undefined,
+  input: PresentResultInput,
+  resolvedNodeIds: string[],
+): string[] {
+  const sections = input.sections;
+  if (!sections || sections.length === 0) return [];
+  const resolvedSet = new Set(resolvedNodeIds);
+  const prunedIds = new Set(
+    (resultGraph?.node_states ?? []).filter(s => s.action === 'prune').map(s => s.nodeId),
+  );
+  const linked = new Set<string>();
+  for (const sec of sections) for (const id of sec.node_ids ?? []) if (resolvedSet.has(id)) linked.add(id);
+  for (const g of input.highlight_groups ?? []) for (const id of g.node_ids ?? []) if (resolvedSet.has(id)) linked.add(id);
+
+  return resolvedNodeIds.filter(id => !prunedIds.has(id) && !linked.has(id));
+}
+
+/**
  * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
  *
  * @remarks
- * LLMs often produce slightly malformed outputs such as double-escaped newlines
- * or excessive title lengths. This function applies surgical corrections to ensure
- * the final UI renders correctly while preserving authored markdown content.
+ * Handles only mechanical normalization the model cannot self-correct: double-escaped newlines.
+ * It does NOT touch content length — GUI-label bounds are enforced by the Zod boundary caps (which
+ * reject-and-self-heal past the tolerance), never by silently truncating authored text.
  *
- * @param model - The database model.
  * @param input - The raw input from the AI.
- * @param resolvedNodeIds - The canonical set of node IDs in the current session.
  * @returns The fixed input object and a list of applied fixes for logging.
  */
 export function autoFixPresentResult(
-  model: DatabaseModel,
   input: PresentResultInput,
-  resolvedNodeIds?: string[],
 ): { input: PresentResultInput; fixes: string[] } {
   const fixes: string[] = [];
   let fixed = { ...input };
 
-  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args),
-  //    but never inside LaTeX math spans ($$…$$ / $…$): there a "\n…" is a control
-  //    word (\not, \ne, \neq, \nabla, \ni, \nu, …) that must survive verbatim — a blind
-  //    replace would collapse it to a newline and corrupt the formula.
-  const MATH_SPAN = /\$\$[\s\S]*?\$\$|\$[^$\n]*?\$/g;
-  const unescapeNewlines = (s: string): string => {
-    let out = '';
-    let last = 0;
-    for (const m of s.matchAll(MATH_SPAN)) {
-      const idx = m.index ?? 0;
-      out += s.slice(last, idx).replace(/\\n/g, '\n'); // outside math → unescape
-      out += m[0];                                     // inside math → verbatim
-      last = idx + m[0].length;
-    }
-    return out + s.slice(last).replace(/\\n/g, '\n');
-  };
+  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args).
+  // Tolerate a mistyped (non-string) field: pass it through untouched so the downstream
+  // validator reports a clean field error instead of throwing on `.replace` (→ swallowed internal_error).
+  const unescapeNewlines = (s: string): string =>
+    typeof s === 'string' ? s.replace(/\\n/g, '\n') : s;
   if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
   if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
   if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
   if (fixed.sections) fixed = { ...fixed, sections: fixed.sections.map(s => ({ ...s, text: s.text ? unescapeNewlines(s.text) : s.text })) };
-
-  // 1. Auto-truncate name at word boundary if too long
-  if (fixed.name && fixed.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) {
-    const truncated = fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH).replace(/\s+\S*$/, '').trimEnd();
-    fixed = { ...fixed, name: truncated || fixed.name.slice(0, PRESENT_RESULT_NAME_MAX_LENGTH) };
-    fixes.push(`Truncated name to ${PRESENT_RESULT_NAME_MAX_LENGTH} chars`);
-  }
-
-  // 2. Auto-truncate title at word boundary if too long
-  if (fixed.title && fixed.title.trim().length > 80) {
-    const truncated = fixed.title.slice(0, 80).replace(/\s+\S*$/, '').trimEnd();
-    fixed = { ...fixed, title: truncated || fixed.title.slice(0, 80) };
-    fixes.push('Truncated title to 80 chars');
-  }
-
-  // 3. Auto-truncate summary at sentence boundary if too long
-  if (fixed.summary && fixed.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
-    const truncated = fixed.summary.slice(0, PRESENT_RESULT_SUMMARY_HARD_LIMIT);
-    const lastPeriod = truncated.lastIndexOf('.');
-    fixed = { ...fixed, summary: lastPeriod > 80 ? truncated.slice(0, lastPeriod + 1) : truncated.trimEnd() };
-    fixes.push(`Truncated summary to ${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars`);
-  }
-
-  const nodeIdSet = new Set(resolvedNodeIds ?? []);
-
-  // 5. Drop empty notes & notes for nodes not in the resolved set
-  if (fixed.notes) {
-    const before = fixed.notes.length;
-    const filtered = fixed.notes.filter(n => nodeIdSet.has(n.node_id) && n.text && n.text.trim().length > 0);
-    fixed = { ...fixed, notes: filtered };
-    const dropped = before - filtered.length;
-    if (dropped > 0) fixes.push(`Dropped ${dropped} empty or orphaned note(s)`);
-  }
-
-  // 6. Prune highlight_groups referencing nodes not in the resolved set
-  if (fixed.highlight_groups) {
-    const before = fixed.highlight_groups.length;
-    const pruned = fixed.highlight_groups
-      .map(g => ({ ...g, node_ids: g.node_ids.filter(id => nodeIdSet.has(id)) }))
-      .filter(g => g.node_ids.length > 0);
-    fixed = { ...fixed, highlight_groups: pruned };
-    const dropped = before - pruned.length;
-    if (dropped > 0) fixes.push(`Dropped ${dropped} orphaned highlight group(s)`);
-  }
 
   return { input: fixed, fixes };
 }
@@ -389,23 +518,102 @@ export function autoFixPresentResult(
  * @param md - The markdown string to validate.
  * @returns A list of error strings, or an empty array if valid.
  */
-export function validateMarkdownFormat(md: string): string[] {
+function validateMarkdownFormat(md: string): string[] {
   const errors: string[] = [];
+  const mathExpressions: Array<{ value: string; displayMode: boolean }> = [];
+  const visibleLines: string[] = [];
 
-  // Reject unclosed fenced blocks (walk lines, track open/close state)
-  let insideFence = false;
+  // Reject unclosed fenced blocks while retaining only user-visible Markdown for the
+  // inline-code and $$ math scans. Fenced `math` bodies are validated with KaTeX too.
+  let fence: { marker: string; math: boolean; lines: string[] } | null = null;
   for (const line of md.split('\n')) {
     const trimmed = line.trim();
-    if (!insideFence && trimmed.startsWith('```')) {
-      insideFence = true;
-    } else if (insideFence && trimmed === '```') {
-      insideFence = false;
+    if (!fence) {
+      const opening = trimmed.match(/^(`{3,}|~{3,})\s*([^\s]*)/);
+      if (opening) {
+        fence = {
+          marker: opening[1],
+          math: opening[2].toLowerCase() === 'math',
+          lines: [],
+        };
+        visibleLines.push('');
+        continue;
+      }
+      visibleLines.push(line);
+      continue;
     }
+
+    const closing = new RegExp(`^${fence.marker[0]}{${fence.marker.length},}\\s*$`);
+    if (closing.test(trimmed)) {
+      if (fence.math) {
+        mathExpressions.push({ value: fence.lines.join('\n').trim(), displayMode: true });
+      }
+      fence = null;
+      visibleLines.push('');
+      continue;
+    }
+    if (fence.math) fence.lines.push(line);
+    visibleLines.push('');
   }
-  if (insideFence) {
+  if (fence) {
     errors.push(
       'unclosed fenced block detected — a section body or assembled output is missing a closing ```',
     );
+  }
+
+  const visibleMarkdown = visibleLines.join('\n');
+  const blockMathPattern = /\$\$([\s\S]*?)\$\$/g;
+  for (const match of visibleMarkdown.matchAll(blockMathPattern)) {
+    mathExpressions.push({ value: match[1].trim(), displayMode: true });
+  }
+  const withoutClosedMath = visibleMarkdown.replace(blockMathPattern, '');
+  const remainingMathDelimiters = withoutClosedMath.match(/\$\$/g)?.length ?? 0;
+  if (remainingMathDelimiters % 2 !== 0) {
+    errors.push('unclosed block math detected — a $$ expression is missing its closing $$');
+  }
+
+  for (let index = 0; index < mathExpressions.length; index++) {
+    const expression = mathExpressions[index];
+    if (!expression.value) {
+      errors.push(`invalid KaTeX math block ${index + 1}: expression is empty`);
+      continue;
+    }
+    try {
+      katex.renderToString(expression.value, {
+        displayMode: expression.displayMode,
+        throwOnError: true,
+        strict: 'ignore',
+        trust: false,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      errors.push(`invalid KaTeX math block ${index + 1}: ${detail}`);
+    }
+  }
+
+  // Markdown code spans close only on a run with the same number of backticks.
+  // Fenced code and closed block math have already been removed from this scan.
+  let openCodeRun = 0;
+  for (let index = 0; index < withoutClosedMath.length;) {
+    if (withoutClosedMath[index] !== '`') {
+      index++;
+      continue;
+    }
+    let precedingSlashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && withoutClosedMath[cursor] === '\\'; cursor--) {
+      precedingSlashes++;
+    }
+    let end = index + 1;
+    while (withoutClosedMath[end] === '`') end++;
+    const runLength = end - index;
+    if (precedingSlashes % 2 === 0) {
+      if (openCodeRun === 0) openCodeRun = runLength;
+      else if (openCodeRun === runLength) openCodeRun = 0;
+    }
+    index = end;
+  }
+  if (openCodeRun !== 0) {
+    errors.push(`unclosed inline code span detected — missing a closing ${'`'.repeat(openCodeRun)}`);
   }
 
   return errors;
@@ -432,6 +640,14 @@ export function validateMarkdownFormat(md: string): string[] {
  * @param resolvedNodeIds - The canonical set of node IDs.
  * @param assembledBadges - Pre-assembled numbered badges for consistency.
  * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
+ * @param isAmendment - Engine-derived: this render updates an existing committed presentation in
+ *   Completed Phase, so `highlight_groups` may be inherited from that prior render. A held synthesis
+ *   draft is not an amendment and must still pass the complete new-render contract. Computed by the
+ *   dispatcher — never the model's raw `is_update` flag.
+ * @param stage - The calling stage (engine-derived), used to keep the unknown-node-id repair hint
+ *   caller-possible — see {@link presentNodeIdHint}. Defaults to `'completed'`, the only stage whose
+ *   tool policy includes `lineage_search_objects`, so existing callers that do not pass a stage keep
+ *   today's hint wording unchanged.
  * @returns A successful request object or a structured error with correction hints.
  */
 export function validatePresentResult(
@@ -439,40 +655,89 @@ export function validatePresentResult(
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
   assembledDescription?: string,
+  isAmendment: boolean = false,
+  externalViolations: readonly PresentResultViolation[] = [],
+  stage: PresentResultStage = 'completed',
 ): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
+  // Structural classification — the failed field AND repairability are set once per addError call
+  // at the exact site the error is known, never re-derived later by matching error TEXT
+  // (see PresentResultError.repairable). A message rewording can therefore never desync the
+  // repair-hint field list.
+  let allRepairable = true;
+  const repairFields = new Set<PresentResultRepairField>();
+  const failedFields = new Set<PresentResultFailedField>();
+  // Offending entry paths, collected at the same call sites for the same reason the field list is:
+  // a rejection that names a rule but not the offender costs a repair round to locate.
+  const issuePaths = new Set<string>();
+  const addError = (
+    field: PresentResultFailedField,
+    message: string,
+    authorizedFields: readonly PresentResultRepairField[] = [],
+    paths: readonly string[] = [],
+  ): void => {
+    errors.push(message);
+    failedFields.add(field);
+    if (authorizedFields.length === 0) allRepairable = false;
+    for (const f of authorizedFields) repairFields.add(f);
+    for (const path of paths) issuePaths.add(path);
+  };
+  // Set only at the unexplained-highlight addError call below — drives a bespoke hint override
+  // instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
+  let hasUnexplainedHighlightGap = false;
 
-  // Name validation
-  if (!input.name || input.name.trim().length === 0) errors.push('name is required');
-  else if (input.name.length > PRESENT_RESULT_NAME_MAX_LENGTH) errors.push(`name exceeds ${PRESENT_RESULT_NAME_MAX_LENGTH} characters`);
+  // Findings computed by callers that hold context this function does not — the cached discovery
+  // answer, the result graph. Reported first so their messages keep the priority they had when each
+  // owned its own early return, but through this accumulator so a payload carrying one of them plus
+  // a structural defect reports both in one round instead of one per round.
+  const soleHints = externalViolations.flatMap(violation => violation.soleHint ?? []);
+  for (const violation of externalViolations) {
+    for (const message of violation.messages) {
+      addError(violation.field, message, violation.repairFields, violation.paths);
+    }
+  }
+  // How many of `errors` came from callers — lets a caller's own hint stand while it is the only
+  // thing wrong, without assuming one violation means one message.
+  const externalErrorCount = errors.length;
+
+  // Presence only — length caps are Zod-owned at the boundary schema (name/title/summary), so no
+  // hand-rolled length check here (it would duplicate Zod and, for summary, reject on prose length).
+  if (!input.name || input.name.trim().length === 0) addError('name', 'name is required');
 
   // Node set must be non-empty (after resolve + prune)
   if (resolvedNodeIds.length === 0) {
-    errors.push('No nodes in view — the result graph is empty or all nodes were pruned');
+    addError('nodes', 'No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
-  if (input.title && input.title.trim().length > 80) errors.push('title exceeds 80 characters');
-
-  // summary required + length
   if (!input.summary || input.summary.trim().length === 0) {
-    errors.push(`summary is required — one-line graph purpose (~120 chars, max ${PRESENT_RESULT_SUMMARY_HARD_LIMIT})`);
-  } else if (input.summary.length > PRESENT_RESULT_SUMMARY_HARD_LIMIT) {
-    errors.push(`summary exceeds hard limit (${PRESENT_RESULT_SUMMARY_HARD_LIMIT} chars) — aim for ~120 chars`);
+    addError('summary', 'summary is required — one-line graph purpose (~120 chars)');
   }
 
   const hasSections = !!(input.sections && input.sections.length > 0);
   const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
+  const sectionLinkedNodeIds = new Set<string>();
 
   // Either AI submitted sections[] (which the engine assembles into a description before
   // validation) OR an engine-assembled description is supplied. Without one, there's no body.
   if (!hasSections && !hasAssembled) {
-    errors.push('sections[] is required — provide at least one section with label and text; node_ids[] is optional.');
+    addError('sections', 'sections[] is required — provide at least one section with label and text; node_ids[] is optional.');
   }
 
-  // Mechanical fence-closure check on the engine-assembled blob (catches cases where
-  // a slot body had an unclosed ``` that survived the autoFix pass).
-  if (hasAssembled) {
-    errors.push(...validateMarkdownFormat(assembledDescription!));
+  // Validate each AI-authored document field independently so a repair turn can update only the
+  // field that contains malformed Markdown or KaTeX. Engine assembly adds headings/links only.
+  const markdownFields: Array<{
+    field: 'title' | 'intro' | 'closing';
+    value: string | undefined;
+  }> = [
+    { field: 'title', value: input.title },
+    { field: 'intro', value: input.intro },
+    { field: 'closing', value: input.closing },
+  ];
+  for (const { field, value } of markdownFields) {
+    if (value) validateMarkdownFormat(value).forEach(e => addError(field, e, [field]));
+  }
+  if (hasAssembled && !hasSections) {
+    validateMarkdownFormat(assembledDescription!).forEach(e => addError('sections', e));
   }
 
   // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
@@ -480,85 +745,124 @@ export function validatePresentResult(
     const resolvedSet = new Set(resolvedNodeIds);
     const labels = new Set<string>();
     const nodeToSectionLabel = new Map<string, string>();
-    for (const sec of input.sections!) {
+    for (const [sectionIndex, sec] of input.sections!.entries()) {
       const label = (sec.label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
       const normalizedLabel = normalizePresentSectionLabel(sec.label);
       if (!label) {
-        errors.push('Section label is required — provide a short final label for this detail section');
+        addError('sections', 'Section label is required — provide a short final label for this detail section');
       } else {
-        const labelWords = countPresentSectionLabelWords(label);
-        if (labelWords > 3) {
-          errors.push(`Section "${label}" label exceeds 3 words — use a short graph pointer`);
-        }
+        // Label brevity is prompt-owned content quality; structural validity stays at this boundary.
         if (labels.has(normalizedLabel)) {
-          errors.push(`Duplicate section label "${label}" — each final label must map to exactly one section text`);
+          addError('sections', `Duplicate section label "${label}" — each final label must map to exactly one section text`);
         }
         labels.add(normalizedLabel);
       }
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
-          errors.push(`Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — ${SECTION_NODE_ID_HINT}`);
+          addError('sections', `Section "${sec.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — ${presentNodeIdHint(stage)}`);
         }
         for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
+          sectionLinkedNodeIds.add(nodeId);
           const existingLabel = nodeToSectionLabel.get(nodeId);
           if (existingLabel && existingLabel !== normalizedLabel) {
-            errors.push(`Node "${nodeId}" is linked to multiple section labels — each node may point to at most one final section`);
-            continue;
+            addError('sections', `Node "${nodeId}" is linked to multiple section labels ("${existingLabel}" and "${normalizedLabel}"). A node can only appear in ONE section. Please remove it from the other sections to fix this.`, ['sections'], [`sections.${sectionIndex}`]);
+          } else {
+            nodeToSectionLabel.set(nodeId, normalizedLabel);
           }
-          nodeToSectionLabel.set(nodeId, normalizedLabel);
         }
       }
-      if (!sec.text || sec.text.trim().length === 0) {
-        errors.push(`Section "${sec.label}" is missing text — every final section label requires one detail body`);
+      if (typeof sec.text !== 'string' || sec.text.trim().length === 0) {
+        addError('sections', `Section "${sec.label}" is missing text — every final section label requires one detail body`);
+      } else {
+        validateMarkdownFormat(sec.text).forEach(e => addError('sections', `Section "${sec.label}": ${e}`, ['sections']));
       }
-      if (sec.text) errors.push(...validateMarkdownFormat(sec.text).map(e => `Section "${sec.label}": ${e}`));
     }
   }
 
-  // Notes validation
+  const noteNodeIds = new Set<string>();
   if (input.notes?.length) {
+    const resolvedSet = new Set(resolvedNodeIds);
     for (const note of input.notes) {
-      if (!note.text || note.text.trim().length === 0) {
-        errors.push(`Note for "${note.node_id}" is missing text`);
+      if (resolvedSet.has(note.node_id)) {
+        noteNodeIds.add(note.node_id);
+      } else {
+        addError('notes', `notes[].node_id contains unknown ID: ${note.node_id} — ${presentNodeIdHint(stage)}`);
+      }
+      if (typeof note.text !== 'string' || note.text.trim().length === 0) {
+        addError('notes', `Note for "${note.node_id}" is missing text`);
       }
     }
   }
 
-  // highlight_groups validation — required for new renders; optional for is_update text edits
+  // highlight_groups validation — required for new renders; inherited (optional) only when this render
+  // amends an existing one (engine-derived isAmendment), never on the model's raw is_update flag.
+  const highlightedNodeIds = new Set<string>();
   if (!input.highlight_groups || input.highlight_groups.length === 0) {
-    if (!input.is_update) {
-      errors.push('highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)');
+    if (!isAmendment) {
+      addError('highlight_groups', 'highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)');
     }
   } else {
-    if (input.highlight_groups.length > 5) errors.push('highlight_groups exceeds maximum of 5');
-    for (const g of input.highlight_groups) {
-      if (!g.label) errors.push('Group label is required');
-      if (!AI_HIGHLIGHT_ROLES.has(g.color)) errors.push(`Group "${g.label}" has invalid role "${g.color}"`);
+    if (input.highlight_groups.length > PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX) {
+      addError('highlight_groups', `highlight_groups exceeds maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`, ['highlight_groups']);
     }
+    const resolvedSet = new Set(resolvedNodeIds);
+    for (const g of input.highlight_groups) {
+      if (!g.label) addError('highlight_groups', 'Group label is required');
+      if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
+      const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
+      if (unknownIds.length > 0) {
+        addError('highlight_groups', `highlight_groups "${g.label}" node_ids contains unknown IDs: ${unknownIds.slice(0, 3).join(', ')}${unknownIds.length > 3 ? ' ...' : ''} — ${presentNodeIdHint(stage)}`);
+      }
+      for (const nodeId of g.node_ids ?? []) {
+        if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
+      }
+    }
+  }
+
+  // Highlighted nodes require an explanation, but unhighlighted preview nodes do not require notes.
+  // A repair may add or relink the missing explanation without modifying the locked graph.
+  const unexplainedHighlightNodeIds = [...highlightedNodeIds].filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id));
+  if (unexplainedHighlightNodeIds.length > 0) {
+    hasUnexplainedHighlightGap = true;
+    addError(
+      'highlight_groups',
+      `highlight_groups node_ids must be explained by sections[].node_ids or notes[]: ${unexplainedHighlightNodeIds.slice(0, 5).join(', ')}${unexplainedHighlightNodeIds.length > 5 ? ' ...' : ''}. For each listed node, add it to a section's node_ids[] or add a note naming it — or drop it from highlight_groups[] if it is uncolored plumbing.`,
+      ['sections', 'notes', 'highlight_groups'],
+    );
   }
 
   if (errors.length > 0) {
-    // Identify which fields failed so the hint tells the AI exactly what to fix
-    const failedFields = new Set<string>();
-    for (const e of errors) {
-      if (e.startsWith('name ') || e.startsWith('name exceeds')) failedFields.add('name');
-      else if (e.startsWith('title ')) failedFields.add('title');
-      else if (e.startsWith('closing ')) failedFields.add('closing');
-      else if (e.includes('summary')) failedFields.add('summary');
-      else if (e.includes('section') || e.startsWith('Section ') || e.startsWith('Duplicate section')) failedFields.add('sections');
-      else if (e.startsWith('Note for ')) failedFields.add('notes');
-      else if (e.includes('highlight_groups') || e.startsWith('Group ')) failedFields.add('highlight_groups');
-      else if (e.includes('No nodes')) failedFields.add('nodes');
-    }
+    // The failed-field list was attached structurally at each addError site above.
     const fieldList = [...failedFields];
+    // Derive the resend list from the same field set used to narrow the repair schema.
+    const resendList = [...repairFields];
     let hint = fieldList.length === 1
-      ? `Fix ${fieldList[0]} only. Keep all other fields (notes, summary, highlight_groups) exactly as submitted.`
-      : `Fix these fields: ${fieldList.join(', ')}. Keep all other fields exactly as submitted.`;
+      ? `Fix ${fieldList[0]} only.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`
+      : `Fix these fields: ${fieldList.join(', ')}.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`;
     if (failedFields.has('sections')) {
-      hint = `${hint} ${SECTION_NODE_ID_HINT}`;
+      hint = `${hint} ${presentNodeIdHint(stage)}`;
     }
-    return { success: false, errors, hint, repair_fields: fieldList.filter((field): field is PresentResultRepairField => PRESENT_RESULT_REPAIR_FIELDS.includes(field as PresentResultRepairField)) };
+    // The unexplained-highlight-coverage gap authorizes three repair fields (sections, notes,
+    // highlight_groups — see the addError call above), and its node ids are already resolved, so
+    // both the generic single-field template ("keep highlight_groups exactly as submitted") and
+    // the unknown-ID hint above misfire for this class. Override when it is the sole reported
+    // failure; a mixed batch (e.g. alongside a non-repairable field) keeps the generic hint.
+    if (hasUnexplainedHighlightGap && errors.length === 1) {
+      hint = "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a note naming it, or drop it from highlight_groups[] if it is uncolored plumbing.";
+    }
+    // Same rule for a caller-supplied class: its wording stands only while nothing else is wrong.
+    if (soleHints.length === 1 && errors.length === externalErrorCount) {
+      hint = soleHints[0];
+    }
+    return {
+      success: false,
+      errors,
+      hint,
+      repairable: allRepairable,
+      repairFields: [...repairFields],
+      ...(issuePaths.size > 0 ? { detail: [...issuePaths].map(path => ({ path })) } : {}),
+    };
   }
 
   return {
@@ -566,7 +870,7 @@ export function validatePresentResult(
     name: input.name.trim(),
     node_ids: resolvedNodeIds,
     summary: input.summary,
-    description: assembledDescription,
+    description: assembledDescription!,
     layout_direction: input.layout_direction ?? 'TB',
     highlight_groups: input.highlight_groups ?? [],
     badges: assembledBadges ?? [],
@@ -611,20 +915,4 @@ export function findDisconnectedViewNodes(
     }
   }
   return nodeIds.filter(id => !seen.has(id)).sort();
-}
-
-/**
- * Structural summary of the final presentation result.
- */
-export interface PresentResultResult {
-  /** True when the request passed validation and was posted to the webview. */
-  success: boolean;
-  /** Display name of the rendered AI view (≤200 chars after auto-fix). */
-  name: string;
-  /** One-line graph-card summary (≤300 chars) shown beside the view. */
-  summary: string;
-  /** Engine-assembled markdown blob from `orderAndAssemble`; absent when the AI submitted no `sections[]`. */
-  description?: string;
-  /** Count of nodes included in the rendered view after add/prune resolution. */
-  node_count: number;
 }

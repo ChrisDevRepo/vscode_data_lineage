@@ -23,9 +23,10 @@ import {
   enrichColumnsWithConstraints,
   createEmptySchemaInfo,
   DEFAULT_CONFIG,
+  UNKNOWN_DB_PLATFORM,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
-import type { SimpleExecuteResult, DbCellValue } from '../types/mssql';
+import type { SimpleExecuteResult, DbCellValue, IServerInfo } from '../types/mssql';
 import { schemaKey } from '../utils/sql';
 
 /**
@@ -38,12 +39,12 @@ export interface DmvResults {
   columns: SimpleExecuteResult;
   /** Raw cross-object dependency edges. */
   dependencies: SimpleExecuteResult;
-  /** Full cross-schema catalog for dependency resolution. */
-  allObjects?: SimpleExecuteResult;
   /** metadata for Foreign Key, Unique, and Check constraints. */
   constraints?: SimpleExecuteResult;
   /** Server-level platform and version metadata. */
   platformInfo?: SimpleExecuteResult;
+  /** Platform derived from MSSQL server metadata when the platform query is unavailable. */
+  serverPlatform?: string;
 }
 
 /**
@@ -104,7 +105,6 @@ export function buildModelFromDmv(
 ): DatabaseModel {
   const objects = extractObjects(results);
   const deps = extractDependencies(results);
-  const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
   if (onDebugLog) {
     const c = { table: 0, view: 0, procedure: 0, function: 0 } as Record<string, number>;
     for (const o of objects) if (o.type in c) c[o.type]++;
@@ -115,28 +115,49 @@ export function buildModelFromDmv(
     }).length ?? 0;
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
-  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes, onDebugLog);
-  const dbPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : undefined;
+  const model = buildModel(objects, deps, undefined, currentDatabase, externalRefsEnabled, maxNodes, onDebugLog);
+  const queryPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
+  const dbPlatform = queryPlatform !== UNKNOWN_DB_PLATFORM
+    ? queryPlatform
+    : results.serverPlatform?.trim() || UNKNOWN_DB_PLATFORM;
 
   const warnings: string[] = [];
   if (objects.length === 0) {
     warnings.push('No user objects found in database.');
   }
 
-  return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform };
+  return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform, source: 'database' };
 }
 
 /**
  * Maps SQL Server engine metadata to human-readable platform strings.
  */
-function mapEnginePlatform(result: SimpleExecuteResult): string | undefined {
-  if (!result.rows.length) return undefined;
+export function mapEnginePlatform(result: SimpleExecuteResult): string {
+  if (!result.rows.length) return UNKNOWN_DB_PLATFORM;
   const colIdx = buildColumnIndex(result);
   const row = result.rows[0];
   const engineEdition = parseInt(cellValue(row, colIdx, 'engine_edition'), 10);
   const majorVersion  = parseInt(cellValue(row, colIdx, 'major_version'), 10);
   const edition       = cellValue(row, colIdx, 'edition');
-  
+  return mapEngineMetadata(engineEdition, majorVersion, edition);
+}
+
+/**
+ * Maps authoritative MSSQL extension server metadata to a platform label.
+ *
+ * @remarks
+ * A second entry point exists so the `getServerInfo` fallback cannot drift from the
+ * `platform-info` query path: both funnel into `mapEngineMetadata`, so a connection
+ * yields the same label whichever tier resolved it. Changing one mapping without the
+ * other would make the displayed platform depend on which tier happened to answer.
+ */
+export function mapServerInfoPlatform(
+  info: Pick<IServerInfo, 'engineEditionId' | 'serverMajorVersion' | 'serverEdition'>,
+): string {
+  return mapEngineMetadata(info.engineEditionId, info.serverMajorVersion, info.serverEdition);
+}
+
+function mapEngineMetadata(engineEdition: number, majorVersion: number, edition: string): string {
   switch (engineEdition) {
     case 5:  return 'Azure SQL Database';
     case 6:  return 'Synapse Dedicated Pool';
@@ -151,7 +172,7 @@ function mapEnginePlatform(result: SimpleExecuteResult): string | undefined {
         16: '2022', 17: '2025',
       };
       const year = versionYearMap[majorVersion];
-      return year ? `SQL Server ${year}` : (edition || undefined);
+      return year ? `SQL Server ${year}` : (edition.trim() || UNKNOWN_DB_PLATFORM);
     }
   }
 }
@@ -161,7 +182,6 @@ function mapEnginePlatform(result: SimpleExecuteResult): string | undefined {
  */
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   'schema-preview': ['schema_name', 'type_code', 'object_count'],
-  'all-objects': ['schema_name', 'object_name', 'type_code'],
   nodes: ['schema_name', 'object_name', 'type_code', 'body_script'],
   columns: [
     'schema_name', 'table_name', 'ordinal', 'column_name',
@@ -173,6 +193,7 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
     'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete'
   ],
   dependencies: ['referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'],
+  'platform-info': ['engine_edition', 'major_version', 'edition'],
 };
 
 /**
@@ -275,14 +296,14 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
 
   const isTruthy = (v: string) => v === '1' || v.toLowerCase() === 'true';
   const objectColumns = new Map<string, ColumnDef[]>();
-  
+
   for (const row of results.columns.rows) {
     const schema = cellValue(row, colColIdx, 'schema_name');
     const table = cellValue(row, colColIdx, 'table_name');
     const key = `${schema}.${table}`.toLowerCase();
-    
+
     if (!objectColumns.has(key)) objectColumns.set(key, []);
-    
+
     const col = buildColumnDef(
       cellValue(row, colColIdx, 'column_name'),
       cellValue(row, colColIdx, 'type_name'),
@@ -293,7 +314,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       cellValue(row, colColIdx, 'precision'),
       cellValue(row, colColIdx, 'scale'),
     );
-    
+
     const pkOrdinalRaw = cellValue(row, colColIdx, 'pk_ordinal');
     if (pkOrdinalRaw) {
       const pk = parseInt(pkOrdinalRaw, 10);
@@ -323,7 +344,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     let fks: ForeignKeyInfo[] | undefined;
     const objectKey = `${schemaName}.${objectName}`.toLowerCase();
     const cols = objectColumns.get(objectKey);
-    
+
     if (cols) {
       columns = cols;
       if (constraintMaps && (objType === 'table' || objType === 'external')) {
@@ -371,30 +392,4 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
   }
 
   return deps;
-}
-
-/**
- * Extracts a lightweight catalog of all objects from the full catalog query.
- */
-function extractAllObjects(result: SimpleExecuteResult): ExtractedObject[] {
-  const colIdx = buildColumnIndex(result);
-  const seen = new Set<string>();
-  const objects: ExtractedObject[] = [];
-
-  for (const row of result.rows) {
-    const schemaName = cellValue(row, colIdx, 'schema_name');
-    const objectName = cellValue(row, colIdx, 'object_name');
-    const typeCode = cellValue(row, colIdx, 'type_code').trim();
-    const objType = DMV_TYPE_MAP[typeCode];
-    if (!objType) continue;
-
-    const fullName = `[${schemaName}].[${objectName}]`;
-    const id = normalizeName(fullName);
-    if (seen.has(id)) continue;
-    seen.add(id);
-
-    objects.push({ fullName, type: objType });
-  }
-
-  return objects;
 }

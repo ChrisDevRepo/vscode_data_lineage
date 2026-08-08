@@ -5,6 +5,7 @@ import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
 
 /**
  * Configuration options for the detail view, typically synchronized from VS Code settings.
@@ -40,10 +41,7 @@ const DEFAULT_DETAIL_CONFIG: DetailConfig = {
   standardModeEnabled:   DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
 };
 
-/** 
- * Persistent reference to the VS Code Webview API.
- * This is acquired once per webview lifecycle.
- */
+/** VS Code API acquired once for the detail webview lifecycle. */
 const _vscodeApi = acquireVsCodeApi();
 
 // Expose the VS Code API globally for components that cannot use hooks (e.g., class-based ErrorBoundaries).
@@ -59,15 +57,7 @@ window.addEventListener('error', (event) => {
 });
 
 /**
- * Root component for the Data Lineage Detail Webview.
- * 
- * This component manages the lifecycle of the detail panel, including:
- * - IPC communication with the VS Code extension host.
- * - Switching between DDL (Monaco) and Column (Table) views.
- * - Managing table statistics (profiling) state.
- * - Synchronizing theme changes with VS Code.
- * 
- * @returns The rendered detail panel or a placeholder message if no node is selected.
+ * Coordinates detail-webview messages, DDL/column views, and profiling state.
  */
 export function DetailApp() {
   const vscodeApi  = useRef(_vscodeApi);
@@ -80,12 +70,24 @@ export function DetailApp() {
   nodeIdRef.current = detail?.node?.id;
 
   useEffect(() => {
-    /** 
+    /**
      * Handles incoming messages from the VS Code extension host.
      */
     function handler(e: MessageEvent) {
-      const msg = e.data;
-      if (!msg?.type) return;
+      // Single validated inbound dispatcher — host→detail messages are Zod-checked here, never read raw.
+      const parsed = ExtensionToDetailMsgSchema.safeParse(e.data);
+      if (!parsed.success) return;
+      // `postToDetail` stamps every frame, so a missing or different version means the host bundle
+      // and this view disagree about the contract — report it instead of half-rendering.
+      const version = (e.data as BridgeEnvelope | undefined)?.protocolVersion;
+      if (version !== BRIDGE_PROTOCOL_VERSION) {
+        vscodeApi.current.postMessage({
+          type: 'error',
+          error: `[Detail] Bridge protocol mismatch on "${parsed.data.type}": host sent v${String(version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
+        });
+        return;
+      }
+      const msg = parsed.data;
 
       if (msg.type === 'detail-update') {
         // Reset statistics state if we've switched to a different node.
@@ -102,15 +104,13 @@ export function DetailApp() {
         setStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
       } else if (msg.type === 'table-stats-error') {
         setStatsState({ phase: 'error', message: msg.message });
-      } else if (msg.type === 'themeChanged') {
-        document.body.setAttribute('data-vscode-theme-kind', String(msg.kind));
       }
     }
     window.addEventListener('message', handler);
     // Signal to the host that the detail view is ready to receive data.
     vscodeApi.current.postMessage({ type: 'detail-ready' });
     return () => window.removeEventListener('message', handler);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reset toggle to DDL view when switching to a different node.
   useEffect(() => { setDetailMode('ddl'); }, [detail?.node?.id]);
@@ -133,7 +133,7 @@ export function DetailApp() {
   const isTable = node.type === 'table' || node.type === 'external';
   const hasColumnsAndDdl = !!(node.columns?.length && node.bodyScript);
 
-  /** 
+  /**
    * Dispatches a request to the host to profile the current table/view.
    */
   function handleRequestStats(mode: StatsMode) {
@@ -147,7 +147,7 @@ export function DetailApp() {
     setStatsState({ phase: 'loading', mode });
   }
 
-  /** 
+  /**
    * Signals the host to close the detail panel.
    */
   function handleClose() {

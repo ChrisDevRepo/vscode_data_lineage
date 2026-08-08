@@ -7,9 +7,6 @@ import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 import { preprocessDescriptionMarkdown } from './aiDescriptionMarkdown';
 
-/**
- * Props for the `AiDescriptionOverlay` component.
- */
 interface AiDescriptionOverlayProps {
   /** The name of the AI-generated view or analysis. */
   viewName: string;

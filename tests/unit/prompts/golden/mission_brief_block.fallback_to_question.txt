@@ -1,0 +1,4 @@
+## Mission Context
+<mission_brief>
+How is FactSales loaded?
+</mission_brief>

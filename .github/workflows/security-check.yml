@@ -14,7 +14,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for sensitive files
+      - name: Check for ignored or sensitive files
         run: |
           echo "Checking for sensitive files..."
 
@@ -27,13 +27,6 @@ jobs:
             "*.pfx"
             "credentials*.json"
             "secrets*.json"
-            "**/test-data/**"
-            "**/.claude/**"
-            ".claude/**"
-            "**/test-internal/**"
-            "test-internal/**"
-            "**/docs-internal/**"
-            "docs-internal/**"
             "customer-data/**"
           )
 
@@ -45,6 +38,13 @@ jobs:
           )
 
           FOUND_FILES=""
+
+          # A tracked path covered by the repository ignore policy was
+          # force-added and must be reviewed or removed.
+          ignored_tracked=$(git ls-files -ci --exclude-standard)
+          if [ -n "$ignored_tracked" ]; then
+            FOUND_FILES="$FOUND_FILES$ignored_tracked (tracked despite .gitignore)"$'\n'
+          fi
 
           for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
             matches=$(git ls-files "$pattern" 2>/dev/null || true)

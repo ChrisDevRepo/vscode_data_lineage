@@ -15,9 +15,6 @@ import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 import type { FilterProfile } from '../engine/projectStore';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
-/**
- * Props for the {@link Toolbar} component.
- */
 interface ToolbarProps {
   /** The set of object types (table, view, etc.) currently active in the filter. */
   types: Set<ObjectType>;
@@ -190,13 +187,7 @@ function expandedSchemaStatusText(expandedSchemaCount: number): string {
 
 
 /**
- * The main control bar for the lineage visualizer.
- *
- * This component provides a comprehensive set of tools for searching, filtering,
- * analyzing, and navigating the data lineage graph. It manages state for
- * various dropdowns and handles keyboard shortcuts for quick access.
- *
- * @param props - Component properties.
+ * Provides graph search, filtering, analysis, navigation, and keyboard controls.
  */
 export const Toolbar = memo(function Toolbar({
   types,
@@ -311,7 +302,6 @@ export const Toolbar = memo(function Toolbar({
   return (
     <>
       <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
-        {/* Navigation */}
         <Tooltip content="Load New Project">
           <Button onClick={() => isFilterDirty ? setConfirmingBack(true) : onBack()} variant="icon" aria-label="Load New Project">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -334,7 +324,6 @@ export const Toolbar = memo(function Toolbar({
 
         <div className="w-px h-6 ln-divider" />
 
-        {/* Search & Filters */}
         <div className="flex-1 min-w-[100px] max-w-[340px]">
           <SearchWithAutocomplete
             onExecuteSearch={onExecuteSearch}
@@ -413,7 +402,6 @@ export const Toolbar = memo(function Toolbar({
           />
         )}
 
-        {/* Analysis Dropdown */}
         <Tooltip content={!canStartNewScopedMode && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
           <Button
             ref={analysis.refs.setReference}
@@ -489,7 +477,6 @@ export const Toolbar = memo(function Toolbar({
           </Tooltip>
         )}
 
-        {/* Export & Help */}
         <Tooltip content={isOverview ? 'Export Schema View as Draw.io' : 'Export as Draw.io'}>
           <Button onClick={onExportDrawio} variant="icon" aria-label="Export as Draw.io" disabled={!onExportDrawio}>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">

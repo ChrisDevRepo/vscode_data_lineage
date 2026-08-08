@@ -5,17 +5,13 @@ import { bfsReachable } from './graphGuards';
 import { searchCatalog, searchBodyScripts, searchColumns, type SearchableNode } from '../utils/modelSearch';
 
 /**
- * Deterministic "engine parity report" — a fixed battery of backend computations
- * over a loaded {@link DatabaseModel}, used as a golden-baseline regression net.
+ * Deterministic engine report containing a fixed battery of backend computations
+ * over a loaded {@link DatabaseModel}.
  *
  * @remarks
- * The same function is run in two layers against the same input (the demo dacpac):
- * the unit layer (vitest, from the fixture) and the electron layer (the real
- * Extension Development Host, via the gated `dataLineageViz.__test.engineReport`
- * command). Both assert equality against `tests/fixtures/engine-parity-baseline.json`,
- * so a divergence flags an integration/bundling/extraction regression that
- * isolated unit tests cannot see. Every field is order-stable (sets are sorted)
- * and free of timestamps/randomness so the JSON compares byte-for-byte.
+ * Every field is order-stable and free of timestamps or randomness, allowing callers to compare
+ * reports byte-for-byte. The Extension Development Host exposes it only through the test-gated
+ * `dataLineageViz.__test.engineReport` command.
  */
 export interface EngineParityReport {
   /** Report schema version — bump when the battery shape changes (forces a baseline refresh). */
@@ -44,7 +40,7 @@ export interface EngineParityReport {
 
 const REPORT_SCHEMA_VERSION = 1;
 
-/** Fixed, content-agnostic queries — whatever the demo returns becomes the golden. */
+/** Fixed, content-agnostic queries included in every report. */
 const FIXED_QUERIES: ReadonlyArray<{ kind: 'catalog' | 'body' | 'column'; query: string }> = [
   { kind: 'catalog', query: 'a' },
   { kind: 'body', query: 'select' },

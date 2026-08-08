@@ -14,16 +14,15 @@ export interface CspOptions {
 }
 
 /**
- * Builds a strict but functional Content-Security-Policy for the React webview.
+ * Builds a webview Content Security Policy from its nonce and allowed source URI.
  *
- * @param options - Required parameters for VS Code webview CSP generation.
  * @returns A formatted CSP string ready for the `<meta>` tag.
  */
 export function buildWebviewCsp({ nonce, cspSource }: CspOptions): string {
   return [
     "default-src 'none'",
     `style-src ${cspSource} 'unsafe-inline'`,
-    // Note: cspSource is required in script-src so Vite can dynamically import chunks
+    // Vite chunk imports require the webview source in addition to the nonce.
     `script-src 'nonce-${nonce}' ${cspSource}`,
     `img-src ${cspSource} data:`,
     `font-src ${cspSource}`

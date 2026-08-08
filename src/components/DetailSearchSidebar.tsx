@@ -4,9 +4,7 @@ import { SidePanel } from './SidePanel';
 import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
 import { highlightText } from './highlight';
 
-/**
- * A specialized node representation used for high-performance detail searching.
- */
+/** Search projection containing the node fields used by the detail sidebar. */
 export interface DetailSearchNode {
   /** The unique ID of the object. */
   id: string;
@@ -22,9 +20,6 @@ export interface DetailSearchNode {
   columns?: ColumnDef[];
 }
 
-/**
- * Props for the `DetailSearchSidebar` component.
- */
 interface DetailSearchSidebarProps {
   /** Callback triggered to close the sidebar. */
   onClose: () => void;

@@ -18,9 +18,7 @@ export type TableStatsState =
   | { phase: 'result'; stats: TableStats; mode: StatsMode }
   | { phase: 'error'; message: string };
 
-/**
- * Props for the {@link TableDetailPanel} component.
- */
+/** Data, configuration, and callbacks required by {@link TableDetailPanel}. */
 export interface TableDetailPanelProps {
   /** Database schema name (e.g., 'dbo'). */
   schema: string;
@@ -62,13 +60,7 @@ const DEFAULT_WIDTH = 560;
 
 
 /**
- * A slide-out panel that displays comprehensive details for a selected database object.
- *
- * This component acts as a high-density information hub, presenting column definitions,
- * foreign key relationships, and live data statistics. It supports manual resizing
- * and integrates with the profiling engine to fetch real-time metrics.
- *
- * @param props - Component properties.
+ * Displays columns, foreign keys, and profiling metrics for the selected database object.
  */
 export const TableDetailPanel = memo(function TableDetailPanel({
   schema,
@@ -164,9 +156,7 @@ export const TableDetailPanel = memo(function TableDetailPanel({
         />
       )}
 
-      {/* Panel content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-        {/* Header */}
         <div
           style={{
             display: 'flex',
@@ -201,20 +191,15 @@ export const TableDetailPanel = memo(function TableDetailPanel({
           </Tooltip>
         </div>
 
-        {/* Scrollable body */}
         <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {/* Type label */}
           <div className="ln-section-label">
             {typeLabel}
           </div>
 
-          {/* Column table */}
           <ColumnTable columns={columns} isVirtualExt={isVirtualExt} findQuery={findQuery} compact={compactColumns} />
 
-          {/* Foreign Keys section */}
           {fks.length > 0 && <ForeignKeysSection fks={fks} findQuery={findQuery} />}
 
-          {/* Statistics section — only shown for DB mode */}
           {isDbMode && statsEnabled && !isVirtualExt && !(excludeExternalTables && objectType === 'external') && (
             <StatsSection
               statsState={statsState}

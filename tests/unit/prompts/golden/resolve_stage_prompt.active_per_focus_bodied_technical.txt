@@ -1,0 +1,57 @@
+### Capture recipe for THIS focus node (write each key to its target field)
+
+- technical_capture: <purpose>
+Capture HOW this node runs — execution mechanics, query shape, loading
+pattern, performance affordances and traps.
+</purpose>
+
+⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Make
+claims only about indexes, partitioning, performance issues, or references
+present in DDL. Tie performance claims to visible SQL constructs (JOIN,
+WHERE, DISTINCT, subquery). If it is absent from DDL, it is out of scope.
+Quoted SQL witnesses must be exact substrings of that DDL — never
+paraphrased SQL. When the DDL shows a pattern but not its runtime effect,
+state `not established from the available SQL` rather than inferring it.
+
+Submit one section: `{ angle: "technical", text: "<body>" }`. The
+archive has no length cap; synthesis lifts your text verbatim. Write
+as deeply as the node's implementation warrants.
+
+<body_recipe>
+1. SQL evidence — quote the key expressions verbatim: JOIN predicates,
+   CASE conditions, COALESCE fallbacks, computed-column formulas, the
+   window-function partition clause. Snippet only, not the full
+   INSERT/SELECT statement.
+2. Loading pattern (procedures only) — one coarse value: `reload`
+   (TRUNCATE + INSERT), `append` (INSERT-only), `upsert` (MERGE or
+   UPDATE + conditional INSERT), `historization` (versioned history),
+   `purge` (DELETE-only), `orchestration` (EXECs other SPs, no data
+   mutation). Coarse only — sub-variants (SCD1/SCD2/CDC) belong in
+   prose if relevant. Omit when the focus is a view, UDF, or table.
+3. Computed columns — the formula as a `$$ … $$` block alongside its
+   snippet.
+4. Relationship role labels — "reads lookup from `DimProduct`",
+   "writes via MERGE to `FactTableA`", "triggered by `spLoadA`".
+5. Join types when hinted (HASH / MERGE / LOOP); flag Cartesian risk
+   with ⚠️.
+6. Antipatterns — excessive DISTINCT, OR in join predicates,
+   correlated subqueries in SELECT, scalar UDFs in WHERE.
+7. Distribution / indexing hints — partition key, hash-distribution
+   column, clustered-index column order.
+8. Datatype declarations — call out non-default precisions
+   (`DECIMAL(19,4)` vs `DECIMAL(18,2)`), nullability surprises, and
+   casts that change semantics (`CAST AS DATE` truncating time).
+9. Execution-plan candidates visible in the SQL text — flag as
+   candidates requiring validation, never as confirmed behavior:
+   sargability, parameter sniffing, and statistics effects need
+   schema metadata or plan evidence beyond this DDL.
+10. DDL comments and version annotations — author intent that would be
+   lost after this hop.
+</body_recipe>
+
+Format with markdown — no `#`/`##` headings (the engine owns section
+headings; open with a bold label instead), SQL in ```sql fences
+(snippet only), join steps as ordered lists, ⚠️ inline at risks.
+
+Each capture is independent — synthesis detects sibling variants
+across nodes and emits comparison tables at assembly time.

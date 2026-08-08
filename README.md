@@ -4,7 +4,10 @@
 [![VS Code](https://img.shields.io/badge/vscode-1.101+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
 
-Visualise SQL dependencies right inside VS Code. Browse your lineage graph with search, trace, and Schema View — and, if you use GitHub Copilot, ask `@lineage` to explore the loaded model in natural language.
+Visualise SQL dependencies right inside VS Code. Browse your lineage graph with
+search, trace, and Schema View — and, with a VS Code Language Model Chat
+provider such as GitHub Copilot, ask `@lineage` to explore the loaded model in
+natural language.
 
 Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
@@ -27,13 +30,16 @@ Once your model loads, the visual graph is ready to use — no Copilot required:
 - **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly.
 - **Trace dependencies** — follow sources upstream or consumers downstream from any node.
 - **See the blast radius** — spot hubs, islands, orphans, and circular dependencies before you change anything.
-- **Read the SQL** — click any node for DDL with syntax highlighting; full-text search across procedure and view bodies.
+- **Read the SQL** — right-click an object to open its DDL or table details; full-text search across procedure and view bodies.
 
 ![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
 
 ## Optional AI lineage with `@lineage`
 
-If GitHub Copilot is installed, `@lineage` adds natural-language exploration on top of the visual graph. The assistant answers from your loaded data model — never from general knowledge.
+With a VS Code Language Model Chat provider, `@lineage` adds natural-language
+exploration on top of the visual graph. The extension passes exactly the model
+selected for the chat request and constrains the assistant to the loaded data
+model.
 
 ```text
 @lineage trace from Sales.SalesOrderDetail upstream to the source tables
@@ -41,16 +47,23 @@ If GitHub Copilot is installed, `@lineage` adds natural-language exploration on 
 @lineage which objects are hubs with the most connections?
 ```
 
-Use it to ask dependency questions, open bookmarked graph views, and — where the metadata allows — follow column mappings or explain SQL logic.
+Use it to ask dependency questions, preview graph scopes, save useful previews as
+bookmarks, and — where the metadata allows — follow column mappings or explain
+SQL logic.
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
-`@lineage` has two modes of operation:
+`@lineage` has three user-visible paths:
 
 - **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered directly in chat from deterministic tools.
-- **Structured walkthrough** — when you ask for a graph in the side panel, request a column trace, or open a scope too large for chat, the assistant first shows the planned scope (nodes, schemas, depth) and asks for confirmation. Once approved, it walks the graph hop-by-hop and colours source / transform / target nodes in the result.
+- **Graph preview** — the **Show graph preview** follow-up opens a bounded transient preview in the side panel. Save it explicitly if you want a bookmark.
+- **Structured walkthrough** — an explicit graph/render request, `/trace`, a named-column trace, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
 
-Only the `@lineage` chat experience requires [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). The visual graph, search, trace, SQL preview, demo data, profiling, and export features work without Copilot.
+Only the `@lineage` chat experience requires a VS Code Language Model Chat
+provider, such as
+[GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
+or a compatible BYOK provider. The visual graph, search, trace, SQL preview,
+demo data, profiling, and export features work without one.
 
 ## Features
 
@@ -58,7 +71,7 @@ Only the `@lineage` chat experience requires [GitHub Copilot](https://marketplac
 - **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
 - **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
-- **Optional `@lineage` AI** — use GitHub Copilot Chat to ask lineage questions, follow column mappings where the metadata allows, and build bookmarked graph views.
+- **Optional `@lineage` AI** — use VS Code Chat to ask lineage questions, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows.
 - **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).
@@ -104,4 +117,4 @@ Bug reports welcome. For custom features, fork and extend under the MIT license.
 
 ---
 
-MIT License · [Christian Wagner](https://www.linkedin.com/in/christian-wagner-11aa8614b) · [GitHub](https://github.com/ChrisDevRepo/vscode_data_lineage) · Developed with Claude Code, Codex and Gemini
+MIT License · [Christian Wagner](https://www.linkedin.com/in/christian-wagner-11aa8614b) · [GitHub](https://github.com/ChrisDevRepo/vscode_data_lineage)

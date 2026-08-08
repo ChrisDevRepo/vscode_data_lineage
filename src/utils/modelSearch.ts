@@ -1,8 +1,6 @@
 import type { ObjectType, ColumnDef } from '../engine/types';
 
-/**
- * Represents a node structure optimized for search and filtering operations.
- */
+/** Node fields required by catalog, DDL, and column search. */
 export interface SearchableNode {
   /** Unique identifier of the node (schema.object). */
   id: string;
@@ -23,7 +21,7 @@ export interface SearchableNode {
 /**
  * Represents a match found within a DDL body script or column list.
  */
-export interface DdlMatch {
+interface DdlMatch {
   /** The node that contains the match. */
   node: SearchableNode;
   /** A formatted snippet showing the context of the match. */
@@ -36,11 +34,7 @@ export interface DdlMatch {
  * @param pattern - The raw regex string to compile.
  * @returns A compiled `RegExp` object, or `null` if the pattern is invalid or risky.
  *
- * @remarks
- * Architectural Remark:
- * Includes a heuristic ReDoS (Regular Expression Denial of Service) guard.
- * If execution on a 200-character sample string exceeds 5ms, the pattern
- * is rejected as potentially catastrophic.
+ * @remarks Rejects patterns that fail to execute against a bounded sample within 5 ms.
  */
 export function safeRegex(pattern: string): RegExp | null {
   try {

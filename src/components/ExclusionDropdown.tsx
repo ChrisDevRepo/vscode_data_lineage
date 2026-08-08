@@ -5,9 +5,6 @@ import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 import { compileExclusionPattern } from '../utils/sql';
 
-/**
- * Props for the {@link ExclusionDropdown} component.
- */
 interface ExclusionDropdownProps {
   /** Array of active exclusion patterns (SQL-like or Regex). */
   exclusionPatterns: string[];
@@ -19,11 +16,11 @@ interface ExclusionDropdownProps {
 
 /**
  * A dropdown component for managing node exclusion rules.
- * 
+ *
  * It allows users to enter SQL-like wildcards (e.g., `%tmp%`) or regular expressions
- * to hide matching nodes from the graph. Patterns are validated using 
+ * to hide matching nodes from the graph. Patterns are validated using
  * {@link compileExclusionPattern} before being added.
- * 
+ *
  * @param props - The component props.
  * @returns A memoized React component.
  */
@@ -112,7 +109,6 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             aria-label="Exclusion rules"
             {...getFloatingProps()}
           >
-            {/* Input row */}
             <div className="p-2 flex gap-1.5">
               <input
                 ref={inputRef}
@@ -142,7 +138,6 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
               </p>
             )}
 
-            {/* Quick Tips */}
             <div className="px-2 pb-1">
               <button
                 onClick={() => setTipsOpen(prev => !prev)}
@@ -177,7 +172,6 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
 
             <div className="mx-2 ln-border-top" />
 
-            {/* Rules list */}
             <div className="p-1.5 max-h-52 overflow-y-auto">
               {count === 0 ? (
                 <p className="px-2 py-2 text-xs text-center ln-text-muted">No exclusion rules</p>

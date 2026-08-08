@@ -2,8 +2,8 @@
  * @module ProfilingEngine
  * Handles SQL generation and result parsing for table-level data profiling.
  *
- * This module enables "Smart Profiling" by generating type-aware, single-pass SQL 
- * aggregation queries. It supports multiple target platforms (SQL Server 2022+, 
+ * This module enables "Smart Profiling" by generating type-aware, single-pass SQL
+ * aggregation queries. It supports multiple target platforms (SQL Server 2022+,
  * Azure SQL, Synapse, Fabric DWH) and provides:
  * - Statistical metrics (distinct counts, null percentages, completeness, uniqueness).
  * - Advanced profiling (min/max, mean, standard deviation, zero/empty counts).
@@ -244,7 +244,7 @@ export function buildProfilingQuery(
     if (engineEdition === ENGINE_EDITION_FABRIC) {
       topClause = `TOP ${sampleSize} `;
     } else {
-      const pct = computeSamplePercent(engineEdition, sampleSize, rowCount);
+      const pct = computeSamplePercent(sampleSize, rowCount);
       tablesampleClause = ` TABLESAMPLE(${pct} PERCENT)`;
     }
   }
@@ -277,13 +277,12 @@ WHERE p.object_id = OBJECT_ID('${qiStr(schema)}.${qiStr(tableName)}')
 /**
  * Calculates the required sampling percentage for `TABLESAMPLE`.
  *
- * @param _engineEdition - Database engine edition.
  * @param sampleSize - Requested sample size.
  * @param rowCount - Known row count.
  *
  * @returns Sampling percentage in `[1, 100]`; 100 when the row count is unknown or zero.
  */
-export function computeSamplePercent(_engineEdition: number, sampleSize: number, rowCount: number): number {
+export function computeSamplePercent(sampleSize: number, rowCount: number): number {
   if (rowCount <= 0) return 100;
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }

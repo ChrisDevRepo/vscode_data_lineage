@@ -6,7 +6,7 @@
  * own phase/state-dependent constraints that cannot be expressed as static
  * schemas (engine status, focus alignment, per-round invariants).
  */
-export type InteractionRuleFailure = {
+type InteractionRuleFailure = {
   error: string;
   hint: string;
   next_action?: string;

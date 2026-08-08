@@ -7,9 +7,6 @@ import { Tooltip } from './ui/Tooltip';
  */
 export type BannerVariant = 'trace' | 'analysis' | 'ai';
 
-/**
- * Props for the {@link ModeBanner} component.
- */
 interface ModeBannerProps {
   /** The visual style of the banner. */
   variant: BannerVariant;
@@ -38,12 +35,12 @@ const VARIANT_CLASS: Record<BannerVariant, string> = {
 
 /**
  * A shared UI component for displaying the active graph mode (Trace, Analysis, AI).
- * 
+ *
  * It appears at the top of the canvas and provides:
  * - A summary of the active operation.
  * - Mode-specific actions (via `extraControls`).
  * - A standardized workflow for saving the current view as a named bookmark.
- * 
+ *
  * @param props - The component props.
  * @returns A memoized React component.
  */

@@ -1,7 +1,7 @@
 /**
  * Structured logging infrastructure for the Data Lineage extension host.
  *
- * All output channel logging MUST use these helpers to enforce consistent
+ * Output-channel logging uses these helpers to enforce consistent
  * `[Category] message` formatting. This ensures traceability across the
  * asynchronous boundaries of the extension, bridge, and engine.
  */
@@ -9,8 +9,7 @@ import type { LogOutputChannel } from 'vscode';
 import { getGlobalSingleton } from './globalSingleton';
 
 /**
- * Canonical log categories used to tag all log entries.
- * Never invent new categories without updating this type.
+ * Canonical categories used to tag extension log entries.
  */
 export type LogCategory =
   | 'DB'
@@ -27,10 +26,8 @@ export type LogCategory =
 /**
  * Internal log capture buffer for automated integration tests.
  *
- * @remarks
- * Architectural Remark: Stored on `globalThis` to survive bundler-induced
- * module duplication in test environments (where multiple instances of
- * this module might be loaded by different entry points).
+ * @remarks Stored on `globalThis` so test bundles that load multiple module instances share one
+ * capture buffer.
  */
 const GLOBAL_LOG_KEY = '__VSCODE_DL_TEST_LOGS__';
 
@@ -46,20 +43,6 @@ function logToTest(cat: LogCategory, msg: string) {
   if (process.env.VSCODE_EX_TEST) {
     testLogCapture.push(`[${cat}] ${msg}`);
   }
-}
-
-/** Maximum number of recent log lines retained in the in-memory diagnostics ring. */
-const MAX_RECENT_LOGS = 200;
-const recentLogs: string[] = [];
-
-/**
- * Appends a single formatted log line to the always-on diagnostics ring.
- *
- * Bounded to {@link MAX_RECENT_LOGS}; oldest entries are evicted.
- */
-function recordRecentLog(level: 'info' | 'debug' | 'warn' | 'error', line: string): void {
-  recentLogs.push(`${new Date().toISOString()} [${level}] ${line}`);
-  if (recentLogs.length > MAX_RECENT_LOGS) recentLogs.shift();
 }
 
 function normalizeLogMessage(msg: string): string {
@@ -89,7 +72,6 @@ function normalizeCategorizedLogMessage(cat: LogCategory, msg: string): string {
 export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   logToTest(cat, norm);
-  recordRecentLog('info', `[${cat}] ${norm}`);
   ch.info(`[${cat}] ${norm}`);
 }
 
@@ -106,7 +88,6 @@ export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
 export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   logToTest(cat, norm);
-  recordRecentLog('debug', `[${cat}] ${norm}`);
   ch.debug(`[${cat}] ${norm}`);
 }
 
@@ -123,7 +104,6 @@ export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): v
 export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   logToTest(cat, norm);
-  recordRecentLog('warn', `[${cat}] ${norm}`);
   ch.warn(`[${cat}] ${norm}`);
 }
 
@@ -199,7 +179,6 @@ export function logRaw(
   text: string,
 ): void {
   const norm = normalizeLogMessage(text);
-  recordRecentLog(level, norm);
   switch (level) {
     case 'info':  ch.info(norm);  return;
     case 'warn':  ch.warn(norm);  return;
@@ -213,6 +192,52 @@ export const LOG_TRUNC_CONTENT = 200;
 
 /** Truncation cap for JSON payloads (tool I/O, webview messages) — logging.md truncation table. */
 export const LOG_TRUNC_JSON = 300;
+
+/**
+ * Truncation cap for tool-rejection diagnostics (reason and remediation hint).
+ *
+ * @remarks
+ * Deliberately larger than the content/JSON caps. A rejection's reason and hint are already
+ * bounded at construction, and for a turn that *ends* on a rejection this log line is the only
+ * complete record of which rule fired: the model-facing correction envelope is replayed into the
+ * next provider request, and a terminal rejection has no next request. Truncating below the
+ * value's own bound is what makes such a turn undiagnosable, so this cap is a safety stop on
+ * pathological input, not a formatting budget.
+ */
+export const LOG_TRUNC_REJECTION = 1_000;
+
+/**
+ * Serializes an arbitrary value into a bounded, single-line diagnostic preview.
+ *
+ * Circular references and bigint values are represented explicitly. Objects whose
+ * property access or serialization throws degrade to a stable marker so diagnostic
+ * formatting can never suppress the user-facing operation it accompanies.
+ */
+export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): string {
+  try {
+    const seen = new WeakSet<object>();
+    const serialized = JSON.stringify(value, (_key, candidate: unknown) => {
+      if (typeof candidate === 'bigint') return `${candidate.toString()}n`;
+      if (typeof candidate === 'string') {
+        return trunc(candidate, Math.max(32, Math.floor(max / 2)));
+      }
+      if (candidate && typeof candidate === 'object') {
+        if (seen.has(candidate)) return '[Circular]';
+        seen.add(candidate);
+      }
+      return candidate;
+    });
+    if (serialized !== undefined) return trunc(sanitizeForLog(serialized), max);
+  } catch {
+    // Fall through to a scalar representation. Proxies/getters can make JSON serialization throw.
+  }
+
+  try {
+    return trunc(sanitizeForLog(String(value)), max);
+  } catch {
+    return '[Unserializable]';
+  }
+}
 
 /**
  * Truncates a string or an array of items for log previews.
@@ -264,11 +289,9 @@ export function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err
   const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
   const msg = `FAILED: ${normalizeCategorizedLogMessage(cat, op)} — ${detail}`;
   logToTest(cat, msg);
-  recordRecentLog('error', `[${cat}] ${msg}`);
   ch.error(`[${cat}] ${msg}`);
   if (err instanceof Error && err.stack) {
     const stackLine = `Stack: ${normalizeLogMessage(err.stack)}`;
-    recordRecentLog('error', `[${cat}] ${stackLine}`);
     ch.error(`[${cat}] ${stackLine}`);
   }
 }

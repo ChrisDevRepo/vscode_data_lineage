@@ -4,9 +4,6 @@ import { useVsCode } from '../contexts/VsCodeContext';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the {@link HelpModal} component.
- */
 interface HelpModalProps {
   /** Whether the help modal is currently visible. */
   isOpen: boolean;
@@ -368,17 +365,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
 
 
 /**
- * A modal dialog that provides comprehensive documentation and help for the extension.
- * 
- * Features four main tabs:
- * - **Overview**: Keyboard shortcuts and high-level feature summaries.
- * - **Analysis**: Explanations of graph analysis modes (Islands, Hubs, Cycles, etc.).
- * - **Database**: Guidance on importing data and table profiling.
- * - **AI**: Instructions for using the @lineage AI assistant in Copilot Chat.
- * 
- * Architectural Note: This component uses a fixed-position overlay and manages its own
- * tab state. It communicates with the VS Code host for external link opening and
- * settings navigation.
+ * Displays the extension's overview, analysis, database, and AI help tabs.
  */
 export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalProps) {
   const vscodeApi = useVsCode();

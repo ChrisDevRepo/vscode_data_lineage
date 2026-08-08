@@ -1,12 +1,18 @@
 import * as vscode from 'vscode';
 import { type AiSession } from './ai/session/session';
 import { Logger } from './utils/log';
+import { notifyError } from './utils/notifications';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
 import { summarizeZodError } from './bridge/host';
 import { createMessageHandlers, PROJECT_STORE_KEY } from './bridge/messageHandlers';
-import { MainPanelToExtensionMsgSchema, type MainPanelToExtensionMsg } from './engine/shared/bridgeContract';
+import {
+  BRIDGE_PROTOCOL_VERSION,
+  MainPanelToExtensionMsgSchema,
+  type BridgeEnvelope,
+  type MainPanelToExtensionMsg,
+} from './engine/shared/bridgeContract';
 
 let activePanel: vscode.WebviewPanel | undefined;
 let activeTriggerDemo: (() => Promise<void>) | undefined;
@@ -94,6 +100,7 @@ export function openPanel(
     sess.model = null;
     sess.graph = null;
     sess.columnStore.clear();
+    sess.clearDiscoveryTranscript();
     vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
@@ -117,6 +124,19 @@ export function openPanel(
   });
 
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
+    // Envelope check before the payload union: a frame carrying a *different* protocol version came
+    // from a bundle this host cannot speak to, and parsing it would be guesswork. Webview→host
+    // frames are unstamped by contract (only the host's send path stamps), so an absent version is
+    // normal and only a present-but-wrong one is a skew.
+    const inboundVersion = (rawMsg as BridgeEnvelope | undefined)?.protocolVersion;
+    if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
+      notifyError(
+        bridgeLogger,
+        'Bridge protocol mismatch',
+        `Data Lineage: the webview is speaking bridge protocol v${String(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
+      );
+      return;
+    }
     const parsed = MainPanelToExtensionMsgSchema.safeParse(rawMsg);
     if (!parsed.success) {
       bridgeLogger.warn(`Rejected malformed webview message (type=${rawMsg?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
@@ -127,10 +147,14 @@ export function openPanel(
     try {
       await handler(msg);
     } catch (err) {
-      // A handler throwing here is unexpected: surface it to the user instead of failing
-      // silently, otherwise user-initiated actions (save/delete/export) appear to succeed.
-      bridgeLogger.error(`Handler '${msg.type}' threw unexpectedly`, err);
-      host.showErrorMessage(`Data Lineage: the "${msg.type}" action failed — ${err instanceof Error ? err.message : String(err)}`);
+      notifyError(
+        bridgeLogger,
+        `Handler '${msg.type}' threw unexpectedly`,
+        'Data Lineage: The requested action failed — see the "Data Lineage Viz" Output channel for details.',
+        err,
+        { messageType: msg.type },
+        host.showErrorMessage,
+      );
     }
   }, undefined, context.subscriptions);
 }
@@ -174,42 +198,6 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadD
   <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
-}
-
-/**
- * Provides the "Quick Actions" tree view in the VS Code Sidebar.
- *
- * This provider registers static entry points for common extension tasks
- * (Open Wizard, Open Demo, Settings) to improve discoverability.
- */
-export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    /**
-   * Returns a tree item representation for a specific element.
-   *
-   * @param element - element.
-   */
-  getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
-
-  /**
-   * Retrieves the top-level items for the sidebar.
-   */
-  getChildren(): vscode.TreeItem[] {
-    return [
-      this.item('Open Wizard', 'dataLineageViz.open', 'graph'),
-      this.item('Open Demo', 'dataLineageViz.openDemo', 'play'),
-      this.item('Settings', 'dataLineageViz.openSettings', 'gear'),
-    ];
-  }
-
-  /**
-   * Helper to construct a standard `vscode.TreeItem` with a command and icon.
-   */
-  private item(label: string, commandId: string, icon: string): vscode.TreeItem {
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-    item.command = { command: commandId, title: label };
-    item.iconPath = new vscode.ThemeIcon(icon);
-    return item;
-  }
 }
 
 export { buildDebugDump } from './bridge/messageHandlers';
