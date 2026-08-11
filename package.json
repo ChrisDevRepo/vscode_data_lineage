@@ -1278,7 +1278,7 @@
     "graphology-shortest-path": "^2.1.0",
     "graphology-traversal": "^0.3.1",
     "graphology-types": "^0.24.8",
-    "js-yaml": "^4.3.0",
+    "js-yaml": "^4.3.1",
     "jszip": "^3.10.1",
     "katex": "^0.16.47",
     "monaco-editor": "^0.53.0",
