@@ -989,14 +989,17 @@ export function App() {
     setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
     // View shape first, so the restored layout is built once instead of rebuilt after a mode flip.
-    // Restored only when it can render as saved: a bookmark written before these fields existed
-    // carries no `graphMode`; a scoped bookmark (allowlist) renders its node set, never schema
-    // clusters; and a saved 'overview' is not forced onto a host whose overview setting is off —
-    // each of those keeps the view as it is, exactly as before the fields existed.
-    const shapeMode = !isAdvanced && profile.graphMode
-      && (profile.graphMode === 'full' || (config.overview.enabled && !schemaViewSoftDisabled))
-      ? profile.graphMode
-      : undefined;
+    // A scoped bookmark (allowlist) renders its node set, never schema clusters, so it always
+    // restores into object-level mode. Otherwise the saved shape is restored only when it can
+    // render as saved: a bookmark written before these fields existed carries no `graphMode`, and
+    // a saved 'overview' is not forced onto a host whose overview setting is off — each of those
+    // keeps the view as it is, exactly as before the fields existed.
+    const shapeMode: GraphMode | undefined = isAdvanced
+      ? 'full'
+      : profile.graphMode
+        && (profile.graphMode === 'full' || (config.overview.enabled && !schemaViewSoftDisabled))
+        ? profile.graphMode
+        : undefined;
     if (shapeMode) {
       setGraphMode(shapeMode);
       setExpandedSchemaView(profile.expandedSchemaView
@@ -1009,7 +1012,12 @@ export function App() {
     }
     // `rebuild` reads `graphMode` from state, which is still stale in this tick.
     const targetMode = shapeMode ?? graphMode;
-    if (profile.positions && Object.keys(profile.positions).length > 0) {
+    // Saved positions are consumed by the canvas on the first `flowNodes` change after they are
+    // set. A deferred rebuild would commit the filter/mode state first and the new graph later,
+    // producing two changes — the first spends the positions on stale nodes, the second lands the
+    // default layout and auto-fit. Building synchronously commits everything in one render.
+    const hasPositions = !!profile.positions && Object.keys(profile.positions).length > 0;
+    if (hasPositions) {
       setPendingPositions(profile.positions);
       setPendingViewport(profile.viewport);
     }
@@ -1020,11 +1028,11 @@ export function App() {
       restored.types = new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']);
       setFilter(restored);
       setActiveAdvancedProfile(profile);
-      if (model) rebuild(model, restored, config, false, targetMode);
+      if (model) rebuild(model, restored, config, hasPositions, targetMode);
     } else {
       const restored = deserializeFilter(profile.filter);
       setFilter(restored);
-      if (model) rebuild(model, restored, config, false, targetMode);
+      if (model) rebuild(model, restored, config, hasPositions, targetMode);
     }
   }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled]);
 
