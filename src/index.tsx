@@ -7,6 +7,36 @@ if (!root) {
   throw new Error('Root element not found!');
 }
 
+/**
+ * Reports a failed bootstrap chunk load and leaves a visible message in place of the panel.
+ *
+ * @remarks
+ * The dynamic imports below carry the ErrorBoundary and — in detail mode — the global
+ * `unhandledrejection` listener itself, so a chunk that fails to load has no other reporter: without
+ * this the panel is blank and nothing reaches the Output channel. `window.vscode` may legitimately
+ * be undefined here (detail mode acquires it inside the chunk that just failed), in which case the
+ * in-page message is the only surface left.
+ *
+ * @param surface - Which webview failed, used to label the Output-channel record.
+ * @param mount - Element the failure message replaces the panel content in.
+ * @param error - The rejection value from the import chain.
+ */
+function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  window.vscode?.postMessage({
+    type: 'error',
+    source: 'window-error',
+    error: `${surface} webview failed to load: ${message}`,
+    stack: error instanceof Error ? error.stack : undefined,
+    timestamp: Date.now(),
+  });
+  // textContent, never innerHTML: `message` is provider/runtime text and must not be parsed as markup.
+  mount.textContent = 'Data Lineage could not load this view. Reload the window; if it persists, reinstall the extension.';
+  mount.style.setProperty('padding', '12px');
+  mount.style.setProperty('font-size', '12px');
+  mount.style.setProperty('color', 'var(--vscode-errorForeground)');
+}
+
 if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     // Global error handlers + ErrorBoundary are set up in DetailApp.tsx module scope
   // (window.vscode is also set there, which ErrorBoundary requires).
@@ -33,7 +63,7 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
         <DetailApp />
       </ErrorBoundary>
     );
-  });
+  }).catch(err => reportBootstrapFailure('detail', root, err));
 } else {
     // Acquire VS Code API ONCE — this is the only place it should be called
     const vscodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
@@ -88,5 +118,5 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
         </VsCodeProvider>
       </ErrorBoundary>
     );
-  });
+  }).catch(err => reportBootstrapFailure('panel', root, err));
 }

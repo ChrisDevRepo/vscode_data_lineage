@@ -1,10 +1,9 @@
 /**
  * Shared graph-integrity guards — pure graph algorithms for scope edits.
  *
- * Pure graph algorithms: accept graph + sets as parameters, no SM- or
- * view-specific coupling. The single source of truth for the add/prune rules
- * used by BOTH the AI NavigationEngine (hop-by-hop route/prune) and the
- * webview interactive trace editing (user-triggered add/prune):
+ * @remarks
+ * Pure graph algorithms: accept graph + sets as parameters, no SM- or view-specific coupling.
+ * Single source of truth for add/prune rules:
  * - Prune validation (orphan guard, cascade guard, disconnect guard)
  * - Node reference validation (reject hallucinated names)
  * - Bridge node injection (reconnect orphan noted nodes in result graph)
@@ -63,10 +62,10 @@ export function findShortestPathOrdered(
  * Logging callback injected into state machines for operational tracing.
  *
  * @remarks
- * Only `info` / `debug` / `warn` are permitted here; `error` flows through
- * dedicated channels with notification escalation.
+ * The optional error argument preserves caught exception stacks at production
+ * adapters without requiring the engine to depend on a concrete logger.
  */
-export type LogFn = (level: 'info' | 'debug' | 'warn', msg: string) => void;
+export type LogFn = (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void;
 
 /** Directional side of a lineage node when listing direct neighbors. */
 export type NeighborSide = 'in' | 'out';
@@ -76,10 +75,8 @@ export type NeighborSide = 'in' | 'out';
  * Performs a BFS reachability check from a starting node, respecting a set of removed (pruned) nodes.
  *
  * @remarks
- * This function uses undirected traversal (graph.neighbors) to ensure that both upstream
- * and downstream nodes are correctly identified within the lineage scope. This is essential
- * because a node's relevance is often determined by its connection to source tables (inbound)
- * as well as target views (outbound).
+ * Traversal is undirected (`graph.neighbors`) because relevance in a lineage scope runs both
+ * ways — a node can matter through an inbound source table or an outbound target view.
  *
  * @param graph - The graphology instance to traverse.
  * @param startId - The ID of the node to start the BFS from.
@@ -112,35 +109,6 @@ export function bfsReachable(
   return reachable;
 }
 
-
-/**
- * Determines if pruning a candidate node would orphan any previously noted nodes from the origin.
- *
- * @remarks
- * This guard prevents the AI from accidentally cutting off access to nodes it has already
- * flagged as important ("noted") during an exploration.
- *
- * @param graph - The graphology instance to check.
- * @param originId - The ID of the exploration's origin node.
- * @param removedSet - The current set of pruned nodes.
- * @param notedIds - The set of nodes previously noted by the AI.
- * @param candidateId - The ID of the node being considered for pruning.
- * @returns The ID of the first orphaned noted node found, or `null` if no orphaning occurs.
- */
-export function wouldOrphanNotedNode(
-  graph: Graph,
-  originId: string,
-  removedSet: ReadonlySet<string>,
-  notedIds: ReadonlySet<string>,
-  candidateId: string,
-): string | null {
-  if (notedIds.size === 0) return null;
-  const reachable = bfsReachable(graph, originId, removedSet, candidateId);
-  for (const id of notedIds) {
-    if (!reachable.has(id)) return id;
-  }
-  return null;
-}
 
 /**
  * Returns the first required node that would become disconnected from origin after removals.
@@ -207,9 +175,8 @@ export function directNeighborIds(
  * Generates a depth map for a directed graph starting from an origin node.
  *
  * @remarks
- * This function calculates the minimum hop distance from the origin to all reachable nodes
- * in a result subgraph. It is primarily used to sort nodes into "stages" or "tiers" for
- * structured report generation and visualization layout.
+ * Depth is the minimum hop distance from the origin, used to sort nodes into stages/tiers
+ * for report generation and visualization layout.
  *
  * @param edges - A flat list of directed edges [source, target, type].
  * @param originNodeId - The root node from which to calculate depths (depth 0).

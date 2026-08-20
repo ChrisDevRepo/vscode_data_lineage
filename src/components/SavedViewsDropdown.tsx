@@ -5,9 +5,6 @@ import { Tooltip } from './ui/Tooltip';
 import type { FilterProfile } from '../engine/projectStore';
 import { useDropdown } from '../hooks/useDropdown';
 
-/**
- * Props for the {@link SavedViewsDropdown} component.
- */
 interface SavedViewsDropdownProps {
   /** List of saved filter profiles (bookmarks) for the current project. */
   filterProfiles: FilterProfile[];
@@ -17,39 +14,30 @@ interface SavedViewsDropdownProps {
   activeViewId?: string | null;
   /** Whether the current filter state differs from the saved profile. */
   isViewModified?: boolean;
-  /** 
+  /**
    * Callback to save the current filter state as a new bookmark.
-   * @param name The display name for the new bookmark.
+   * @param name - Display name for the new bookmark.
    */
   onSaveView: (name: string) => void;
-  /** 
+  /**
    * Callback to apply a saved bookmark's filter state.
-   * @param profile The bookmark profile to apply.
+   * @param profile - Bookmark profile to apply.
    */
   onApplyView: (profile: FilterProfile) => void;
-  /** 
+  /**
    * Callback to delete a saved bookmark.
-   * @param profileId The ID of the bookmark to remove.
+   * @param profileId - ID of the bookmark to remove.
    */
   onDeleteView: (profileId: string) => void;
-  /** 
+  /**
    * Optional callback to update an existing bookmark with the current filter state.
-   * @param profileId The ID of the bookmark to update.
+   * @param profileId - ID of the bookmark to update.
    */
   onUpdateView?: (profileId: string) => void;
 }
 
 /**
- * A dropdown menu for managing and applying saved graph views (bookmarks).
- * 
- * Capabilities:
- * - **Create**: Save the current filter/search/exclusion state as a named bookmark.
- * - **Switch**: Rapidly apply different filter profiles.
- * - **Sync**: Update existing bookmarks with modified filter states.
- * - **Advanced**: Highlights "Advanced Bookmarks" (views with explicit node selections).
- * 
- * Architectural Remark: This component uses the `useDropdown` hook for positioning 
- * and handles its own confirmation state for deletion to prevent accidental data loss.
+ * Creates, applies, updates, and deletes saved graph views.
  */
 export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   filterProfiles,
@@ -67,7 +55,6 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reset internal state when dropdown closes
   useEffect(() => {
     if (!isOpen) {
       setIsAdding(false);
@@ -122,7 +109,6 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
             aria-label="Bookmarks"
             {...getFloatingProps()}
           >
-            {/* Save new view */}
             {!isAdding ? (
               <button
                 className="w-full text-left px-2 py-1.5 text-xs rounded-sm transition-colors ln-list-item flex items-center gap-2"
@@ -158,7 +144,6 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
               </div>
             )}
 
-            {/* Saved profiles list */}
             {filterProfiles.length > 0 && (
               <>
                 <div className="w-full h-px my-1.5" style={{ background: 'var(--ln-border)' }} />

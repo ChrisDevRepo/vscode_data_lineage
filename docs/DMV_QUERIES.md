@@ -7,7 +7,7 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 1. Open the **Command Palette** (`Ctrl+Shift+P`) and run **Data Lineage: Create DMV Queries** — copies the built-in YAML into your workspace as `dmvQueries.yaml`.
 2. Set `dataLineageViz.dmvQueriesFile` to `dmvQueries.yaml` in VS Code Settings (`Ctrl+,`, search "dataLineageViz").
 3. Edit the SQL — add WHERE filters, adjust JOINs, swap a query for a vendor variant.
-4. The YAML is validated on every DB import. Anything wrong falls back to the built-in queries with a VS Code warning.
+4. The YAML is loaded on every DB import. Missing or unreadable files, invalid YAML, or a file with no usable query entries falls back to the built-in queries with a warning. Invalid individual entries are skipped; a partially valid custom file remains active.
 
 ## Prerequisites
 
@@ -24,16 +24,28 @@ Every executed DMV query is logged to the **Data Lineage Viz** Output channel wi
 3. Open the wizard and run an import.
 4. Each query is logged on execution as `[DB] Executing <name> (step/total) — SQL: <first 300 chars>`. Copy / paste into SSMS to validate before scaling to a production server.
 
-The 300-character cap is intentional for log hygiene. For the full built-in SQL, read [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml); custom SQL is whatever your configured YAML contains after `{{SCHEMAS}}` expansion.
+The 300-character cap is intentional for log hygiene. For the full built-in
+SQL, read [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). Custom SQL is
+executed as configured; non-phase-1 queries receive `{{SCHEMAS}}` expansion.
 
-Nothing runs automatically in the background. The seven queries fire only during import and follow this two-phase order:
+Nothing runs automatically in the background. The standard import path uses:
 
 | Phase | Queries | When |
 |-------|---------|------|
-| Phase 1 | `schema-preview`, `all-objects`, `platform-info` (optional) | Always — runs first to populate the schema-selection wizard and the global object catalog. |
-| Phase 2 | `nodes`, `columns`, `constraints` (optional), `dependencies` | After schema selection — filtered to the selected schemas via the `{{SCHEMAS}}` placeholder. |
+| Phase 1 | `schema-preview` | Runs first to populate the schema-selection wizard. |
+| Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the extension uses authoritative MSSQL server metadata; if neither source is available, the model records `Unknown database platform` without failing the import. |
+| Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
+| Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
 
-Phase 2 queries use the placeholder `{{SCHEMAS}}` which the extension expands to the comma-separated, single-quoted schema list before execution (e.g. `'dbo','Sales'`). The SQL author controls *where* the filter is applied — TypeScript does not rewrite the query.
+`constraints` is executed, but its result is not currently attached to the
+`DmvResults` passed to the extractor, so constraint rows do not reach the table
+design view. These are current implementation limitations, not customization
+promises.
+
+The built-in Phase 2 queries use `{{SCHEMAS}}`, which the extension expands to
+the comma-separated, single-quoted schema list before execution (for example
+`'dbo', 'Sales'`). The SQL author controls where the filter is applied; TypeScript
+does not otherwise rewrite custom SQL.
 
 ## YAML structure
 
@@ -46,12 +58,12 @@ queries:
     description: "..."
     sql: |
       SELECT ...
-  - name: all-objects      # Phase 1 — full catalog (no DDL)
+  - name: all-objects      # Phase 1 — full object catalog (no DDL), optional
     phase: 1
     description: "..."
     sql: |
       SELECT ...
-  - name: platform-info    # Phase 1 — DB platform detection (optional)
+  - name: platform-info    # Platform detection before model construction
     phase: 1
     description: "..."
     sql: |
@@ -78,9 +90,9 @@ queries:
       SELECT ... WHERE s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}})
 ```
 
-## Required columns — the contract
+## Expected columns — the contract
 
-Each query must return specific columns (validated at runtime). Column names are case-insensitive. Extra columns are ignored.
+Each query must return the columns below. Column matching is case-insensitive and extra columns are ignored. The host currently validates `platform-info` before using it; the main extraction queries are consumed by column name without a complete preflight check, so test custom result shapes before production use.
 
 ### `schema-preview` — schema object counts (Phase 1)
 
@@ -90,9 +102,9 @@ Each query must return specific columns (validated at runtime). Column names are
 | `type_code` | string | Object type code (see table below) |
 | `object_count` | int | Number of objects of that type in the schema |
 
-### `all-objects` — full object catalog (Phase 1)
+### `all-objects` — full object catalog (Phase 1, optional)
 
-Runs alongside `schema-preview`. Returns all objects across **all schemas** (no DDL, no columns). Used in Phase 2 to classify cross-schema SP dependencies as "known" vs "unresolved", and to provide correct schema casing in the dependency details panel.
+Runs before the Phase 2 sweep. Returns all objects across **all schemas** (no DDL, no columns). Used to classify cross-schema dependencies as "known" vs "unresolved" and to provide correct schema casing in the dependency details panel. If absent or failing, cross-schema references into unselected schemas stay unclassified.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -121,9 +133,14 @@ Runs alongside `schema-preview`. Returns all objects across **all schemas** (no 
 | `TF` | Multi-Statement Table-Valued Function |
 | `ET` | External Table (PolyBase, Synapse, Fabric) |
 
-### `platform-info` — database platform detection (Phase 1, optional)
+### `platform-info` — platform detection
 
-Returns a single row identifying the database engine. Used to populate the `dbPlatform` field on the model (displayed in the connection info tooltip). If omitted, `dbPlatform` is left blank.
+The shipped query returns one row identifying the database engine. The
+extension maps it to `DatabaseModel.dbPlatform`, which is passed unchanged to
+the AI context and tool metadata. If the query is unavailable, MSSQL server
+metadata supplies the same mapping as a non-failing authoritative fallback.
+The import remains usable if neither source is available, but the platform is
+explicitly recorded as unknown rather than silently labelled SQL Server.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -141,7 +158,7 @@ Returns a single row identifying the database engine. Used to populate the `dbPl
 | 9 | Azure SQL Edge |
 | 11 | Fabric Data Warehouse |
 | 12 | SQL Database in Fabric |
-| 1–4 | On-prem SQL Server (resolved via `major_version`) |
+| any other value | Resolved from `major_version` to an on-prem SQL Server year (2000-2025); an unrecognised version falls back to `edition`, then to unknown |
 
 ### `columns` — table column metadata (Phase 2)
 
@@ -164,7 +181,9 @@ Used for the table design preview in the SQL viewer.
 
 ### `constraints` — table constraints (Phase 2, optional)
 
-Returns FK, UQ, and CK constraint metadata via `UNION ALL`, distinguished by `constraint_type`. If omitted, the table design view still works — constraints are simply not shown.
+Returns FK, UQ, and CK constraint metadata via `UNION ALL`, distinguished by
+`constraint_type`. The query currently executes, but the host omits its result
+when constructing `DmvResults`; consequently these constraints are not shown.
 
 CK rows are **column-level only** (`parent_column_id != 0`). Table-level CHECK constraints are not yet returned by the built-in query; see comments in `assets/dmvQueries.yaml` for context.
 
@@ -199,23 +218,36 @@ CK rows are **column-level only** (`parent_column_id != 0`). Table-level CHECK c
 
 ## What must stay fixed
 
-- **Query names** — must be exactly `schema-preview`, `all-objects`, `nodes`, `columns`, `dependencies` (required); `constraints`, `platform-info` (optional).
+- **`version`** — must equal the `version` of the shipped
+  [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) for this release. The
+  shipped file is the contract, and it is its own source of truth. A custom
+  file declaring a different version, or omitting the field, is skipped with a
+  VS Code warning notification naming both versions plus a log entry to the
+  **Data Lineage Viz** output channel, and the built-in queries are used for
+  that import — so a file written against an older query set never runs against
+  a contract it no longer matches. A release bumps this whenever a
+  change would invalidate an older custom file: a runtime query renamed or
+  removed, a required column added or renamed, or changed `{{SCHEMAS}}`
+  expansion. After an upgrade, run **Data Lineage: Create DMV Queries** to
+  scaffold a copy at the current version and re-apply your edits.
+- **Runtime query names** — the current import path requires
+  `schema-preview`, `nodes`, `columns`, and `dependencies`. `all-objects`,
+  `constraints`, and `platform-info` are optional definitions; MSSQL server
+  metadata supplies platform context when `platform-info` is unavailable, and a
+  missing `all-objects` leaves cross-schema references unclassified.
 - **Required column names** — the columns listed above must be present in the result set.
 - **Column semantics** — `type_code` must return `sys.objects.type` codes (or `ET` for external tables).
-- **`{{SCHEMAS}}` placeholder** — Phase 2 queries must contain it, otherwise the schema selection from the wizard cannot be applied.
-
-## Validation
-
-Column contracts are enforced at runtime. If a required column is missing, the error is explicit:
-
-> Query 'nodes' is missing required columns: type_code, body_script.
+- **`{{SCHEMAS}}` placeholder** — use it in Phase 2 SQL to apply the wizard's
+  schema selection. If it is absent, the loader warns but executes the custom
+  SQL verbatim rather than enforcing a filter.
 
 ## Fallback behaviour
 
 - **No YAML configured** → uses built-in queries silently.
 - **YAML missing or invalid** → uses built-in queries + VS Code warning dialog + log entry to the Output channel.
-- **YAML valid but missing required query names** → early warning at load time listing what's missing; hard error at execution time.
-- **Query returns wrong columns** → error message identifying the missing columns.
+- **YAML `version` does not match the shipped file** (including a missing `version`) → uses built-in queries + VS Code warning dialog naming both versions + log entry to the Output channel; re-scaffold and re-apply your edits.
+- **YAML valid but missing required query names** → an early warning lists the missing names; import fails when the active path needs a missing result.
+- **Main query returns wrong columns** → extraction may be empty or incomplete; there is no complete preflight validator for these result sets. `platform-info` is validated and falls back to MSSQL server metadata when unusable.
 - **Built-in YAML itself fails** (should not happen) → error logged, `db-error` sent to the webview.
 
 ## Known limitations

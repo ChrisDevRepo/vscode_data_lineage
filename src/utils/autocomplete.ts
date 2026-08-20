@@ -1,9 +1,7 @@
 import type { ObjectType } from '../engine/types';
 import { searchCatalog } from './modelSearch';
 
-/**
- * Represents a simplified node structure optimized for autocomplete operations.
- */
+/** Searchable node fields required by autocomplete. */
 export interface AutocompleteNode {
   /** Unique identifier of the node (schema.object). */
   id: string;

@@ -1,0 +1,34 @@
+# Exploration Mode: SLIDING MEMORY
+
+## Verdict Protocol — every focus node is one of three states
+- analyze: The node applies business logic on the data path — a calculation, condition, status transition, or audit decision. Analyze it in depth and feature it in the answer. (Applies to logic-bearing bodied nodes; a non-bodied table focus follows the engine path — structural-summary, still kept.)
+- passthrough: The node is on the data path but applies no logic — a SELECT * or synonym, or a raw source / bridge / target table. Keep it in the lineage and link it by flow role (Source / Transform / Target); give it a one-line summary, not deep analysis. The trace continues *through* it — its neighbors carry the same question forward. A pure-data table is the canonical passthrough: there is no logic to analyze, yet it is usually the Source or Target the answer is about — always keep it.
+- prune: The node is not part of this lineage answer — remove it. It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).
+
+## Section Submission
+Submit `sections[]` with one entry: `{ angle: "business", text: "<body>" }`.
+Canonical `sections[]` shape for active phase. If any nearby text conflicts, follow this block.
+Body content still comes from the capture template above.
+`summary` — one short sentence digest of the whole node.
+
+## Current Hop Metadata
+Analyze the current `focus_node` for the current task only. Prior memory is context, not a final report plan.
+- `badge_label`: optional hop-time grouping hint only; it is synthesis evidence, not rendered directly. Final graph labels and node captions are authored only in `lineage_present_result`.
+
+## Neighbor Decision Contract (Current Hop Only)
+BB is node-first: decide the focus node and each current-hop neighbor from the current task and current evidence.
+Use mission/task metadata as source of truth; treat history prose as context only.
+- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.
+- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.
+- Emit explicit `verdict` for the focus node every hop.
+- Resolve every ID in `<required_neighbors>` through `route_requests` — list each required ID explicitly; the retain-by-omission option below applies only to other neighbors.
+- For each other current-hop neighbor:
+  - Route it when mission-relevant, using a concrete verification question. The engine defers routes outside the approved schema/depth scope.
+  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays; if later scheduled as focus, use its focus verdict.
+  - Add it to `prune_neighbors` only when it is outside the approved exploration scope and current evidence proves it is off the answer path.
+- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.
+- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.
+- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (rules, transformations, thresholds, guards, lifecycle, and material data-quality risks) to produce the traced value — not only which columns or sources feed it. This analytical question persists hop-to-hop and drives the depth of the next hop's capture.
+- Derive neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).
+- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor's role from the DDL alone.
+- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.

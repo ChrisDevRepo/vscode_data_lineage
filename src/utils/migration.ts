@@ -1,30 +1,33 @@
 import * as vscode from 'vscode';
 import { IConnectionInfo } from '../types/mssql';
 import { stripSensitiveFields } from '../engine/connectionManager';
-import { migrateProjectStore, createProject, updateProject, generateProjectName } from '../engine/projectStore';
+import {
+  migrateProjectStore,
+  createProject,
+  updateProject,
+  generateProjectName,
+  type ProjectStoreDropReport,
+} from '../engine/projectStore';
 import { Logger } from './log';
 
 /**
- * Orchestrates the migration of legacy workspaceState keys into the new unified Project Store.
+ * Migrates legacy workspace-state connection metadata into the project store.
  *
- * This function preserves backward compatibility for users upgrading from versions
- * pre-dating the `ProjectStore` architecture. it recovers the "last-opened"
- * connection metadata and encapsulates it into a persistent project entity.
+ * The migration supports DACPAC and database connections, removes the legacy keys after
+ * processing, and is safe to call when no legacy state exists.
  *
  * @param context - The VS Code extension context for state access.
- * @param PROJECT_STORE_KEY - The unique key used for the global state project store.
+ * @param PROJECT_STORE_KEY - Global-state key for the project store.
  * @param outputChannel - The log channel for reporting migration progress.
- *
- * @remarks
- * Architectural Remark:
- * This logic handles both 'dacpac' and 'database' source types. Once migrated,
- * the legacy keys are purged to prevent redundant migrations on subsequent activations.
- * This should be deprecated and removed in a future major version (v1.0.0).
+ * @param onProjectsDropped - Receives the drop report when persisted records fail validation.
+ *   This path rewrites global state, so anything validation discards here is lost permanently —
+ *   the host reports it through the same single-notification channel as a normal load.
  */
 export async function migrateFromWorkspaceState(
-  context: vscode.ExtensionContext, 
+  context: vscode.ExtensionContext,
   PROJECT_STORE_KEY: string,
-  outputChannel: vscode.LogOutputChannel
+  outputChannel: vscode.LogOutputChannel,
+  onProjectsDropped?: (report: ProjectStoreDropReport) => void,
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Project');
   const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
@@ -45,7 +48,12 @@ export async function migrateFromWorkspaceState(
     const sourceName = context.workspaceState.get<string>('lastDbSourceName');
     const connectionInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
     if (sourceName && connectionInfo) {
-      connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
+      try {
+        connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
+      } catch (err) {
+        // A record the strict read schema would drop anyway — skip it here, where it can be logged.
+        logger.warn(`Legacy connection "${sourceName}" failed validation and was not migrated: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -53,13 +61,18 @@ export async function migrateFromWorkspaceState(
     const name = generateProjectName(connection);
     const project = createProject(name, connection);
     const rawStore = context.globalState.get(PROJECT_STORE_KEY);
-    const store = migrateProjectStore(rawStore);
+    const store = migrateProjectStore(rawStore, (report) => {
+      logger.warn(
+        `Legacy migration rewrote the project store without ${report.dropped} unreadable record(s) — fields: ${report.issuePaths.join(', ') || 'unknown'}`,
+      );
+      onProjectsDropped?.(report);
+    });
     const updated = updateProject(store, project);
     await context.globalState.update(PROJECT_STORE_KEY, updated);
     logger.info(`Migrated legacy connection to project "${name}"`);
   }
 
-  // Clear old workspaceState keys regardless
+  // Clear legacy keys even when their payload is incomplete to avoid repeated migration attempts.
   await Promise.all([
     context.workspaceState.update('lastSourceType', undefined),
     context.workspaceState.update('lastDacpacPath', undefined),

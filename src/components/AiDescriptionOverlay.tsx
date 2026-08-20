@@ -7,9 +7,6 @@ import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 import { preprocessDescriptionMarkdown } from './aiDescriptionMarkdown';
 
-/**
- * Props for the `AiDescriptionOverlay` component.
- */
 interface AiDescriptionOverlayProps {
   /** The name of the AI-generated view or analysis. */
   viewName: string;
@@ -191,7 +188,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             ) : (
               <div className="ln-ai-description-md">
                 <Markdown
-                  remarkPlugins={[remarkGfm, remarkMath]}
+                  remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
                   rehypePlugins={[rehypeKatex]}
                   components={{ a: AnchorComponent, h3: H3Component }}
                 >{processedDescription}</Markdown>

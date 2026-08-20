@@ -58,6 +58,16 @@ export function useExpandedSchemaView({
 
   const expandedSchemaViewGraph = useMemo(() => {
     if (graphMode !== 'overview' || !expandedSchemaView || !graph) return null;
+    // The render limit is enforced here, in the layer that owns the projection, because state can
+    // arrive without passing `applyExpandedSchemaViewSchemas` — a restored bookmark whose graph
+    // grew, or whose limit shrank, since it was saved. Over the limit the view degrades to
+    // clusters instead of freezing the webview.
+    const projectedCount = countExpandedSchemaViewRenderedNodes(
+      graph,
+      expandedSchemaView.expandedSchemas,
+      { includeCollapsedSchemaClusters: showExpandedSchemaClusters },
+    );
+    if (projectedCount > config.renderLimit) return null;
     return buildExpandedSchemaViewGraph(
       graph,
       expandedSchemaView.expandedSchemas,

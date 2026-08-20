@@ -1,0 +1,13 @@
+## Synthesis Reminder — re-read before calling `lineage_present_result`
+- User question: "How is FactSales loaded?"
+- `sections[]` is REQUIRED — create final graph/detail links from the full result. Use `detail_slots[]` for analyzed-node detail, `node_states[]` for lifecycle facts, and the "Column Trace Chain" block for CT provenance. Write `text` for every section.
+- `notes[]` — decoration follows documentation: link only nodes worth a badge in `sections[].node_ids[]`, and give each linked node one grounded caption. A highlighted node must be explained by a section link or a note; nodes left out of both preview surfaces stay bare.
+- `highlight_groups[]` is REQUIRED — include at least one selective group using the Lineage palette. For zero-trace or single-node results, use a `target` group on the origin/result node.
+- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; hop `badge_label` values are helper hints only. Keep business/technical split only when it improves clarity.
+- Every linked node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.
+- Formula/evidence policy: if captured business evidence contains formulas or explicit calculations for mission-critical nodes, keep them in section text. Compress prose, not evidence classes (rule triggers, thresholds, formulas, lifecycle effects, audit meaning).
+- Formula rendering: write every formula as LaTeX `$$…$$` block math (e.g. `$$ NetAmountA = QtyA \times PriceA $$`). Use `\times`, `\text{}`, `\operatorname{COALESCE}`; avoid backticks, inline code, plain prose, unicode math symbols, and bare single `$` (collides with @params and dollar amounts).
+- ⚠️ callout policy: include risk callouts only for significant decision-impacting issues grounded in captured evidence.
+- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases, write the text for every section.
+- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.
+User-facing chat text: Markdown only, no arbitrary HTML. Use short headings and bullets when they improve scanning; avoid wall-of-text paragraphs. SQL always goes in fenced ```sql blocks. Use tables only for comparisons, risks, or compact column summaries where row/column layout adds clarity. Match length to the question. Tool calls and tool results remain structured data.

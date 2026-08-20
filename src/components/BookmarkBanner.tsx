@@ -2,9 +2,6 @@ import { memo } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the `BookmarkBanner` component.
- */
 interface BookmarkBannerProps {
   /** The saved view profile being displayed. */
   profile: FilterProfile;
@@ -16,7 +13,7 @@ interface BookmarkBannerProps {
   onExit: () => void;
 }
 
-/** 
+/**
  * Human-readable labels for the different sources of bookmarked views.
  */
 const SOURCE_LABELS: Record<NonNullable<FilterProfile['source']>, string> = {
@@ -26,7 +23,7 @@ const SOURCE_LABELS: Record<NonNullable<FilterProfile['source']>, string> = {
   user: 'View',
 };
 
-/** 
+/**
  * Border and text colors corresponding to different bookmark sources.
  */
 const SOURCE_COLORS: Record<NonNullable<FilterProfile['source']>, string> = {
@@ -39,11 +36,11 @@ const SOURCE_COLORS: Record<NonNullable<FilterProfile['source']>, string> = {
 /**
  * A persistent banner displayed at the top of the graph canvas when an "Advanced Bookmark"
  * (an allowlist-based view) is active.
- * 
+ *
  * @remarks
  * This banner provides visual confirmation that the user is in a "locked" view mode
  * and provides a clear exit path to return to the global graph exploration.
- * 
+ *
  * @param props - The component props.
  */
 export const BookmarkBanner = memo(function BookmarkBanner({

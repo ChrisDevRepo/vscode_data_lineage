@@ -1,39 +1,35 @@
 # Source files (bundled into out/ and dist/)
 src/**
 scripts/**
-test/**
 tests/**
 test-results/**
-customer-data/**
-temp-old-design/**
 tmp/**
 tmp_*
 
-# Test output emitted into out/ folder must not ship.
-# Pattern intentionally globs `out/test*/**` so orphaned timestamped dirs
-# like `out/test.stale.1777052232/` don't leak into the VSIX.
+# Test output emitted into out/ must not ship.
 out/test*/**
 out/*.js
 out/**/*.js
 !out/extension.js
+!out/extensionRuntime.js
 out/*.d.ts
 out/**/*.d.ts
 
 # Config files
 .gitignore
+.gitattributes
 tsconfig.json
-tsconfig.extension.json
 tsconfig.integration.json
 .vscode-test.mjs
 vite.config.ts
 vitest.config.ts
-tailwind.config.js
-postcss.config.js
-postcss.config.cjs
 esbuild.config.mjs
 
 # Dev artifacts
 node_modules/**
+# Local inert langsmith replacement — resolved via npm override at install time; the shipped
+# bundle is self-contained, so the stub source never belongs in the VSIX.
+stubs/**
 .vscode/**
 **/*.map
 
@@ -43,7 +39,6 @@ CONTRIBUTING.md
 
 # Internal test and documentation infrastructure (must not leak into VSIX)
 **/*internal*/**
-.agents/**
 
 # Environment files (must never be packaged)
 .env
@@ -51,18 +46,18 @@ CONTRIBUTING.md
 
 # Assistant session temp files must not leak into VSIX.
 tmpclaude-*
+# Scratch files any tool drops beside the manifest. vsce ignores .gitignore, so untracked is not
+# the same as unpackaged; assert-package-contents.mjs rejects the same suffix as a backstop.
+*.tmp
+**/*.tmp
 
-# Unreferenced screenshot (superseded by viz-search/viz-ai variants).
-# NOTE: logo.png IS used at runtime by src/panelProvider.ts — keep it.
-images/viz-screenshot.png
+# Code-audit workspace (tool output, inventories, classification artifacts).
+.audit/**
 
 # KaTeX TTF fonts — never loaded by VS Code's webview (Chromium picks
 # woff2 > woff > ttf; TTF only matters for legacy browsers). Keep woff+woff2
 # as the actual delivery formats.
 dist/assets/KaTeX_*.ttf
-
-# AI dev artifacts (eval runs, replay JSON, prompt changelogs — internal only)
-ai/**
 
 # Misc
 PLAN*.md
@@ -75,10 +70,11 @@ GEMINI.md
 SECURITY.md
 CODE_OF_CONDUCT.md
 *.vsix
-debug.log
+# Untracked ad-hoc debug dumps still get packaged by vsce — exclude them explicitly.
+debug*.txt
 .claude/**
 .github/**
 **/.DS_Store
 .editorconfig
-.eslintrc*
-.prettierrc*
+
+.venv/**

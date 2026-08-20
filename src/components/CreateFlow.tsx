@@ -9,9 +9,6 @@ import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
 import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
 import { generateProjectName } from '../engine/projectStore';
 
-/**
- * Props for the `CreateFlow` component.
- */
 interface CreateFlowProps {
   /** The state object from the `useDacpacLoader` hook, managing the connection lifecycle. */
   loader: DacpacLoaderState;
@@ -19,7 +16,7 @@ interface CreateFlowProps {
   maxNodes: number;
   /** Callback triggered to return to the previous screen (StartScreen). */
   onBack: () => void;
-  /** 
+  /**
    * Callback triggered to finalize project creation and start the visualization.
    * @param projectName - The user-defined or auto-generated name for the project.
    * @param connection - The connection metadata (Dacpac or Database).
@@ -29,7 +26,7 @@ interface CreateFlowProps {
 
 /**
  * A wizard-style component that guides the user through creating a new lineage visualization.
- * 
+ *
  * @remarks
  * The flow consists of two logical phases:
  * 1. **Source Selection**: The user chooses between opening a .dacpac file or connecting to a live database.
@@ -37,7 +34,7 @@ interface CreateFlowProps {
  *    - Define a project name (auto-generated if left blank).
  *    - Select specific schemas to include in the visualization.
  *    - View warnings if the selected scope exceeds the recommended node limit.
- * 
+ *
  * @param props - The component props.
  */
 export const CreateFlow = memo(function CreateFlow({
@@ -109,7 +106,6 @@ export const CreateFlow = memo(function CreateFlow({
 
   return (
     <WizardPanel footer={footer}>
-      {/* Back navigation */}
       <button
         className="flex items-center gap-1 text-xs hover:underline ln-text-link"
         onClick={onBack}
@@ -139,7 +135,6 @@ export const CreateFlow = memo(function CreateFlow({
         </div>
       ) : (
         <div className="space-y-2">
-          {/* Open Dacpac — full width */}
           <button
             className="w-full flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm text-left ln-file-picker ln-list-item"
             onClick={loader.openFile}
@@ -180,7 +175,6 @@ export const CreateFlow = memo(function CreateFlow({
           </button>
           </Tooltip>
 
-          {/* Status / error */}
           {loader.status && (
             <StatusMessage text={loader.status.text} type={loader.status.type} />
           )}
@@ -240,9 +234,7 @@ export const CreateFlow = memo(function CreateFlow({
   );
 });
 
-/**
- * A simple inline spinning SVG used to indicate loading progress within wizard buttons.
- */
+/** Inline loading indicator for wizard actions. */
 function InlineSpinner() {
   return <Spinner className="w-4 h-4 ml-auto shrink-0" />;
 }

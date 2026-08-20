@@ -1,0 +1,2 @@
+
+(Inherited through passthrough dbo.OrderDetailA; re-anchor this question to dbo.spLoadFactSales. dbo.spLoadFactSales applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.)

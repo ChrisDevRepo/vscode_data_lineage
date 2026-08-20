@@ -1,18 +1,21 @@
 import type { ColumnEdge, SmNodeState } from '../sm/smTypes';
+import type { AIViewMetadata } from '../../engine/projectStore';
 
-/**
- * Categorizes nodes based on their semantic relevance to an AI-driven lineage investigation.
- *
- * @remarks
- * Used for both graph visualization (React Flow) and AI reasoning (BFS/DFS).
- * - `trace`: Part of the active lineage path.
- * - `pass`: Node was traversed but deemed a non-critical passthrough.
- * - `prune`: Node and its descendants were explicitly excluded.
- * - `noted`: Node has a high-signal business annotation.
- * - `bridge`: Structural node connecting critical parts of the graph.
- * - `origin`: The starting point of the lineage investigation.
- */
-export type NodeRole = 'trace' | 'pass' | 'prune' | 'noted' | 'bridge' | 'origin';
+/** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
+export interface DiscoveryScopeArtifact {
+  readonly turnEpoch: number;
+  readonly origin: string;
+  readonly direction: 'upstream' | 'downstream' | 'bidirectional';
+  readonly nodeIds: readonly string[];
+  readonly edges: readonly [string, string, string][];
+}
+
+/** Validated presentation committed by either a bounded preview or SM synthesis. */
+export interface PresentationArtifact {
+  readonly name: string;
+  readonly nodeIds: readonly string[];
+  readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
+}
 
 /**
  * Represents the grounded findings of an AI session, serialized for visualization.
@@ -26,8 +29,6 @@ export interface ResultGraph {
   nodeIds: string[];
   /** Tuple representation of edges: [sourceNodeId, targetNodeId, edgeType]. */
   edges: [string, string, string][];
-  /** Maps node IDs to their semantic roles in the result set. */
-  verdicts: Record<string, NodeRole>;
   /** The exploration mode and origin context that generated this graph. */
   source: string;
   /** The starting node ID of the exploration; used for topological sorting. */
@@ -53,14 +54,30 @@ export interface ResultGraph {
   /** AI-supplied closing note from `present_result.input.closing`. */
   closing?: string;
   /** AI-supplied report sections from `present_result.input.sections[]`. */
-  sections?: Array<{ label: string; node_ids?: string[]; angle?: 'business' | 'technical'; text?: string }>;
+  sections?: Array<{ label: string; node_ids?: string[]; text?: string }>;
   /**
-   * Column lineage chain from a CT session. Present only when the session used `targetColumns`.
-   * Forward-compatible foundation for React column-viz rendering — not yet consumed by the UI.
-   * `ctPrunedNodeIds` lists nodes visited but contributing no edges, for display filtering.
+   * Column lineage chain from a CT session, serialized into AI metadata for React canvas
+   * rendering. `ctPrunedNodeIds` identifies visited nodes that contributed no flow edges.
    */
   columnAspect?: { edges: ColumnEdge[]; ctPrunedNodeIds: string[] };
 }
+
+/**
+ * Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure).
+ *
+ * @remarks
+ * The single source of truth for template-structure compatibility. The built-in YAML carries a
+ * matching `schemaVersion`; a user's custom overlay (`ai.outputTemplateFile`) is honoured only when
+ * its `schemaVersion` equals this. **Bump this whenever a released change to the built-in YAML would
+ * make a previous release's overlay wrong** — a key renamed/removed, the `instruction` shape changed,
+ * or an instruction's *content* changed a rule `validatePresentResult` enforces (heading ownership,
+ * section counts, grounding). Content is deliberately NOT exempt: an overlay that still clears the
+ * version gate keeps instructing the model against the current validator, and that silent
+ * mis-application is the failure this gate exists to prevent. Additive-only changes (a new optional
+ * key that older YAML simply lacks) do NOT require a bump — the overlay tolerates absent keys.
+ * `tests/tools/assert-template-schema-version.mjs` fails the gate when the asset changes without one.
+ */
+export const AI_TEMPLATE_SCHEMA_VERSION = 2;
 
 /**
  * Collection of Markdown-formatted instructions for AI report generation.
@@ -152,25 +169,3 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   loading_pattern: '',
   column_trace_capture: '',
 };
-
-/**
- * A high-level, human-readable summary of an active AI session's state.
- *
- * @remarks
- * Primarily used for logging, telemetry, and updating VS Code UI elements
- * (like the Status Bar or Chat Participant metadata).
- */
-export interface SessionSummary {
-  /** Unique session identifier. */
-  id: string;
-  /** The name of the active project, if any. */
-  projectName: string | null;
-  /** Total number of nodes in the current database model. */
-  modelNodes: number;
-  /** Number of nodes explored by the AI in the current session. */
-  visitedNodes: number;
-  /** Percentage of the total model that has been explored. */
-  coveragePct: number;
-  /** Total number of hops (visits) performed by the AI. */
-  hopCount: number;
-}

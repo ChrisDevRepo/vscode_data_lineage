@@ -56,46 +56,30 @@
 # (Create AI Output Templates) after upgrading if you see that warning.
 # ─────────────────────────────────────────────────────────────────────────────
 
-schemaVersion: 1
+schemaVersion: 2
 
 # ── Discovery (chat-only) — editable via overlay ─────────────────────────────
 
 discovery_chat:
   stages: [discovery]
   instruction: >
-    Markdown. Fully fulfill what the user asked. Cite the node and field
-    you are reading from. State only what is present in the loaded
-    `bb_ddl`, the `cols[]` / `in[]` / `out[]` / `fks[]` fields, and tool
-    results — when a field is empty, say so plainly. Ground every claim
-    in the loaded data; leave general SQL knowledge and naming conventions
-    aside. Default to business-focused wording. Apply the `general` template's
-    rendering set freely — rename tables, `$$` block formulas, source-guard SQL
-    fences, status lifecycles — whenever the loaded data carries the underlying
-    material; prefer structured formatting (headings, bullet lists, tables,
-    formulas) over dense prose when it makes the answer easier to scan.
+    Markdown. Lead with the direct answer to the user's question, then explain
+    the lineage as a coherent flow: what each relevant object contributes and
+    why it matters before adding technical evidence.
 
 
-    Scale the answer to the question:
-
-    - **Single-object question** ("what does X do", "show DDL of X", "list
-      columns of X") — one focused answer. Open with the direct answer,
-      then explain business meaning and impact. Add technical mechanics
-      wherever they clarify the business meaning.
-
-    - **Multi-object walk** (dependency trace, lineage walk, "N levels
-      up/down", "what feeds X", "list dependencies of X") — one Markdown
-      heading per node visited. Under each heading: a short business
-      paragraph (what the node represents and why it matters). Add technical
-      mechanics wherever they clarify the business meaning. Cover every node you loaded
-      and use only nodes that appeared in your tool-call results. Order
-      the headings to match the lineage flow (origin first, then upstream,
-      then downstream — or the order the user named).
+    Preserve every substantive fact supported by the loaded data, including
+    transformations and column mappings, filters and predicates, read/write
+    distinctions, validation or deduplication rules, error and audit paths, and
+    notable inconsistencies or risks. Use canonical object and column names.
+    If evidence is missing, state what is unavailable instead of inferring it.
 
 
-    Output rendering (math fences, rename tables, source-guard SQL fences,
-    status-enum lifecycles, ⚠️ markers) is governed by the `general`
-    template — apply its rules whenever the loaded data carries the
-    underlying material.
+    Keep internal tool names, call syntax, and payload fields out of the answer.
+    Organize multi-object answers by the question's flow and group simple source
+    or pass-through objects when helpful. Show a raw node/edge inventory only
+    when the user explicitly asks for one. Use headings, bullets, tables, or SQL
+    fences only when they make the answer clearer.
 
 # ── Card + top of the document ───────────────────────────────────────────────
 
@@ -139,7 +123,8 @@ intro:
 closing:
   stages: [synthesis]
   instruction: >
-    Required when this template is rendered (analysis spans 5+ sections).
+    Required whenever this template appears — the engine renders it only
+    for results large enough to need a wrap-up.
     After the sections, separated by a `---` divider, write a brief
     closing block:
     (1) one-paragraph through-line that names the overall pipeline answer
@@ -215,7 +200,11 @@ business_capture:
 
     ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Use only
     rules, formulas, thresholds, and relationships present in DDL. If a
-    construct is absent from DDL, treat it as out of scope.
+    construct is absent from DDL, treat it as out of scope. Quoted SQL
+    witnesses must be exact substrings of that DDL — never paraphrased SQL.
+    When the DDL proves the mechanism but not the intent, prevalence, or
+    runtime impact, state `not established from the available SQL` — never
+    fill a gap with a plausible inference.
 
     <scope_relevance>
     Logging, error-capture, audit, and retention sinks are usually not part of
@@ -279,7 +268,10 @@ business_capture:
     1. `QtyA` is line-item quantity sold, renamed from `RawQtyA` in
        `CTE_Orders`.
     2. `PriceA` is list price after markup:
-       `PriceA = BaseCostA × (1 + UpliftPctA)`.
+
+       $$
+       PriceA = BaseCostA \times (1 + UpliftPctA)
+       $$
     3. The fact row is INSERTed with `NetAmountA` populated.
 
     | From | To | Business meaning |
@@ -305,6 +297,9 @@ technical_capture:
     claims only about indexes, partitioning, performance issues, or references
     present in DDL. Tie performance claims to visible SQL constructs (JOIN,
     WHERE, DISTINCT, subquery). If it is absent from DDL, it is out of scope.
+    Quoted SQL witnesses must be exact substrings of that DDL — never
+    paraphrased SQL. When the DDL shows a pattern but not its runtime effect,
+    state `not established from the available SQL` rather than inferring it.
 
     Submit one section: `{ angle: "technical", text: "<body>" }`. The
     archive has no length cap; synthesis lifts your text verbatim. Write
@@ -334,13 +329,16 @@ technical_capture:
     8. Datatype declarations — call out non-default precisions
        (`DECIMAL(19,4)` vs `DECIMAL(18,2)`), nullability surprises, and
        casts that change semantics (`CAST AS DATE` truncating time).
-    9. Execution-plan affordances and traps — sargability of WHERE
-       predicates, parameter-sniffing risks, statistics dependencies.
+    9. Execution-plan candidates visible in the SQL text — flag as
+       candidates requiring validation, never as confirmed behavior:
+       sargability, parameter sniffing, and statistics effects need
+       schema metadata or plan evidence beyond this DDL.
     10. DDL comments and version annotations — author intent that would be
        lost after this hop.
     </body_recipe>
 
-    Format with markdown — `## Purpose` opener, SQL in ```sql fences
+    Format with markdown — no `#`/`##` headings (the engine owns section
+    headings; open with a bold label instead), SQL in ```sql fences
     (snippet only), join steps as ordered lists, ⚠️ inline at risks.
 
     Each capture is independent — synthesis detects sibling variants
@@ -357,11 +355,14 @@ technical_capture:
     WHERE o.IsActive = 1
     ```
 
-    Filters: `WHERE IsActive = 1` is sargable (index on `IsActive`).
-    `INNER HASH JOIN` on `ProductId` — correct for large-orders × small-products.
+    Filters: `WHERE IsActive = 1` — plain equality predicate; index
+    support is unknown from this DDL (schema metadata required).
+    `INNER HASH JOIN` on `ProductId` — explicit hash-join hint in the
+    source; fit for the actual table sizes needs plan evidence.
     `LEFT JOIN vwPriceA` on `ProductId` — ⚠️ unmatched rows produce NULL
     downstream; no ISNULL guard before the INSERT.
-    Index hint: clustered on `(ProductId, OrderDate)` for downstream aggregation.
+    Candidate: an index covering `(ProductId, OrderDate)` may help the
+    downstream aggregation — validate against existing indexes first.
 
 # ── Reduced capture for non-bodied starting points ───────────────────────────
 
@@ -369,7 +370,10 @@ structural_summary:
   stages: [active]
   instruction: >
     Fires only when the focus node has no DDL body (table/non-bodied).
-    For this hop only, it replaces `business_capture` and `technical_capture`.
+    For this hop only, it replaces `business_capture` and `technical_capture`. It replaces the
+    recipes but not the section count: submit one section per angle the mission requires, each
+    carrying this same body, because the locked classification decides how many sections a hop
+    must contain and the focus type does not change it.
 
     Describe what this node **is**; point to the surrounding procedures for
     what it **does**. Non-bodied nodes carry structure, not behaviour.
@@ -378,28 +382,28 @@ structural_summary:
     objects, neighbors, and relationships present in that data. If a field is
     missing/empty, output the explicit empty-case text below.
 
-    Required sections (use these headings exactly):
+    Required parts, in this order, each opened with a bold label on its own line:
 
-    ## Purpose
+    **Purpose**
     One short sentence naming the role of this node in the pipeline.
     Source: node id / type from focus_node.
 
-    ## Columns
+    **Columns**
     From `cols[]` only, render a `| Column | Type | Role / ⚠️ |` table. Role is a short phrase
     (key / dim / metric / audit / computed). Flag nullable columns with ⚠️.
     If `cols[]` is absent: write "Column metadata not available in current model."
 
-    ## Upstream sources
+    **Upstream sources**
     Populate from `in[]` in focus_node — these are the nodes that write TO
     this table. One line per entry: node id + one-sentence role.
     If `in[]` is empty or absent: write "No upstream sources found in graph."
 
-    ## Downstream consumers
+    **Downstream consumers**
     Populate from `out[]` in focus_node — these are the nodes that read FROM
     this table. One line per entry: node id + one-sentence role.
     If `out[]` is empty or absent: write "No downstream consumers found in graph."
 
-    ## Grain / keys
+    **Grain / keys**
     Derive from PK-flagged columns in `cols[]` and `fks[]` in focus_node only.
     If neither is present: write "Key information not available in current model."
 
@@ -424,14 +428,14 @@ column_trace_capture:
 
     A tracked column you leave out of column_flow is rejected as column_chain_incomplete —
     account for it (continue / terminal). column_flow is engine-validated:
-    omitting the field returns column_flow_required; column_flow: [] means "no columns accounted"
+    omitting the field returns ct_field_required; column_flow: [] means "no columns accounted"
     and is valid only when this node has no active tracked columns (off-trace).
     </purpose>
 
     ## Before submitting — verify
     □ Every active tracked column appears as an out_col in column_flow (continued, or terminal with upstream_columns: []). If the node has no tracked columns, submit column_flow: [] (off-trace).
     □ Each upstream_columns entry is a real INPUT to `out_col`'s value — it appears in `out_col`'s producing expression (the formula / CASE / SELECT clause that computes it). A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
-    □ sections[].text (from business/technical capture) explains the context of the flow — including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
+    □ sections[].text — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
     □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
     □ When an out_col is produced by a computed expression (arithmetic, CASE, COALESCE, aggregation), sections[].text includes the producing expression as a `$$ … $$` block.
 
@@ -548,9 +552,10 @@ loading_pattern:
   stages: [synthesis]
   instruction: >
     Technical-angle closing addition. When all bodied procedures in scope
-    share a single load shape, name it once in the closing note as the
-    big-picture ETL pattern. Recognized shapes (coarse — no SCD1/SCD2/CDC
-    sub-variants):
+    share a single load shape, name it once — in `closing` if a closing is
+    requested, otherwise in the section that covers the load — because the
+    pattern is one statement about the whole pipeline, not per section.
+    Recognized shapes (coarse — no SCD1/SCD2/CDC sub-variants):
 
     - `reload`        TRUNCATE + INSERT / full refresh
     - `append`        INSERT-only, no UPDATE or DELETE

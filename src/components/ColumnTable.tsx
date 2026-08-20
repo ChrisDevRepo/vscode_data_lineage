@@ -2,20 +2,17 @@ import type { ColumnDef } from '../engine/types';
 import { highlightText } from './highlight';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the `ColumnTable` component.
- */
 interface ColumnTableProps {
   /** The array of column definitions to render. */
   columns: ColumnDef[];
-  /** 
+  /**
    * Indicates if the parent object is a "virtual" external reference.
    * If true, a specific message is shown indicating metadata unavailability.
    */
   isVirtualExt: boolean;
   /** Optional search query to highlight matching text within column names. */
   findQuery?: string;
-  /** 
+  /**
    * If true, hides the 'Null' and 'Flags' columns to save space.
    * Typically used for views or functions where these attributes are non-applicable.
    */
@@ -23,16 +20,7 @@ interface ColumnTableProps {
 }
 
 /**
- * Renders a tabular list of columns for a specific database object.
- *
- * @remarks
- * This component provides:
- * - High-fidelity rendering of SQL Server column metadata (Name, Type, Nullability).
- * - Automatic badge generation for Primary Keys (PK) and Unique constraints (UQ).
- * - Truncation with tooltips for long column names and types.
- * - Integration with the global search highlight system.
- *
- * @returns The column table, or a placeholder note when no columns are loaded.
+ * Renders SQL column metadata and constraint badges, or an empty-state message.
  */
 export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: ColumnTableProps) {
   if (columns.length === 0) {

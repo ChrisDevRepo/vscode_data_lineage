@@ -2,7 +2,7 @@ import { createContext, useContext, ReactNode } from 'react';
 
 /**
  * Context providing access to the VS Code Webview API.
- * 
+ *
  * @remarks
  * The `VsCodeAPI` type is globally declared in `src/types/global.d.ts`.
  * This context allows nested components to post messages to the extension host
@@ -24,7 +24,7 @@ export const VsCodeProvider = ({ children, api }: { children: ReactNode; api: Vs
 /**
  * Hook to access the VS Code Webview API from within the React tree.
  *
- * @throws {Error} If called from a component not wrapped in a `VsCodeProvider`.
+ * @throws If called from a component not wrapped in a `VsCodeProvider`.
  * @returns The active `VsCodeAPI` instance.
  */
 export const useVsCode = () => {

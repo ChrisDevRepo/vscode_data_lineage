@@ -4,26 +4,16 @@ node_modules/
 # Build outputs
 dist/
 out/
-build/
-.vite/
-.cache/
 *.vsix
-
-# Python bytecode (eval harness scripts) — never tracked
-__pycache__/
-*.pyc
-*.pyo
 
 # Testing
 test-results/
 **/test-results/**
 .vscode-test/
-coverage/
-*.lcov
 
 # IDE / local
-.vscode/settings.json
-.idea/
+# Keep the repository workspace settings tracked: they deliberately disable unrelated
+# MCP servers so @lineage remains the only AI tool surface while developing this solution.
 tmp/
 PLAN*.md
 
@@ -32,10 +22,12 @@ PLAN*.md
 .env.example
 *.log
 
+# Ad-hoc debug dumps written by tests/tools — never tracked, never packaged
+debug*.txt
+
 # OS
 .DS_Store
 Thumbs.db
-nul
 
 # AI assistant config — NEVER commit to public repo
 # These folders contain local context, prompts, credentials, and internal instructions.
@@ -61,6 +53,21 @@ GEMINI.md
 *internal*/
 **/*internal*/**
 
-# Verification scripts and artifacts
-scripts/
-adventure_works_graph.json
+# Verification scripts and artifacts (contents-pattern so tracked build tooling can be re-included:
+# git cannot negate below an excluded directory)
+scripts/*
+# The gate's manifest step runs this — it must be committable.
+!scripts/generate-tool-manifest.mjs
+
+# Code-audit workspace (tool output, inventories, classification artifacts)
+.audit/
+
+# Python venv for the analysis scripts (stdlib-only; never bundled).
+.venv/
+
+# The ai-disabled EDH lane's seeded user-data-dir: only the settings seed is tracked; everything
+# else is runtime state the Electron host writes on every run.
+tests/fixtures/kill-switch-user-data/*
+!tests/fixtures/kill-switch-user-data/User/
+tests/fixtures/kill-switch-user-data/User/*
+!tests/fixtures/kill-switch-user-data/User/settings.json

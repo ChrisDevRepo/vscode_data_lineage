@@ -1,0 +1,12 @@
+<current_task>
+  <root_question>How is FactSales loaded?</root_question>
+  <column_trace>
+    Active columns: [NetAmountA]
+    Hop-specific focus: account for these columns in column_flow using the CT system/capture contract.
+    To inspect upstream column schemas before declaring upstream_columns, call lineage_get_neighbor_columns for current-hop neighbors.
+  </column_trace>
+  <lineage_questions>
+    Column-chain continuations opened on an earlier hop. Each may name a node other than this focus; address the one(s) whose column matches this hop's active columns:
+    - dbo.OrderDetailA.QtyA -> dbo.spLoadFactSales.NetAmountA still needs a terminal source
+  </lineage_questions>
+</current_task>

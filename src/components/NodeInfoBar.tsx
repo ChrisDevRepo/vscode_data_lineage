@@ -13,9 +13,6 @@ import type { CatalogEntry, NeighborIndex, ParseStats } from '../engine/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the {@link NodeInfoBar} component.
- */
 interface NodeInfoBarProps {
   /** ID of the node currently under inspection. */
   nodeId: string;
@@ -181,17 +178,7 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
 
 
 /**
- * A horizontal bar that displays detailed technical metadata for a selected node.
- * 
- * The bar provides:
- * - **Identity**: Icon and qualified name (schema.object) of the node.
- * - **Connectivity**: Interactive counts for 'In' and 'Out' neighbors with schema-grouped hover lists.
- * - **Analysis**: Hoverable lists for unresolved references (e.g., missing tables) and excluded 
- *   references (filtered by user patterns).
- * 
- * Architectural Remark: This component is designed to be highly responsive, updating 
- * immediately as the user clicks different nodes in the graph. It uses `@floating-ui` 
- * for the hover popovers to ensure they remain visible regardless of the bar's position.
+ * Displays identity, connectivity, and parse diagnostics for the selected node.
  */
 export const NodeInfoBar = memo(function NodeInfoBar({
   nodeId, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,

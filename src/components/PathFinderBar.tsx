@@ -7,9 +7,6 @@ import { SuggestionList } from './ui/SuggestionList';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the {@link PathFinderBar} component.
- */
 interface PathFinderBarProps {
   /** The name of the node where the path search begins. */
   sourceNodeName: string;
@@ -17,10 +14,10 @@ interface PathFinderBarProps {
   allNodes: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   /** The result of the last path-finding operation, if any. */
   pathResult: { found: boolean; nodeCount: number; edgeCount: number } | null;
-  /** 
-   * Callback to execute the path search. 
-   * @param targetNodeId The ID of the destination node.
-   * @returns true if a path was found, false otherwise.
+  /**
+   * Callback to execute the path search.
+   * @param targetNodeId - ID of the destination node.
+   * @returns Whether a path was found.
    */
   onFindPath: (targetNodeId: string) => boolean;
   /** Callback fired when the user closes the path finder interface. */
@@ -28,16 +25,7 @@ interface PathFinderBarProps {
 }
 
 /**
- * A toolbar component for finding the shortest path between two nodes.
- * 
- * Features:
- * - Autocomplete search for the target node.
- * - Real-time validation of connectivity.
- * - Summary display of the path length (nodes and edges).
- * 
- * Architectural Note: This component is a "Transient Toolbar" that overlays the 
- * standard toolbar when the path-finding mode is active. It manages its own 
- * autocomplete state but delegates the actual graph traversal logic to the parent.
+ * Collects a target node and delegates shortest-path traversal to the parent graph.
  */
 export const PathFinderBar = memo(function PathFinderBar({
   sourceNodeName,
@@ -140,7 +128,6 @@ export const PathFinderBar = memo(function PathFinderBar({
           )}
         </div>
 
-        {/* Result status */}
         {pathResult && pathResult.found && (
           <span className="text-xs ln-text-muted shrink-0">
             <span className="font-bold">{pathResult.nodeCount} nodes · {pathResult.edgeCount} edges</span>

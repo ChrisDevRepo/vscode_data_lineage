@@ -3,7 +3,6 @@
  * Provides advanced graph-theoretic analysis functions for the database schema graph.
  *
  * This module leverages `graphology` to perform structural investigations, including:
- * - Neighbor discovery (connected schemas).
  * - Island detection (isolated subgraphs).
  * - Hub analysis (highly connected nodes).
  * - Orphan detection (disconnected nodes).
@@ -14,36 +13,7 @@
 
 import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
-import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig, type DatabaseModel } from './types';
-
-/**
- * Discovers all schemas that have at least one edge connecting to a node in the target schema.
- * Uses the pre-built `neighborIndex` for O(NodesInSchema * Degree) performance.
- *
- * @param model - The complete database model.
- * @param schema - The target schema name.
- * @returns A set of schema names connected to the target schema (includes the target schema).
- */
-export function getNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
-  const neighborSchemas = new Set<string>([schema]);
-  
-  const focusNodes = model.nodes.filter(n => n.schema === schema);
-  
-  for (const node of focusNodes) {
-    const neighbors = model.neighborIndex[node.id];
-    if (!neighbors) continue;
-    
-    const allNeighborIds = [...neighbors.in, ...neighbors.out];
-    for (const nid of allNeighborIds) {
-      const neighborMeta = model.catalog[nid];
-      if (neighborMeta && neighborMeta.schema) {
-        neighborSchemas.add(neighborMeta.schema);
-      }
-    }
-  }
-  
-  return neighborSchemas;
-}
+import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
 
 /**
  * Detects isolated subgraphs (islands) that are disconnected from the rest of the graph.

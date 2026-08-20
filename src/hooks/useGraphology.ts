@@ -28,7 +28,7 @@ interface UseGraphologyReturn {
   renderedSchemas: string[];
   /**
    * Rebuilds the graph from the database model based on the current filter and configuration.
-   * 
+   *
    * @param model - The database model to filter and build from.
    * @param filter - The current UI filter state.
    * @param config - Optional configuration overrides.
@@ -39,18 +39,11 @@ interface UseGraphologyReturn {
 }
 
 /**
- * Primary hook for managing graph state, filtering, and layout orchestration.
- * 
+ * Manages graph filtering, render limits, layout, and React Flow projection.
+ *
  * @remarks
- * This hook implements a high-performance filtering pipeline that runs on every
- * state change. It supports multiple rendering modes:
- * 1. **Full Mode**: Executes the Dagre layout engine for precise positioning.
- * 2. **Schema View**: Skips object layout and lets Schema View render the working set.
- * 3. **Pruned Mode**: Rejects rendering entirely if hard limits are exceeded.
- * 
- * The pipeline follows this order: Schema → Type → Exclusion → Isolation → Allowlist.
- * 
- * @returns An object containing the current graph state and the build function.
+ * Filters run in schema, type, exclusion, isolation, then allowlist order. Object layout is
+ * skipped for Schema View and entirely withheld when the render limit is exceeded.
  */
 export function useGraphology(): UseGraphologyReturn {
   const [flowNodes, setFlowNodes] = useState<FlowNode<CustomNodeData>[]>([]);
@@ -64,7 +57,7 @@ export function useGraphology(): UseGraphologyReturn {
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false): number => {
     const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
-    
+
     // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
       n.externalType === 'file' || n.externalType === 'db';

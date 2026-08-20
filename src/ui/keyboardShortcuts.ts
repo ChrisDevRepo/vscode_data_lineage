@@ -8,12 +8,7 @@ export type KeyboardShortcutId =
   | 'excludeHighlightedNode'
   | 'exitMode'
   | 'toggleSchemaView'
-  | 'hideExpandedSchemaClusters'
-  | 'suggestionNavigation'
-  | 'selectSuggestion'
-  | 'closeInput'
-  | 'activateFocusedControl'
-  | 'expandSchemaCluster';
+  | 'hideExpandedSchemaClusters';
 
 /**
  * Subset of {@link KeyboardShortcutId} for app-level (always-active) shortcuts —
@@ -35,18 +30,6 @@ export type AppShortcutId = Extract<
 >;
 
 /**
- * Display metadata for a documented keyboard shortcut.
- */
-export interface KeyboardShortcutDoc {
-  /** Stable registry key used by tests and help/documentation alignment checks. */
-  id: KeyboardShortcutId;
-  /** Human-readable key labels rendered in help and docs. */
-  keys: string[];
-  /** User-facing action label for the shortcut. */
-  label: string;
-}
-
-/**
  * Display strings for the supported keyboard shortcuts.
  *
  * @remarks
@@ -64,28 +47,23 @@ export const SHORTCUT_KEYS: Record<AppShortcutId, string> = {
 };
 
 /**
- * Keyboard shortcuts that apply across the whole app.
+ * Display order and labels for the documented shortcuts, in the order the help
+ * panel and `docs/FEATURES.md` present them.
+ *
+ * @remarks
+ * Typing the entries to {@link AppShortcutId} keeps this list exhaustive: adding a
+ * binding to {@link SHORTCUT_KEYS} without describing it here is a compile error, so
+ * the help panel can never document fewer shortcuts than the app registers.
  */
-export const APP_LEVEL_SHORTCUTS: KeyboardShortcutDoc[] = [
-  { id: 'quickJump', keys: ['/'], label: 'Focus Quick Jump' },
-  { id: 'fitView', keys: ['F'], label: 'Fit graph to view' },
-  { id: 'openHelp', keys: ['?'], label: 'Open Help' },
-  { id: 'excludeHighlightedNode', keys: ['Delete'], label: 'Exclude highlighted node' },
-  { id: 'exitMode', keys: ['Esc'], label: 'Exit active trace, path, analysis, bookmark, or AI preview' },
-  { id: 'toggleSchemaView', keys: ['S'], label: 'Toggle Schema View' },
-  { id: 'hideExpandedSchemaClusters', keys: ['H'], label: 'Hide/Show schema clusters' },
-];
-
-/**
- * Keyboard shortcuts that depend on the active UI context.
- */
-export const CONTEXTUAL_SHORTCUTS: KeyboardShortcutDoc[] = [
-  { id: 'suggestionNavigation', keys: ['↑', '↓'], label: 'Move through Quick Jump and path suggestions' },
-  { id: 'selectSuggestion', keys: ['Enter'], label: 'Select a suggestion or apply the current input action' },
-  { id: 'closeInput', keys: ['Esc'], label: 'Close the active input or dropdown before broader mode exit' },
-  { id: 'activateFocusedControl', keys: ['Enter', 'Space'], label: 'Activate focused graph, sidebar, and list controls' },
-  { id: 'expandSchemaCluster', keys: ['Enter', 'Space'], label: 'Expand a focused schema cluster' },
-];
+export const SHORTCUT_DESCRIPTIONS: Record<AppShortcutId, string> = {
+  quickJump: 'Focus Quick Jump',
+  fitView: 'Fit the graph to the viewport',
+  openHelp: 'Open Help',
+  toggleSchemaView: 'Toggle Schema View',
+  hideExpandedSchemaClusters: 'Hide schema clusters in Expanded Schema View',
+  excludeHighlightedNode: 'Exclude the selected node from the view',
+  exitMode: 'Close active input, then exit the current mode',
+};
 
 /**
  * Reports whether an event target is a text-entry surface (`input`, `textarea`,

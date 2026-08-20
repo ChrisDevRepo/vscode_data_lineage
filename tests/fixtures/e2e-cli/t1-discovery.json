@@ -1,0 +1,30 @@
+{
+  "description": "Offline transport fixture for the headless harness CLI: one T1-style discovery turn (entry detection -> lineage_get_context -> plain-text answer). Rules match on the offered tool set, which is what names the pipeline phase (src/ai/tools/toolPolicy.ts); `notInBody` stops a spent call id from being re-emitted. This proves the whole CLI path — lane resolution, trace writer, port, runtime, session, summary — with zero network.",
+  "rules": [
+    {
+      "id": "entry-detector",
+      "when": { "toolsInclude": ["structured_output"] },
+      "respond": {
+        "toolCall": {
+          "callId": "fx-entry-1",
+          "name": "structured_output",
+          "arguments": { "entry": "discovery", "targetColumns": null }
+        },
+        "usage": { "prompt_tokens": 1200, "completion_tokens": 24, "total_tokens": 1224 }
+      }
+    },
+    {
+      "id": "discovery-get-context",
+      "when": { "toolsInclude": ["lineage_get_context"], "notInBody": "fx-context-1" },
+      "respond": {
+        "toolCall": { "callId": "fx-context-1", "name": "lineage_get_context", "arguments": {} },
+        "usage": { "prompt_tokens": 3400, "completion_tokens": 18, "total_tokens": 3418 }
+      }
+    }
+  ],
+  "fallback": {
+    "text": "The loaded snapshot is the AdventureWorks AI sample: an `ai` schema of order-ingest tables, cleansing procedures and a FactSalesReport reporting layer, plus the surrounding AdventureWorks objects they draw on.",
+    "finishReason": "stop",
+    "usage": { "prompt_tokens": 4100, "completion_tokens": 46, "total_tokens": 4146 }
+  }
+}

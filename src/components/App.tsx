@@ -16,18 +16,18 @@ import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, GraphMode } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
-import { runAnalysis, getNeighborSchemas } from '../engine/graphAnalysis';
+import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import { reconcileAiView } from './aiViewReconcile';
-import { ExtensionToWebviewMsgSchema } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 
-/** 
+/**
  * Represents a transient AI-curated view before it is saved as a permanent bookmark.
  */
 interface AiPreview {
@@ -61,9 +61,9 @@ const OBJECT_CONTEXT_MENU_HEIGHT = 250;
 
 /**
  * Computes the set of schemas that are immediate neighbors of a target schema.
- * A schema is a neighbor if there is at least one edge connecting a node in the 
+ * A schema is a neighbor if there is at least one edge connecting a node in the
  * target schema to a node in the neighbor schema.
- * 
+ *
  * @param model - The complete database model.
  * @param schema - The name of the central schema.
  * @returns A set of schema names including the target and its neighbors.
@@ -113,21 +113,7 @@ interface ObjectContextMenuState {
 type ContextMenuState = ObjectContextMenuState;
 
 /**
- * The root container component for the Data Lineage Viz application.
- *
- * @remarks
- * This component acts as the central orchestrator for the entire application state, 
- * managing:
- * 1. Navigation between screens (Start, Create, Loading, Graph).
- * 2. Database model lifecycle (loading from DACPAC/DB).
- * 3. Global filtering and graph layout rebuilds.
- * 4. Integration with VS Code host via the `VsCodeContext`.
- * 5. Advanced modes like interactive tracing, structural analysis, and AI-curated views.
- *
- * It coordinates multiple hooks (`useGraphology`, `useInteractiveTrace`, `useDacpacLoader`)
- * to provide a reactive and high-performance graph exploration experience.
- *
- * @returns The root application view for the current model and mode state.
+ * Coordinates application navigation, model lifecycle, graph filters, and interaction modes.
  */
 export function App() {
   const vscodeApi = useVsCode();
@@ -143,7 +129,6 @@ export function App() {
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
-  // VisualizingScreen state
   const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>('load');
   const [loadingStats, setLoadingStats] = useState<string | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
@@ -182,7 +167,7 @@ export function App() {
 
   /**
    * Triggers a graph rebuild based on the current model and filters.
-   * 
+   *
    * @param m - The database model to use.
    * @param f - The filters to apply.
    * @param cfg - Optional configuration override.
@@ -443,7 +428,6 @@ export function App() {
     setSourceName(projectName);
 
     if (conn && conn.type === 'dacpac') {
-      // Save project now (dacpac: we have the full connection)
       const project = createProject(projectName, conn);
       setActiveProjectId(project.id);
 
@@ -535,7 +519,7 @@ export function App() {
         rebuildRef.current(modelRef.current, saved, configRef.current, false, mode);
       }
     }
-  }, [isModeLocked]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isModeLocked]);
 
   /**
    * Resets filters and pulls fresh extension settings from the host.
@@ -692,9 +676,9 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
-  /** 
+  /**
    * Unified star-schema handler for the schema focus control.
-   * 
+   *
    * @param schema - Target schema, or null to unfocus.
    * @param options - Logic flags: toggle, forceLayout, includeNeighbors.
    * @returns Post-filter node count.
@@ -749,9 +733,9 @@ export function App() {
 
   const { schemaNodes, schemaEdges } = useMemo(() => {
     if (!graph) return { schemaNodes: [], schemaEdges: [] };
-    const { nodes, edges } = buildSchemaGraph(graph);
+    const { nodes, edges } = buildSchemaGraph(graph, config);
     return { schemaNodes: nodes, schemaEdges: edges };
-  }, [graph]);
+  }, [config, graph]);
   const {
     clearExpandedSchemaView,
     collapsedSchemaNodeIds,
@@ -1004,6 +988,27 @@ export function App() {
   const handleApplyView = useCallback((profile: FilterProfile) => {
     setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
+    // View shape first, so the restored layout is built once instead of rebuilt after a mode flip.
+    // Restored only when it can render as saved: a bookmark written before these fields existed
+    // carries no `graphMode`; a scoped bookmark (allowlist) renders its node set, never schema
+    // clusters; and a saved 'overview' is not forced onto a host whose overview setting is off —
+    // each of those keeps the view as it is, exactly as before the fields existed.
+    const shapeMode = !isAdvanced && profile.graphMode
+      && (profile.graphMode === 'full' || (config.overview.enabled && !schemaViewSoftDisabled))
+      ? profile.graphMode
+      : undefined;
+    if (shapeMode) {
+      setGraphMode(shapeMode);
+      setExpandedSchemaView(profile.expandedSchemaView
+        ? {
+            focusNodeId: profile.expandedSchemaView.focusNodeId,
+            expandedSchemas: new Set(profile.expandedSchemaView.expandedSchemas),
+          }
+        : null);
+      setShowExpandedSchemaClusters(profile.showExpandedSchemaClusters ?? true);
+    }
+    // `rebuild` reads `graphMode` from state, which is still stale in this tick.
+    const targetMode = shapeMode ?? graphMode;
     if (profile.positions && Object.keys(profile.positions).length > 0) {
       setPendingPositions(profile.positions);
       setPendingViewport(profile.viewport);
@@ -1015,29 +1020,34 @@ export function App() {
       restored.types = new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']);
       setFilter(restored);
       setActiveAdvancedProfile(profile);
-      if (model) rebuild(model, restored, config);
+      if (model) rebuild(model, restored, config, false, targetMode);
     } else {
       const restored = deserializeFilter(profile.filter);
       setFilter(restored);
-      if (model) rebuild(model, restored, config);
+      if (model) rebuild(model, restored, config, false, targetMode);
     }
-  }, [model, config, filter, rebuild]);
+  }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled]);
 
   // ── Message handler (stats + projects-list) ─────────────────────────────────
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       const parsed = ExtensionToWebviewMsgSchema.safeParse(e.data);
       if (!parsed.success) return;
+      // Host→webview frames are stamped unconditionally by the `postValidated` send choke point, so
+      // anything that parses as a contract message but carries the wrong (or no) version came from
+      // a host bundle this view cannot trust. Fail loudly through the existing error funnel rather
+      // than rendering a message whose shape we are only guessing at.
+      const version = (e.data as BridgeEnvelope | undefined)?.protocolVersion;
+      if (version !== BRIDGE_PROTOCOL_VERSION) {
+        window.vscode?.postMessage({
+          type: 'error',
+          error: `[Bridge] Protocol mismatch on "${parsed.data.type}": host sent v${String(version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
+        });
+        return;
+      }
       const msg = parsed.data;
       if (msg.type === 'detail-closed') {
         setIsDetailOpen(false);
-      } else if (msg.type === 'auto-visualize-start') {
-        setSourceName('AdventureWorks (demo)');
-        setLoadingPhase('load');
-        setLoadingStats(null);
-        setLoadingError(null);
-        setActiveProjectId(null);
-        setView('visualizing');
       } else if (msg.type === 'projects-list') {
         const updatedProjects: Project[] = (msg.projects ?? []) as Project[];
         setProjects(updatedProjects);
@@ -1119,6 +1129,8 @@ export function App() {
             hideIsolated: false,
           };
           if (renderModel) {
+            // AI previews always render in the classic full Object View — the curated allowlist is
+            // small by construction, so schema-overview clustering has nothing to summarize.
             setGraphMode('full');
             rebuildRef.current(renderModel, next, configRef.current, false, 'full');
           }
@@ -1183,7 +1195,6 @@ export function App() {
       },
     };
     vscodeApi.postMessage({ type: 'filter-changed', uiState });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKeyForHost, filterProfiles, model, vscodeApi, expandedSchemaView, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted, graphMode, filteredCount, renderLimitHit, analysisMode, activeAdvancedProfile, isDetailOpen]);
 
   const isViewModified = useMemo(() => {
@@ -1203,28 +1214,44 @@ export function App() {
   /** Internal helper to persist a filter profile to the store and extension host. */
   const persistFilterProfile = useCallback((
     profile: FilterProfile,
-    options?: { 
-      clearAiPreview?: boolean, 
-      activateProfile?: boolean 
+    options?: {
+      clearAiPreview?: boolean,
+      activateProfile?: boolean
     }
   ) => {
     if (!activeProjectId) return;
 
+    // Every save — create or update — records the view shape it was taken in, so reopening the
+    // bookmark restores schema clusters, individual objects, or the mixed state rather than
+    // whatever happens to be on screen. All three fields overwrite unconditionally: an update
+    // taken after collapsing every schema must clear a previously saved expansion, not keep it.
+    const stamped: FilterProfile = {
+      ...profile,
+      graphMode,
+      showExpandedSchemaClusters,
+      expandedSchemaView: expandedSchemaView
+        ? {
+            focusNodeId: expandedSchemaView.focusNodeId,
+            expandedSchemas: Array.from(expandedSchemaView.expandedSchemas).sort(),
+          }
+        : undefined,
+    };
+
     setProjects(prev => {
       const store = { schemaVersion: 1 as const, projects: prev, lastOpenedId };
-      return addFilterProfile(store, activeProjectId, profile).projects;
+      return addFilterProfile(store, activeProjectId, stamped).projects;
     });
 
-    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile });
+    vscodeApi.postMessage({ type: 'save-view', projectId: activeProjectId, profile: stamped });
 
     if (options?.clearAiPreview) setAiPreview(null);
     if (options?.activateProfile) {
-      if ((profile.filter.allowlistNodeIds?.length ?? 0) > 0) {
-        setActiveAdvancedProfile(profile);
+      if ((stamped.filter.allowlistNodeIds?.length ?? 0) > 0) {
+        setActiveAdvancedProfile(stamped);
       }
-      setActiveViewId(profile.id);
+      setActiveViewId(stamped.id);
     }
-  }, [activeProjectId, lastOpenedId, vscodeApi]);
+  }, [activeProjectId, lastOpenedId, vscodeApi, graphMode, showExpandedSchemaClusters, expandedSchemaView]);
 
   /** Saves the current filter state as a new named view. */
   const handleSaveView = useCallback((name: string) => {

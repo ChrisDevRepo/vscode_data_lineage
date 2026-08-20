@@ -1,11 +1,7 @@
-import React from 'react';
 import type { ForeignKeyInfo } from '../engine/types';
 import { highlightText } from './highlight';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the {@link ForeignKeysSection} component.
- */
 interface ForeignKeysSectionProps {
   /** Array of foreign key information objects to be displayed. */
   fks: ForeignKeyInfo[];
@@ -14,15 +10,7 @@ interface ForeignKeysSectionProps {
 }
 
 /**
- * A component that renders a table displaying foreign key constraints for a specific SQL table.
- *
- * @remarks
- * This section includes columns for the constraint name, source columns, referenced table, and delete rules.
- * It uses {@link Tooltip} for truncated text and {@link highlightText} for search result visualization.
- * It is typically rendered within a table detail or property panel.
- *
- * @param props - The component properties.
- * @returns A {@link React.JSX.Element} displaying the foreign keys table.
+ * Renders foreign-key constraints with source columns, referenced tables, and delete rules.
  */
 export function ForeignKeysSection({ fks, findQuery }: ForeignKeysSectionProps) {
   return (

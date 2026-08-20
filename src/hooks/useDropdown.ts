@@ -15,19 +15,14 @@ import {
 const DROPDOWN_OPEN_EVENT = 'ln:dropdown:open';
 
 /**
- * Shared hook for standard dropdown behavior including positioning and orchestration.
+ * Provides positioned dropdown state, dismissal, and mutual exclusion with other dropdowns.
  *
  * @remarks
- * This hook provides a comprehensive set of features for UI dropdowns:
- * 1. **Floating UI Integration**: Precise positioning with flip and shift middleware.
- * 2. **Auto-Close**: Closes on Escape key or clicks outside the menu.
- * 3. **Mutual Exclusion**: Ensures that opening one dropdown automatically closes 
- *    all other active dropdowns using a custom event bridge.
- * 4. **Interaction Mapping**: Provides ARIA-compliant props for trigger and content.
+ * A window event closes other active dropdowns when one opens. Floating UI supplies placement,
+ * collision handling, dismissal, and interaction props.
  *
- * @param placement - Floating UI placement — default 'bottom-start' (left-aligned below trigger).
- *                    Use 'bottom-end' for right-aligned dropdowns.
- * @returns An object containing visibility state, toggles, positioning styles, and prop getters.
+ * @param placement - Floating UI placement; defaults to `bottom-start`.
+ * @returns Visibility controls, positioning refs/styles, and interaction prop getters.
  */
 export function useDropdown(placement: Placement = 'bottom-start') {
   const [isOpen, setIsOpen] = useState(false);
@@ -37,14 +32,12 @@ export function useDropdown(placement: Placement = 'bottom-start') {
   const close = useCallback(() => setIsOpen(false), []);
   const toggle = useCallback(() => setIsOpen(prev => !prev), []);
 
-  // When this dropdown opens, tell all others to close
   useEffect(() => {
     if (isOpen) {
       window.dispatchEvent(new CustomEvent(DROPDOWN_OPEN_EVENT, { detail: idRef.current }));
     }
   }, [isOpen]);
 
-  // Close self when another dropdown opens
   useEffect(() => {
     const onOtherOpen = (e: Event) => {
       if ((e as CustomEvent<symbol>).detail !== idRef.current) setIsOpen(false);

@@ -1,43 +1,23 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { z } from 'zod';
 import { type AiSession } from './ai/session/session';
-import { DeferredQuestionSchema } from './ai/sm/smTypes';
-import { buildDeferredQuestionsPrompt } from './ai/prompting/prompts';
-import { LmTracer } from './ai/infra/lmTracer';
 import { getActivePanel } from './panelProvider';
+import { postToWebview } from './bridge/host';
 import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
 import { searchCatalog, type SearchableNode } from './utils/modelSearch';
-import { buildExtensionConfig } from './bridge/messageHandlers';
-import { buildEngineParityReport } from './engine/engineParityReport';
-
-/**
- * Runtime schema for the `dataLineageViz.showDeferredQuestions` command argument.
- *
- * @remarks
- * The command is invoked from a `stream.button` in a chat response and from
- * test harnesses, both of which cross a trust boundary. Validate the full
- * payload with Zod so a malformed entry surfaces as a diagnostic rather than
- * an exception during prompt construction.
- */
-const DeferredQuestionArgSchema = z.array(DeferredQuestionSchema).min(1);
+import { applyModelToSession, buildExtensionConfig } from './bridge/messageHandlers';
+import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
- *
- * This includes commands for:
- * - Opening the primary lineage panel (wizard or demo).
- * - Project management (loading, saving, deleting).
- * - Configuration scaffolding (creating YAML templates).
- * - AI integration (view creation, state dumping).
- * - UI controls (object search).
  *
  * @param context - The extension context.
  * @param getSession - Factory to retrieve the active AI session.
  * @param outputChannel - Log channel for reporting command execution and errors.
  * @param openPanel - Function to open the primary lineage webview.
  * @param buildDebugDump - Function to generate diagnostic information.
+ * @param traceWriter - Session-scoped AI diagnostic writer.
  *
  * @returns An array of disposables representing the registered commands.
  */
@@ -46,7 +26,8 @@ export function registerCommands(
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
   openPanel: (context: vscode.ExtensionContext, title: string, loadDemo?: boolean) => void,
-  buildDebugDump: (context: vscode.ExtensionContext) => string
+  buildDebugDump: (context: vscode.ExtensionContext) => string,
+  traceWriter: AiTraceWriter,
 ): vscode.Disposable[] {
   const configLogger = Logger.create(outputChannel, 'Config');
   const aiLogger = Logger.create(outputChannel, 'AI');
@@ -55,18 +36,6 @@ export function registerCommands(
     // --- Primary Entry Points ---
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
-
-    /**
-     * Programmatic entry point for automated testing or deep-linking.
-     * Loads a specific project by its ID.
-     */
-    vscode.commands.registerCommand('dataLineageViz.openProject', (projectId: string) => {
-      openPanel(context, 'Data Lineage Viz');
-      const panel = getActivePanel();
-      if (panel) {
-        panel.webview.postMessage({ type: 'load-project', id: projectId });
-      }
-    }),
 
     /**
      * Pushes fresh extension settings to the active panel and clears the column
@@ -85,7 +54,7 @@ export function registerCommands(
       }
       getSession().columnStore.clear();
       const config = buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz'));
-      panel.webview.postMessage({ type: 'rebuild-config', config });
+      void postToWebview(panel, { type: 'rebuild-config', config }, configLogger);
       configLogger.debug('dataLineageViz.refresh — pushed rebuild-config');
     }),
 
@@ -105,63 +74,89 @@ export function registerCommands(
       }
     }),
 
-    vscode.commands.registerCommand('dataLineageViz.enableAiTraceLogging', () => {
-      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
-      const tracePath = LmTracer.enable(workspaceRoot);
-      if (!tracePath) {
+    vscode.commands.registerCommand('dataLineageViz.enableAiTraceLogging', async () => {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
+        notifyWarning(
+          configLogger,
+          'Enable AI trace logging',
+          'Data Lineage: Open a workspace folder before enabling AI trace logging.',
+          { command: 'dataLineageViz.enableAiTraceLogging' },
+        );
+        return undefined;
+      }
+
+      const traceRoot = vscode.Uri.joinPath(workspaceFolder.uri, 'tmp').fsPath;
+      try {
+        // Origin stays the writer's `extension-host` default; the file's trace-open record is the
+        // single durable stamp of the producer.
+        const tracePath = await traceWriter.enable(traceRoot);
+        notifyInfo(
+          configLogger,
+          'Enable AI trace logging',
+          `Data Lineage: AI trace logging enabled for this session. Writing to ${tracePath}`,
+          { command: 'dataLineageViz.enableAiTraceLogging' },
+        );
+        return tracePath;
+      } catch (err) {
         notifyError(
           configLogger,
           'Enable AI trace logging',
           'Data Lineage: Failed to enable AI trace logging.',
-          new Error('failed to prepare tmp/lm-trace'),
-          { command: 'dataLineageViz.enableAiTraceLogging', workspaceRoot },
+          err,
+          { command: 'dataLineageViz.enableAiTraceLogging', traceRoot },
         );
-        return;
+        return undefined;
       }
-      notifyInfo(configLogger, 'Enable AI trace logging', `Data Lineage: AI trace logging enabled for this session. Writing to ${tracePath}`, { command: 'dataLineageViz.enableAiTraceLogging' });
     }),
 
     /**
-     * Dumps the current AI State Machine (SM) state to a JSON file in the workspace.
-     * Used for debugging deep-trace behavior and non-deterministic AI failures.
+     * Dumps the current AI State Machine (SM) state to a JSON file under the workspace's
+     * `tmp/sm-dumps` directory. Used for debugging deep-trace behavior and non-deterministic
+     * AI failures.
+     *
+     * @returns The SM state, also when no workspace folder is open to write it to;
+     *   `undefined` only when there is no state machine or the write failed.
+     *
+     * @remarks
+     * Shares the `tmp` root with AI trace logging rather than creating a `test-results`
+     * directory in the user's project — that name is this repository's test-output
+     * convention, not something a user's workspace should grow.
      */
     vscode.commands.registerCommand('dataLineageViz.dumpSmState', async () => {
       const sess = getSession();
       const sm = sess.stateMachine;
       if (!sm) {
-        notifyWarning(aiLogger, 'Dump SM state', 'Data Lineage: No active state machine to dump.', { command: 'dataLineageViz.dumpSmState' });
+        notifyWarning(
+          aiLogger,
+          'Dump SM state',
+          'Data Lineage: No active state machine to dump. A bounded graph preview runs in one pass; use its AI NDJSON trace for diagnostics.',
+          { command: 'dataLineageViz.dumpSmState', hasPresentation: sess.presentationArtifact !== null },
+        );
         return;
       }
       try {
-        const dump = JSON.stringify(sm.toJSON(), null, 2);
-        const ts = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+        const state = sm.toJSON();
+        const dump = JSON.stringify(state, null, 2);
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const wsFolder = vscode.workspace.workspaceFolders?.[0];
         if (!wsFolder) {
           notifyWarning(aiLogger, 'Dump SM state', 'Data Lineage: No workspace folder open.', { command: 'dataLineageViz.dumpSmState' });
-          return;
+          return state;
         }
-        const dir = vscode.Uri.joinPath(wsFolder.uri, 'test-results', 'sm-dumps');
+        const dir = vscode.Uri.joinPath(wsFolder.uri, 'tmp', 'sm-dumps');
         await vscode.workspace.fs.createDirectory(dir);
         const fileUri = vscode.Uri.joinPath(dir, `sm-${ts}.json`);
         await vscode.workspace.fs.writeFile(fileUri, Buffer.from(dump, 'utf-8'));
         aiLogger.debug(`SM state dumped to ${fileUri.fsPath}`);
         const doc = await vscode.workspace.openTextDocument(fileUri);
         await vscode.window.showTextDocument(doc);
+        return state;
       } catch (err) {
         notifyError(aiLogger, 'Dump SM state', 'Data Lineage: Failed to dump SM state.', err, { command: 'dataLineageViz.dumpSmState' });
       }
     }),
 
-    // --- Test-only diagnostic (registered ONLY under VSCODE_EX_TEST; zero prod surface) ---
-    // Returns the deterministic engine-parity report for the loaded model so the
-    // electron integration layer can assert the SAME backend output as the unit
-    // layer (golden-baseline regression net — see docs/E2E_TESTING.md).
-    ...(process.env.VSCODE_EX_TEST === '1'
-      ? [vscode.commands.registerCommand('dataLineageViz.__test.engineReport', () => {
-          const model = getSession().model;
-          return model ? buildEngineParityReport(model) : null;
-        })]
-      : []),
 
     // --- Configuration Scaffolding ---
     vscode.commands.registerCommand('dataLineageViz.createParseRules', () =>
@@ -175,116 +170,26 @@ export function registerCommands(
     ),
 
     // --- AI Integration ---
-    /**
-     * Command invoked by the "Show in Graph" button (rendered by `stream.button` at the end
-     * of a completed SM turn). Handles both cases in one place so the UI only needs one entry
-     * point.
-     *
-     * @remarks
-     * - **Fast path**: if an AI view has already been synthesized this session
-     *   (`sess.resultGraph` is populated) and the lineage panel exists, just reveal it.
-     *   No new chat turn, no AI round-trip, no token cost.
-     * - **Slow path**: if no view exists yet (e.g. the user ran a `bfs_trace` but the AI
-     *   never called `present_result`), open a fresh `@lineage` chat turn asking the AI to
-     *   synthesize a view from the stored trace results.
-     *
-     * @param originalPrompt - The user's original question, captured at SM start; used as
-     *   the seed for the view name in the slow path.
-     */
-    vscode.commands.registerCommand('dataLineageViz.aiCreateView', (originalPrompt: string) => {
+    // Replays the last validated presentation without another model call.
+    vscode.commands.registerCommand('dataLineageViz.aiCreateView', () => {
       const sess = getSession();
       const panel = getActivePanel();
-      if (sess.resultGraph && panel) {
-        // Always re-post the preview: present_result's ai-view-preview is ephemeral.
-        // If it was never sent (present_result errored/skipped) or the webview lost state,
-        // reveal alone would show a stale/empty panel.
-        const rg = sess.resultGraph;
-        const labelToNumber = new Map<string, number>();
-        const badges = (rg.sections ?? []).flatMap((section, index) => {
-          const label = section.label.replace(/^\d+[\.]?\s+/, '').trim();
-          if (!label) return [];
-          if (!labelToNumber.has(label)) labelToNumber.set(label, index + 1);
-          const n = labelToNumber.get(label)!;
-          return (section.node_ids ?? []).map(nodeId => ({ nodeId, text: `${n} ${label}` }));
-        });
-        const notes = (rg.notes ?? [])
-          .filter(n => n.summary)
-          .map(n => ({ nodeId: n.nodeId, text: n.summary }));
-        const name = (originalPrompt || 'AI Lineage View').length > 200
-          ? (originalPrompt || 'AI Lineage View').slice(0, 200) + '\u2026'
-          : (originalPrompt || 'AI Lineage View');
-        const aiMetadata = {
-          summary: sess.lastPresentResultDescription ? '' : `Lineage trace for: ${originalPrompt}`,
-          description: sess.lastPresentResultDescription ?? '',
-          createdAt: new Date().toISOString(),
-          modelName: sess.modelName || 'unknown',
-          highlightGroups: [],
-          badges,
-          notes,
-          layoutDirection: 'LR' as const,
-        };
-        panel.webview.postMessage({
+      if (sess.presentationArtifact && panel) {
+        const preview = sess.presentationArtifact;
+        void postToWebview(panel, {
           type: 'ai-view-preview',
-          name,
-          nodeIds: rg.nodeIds,
-          aiMetadata,
-        });
+          name: preview.name,
+          nodeIds: [...preview.nodeIds],
+          aiMetadata: preview.aiMetadata,
+        }, aiLogger);
         panel.reveal(vscode.ViewColumn.One);
         return;
       }
-      const viewPrompt = `Create an AI view from the trace above. Use the BFS results you already have — add badges, notes, and highlight groups. Name it based on the original question: "${originalPrompt}"`;
-      vscode.commands.executeCommand('workbench.action.chat.open', {
-        query: `@lineage ${viewPrompt}`,
-      });
-    }),
-
-    /**
-     * Pre-fills the chat input with the full list of deferred (out-of-approved-scope)
-     * sub-questions the engine collected during an SM session. The user trims the list
-     * to whatever they want to pursue and sends manually — the command starts no task.
-     *
-     * @remarks
-     * Invoked from the `stream.button` emitted after a successful synthesis
-     * (see `LineageParticipant.dispatchExit`). The argument is validated via
-     * {@link DeferredQuestionArgSchema}; a malformed payload is logged and silently
-     * skipped rather than throwing. Uses `workbench.action.chat.open` with
-     * `isPartialQuery: true` so the input text is not auto-submitted.
-     */
-    vscode.commands.registerCommand('dataLineageViz.showDeferredQuestions', async (raw: unknown) => {
-      const parsed = DeferredQuestionArgSchema.safeParse(raw);
-      if (!parsed.success) {
-        aiLogger.warn(`showDeferredQuestions: ignoring malformed argument — ${parsed.error.issues.map(i => i.message).join('; ')}`);
-        return;
-      }
-      // Pre-fill the chat input with the full list. `isPartialQuery: true` keeps it unsent
-      // so the user can trim to one question and decide when to send — no auto-task.
-      await vscode.commands.executeCommand('workbench.action.chat.open', {
-        query: buildDeferredQuestionsPrompt(parsed.data),
-        isPartialQuery: true,
-      });
-    }),
-
-    /**
-     * Internal command invoked by 'Approve' / 'Cancel' / 'Refine Scope' buttons in a chat gate.
-     *
-     * @remarks
-     * - `'yes'` / `'no'` resolve mechanically — submit the literal token so the participant's
-     *   gate classifier matches and the engine resumes or aborts.
-     * - `'refine'` opens the chat input pre-filled with `@lineage refine: ` so the user types
-     *   their narrowing instruction (free text). The classifier matches the `refine:` prefix
-     *   and routes the message to the AI for structural translation.
-     */
-    vscode.commands.registerCommand('dataLineageViz.aiResolveGate', (choice: 'yes' | 'no' | 'refine') => {
-      configLogger.info(`AI Gate resolved: choice=${choice}`);
-      if (choice === 'refine') {
-        vscode.commands.executeCommand('workbench.action.chat.open', {
-          query: '@lineage refine: ',
-          isPartialQuery: true,
-        });
-        return;
-      }
-      vscode.commands.executeCommand('workbench.action.chat.open', {
-        query: `@lineage ${choice}`
+      notifyInfo(aiLogger, 'AI create view', 'No validated AI lineage preview is available for this session.', {
+        command: 'dataLineageViz.aiCreateView',
+        hasResultGraph: sess.resultGraph !== null,
+        hasPresentationArtifact: sess.presentationArtifact !== null,
+        hasPanel: panel !== undefined,
       });
     }),
 
@@ -319,17 +224,21 @@ export function registerCommands(
 
     /**
      * Command intended for testing/integration that forces a .dacpac file load into the active session.
+     *
+     * @remarks
+     * Installs the model through the same path the webview bridge uses, so the session it leaves
+     * behind is indistinguishable from a wizard load — including the `dataLineageViz.modelLoaded`
+     * context key. Renders into an already-open panel; it does not open one.
      */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
       configLogger.info(`Forcing project load from: ${uri.fsPath}`);
       try {
         const { extractDacpac } = await import('./engine/dacpacExtractor');
-        const { buildBareGraph } = await import('./ai/infra/graphUtils');
 
         const buffer = await vscode.workspace.fs.readFile(uri);
         const config = buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz'));
         const model = await extractDacpac(
-          buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer,
+          buffer,
           undefined,
           undefined,
           {
@@ -339,9 +248,14 @@ export function registerCommands(
         );
         const sess = getSession();
 
-        sess.model = model;
+        applyModelToSession(sess, model, false, null);
         sess.projectName = path.basename(uri.fsPath, '.dacpac');
-        sess.graph = buildBareGraph(model);
+
+        // A forced load has no wizard step to drive the canvas, so push the model itself.
+        const panel = getActivePanel();
+        if (panel) {
+          void postToWebview(panel, { type: 'dacpac-model', model, config, sourceName: sess.projectName, autoVisualize: true }, configLogger);
+        }
 
         configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`);
       } catch (err) {
@@ -359,6 +273,7 @@ export function registerCommands(
  * Creates a YAML configuration file in the workspace root by copying a template from the extension assets.
  *
  * @param context - The extension context.
+ * @param logger - Logger used for command diagnostics and notifications.
  * @param fileName - The name of the file to create in the workspace.
  * @param sourceAsset - The name of the template file in the extension's `assets/` folder.
  * @param settingName - The name of the extension setting associated with this file.
@@ -374,22 +289,28 @@ async function createYamlScaffold(
 
   const targetUri = vscode.Uri.joinPath(folder.uri, fileName);
 
+  // The command still fails — this only guarantees the detail and stack reach the Output channel,
+  // which VS Code's own generic command-failure toast does not do.
   try {
-    // If the file already exists, just open it for the user.
-    await vscode.workspace.fs.stat(targetUri);
+    try {
+      // Preserve an existing scaffold.
+      await vscode.workspace.fs.stat(targetUri);
+      const doc = await vscode.workspace.openTextDocument(targetUri);
+      await vscode.window.showTextDocument(doc);
+      return;
+    } catch (err) {
+      if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
+    }
+
+    const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', sourceAsset);
+    const sourceData = await vscode.workspace.fs.readFile(sourceUri);
+    await vscode.workspace.fs.writeFile(targetUri, sourceData);
+
     const doc = await vscode.workspace.openTextDocument(targetUri);
     await vscode.window.showTextDocument(doc);
-    return;
+    notifyInfo(logger, 'Create YAML scaffold', `Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`, { fileName, settingName });
   } catch (err) {
-    if (!(err instanceof vscode.FileSystemError) || err.code !== 'FileNotFound') throw err;
+    notifyError(logger, 'Create YAML scaffold', `Data Lineage: Failed to create ${fileName} — check the Output channel for details.`, err, { fileName, sourceAsset, settingName });
+    throw err;
   }
-
-  // Copy from assets to workspace.
-  const sourceUri = vscode.Uri.joinPath(context.extensionUri, 'assets', sourceAsset);
-  const sourceData = await vscode.workspace.fs.readFile(sourceUri);
-  await vscode.workspace.fs.writeFile(targetUri, sourceData);
-
-  const doc = await vscode.workspace.openTextDocument(targetUri);
-  await vscode.window.showTextDocument(doc);
-  notifyInfo(logger, 'Create YAML scaffold', `Created ${fileName} in workspace root. Set "dataLineageViz.${settingName}" to "${fileName}" to use it.`, { fileName, settingName });
 }

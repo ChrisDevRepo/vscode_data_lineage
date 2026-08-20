@@ -1,37 +1,246 @@
-# Copilot Instructions - Public Delta
+# Copilot Instructions
 
-Canonical repo policy lives in `AGENTS.md`. Use `CONTRIBUTING.md` and `tests/README.md` for the current test strategy. If these files conflict, follow `AGENTS.md`, then `CONTRIBUTING.md`, then this file.
+How this extension is built, so an AI assistant can reason about it before
+changing it. Tracked source, tests, and documentation are the authoritative
+context; this file explains the parts the code alone does not reveal — why a
+boundary exists, which component owns a decision, and what a given design
+choice is protecting.
 
 ## Read First
 - `docs/ARCHITECTURE.md`: runtime architecture, graph contracts, `NavigationEngine`
-- `docs/DEVELOPER_GUIDE.md`: extension, ingestion, and tracer workflows
+- `docs/DEVELOPER_GUIDE.md`: extension, ingestion, and runtime-evidence workflows
 - `docs/AI_PROMPTS.md`: `@lineage` prompt/tool/template lifecycle
+- `docs/E2E_TESTING.md`: model tiers, unit gate, Electron lanes, headless live-provider harness
 - `docs/PARSE_RULES.md` and `docs/DMV_QUERIES.md`: parser and DMV customization
+- `docs/PROFILING_PATTERNS.md`: generated profiling SQL, its settings, and its limits
+- `docs/FEATURES.md` and `docs/TROUBLESHOOTING.md`: user-facing behaviour and diagnostics
+- `CONTRIBUTING.md` and the `package.json` scripts: toolchain versions and the command set
 
-## Core Engineering Rules
-- Keep `@lineage` as the primary user-facing surface.
-- `NavigationEngine` owns BFS scope, agenda, gates, route validation, pruning, closure, and termination.
-- Treat the language model as a semantic worker, not a process-state owner.
-- Validate untrusted boundaries with Zod.
-- Prefer schema/FSM/policy/code guards over prompt-only constraints.
-- Use `src/utils/log.ts` helpers only.
-- Every user-facing error/warning notification must go through `notifyError` / `notifyWarning` (`src/utils/notifications.ts`) so full detail + stack reach the Output channel at the same level as the toast — never demote detail to `debug`. Webview errors funnel through the bridge `'error'` message.
-- AI/Zod rejections are normal AI behavior → `debug`, not error/warn. Render-limit / node-cap reached is capacity guidance → `info`, not an error.
-- Use `dataLineageViz.*` for commands and settings.
-- Use `Expanded Schema View` naming for the schema expansion view.
-- The user solely owns the version number. Never bump/lower or restructure versioning, and never add a CHANGELOG `[Unreleased]` section (the project does not use one); new notes go under the current version heading.
+## What the extension is
 
-## Testing And Verification
-- Full gate: `npm test`
-- Core tiers: `npm run test:parser`, `npm run test:bfs`
-- Supporting tiers: `npm run test:support`, `npm run test:ui`, `npm run test:baseline`
-- Discovery audit: `npm run test:list`
-- Parser rule edits require `npm run test:snapshot`, then `npm run test:snapshot:update` only for intentional changes.
-- For structural or code-path changes, run `npx tsc --noEmit`, `npm run build`, and `npm test`.
-- New-test placement (so it is never silently skipped): node tests are self-running scripts (`assert`/`assertEq`/`printSummary` from `tests/unit/helpers/testUtils`, calling `runTests()` at module load) living at root `tests/unit/*.test.ts`. A domain runner under `tests/unit/runners/` collects them: `bfs`/`parser`/`baseline`/`snapshot` use explicit module arrays (add your file there); the `support` runner auto-discovers remaining root-level `*.test.ts` minus its exclude list. A file in a subdirectory (e.g. `tests/unit/ai/`) is NOT discovered. UI/hook tests under `tests/unit/components/` or `tests/unit/hooks/` are vitest `describe`/`it` files, glob-discovered by the `ui`/`support-ui` projects. Confirm a new test ran: its summary appears in `npm test` output and the project's test count increases.
+`data-lineage-viz` reads SQL objects — tables, views, procedures, functions —
+from a DACPAC file or from live SQL Server, Azure SQL, Fabric, or Synapse
+metadata, resolves them into a dependency graph, and renders that graph as an
+interactive diagram. It ships two bundles: the extension host (esbuild →
+`out/extension.js`) and a React webview (Vite → `dist/`). Everything crossing
+that boundary travels as a discriminated union declared in `bridgeContract.ts`
+and is Zod-parsed on both sides, which is why there is no untyped `postMessage`
+anywhere — a message that does not parse is a bug caught at the seam rather
+than a render failure deep in the webview.
 
-## Security
-- Never commit secrets, `.env*`, customer data, proprietary DACPACs, raw traces, journals, or local assistant artifacts.
-- Never commit `CLAUDE*`, `GEMINI*`, `*internal*`, `.claude/`, `.gemini/`, `.cursor/`, `.continue/`, `.aider*`, `.agents/`, or `tmp/`.
-- Only approved AdventureWorks DACPAC fixtures may be committed under `tests/fixtures/`.
-- LM trace logging stays opt-in per session via `dataLineageViz.enableAiTraceLogging`. Do not add a persistent setting for it.
+An optional `@lineage` chat participant answers questions about the graph.
+
+## The AI surface
+
+`src/ai/participant/lineageParticipant.ts` is the only AI entry point. There is
+no embedded chat webview and no separate AI panel, so a feature that needs AI
+attaches to the participant rather than opening a second surface.
+
+The model path is fixed: participant → `LineageRuntime` → LangGraph →
+`VscodeModelPort` → `VscodeLangChainBridge` → `vscode.lm`. The model is exactly
+`ChatRequest.model`, passed straight through. That single decision is what
+gives the extension the user's Copilot model — including their "Manage Models…"
+BYOK configuration — for free, and it is why the extension holds no API keys,
+no provider setting, and no endpoint configuration. Selecting or substituting a
+model would break that inheritance rather than extend it.
+
+`vscode.lm` has no system role, so `VscodeLangChainBridge` downgrades a
+`SystemMessage` to a User turn. Anything that depends on system-role semantics
+has to survive that mapping.
+
+Tool calls run through the local strict-Zod dispatcher, not
+`vscode.lm.invokeTool`. The bridge preserves tool-selection semantics across the
+two type systems: LangChain `any` is VS Code `Required`, `none` sends no tools,
+and a named choice exposes only that tool. Unsupported choices and missing
+tool-call IDs fail before model dispatch, where the diagnosis is still cheap.
+The `package.json` `languageModelTools` manifest is generated from the Zod
+schemas and a drift test guards the pair.
+
+## How a turn runs
+
+The participant stays thin. The outer LangGraph owns discovery, semantic
+retries, gates, hop-by-hop transitions, synthesis, and terminal ownership — so
+turn state lives in the graph, and the language model acts as a semantic worker
+rather than a process-state owner.
+
+`ChatContext.history` is the production conversation source. Only ordered
+user/assistant text and complete tool-call/result pairs convert; an orphan tool
+message would be rejected by the provider, so the conversion never invents one.
+An empty native history is the explicit new-chat boundary: it cancels an old
+gate, rotates the session ID, and runs `AiSession.resetExploration()`.
+
+Active exploration begins only through the approve-gate path, and
+`activatePendingExploration` is the single site that publishes a navigation
+engine. Every mutating or panel-presenting tool call runs under the active turn
+lease — including calls arriving through externally registered `vscode.lm` tools
+from Copilot agent mode, not only through the internal dispatcher.
+
+`NavigationEngine` owns BFS scope, agenda, gates, route validation, pruning,
+closure, and termination. Bounding traversal in the engine rather than in the
+prompt is deliberate: a schema, state machine, or code guard holds where a
+prompt-only constraint drifts.
+
+## Prompts, presentation, and rejection
+
+Every stage that calls `lineage_present_result` composes its system prompt
+through the shared phase dispatcher (`buildPhasePrompt`) and receives
+`buildPresentationDetailContract`. One validator judges preview and synthesis
+alike, so a rule given to one stage and not the other surfaces as a rejection
+the model could not have avoided — a prompt-composition defect, not a model
+defect. Stage-specific text stays with its stage; everything else belongs in the
+shared builder.
+
+`validatePresentResult` is the single rejection point. Checks that need context
+the validator does not hold — a cached discovery answer, the result graph — pass
+their findings into its accumulator instead of returning early, because
+reordering checks only changes which defect stays hidden. A rejection names the
+offending entry paths, not just the rule: each defect class disclosed on its own
+round costs its own semantic-failure charge against a budget of three.
+
+Repair is minimal-delta. A rejected submission is held and repaired through
+bounded correction fragments and the strict patch schema rather than re-sending
+the whole payload.
+
+## Persisted records
+
+The project store lives in `globalState` and is validated on read. Validation
+tolerates fields it does not recognise rather than discarding the record: a
+record written by an older build carries keys this one never declared, and
+rejecting it would be silent user-data loss. The write path selects
+schema-declared keys instead of removing known-bad ones, so nothing undeclared
+is persisted in the first place.
+
+## Provenance and live SQL
+
+`DatabaseModel.source` carries the ingestion lane, stamped by each extractor,
+and `buildModel` stays lane-agnostic. `dbPlatform` is not a proxy for it: a
+DACPAC derives a platform label from its DSP exactly as a live import derives
+one from the server, so the presence of a platform says nothing about where the
+model came from.
+
+Every SQL statement sent to a real database is documented in
+`docs/DMV_QUERIES.md` and overridable through the user's `dmvQueries.yaml`, so a
+change to live-database SQL ships those updates in the same commit. The AI
+dependency closure is snapshot-only — it cannot connect, execute SQL, refresh
+data, start DMV ingestion, or start profiling.
+
+## LangSmith containment
+
+LangSmith is a transitive dependency of `@langchain/core`, never an application
+dependency. Four layers keep it inert: an npm `overrides` entry redirecting
+`langsmith` to the empty shell in `stubs/langsmith/`, a fail-closed tracing
+guard that trips before any graph or model call, the `assert-no-langsmith` gate
+step, and a pin on `@langchain/core`.
+
+The pin exists for a specific reason. From 1.2.8 that package vendors
+`src/utils/gateway.ts`, which rewrites a model call's `baseURL` to a LangSmith
+gateway when `LANGSMITH_GATEWAY` or `LANGSMITH_GATEWAY_API_KEY` is set. The npm
+override cannot reach that code — it lives inside `@langchain/core`, not in the
+`langsmith` package — and the runtime guard watches different variables than the
+gateway reads, so only the bundle-signature gate catches it. An outdated-
+dependency report is not a reason to unpin. `@langchain/langgraph` is unaffected
+and may advance on its own.
+
+Trace export is Langfuse-only. The test-only REST exporter
+`tests/harness/langfuseExport.ts` is the sanctioned exception: plain HTTP from
+dev-box test tooling, no vendor SDK, no tracing flags, never bundled.
+
+## Diagnostics and logging
+
+AI diagnostic logging is off by default and enabled only through an explicit
+session-scoped command, so there is no always-on content-bearing AI log.
+
+Lifecycle records carry enumerated codes, counters, and dotted field paths —
+never prompts, model text, tool payloads, or error prose. A turn still has to be
+diagnosable from the trace alone within that constraint, which is why the stop
+reason and the offending paths are recorded and the prose stays in the log.
+
+Logging goes through `src/utils/log.ts`, and user-facing errors and warnings
+through `notifyError` / `notifyWarning` (`src/utils/notifications.ts`) so full
+detail and stack reach the Output channel at the same level as the toast;
+webview errors funnel through the bridge `'error'` message. Severity follows
+meaning: AI and Zod rejections are normal AI behaviour and log at `debug`, while
+a render-limit or node-cap is capacity guidance at `info`.
+
+## Conventions
+
+Doc comments follow TSDoc: `/** */` contracts on exported API, with
+`@param name - description`, `@returns`, `@throws`, `@remarks` for invariants,
+and `@internal` for non-public exports. In `.ts`/`.tsx` types live in signatures
+and are not repeated in comments; plain `.mjs` scripts keep type-bearing JSDoc
+because that is the only place the type can be stated. Comments carry contracts,
+not narration, decision history, or notes to a reviewer.
+
+Commands and settings use the `dataLineageViz.*` prefix, and the schema
+expansion view is named `Expanded Schema View`. Changelog notes go under the
+current version heading; the project uses no `[Unreleased]` section and the
+version number is the user's to set.
+
+The LangGraph runtime is the established architecture, and current tracked
+source and tests are the implementation baseline.
+
+## Testing
+
+`npm run gate` is the deterministic pre-merge check; `CONTRIBUTING.md` and the
+`package.json` scripts list the command set. Beyond type-checking, builds, and the
+unit suites it enforces five derived contracts: the
+`contributes.languageModelTools` manifest drift check, the AI template
+schema-version gate, the honest-test-label scan, the packaged-VSIX contents check,
+and the `assert-no-langsmith` bundle check.
+
+`npm run test:e2e-electron` runs the extended VS Code Electron lanes outside the gate,
+against a scripted provider registered through the real `vscode.lm` API — it
+proves extension wiring, not model behaviour. The lanes are serial: they share
+one Electron profile and one `out/` build, so exactly one host runs at a time and
+`.vscode-test.mjs` is never edited to parallelize them. The failure modes that
+edit produces, and why the serial cost is not worth engineering around, are in
+`docs/E2E_TESTING.md` §One host at a time.
+
+The host and the model are tested on separate surfaces, and that separation is a
+decision rather than a gap. A host is the only place `activate()`, contribution
+points, command registration, and `vscode.lm.invokeTool` exist, so it is the only
+place their defects can surface; everything it adds beyond that is deterministic
+translation that does not care whether the text came from inference. Model
+behaviour is therefore measured headless by `npm run test:live-provider`, and the
+Electron fixture stays scripted-only — it must not grow a live-provider mode.
+The seam that separation would otherwise leave — the harness's
+`openAiCompatiblePort` drifting from `VscodeModelPort`, two implementations that
+share no code — is closed by one port-agnostic acceptance suite
+(`tests/unit/ai-core/helpers/portContract.ts`) run against both. A new guarantee
+about the model boundary belongs in that suite, never in a credentialed host lane.
+
+The suites prove the deterministic core: SQL parsing and dependency extraction,
+graph construction and traversal, schemas, and state transitions. How good a
+model's answer is cannot be settled by a repository test and is not measured
+here.
+
+Live database access is UAT-only and outside the automated framework. No runner
+connects to a server, so DMV query execution, `{{SCHEMAS}}` expansion against a
+real catalog, result shapes, platform detection, and custom `dmvQueriesFile`
+loading are verified by hand — their absence from the suite is the design, not a
+gap. Model building from DMV-shaped data is a different thing and stays covered
+by `tests/unit/parser/dmvExtractor.test.ts` over synthetic result sets.
+
+Tests are Vitest `describe`/`it`; the unit suite applies the `vscode` stub alias
+globally. There is no snapshot tier: after editing `assets/defaultParseRules.yaml`
+a green `npm run test:parser` is not evidence that parser output is unchanged,
+so the resulting dependency edges are reviewed against the DDL by hand.
+
+## Security and data handling
+
+Secrets, customer data, proprietary DACPACs, and raw traces do not belong in the
+repository; only approved AdventureWorks DACPAC fixtures are committed under
+`tests/fixtures/`.
+
+Default runtime logs are content-free. Session diagnostics, once explicitly
+enabled, may contain prompts, customer data, tool payloads, and provider
+responses — they stay in ignored storage and are reviewed before sharing, and
+credentials and authorization headers are never recorded.
+
+Dynamic prompt slots — hop context, tool observations, the user question —
+escape `<`/`>` and carry an untrusted-data banner; `src/ai/agent/toolAttempt.ts`
+and `stagePrompts.ts` hold the established idiom for a new slot.
+
+Third-party prompt sources contribute concepts, not prose. Copying licensed
+prompt or template text near-verbatim requires a tracked third-party-notices
+register recording source, license, destination, and modifications.

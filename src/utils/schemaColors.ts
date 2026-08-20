@@ -88,7 +88,7 @@ const SCHEMA_COLORS_DARK = [
  * @param str - The input string to hash.
  * @returns A deterministic hash value.
  */
-export function hashString(str: string): number {
+function hashString(str: string): number {
   let hash = 2166136261; // FNV-1a offset basis
   for (let i = 0; i < str.length; i++) {
     hash ^= str.charCodeAt(i);
@@ -175,7 +175,7 @@ export function getSchemaColor(schema: string, forceLight?: boolean): string {
  *
  * @returns Palette slot index in `[0, paletteSize)`, stable for a given schema name.
  */
-export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_EXT.length): number {
+function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_EXT.length): number {
   return hashString(schemaKey(requireSchemaName(schema))) % paletteSize;
 }
 
@@ -186,7 +186,7 @@ export function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_
  * @param schemas - Schema names to map.
  * @param forceLight - Whether to force the light palette.
  *
- * @returns a deterministic loaded-set color map keyed by normalized schema name.
+ * @returns A deterministic loaded-set color map keyed by normalized schema name.
  */
 export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean): SchemaColorMap {
   const palette = getSchemaPalette(forceLight);
@@ -268,9 +268,9 @@ export function getSchemaDisplayColor(
 }
 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
-export const EXTERNAL_NODE_COLOR_LIGHT = '#6B7A8D';
+const EXTERNAL_NODE_COLOR_LIGHT = '#6B7A8D';
 /** Fixed color for external nodes in dark theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
-export const EXTERNAL_NODE_COLOR_DARK  = '#94A3B8';
+const EXTERNAL_NODE_COLOR_DARK  = '#94A3B8';
 
 /**
  * Returns the theme-aware fixed color for external nodes.
@@ -299,7 +299,7 @@ export const AI_COLOR_HEX: Record<string, string> = {
 /**
  * Maps semantic AI roles to their corresponding two-letter color codes.
  */
-export const AI_ROLE_TO_COLOR: Record<string, string> = {
+const AI_ROLE_TO_COLOR: Record<string, string> = {
   source: 'bu', transform: 'or', target: 'gn',
   good: 'gn', warn: 'ye', fail: 'rd',
   gy: 'gy',
@@ -334,7 +334,7 @@ export const AI_COLOR_GLOW: Record<string, { glow: string; shadow: string }> = {
  *
  * @returns `true` if a dark theme is active; otherwise `false`.
  */
-export function isDarkTheme(): boolean {
+function isDarkTheme(): boolean {
   if (typeof document === 'undefined') return false;
   const kind = document.body?.dataset?.vscodeThemeKind;
   return kind === 'vscode-dark' || kind === 'vscode-high-contrast';

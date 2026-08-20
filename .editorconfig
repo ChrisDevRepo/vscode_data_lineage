@@ -1,0 +1,14 @@
+# Editor-side companion to .gitattributes: keeps files LF as they are written,
+# so Git never has to normalise them on commit. Honoured natively by most
+# editors; VS Code needs the EditorConfig extension for full support.
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
+
+[*.md]
+# Trailing double-space is a hard line break in Markdown.
+trim_trailing_whitespace = false

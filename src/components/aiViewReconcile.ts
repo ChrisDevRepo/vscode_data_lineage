@@ -1,7 +1,8 @@
 import type { DatabaseModel } from '../engine/types';
 import type { AIViewMetadata } from '../engine/projectStore';
-import { resolveModelNodeId } from '../ai/infra/inputNormalization';
+import { resolveModelNodeId } from '../engine/shared/nodeIdResolution';
 
+/** Canonicalized AI-view payload plus unresolved node references. */
 export interface ReconciledAiView {
   nodeIds: string[];
   unresolved: string[];

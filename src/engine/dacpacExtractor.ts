@@ -1,31 +1,21 @@
 /**
  * @module DacpacExtractor
- * Orchestrates the extraction of database metadata and lineage from SQL Server .dacpac files.
+ * Extracts database metadata and lineage from SQL Server DACPAC archives.
  *
- * This module provides a high-performance, two-phase extraction pipeline:
- * 1. **Phase 1 (Lightweight):** Quickly parses the `model.xml` to build a schema preview and object catalog.
- * 2. **Phase 2 (Full):** Performs deep extraction of columns, DDL, and dependencies, optionally filtered by schema.
- *
- * Key features:
- * - Direct parsing of the dacpac ZIP structure using `jszip`.
- * - Fast XML processing of `model.xml` via `fast-xml-parser`.
- * - Reconstruction of object-level dependencies and column-level metadata.
- * - Mapping of DAC Data Schema Providers to human-readable platform names.
+ * Phase one builds the schema preview and object catalog. Phase two extracts columns, DDL,
+ * constraints, dependencies, and platform metadata for the selected schemas.
  */
 
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 import {
   DatabaseModel,
-  ObjectType,
   SchemaInfo,
   SchemaPreview,
   ELEMENT_TYPE_MAP,
   TRACKED_ELEMENT_TYPES,
   XmlElement,
   XmlProperty,
-  XmlRelationship,
-  XmlEntry,
   XmlReference,
   ExtractedObject,
   ExtractedDependency,
@@ -38,7 +28,8 @@ import {
   DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
-import { stripBrackets, schemaKey, compileExclusionPattern } from '../utils/sql';
+import { applyExclusionFilter } from './modelFilters';
+import { stripBrackets, schemaKey } from '../utils/sql';
 import { trunc } from '../utils/log';
 
 interface DacpacExtractionOptions {
@@ -46,9 +37,7 @@ interface DacpacExtractionOptions {
   maxNodes?: number;
 }
 
-/**
- * Counts extracted objects by canonical type. Used for one-line log breakdowns.
- */
+/** Counts extracted objects by canonical type for summary logging. */
 function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 'procedure' | 'function', number> {
   const c = { table: 0, view: 0, procedure: 0, function: 0 };
   for (const o of objs) {
@@ -58,21 +47,23 @@ function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 
 }
 
 /**
- * Extracts a complete DatabaseModel from a .dacpac file buffer.
- * Performs a full, unfiltered extraction of all tracked objects.
+ * Extracts a complete {@link DatabaseModel} from a DACPAC archive buffer.
  *
- *
- * @param buffer - DACPAC archive buffer to extract.
+ * @param buffer - DACPAC archive bytes to extract.
  * @param onDebugLog - Debug logger callback.
  * @param onInfoLog - Info logger callback.
  * @param options - Runtime extraction settings from VS Code configuration.
  *
- * @returns A Promise resolving to the extracted DatabaseModel.
+ * @returns The extracted database model.
+ * @throws If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
+ *   The thrown error carries the underlying archive error as `cause`.
  *
- * @throws {Error} If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
+ * @remarks Accepts `Uint8Array` so callers pass `readFile` output directly. Node pools file reads
+ * up to 32KB, so `.buffer` on a small dacpac is a 64KB pool shared with later allocations rather
+ * than the file's bytes.
  */
 export async function extractDacpac(
-  buffer: ArrayBuffer,
+  buffer: Uint8Array | ArrayBuffer,
   onDebugLog?: (msg: string) => void,
   onInfoLog?: (msg: string) => void,
   options: DacpacExtractionOptions = {},
@@ -113,6 +104,7 @@ export async function extractDacpac(
     ...model,
     warnings: warnings.length > 0 ? warnings : undefined,
     dbPlatform: dbPlatform || undefined,
+    source: 'dacpac',
   };
 }
 
@@ -121,10 +113,10 @@ export async function extractDacpac(
  * This Phase 1 extraction counts schemas and object types without parsing body scripts,
  * columns, or deep dependencies.
  *
- * @param buffer - The raw ArrayBuffer of the .dacpac file.
+ * @param buffer - The raw bytes of the .dacpac file.
  * @returns A Promise resolving to the schema preview and the pre-parsed XML elements for Phase 2.
  */
-export async function extractSchemaPreview(buffer: ArrayBuffer): Promise<{
+export async function extractSchemaPreview(buffer: Uint8Array | ArrayBuffer): Promise<{
   preview: SchemaPreview;
   elements: XmlElement[];
   dspName: string;
@@ -194,12 +186,13 @@ export function extractDacpacFiltered(
     ...model,
     warnings: warnings.length > 0 ? warnings : undefined,
     dbPlatform: dbPlatform || undefined,
+    source: 'dacpac',
   };
 }
 
 /**
  * Internal logic to compute schema-level statistics from parsed XML elements.
- * 
+ *
  * @param elements - The full array of parsed elements from model.xml.
  * @returns A summary object containing schema info and total object count.
  */
@@ -258,7 +251,7 @@ export function filterBySchemas(
   const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
   const schemaNodes = model.nodes.filter((n) => lowerSelected.has(n.schema.toLowerCase()));
   const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
-  
+
   const connectedVirtualIds = new Set<string>();
   for (const e of model.edges) {
     if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
@@ -288,7 +281,7 @@ export function filterBySchemas(
 
 /**
  * Extracts a lightweight catalog of all tracked objects from XML elements.
- * 
+ *
  * @param elements - The source XML elements.
  * @returns A collection of extracted objects without body or column detail.
  */
@@ -309,20 +302,20 @@ function extractObjectsLightweight(elements: XmlElement[]): ExtractedObject[] {
 
 /**
  * Loads the dacpac buffer into JSZip and retrieves the `model.xml` content.
- * 
- * @param buffer - Raw file buffer.
+ *
+ * @param buffer - Raw file bytes.
  * @returns The XML content as a string.
  */
-async function extractModelXml(buffer: ArrayBuffer): Promise<string> {
+async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string> {
   let zip: JSZip;
   try {
     zip = await JSZip.loadAsync(buffer);
   } catch (err) {
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('end of central directory') || msg.includes('is this a zip file'))
-      throw new Error('Not a valid .dacpac file (invalid ZIP archive)');
+      throw Object.assign(new Error('Not a valid .dacpac file (invalid ZIP archive)'), { cause: err });
     if (msg.includes('End of data reached') || msg.includes('Corrupted zip'))
-      throw new Error('File appears to be corrupted or truncated');
+      throw Object.assign(new Error('File appears to be corrupted or truncated'), { cause: err });
     throw new Error(`Invalid .dacpac file: ${msg || 'unknown error'}`);
   }
   const modelFile = zip.file('model.xml');
@@ -332,7 +325,7 @@ async function extractModelXml(buffer: ArrayBuffer): Promise<string> {
 
 /**
  * Parses the raw XML string into a structured object using `fast-xml-parser`.
- * 
+ *
  * @param xml - The XML string to parse.
  * @returns An object containing the elements array and the DSP name.
  */
@@ -381,14 +374,14 @@ export function parseDspPlatform(dsp: string): string {
     ['Sql90',  'SQL Server 2005'], ['Sql80',  'SQL Server 2000'],
   ];
   for (const [key, label] of verMap) if (dsp.includes(key)) return label;
-  
+
   const m = dsp.match(/\.(\w+?)DatabaseSchemaProvider$/);
   return m ? m[1] : dsp;
 }
 
 /**
  * Extracts deep metadata (DDL, columns, constraints) for tracked objects.
- * 
+ *
  * @param elements - The elements to process.
  * @param constraintElements - Optional elements collection for cross-referencing constraints.
  * @returns The collection of detailed object metadata.
@@ -439,7 +432,7 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
 
 /**
  * Extracts object-level dependencies between XML elements.
- * 
+ *
  * @param elements - The source XML elements.
  * @returns The collection of discovered dependencies.
  */
@@ -462,7 +455,7 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
 
 /**
  * Extracts column definitions for tables, views, and functions from the XML model.
- * 
+ *
  * @param el - The source element.
  * @returns An array of column definitions.
  */
@@ -517,7 +510,7 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
 
 /**
  * Utility to extract `@_Name` values from a specific Relationship.
- * 
+ *
  * @param el - The source element.
  * @param relName - The relationship name to lookup.
  * @returns An array of referenced names.
@@ -537,7 +530,7 @@ const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NUL
 
 /**
  * Extracts comprehensive constraint metadata (UQ, CK, FK, PK) for the entire model.
- * 
+ *
  * @param elements - The source XML elements.
  * @returns Maps of unique, check, foreign key, and primary key constraints.
  */
@@ -628,7 +621,7 @@ const DEPENDENCY_RELATIONSHIPS = new Set([
 
 /**
  * Extracts dependencies from an element's script or body.
- * 
+ *
  * @param el - The source element.
  * @returns A collection of dependency names.
  */
@@ -640,7 +633,7 @@ function extractBodyDependencies(el: XmlElement): string[] {
 
 /**
  * Recursively collects object-level dependency references from XML relationships.
- * 
+ *
  * @param el - The current element.
  * @param deps - Dependency names accumulated so far.
  */
@@ -671,7 +664,7 @@ function collectDeps(el: XmlElement, deps: string[]): void {
 
 /**
  * Retrieves the full SQL body script for an element, synthesizing a header if necessary.
- * 
+ *
  * @param el - The source element.
  * @param type - Dacpac element type.
  * @param schema - Object schema.
@@ -707,7 +700,7 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
 
 /**
  * Maps a dacpac element type to its SQL keyword equivalent.
- * 
+ *
  * @param type - The dacpac element type.
  * @returns The keyword (e.g. 'PROCEDURE', 'VIEW') or `undefined`.
  */
@@ -720,7 +713,7 @@ function getSqlKeyword(type: string): string | undefined {
 
 /**
  * Extracts the raw script content from dacpac properties or function body elements.
- * 
+ *
  * @param el - The source element.
  * @param type - Element type.
  * @returns The raw script string or `undefined`.
@@ -759,7 +752,7 @@ function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
 
 /**
  * Extracts and decodes a property value, handling XML character references.
- * 
+ *
  * @param prop - The XML property object.
  * @returns The decoded string value.
  */
@@ -785,7 +778,7 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
 
 /**
  * Checks if a reference is object-level (schema.object) rather than column-level.
- * 
+ *
  * @param name - The reference string.
  * @returns `true` if it looks like an object-level reference.
  */
@@ -796,7 +789,7 @@ function isObjectLevelRef(name: string): boolean {
 
 /**
  * Ensures the provided value is treated as an array.
- * 
+ *
  * @param val - A single value or an array.
  * @returns An array.
  */
@@ -806,35 +799,30 @@ function asArray<T>(val: T | T[] | undefined | null): T[] {
 }
 
 /**
- * Removes nodes from a DatabaseModel that match specified exclusion patterns.
+ * Removes nodes from a DatabaseModel that match specified exclusion patterns, and records
+ * the removed objects on the parse statistics of the surviving objects that referenced them.
+ *
+ * @remarks
+ * Node and edge exclusion is delegated to {@link applyExclusionFilter} so the load-time and
+ * graph-time paths cannot diverge; only the parse-stat annotation is specific to this entry
+ * point. Invalid patterns are skipped and reported, matching that function's contract.
  *
  * @param model - The DatabaseModel to filter.
  * @param patterns - Array of regex pattern strings.
- * @param onWarning - Callback for invalid regex patterns.
+ * @param onWarning - Callback receiving a formatted message for each invalid regex pattern.
  * @returns A new DatabaseModel with matching nodes and edges removed.
  */
 export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
-  if (!patterns || patterns.length === 0) return model;
-
-  const regexes = patterns.map((p) => {
-    try {
-      return compileExclusionPattern(p);
-    } catch (e) {
-      onWarning?.(`Invalid exclude pattern "${p}": ${e instanceof Error ? e.message : e}`);
-      return null;
-    }
-  }).filter(Boolean) as RegExp[];
-
-  if (regexes.length === 0) return model;
-
-  const nodes = model.nodes.filter((n) => {
-    const name = `${n.schema}.${n.name}`;
-    return !regexes.some((r) => r.test(name) || r.test(n.fullName));
+  const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
+    onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
   });
+  // Identity means no pattern survived compilation, so nothing was excluded and the
+  // parse-stat bookkeeping below has nothing to record.
+  if (filtered === model) return model;
 
+  const { nodes } = filtered;
   const nodeIds = new Set(nodes.map((n) => n.id));
   const excludedNodes = model.nodes.filter((n) => !nodeIds.has(n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
   const excludedIds = new Set(excludedNodes.map((n) => n.id));
   const excludedNameById = new Map(excludedNodes.map((n) => [n.id, `${n.schema}.${n.name}`]));
@@ -876,5 +864,5 @@ export function applyExclusionPatterns(model: DatabaseModel, patterns: string[],
     };
   }
 
-  return { ...model, nodes, edges, parseStats };
+  return { ...filtered, parseStats };
 }

@@ -11,9 +11,6 @@ import { Spinner } from './ui/Spinner';
  */
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
-/**
- * Props for the {@link VisualizingScreen} component.
- */
 interface VisualizingScreenProps {
   /** The name or path of the data source currently being processed. */
   sourceName: string;
@@ -58,12 +55,7 @@ function phaseStatus(rowPhase: LoadingPhase, current: LoadingPhase, hasError: bo
   return 'pending';
 }
 
-/**
- * Renders an icon representing the status of a loading phase.
- *
- * @param props - Component properties.
- * @returns A React element representing the phase icon.
- */
+/** Renders the pending, active, completed, or failed state of a loading phase. */
 function PhaseIcon({ status }: { status: PhaseStatus }) {
   if (status === 'done') {
     return (
@@ -86,7 +78,6 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
   if (status === 'active') {
     return <Spinner className="w-4 h-4 shrink-0" />;
   }
-  // pending
   return (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"
       className="w-4 h-4 shrink-0"
@@ -99,14 +90,7 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
 const AUTO_REDIRECT_MS = 8000;
 
 /**
- * A full-screen progress and status indicator shown during project initialization.
- *
- * This component provides visual feedback for the multi-step process of loading
- * database metadata and generating the lineage graph. It handles real-time
- * progress updates, elapsed time tracking, and provides an automatic return-to-start
- * mechanism if an error occurs.
- *
- * @param props - Component properties.
+ * Displays project-loading progress, elapsed time, cancellation, and failure recovery.
  */
 export const VisualizingScreen = memo(function VisualizingScreen({
   sourceName,
@@ -117,7 +101,6 @@ export const VisualizingScreen = memo(function VisualizingScreen({
   onCancel,
   onBack,
 }: VisualizingScreenProps) {
-  // Elapsed seconds counter — shown when in 'load' phase with no DB progress text
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     if (phase !== 'load' || progressText || !!error) { setElapsed(0); return; }
@@ -126,7 +109,6 @@ export const VisualizingScreen = memo(function VisualizingScreen({
     return () => clearInterval(interval);
   }, [phase, progressText, error]);
 
-  // Countdown for auto-redirect on error — cleared on unmount to avoid loops
   const [countdown, setCountdown] = useState<number | null>(null);
 
   useEffect(() => {
@@ -147,9 +129,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
     }, 250);
 
     return () => clearInterval(tick);
-    // onBack is stable (useCallback in App) — no re-fire risk
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [error]);
+  }, [error, onBack]);
 
   const hasError = !!error;
   const showCancel = phase === 'load' && !hasError;
@@ -166,7 +146,6 @@ export const VisualizingScreen = memo(function VisualizingScreen({
   ) : showCancel ? (
     <Button variant="ghost" onClick={onCancel}>Cancel</Button>
   ) : (
-    // Preserve footer area for consistent panel layout
     <span />
   );
 
@@ -174,14 +153,12 @@ export const VisualizingScreen = memo(function VisualizingScreen({
     <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">
       <div className="w-full max-w-md ln-panel flex flex-col" style={{ borderRadius: 6, minHeight: 280 }}>
         <div className="px-5 py-6 space-y-4 flex-1 overflow-y-auto">
-          {/* Source name */}
           <Tooltip content={sourceName} asChild>
             <div className="text-sm font-medium truncate">
               {sourceName}
             </div>
           </Tooltip>
 
-          {/* Phase rows */}
           <div className="space-y-3">
             {PHASES.map(({ key, label }) => {
               const status = phaseStatus(key, phase, hasError);

@@ -1,8 +1,3 @@
-// Re-export Monaco's main types for the ESM editor.api subpath used by MonacoSqlView.tsx.
-declare module 'monaco-editor/esm/vs/editor/editor.api' {
-  export * from 'monaco-editor';
-}
-
 interface VsCodeAPI {
   postMessage: (message: Record<string, unknown>) => void;
   getState: () => Record<string, unknown> | undefined;

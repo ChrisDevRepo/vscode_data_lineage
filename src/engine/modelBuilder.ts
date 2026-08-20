@@ -67,7 +67,7 @@ function makeParseTraceCallback(
  * @param allObjects - Catalog of all known objects in scope.
  * @param currentDatabase - Current database name for local-object resolution.
  * @param externalRefsEnabled - Whether external reference nodes should be emitted.
- * @param maxNodes - Configured node cap for the generated model.
+ * @param maxNodes - Total budget used only when adding virtual external nodes; real nodes are retained.
  * @param onDebugLog - Debug logger callback.
  *
  * @returns A fully assembled DatabaseModel.
@@ -234,7 +234,7 @@ export function normalizeName(name: string): string {
 
 /**
  * Checks if a name contains a schema qualifier (e.g., 'dbo.Table' vs 'Table').
- * 
+ *
  * @param name - The SQL identifier to check.
  * @returns `true` if the name is schema-qualified.
  */
@@ -244,7 +244,7 @@ function isSchemaQualified(name: string): boolean {
 
 /**
  * Checks if a reference points to a known system schema (e.g., sys, INFORMATION_SCHEMA).
- * 
+ *
  * @param name - The SQL identifier to check.
  * @returns `true` if it belongs to a system schema.
  */
@@ -255,15 +255,15 @@ function isSystemRef(name: string): boolean {
 
 /**
  * Heuristically determines if a script writes to a specific object.
- * 
+ *
  * @remarks
- * Uses a regex to look for INSERT/UPDATE/DELETE/MERGE/TRUNCATE keywords 
+ * Uses a regex to look for INSERT/UPDATE/DELETE/MERGE/TRUNCATE keywords
  * preceding the object name. Used to infer flow direction for SPs.
- * 
+ *
  * @param body - The SQL script body.
  * @param schema - Object schema.
  * @param name - Object name.
- * @returns 'write' if a write operation is detected, otherwise 'read'.
+ * @returns `'write'` when the SQL mutates the named object; otherwise `'read'`.
  */
 function inferBodyDirection(body: string, schema: string, name: string): 'write' | 'read' {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -277,7 +277,7 @@ function inferBodyDirection(body: string, schema: string, name: string): 'write'
 
 /**
  * Internal utility to add a directional edge to the lineage graph.
- * 
+ *
  * @param edges - The collection of edges to add to.
  * @param edgeKeys - A set used to deduplicate edges by their source→target key.
  * @param source - Source node ID.
@@ -300,7 +300,7 @@ function addEdge(
 
 /**
  * Computes architectural schema metrics from the resolved node list.
- * 
+ *
  * @param nodes - All discovered lineage nodes.
  * @returns An array of schema info objects, sorted by node count.
  */
@@ -322,7 +322,7 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
 
 /**
  * Builds the primary list of LineageNodes from extracted object metadata.
- * 
+ *
  * @param objects - Metadata for objects discovered in the active scope.
  * @returns The assembled nodes and their unique IDs.
  */
@@ -351,7 +351,7 @@ function buildNodeList(objects: ExtractedObject[]): { nodes: LineageNode[]; node
 
 /**
  * Builds the full cross-schema catalog for Phase 2 dependency resolution.
- * 
+ *
  * @param allObjects - The full database catalog (optional).
  * @returns Metadata for all objects available for neighbor resolution.
  */
@@ -390,7 +390,7 @@ interface GroupedDeps {
 
 /**
  * Categorizes dependencies based on their visibility and resolution status in the current catalog.
- * 
+ *
  * @param deps - Raw extracted dependencies.
  * @param nodeIds - Nodes in the active filtered scope.
  * @param allNodeIds - All nodes in the database catalog.
@@ -489,7 +489,7 @@ interface ParseTraceCtx {
 
 /**
  * Resolves regex-parsed references into graph edges or neighbor index pairs.
- * 
+ *
  * @param refs - Raw SQL names found in script body.
  * @param sourceId - ID of the node being parsed.
  * @param spLabel - Human-readable name for logging.
@@ -497,7 +497,6 @@ interface ParseTraceCtx {
  * @param edgeType - The semantic type of connection (body vs exec).
  * @param ctx - Shared edge creation context.
  * @param outRefs - Collection for successful resolutions.
- * @param skipped - Collection for system/unqualified skips.
  * @param unrelated - Collection for unresolvable drops.
  * @returns The number of successfully resolved edges.
  */
@@ -547,7 +546,7 @@ function processRegexRefs(
 
 /**
  * Orchestrates edge creation for non-procedural nodes (tables, views, functions).
- * 
+ *
  * @param node - The node to process.
  * @param xmlDeps - Dependencies declared in the XML model (DACPAC only).
  * @param ctx - Shared edge context.
@@ -584,7 +583,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
       }
     }
     const xmlDepIds = new Set(xmlDeps);
-    
+
     for (const dep of parsed.sources) {
       if (!isSchemaQualified(dep)) continue;
       if (isSystemRef(dep)) continue;
@@ -624,7 +623,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
 
 /**
  * Orchestrates edge creation for stored procedures using regex-based script analysis.
- * 
+ *
  * @param node - The node to process.
  * @param xmlDeps - XML-declared dependencies.
  * @param ctx - Shared edge context.
@@ -707,13 +706,14 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
 
 /**
  * Primary internal builder for the node and edge lists.
- * 
- * @param objects - Objects discoverd in scope.
+ *
+ * @param objects - Objects discovered in scope.
  * @param deps - Extracted object-level dependencies.
  * @param allObjects - Full database catalog.
  * @param currentDatabase - Active database name.
  * @param externalRefsEnabled - Whether to create virtual nodes for external systems.
- * @param maxNodes - Budget for total nodes.
+ * @param maxNodes - Total budget used only when adding virtual external nodes; real nodes are retained.
+ * @param onDebugLog - Optional sink for sampled parser diagnostics.
  * @returns Assembled nodes, edges, statistics, and neighbor index pairs.
  */
 function buildNodesAndEdges(
@@ -785,9 +785,9 @@ function buildNodesAndEdges(
   return { nodes, edges: sanitized, stats, neighborPairs };
 }
 
-/** 
- * Deterministic hash of a URL string → 8-char hex for stable virtual node IDs. 
- * 
+/**
+ * Deterministic hash of a URL string → 8-char hex for stable virtual node IDs.
+ *
  * @param url - The URL to hash.
  * @returns An 8-character hex string.
  */
@@ -800,9 +800,9 @@ function hashUrl(url: string): string {
   return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
 }
 
-/** 
- * Extract last path segment from a URL, max length 40. 
- * 
+/**
+ * Extract last path segment from a URL, max length 40.
+ *
  * @param url - The URL to parse.
  * @param maxLen - Maximum character length.
  * @returns The last segment of the path.
@@ -816,7 +816,7 @@ function lastUrlSegment(url: string, maxLen = 40): string {
 
 /**
  * Creates virtual nodes for external systems like cloud files or remote databases.
- * 
+ *
  * @param nodes - Node collection to add to.
  * @param nodeIds - ID set to add to.
  * @param edges - Edge collection.
@@ -824,7 +824,7 @@ function lastUrlSegment(url: string, maxLen = 40): string {
  * @param crossDbRegexRefs - Discovered 3-part references from regex.
  * @param crossDbMetaDeps - Discovered 3-part references from model metadata.
  * @param currentDatabase - Active database name.
- * @param maxNodes - Total node budget.
+ * @param maxNodes - Total node budget for admitting virtual external nodes.
  */
 function createVirtualNodes(
   nodes: LineageNode[],

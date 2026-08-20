@@ -10,6 +10,10 @@ platforms: [SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicate
 #                       Phase 2 to classify SP dependencies as "cross-schema known" vs
 #                       "truly unresolved" and to display correct schema.name pairs in
 #                       the dependency details panel.
+#   Platform detection — platform-info runs once before the Phase 2 model is built.
+#             It keeps `phase: 1` even though it runs at Phase 2 time: the tag means
+#             "not schema-filtered", and is what excludes the query from the Phase 2
+#             sweep and its {{SCHEMAS}} expansion. Do not retag it as phase 2.
 #   Phase 2 — nodes/columns/constraints/dependencies run after the user selects schemas.
 #             Each Phase 2 query uses {{SCHEMAS}} placeholders that expand to the
 #             selected schema list (e.g. 'dbo', 'Sales'). The SQL author controls
@@ -259,11 +263,11 @@ queries:
         AND (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))
       ORDER BY referencing_schema, referencing_name
 
-  # ── Phase 1 (optional): DB platform detection ────────────────────────────────
+  # ── Platform detection (optional, with MSSQL metadata fallback) ──────────────
   - name: platform-info
     phase: 1
     description: >
-      Optional Phase 1 query: identifies the database platform (SQL Server edition/version,
+      Identifies the database platform (SQL Server edition/version,
       Azure SQL, Synapse, Fabric, etc.) using SERVERPROPERTY. Result is used to populate
       DatabaseModel.dbPlatform for display in the status bar and project card.
       major_version maps on-prem SQL Server version numbers to release years.

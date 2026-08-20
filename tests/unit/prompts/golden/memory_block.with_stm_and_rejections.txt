@@ -1,0 +1,6 @@
+<short_term_memory>
+- dbo.OrderDetailA: Passthrough source; QtyA feeds NetAmountA.
+</short_term_memory>
+<recent_rejections>
+- dbo.DimProduct (hop 1): route target already visited
+</recent_rejections>

@@ -1,0 +1,12 @@
+{
+  "focus_node_id": "[ai].[sploadsalesstaging]",
+  "verdict": "analyze",
+  "summary": "spLoadSalesStaging reloads SalesStaging from vwRawOrders and backfills OrderDateKey via DimCalendar.",
+  "sections": [
+    {
+      "angle": "business",
+      "text": "Synthetic replay-fixture body; the schema does not bound section text length, so its content is inert for this rejection class."
+    }
+  ],
+  "badge_label": "spLoadSalesStaging — staging reload + date-key backfill"
+}

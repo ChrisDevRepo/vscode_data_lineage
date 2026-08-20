@@ -5,9 +5,6 @@ import { SidePanel } from './SidePanel';
 import { Tooltip } from './ui/Tooltip';
 import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';
 
-/**
- * Props for the `AnalysisSidebar` component.
- */
 interface AnalysisSidebarProps {
   /** The current active analysis state. */
   analysis: AnalysisMode;
@@ -24,16 +21,7 @@ interface AnalysisSidebarProps {
 }
 
 /**
- * A sidebar panel that displays the results and details of structural graph analyses.
- * 
- * @remarks
- * This component provides:
- * - A mode-switcher to toggle between different analysis types (SCC, Islands, Hubs, etc.).
- * - A summary of the overall analysis findings.
- * - An interactive list of groups (islands, cycles, etc.) discovered by the algorithm.
- * - Support for categorizing groups, specifically for external reference tracking.
- * 
- * @param props - The component props.
+ * Displays structural-analysis summaries, mode selection, and interactive result groups.
  */
 export const AnalysisSidebar = memo(function AnalysisSidebar({
   analysis,
@@ -67,7 +55,6 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
     </svg>
   );
 
-  // Build groups list with section headers for external-refs
   const groupElements: React.ReactNode[] = [];
   if (analysis.type === 'external-refs' && result.groups.length > 0) {
     let lastKind: string | undefined;
@@ -113,7 +100,6 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
 
   return (
     <SidePanel title={info.title} icon={icon} onClose={onClose}>
-      {/* Mode-switcher strip */}
       {onSwitchAnalysis && (
         <div className="flex items-center gap-0.5 px-2 py-1.5" style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
           {ALL_ANALYSIS_TYPES.map(type => {
@@ -135,12 +121,10 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
         </div>
       )}
 
-      {/* Description */}
       <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}>
         {info.description}
       </div>
 
-      {/* Summary */}
       <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
         {analysis.type === 'orphans' && result.groups.length > 0 ? (
           <>
@@ -158,7 +142,6 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
         )}
       </div>
 
-      {/* Groups list */}
       <div className="ln-analysis-groups">
         {result.groups.length === 0 ? (
           <div className="px-3 py-4 text-xs text-center" style={{ color: 'var(--ln-fg-muted)' }}>
@@ -169,7 +152,6 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
         )}
       </div>
 
-      {/* Active filter indicator */}
       {activeGroupId && (
         <div className="px-3 py-2 text-[11px] border-t flex items-center justify-between" style={{ color: 'var(--ln-fg-muted)', borderColor: 'var(--ln-border-light)' }}>
           <span>Viewing subset</span>
@@ -187,9 +169,6 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
 });
 
 
-/**
- * Props for the `AnalysisGroupItem` component.
- */
 interface AnalysisGroupItemProps {
   /** The analysis group data to render. */
   group: AnalysisGroup;
@@ -205,7 +184,7 @@ interface AnalysisGroupItemProps {
 
 /**
  * A list item representing a single group discovered during graph analysis.
- * 
+ *
  * @param props - The component props.
  */
 const AnalysisGroupItem = memo(function AnalysisGroupItem({
@@ -244,7 +223,7 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
 
 /**
  * Renders descriptive metadata for an analysis group based on its type.
- * 
+ *
  * @param meta - The metadata record for the group.
  * @param type - The analysis type.
  * @param nodeIds - The IDs of nodes within this group.

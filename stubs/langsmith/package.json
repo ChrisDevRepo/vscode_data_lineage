@@ -1,0 +1,12 @@
+{
+  "name": "langsmith",
+  "version": "0.0.0-excluded",
+  "description": "Inert local replacement for the langsmith package. LangSmith is excluded from this project: @langchain/core hard-depends on langsmith, so the npm override in the root package.json redirects every resolution here instead of installing the real client. See docs/ARCHITECTURE.md.",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": "./index.js",
+    "./*": "./index.js"
+  }
+}

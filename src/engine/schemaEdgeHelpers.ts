@@ -7,7 +7,7 @@
  */
 
 /** Separator that cannot appear in schema names, for composite edge keys. */
-export const SCHEMA_EDGE_KEY_SEPARATOR = '\u0000';
+const SCHEMA_EDGE_KEY_SEPARATOR = '\u0000';
 
 /**
  * Aggregated schema-to-schema dependency edge with antiparallel pairs
@@ -29,12 +29,12 @@ export interface CollapsedSchemaEdge {
 }
 
 /** Returns the pair sorted lexicographically ascending. */
-export function orderedSchemas(a: string, b: string): [string, string] {
+function orderedSchemas(a: string, b: string): [string, string] {
   return a.localeCompare(b) <= 0 ? [a, b] : [b, a];
 }
 
 /** Builds the directed composite key for a schema pair. */
-export function schemaEdgeKey(sourceSchema: string, targetSchema: string): string {
+function schemaEdgeKey(sourceSchema: string, targetSchema: string): string {
   return `${sourceSchema}${SCHEMA_EDGE_KEY_SEPARATOR}${targetSchema}`;
 }
 

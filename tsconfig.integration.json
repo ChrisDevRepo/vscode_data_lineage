@@ -1,11 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "node16",
+    "moduleResolution": "node16",
     "esModuleInterop": true,
     "outDir": "out/test",
-    "rootDir": "tests",
+    "rootDir": ".",
     "types": ["node", "mocha"],
     "lib": ["ES2022"],
     "declaration": false,
@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "noEmit": false
   },
-  "include": ["tests/integration/**/*.ts"]
+  "include": ["tests/integration/**/*.ts", "tests/harness/**/*.ts"]
 }
