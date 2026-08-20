@@ -10,11 +10,8 @@ import {
 import { FloatingPortal } from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
 import { escapeRegexLiteral } from '../utils/sql';
-import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the {@link NodeContextMenu} component.
- */
+
 interface NodeContextMenuProps {
   /** X-coordinate for the menu origin. */
   x: number;
@@ -56,13 +53,13 @@ interface NodeContextMenuProps {
 
 /**
  * A context menu for graph nodes, providing quick access to lineage and inspection tools.
- * 
+ *
  * It uses Floating UI to position itself at the cursor coordinates and handles:
  * - Initiating Trace and Pathfinding modes.
  * - Opening DDL and Table Detail views.
  * - Copying qualified names to the clipboard.
  * - Adding ad-hoc exclusion rules.
- * 
+ *
  * @param props - The component props.
  * @returns A portal-rendered React component.
  */
@@ -95,7 +92,6 @@ export const NodeContextMenu = memo(function NodeContextMenu({
     },
   });
 
-  // Update virtual position when x/y change
   useEffect(() => {
     virtualRef.current.getBoundingClientRect = () => ({
       x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x,
@@ -112,7 +108,6 @@ export const NodeContextMenu = memo(function NodeContextMenu({
     ],
   });
 
-  // Set virtual element as reference
   useEffect(() => {
     refs.setReference(virtualRef.current);
   }, [refs]);

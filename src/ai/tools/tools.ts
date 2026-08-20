@@ -1,8 +1,7 @@
 /**
  * AI tool pure functions — zero VS Code imports.
- * 8 classic retrieval functions invoked by classic LanguageModelTools in extension.ts.
- * CT and BB tools (start_exploration, submit_findings)
- * are handled directly by NavigationEngine in toolProvider.ts.
+ * Retrieval functions invoked through the shared tool registry.
+ * CT and BB lifecycle tools are handled by `NavigationEngine` through `toolProvider.ts`.
  *
  * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
  */
@@ -21,22 +20,21 @@ import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
-import { normalizeBodyScript } from '../../utils/sql';
-import { normalizeSearchQueryInput } from '../infra/inputNormalization';
+import { normalizeBodyScript, minifyDdlForHop } from '../../utils/sql';
+import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState, FilterProfile } from '../../engine/projectStore';
 import {
   strip, edgeApiType,
   presentNode, presentColumn, presentColumnCompact, presentFkCompact,
-  presentSchema, presentNeighbor, presentFilter,
-} from '../infra/aiPresenter';
+  presentSchema, presentNeighbor, presentFilter, presentForeignKeys,
+} from '../support/aiPresenter';
 import { type GetScopeBundleInput } from './toolSchemas';
+import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepthContract';
 
 
-import { shouldInline, estimateTokens, REGEX_MAX_LENGTH, getEffectiveBudget, checkScopeBudget } from '../infra/tokenBudget';
-export { shouldInline, estimateTokens, getEffectiveBudget, setCatalogInlineTokenBudget, setDiscoveryNodeCap, setDiscoveryTokenBudget, checkScopeBudget, getDiscoveryLimits } from '../infra/tokenBudget';
-
-/** Max nodes for inline BFS delivery — above this, recommend state machine. */
-export const BFS_INLINE_NODE_CAP = 200;
+import { estimateTokens, REGEX_MAX_LENGTH, checkScopeBudget } from '../support/tokenBudget';
+// Re-exported for the discovery-budget-guard unit test, which drives the caps through this module.
+export { setDiscoveryNodeCap, setDiscoveryTokenBudget } from '../support/tokenBudget';
 
 /** Number of context lines shown in DDL/body search snippets. */
 const SNIPPET_CONTEXT_LINES = 2;
@@ -80,7 +78,7 @@ export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
  * @param model - The full database model.
  * @returns A map of object names to their unresolved reference strings.
  */
-export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
+function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   const m = new Map<string, string[]>();
   if (!model.parseStats?.spDetails) return m;
   for (const d of model.parseStats.spDetails) {
@@ -91,30 +89,6 @@ export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   return m;
 }
 
-
-/**
- * Extracts `@ParamName` identifiers from a procedure/function DDL signature.
- *
- * @remarks
- * Parses the parameter list between `CREATE PROCEDURE`/`CREATE FUNCTION` and the `AS` keyword.
- *
- * @param ddl - Raw DDL body of a procedure or function.
- * @returns Array of parameter names (with leading `@`), or empty array if none found.
- */
-export function parseProcParams(ddl: string): string[] {
-  // Match everything between the object header and the AS/BEGIN keyword
-  const headerMatch = ddl.match(/CREATE\s+(?:PROCEDURE|PROC|FUNCTION)\s+[^\s(]+\s*([\s\S]*?)\s+AS\b/i);
-  if (!headerMatch) return [];
-  const paramSection = headerMatch[1];
-  const params: string[] = [];
-  // Each @Param followed by a type declaration
-  const paramRe = /@(\w+)\s+\w/g;
-  let m: RegExpExecArray | null;
-  while ((m = paramRe.exec(paramSection)) !== null) {
-    params.push(`@${m[1]}`);
-  }
-  return params;
-}
 
 /**
  * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
@@ -159,6 +133,9 @@ export function getNodeDdl(
  * @param unrelatedMap - The map of unresolved references.
  * @param store - Optional high-fidelity column store.
  * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
+ * @param neighborIndex - Optional pre-computed neighbor index to attach in/out edge metadata.
+ * @param edgeTypeMap - Optional map of edge types.
+ * @param preserveTechContext - If true, physical layer details are retained in the minified DDL.
  * @returns A record containing the focus node's metadata.
  */
 export function buildHopFocusNode(
@@ -169,14 +146,15 @@ export function buildHopFocusNode(
   ddlKey = 'ddl',
   neighborIndex?: NeighborIndex,
   edgeTypeMap?: Map<string, string>,
+  preserveTechContext = false,
 ): Record<string, unknown> {
   const focusNode: Record<string, unknown> = {
     id: node.id, s: node.schema, n: node.name, t: node.type,
   };
-  const ddl = getNodeDdl(node.id, nodeMap, store);
+  const rawDdl = (typeof store?.getDdl === 'function' ? store.getDdl(node.id) : undefined) ?? nodeMap.get(node.id)?.bodyScript;
   const cols = getNodeColumns(node.id, nodeMap, store);
-  if (SCRIPT_TYPES.has(node.type) && ddl) {
-    focusNode[ddlKey] = ddl;
+  if (SCRIPT_TYPES.has(node.type) && rawDdl) {
+    focusNode[ddlKey] = minifyDdlForHop(rawDdl, preserveTechContext);
   } else if (cols?.length) {
     focusNode.cols = cols.map(c => presentColumnCompact(c));
   }
@@ -235,7 +213,6 @@ export function getContext(
       }).length
     : model.nodes.length;
 
-  // Build full catalog payload, then measure — token budget decides inline vs on-demand
   const catalog = model.nodes.map(n => {
     const base = presentNode(n, model.neighborIndex);
     const ddlBody = store?.getDdl(n.id) ?? n.bodyScript;
@@ -247,11 +224,7 @@ export function getContext(
     if (cols && cols.length > 0) {
       const enriched: Record<string, unknown> = { ...base, cols: cols.map(c => presentColumn(c)) };
       if (n.fks && n.fks.length > 0) {
-        enriched.fks = n.fks.map(fk => ({
-          name: fk.name, columns: fk.columns,
-          ref_schema: fk.refSchema, ref_table: fk.refTable,
-          ref_columns: fk.refColumns, on_delete: fk.onDelete,
-        }));
+        enriched.fks = presentForeignKeys(n.fks);
       }
       return strip(enriched);
     }
@@ -259,24 +232,39 @@ export function getContext(
   });
   const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]);
   const catalogChars = JSON.stringify(catalog).length + JSON.stringify(edges).length;
-  const isInline = shouldInline(catalogChars);
 
-  return {
+  const summary = {
     project_name:  projectName,
-    source_type:   model.dbPlatform ? 'database' : 'dacpac',
+    // Read, never inferred: a dacpac carries a DSP-derived platform label just like a live
+    // import, so platform presence says nothing about provenance. Falls back to the snapshot
+    // answer, which understates rather than overstates what the model is connected to.
+    source_type:   model.source ?? 'dacpac',
     db_platform:   model.dbPlatform ?? null,
-    model_size:    isInline ? 'small' as const : 'large' as const,
     model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
     schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
     saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
-    // Token budget check: inline full catalog when payload fits, otherwise summary only
-    ...(isInline && { objects: catalog, edges }),
-    ...(!isInline && model.parseStats && {
-      unresolved_ref_count: model.parseStats.droppedRefs?.length ?? 0,
-    }),
-    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars), budget: getEffectiveBudget(), decision: isInline ? 'inline' : 'on_demand' },
+    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars) },
+  };
+
+  // Same discovery budget guard as get_scope_bundle, token axis only (the catalog listing has no
+  // per-node scope semantics). Over budget → summary WITHOUT the inlined catalog — the orientation
+  // stats stay usable and the AI retrieves objects on demand; over-budget *scope* requests are
+  // still the single mechanism that routes to hop-by-hop exploration.
+  if (!checkScopeBudget(0, catalogChars).ok) {
+    return {
+      ...summary,
+      model_size: 'large' as const,
+      hint: 'The full catalog exceeds the discovery token budget and was not inlined. Use lineage_search_objects, lineage_get_object_detail, or lineage_get_scope_bundle for on-demand retrieval.',
+    };
+  }
+
+  return {
+    ...summary,
+    model_size: 'small' as const,
+    objects: catalog,
+    edges,
   };
 }
 
@@ -287,10 +275,10 @@ export function getContext(
  * @param query - The user-provided search string.
  * @returns Success status or an error with a hint.
  */
-export function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
+function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
-    return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters.' };
+    return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters — a real name fragment like "SalesOrder" or a schema name like "ai". To list everything in a schema, send an empty query WITH schemas:["<schema>"].' };
   }
   if (/^[.*?+^$]+$/.test(trimmed)) {
     return { ok: false, error: 'query_too_broad', hint: 'Query matches everything. Be more specific or use schemas[] to narrow scope.' };
@@ -333,32 +321,44 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
-  if (mode !== 'regex') {
+  const effectiveQuery = normalizedQuery.query.trim();
+  const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
+  // Empty query WITH an explicit schema scope is a legitimate "list everything in schema X"
+  // ask — there is no name fragment to search, so enumerate the schema directly instead of
+  // rejecting (query_too_short) or handing an empty string to searchCatalog (which matches
+  // nothing). Case-insensitive so the model's `ai` matches a node schema stored as `ai`/`AI`.
+  const listAllInSchemas = mode !== 'regex' && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
+
+  if (mode !== 'regex' && !listAllInSchemas) {
     const validation = validateQuery(normalizedQuery.query);
     if (!validation.ok) {
       return { error: validation.error, hint: validation.hint };
     }
   }
 
-  const effectiveQuery = normalizedQuery.query.trim();
-  const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
-  const typeSet   = types   ? new Set<ObjectType>(types)   : undefined;
+  const typeSet   = types?.length ? new Set<ObjectType>(types) : undefined;
   const schemaSet = appliedSchemaFilter ? new Set<string>(normalizedSchemas!) : undefined;
+  const schemaSetLower = appliedSchemaFilter ? new Set(appliedSchemaFilter.map(s => s.toLowerCase())) : undefined;
 
-  const nameHits = searchCatalog(
-    model.nodes as SearchableNode[],
-    effectiveQuery,
-    typeSet,
-    schemaSet,
-    Number.MAX_SAFE_INTEGER,
-    mode,
-  );
+  const nameHits = listAllInSchemas
+    ? (model.nodes as SearchableNode[]).filter(n =>
+        (!schemaSetLower || schemaSetLower.has(n.schema.toLowerCase())) &&
+        (!typeSet || typeSet.has(n.type)))
+    : searchCatalog(
+        model.nodes as SearchableNode[],
+        effectiveQuery,
+        typeSet,
+        schemaSet,
+        Number.MAX_SAFE_INTEGER,
+        mode,
+      );
 
-  // Column name search (tables/external only, always-on, respects schema/type filters)
+  // Column name search (tables/external only, always-on, respects schema/type filters).
+  // Skipped for a list-all enumeration — nameHits already covers every node in the schema.
   let columnNodes = model.nodes as SearchableNode[];
   if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
   if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
-  const columnHits = mode === 'substring'
+  const columnHits = mode === 'substring' && !listAllInSchemas
     ? searchColumns(columnNodes, effectiveQuery, COLUMN_SEARCH_LIMIT)
     : [];
   const seenIds = new Set(nameHits.map(n => n.id));
@@ -482,14 +482,7 @@ export function getObjectDetail(
 
   const cols = getNodeColumns(node.id, nodeMap, store);
   const columns    = cols?.map(c => presentColumn(c)) ?? undefined;
-  const foreignKeys = node.fks?.map(fk => ({
-    name:        fk.name,
-    columns:     fk.columns,
-    ref_schema:  fk.refSchema,
-    ref_table:   fk.refTable,
-    ref_columns: fk.refColumns,
-    on_delete:   fk.onDelete,
-  })) ?? null;
+  const foreignKeys = presentForeignKeys(node.fks) ?? null;
 
   const base: Record<string, unknown> = strip({
     id:           node.id,
@@ -525,6 +518,12 @@ export function getObjectDetail(
  * answer multi-object lineage asks without chaining per-node detail calls.
  * When `include_ddl` is true, the discovery scope budget guard is enforced
  * before materializing the payload.
+ *
+ * @param model - The database model.
+ * @param graph - The graphology instance.
+ * @param input - The scope bundle input payload.
+ * @param store - Optional column store for high-fidelity metadata.
+ * @returns The requested scope bundle.
  */
 export function getScopeBundle(
   model: DatabaseModel,
@@ -533,7 +532,6 @@ export function getScopeBundle(
   store?: import('../../engine/columnStore').ColumnStore,
 ): object {
   const nodeMap = buildNodeMap(model);
-  const edgeMap = buildEdgeTypeMap(model);
   const origin = normalizeName(input.origin);
   const originNode = nodeMap.get(origin);
   if (!originNode) {
@@ -541,46 +539,75 @@ export function getScopeBundle(
   }
 
   const direction = input.direction ?? 'bidirectional';
-  const includeDdl = input.include_ddl ?? false;
-  const defaultDepth = input.depth ?? 2;
-  const resolveDepth = (val: number | 'all' | null | undefined, def: number) => {
-    if (val === 'all') return 9999;
-    return val ?? def;
-  };
-  const upstreamDepth = direction === 'bidirectional' ? resolveDepth(input.upstream_depth, defaultDepth) : undefined;
-  const downstreamDepth = direction === 'bidirectional' ? resolveDepth(input.downstream_depth, defaultDepth) : undefined;
-  const singleDepth = input.depth ?? 2;
+  // Preserve the distinction between an omitted `include_ddl` and an explicit `false`.
+  const includeDdl = input.include_ddl;
+  const symmetricDepth = input.depth ?? 3;
+  const upstreamDepth = direction === 'bidirectional' ? (input.upstream_depth ?? symmetricDepth) : undefined;
+  const downstreamDepth = direction === 'bidirectional' ? (input.downstream_depth ?? symmetricDepth) : undefined;
+  const singleDepth = input.depth ?? 3;
+
+  // Every model-facing call now states both sides explicitly (GetScopeBundleModelSchema requires
+  // upstream_depth/downstream_depth); reject the degenerate origin-only combination with a
+  // field-specific reason instead of silently returning a scope with no neighbors.
+  if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
+    return {
+      error: ASYMMETRIC_DEPTH_BOTH_ZERO,
+      hint: 'upstream_depth and downstream_depth are both 0, which would return only the origin node with no neighbors. Set at least one side above 0, or call lineage_get_object_detail for a single object.',
+    };
+  }
 
   const scopeIds = new Set<string>([origin]);
-  const walkWithCap = (mode: 'inbound' | 'outbound' | 'directed', maxDepth: number): void => {
+  let nodeBudgetExceeded = false;
+  const walkWithCap = (mode: 'inbound' | 'outbound' | 'directed', depthIntent: number | 'all'): void => {
+    const maxDepth = depthIntent === 'all' ? Number.POSITIVE_INFINITY : depthIntent;
     if (maxDepth <= 0) return;
     bfsFromNode(graph, origin, (key, _attr, depth) => {
-      if (depth > maxDepth) return true;
+      if (nodeBudgetExceeded || depth > maxDepth) return true;
       scopeIds.add(String(key).toLowerCase());
+      if (!checkScopeBudget(scopeIds.size, 0).ok) nodeBudgetExceeded = true;
       return false;
     }, { mode });
   };
 
   if (direction === 'upstream') {
-    walkWithCap('inbound', singleDepth);
+    walkWithCap('inbound', singleDepth!);
   } else if (direction === 'downstream') {
-    walkWithCap('outbound', singleDepth);
+    walkWithCap('outbound', singleDepth!);
   } else {
-    walkWithCap('inbound', upstreamDepth ?? defaultDepth);
-    walkWithCap('outbound', downstreamDepth ?? defaultDepth);
+    walkWithCap('inbound', upstreamDepth!);
+    walkWithCap('outbound', downstreamDepth!);
   }
 
-  let ddlChars = 0;
-  if (includeDdl) {
-    for (const id of scopeIds) {
-      const ddl = getNodeDdl(id, nodeMap, store);
-      if (ddl) ddlChars += ddl.length;
-    }
-    const budget = checkScopeBudget(scopeIds.size, ddlChars);
-    if (!budget.ok) {
-      return budget;
-    }
+  if (nodeBudgetExceeded) {
+    return {
+      ...checkScopeBudget(scopeIds.size, 0),
+      scope_proposal: {
+        origin: originNode.id,
+        direction,
+        depth: singleDepth,
+        upstream_depth: upstreamDepth,
+        downstream_depth: downstreamDepth,
+      },
+    };
   }
+
+  // Always measure DDL so the engine can auto-attach it when it fits the budget. Edge direction and
+  // role (INSERT/exec/read/filter-only) are grounded in the DDL body, not the generic stored edge
+  // verbs, so grounding must not depend on the model remembering to set include_ddl.
+  let ddlChars = 0;
+  for (const id of scopeIds) {
+    const ddl = getNodeDdl(id, nodeMap, store);
+    if (ddl) ddlChars += ddl.length;
+  }
+  // Auto-attach DDL when it fits the token budget. If the caller explicitly asked for DDL that does
+  // not fit, route to SM (their intent needs the bodies). If they did NOT ask and it does not fit,
+  // fall through with metadata only — preserves the inline chat path, no forced SM.
+  const ddlFits = checkScopeBudget(0, ddlChars).ok;
+  if (includeDdl && !ddlFits) return checkScopeBudget(scopeIds.size, ddlChars);
+  // Only an omitted value may enable automatic DDL grounding.
+  const effectiveIncludeDdl = includeDdl === false
+    ? false
+    : (includeDdl === true || ddlChars > 0) && ddlFits;
 
   const edges = model.edges
     .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
@@ -592,9 +619,9 @@ export function getScopeBundle(
     .map(n => {
       const base = presentNode(n, model.neighborIndex);
       const payload: Record<string, unknown> = { ...base };
-      if (includeDdl && SCRIPT_TYPES.has(n.type)) {
+      if (effectiveIncludeDdl && SCRIPT_TYPES.has(n.type)) {
         payload.ddl = getNodeDdl(n.id, nodeMap, store) ?? null;
-      } else if (includeDdl) {
+      } else if (effectiveIncludeDdl) {
         const cols = getNodeColumns(n.id, nodeMap, store);
         if (cols?.length) payload.cols = cols.map(c => presentColumn(c));
       }
@@ -607,12 +634,12 @@ export function getScopeBundle(
     depth: direction === 'bidirectional' ? undefined : singleDepth,
     upstream_depth: direction === 'bidirectional' ? (upstreamDepth ?? null) : undefined,
     downstream_depth: direction === 'bidirectional' ? (downstreamDepth ?? null) : undefined,
-    include_ddl: includeDdl,
+    include_ddl: effectiveIncludeDdl,
     scope: {
       nodes: nodes.length,
       edges: edges.length,
       estimated_ddl_chars: ddlChars,
-      estimated_ddl_tokens: includeDdl ? estimateTokens(ddlChars) : 0,
+      estimated_ddl_tokens: effectiveIncludeDdl ? estimateTokens(ddlChars) : 0,
     },
     nodes,
     edges,
@@ -656,14 +683,7 @@ export function getNeighborColumns(
       return { id, error: 'not_found' as const };
     }
     const cols = getNodeColumns(id, nodeMap, store);
-    const foreignKeys = node.fks?.map(fk => ({
-      name:        fk.name,
-      columns:     fk.columns,
-      ref_schema:  fk.refSchema,
-      ref_table:   fk.refTable,
-      ref_columns: fk.refColumns,
-      on_delete:   fk.onDelete,
-    }));
+    const foreignKeys = presentForeignKeys(node.fks);
     return strip({
       id:           node.id,
       schema:       node.schema,
@@ -686,47 +706,6 @@ export function getNeighborColumns(
  */
 export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
-/**
- * Largest BFS depth from `origin` whose scope fits within `safeNodeCap`.
- *
- * @remarks
- * Used by the preflight scope-vs-budget gate in `lineage_start_exploration`. Walks
- * outwards from the origin and returns the depth just before the scope exceeds the
- * cap, clamping at 1 (callers never recommend `depth=0`). Returns 0 only when even
- * the origin + immediate neighbors exceed the cap, which signals an unwinnable
- * budget and should be surfaced as-is for the AI to re-ask the user.
- *
- * @param graph - Loaded lineage graph.
- * @param origin - Origin node id.
- * @param direction - BFS direction, same enum accepted by `lineage_start_exploration`.
- * @param safeNodeCap - Largest scope size that still leaves headroom in the round budget.
- * @returns Suggested depth, 1 or above when feasible, 0 when the budget is too tight.
- */
-export function suggestNarrowerDepth(
-  graph: Graph,
-  origin: string,
-  direction: 'upstream' | 'downstream' | 'bidirectional',
-  safeNodeCap: number,
-): number {
-  const mode = direction === 'upstream' ? 'inbound' : direction === 'downstream' ? 'outbound' : 'directed';
-  const depthMap = new Map<string, number>();
-  let maxSafeDepth = 0;
-  bfsFromNode(graph, origin, (key, _attr, depth) => {
-    depthMap.set(key, depth);
-    return false;
-  }, { mode });
-  // Count nodes at each depth and accumulate — pick the largest depth whose cumulative count fits.
-  const byDepth: number[] = [];
-  for (const d of depthMap.values()) byDepth[d] = (byDepth[d] ?? 0) + 1;
-  let running = 0;
-  for (let d = 0; d < byDepth.length; d++) {
-    running += byDepth[d] ?? 0;
-    if (running > safeNodeCap) break;
-    maxSafeDepth = d;
-  }
-  return Math.max(maxSafeDepth, maxSafeDepth === 0 ? 0 : 1);
-}
-
 
 
 /**
@@ -737,7 +716,6 @@ export function suggestNarrowerDepth(
  * without retrieving every node's metadata. It uses deterministic engine logic to find
  * architectural hotspots and change-risk areas.
  *
- * @param model - The database model.
  * @param graph - The graphology instance.
  * @param type - The type of analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
  * @param minDegree - Minimum degree for a node to be considered a hub.
@@ -746,7 +724,6 @@ export function suggestNarrowerDepth(
  * @returns A summary of the analysis results including grouped node IDs.
  */
 export function runAnalysis(
-  model: DatabaseModel,
   graph: Graph,
   type: AnalysisType,
   minDegree?: number,

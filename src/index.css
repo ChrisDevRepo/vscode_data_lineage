@@ -1,7 +1,6 @@
 @import 'tailwindcss';
 
-/* Tailwind v4 defaults borders to currentColor. Preserve the v3 visual contract
-   until every consumer carries an explicit border-color utility. */
+/* Implicit borders use the neutral theme token instead of inheriting text color. */
 @layer base {
   *,
   ::after,
@@ -687,7 +686,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   box-shadow: var(--ln-node-shadow-elevated);
 }
 
-/* Schema cluster on-node action toolbar (replaces the old right-click context window) */
+/* Schema cluster on-node action toolbar. */
 .ln-schema-toolbar {
   display: flex;
   gap: 2px;
@@ -825,37 +824,6 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 .ln-trace-node-picker__name {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-/* Error boundary */
-.ln-error-boundary {
-  padding: 20px;
-  margin: 20px;
-  border: 2px solid var(--ln-validation-error-border);
-  border-radius: 8px;
-  background: var(--ln-bg);
-  color: var(--ln-fg);
-  font-family: var(--vscode-editor-font-family, monospace);
-}
-.ln-error-boundary h2 {
-  color: var(--ln-validation-error-border);
-  margin-top: 0;
-}
-.ln-error-boundary p {
-  color: var(--ln-fg-muted);
-}
-.ln-error-boundary summary {
-  cursor: pointer;
-  color: var(--ln-text-link);
-}
-.ln-error-boundary pre {
-  margin-top: 10px;
-  padding: 10px;
-  background: var(--ln-bg-secondary);
-  border-radius: 4px;
-  overflow: auto;
-  font-size: 12px;
-  color: var(--ln-fg);
 }
 
 /* #endregion */
@@ -1185,12 +1153,6 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 .ln-help-sep-bottom { border-bottom: 1px solid var(--ln-wizard-border); }
 .ln-help-sep-top    { border-top:    1px solid var(--ln-wizard-border); }
 
-/* HelpModal — muted info note (no border) */
-.ln-help-info-block {
-  background: var(--ln-wizard-input-bg);
-  border: 1px solid var(--ln-wizard-border);
-}
-
 /* HelpModal — "NEW" feature badge */
 .ln-help-badge {
   background: var(--ln-wizard-btn-bg);
@@ -1238,11 +1200,6 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   border: 1px solid var(--ln-widget-border);
   border-radius: 6px;
   box-shadow: var(--ln-node-shadow);
-}
-
-.ln-trace-banner {
-  background: var(--ln-warning-bg);
-  border-bottom: 1px solid var(--ln-warning-border);
 }
 
 /* ─── Generic Mode Banner ──────────────────────────────────────────────── */
@@ -1499,12 +1456,6 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   padding: 0 1px;
 }
 
-/* ─── Analysis Banner ──────────────────────────────────────────────────── */
-.ln-analysis-banner {
-  background: var(--ln-analysis-bg);
-  border-bottom: 1px solid var(--ln-analysis-border);
-}
-
 .ln-analysis-groups {
   max-height: 400px;
   overflow-y: auto;
@@ -1533,21 +1484,6 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 .ln-analysis-group-item:focus-visible {
   outline: 2px solid var(--ln-focus-border);
   outline-offset: -2px;
-}
-
-/* Render-count gauge bar */
-.ln-gauge-track {
-  width: 64px;
-  height: 4px;
-  background: var(--ln-border, rgba(127, 127, 127, 0.25));
-}
-.ln-gauge-fill {
-  transition: width 0.2s ease;
-}
-.ln-gauge-tick {
-  width: 1px;
-  background: var(--ln-fg-muted);
-  opacity: 0.7;
 }
 
 /* #endregion */

@@ -3,7 +3,7 @@ import { isTextEntryTarget } from '../ui/keyboardShortcuts';
 
 /**
  * Custom hook for registering global keyboard shortcuts within the VS Code webview context.
- * 
+ *
  * @remarks
  * This hook manages event listener registration and cleanup, ensuring that callbacks
  * are always current without triggering unnecessary effect re-runs. It ignores key
@@ -14,7 +14,7 @@ import { isTextEntryTarget } from '../ui/keyboardShortcuts';
  * @param key - The key or array of keys that should trigger the callback. Compared case-insensitively against `KeyboardEvent.key`.
  * @param callback - The function to execute when a matching key is pressed.
  * @param preventDefault - Whether to call `e.preventDefault()` on matching key events. Defaults to `false`.
- * 
+ *
  * @example
  * ```tsx
  * useKeyboardShortcut('Escape', () => setIsOpen(false), true);
@@ -41,6 +41,5 @@ export function useKeyboardShortcut(
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Array.isArray(key) ? key.join('\0') : key, preventDefault]);
 }

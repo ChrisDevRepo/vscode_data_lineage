@@ -6,7 +6,7 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **`.dacpac` won't load.** Close SSDT / Visual Studio / Azure Data Studio (file lock). Only SSDT- and SDK-style archives are supported.
 
-**Database connection fails.** Install the [mssql extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql); `@lineage` reuses its profile. Imports need metadata visibility such as `VIEW DEFINITION` plus permission to run the configured catalog queries. Profiling also needs `SELECT` on profiled tables and catalog visibility for `sys.partitions` row counts.
+**Database connection fails.** Install or update the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql) and configure a connection profile. Data Lineage Viz requires an MSSQL release that exposes the connection-sharing API (v1.34 or later). Database import uses that profile; `@lineage` reads only the already-loaded model and never opens a database connection. Imports need metadata visibility such as `VIEW DEFINITION` plus permission to run the configured catalog queries. Profiling also needs `SELECT` on profiled tables and catalog visibility for `sys.partitions` row counts.
 
 **Cross-database refs missing.** Fully qualified three- or four-part names can surface as virtual external nodes, but remote database internals are not imported. Unqualified names are ambiguous and may not resolve.
 
@@ -14,35 +14,62 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **Custom YAML rejected.** Structure must match the built-in YAML. See [`DMV_QUERIES.md`](DMV_QUERIES.md) and [`PARSE_RULES.md`](PARSE_RULES.md).
 
+**"saved projects could not be read and were skipped".** A stored project was missing a field the schema requires, or carried one of the wrong type, and was left out of the project list. A field this build merely does not recognise is dropped instead and never costs you the project. The warning appears once per session; **Output → Data Lineage Viz** names the rejected field paths (names only, never values). A credential cannot be written to the store in the first place, and is dropped rather than replayed if an older record carries one — recreate the project instead of editing stored state.
+
 ## Graph and webview
 
 **Blank or stuck graph.** Open Webview Developer Tools, check the console, then reload the window.
 
-**"Node limit reached".** `dataLineageViz.renderLimit` is the hard visual ceiling after load. `dataLineageViz.overview.threshold` only dictates whether a new load defaults to Schema View or fully-expanded Object View. Raise `dataLineageViz.maxNodes` / `dataLineageViz.renderLimit` if needed.
+**"Render limit reached".** `dataLineageViz.renderLimit` is the hard visual ceiling after load — raise it (default 750, maximum 1500). Raising `dataLineageViz.maxNodes` will not help: it already ships at its maximum of 2000. `dataLineageViz.overview.threshold` only dictates whether a new load defaults to Schema View or fully-expanded Object View.
 
 **Theme colours wrong after switching themes.** Reload the window.
 
 ## `@lineage` chat participant
 
-**No response.** Install and sign in to [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). Load a graph before asking.
+**No response.** Load a graph first, then make sure a VS Code Language Model Chat provider is installed, configured, and available to Chat. [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) is one supported provider.
 
-**"Scope exceeds budget".** Narrow the question, rerun at the suggested `safe_depth_hint`, or raise `dataLineageViz.ai.maxRounds`.
+**The request is redirected because the scope exceeds its budget.** Narrow the requested scope or approve the offered deep analysis. For deliberately larger discovery answers, adjust `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget` within their documented ranges; `ai.maxRounds` does not change the discovery bundle limits. If an approved deep analysis reports an over-budget scope during hops, raise `dataLineageViz.ai.explorationNodeCap` or `dataLineageViz.ai.explorationTokenBudget` instead — those bound the active-exploration scope, not discovery.
 
-**"Confirm SM start" gate.** Sliding-Memory mode asks once before burning hops. Triggered by graph render, column trace, deeper hop-by-hop analysis, or `over_discovery_budget` from a discovery bundle.
+**Deep-analysis confirmation.** The assistant asks before starting hop-by-hop
+analysis. This path is used by `/trace`, named-column traces, explicit deeper
+analysis, and discovery scopes that exceed their configured budget. A graph
+request uses the bounded **AI Preview** path and does not open this gate.
 
-**"Unanswered (out of approved scope)".** By design — SM locks the border at confirmation. The **Show deferred questions** button pre-fills them for a new run.
+**The response ends when I click Change scope.** By design. VS Code keeps the chat
+input locked while a request is still running, so the turn finishes and the input is
+prefilled with `@lineage`. Type the change — for example `remove DimCalendar` — and send
+it; the proposal stays pending and comes back revised. **Cancel** or a slash command
+abandons it instead.
 
-**"Exploration incomplete — N rounds pending".** The hop cap was reached before the agenda drained. Narrow the scope or raise `ai.maxRounds`.
+**Related paths beyond the approved scope.** By design — deep analysis locks the schema
+border at confirmation. After synthesis the chat reports the number of deferred
+routes, and a completed result offers **Explore related objects…**. The current
+UI does not create a separate button for each deferred route.
 
-**Tool-call clutter in chat.** Turn off `dataLineageViz.ai.showToolInvocations`.
+**Deep analysis stops before the whole scope is covered.** No error is shown: on reaching the hop cap the engine stops exploring and synthesizes what it already has, so the answer is a partial result rather than a failure. Narrow the scope or raise `dataLineageViz.ai.maxRounds`, then reload the window — the runtime reads that setting once at activation.
 
-**Formulas or math artifacts in the AI description panel.** Re-run the `@lineage` query to regenerate the description with the current format.
+**Model choice.** Per-hop latency and protocol compliance differ by model. Models running
+directly on Microsoft infrastructure — Copilot-native Anthropic Claude Sonnet and OpenAI GPT, or
+an Azure AI Foundry deployment — gave the best results in testing. Of several models tested via
+"Manage Models", most had latency and reliability issues; a few (e.g. MiniMax) produced acceptable
+results but were still slower. A long silence during deep analysis usually means the provider is
+still generating — the hop counter advances as hops complete — up to the zero-output limit below.
+
+**"The language model produced no output within 600s; the request was aborted (first-output
+timeout)."** The provider accepted the request and then streamed nothing at all for ten minutes, so
+the turn was cancelled rather than left hanging. The limit covers only the silence before the first
+output of any kind: once a model has emitted anything — text or a tool call — the rest of that
+generation is never interrupted, however long it takes. A model that hits this repeatedly is not
+usable for deep analysis; pick one from the Model choice guidance above and re-ask.
 
 ## Export and profiling
 
 - Draw.io export mirrors the current webview layout.
 - Profiling is live-DB only (no dacpac). See [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
+- On SQL Server 2016 or 2017, set `dataLineageViz.tableStatistics.useApproxDistinct` to `false`; `APPROX_COUNT_DISTINCT` requires SQL Server 2019 or later.
 
 ## Bug reports
 
-Run **Data Lineage: Copy Debug Info** and paste the output into the issue along with the relevant section from **Output → Data Lineage Viz**. Do not attach customer dacpacs.
+Run **Data Lineage: Copy Debug Info** and include the relevant section from
+**Output → Data Lineage Viz**. Review and redact project, source, schema, object,
+filter, and model identifiers before sharing. Do not attach customer dacpacs.

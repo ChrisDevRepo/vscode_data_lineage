@@ -36,7 +36,7 @@ export interface ScreenStateExtras {
 }
 
 /** Truncates a node-id list for dump display, keeping it scannable. */
-export function formatIdList(ids: readonly string[], cap = 40): string {
+function formatIdList(ids: readonly string[], cap = 40): string {
   if (ids.length === 0) return '(none)';
   return trunc([...ids], cap);
 }

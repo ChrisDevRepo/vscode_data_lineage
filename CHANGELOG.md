@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.1.0] - 2026-08-20
+
+### Added
+- The analysis engine runs on LangChain/LangGraph, with a request-scoped bridge to the model supplied by VS Code.
+- A "Show graph preview" follow-up renders a bounded lineage view without running a full analysis.
+
+### Changed
+- Scope gate buttons (Approve & Proceed, Change scope, Cancel) invoke a command directly instead of posting a chat reply.
+- The chat answer carries the summary, intro, and closing of the result.
+- Dependencies updated; `npm audit` reports no known vulnerabilities.
+
+### Removed
+- Settings `dataLineageViz.ai.contextPayloadBudget` and `dataLineageViz.ai.showToolInvocations`.
+- Chat tool references `#lineage_get_scope_bundle` and `#lineage_present_result`; both tools are now internal to the analysis engine.
+
+### Fixed
+- A saved database project is no longer discarded when one of its records carries a field this build does not recognise.
+- A live connection reports a database platform even when the engine-metadata query identifies none, falling back to the server-reported platform.
+- References into schemas not selected during a live database import are classified correctly instead of being reported as unresolved.
+
 ## [1.0.3] - 2026-07-19
 
 ### Added

@@ -1,0 +1,2 @@
+
+(Inherited through passthrough dbo.OrderDetailA; re-anchor this question to dbo.spLoadFactSales.)

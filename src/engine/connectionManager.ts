@@ -11,37 +11,60 @@
 
 import * as vscode from 'vscode';
 import * as yaml from 'js-yaml';
+import { z } from 'zod';
+
+const DmvQueriesConfigSchema = z.object({
+  // Hand-authored YAML, so `version: "1"` must still parse. Coerced to a number because the
+  // upgrade gate below compares it with strict `!==` against the shipped file's own version.
+  version: z.coerce.number().optional(),
+  queries: z.array(z.record(z.string(), z.any())).optional()
+}).passthrough();
 import type { IExtension, IConnectionInfo, IConnectionSharingService, SimpleExecuteResult, IServerInfo } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { notifyWarning } from '../utils/notifications';
+import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
 
 /**
  * The unique identifier for the Microsoft MSSQL extension.
  */
-const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
+export const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
 /**
  * Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server.
  */
 export interface DmvQuery {
-  /** 
-   * The unique name/key of the query. 
-   * Known keys: 'schema-preview', 'all-objects', 'nodes', 'columns', 'dependencies'.
+  /**
+   * The unique name/key of the query.
+   *
+   * @remarks
+   * Two classes of name, because they fail differently. Required — 'schema-preview',
+   * 'nodes', 'columns', 'dependencies' — are listed in the loader's `KNOWN_NAMES` and
+   * warn when a custom YAML omits them, since the import path cannot complete without
+   * them. Optional — 'all-objects', 'platform-info', 'constraints' — are deliberately
+   * absent from that list: omitting 'all-objects' leaves cross-schema references
+   * unclassified, omitting 'platform-info' falls back to MSSQL server metadata, and
+   * omitting 'constraints' drops constraint enrichment. All degrade silently by design,
+   * so a warning would be noise.
    */
   name: string;
-  /** A human-readable description of the query's purpose. */
-  description: string;
+  /** A human-readable description of the query's purpose. Never consumed by the import path. */
+  description?: string;
   /** The raw SQL statement to execute. */
   sql: string;
-  /** 
+  /**
    * The execution phase of the query.
    * `1`: Preliminary phase (unfiltered).
    * `2`: Main extraction phase (typically filters by schema).
    * @default 2
    */
   phase?: number;
+}
+
+/** The fields the import path actually requires; every other {@link DmvQuery} field degrades gracefully. */
+function hasRequiredQueryFields(q: Record<string, any>): q is DmvQuery {
+  return Boolean(q.name) && Boolean(q.sql);
 }
 
 /**
@@ -55,9 +78,9 @@ export interface DmvQueriesConfig {
 }
 
 /**
- * Loads DMV queries by checking the workspace configuration for a custom path, 
+ * Loads DMV queries by checking the workspace configuration for a custom path,
  * falling back to built-in defaults if necessary.
- * 
+ *
  * @param outputChannel - The VS Code output channel for logging.
  * @param extensionUri - The base URI of the extension for resolving built-in assets.
  * @returns A promise resolving to an array of validated DMV queries.
@@ -73,24 +96,49 @@ export async function loadDmvQueries(
   if (customPath) {
     const resolved = resolveWorkspacePath(customPath);
     if (resolved) {
-      logger.info(`Reading DMV queries custom: ${resolved}`);
+      logger.debug(`Reading DMV queries custom: ${resolved}`);
       try {
         const data = await vscode.workspace.fs.readFile(vscode.Uri.file(resolved));
-        const parsed = yaml.load(new TextDecoder().decode(data)) as DmvQueriesConfig;
+        const rawParsed = yaml.load(new TextDecoder().decode(data));
+        const parsed = DmvQueriesConfigSchema.parse(rawParsed);
+
+        // The shipped asset is the contract, so it is its own source of truth — no separate
+        // constant to drift from it. A custom file written against an older query set (a query
+        // renamed or removed, changed {{SCHEMAS}} expansion) is skipped rather than executed
+        // against a contract it no longer matches. A missing `version` counts as a mismatch:
+        // silently running an unversioned file is the failure this gate exists to prevent.
+        const builtInConfig = await loadBuiltInDmvConfig(outputChannel, extensionUri);
+        if (parsed.version !== builtInConfig.version) {
+          notifyWarning(
+            logger,
+            'Load custom DMV queries',
+            `Custom DMV queries declare version ${String(parsed.version ?? 'missing')} but this release ships ` +
+            `version ${builtInConfig.version} — the query contract changed. Re-scaffold via ` +
+            `"Data Lineage: Create DMV Queries" and re-apply your edits; using built-in defaults until then.`,
+            {
+              customVersion: parsed.version ?? null,
+              expectedVersion: builtInConfig.version,
+              path: resolved,
+              setting: 'dmvQueriesFile',
+              fallback: 'built-in defaults',
+            },
+          );
+          return builtInConfig.queries;
+        }
 
         if (parsed?.queries && Array.isArray(parsed.queries)) {
           const skipped: string[] = [];
-          const valid = parsed.queries.filter((q, i) => {
-            if (!q.name || !q.sql) {
+          const valid = parsed.queries.filter((q, i): q is DmvQuery => {
+            if (!hasRequiredQueryFields(q)) {
               const label = q?.name || `query[${i}]`;
-              logger.info(`Skipped DMV query '${label}': missing ${!q?.name ? "'name'" : "'sql'"} field`);
+              logger.debug(`Skipped DMV query '${label}': missing ${!q?.name ? "'name'" : "'sql'"} field`);
               skipped.push(label);
               return false;
             }
             return true;
           });
           if (valid.length > 0) {
-            const KNOWN_NAMES = ['schema-preview', 'all-objects', 'nodes', 'columns', 'dependencies'];
+            const KNOWN_NAMES = ['schema-preview', 'nodes', 'columns', 'dependencies'];
             const loadedNames = new Set(valid.map(q => q.name));
             const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
             if (missingNames.length > 0) {
@@ -135,7 +183,7 @@ export async function loadDmvQueries(
 
 /**
  * Loads the built-in DMV queries from the extension's `assets` directory.
- * 
+ *
  * @param outputChannel - The VS Code output channel for logging.
  * @param extensionUri - The base URI of the extension.
  * @returns A promise resolving to the built-in DMV queries.
@@ -145,31 +193,64 @@ async function loadBuiltInDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
 ): Promise<DmvQuery[]> {
-  const logger = Logger.create(outputChannel, 'Config');
-  const yamlUri = vscode.Uri.joinPath(extensionUri, 'assets', 'dmvQueries.yaml');
-  logger.info(`Reading DMV queries built-in: ${yamlUri.fsPath}`);
-  const data = await vscode.workspace.fs.readFile(yamlUri);
-  const parsed = yaml.load(new TextDecoder().decode(data)) as DmvQueriesConfig;
-
-  if (!parsed?.queries || !Array.isArray(parsed.queries)) {
-    throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
-  }
-
-  logger.info(`Applied DMV queries: ${parsed.queries.length} loaded from built-in, 0 skipped`);
+  const parsed = await loadBuiltInDmvConfig(outputChannel, extensionUri);
+  Logger.create(outputChannel, 'Config')
+    .info(`Applied DMV queries: ${parsed.queries.length} loaded from built-in, 0 skipped`);
   return parsed.queries;
 }
 
 /**
- * Accesses the MSSQL extension API, ensuring the extension is installed and activated.
- * 
- * @param outputChannel - The VS Code output channel for logging.
- * @returns A promise resolving to the `IExtension` exports.
- * @throws If the MSSQL extension is not installed.
+ * Reads and validates the built-in `assets/dmvQueries.yaml`, returning the whole config.
+ *
+ * @remarks
+ * Split from {@link loadBuiltInDmvQueries} because the custom-file path needs the shipped
+ * `version` — the contract a custom file is validated against — and not only the queries.
+ * @throws If the built-in file is missing, has no `queries` array, or declares no `version`.
  */
-async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExtension> {
+async function loadBuiltInDmvConfig(
+  outputChannel: vscode.LogOutputChannel,
+  extensionUri: vscode.Uri,
+): Promise<DmvQueriesConfig> {
+  const logger = Logger.create(outputChannel, 'Config');
+  const yamlUri = vscode.Uri.joinPath(extensionUri, 'assets', 'dmvQueries.yaml');
+  logger.debug(`Reading DMV queries built-in: ${yamlUri.fsPath}`);
+  const data = await vscode.workspace.fs.readFile(yamlUri);
+  const rawParsed = yaml.load(new TextDecoder().decode(data));
+  const parsed = DmvQueriesConfigSchema.parse(rawParsed);
+
+  const { version, queries } = parsed;
+  if (!queries || !Array.isArray(queries)) {
+    throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
+  }
+  if (version === undefined) {
+    // The shipped version is the contract every custom file is gated against; a version-less
+    // built-in would silently disable that gate.
+    throw new Error('Built-in dmvQueries.yaml is invalid — missing "version"');
+  }
+  const validQueries = queries.filter(hasRequiredQueryFields);
+  if (validQueries.length !== queries.length) {
+    throw new Error('Built-in dmvQueries.yaml is invalid — a query is missing "name" or "sql"');
+  }
+
+  return { version, queries: validQueries };
+}
+
+/**
+ * Accesses the MSSQL extension API, ensuring the extension is installed and activated.
+ *
+ * @remarks
+ * `getExtension` reports a disabled extension exactly as it reports a missing one, so the message
+ * names both states and the repair for each.
+ *
+ * @returns A promise resolving to the `IExtension` exports.
+ * @throws If the MSSQL extension is not installed or is disabled.
+ */
+async function getMssqlApi(): Promise<IExtension> {
   const ext = vscode.extensions.getExtension<IExtension>(MSSQL_EXTENSION_ID);
   if (!ext) {
-    throw new Error(`MSSQL extension (${MSSQL_EXTENSION_ID}) is not installed.`);
+    throw new Error(
+      `The SQL Server (mssql) extension is not installed or is disabled. Install or enable ${MSSQL_EXTENSION_ID} (v1.34 or later) to use database projects.`,
+    );
   }
 
   const api = ext.isActive ? ext.exports : await ext.activate();
@@ -178,24 +259,21 @@ async function getMssqlApi(outputChannel: vscode.LogOutputChannel): Promise<IExt
 
 /**
  * Retrieves the connection sharing service from the MSSQL extension.
- * 
- * @param outputChannel - The VS Code output channel for logging.
+ *
  * @returns A promise resolving to the `IConnectionSharingService`.
  * @throws If the MSSQL extension version does not support connection sharing.
  */
-async function getConnectionSharingApi(
-  outputChannel: vscode.LogOutputChannel,
-): Promise<IConnectionSharingService> {
-  const api = await getMssqlApi(outputChannel);
+async function getConnectionSharingApi(): Promise<IConnectionSharingService> {
+  const api = await getMssqlApi();
   if (!api.connectionSharing) {
-    throw new Error('MSSQL extension does not expose connectionSharing API. Please update to v1.34+.');
+    throw new Error('The installed SQL Server (mssql) extension does not expose the connection-sharing API. Update it to v1.34 or later to use database projects.');
   }
   return api.connectionSharing;
 }
 
 /**
  * Triggers the native MSSQL connection picker and initiates a connection.
- * 
+ *
  * @param outputChannel - The VS Code output channel for logging.
  * @returns Connection URI and metadata, or `undefined` if the user cancels.
  */
@@ -205,7 +283,7 @@ export async function promptForConnection(
   const logger = Logger.create(outputChannel, 'DB');
   const ext = vscode.extensions.getExtension(MSSQL_EXTENSION_ID);
   logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext?.packageJSON?.version ?? '?'} found`);
-  const api = await getMssqlApi(outputChannel);
+  const api = await getMssqlApi();
 
   const connectionInfo = await api.promptForConnection(true);
   if (!connectionInfo) {
@@ -222,20 +300,54 @@ export async function promptForConnection(
 }
 
 /**
- * Sanitizes connection info by removing secrets (passwords and raw connection strings).
- * 
- * @param info - The raw connection information.
- * @returns A sanitized clone of the connection information.
+ * Reduces connection info to exactly the fields that may be persisted.
+ *
+ * @remarks
+ * Allow-list, not a deny-list, and the allowed set is read from
+ * {@link StoredConnectionInfoSchema} so the two can never drift.
+ *
+ * A deny-list is unsafe here because the two sides of persistence are asymmetric: the object
+ * comes from the mssql extension, whose runtime shape is wider than the partial
+ * {@link IConnectionInfo} declaration in this repo (`applicationName`, `connectTimeout`, and
+ * others). Spreading the rest wrote those extra keys into the project store, and the read side
+ * (`StoredConnectionInfoSchema` is `.strict()`) then rejected the record — so `migrateProjectStore`
+ * discarded a saved database project on the next load. Selecting known keys makes what is written
+ * readable by construction.
+ *
+ * `.strict()` on the read side stays deliberately: it is what keeps a future leaked credential out
+ * of the store. This function is the correct place to narrow, because it is the only write path,
+ * and it parses what it built for the same reason: a record the read side would reject must fail
+ * here, at save time, rather than silently drop the saved project on the next load.
+ *
+ * @param info - The raw connection information from the mssql extension.
+ * @returns A persistable clone carrying only schema-declared fields; secrets are never among them.
+ * @throws When the narrowed record still violates {@link StoredConnectionInfoSchema} — for
+ *   example a server-scoped profile with no `database`.
  */
-export function stripSensitiveFields(info: IConnectionInfo): Omit<IConnectionInfo, 'password' | 'connectionString'> {
-  const { password: _pw, connectionString: _cs, ...safe } = info;
-  return safe;
+export function stripSensitiveFields(info: IConnectionInfo): StoredConnectionInfo {
+  // Double cast: the runtime object is wider than the declared interface, which has no index
+  // signature — that gap is exactly why this allow-list exists.
+  const source = info as unknown as Record<string, unknown>;
+  const persistable: Record<string, unknown> = {};
+  for (const key of Object.keys(StoredConnectionInfoSchema.shape)) {
+    // Omit absent optionals rather than writing explicit `undefined`, which JSON drops anyway.
+    if (source[key] !== undefined) persistable[key] = source[key];
+  }
+  return StoredConnectionInfoSchema.parse(persistable);
 }
 
 /**
- * Attempts a direct reconnection using existing credentials. 
- * Falls back to the picker if direct connection fails.
- * 
+ * Attempts direct reconnection with existing credentials. Returns `undefined` on failure so the
+ * caller can choose a recovery path.
+ *
+ * @remarks
+ * The profile handed to `api.connect` is a clone, never the caller's object. The mssql extension
+ * owns what it does with the profile it receives, and an Entra connection observably comes back
+ * carrying acquired-token fields the persistence contract never declares. Callers pass the
+ * connection info held inside a saved project, so handing that object over directly let a field
+ * appear inside a persisted record — which then failed the strict webview contract and cost the
+ * whole `projects-list` frame. Cloning keeps ownership of the record with this extension.
+ *
  * @param connectionInfo - The existing connection credentials.
  * @param outputChannel - The VS Code output channel for logging.
  * @returns Connection details on success, or `undefined` on failure.
@@ -247,14 +359,18 @@ export async function connectDirect(
   const logger = Logger.create(outputChannel, 'DB');
   const ext = vscode.extensions.getExtension(MSSQL_EXTENSION_ID);
   logger.debug(`MSSQL extension (${MSSQL_EXTENSION_ID}) v${ext?.packageJSON?.version ?? '?'} found`);
-  const api = await getMssqlApi(outputChannel);
+  const api = await getMssqlApi();
 
   logger.debug(`>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
   const reconnectStart = Date.now();
+  // Shallow copy, not structuredClone: the caller may pass a live mssql profile object, whose
+  // runtime shape can carry values structuredClone throws on, and the observed mutation
+  // (acquired-token fields) is a top-level write, so a shallow copy fully isolates the record.
+  const profile = { ...connectionInfo };
   try {
-    const connectionUri = await api.connect(connectionInfo, false);
+    const connectionUri = await api.connect(profile, false);
     logger.info(`Reconnected (${Date.now() - reconnectStart}ms)`);
-    return { connectionUri, connectionInfo };
+    return { connectionUri, connectionInfo: profile };
   } catch (err) {
     logger.warn(`Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
     return undefined;
@@ -263,8 +379,8 @@ export async function connectDirect(
 
 /**
  * Utility to wrap an asynchronous operation with a timeout constraint.
- * 
- * @template T - The return type of the promise.
+ *
+ * @typeParam T - The resolved value type.
  * @param promise - The promise to monitor.
  * @param ms - Timeout duration in milliseconds.
  * @param timeoutMessage - Message for the thrown error upon timeout.
@@ -282,7 +398,7 @@ export function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMess
 
 /**
  * Executes a batch of DMV queries sequentially.
- * 
+ *
  * @param connectionUri - The active connection URI.
  * @param queries - List of queries to execute.
  * @param outputChannel - Logger output channel.
@@ -298,7 +414,7 @@ export async function executeDmvQueries(
   queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
   const logger = Logger.create(outputChannel, 'DB');
-  const sharing = await getConnectionSharingApi(outputChannel);
+  const sharing = await getConnectionSharingApi();
 
   const results = new Map<string, SimpleExecuteResult>();
   const total = queries.length;
@@ -317,7 +433,7 @@ export async function executeDmvQueries(
       : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logger.info(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -325,8 +441,19 @@ export async function executeDmvQueries(
 }
 
 /**
+ * Whether a query belongs to the schema-filtered Phase 2 sweep.
+ *
+ * @remarks
+ * Exported so callers can size progress reporting from the same predicate the sweep itself
+ * uses. `phase: 1` means "not schema-filtered" rather than "runs during Phase 1" — the
+ * platform probe carries that tag while running at Phase 2 time — so an independent
+ * re-implementation of this test would silently miscount the steps.
+ */
+export const isPhase2Query = (q: DmvQuery): boolean => (q.phase ?? 2) !== 1;
+
+/**
  * Executes Phase 2 queries with `{{SCHEMAS}}` substitution.
- * 
+ *
  * @param connectionUri - The active connection URI.
  * @param queries - Candidate queries to filter and execute.
  * @param schemas - Schema names for placeholder replacement.
@@ -344,9 +471,9 @@ export async function executeDmvQueriesFiltered(
   queryTimeoutMs?: number,
 ): Promise<Map<string, SimpleExecuteResult>> {
   const logger = Logger.create(outputChannel, 'DB');
-  const sharing = await getConnectionSharingApi(outputChannel);
+  const sharing = await getConnectionSharingApi();
 
-  const phase2Queries = queries.filter(q => (q.phase ?? 2) !== 1);
+  const phase2Queries = queries.filter(isPhase2Query);
 
   for (const q of phase2Queries) {
     const warning = validateSchemaPlaceholder(q.name, q.sql, q.phase ?? 2);
@@ -371,7 +498,7 @@ export async function executeDmvQueriesFiltered(
       : await queryPromise;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logger.info(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
     results.set(query.name, result);
   }
 
@@ -380,22 +507,20 @@ export async function executeDmvQueriesFiltered(
 
 /**
  * Retrieves server-level metadata (version, edition, etc.) from the connection.
- * 
+ *
  * @param connectionUri - The active connection URI.
- * @param outputChannel - The VS Code output channel for logging.
  * @returns Server info metadata.
  */
 export async function getServerInfo(
   connectionUri: string,
-  outputChannel: vscode.LogOutputChannel,
 ): Promise<IServerInfo> {
-  const sharing = await getConnectionSharingApi(outputChannel);
+  const sharing = await getConnectionSharingApi();
   return sharing.getServerInfo(connectionUri);
 }
 
 /**
  * Executes a single SQL command without batching or placeholders.
- * 
+ *
  * @param connectionUri - The active connection URI.
  * @param sql - The SQL script to execute.
  * @param outputChannel - Logger output channel.
@@ -407,17 +532,17 @@ export async function executeSimpleQuery(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<SimpleExecuteResult> {
   const logger = Logger.create(outputChannel, 'DB');
-  const sharing = await getConnectionSharingApi(outputChannel);
+  const sharing = await getConnectionSharingApi();
   logger.debug(`Executing simple query — SQL: ${trunc(sanitizeForLog(sql), 300)}`);
   const start = Date.now();
   const result = await sharing.executeSimpleQuery(connectionUri, sql);
-  logger.info(`Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`);
+  logger.debug(`Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`);
   return result;
 }
 
 /**
  * Gracefully terminates the database connection.
- * 
+ *
  * @param connectionUri - The connection URI to close.
  * @param outputChannel - Logger output channel.
  */
@@ -426,7 +551,7 @@ export async function disconnectDatabase(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'DB');
-  const sharing = await getConnectionSharingApi(outputChannel);
+  const sharing = await getConnectionSharingApi();
   await sharing.disconnect(connectionUri);
   logger.info('Disconnected');
 }

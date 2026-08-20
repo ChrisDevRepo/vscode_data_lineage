@@ -1,10 +1,7 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { ModeBanner } from './ModeBanner';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the {@link TracedFilterBanner} component.
- */
 interface TracedFilterBannerProps {
   /** The display name of the starting node for the lineage trace. */
   startNodeName: string;
@@ -16,7 +13,7 @@ interface TracedFilterBannerProps {
   totalNodes: number;
   /** Total number of edges currently visible in the traced graph. */
   totalEdges: number;
-  /** 
+  /**
    * The current trace mode:
    * - 'applied': The trace is actively being calculated or shown as a temporary view.
    * - 'filtered': The trace is acting as a persistent filter on the global graph.
@@ -40,15 +37,7 @@ interface TracedFilterBannerProps {
 const TRACE_ICON = 'M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5';
 
 /**
- * A specialized banner component that provides status and controls for an active lineage trace.
- *
- * @remarks
- * This component is memoized and wraps the generic {@link ModeBanner}.
- * it displays the trace starting point, traversal depth, and counts of visible vs. filtered nodes.
- * It also provides a toggle to include nodes that would otherwise be filtered out by global schema/type settings.
- *
- * @param props - The component properties.
- * @returns A {@link React.JSX.Element} representing the trace status banner.
+ * Configures {@link ModeBanner} with active-trace scope, counts, and filter controls.
  */
 export const TracedFilterBanner = memo(function TracedFilterBanner({
   startNodeName,
@@ -66,7 +55,7 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
 }: TracedFilterBannerProps) {
   /**
    * Formats the level depth for display.
-   * 
+   *
    * @param levels - The depth number or MAX_SAFE_INTEGER for 'All'.
    * @returns A string representation of the depth.
    */

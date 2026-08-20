@@ -10,7 +10,7 @@ interface SpinnerProps {
 /**
  * Animated loading spinner.
  *
- * @returns The shared spinning-circle SVG previously copied inline across several components.
+ * @returns The shared spinning-circle SVG.
  */
 export function Spinner({ className = 'w-4 h-4', style }: SpinnerProps) {
   return (

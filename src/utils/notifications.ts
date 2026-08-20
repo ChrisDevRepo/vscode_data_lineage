@@ -1,23 +1,45 @@
 import * as vscode from 'vscode';
-import { Logger, sanitizeForLog } from './log';
+import {
+  LOG_TRUNC_JSON,
+  Logger,
+  safeStringifyForLog,
+  sanitizeForLog,
+  trunc,
+} from './log';
 
 type NotifyContext = Record<string, unknown>;
 
+const MAX_NOTIFICATION_CONTEXT = LOG_TRUNC_JSON * 4;
+
+function renderContextValue(value: unknown): string {
+  try {
+    if (Array.isArray(value)) {
+      return trunc(value.map((item) => (
+        item && typeof item === 'object'
+          ? safeStringifyForLog(item)
+          : sanitizeForLog(String(item))
+      )).join(', '), LOG_TRUNC_JSON);
+    }
+    if (value instanceof Error) return trunc(sanitizeForLog(value.message), LOG_TRUNC_JSON);
+    if (value && typeof value === 'object') return safeStringifyForLog(value);
+    return trunc(sanitizeForLog(String(value)), LOG_TRUNC_JSON);
+  } catch {
+    return '[Unserializable]';
+  }
+}
+
 function formatContext(context?: NotifyContext): string {
-  if (!context || Object.keys(context).length === 0) return '';
-  const parts = Object.entries(context)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => {
-      const rendered = Array.isArray(value)
-        ? value.join(', ')
-        : value instanceof Error
-          ? value.message
-          : value && typeof value === 'object'
-            ? JSON.stringify(value)
-            : String(value);
-      return `${key}=${sanitizeForLog(rendered)}`;
-    });
-  return parts.length > 0 ? ` — ${parts.join('; ')}` : '';
+  if (!context) return '';
+  try {
+    const parts = Object.entries(context)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${sanitizeForLog(key)}=${renderContextValue(value)}`);
+    return parts.length > 0
+      ? ` — ${trunc(parts.join('; '), MAX_NOTIFICATION_CONTEXT)}`
+      : '';
+  } catch {
+    return ' — context=[Unserializable]';
+  }
 }
 
 /**

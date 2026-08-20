@@ -17,4 +17,6 @@ export const REJECTION_CODES = {
   alreadyStarted: 'already_started',
   /** Provider/SDK emitted the same tool-call id twice in one generation — a transport artifact, never charged to the model's semantic budget. */
   duplicateCallId: 'duplicate_call_id',
+  /** Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport artifact, never charged to the model's semantic budget. */
+  emptyGeneration: 'empty_generation',
 } as const;

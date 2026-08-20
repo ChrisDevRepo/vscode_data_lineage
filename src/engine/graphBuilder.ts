@@ -5,7 +5,7 @@
  * This module is responsible for:
  * - Building the underlying `graphology` computational graph.
  * - Implementing spatial layout algorithms (Dagre, Grid) for node positioning.
- * - Managing complex graph operations like tracing (upstream/downstream), pathfinding, and cycle detection.
+ * - Managing graph operations such as upstream/downstream tracing and pathfinding.
  * - Converting computational graphs into React Flow nodes and edges with specialized styling.
  * - Handling bidirectional edge consolidation and canonical direction selection.
  * - Building schema-level overview graphs for macro-lineage visualization.
@@ -36,6 +36,17 @@ export const NODE_HEIGHT = 80;
 export const SCHEMA_NODE_WIDTH = 200;
 /** Height of a schema-level node in pixels. */
 export const SCHEMA_NODE_HEIGHT = 80;
+/**
+ * Rank separation for Schema View, independent of `layout.rankSeparation`.
+ *
+ * @remarks
+ * A schema node carries a name plus its object counts, so the macro view needs more room
+ * between ranks than the object graph. `layout.rankSeparation` and `layout.nodeSeparation`
+ * are documented as object-graph settings and are deliberately not read here.
+ */
+const SCHEMA_RANK_SEPARATION = 160;
+/** Node separation for Schema View; see {@link SCHEMA_RANK_SEPARATION}. */
+const SCHEMA_NODE_SEPARATION = 80;
 
 /** Typed tuple for React Flow edge label background padding. */
 const LABEL_BG_PAD: [number, number] = [4, 4];
@@ -46,7 +57,7 @@ const GRID_CELL_PADDING = 40;
 
 /**
  * Collects edges between traced nodes with direction-aware filtering.
- * 
+ *
  * @param graph - The underlying computational graph.
  * @param nodeIds - Set of node identifiers within the trace scope.
  * @param upDepth - Upstream depth mapping.
@@ -153,7 +164,7 @@ function buildLineageFlowNode(
 
 /**
  * Builds a directed graphology graph from a database model.
- * 
+ *
  * @param model - The database model definitions.
  * @returns A populated graph instance.
  */
@@ -210,7 +221,7 @@ function toFlowResult(
 
 /**
  * Fully builds and layouts a graph for visualization.
- * 
+ *
  * @param model - Database model to visualize.
  * @param config - Extension configuration.
  * @returns Complete graph result.
@@ -223,7 +234,7 @@ export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAU
 
 /**
  * Builds a graph without executing layout algorithms, preserving default positions.
- * 
+ *
  * @param model - Database model to visualize.
  * @param config - Extension configuration.
  * @returns Complete graph result with zeroed positions.
@@ -235,7 +246,7 @@ export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig
 
 /**
  * Traces a node's lineage (upstream/downstream) through the graph.
- * 
+ *
  * @param graph - computational graph.
  * @param nodeId - Origin node ID.
  * @param mode - Trace direction.
@@ -755,9 +766,14 @@ function buildOverviewColorMap(graph: Graph): SchemaColorMap {
  * Builds the macro-level Schema View graph.
  *
  * @param graph - The current filtered Graphology working graph.
+ * @param config - Supplies layout direction and edge style; node spacing is view-owned
+ *   ({@link SCHEMA_RANK_SEPARATION}, {@link SCHEMA_NODE_SEPARATION}).
  * @returns React Flow nodes and edges for Schema View.
  */
-export function buildSchemaGraph(graph: Graph): { nodes: FlowNode<SchemaNodeData>[]; edges: FlowEdge[] } {
+export function buildSchemaGraph(
+  graph: Graph,
+  config: ExtensionConfig = DEFAULT_CONFIG,
+): { nodes: FlowNode<SchemaNodeData>[]; edges: FlowEdge[] } {
   const projection = projectSchemaQuotient(graph);
   const schemaIdSet = new Set(projection.nodes.keys());
   const schemaIds = [...schemaIdSet];
@@ -766,7 +782,13 @@ export function buildSchemaGraph(graph: Graph): { nodes: FlowNode<SchemaNodeData
   for (const edge of projection.edges) edgesForLayout.push({ source: edge.sourceSchema, target: edge.targetSchema });
 
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: 'LR', ranksep: 160, nodesep: 80, marginx: 30, marginy: 30 });
+  g.setGraph({
+    rankdir: config.layout.direction,
+    ranksep: SCHEMA_RANK_SEPARATION,
+    nodesep: SCHEMA_NODE_SEPARATION,
+    marginx: 30,
+    marginy: 30,
+  });
   g.setDefaultEdgeLabel(() => ({}));
   for (const id of schemaIds) g.setNode(id, { width: SCHEMA_NODE_WIDTH, height: SCHEMA_NODE_HEIGHT });
   for (const { source, target } of edgesForLayout) {
@@ -814,6 +836,7 @@ export function buildSchemaGraph(graph: Graph): { nodes: FlowNode<SchemaNodeData
         : `__schema__${edge.sourceSchema}→${edge.targetSchema}`,
       source: srcId,
       target: tgtId,
+      type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
       label: edge.bidirectional ? `⇄ ${edge.totalCount}` : `${edge.count}`,
       labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
       labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },

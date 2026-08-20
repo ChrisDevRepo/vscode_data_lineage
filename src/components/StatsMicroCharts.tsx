@@ -1,4 +1,3 @@
-import React from 'react';
 import { typeBadgeLabel } from '../engine/profilingEngine';
 import { Tooltip } from './ui/Tooltip';
 
@@ -20,14 +19,7 @@ const BADGE_COLORS: Record<string, string> = {
 };
 
 /**
- * A component that renders a small, colored badge representing a SQL data type.
- *
- * @remarks
- * The badge uses a simplified label (e.g., "INT" for "int", "bigint", etc.) derived from
- * the {@link typeBadgeLabel} utility. It displays the full type string as a tooltip.
- *
- * @param props - Object containing `typeStr`, the raw SQL type string.
- * @returns A {@link React.JSX.Element} displaying the type badge.
+ * Renders the compact {@link typeBadgeLabel} with the full SQL type in a tooltip.
  */
 export function TypeBadge({ typeStr }: { typeStr: string }) {
   const label = typeBadgeLabel(typeStr);
@@ -62,13 +54,7 @@ function qualityColor(value: number): string {
 }
 
 /**
- * A horizontal progress bar component used to visualize data completeness (null vs. non-null).
- *
- * @remarks
- * The bar's color changes dynamically based on the completeness percentage using {@link qualityColor}.
- *
- * @param props - Object containing `value`, a number between 0 and 1.
- * @returns A {@link React.JSX.Element} representing the completeness bar as an SVG.
+ * Renders a color-coded completeness ratio as an SVG progress bar.
  */
 export function CompletenessBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
@@ -81,14 +67,7 @@ export function CompletenessBar({ value }: { value: number }) {
 }
 
 /**
- * A textual indicator component for data uniqueness/cardinality.
- *
- * @remarks
- * This component categorizes uniqueness into "Const", "High", "Med", or "Low" based on the ratio
- * of distinct values to total rows, and provides semantic coloring.
- *
- * @param props - Object containing `value` (uniqueness ratio 0-1) and `distinctCount`.
- * @returns A {@link React.JSX.Element} displaying the uniqueness label.
+ * Classifies a uniqueness ratio as constant, high, medium, or low.
  */
 export function UniquenessIndicator({ value, distinctCount }: { value: number; distinctCount: number }) {
   let label: string;

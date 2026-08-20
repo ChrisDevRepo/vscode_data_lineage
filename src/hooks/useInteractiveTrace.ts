@@ -97,17 +97,17 @@ function resolveBfsGraph(
 
 /**
  * Custom hook for managing interactive data lineage traces and pathfinding.
- * 
+ *
  * @remarks
  * This hook manages the lifecycle of "drilling into" specific nodes. It supports:
  * 1. **Level-based Tracing**: Upstream and downstream traversal.
  * 2. **Shortest Path**: Finding connections between two specific nodes.
  * 3. **Analysis Subsets**: Highlighting architectural patterns (hubs, islands).
- * 
+ *
  * It handles the complex logic of "Auto-Promotion", where a trace on a node that is
  * currently filtered out will automatically switch to the `fullGraph` to ensure
  * the user can always see the requested lineage.
- * 
+ *
  * @param graph - The currently active (filtered) graph instance.
  * @param flowNodes - The current set of React Flow nodes.
  * @param flowEdges - The current set of React Flow edges.
@@ -131,11 +131,9 @@ export function useInteractiveTrace(
   // traverses all model nodes, not just the filtered subset.
   const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
 
-  // Keep a ref to useFullModel so callbacks don't go stale
   const useFullModelRef = useRef(useFullModel);
   useFullModelRef.current = useFullModel;
 
-  // Phase 1: Start configuring trace (show InlineTraceControls)
   const startTraceConfig = useCallback((nodeId: string) => {
     setTrace(createTrace(config, {
       mode: 'configuring',
@@ -143,7 +141,6 @@ export function useInteractiveTrace(
     }));
   }, [config]);
 
-  // Immediate trace: apply with defaults without showing config UI
   const startTraceImmediate = useCallback((nodeId: string) => {
     const { bfsGraph, autoPromoted } = resolveBfsGraph(nodeId, useFullModelRef.current, graph, fullGraph);
     if (!bfsGraph) {
@@ -184,7 +181,6 @@ export function useInteractiveTrace(
     }));
   }, [graph, fullGraph, config]);
 
-  // Phase 2: Apply trace with levels (filter graph, keep controls visible briefly)
   const applyTrace = useCallback(
     (upstreamLevels: number, downstreamLevels: number) => {
       if (!trace.selectedNodeId) {
@@ -227,7 +223,6 @@ export function useInteractiveTrace(
     [config, graph, fullGraph, trace.selectedNodeId]
   );
 
-  // Start path finding mode (from right-click "Find Path")
   const startPathFinding = useCallback((nodeId: string) => {
     setTrace(createTrace(config, {
       mode: 'pathfinding',
@@ -277,7 +272,6 @@ export function useInteractiveTrace(
     return true;
   }, [config, fullGraph, graph, trace.selectedNodeId]);
 
-  // Apply analysis subset — reuses same rendering as trace/path
   const applyAnalysisSubset = useCallback((
     nodeIds: Set<string>,
     edgeIds: Set<string>,
@@ -300,12 +294,10 @@ export function useInteractiveTrace(
     }));
   }, [config, flowNodes.length]);
 
-  // Toggle between filtered and full-model BFS — re-runs trace immediately
   const toggleUseFullModel = useCallback(() => {
     const next = !useFullModelRef.current;
     setUseFullModel(next);
 
-    // Re-run trace on the alternate graph if a trace is active
     const isTraceActive = isEditableTraceMode(trace.mode);
     if (!isTraceActive || !trace.selectedNodeId) return;
 
@@ -389,7 +381,6 @@ export function useInteractiveTrace(
 
   const clearTrace = endTrace;
 
-  // Compute how many nodes are hidden by the active filter (only when filter is inherited)
   const filteredOutCount = useMemo(() => {
     const isTraceActive = isEditableTraceMode(trace.mode);
     if (useFullModel || trace.autoPromoted || !isTraceActive || !trace.selectedNodeId || !fullGraph) return 0;
@@ -402,7 +393,6 @@ export function useInteractiveTrace(
     return Math.max(0, fullResult.nodeIds.size - trace.tracedNodeIds.size);
   }, [fullGraph, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.tracedNodeIds, useFullModel, trace.autoPromoted]);
 
-  // Memoize trace application to avoid re-rendering all nodes
   const { tracedNodes, tracedEdges, traceGraph } = useMemo(
     (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[]; traceGraph: Graph | null } => {
       if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {

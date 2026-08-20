@@ -7,7 +7,6 @@ import { escHtml } from '../utils/sql';
 
 /**
  * Geometry data for an mxGraph cell.
- * @internal
  */
 interface MxGeometry {
   '@_x'?: string;
@@ -20,7 +19,6 @@ interface MxGeometry {
 
 /**
  * Represents a standard cell in an mxGraph XML structure.
- * @internal
  */
 interface MxCell {
   '@_id': string;
@@ -37,7 +35,6 @@ interface MxCell {
 /**
  * Represents an object cell (vertex with metadata) in an mxGraph XML structure.
  * Used for storing additional attributes like tooltips and full names.
- * @internal
  */
 interface MxObject {
   '@_id': string;
@@ -61,7 +58,7 @@ const COLOR_BAND_W = 6;
 
 /**
  * Constructs a rich HTML label for a node in the Draw.io diagram.
- * 
+ *
  * @param d - The custom data associated with the lineage node.
  * @returns A string containing HTML for the node label.
  */
@@ -80,9 +77,11 @@ function buildLabel(d: CustomNodeData): string {
 
 /**
  * Generates the legend section of the Draw.io diagram, mapping schema names to their assigned colors.
- * 
+ *
  * @param schemas - List of unique schema names in the graph.
+ * @param colorMap - Display colors keyed by schema name.
  * @param startId - The starting ID for XML elements in this section.
+ * @param externalSchemas - Schema names rendered with the external-node color.
  * @returns An object containing the generated cells and the next available ID.
  */
 function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number, externalSchemas: ReadonlySet<string> = new Set()): { cells: MxCell[]; nextId: number } {
@@ -99,7 +98,6 @@ function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: numbe
   const boxW = Math.max(180, Math.round(maxSchemaLen * 6.5) + padX + 50);
   const boxH = headerH + schemas.length * rowH + padY;
 
-  // Background rectangle
   cells.push({
     '@_id': String(id++),
     '@_value': '',
@@ -109,7 +107,6 @@ function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: numbe
     mxGeometry: { '@_x': '10', '@_y': '10', '@_width': String(boxW), '@_height': String(boxH), '@_as': 'geometry' },
   });
 
-  // Title: "SCHEMAS"
   cells.push({
     '@_id': String(id++),
     '@_value': '<b style="font-size:10px;color:#666666;letter-spacing:1px;">SCHEMAS</b>',
@@ -147,7 +144,7 @@ function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: numbe
 
 /**
  * Constructs an mxGraph edge cell.
- * 
+ *
  * @param edge - The React Flow edge data.
  * @param cellId - Unique ID for the XML cell.
  * @param sourceId - ID of the source node.
@@ -182,16 +179,17 @@ function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: s
 
 /**
  * Converts a set of React Flow nodes and edges into a Draw.io compatible XML (mxfile) format.
- * 
+ *
  * The output includes:
  * - A persistent schema legend.
  * - Styled vertices with custom HTML labels and color bands.
  * - Orthogonal edges with bidirectional support.
  * - Embedded metadata (tooltips, full names) using `<object>` containers.
- * 
+ *
  * @param nodes - Array of nodes from the graph state.
  * @param edges - Array of edges from the graph state.
  * @param schemas - List of schema names for the legend.
+ * @param clusterNodes - Optional schema-overview nodes included in the export.
  * @returns A full XML string ready for import into Draw.io.
  */
 export function exportToDrawio(

@@ -1,7 +1,6 @@
-import { REJECTION_CODES } from "../../support/rejectionCodes";
-
 import type { LmStage } from '../../tools/toolPolicy';
 import type { InteractionRuleResult } from '../types';
+import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /**
  * Tool-specific routing hint for off-policy responses.
@@ -27,6 +26,11 @@ function offPolicyHint(toolName: string, stage: LmStage): string {
 
 /**
  * Evaluates phase policy for a requested tool call.
+ *
+ * @param toolName - The name of the requested tool.
+ * @param stage - The current LM stage.
+ * @param allowed - Set of allowed tool names for the stage.
+ * @returns A rule result error if the tool is off-policy, otherwise null.
  */
 export function evaluateToolPhaseRule(
   toolName: string,

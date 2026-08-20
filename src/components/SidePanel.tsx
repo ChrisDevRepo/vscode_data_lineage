@@ -1,9 +1,6 @@
-import React, { type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { CloseIcon } from './ui/CloseIcon';
 
-/**
- * Props for the {@link SidePanel} component.
- */
 interface SidePanelProps {
   /** The title text displayed in the header. */
   title: string;
@@ -16,14 +13,7 @@ interface SidePanelProps {
 }
 
 /**
- * A generic sidebar panel component for displaying detailed information or interactive controls.
- *
- * @remarks
- * This component features a header with a title, an optional icon, and a close button.
- * It is styled using theme variables (e.g., `--ln-sidebar-header-bg`, `--ln-sidebar-header-fg`).
- *
- * @param props - The component properties.
- * @returns A {@link React.JSX.Element} representing the sidebar panel.
+ * Renders the shared titled, closable sidebar shell.
  */
 export function SidePanel({ title, icon, onClose, children }: SidePanelProps) {
   return (

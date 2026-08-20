@@ -50,7 +50,7 @@ export function applyExclusionFilter(
 
 /**
  * Filters the model by removing isolated nodes (nodes with a total degree of zero).
- * 
+ *
  * @param model - The database model to filter.
  * @param hideIsolated - If `true`, isolation filtering is applied.
  * @returns A filtered DatabaseModel instance.
@@ -73,7 +73,7 @@ export function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean
 
 /**
  * Filters the model to include only nodes explicitly present in the provided allowlist.
- * 
+ *
  * @param model - The database model to filter.
  * @param allowlist - A set of node IDs to retain.
  * @returns A filtered DatabaseModel instance.

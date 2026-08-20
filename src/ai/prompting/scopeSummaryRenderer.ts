@@ -3,81 +3,76 @@
  *
  * @remarks
  * Lives in its own file (no `vscode` import) so unit tests can exercise it without
- * the VS Code module surface. Single source of truth for the gate-detail markdown.
+ * the VS Code module surface. Single source of truth for the native gate markdown.
  */
 
 import type { ScopeSummary } from '../sm/smTypes';
+import { pluralize } from '../support/text';
 
-/** Pluralizes a noun based on count. */
+/** Formats a count with its noun; the suffix rule itself lives in the shared `pluralize`. */
 function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+  return `${n} ${pluralize(n, noun)}`;
 }
 
 /** Capitalizes and pluralizes an object-type label for display in the scope tree. */
-function typeLabel(t: string, n: number): string {
-  const cap = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
-  return n === 1 ? cap : `${cap}s`;
+function typeLabel(type: string, count: number): string {
+  const capitalized = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+  return count === 1 ? capitalized : `${capitalized}s`;
 }
 
-/**
- * Renders a {@link ScopeSummary} as nested-bullet markdown for the `confirm_sm_start` gate.
- *
- * @remarks
- * Schemas are sorted by hop count desc, then scope desc; types within a schema by hops desc;
- * per-type names are alphabetized inside the snapshot. Pass-tagged nodes appear inline with
- * a `(pass)` marker; excluded items surface in a final "Active filters" block.
- *
- * @param s - Snapshot from `engine.getScopeSummary()`.
- */
-export function renderScopeSummaryMd(s: ScopeSummary): string {
+/** Renders a self-contained main-equivalent approval summary for native chat. */
+export function renderScopeSummaryMd(summary: ScopeSummary): string {
   const lines: string[] = [];
-  const dirLabel = s.direction === 'bidirectional' ? 'bidirectional' : s.direction;
-  const hasAsymmetric = s.direction === 'bidirectional' && (s.upstreamDepth !== null || s.downstreamDepth !== null);
-  const depthLabel = hasAsymmetric
-    ? `depth u:${s.upstreamDepth ?? 'all'} d:${s.downstreamDepth ?? 'all'}`
-    : (s.depth !== null ? `depth ${s.depth}` : 'unbounded depth');
-  const colLabel = s.targetColumns?.length ? ` — columns: [${s.targetColumns.join(', ')}]` : '';
-  const traceLabel = s.columnAspectActive ? `Column-Trace${colLabel}` : 'Blackboard';
+  const direction = summary.direction === 'bidirectional' ? 'bidirectional' : summary.direction;
+  const depth = summary.depthIntent.kind === 'asymmetric'
+    ? `depth u:${summary.depthIntent.upstream} d:${summary.depthIntent.downstream}`
+    : (summary.depth !== null ? `depth ${summary.depth}` : 'unbounded depth');
+  const columns = summary.targetColumns?.length
+    ? ` — columns: [${summary.targetColumns.join(', ')}]`
+    : '';
+  const tracing = summary.analysisMode === 'ct' ? `Column-Trace${columns}` : 'Blackboard';
 
   lines.push('### Exploration plan (proposed)');
   lines.push('');
-  lines.push(`- **${plural(s.hopCount, 'hop')}** · **${plural(s.scopeCount, 'node')} in scope** · ${depthLabel}, ${dirLabel}`);
-  lines.push(`- **Tracing:** ${traceLabel}`);
+  lines.push(`- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${depth}, ${direction}`);
+  lines.push(`- **Tracing:** ${tracing}`);
   lines.push('');
 
-  const passSet = new Set(s.activeFilters.passNodeIds.map(n => n.toLowerCase()));
-
-  // Larger schemas first so the AI sees the heaviest scope upfront; tie-break by name for determinism.
-  const schemaEntries = Object.entries(s.bySchema).sort((a, b) => {
-    const ds = b[1].scope - a[1].scope;
-    if (ds !== 0) return ds;
-    return a[0].localeCompare(b[0]);
+  const passSet = new Set(summary.activeFilters.passNodeIds.map(nodeId => nodeId.toLowerCase()));
+  const schemas = Object.entries(summary.bySchema).sort((a, b) => {
+    const hopDifference = b[1].hops - a[1].hops;
+    if (hopDifference !== 0) return hopDifference;
+    const scopeDifference = b[1].scope - a[1].scope;
+    return scopeDifference !== 0 ? scopeDifference : a[0].localeCompare(b[0]);
   });
 
-  for (const [schema, schEntry] of schemaEntries) {
-    lines.push(`- **${schema}** — ${plural(schEntry.scope, 'node')}`);
-    const typeEntries = Object.entries(schEntry.byType).sort((a, b) => b[1].scope - a[1].scope || a[0].localeCompare(b[0]));
-    for (const [type, leaf] of typeEntries) {
-      const label = typeLabel(type, leaf.scope);
-      const countLabel = plural(leaf.scope, 'node');
-      const annotated = leaf.nodeNames.map(name => {
+  for (const [schema, schemaEntry] of schemas) {
+    lines.push(`- **${schema}** — ${plural(schemaEntry.scope, 'node')}`);
+    const types = Object.entries(schemaEntry.byType).sort((a, b) =>
+      b[1].hops - a[1].hops || b[1].scope - a[1].scope || a[0].localeCompare(b[0]),
+    );
+    for (const [type, leaf] of types) {
+      const names = leaf.nodeNames.map(name => {
         const fq = `[${schema.toLowerCase()}].[${name.toLowerCase()}]`;
         return passSet.has(fq) ? `${name} _(pass)_` : name;
       }).join(', ');
-      const tail = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
-      lines.push(`  - ${label} (${countLabel}): ${annotated}${tail}`);
+      const omitted = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
+      lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}): ${names}${omitted}`);
     }
   }
 
-  const f = s.activeFilters;
-  const hasFilters = f.schemas.length > 0 || f.types.length > 0 || f.nodeIds.length > 0 || f.passNodeIds.length > 0;
+  const filters = summary.activeFilters;
+  const hasFilters = filters.schemas.length > 0
+    || filters.types.length > 0
+    || filters.nodeIds.length > 0
+    || filters.passNodeIds.length > 0;
   if (hasFilters) {
     lines.push('');
     lines.push('**Active filters**');
-    if (f.schemas.length > 0) lines.push(`- Schemas excluded: ${f.schemas.map(x => `\`${x}\``).join(', ')}`);
-    if (f.types.length > 0) lines.push(`- Types excluded: ${f.types.map(x => `\`${x}\``).join(', ')}`);
-    if (f.nodeIds.length > 0) lines.push(`- Nodes excluded: ${f.nodeIds.map(x => `\`${x}\``).join(', ')}`);
-    if (f.passNodeIds.length > 0) lines.push(`- Nodes pass-through: ${f.passNodeIds.map(x => `\`${x}\``).join(', ')}`);
+    if (filters.schemas.length > 0) lines.push(`- Schemas excluded: ${filters.schemas.map(x => `\`${x}\``).join(', ')}`);
+    if (filters.types.length > 0) lines.push(`- Types excluded: ${filters.types.map(x => `\`${x}\``).join(', ')}`);
+    if (filters.nodeIds.length > 0) lines.push(`- Nodes excluded: ${filters.nodeIds.map(x => `\`${x}\``).join(', ')}`);
+    if (filters.passNodeIds.length > 0) lines.push(`- Nodes pass-through: ${filters.passNodeIds.map(x => `\`${x}\``).join(', ')}`);
   }
 
   return lines.join('\n');

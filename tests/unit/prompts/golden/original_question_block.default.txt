@@ -1,0 +1,4 @@
+## Original Question
+<original_question>
+How is FactSales loaded?
+</original_question>

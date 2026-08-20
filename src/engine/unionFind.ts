@@ -7,7 +7,7 @@
  */
 
 /** Minimal disjoint-set (union-find) over string keys for weakly-connected grouping. */
-export class UnionFind {
+class UnionFind {
   private parent = new Map<string, string>();
 
   /** Registers a key as its own singleton set if not already present. */

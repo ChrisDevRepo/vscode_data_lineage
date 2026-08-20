@@ -1,9 +1,6 @@
 import { memo, useState } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
 
-/**
- * Props for the `BookmarkInfoCard` component.
- */
 interface BookmarkInfoCardProps {
   /** The saved view profile whose information is being displayed. */
   profile: FilterProfile;
@@ -15,7 +12,7 @@ interface BookmarkInfoCardProps {
   staleNodeNames: string[];
 }
 
-/** 
+/**
  * Descriptive text for different bookmark sources.
  */
 const SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['source']>, string> = {
@@ -25,10 +22,10 @@ const SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['source']>, string> 
   user: 'Saved view',
 };
 
-/** 
+/**
  * Formats an ISO date string into a localized short date and time format.
  * Example: "Mar 29, 2026, 12:15"
- * 
+ *
  * @param iso - The ISO date string.
  * @returns A formatted locale string.
  */
@@ -41,14 +38,14 @@ function formatDate(iso: string): string {
 
 /**
  * A floating information card that provides technical metadata about a saved bookmark.
- * 
+ *
  * @remarks
  * This card is displayed in the bottom-left corner of the graph canvas. It shows:
  * - Graph statistics (node/schema counts).
  * - Source information (AI, Trace, User).
  * - Creation timestamps.
  * - Warnings if objects referenced in the bookmark are "stale" (missing from the current model).
- * 
+ *
  * @param props - The component props.
  */
 export const BookmarkInfoCard = memo(function BookmarkInfoCard({
@@ -80,7 +77,6 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
         pointerEvents: 'auto',
       }}
     >
-      {/* Header row */}
       <button
         className="w-full flex items-center justify-between px-3 py-2 cursor-pointer border-0"
         onClick={() => setCollapsed(c => !c)}
@@ -96,19 +92,16 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
 
       {!collapsed && (
         <div className="px-3 pb-3 flex flex-col gap-1.5">
-          {/* Stats — auto-generated */}
           <div className="flex flex-col">
             <span className="text-[9px] ln-text-muted uppercase tracking-wide">Scope</span>
             <span className="text-[10px] ln-text">{nodeCount} objects, {schemaCount} schemas</span>
           </div>
 
-          {/* Source */}
           <div className="flex flex-col">
             <span className="text-[9px] ln-text-muted uppercase tracking-wide">Source</span>
             <span className="text-[10px] ln-text">{SOURCE_DESCRIPTIONS[source]}</span>
           </div>
 
-          {/* Summary (AI views) */}
           {ai?.summary && (
             <div className="flex flex-col">
               <span className="text-[9px] ln-text-muted uppercase tracking-wide">Summary</span>
@@ -125,7 +118,6 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
             </span>
           </div>
 
-          {/* Stale objects warning */}
           {hasStale && (
             <div
               className="text-[9px] rounded-sm px-2 py-1.5"

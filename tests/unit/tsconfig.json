@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "declaration": false,
+    "declarationMap": false,
+    // Unit tests run under the dev Node, so ES2022 library types are real here — same reasoning
+    // as tsconfig.integration.json. Declared explicitly rather than inherited so the tests never
+    // depend on an @types/node compatibility shim to reach past the root project's `lib: ES2020`.
+    // `src` keeps that ES2020 discipline; `npm run typecheck` is what enforces it.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "./**/*.tsx", "../../src/types/global.d.ts"]
+}

@@ -182,9 +182,6 @@ function serializeTraceAffordances(nodeId: string, controls: TraceNodeControls):
   return { nodeId, in: serializeSideAffordance(controls.in), out: serializeSideAffordance(controls.out) };
 }
 
-/**
- * Props for the {@link GraphCanvas} component.
- */
 interface GraphCanvasProps {
   /** Array of nodes formatted for React Flow. */
   flowNodes: FlowNode[];
@@ -402,21 +399,7 @@ interface GraphCanvasProps {
 }
 
 /**
- * The primary canvas component for the lineage visualization.
- *
- * This component orchestrates the graph display (via React Flow), the various
- * floating control panels (Toolbar, Search, Legend), and the specialized
- * interaction modes (Trace, Path, Analysis).
- *
- * It manages:
- * - Graph layout and viewport control (fit view, zoom to node).
- * - Multi-layered filtering (types, schemas, exclusions).
- * - Selection and highlighting logic.
- * - In-place schema expansion from overview to Expanded Schema View.
- * - State management for advanced bookmarks and AI-generated views.
- *
- * @param props - The component props.
- * @returns A complex functional component.
+ * Renders the lineage graph and coordinates viewport, selection, filtering, and graph modes.
  */
 export function GraphCanvas({
   flowNodes,
@@ -753,7 +736,6 @@ export function GraphCanvas({
   }, [getNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const previousTrace = traceAtLastGraphChangeRef.current;
     const currentTrace = currentTraceRef.current;
@@ -807,7 +789,6 @@ export function GraphCanvas({
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
   const [notesVisible, setNotesVisible] = useState(true);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) {
       setLocalNodes(flowNodes.map(n => {
@@ -1093,7 +1074,6 @@ export function GraphCanvas({
         traceScope,
       },
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphErrorResetKey, highlightedNodeId, traceControlsByNode, trace.tracedNodeIds.size]);
 
   return (

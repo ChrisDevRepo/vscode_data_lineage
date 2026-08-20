@@ -1,12 +1,10 @@
 // MAINTENANCE: Content overlaps with docs/FEATURES.md — update both when features change
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
+import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, type AppShortcutId } from '../ui/keyboardShortcuts';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Props for the {@link HelpModal} component.
- */
 interface HelpModalProps {
   /** Whether the help modal is currently visible. */
   isOpen: boolean;
@@ -80,10 +78,19 @@ function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
   );
 }
 
+/** Shorter labels for keys whose `KeyboardEvent.key` name reads poorly on a keycap. */
+const KEY_CAPTIONS: Partial<Record<AppShortcutId, string>> = { exitMode: 'Esc' };
+
+/**
+ * Every registered app shortcut, followed by the keys handled per-control rather
+ * than through {@link SHORTCUT_KEYS} — so this panel is the complete list it claims
+ * to be, and adding a binding without a description fails to compile.
+ */
 const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
-  { keys: ['/'], label: 'Focus Quick Jump' },
-  { keys: ['?'], label: 'Open Help' },
-  { keys: ['Esc'], label: 'Close active input, then exit the current mode' },
+  ...(Object.keys(SHORTCUT_DESCRIPTIONS) as AppShortcutId[]).map(id => ({
+    keys: [KEY_CAPTIONS[id] ?? SHORTCUT_KEYS[id]],
+    label: SHORTCUT_DESCRIPTIONS[id],
+  })),
   { keys: ['Enter'], label: 'Select a suggestion or apply the focused action' },
 ];
 
@@ -103,10 +110,10 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
             ))}
           </div>
           <p className="text-xs ln-text-muted mt-2">
-            <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#keyboard-shortcuts" openExternal={openExternal}>See the full list of keyboard shortcuts in the docs ↗</ExtLink>
-          </p>
-          <p className="text-xs ln-text-muted mt-2">
-            Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text. `Esc` first closes the active input or dropdown, then exits the current graph mode.
+            Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text, and
+            never fire with a Ctrl, Cmd, or Alt modifier. <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">Esc</code> first
+            closes the active input, dropdown, or this panel, then exits the current graph mode.{' '}
+            <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#keyboard-shortcuts" openExternal={openExternal}>Also listed in the docs ↗</ExtLink>
           </p>
         </div>
       </section>
@@ -368,21 +375,25 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
 
 
 /**
- * A modal dialog that provides comprehensive documentation and help for the extension.
- * 
- * Features four main tabs:
- * - **Overview**: Keyboard shortcuts and high-level feature summaries.
- * - **Analysis**: Explanations of graph analysis modes (Islands, Hubs, Cycles, etc.).
- * - **Database**: Guidance on importing data and table profiling.
- * - **AI**: Instructions for using the @lineage AI assistant in Copilot Chat.
- * 
- * Architectural Note: This component uses a fixed-position overlay and manages its own
- * tab state. It communicates with the VS Code host for external link opening and
- * settings navigation.
+ * Displays the extension's overview, analysis, database, and AI help tabs.
  */
 export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalProps) {
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');
+
+  // Capture phase, so the open panel consumes Esc before the document-level mode handlers
+  // registered through `useKeyboardShortcut` see it — closing Help never also exits the
+  // trace, analysis, or AI-preview mode behind it.
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 

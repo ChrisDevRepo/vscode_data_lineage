@@ -2,14 +2,8 @@
  * Stage-scoped prompt assembly for the synthesis / active / discover phases.
  */
 
-import type { LineageNode } from '../../engine/types';
 import type { AiOutputTemplates } from '../session/types';
 import type { ClassificationValue } from '../session/classification';
-
-/** Map from node id (`[schema].[name]`) to the resolved node record. */
-export type NodeMap = Map<string, LineageNode>;
-
-// ─── Stage-scoped prompt assembly ───────────────────────────────────────────
 
 /**
  * Stages at which a YAML instruction may be injected into the AI system prompt.
@@ -21,7 +15,7 @@ export type NodeMap = Map<string, LineageNode>;
  *                 pre-formatted from the active-phase capture and are lifted
  *                 as written; synthesis assembles, groups, frames.
  */
-export type TemplateStage = 'discover' | 'active' | 'synthesis';
+type TemplateStage = 'discover' | 'active' | 'synthesis';
 
 /**
  * Canonical, code-owned routing of YAML keys to stages.
@@ -45,7 +39,7 @@ export type TemplateStage = 'discover' | 'active' | 'synthesis';
  * absent — the lift+group+label rule for sections[] lives in
  * `buildSynthesisPrompt()` to avoid duplication with the synthesis cue.
  */
-export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
+const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
   discovery_chat:       ['discover'],
   summary:              ['synthesis'],
   title:                ['synthesis'],
@@ -66,13 +60,10 @@ export const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly Tem
  * matches one of the listed values. Keys absent from this map are always on.
  *
  * @remarks
- * Active-phase classification is typically `undefined` (inference happens at
- * the active→synthesis boundary). When classification is `undefined`, every
- * gated key fires unconditionally so per-hop capture stays broad — the AI
- * captures both angles into the slot. The synthesis turn lifts the slot
- * bodies as written; classification surfaces only via the
- * `**Mission type:** <value>` cue emitted at synthesis (referenced by the
- * `intro` template instruction).
+ * A fresh exploration locks classification before the approval gate, so active
+ * prompt assembly normally receives a concrete value. The `undefined` behavior
+ * remains defensive for pre-gate/legacy callers: every gated capture key fires
+ * rather than silently dropping an evidence angle.
  */
 const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue[]>> = {
   business_capture:     ['business', 'both'],
@@ -81,7 +72,8 @@ const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue
 };
 
 /**
- * CT-mode-gated keys — fire only when Column Aspect (targetColumns) is active.
+ * CT-mode-gated keys — fire only when the approved runtime mode is CT.
+ * CT requires target columns; BB must never carry them.
  * These are additive to classification-gated templates; both gates must pass.
  */
 const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
@@ -89,40 +81,66 @@ const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
 ]);
 
 /**
- * Assembles the stage-scoped template block for the AI system prompt.
- *
- * @remarks
- * Walks `STAGE_BY_KEY` and emits one bullet per active key:
- * `- <key>: <instruction>`. One heading hierarchy — no per-key `####`
- * wrappers. The AI parses the bullet list directly.
- *
- * At synthesis, if `classification` is known, a `**Mission type:** <value>`
- * one-liner is emitted before the bullet list. The value is code-resolved;
- * the `intro` template instruction references it explicitly.
- *
- * @param templates - The loaded AI output templates (instruction strings).
- * @param phase - The current conversation phase.
- * @param classification - Optional mission-type signal; gates active-phase capture firing.
- * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below {@link CLOSING_MIN_SLOTS}.
- * @returns A markdown block ready to append to the phase-appropriate system prompt.
+ * Per-FOCUS capture keys — which of these fires depends on the current hop's focus node
+ * (bodied script vs non-bodied table), so they are volatile per hop. They render into the
+ * per-hop worker message (`render: 'per_focus'`), NEVER into the active system prompt
+ * (`render: 'stable'`): a system prompt that swaps templates per focus type breaks the
+ * byte-stable prefix the provider-side implicit prompt cache keys on.
  */
+const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
+  'business_capture',
+  'technical_capture',
+  'structural_summary',
+]);
+
+/** Render scope for {@link resolveStagePrompt}: hop-invariant system block vs per-focus hop block. */
+export type StageRenderScope =
+  | { readonly scope: 'stable' }
+  | { readonly scope: 'per_focus'; readonly focusKind: 'bodied' | 'non_bodied' };
+
+/** Result of {@link resolveStagePrompt}: the assembled prompt block plus a gating trail for diagnostics. */
 export interface StagePromptResult {
   /** Final markdown block ready to splice into the system prompt. Empty if no keys ship. */
   prompt: string;
   /** YAML keys that survived stage + classification + slot-count gating and have non-empty instructions. */
   shippedKeys: string[];
   /** Keys filtered out, with the reason they were dropped — for diagnostic logging. */
-  gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' | 'ct_mode' | 'non_bodied_focus' }>;
+  gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' | 'ct_mode' | 'focus_scope' }>;
 }
 
+/**
+ * Assembles the stage-scoped template block for the AI system prompt.
+ *
+ * @remarks
+ * Walks `STAGE_BY_KEY` and emits one bullet per active key: `- <key>: <instruction>`. One heading
+ * hierarchy — no per-key `####` wrappers. The AI parses the bullet list directly.
+ *
+ * At synthesis, if `classification` is known, a `**Mission type:** <value>` one-liner is emitted
+ * before the bullet list. The value is code-resolved; the `intro` template instruction references
+ * it explicitly.
+ *
+ * @param templates - The loaded AI output templates (instruction strings).
+ * @param phase - The current conversation phase.
+ * @param classification - Optional mission-type signal; gates active-phase capture firing.
+ * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below {@link CLOSING_MIN_SLOTS}.
+ * @param isCtMode - True if column trace mode is active.
+ * @param render - The render scope configuration.
+ * @returns An object containing the assembled prompt block, shipped keys, and dropped keys.
+ */
 export function resolveStagePrompt(
   templates: AiOutputTemplates,
   phase: TemplateStage,
   classification: ClassificationValue | undefined,
   slotCount?: number,
   isCtMode?: boolean,
-  /** True when the current focus node has no DDL body (tables). structural_summary replaces business/technical capture. */
-  focusIsNonBodied?: boolean,
+  /**
+   * Which slice of the active stage to render. Default `{ scope: 'stable' }` — every
+   * hop-invariant key, per-focus capture keys excluded. `{ scope: 'per_focus', focusKind }`
+   * renders ONLY the capture recipe matching the current focus (bodied → `*_capture`,
+   * non-bodied → `structural_summary`) for the per-hop worker message. Non-active stages
+   * carry no per-focus keys, so the scope is a no-op there.
+   */
+  render: StageRenderScope = { scope: 'stable' },
 ): StagePromptResult {
   // `closing` is only useful when the analysis spans 5+ sections (per the YAML
   // instruction itself). Skip it on small graphs to save ~140 tokens.
@@ -146,19 +164,29 @@ export function resolveStagePrompt(
       gatedOut.push({ key, reason: 'ct_mode' });
       continue;
     }
+    // Keeps the system prompt byte-identical across hops: focus-dependent keys ship only per-focus.
+    if (render.scope === 'stable' && PER_FOCUS_KEYS.has(key)) {
+      gatedOut.push({ key, reason: 'focus_scope' });
+      continue;
+    }
+    if (render.scope === 'per_focus' && !PER_FOCUS_KEYS.has(key)) {
+      gatedOut.push({ key, reason: 'focus_scope' });
+      continue;
+    }
     if (key === 'closing' && phase === 'synthesis' && slotCount !== undefined && slotCount < CLOSING_MIN_SLOTS) {
       gatedOut.push({ key, reason: 'slot_count' });
       continue;
     }
-    // structural_summary replaces business/technical capture for non-bodied focus nodes (tables).
-    // It fires only at those hops; bodied nodes (views, procs, functions) get the normal capture templates.
-    if (key === 'structural_summary' && !focusIsNonBodied) {
-      gatedOut.push({ key, reason: 'non_bodied_focus' });
-      continue;
-    }
-    if ((key === 'business_capture' || key === 'technical_capture') && focusIsNonBodied) {
-      gatedOut.push({ key, reason: 'non_bodied_focus' });
-      continue;
+    // structural_summary replaces business/technical capture for non-bodied (table) focus nodes only.
+    if (render.scope === 'per_focus') {
+      if (key === 'structural_summary' && render.focusKind !== 'non_bodied') {
+        gatedOut.push({ key, reason: 'focus_scope' });
+        continue;
+      }
+      if ((key === 'business_capture' || key === 'technical_capture') && render.focusKind === 'non_bodied') {
+        gatedOut.push({ key, reason: 'focus_scope' });
+        continue;
+      }
     }
     if (!(templates[key] ?? '').trim()) {
       gatedOut.push({ key, reason: 'empty_template' });
@@ -179,7 +207,9 @@ export function resolveStagePrompt(
 
   const headerByPhase: Record<TemplateStage, string> = {
     discover:  '### Output templates (discovery)',
-    active:    '### Active-phase templates (write each key to its target field)',
+    active:    render.scope === 'per_focus'
+      ? '### Capture recipe for THIS focus node (write each key to its target field)'
+      : '### Active-phase templates (write each key to its target field)',
     synthesis: '### Output templates (synthesis)',
   };
 

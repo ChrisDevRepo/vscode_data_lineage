@@ -60,7 +60,7 @@ export function deriveLegendSchemas(
   const isTraceActive = traceMode === 'applied' || traceMode === 'path-applied'
     || traceMode === 'filtered' || traceMode === 'analysis';
 
-  // We only show schemas in the legend if they contain at least one non-external object.
+  // The legend shows only schemas that contain at least one non-external object.
   const schemasWithRealObjects = new Set(
     nodes
       .map(n => n.data as CustomNodeData)

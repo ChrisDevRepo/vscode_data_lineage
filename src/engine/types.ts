@@ -13,14 +13,14 @@ export type ObjectType = typeof OBJECT_TYPES[number];
 
 /**
  * Represents a single node in the lineage graph.
- * 
+ *
  * @remarks
- * A node can represent a physical table, a view, a procedure, or a virtual object 
+ * A node can represent a physical table, a view, a procedure, or a virtual object
  * like a cross-database reference or an external file.
  */
 export interface LineageNode {
-  /** 
-   * Unique identifier for the node. 
+  /**
+   * Unique identifier for the node.
    * Format: `[schema].[name]` (local), `[db].[schema].[name]` (cross-DB), or `[__ext__].[hash]` (file).
    */
   id: string;
@@ -34,15 +34,15 @@ export interface LineageNode {
   type: ObjectType;
   /** True if the ColumnStore contains DDL source for this node. */
   hasDdl?: boolean;
-  /** 
-   * Raw SQL body script. 
+  /**
+   * Raw SQL body script.
    * Temporarily held during extraction before being moved to persistent storage.
    */
   bodyScript?: string;
   /** True if the ColumnStore contains column metadata for this node. */
   hasColumns?: boolean;
-  /** 
-   * List of column definitions. 
+  /**
+   * List of column definitions.
    * Temporarily held during extraction before being moved to persistent storage.
    */
   columns?: ColumnDef[];
@@ -64,7 +64,7 @@ export interface LineageEdge {
   source: string;
   /** The identifier of the target node (the dependent object). */
   target: string;
-  /** 
+  /**
    * The type of dependency:
    * - `body`: Referenced in a FROM, JOIN, or DML statement.
    * - `exec`: Referenced in an EXEC/EXECUTE call.
@@ -118,23 +118,23 @@ export interface ParseStats {
   spDetails: SpParseDetail[];
 }
 
-/** 
- * Lightweight entry for the global object catalog. 
+/**
+ * Lightweight entry for the global object catalog.
  */
-export type CatalogEntry = { 
+export type CatalogEntry = {
   /** SQL schema name. */
-  schema: string; 
+  schema: string;
   /** Short object name. */
-  name: string; 
+  name: string;
   /** Object classification. */
-  type: ObjectType; 
+  type: ObjectType;
   /** External classification if applicable. */
-  externalType?: 'et' | 'file' | 'db' 
+  externalType?: 'et' | 'file' | 'db'
 };
 
 /**
  * O(1) adjacency list for graph navigation.
- * 
+ *
  * @remarks
  * Keyed by node ID. Maps to upstream (`in`) and downstream (`out`) neighbors.
  * Used for high-performance interactive tracing and pathfinding.
@@ -151,8 +151,8 @@ export interface DatabaseModel {
   edges: LineageEdge[];
   /** Summary of schemas found in the model. */
   schemas: SchemaInfo[];
-  /** 
-   * Global catalog of all known objects, including those not in the current graph. 
+  /**
+   * Global catalog of all known objects, including those not in the current graph.
    * Keyed by normalized node ID.
    */
   catalog: Record<string, CatalogEntry>;
@@ -162,12 +162,40 @@ export interface DatabaseModel {
   parseStats?: ParseStats;
   /** Non-critical messages or issues encountered during model build. */
   warnings?: string[];
-  /** 
-   * Description of the source database platform. 
+  /**
+   * Description of the source database platform.
    * (e.g., "Azure SQL Database", "SQL Server 2022").
    */
   dbPlatform?: string;
+  /**
+   * Which ingestion lane produced this model.
+   *
+   * @remarks
+   * Stamped by each extractor rather than derived, because the two lanes are otherwise
+   * indistinguishable downstream — a DACPAC carries a platform label from its DSP just as a
+   * live import does, so platform presence cannot stand in for provenance. Consumers that
+   * describe the model to the user or the AI must read this, never infer it.
+   *
+   * Optional so `buildModel` stays lane-agnostic; both production extractors always set it.
+   */
+  source?: ModelSource;
 }
+
+/** Ingestion lane that produced a {@link DatabaseModel}. */
+export type ModelSource = 'dacpac' | 'database';
+
+/**
+ * Label recorded when no source can identify the database platform.
+ *
+ * @remarks
+ * Single-sourced because this string is simultaneously user-visible (status bar, project
+ * card) and model-visible (the `db_platform` tool field and the `- Platform:` prompt line).
+ * Independent copies in the extractor, the bridge, and the prompt builder would let a
+ * reworded label desynchronize what the user sees from what the model is told. Deliberately
+ * explicit rather than a `SQL Server` default — the model must not reason from an invented
+ * platform.
+ */
+export const UNKNOWN_DB_PLATFORM = 'Unknown database platform';
 
 /**
  * Metadata for a schema-level preview used in the project wizard.
@@ -553,7 +581,7 @@ export interface TableStatsConfig {
   maxColumns: number;
   /** Threshold above which sampling is used instead of a full scan. */
   sampleThreshold: number;
-  /** The number of rows to sample if the threshold is exceeded. */
+  /** Target row count used to derive the platform-specific sampling clause. */
   sampleSize: number;
   /** Whether to use APPROX_COUNT_DISTINCT for performance on compatible platforms. */
   useApproxDistinct: boolean;
@@ -582,15 +610,15 @@ export interface OverviewConfig {
 }
 
 /**
- * The unified extension configuration object.
- * Maps directly to the `dataLineageViz.*` settings in package.json.
+ * Runtime configuration shared by model assembly, graph projection, and the webview.
+ * Host-only file paths and AI settings remain at their owning boundaries.
  */
 export interface ExtensionConfig {
   /** Optional custom regex rules for SQL parsing. */
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
-  /** Glob patterns for objects or schemas to exclude from the model. */
+  /** Regex patterns, with `%` wildcard compatibility, excluded from the webview model. */
   excludePatterns: string[];
-  /** Maximum number of objects allowed in a single model extraction. */
+  /** Webview working-graph cap and virtual-external-node budget. */
   maxNodes: number;
   /** Maximum duration (in seconds) for DMV metadata queries. */
   dmvQueryTimeout: number;
@@ -618,9 +646,6 @@ export const ENGINE_EDITION_FABRIC = 11;
  */
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
-  // Must mirror the `dataLineageViz.maxNodes` default in package.json. Raised 750 → 2000 alongside
-  // Schema View so large models open without truncation (Schema View collapses them; renderLimit
-  // remains the hard render-side safety gate).
   maxNodes: 2000,
   layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
@@ -851,23 +876,3 @@ export interface AnalysisMode {
    */
   activeGroupId: string | null;
 }
-
-
-/**
- * Messages exchanged between the extension host and webviews.
- */
-export type ExtensionMessage =
-  | { type: 'config-only'; config: ExtensionConfig }
-  | { type: 'projects-list'; projects: import('./projectStore').Project[]; lastOpenedId: string | null }
-  | { type: 'dacpac-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string; filePath?: string }
-  | { type: 'dacpac-model'; model: DatabaseModel; config: ExtensionConfig; sourceName: string; autoVisualize?: boolean }
-  | { type: 'last-dacpac-gone' }
-  | { type: 'themeChanged'; kind: string }
-  | { type: 'mssql-status'; available: boolean }
-  | { type: 'db-progress'; step: number; total: number; label: string }
-  | { type: 'db-schema-preview'; preview: SchemaPreview; config: ExtensionConfig; sourceName: string }
-  | { type: 'db-model'; model: DatabaseModel; config: ExtensionConfig; sourceName: string }
-  | { type: 'db-error'; message: string; phase: string }
-  | { type: 'db-cancelled' }
-  | { type: 'table-stats-result'; stats: import('../engine/profilingEngine').TableStats; mode: import('../engine/profilingEngine').StatsMode }
-  | { type: 'table-stats-error'; message: string };

@@ -1,8 +1,5 @@
-import React, { Component, type ReactNode, type ErrorInfo } from 'react';
+import { Component, type ReactNode, type ErrorInfo } from 'react';
 
-/**
- * Props for the {@link ErrorBoundary} component.
- */
 interface ErrorBoundaryProps {
   /** The child components to be rendered and monitored for errors. */
   children: ReactNode;
@@ -53,6 +50,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return { hasError: true, error };
   }
 
+  /** Clears a captured error when the caller changes the reset key. */
   static getDerivedStateFromProps(props: ErrorBoundaryProps, state: ErrorBoundaryState): Partial<ErrorBoundaryState> | null {
     if (state.hasError && props.resetKey !== state.resetKey) {
       return { hasError: false, error: null, resetKey: props.resetKey };
@@ -70,7 +68,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
    * @param errorInfo - Information about the component stack during the error.
    */
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Send error to extension host for OutputChannel logging
     const vscodeApi = window.vscode;
     if (vscodeApi && typeof vscodeApi.postMessage === 'function') {
       vscodeApi.postMessage({
@@ -84,7 +81,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       });
     }
 
-    // Call custom error handler if provided
     this.props.onError?.(error, errorInfo);
   }
 

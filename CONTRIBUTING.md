@@ -3,67 +3,68 @@
 This project prioritizes stability, logical accuracy, and high-performance SQL parsing.
 
 ## 1. Engineering Principles
-- **Metadata Driven**: SQL parsing logic is driven by YAML metadata (`assets/defaultParseRules.yaml`), not hardcoded regexes in TypeScript.
+- **Metadata Driven**: SQL extraction regexes live in
+  `assets/defaultParseRules.yaml`; TypeScript owns preprocessing,
+  normalization, rule execution, and dependency resolution.
 
 ## 2. Development Setup
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18+)
-- [VS Code](https://code.visualstudio.com/)
-- [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) (for AI features)
+- [Node.js](https://nodejs.org/) 22 or newer.
+- [VS Code](https://code.visualstudio.com/) at a version allowed by
+  `engines.vscode` in `package.json`.
+- A VS Code Language Model Chat provider, such as GitHub Copilot or a compatible
+  BYOK provider (for `@lineage`)
 
 ### Local Setup
-1. Clone the repository and run `npm install`.
+1. Clone the repository and run `npm ci`.
 2. Press `F5` in VS Code to launch the **Extension Development Host**.
 3. Open a folder containing a `.dacpac` file or use the **Try with demo data** option in the wizard.
 
 ## 3. Testing Protocol
-All changes must pass the full test suite before submission.
-
-The high-priority regression net is **parsing, BFS, and baseline**. Other tests are narrower guards.
+All changes must pass the applicable maintained checks locally before push.
+GitHub does not run the test suite; its workflow is limited to repository
+security checks. `npm run gate` is the complete client-side pre-push gate.
 
 | Tier | Command | Scope |
 | :--- | :--- | :--- |
-| **Full gate** | `npm test` / `npm run test:unit` | `test:core` + `test:support` + `test:ui`. |
-| **Core** | `npm run test:core` | Parser + BFS/orchestration. |
-| **Parsing** | `npm run test:parser` | Parser edge cases, real-world SQL fixtures, parser snapshot baseline. |
-| **BFS / orchestration** | `npm run test:bfs` | Graph construction, graph analysis, NavigationEngine, traversal contracts, path/present/submit guards. |
-| **Support** | `npm run test:support` | Utility, policy, support-contract, and lower-criticality hook tests. |
-| **UI** | `npm run test:ui` | React hooks/components tied to user-facing behavior. |
-| **Baseline** | `npm run test:baseline` | Parser TSV + graph-analysis JSON regression net. |
-| **Snapshot** | `npm run test:snapshot` | Parser baseline only (refresh: `:update`). |
-| **Discovery audit** | `npm run test:list` | Lists Vitest-discovered tier membership for `tests/unit/**/*.test.ts(x)`. |
+| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, the AI template schema-version gate, all three unit projects, production builds, and package checks. |
+| **Unit suite** | `npm test` | Every `tests/unit/**/*.test.ts` file. |
+| **Core** | `npm run test:core` | Parser and non-AI engine units (`tests/unit/parser`, `tests/unit/engine`). |
+| **Agent runtime** (no model) | `npm run test:runtime` | AI-core and state-machine units (`tests/unit/ai-core`, `tests/unit/sm`), including `NavigationEngine`, result closure, and trace safety. Stubbed `vscode`, no external model. |
+| **Prompt goldens** | `npm run test:prompts` | Prompt-composition golden files (`tests/unit/prompts`). |
+| **Parsing** | `npm run test:parser` | DACPAC, DMV, T-SQL, and targeted SQL fixtures. Core subset. |
+| **BFS** | `npm run test:bfs` | Graph construction, traversal, and analysis (`graphBuilder`, `graphAnalysis`, `graph-analysis-aw`). Core subset. |
+| **Optional scripted provider** | `npm run test:scripted-provider` | Scripted selected-model/runtime check in a VS Code host. Fixture provider, no inference; not part of the gate. |
 
-AI behaviour beyond pure-function surface (prompt content, classification semantics, narrative quality) is verified through UAT baseline captures (`tmp/baseline/`), not unit tests.
+Use the narrowest maintained command that matches the change:
+- Parser or parse-rule work: `npm run test:parser`
+- Graph construction, traversal, or analysis: `npm run test:bfs`
+- `NavigationEngine`, state machine, tools, or prompts: `npm run test:runtime`
+- Prompt text or template wording: `npm run test:prompts`
+- Any other unit behavior: `npm test`
+- Before pushing: `npm run gate`
 
-`npm run test:graph` and `npm run test:hooks` remain compatibility aliases for `test:bfs` and `test:ui`.
+For one file or test name, use:
 
-Test discovery is now tiered and lean:
-- Parser/BFS Node suites run through Vitest node projects with small tier runner files.
-- New top-level `tests/unit/*.test.ts` files fall into the support tier by default unless promoted into the parser or BFS runner.
-- React hook/component tests are discovered from the include patterns in `vitest.config.ts`.
+```bash
+node tests/tools/run-vitest.mjs run tests/unit/path/file.test.ts
+node tests/tools/run-vitest.mjs run -t "test name"
+```
 
-Use the narrowest tier that matches the change:
-- Parser or parse-rule work: `npm run test:parser` and `npm run test:snapshot`
-- BFS, graph contracts, `NavigationEngine`, or orchestration work: `npm run test:bfs`
-- UI-only work: `npm run test:ui`
-- Broader utility/policy work: `npm run test:support`
-- Pre-merge code-path gate: `npx tsc --noEmit`, `npm run build`, `npm test`
+### Parser rule verification
 
-Coverage remains informational only until the Vitest include scope is broadened beyond `src/engine/**` and `src/hooks/**`.
-
-Current tier timing baselines are documented in `tests/README.md`. Re-measure them whenever tier membership changes materially.
-
-### Parser Snapshots
-If you modify `assets/defaultParseRules.yaml`, you must update the baseline:
-1. Run `npm run test:snapshot` to view the diff.
-2. If the diff is intentional, run `npm run test:snapshot:update`.
-3. Commit the updated `tests/fixtures/aw-baseline.tsv`.
+There is no snapshot project or snapshot update command. Run
+`npm run test:parser`, add a focused regression case, and review the resulting
+dependency edges against the affected SQL. Do not treat a green parser run as
+proof that output is unchanged when the changed syntax has no test case.
 
 ## 4. Coding Standards
 - **TypeScript**: Strict typing is mandatory. Avoid `any` at architectural boundaries.
 - **Zod**: Use Zod for all IPC and tool-call validation.
-- **JSDoc**: Provide professional, factual JSDoc for all exported symbols. Focus on the "why" and architectural intent.
+- **JSDoc**: Document exported contracts where the intent is not evident from
+  types and names. Focus on architectural constraints and the "why"; avoid
+  narrating implementation that is already clear from the code.
 - **Logging**: Use the standard logger (`src/utils/log.ts`) with category tags (e.g., `[AI]`, `[Parse]`).
 
 ## 5. Pull Request Guidelines

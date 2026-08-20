@@ -1,9 +1,16 @@
 import * as vscode from 'vscode';
 import { z } from 'zod';
 import { Logger, type LogCategory } from '../utils/log';
-import { ExtensionToWebviewMsgSchema, type ExtensionToWebviewMsg } from '../engine/shared/bridgeContract';
+import { notifyError } from '../utils/notifications';
+import {
+  BRIDGE_PROTOCOL_VERSION,
+  ExtensionToWebviewMsgSchema,
+  type ExtensionToWebviewMsg,
+  ExtensionToDetailMsgSchema,
+  type ExtensionToDetailMsg,
+} from '../engine/shared/bridgeContract';
 
-/** 
+/**
  * Defines the abstract interface for the extension-webview communication bridge.
  *
  * This host abstraction decouples the bridge logic from the concrete VS Code API,
@@ -41,6 +48,82 @@ export interface BridgeHost {
   getWorkspaceState(): vscode.Memento;
 }
 
+/** The minimum a send target must expose, so a panel and a bare view share one send path. */
+interface WebviewPostTarget {
+  readonly webview: vscode.Webview;
+}
+
+/**
+ * The single sanctioned host→webview send primitive.
+ *
+ * @remarks
+ * Validates `msg` against `schema` and **drops** a malformed frame (returning `false`) rather than
+ * shipping it — a drop is a send-side bug. The webview is left waiting on data that will never
+ * arrive, so the drop is notified as well as logged rather than being visible only to a developer
+ * with the Output channel open. Raw `panel.webview.postMessage` bypasses the contract; go through
+ * {@link postToWebview} / {@link postToDetail} (or {@link BridgeHost.postMessage}, which delegates).
+ *
+ * Being the one send path, this is also where {@link BRIDGE_PROTOCOL_VERSION} is stamped. The stamp
+ * is applied to the *parsed* payload, after validation — Zod strips unknown keys, so stamping first
+ * would silently drop it, and adding it to the unions would be schema churn every handler pays for.
+ */
+function postValidated<S extends z.ZodTypeAny>(
+  target: WebviewPostTarget,
+  schema: S,
+  msg: z.infer<S>,
+  label: string,
+  logger: Logger,
+): Thenable<boolean> {
+  const parsed = schema.safeParse(msg);
+  if (!parsed.success) {
+    const type = (msg as { type?: string }).type ?? '?';
+    notifyError(
+      logger,
+      `${label}(${type})`,
+      `Data Lineage dropped an internal "${type}" message that failed validation — the view may be incomplete. See the Data Lineage output channel for detail.`,
+      undefined,
+      { issues: summarizeZodError(parsed.error) },
+    );
+    return Promise.resolve(false);
+  }
+  // `parsed.data` is `z.infer<S>` for a generic `S`, which TS will not spread; both callers pass an
+  // object union, so the cast is the narrowing TS cannot do itself.
+  return target.webview.postMessage({
+    ...(parsed.data as Record<string, unknown>),
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+  });
+}
+
+/** Sends a validated message to the main lineage webview. */
+export function postToWebview(
+  panel: vscode.WebviewPanel,
+  msg: ExtensionToWebviewMsg,
+  logger: Logger,
+): Thenable<boolean> {
+  return postValidated(
+    panel,
+    ExtensionToWebviewMsgSchema,
+    msg,
+    'postToWebview',
+    logger,
+  );
+}
+
+/** Validated send to the **detail-panel** webview ({@link ExtensionToDetailMsgSchema}). Same contract as {@link postToWebview}. */
+export function postToDetail(
+  panel: vscode.WebviewPanel,
+  msg: ExtensionToDetailMsg,
+  logger: Logger,
+): Thenable<boolean> {
+  return postValidated(
+    panel,
+    ExtensionToDetailMsgSchema,
+    msg,
+    'postToDetail',
+    logger,
+  );
+}
+
 /**
  * Creates a concrete {@link BridgeHost} implementation tied to a specific WebviewPanel.
  *
@@ -55,18 +138,7 @@ export interface BridgeHost {
 export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, outputChannel: vscode.LogOutputChannel): BridgeHost {
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
   return {
-    postMessage: (msg) => {
-      try {
-        const validated = ExtensionToWebviewMsgSchema.parse(msg);
-        return panel.webview.postMessage(validated);
-      } catch (err) {
-        if (err instanceof z.ZodError) {
-          bridgeLogger.error(`Outgoing validation failed for ${msg.type}`, summarizeZodError(err));
-          return Promise.resolve(false);
-        }
-        throw err;
-      }
-    },
+    postMessage: (msg) => postToWebview(panel, msg, bridgeLogger),
     log: (level, cat, text, err) => {
       const logger = Logger.create(outputChannel, cat);
       if (level === 'info') logger.info(text);
