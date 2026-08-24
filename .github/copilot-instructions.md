@@ -10,7 +10,7 @@ choice is protecting.
 - `docs/ARCHITECTURE.md`: runtime architecture, graph contracts, `NavigationEngine`
 - `docs/DEVELOPER_GUIDE.md`: extension, ingestion, and runtime-evidence workflows
 - `docs/AI_PROMPTS.md`: `@lineage` prompt/tool/template lifecycle
-- `docs/E2E_TESTING.md`: model tiers, unit gate, Electron lanes, headless live-provider harness
+- `docs/EDH_TESTING.md`: unit gate, Electron smoke lanes
 - `docs/PARSE_RULES.md` and `docs/DMV_QUERIES.md`: parser and DMV customization
 - `docs/PROFILING_PATTERNS.md`: generated profiling SQL, its settings, and its limits
 - `docs/FEATURES.md` and `docs/TROUBLESHOOTING.md`: user-facing behaviour and diagnostics
@@ -80,6 +80,25 @@ closure, and termination. Bounding traversal in the engine rather than in the
 prompt is deliberate: a schema, state machine, or code guard holds where a
 prompt-only constraint drifts.
 
+Depth follows that rule and splits on who chose it. A level count the model
+reports as stated by the user (`depthIntent.kind` of `explicit` or `asymmetric`)
+is a **hard border**: the engine refuses admission past it, per direction, and
+records the frontier through the same `deferQuestion` path a schema breach uses.
+A depth the model inferred (`default_start`) stays a **soft seed** the model may
+grow, exactly as before. Which of the two applies is the model's semantic call,
+carried as Zod-validated `depth` — the host never parses the user's text for it —
+and the engine, never the prompt, enforces the result.
+
+That split generalizes past depth. Every scope rule reaching the engine is either **hard** —
+the user stated it — or **soft** — the model chose it as a starting point; the model
+classifies which, as a typed field, and the host never reads the user's sentence to decide.
+The approval card is grouped by that classification, so a limit the user set and one the
+model estimated are never rendered as the same kind of fact, and an estimate carries `≈`.
+Once approved, the plan is what runs: the engine is constructed from the approved `init`
+object itself, and `checkBorder` enforces the result at every admission purpose. The one
+thing the engine cannot bind is an instruction that maps to no filter field — it rides along
+as `scopeNotes` for the model to honour, with nothing to reject a breach.
+
 ## Prompts, presentation, and rejection
 
 Every stage that calls `lineage_present_result` composes its system prompt
@@ -141,9 +160,9 @@ gateway reads, so only the bundle-signature gate catches it. An outdated-
 dependency report is not a reason to unpin. `@langchain/langgraph` is unaffected
 and may advance on its own.
 
-Trace export is Langfuse-only. The test-only REST exporter
-`tests/harness/langfuseExport.ts` is the sanctioned exception: plain HTTP from
-dev-box test tooling, no vendor SDK, no tracing flags, never bundled.
+Trace export is Langfuse-only. A test-only REST exporter is the sanctioned
+exception: plain HTTP from dev-box test tooling, no vendor SDK, no tracing
+flags, never bundled.
 
 ## Diagnostics and logging
 
@@ -188,26 +207,25 @@ unit suites it enforces five derived contracts: the
 schema-version gate, the honest-test-label scan, the packaged-VSIX contents check,
 and the `assert-no-langsmith` bundle check.
 
-`npm run test:e2e-electron` runs the extended VS Code Electron lanes outside the gate,
+`npm run test:edh` runs the extended VS Code Electron lanes outside the gate,
 against a scripted provider registered through the real `vscode.lm` API — it
 proves extension wiring, not model behaviour. The lanes are serial: they share
 one Electron profile and one `out/` build, so exactly one host runs at a time and
 `.vscode-test.mjs` is never edited to parallelize them. The failure modes that
 edit produces, and why the serial cost is not worth engineering around, are in
-`docs/E2E_TESTING.md` §One host at a time.
+`docs/EDH_TESTING.md` §One host at a time.
 
 The host and the model are tested on separate surfaces, and that separation is a
 decision rather than a gap. A host is the only place `activate()`, contribution
 points, command registration, and `vscode.lm.invokeTool` exist, so it is the only
 place their defects can surface; everything it adds beyond that is deterministic
 translation that does not care whether the text came from inference. Model
-behaviour is therefore measured headless by `npm run test:live-provider`, and the
-Electron fixture stays scripted-only — it must not grow a live-provider mode.
-The seam that separation would otherwise leave — the harness's
-`openAiCompatiblePort` drifting from `VscodeModelPort`, two implementations that
-share no code — is closed by one port-agnostic acceptance suite
-(`tests/unit/ai-core/helpers/portContract.ts`) run against both. A new guarantee
-about the model boundary belongs in that suite, never in a credentialed host lane.
+behaviour is measured internally, headless, never through this repository's
+tracked suite, and the Electron fixture stays scripted-only — it must not grow a
+live-provider mode. `tests/unit/ai-core/helpers/portContract.ts` is a
+port-agnostic acceptance suite proving the real `vscode.lm` transport
+(`VscodeModelPort`) satisfies the model-port contract; a new guarantee about that
+boundary belongs in that suite, never in a credentialed host lane.
 
 The suites prove the deterministic core: SQL parsing and dependency extraction,
 graph construction and traversal, schemas, and state transitions. How good a

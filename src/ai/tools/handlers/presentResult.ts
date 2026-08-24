@@ -10,7 +10,7 @@
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
 import {
-  autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
+  validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
   findBareNonPrunedNodes,
   isRepairablePresentResultFailure,
   discoveryPreviewNarrative,
@@ -317,28 +317,24 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       s.logger.debug(`presentResult section[0] preview: ${trunc(presentInput.sections?.[0]?.text ?? '(empty)', 200)}`);
 
-      // Normalize documented provider encoding artifacts before assembly.
-      // Markdown math rendering happens in the webview after deterministic assembly.
-      const fixedInput = autoFixPresentResult(presentInput);
-
       // Bare-by-choice is a permitted AI decision (prompt contract: nodes left out of both preview
       // surfaces stay bare) — observe and log, never re-link. Bare nodes still render via resolvedNodeIds.
-      const bareNodeIds = findBareNonPrunedNodes(resultGraph, fixedInput, resolvedNodeIds);
+      const bareNodeIds = findBareNonPrunedNodes(resultGraph, presentInput, resolvedNodeIds);
       if (bareNodeIds.length > 0) {
         s.logger.debug(`[Presentation] ${bareNodeIds.length} non-pruned node(s) left bare by the AI (rendered unlabeled/uncolored) — ${trunc(bareNodeIds.join(', '), 200)}`);
       }
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       let assembledDescription: string | undefined = undefined;
-      if (fixedInput.sections?.length) {
+      if (presentInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
-        const assembled = orderAndAssemble(fixedInput.sections, { title: fixedInput.title, intro: fixedInput.intro, closing: fixedInput.closing, nodeMap });
+        const assembled = orderAndAssemble(presentInput.sections, { title: presentInput.title, intro: presentInput.intro, closing: presentInput.closing, nodeMap });
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
       }
 
       s.logger.info(
-        `[Presentation] Output assembled — title="${trunc(fixedInput.title ?? '(none)', 60)}" sections=${fixedInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount}`
+        `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount}`
       );
 
       // Checks that need context validatePresentResult does not hold — the cached discovery answer
@@ -348,9 +344,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // charge, and three charges end the phase.
       const externalViolations: PresentResultViolation[] = [];
       if (isVisualPreview && previewNarrative) {
-        externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, fixedInput));
+        externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, presentInput));
       }
-      const missingTerminalSources = findMissingCtTerminalSources(resultGraph, fixedInput, resolvedNodeIds);
+      const missingTerminalSources = findMissingCtTerminalSources(resultGraph, presentInput, resolvedNodeIds);
       if (missingTerminalSources.length > 0) {
         externalViolations.push({
           field: 'sections',
@@ -372,11 +368,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         : sess.phase.kind === 'completed'
         ? 'completed'
         : 'synthesis';
-      const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage);
+      const validation = validatePresentResult(presentInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage);
 
       if (!validation.success) {
         if (isRepairablePresentResultFailure(validation)) {
-          sess.presentResultRepairDraft.hold(fixedInput, validation.repairFields);
+          sess.presentResultRepairDraft.hold(presentInput, validation.repairFields);
           validation.hint = `${validation.hint} You may repair the held draft by calling lineage_present_result with is_update:true and only these corrected fields: ${validation.repairFields.join(', ')}.`;
         } else {
           sess.presentResultRepairDraft.clear();
@@ -456,11 +452,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         resultGraph.summary = validation.summary ?? undefined;
         // Persist the autoFixed parts — the raw input may still carry literal \n artifacts
         // the fixer already corrected in the rendered description.
-        resultGraph.title = fixedInput.title ?? undefined;
-        resultGraph.intro = fixedInput.intro ?? undefined;
-        resultGraph.closing = fixedInput.closing ?? undefined;
-        if (Array.isArray(fixedInput.sections)) {
-          resultGraph.sections = fixedInput.sections.map(sec => ({
+        resultGraph.title = presentInput.title ?? undefined;
+        resultGraph.intro = presentInput.intro ?? undefined;
+        resultGraph.closing = presentInput.closing ?? undefined;
+        if (Array.isArray(presentInput.sections)) {
+          resultGraph.sections = presentInput.sections.map(sec => ({
             label: sec.label,
             node_ids: sec.node_ids,
             text: sec.text,
@@ -472,7 +468,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         s.logger.debug(`[Presentation] repeated present_result in one turn (success #${sess.presentResultAttemptCountThisTurn}) — single-shot guard may have regressed`);
       }
 
-      s.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${fixedInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
+      s.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
     } catch (err) { return s.toolError('present_result', err); }
 }

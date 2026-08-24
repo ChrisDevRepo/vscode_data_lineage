@@ -1,5 +1,4 @@
 import {
-  autoFixPresentResult,
   discoveryPreviewNarrative,
   findDiscoveryPreviewReuseViolations,
   validatePresentResult,
@@ -21,29 +20,18 @@ describe("present_result hard/soft text limits", () => {
     sections: [{ label: 'Result', text: 'Grounded detail.' }],
   };
 
-  it("autoFix does not truncate", () => {
+  it("the boundary never truncates authored text", () => {
     const longName = 'n'.repeat(PRESENT_RESULT_NAME_MAX - 5);
     const longSummary = 's'.repeat(400);
-    const input = autoFixPresentResult({
+    const result = parse({
+      ...base,
       name: longName,
       title: 't'.repeat(PRESENT_RESULT_TITLE_MAX - 5),
       summary: longSummary,
-    } as never);
-    assertEq(input.name, longName, 'name within tolerance is passed through unmodified');
-    assertEq(input.summary, longSummary, 'summary is never truncated (content, not a GUI label)');
-  });
-
-  it("Regression: autoFix's double-escaped-newline unescape leaves a $$...$$ KaTeX macro like \\not intact", () => {
-    const mathBlock =
-      '$$IsValidated := 1 \\quad \\text{when } ValidationMessage \\text{ is NULL } '
-      + '\\lor ValidationMessage \\not\\text{ LIKE } \\%Unknown\\ region\\%$$';
-    const input = autoFixPresentResult({
-      ...base,
-      sections: [{ label: 'Result', text: `Prose line one.\\nProse line two.\n\n${mathBlock}` }],
-    } as never);
-    const text = input.sections![0].text;
-    assert(text.includes(mathBlock), 'the $$...$$ block round-trips byte-identical, no dropped `n`');
-    assert(text.startsWith('Prose line one.\nProse line two.'), 'a genuine double-escaped newline in prose is still unescaped');
+    });
+    assert(result.success, 'a payload within tolerance parses');
+    assertEq(result.data!.name, longName, 'name within tolerance is passed through unmodified');
+    assertEq(result.data!.summary, longSummary, 'summary is never truncated (content, not a GUI label)');
   });
 
   const textLimitCases: Array<{

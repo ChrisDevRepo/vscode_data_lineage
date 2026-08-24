@@ -297,13 +297,15 @@ export interface RouteOutcome {
   /**
    * Reason for deferral:
    * - `schema` — route target is outside the approved schema allowlist; user will see it as a follow-up offer.
+   * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
+   * - `schema_and_depth` — route target breaches both the schema allowlist and the stated depth border.
    * - `depth_contracted_beyond_budget` — route target was a non-bodied node (table) whose bipartite contraction reached bodied neighbours that fell outside the active BFS scope, so no hop was enqueued. The route is structurally valid but produced no new agenda item.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
    * - `no_active_columns` — CT hop has no active column spine, so route requests are ignored and the hop can complete as zero-trace.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction.
    * - `excluded` — route target exists but is outside the user's approved exclude filters.
    */
-  reason?: 'schema' | 'depth_contracted_beyond_budget' | 'unresolved' | 'no_active_columns' | 'out_of_direction' | 'excluded';
+  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'no_active_columns' | 'out_of_direction' | 'excluded';
 }
 
 /**
@@ -479,6 +481,12 @@ export interface ScopeSummary {
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
   activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
+  /**
+   * Analysis constraints the user stated that no filter field can express, verbatim from the
+   * model's reading. Echoed at the approval gate so the user can confirm the instruction landed
+   * before an autonomous run begins.
+   */
+  scopeNotes: string[];
 }
 
 /**
@@ -724,6 +732,8 @@ export interface NavigationInitParams {
   excludeSchemas?: string[];
   excludeNodeIds?: string[];
   passNodeIds?: string[];
+  /** Analysis constraints the user stated that no filter field expresses; carried verbatim. */
+  scopeNotes?: string[];
   mission_brief?: string;
 }
 
@@ -746,6 +756,8 @@ export interface EngineInternalsSnapshot {
   depthBudget: number | null;
   /** How strictly the depth budget is enforced. */
   depthEnforcement: 'strict' | 'soft' | 'silent';
+  /** Per-side ceilings, `null` where that side is unbounded; absent in a v1 checkpoint. */
+  depthLimits?: { upstream: number | null; downstream: number | null };
   /** BFS depth-from-origin, flattened to `[nodeId, depth]` pairs (insertion order preserved). */
   depthFromOrigin: Array<[string, number]>;
   /** Extra depth levels confirmed mid-session beyond the mode cap. */

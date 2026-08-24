@@ -224,13 +224,45 @@ describe("Discovery-phase refinement loop", () => {
   const md = renderScopeSummaryMd(engine.getScopeSummary());
   assert(md.includes('### Exploration plan (proposed)'),                'native gate includes the plan heading');
   assert(md.includes('nodes in scope'),                                  'native gate includes the scope count');
-  assert(md.includes('depth 3, downstream'),                             'native gate includes depth and direction');
+  assert(md.includes('downstream'),                                      'native gate includes the direction');
   assert(md.includes('- **Tracing:** Blackboard'),                       'native gate includes tracing mode');
   assert(md.includes('- **dbo** —'),                                   'schema heading rendered');
   assert(md.includes('Procedure (1 node): origin'),                     'type and node count rendered');
-  assert(md.includes('**Active filters**'),                              'active-filters block rendered when any are set');
+  // A filter is the assistant's mechanization of the request, so it belongs to how the request was
+  // read — never to the request itself, whose origin the engine cannot know.
+  assert(md.includes('**How I read it**'),                               'mechanized filters get their own block');
   assert(md.includes('Schemas excluded: `ext`'),                         'excluded schema surfaced verbatim');
   assert(!md.includes('**ext**'),                                        'excluded schema not in tree body');
+  assert(!md.includes('**From your question**'),                         'a filter alone never claims the user asked for it');
+
+  // Provenance is carried by placement: a depth the user stated sits under what they asked for and
+  // says it binds; a depth the assistant chose sits under its own plan and says it may move.
+  assert(md.includes('my estimate, I may extend it'),                    'an assistant-chosen depth says it may move');
+  assert(md.includes('Depth: ≈'),                                        'an assistant-chosen depth is marked approximate');
+
+  const bordered = new NavigationEngine(model, graph, () => {}, {});
+  bordered.init({ origin: 'origin', question: 'q, 2 levels down', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+  const borderedMd = renderScopeSummaryMd(bordered.getScopeSummary(), 2);
+  const borderedStated = borderedMd.slice(borderedMd.indexOf('**From your question**'), borderedMd.indexOf('**My plan**'));
+  assert(borderedStated.includes('Depth: 2 levels downstream'),          'a stated depth is attributed to the user');
+  assert(borderedStated.includes('I will not go past this'),             'a stated depth is presented as binding');
+  assert(!borderedStated.includes('≈'),                                  'a stated depth carries no approximation mark');
+  assert(borderedMd.includes('revision 2'),                              'a re-approval round is stamped with its revision');
+
+  const noted = new NavigationEngine(model, graph, () => {}, {});
+  noted.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeSchemas: ['ext'], scopeNotes: ['do not prune it only skip it'] });
+  const notedMd = noted.getScopeSummary();
+  const notedRendered = renderScopeSummaryMd(notedMd);
+  const userBlock = notedRendered.slice(notedRendered.indexOf('**From your question**'), notedRendered.indexOf('**How I read it**'));
+  assert(userBlock.includes('"do not prune it only skip it"'),           "the user's own words are quoted verbatim");
+  assert(!userBlock.includes('Exclude:'),                                'the mechanization is not filed under the user\'s words');
+  assert(notedRendered.indexOf('**From your question**') < notedRendered.indexOf('**How I read it**'), 'the words precede the reading so a misread is adjacent');
+
+  const plain = new NavigationEngine(model, graph, () => {}, {});
+  plain.init({ origin: 'origin', question: 'q', direction: 'downstream', depthIntent: { kind: 'full_frontier' } });
+  const plainMd = renderScopeSummaryMd(plain.getScopeSummary());
+  assert(!plainMd.includes('**From your question**'),                    'the block is omitted entirely when nothing was constrained');
+  assert(!plainMd.includes('**How I read it**'),                         'the reading block is omitted when nothing was mechanized');
 
   const ctEngine = new NavigationEngine(model, graph, () => {}, {});
   ctEngine.init({ origin: 'origin', question: 'q', direction: 'downstream', analysisMode: 'ct', targetColumns: ['id'] });
@@ -256,8 +288,13 @@ describe("Discovery-phase refinement loop", () => {
   assert(engine.currentOrigin            === 'origin',     'currentOrigin captured');
   assert(engine.currentDirection         === 'upstream',   'currentDirection captured');
   assert(engine.currentDepth             === 3,            'currentDepth captured');
-  assert(engine.currentDepthEnforcement  === 'silent',     'currentDepthEnforcement captured');
+  // A level count the AI copied from the user's question is a hard border, so it enforces.
+  assert(engine.currentDepthEnforcement  === 'strict',     'currentDepthEnforcement captured');
   assert(engine.currentQuestion          === 'q, 3 levels up', 'currentQuestion captured');
+
+  const inferred = new NavigationEngine(model, graph, () => {}, {});
+  inferred.init({ origin: 'origin', question: 'q', direction: 'upstream', depthIntent: { kind: 'default_start' } });
+  assert(inferred.currentDepthEnforcement === 'silent', 'an omitted depth stays a growable seed');
 });
 
   it("mission brief persistence", () => {

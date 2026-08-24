@@ -258,17 +258,24 @@ When you ask `@lineage` a question, the assistant labels the mission as `busines
 The proposed scope shown at the approval gate preserves the user's depth
 intent:
 
-- an explicit hop count seeds exactly that many levels;
+- an explicit hop count bounds the trace to exactly that many levels;
 - “all” seeds the full reachable frontier;
 - bidirectional questions can use different upstream and downstream depths,
   including zero to disable one side;
 - omitted depth uses the configured upstream and downstream defaults.
 
-After approval, explicit model routes may extend beyond the initial depth seed
-while direction, exclusions, and the approved schema border remain
-mechanically enforced. Mission-relevant routes outside the schema border are
-counted after synthesis and can be revisited through the related-objects
-follow-up.
+**A level count you state is a hard border; a depth the assistant chose is a
+starting point.** When your question names a number of levels, the trace stops
+there — the assistant may not extend past it, and each side of a bidirectional
+ask is bounded independently. When you do not name one, the assistant seeds a
+reasonable default and may follow the lineage further if the question needs it.
+The approval gate labels which of the two applies before you approve.
+
+Objects just past a stated border are not discarded: they are reported after
+synthesis as follow-up leads, alongside mission-relevant routes outside the
+schema border, and can be revisited through the related-objects follow-up.
+Direction, exclusions, and the approved schema border remain mechanically
+enforced throughout.
 
 ### Tips
 

@@ -193,7 +193,7 @@ function buildActivePhasePrompt(): string {
     'Mode: SLIDING MEMORY: Analyze nodes sequentially as presented.',
     '',
     '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
-    '2. MATHEMATICS: Write formulas only as `$$...$$` block math; avoid backticks, plain prose, and single `$` (collides with @params and dollar amounts).',
+    '2. MATHEMATICS: Write formulas as LaTeX math — `$...$` inline, `$$...$$` for a standalone block.',
     '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` for focus-node analysis. Submit `sections[]` per locked classification (one entry per fired `*_capture`) with full-depth text.',
     '4. DECISION SOURCE: Use the SM Neighbor Decision Contract for all route/prune choices.',
     '5. ACTIVE-PHASE TOOL BOUNDARY: Use only active-hop tools in the hop loop; catalog lookup and rendering tools become available at synthesis/completed phase.',
@@ -260,7 +260,7 @@ export function buildPresentationDetailContract(
     ...(evidence ? [`- ${evidence}`] : []),
     ...depthRules,
     '- Treat `summary` and `notes[]` as orientation fields; they do not replace the detailed section bodies.',
-    '- Close every ``` fence, every `$$` pair, and every backtick run inside the field that opens it, and keep `$$` math KaTeX-parseable, because an unclosed delimiter or unparseable expression rejects that whole field.',
+    '- Close every ``` fence and every backtick run inside the field that opens it.',
     '- On rejection, resend only the fields the error names as repairable, with `is_update: true` — unresolved fields are kept from your held draft automatically.',
   ].join('\n');
 }
@@ -648,23 +648,36 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
  * session. Placing it in the stable prefix lets the service-side prompt cache
  * cover it across every hop of the active/synthesis phase.
  *
+ * Scope notes ride here for the same reason: they are fixed at approval, so the block stays
+ * byte-identical across hops and the cached prefix still holds. They are also the only surviving
+ * copy of an instruction that maps to no filter — the conversation turn that carried it is removed
+ * by the sliding-memory wipe after the first hop.
+ *
  * @param brief - The AI-composed mission statement; may be empty before the first `start_exploration`.
  * @param question - The user's original question, used as fallback text when `brief` is absent.
- * @returns Filled mission-brief XML block, or an empty string when both `brief` and `question` are absent.
+ * @param scopeNotes - User-stated constraints no filter field expresses; omitted when empty.
+ * @returns Filled mission-brief XML block, or an empty string when `brief`, `question`, and `scopeNotes` are all absent.
  */
-export function buildMissionBriefBlock(brief: string, question: string): string {
+export function buildMissionBriefBlock(brief: string, question: string, scopeNotes: readonly string[] = []): string {
   const missionText = brief || question;
-  if (!missionText) return '';
-  const escapedMissionText = missionText
+  if (!missionText && scopeNotes.length === 0) return '';
+  const escape = (value: string): string => value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  return [
-    '## Mission Context',
-    '<mission_brief>',
-    escapedMissionText,
-    '</mission_brief>',
-  ].join('\n');
+  const lines = ['## Mission Context'];
+  if (missionText) {
+    lines.push('<mission_brief>', escape(missionText), '</mission_brief>');
+  }
+  if (scopeNotes.length > 0) {
+    lines.push(
+      '<user_constraints>',
+      'Stated by the user and approved for this run. Apply them on every hop.',
+      ...scopeNotes.map(note => `- ${escape(note)}`),
+      '</user_constraints>',
+    );
+  }
+  return lines.join('\n');
 }
 
 /**

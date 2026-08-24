@@ -48,6 +48,7 @@ function seedProposal(session: AiSession, epoch: number): void {
           },
         },
       },
+      scopeNotes: [],
       activeFilters: { schemas: [], types: [], nodeIds: [], passNodeIds: [] },
     },
   }, epoch);

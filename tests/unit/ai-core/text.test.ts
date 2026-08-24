@@ -1,66 +1,14 @@
 /**
- * Regression tests for `unescapeProseNewlines` (`src/ai/support/text.ts`).
- *
- * @remarks
- * Guards the exact corruption reported against `autoFixPresentResult`/`smBase.ts`'s prior blind
- * `text.replace(/\\n/g, '\n')`: a KaTeX macro starting with a literal backslash + `n` (`\not`,
- * `\neq`, `\nabla`) was split into a real newline plus the trailing letters. The fix must keep
- * unescaping genuine double-escaped newlines in prose while leaving fenced code and `$$...$$`
- * math byte-identical.
+ * Unit tests for the prose helpers in `src/ai/support/text.ts`.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
   quoteIds,
-  unescapeProseNewlines,
   sanitizeProviderErrorDiagnostic,
   isTransportProviderError,
   describeProviderErrorForUser,
 } from '../../../src/ai/support/text';
-
-describe('unescapeProseNewlines', () => {
-  it('(a) unescapes a literal \\n in plain prose into a real newline', () => {
-    const input = 'First line.\\n\\nSecond paragraph.';
-    expect(unescapeProseNewlines(input)).toBe('First line.\n\nSecond paragraph.');
-  });
-
-  it('(b) leaves a KaTeX macro starting with \\n untouched inside a $$...$$ block', () => {
-    const input = '$$ValidationMessage \\lor ValidationMessage \\not\\text{ LIKE } \\%Unknown\\ region\\%$$';
-    expect(unescapeProseNewlines(input)).toBe(input);
-  });
-
-  it('(c) leaves \\n untouched inside fenced code', () => {
-    const input = '```sql\nSELECT \'\\n\' AS literal_backslash_n\n```';
-    expect(unescapeProseNewlines(input)).toBe(input);
-  });
-
-  it('(d) unescapes prose surrounding an untouched $$...$$ block', () => {
-    const input = 'Before.\\n$$\\neq$$\\nAfter.';
-    expect(unescapeProseNewlines(input)).toBe('Before.\n$$\\neq$$\nAfter.');
-  });
-
-  it('(e) Regression: the exact spImportOrders IsValidated rule from the bug report round-trips unchanged', () => {
-    const input =
-      '$$IsValidated := 1 \\quad \\text{when } ValidationMessage \\text{ is NULL } '
-      + '\\lor ValidationMessage \\not\\text{ LIKE } \\%Unknown\\ region\\%$$';
-    expect(unescapeProseNewlines(input)).toBe(input);
-    expect(unescapeProseNewlines(input)).not.toMatch(/\n/);
-  });
-
-  it('(f) leaves \\n untouched inside an inline code span while unescaping the surrounding prose', () => {
-    const input = 'Values separated by `\\n` characters.\\nNext line.';
-    expect(unescapeProseNewlines(input)).toBe('Values separated by `\\n` characters.\nNext line.');
-  });
-
-  it('(g) protects a fence opened with four backticks by its equal-run closure', () => {
-    const input = '````\ncontains \\n and ``` inside\n````';
-    expect(unescapeProseNewlines(input)).toBe(input);
-  });
-
-  it('(h) treats an unclosed backtick run as prose, matching the validator that rejects it', () => {
-    expect(unescapeProseNewlines('broken `span\\n')).toBe('broken `span\n');
-  });
-});
 
 describe('quoteIds', () => {
   it('backticks each id and caps with a trailing ellipsis marker', () => {

@@ -35,26 +35,31 @@ describe("Scope Extension + Hold-and-Amend", () => {
       });
     }
   }
-  it("Test 1: WITH a schema filter, a deep in-filter route beyond the approved seed is accepted.", () => {
+  it("Test 1: WITH a schema filter, a route beyond an explicit level count is still stopped by depth.", () => {
+  // A schema filter is a separate axis: passing it does not license crossing a depth border the
+  // user fixed. n5 (depth 5) is in-filter and still refused at a stated 2 levels.
   const engine = new NavigationEngine(chainModel, chainGraph, () => {}, { activeFilter: { schemas: ['dbo'] } as any });
   engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   drainChain(engine);
   assert(engine.status === 'complete', 'chain engine completes');
   const slotIds = new Set(engine.getResult().detail_slots.map(s => s.nodeId));
-  assert(slotIds.has('n5'), 'n5 (depth 5) analyzed — in-filter depth is not a wall');
+  assert(slotIds.has('n2'), 'n2 sits on the border and is analyzed');
+  assert(!slotIds.has('n5'), 'n5 (depth 5) is beyond the stated 2 levels and is not analyzed');
   const deferredIds = engine.deferredQuestions.map(d => d.nodeId.toLowerCase());
-  assert(!deferredIds.includes('n5'), 'n5 was not deferred with a schema filter present');
+  assert(deferredIds.includes('n3'), 'the first node past the border becomes a follow-up lead');
 });
 
-  it("Test 2: WITHOUT a schema filter, explicit AI routes may still grow beyond the approved seed.", () => {
+  it("Test 2: WITHOUT a schema filter, an unstated depth still lets explicit AI routes grow the seed.", () => {
+  // The soft path is the one that grows: with no level count from the user, the seed remains a
+  // starting point and explicit routes carry the trace past it.
   const engine = new NavigationEngine(chainModel, chainGraph, () => {}, {});
-  engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+  engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'default_start' } });
   drainChain(engine);
   assert(engine.status === 'complete', 'no-filter chain engine completes');
   const slotIds = new Set(engine.getResult().detail_slots.map(s => s.nodeId));
   assert(slotIds.has('n5'), 'n5 analyzed after explicit routes grow beyond the initial seed');
   const deferredIds = engine.deferredQuestions.map(d => d.nodeId.toLowerCase());
-  assert(!deferredIds.includes('n5'), 'n5 is not converted into a legacy depth-boundary lead');
+  assert(!deferredIds.includes('n5'), 'an unstated depth never converts growth into a boundary lead');
 });
 
   const fanNodes: LineageNode[] = [

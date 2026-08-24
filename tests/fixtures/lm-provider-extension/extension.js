@@ -7,8 +7,8 @@ let requests = [];
 // This fixture is scripted-only, by design. It replays fixed text and tool calls through the real
 // `vscode.lm` provider API so the Extension Development Host lanes exercise registration,
 // selection, streaming, and the tool-result round-trip without inference and without a network
-// call. Inference is measured by `npm run test:live-provider`, which runs headless — see
-// docs/E2E_TESTING.md §Model tiers for why the two are deliberately separate surfaces.
+// call. Inference is measured internally, headless — see docs/EDH_TESTING.md §What the public
+// suite proves for why the two are deliberately separate surfaces.
 
 // ── Case scripting state ─────────────────────────────────────────────────────
 //

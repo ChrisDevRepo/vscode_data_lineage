@@ -87,6 +87,7 @@ The extension is built from database DDL/catalog metadata only. The following ar
 - **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected.
 - **Dynamic SQL** — `EXEC(@sql)` and `sp_executesql` cannot be analysed statically.
 - **Unqualified references** — references without a schema prefix are ambiguous; metadata may resolve some known dependencies, but dynamic/default-schema cases are not guaranteed.
+- **Triggers and synonyms** — not ingested from either source. They do not appear as nodes, and references made through them do not become edges.
 
 ## FAQ
 

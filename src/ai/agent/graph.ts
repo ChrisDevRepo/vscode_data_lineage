@@ -870,7 +870,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     const refine = state.gateDecision.refine;
     deps.sink.status('scoping', 'Refining scope...');
-    const scopeMd = renderScopeSummaryMd(proposal.summary);
+    const scopeMd = renderScopeSummaryMd(proposal.summary, proposal.revision);
     const effectiveMode = refine.analysisMode ?? proposal.init.analysisMode ?? 'bb';
     const effectiveTargets = effectiveMode === 'ct'
       ? (refine.targetColumns ?? proposal.init.targetColumns ?? undefined)

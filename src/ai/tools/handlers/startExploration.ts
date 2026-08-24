@@ -210,6 +210,9 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       const excludeSchemas = stringArray(data.excludeSchemas, pendingInit?.excludeSchemas);
       const excludeNodeIds = stringArray(data.excludeNodeIds, pendingInit?.excludeNodeIds);
       const passNodeIds = stringArray(data.passNodeIds, pendingInit?.passNodeIds);
+      // Mechanically preserved across refine rounds like every other omitted field: a scope change
+      // must never silently drop a constraint the user already gave and confirmed.
+      const scopeNotes = stringArray(data.scopeNotes, pendingInit?.scopeNotes);
       // Refine mechanically preserves omitted proposal fields; the model does not re-author them.
       const refineOrigin = isRefining ? (data.origin ?? pendingInit?.origin ?? '') : (data.origin ?? '');
       const refineDirection = data.direction ?? (isRefining ? pendingInit?.direction : 'bidirectional');
@@ -255,6 +258,7 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         excludeSchemas,
         excludeNodeIds,
         passNodeIds,
+        scopeNotes,
         mission_brief: refineMissionBrief,
       } satisfies import('../../sm/smTypes').NavigationInitParams;
       const initResult = engine.init(proposalInit);
@@ -316,7 +320,7 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         }
 
         const classLabel = CLASSIFICATION_LABEL[classification] + (isCt ? ' (Column Trace)' : '');
-        const detail = `${renderScopeSummaryMd(summary)}\n\n_Analysis: ${classLabel}_`;
+        const detail = `${renderScopeSummaryMd(summary, sess.pendingExploration!.revision)}\n\n_Analysis: ${classLabel}_`;
         s.logger.debug(
           `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
           `scope_nodes=${summary.scopeCount} ` +

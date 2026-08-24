@@ -2,9 +2,9 @@
 // One command that answers "which gates are green?" — `npm run gate`.
 //
 // Local deterministic gate. Nothing here pushes, publishes, or runs a real
-// model. T1-T7 runs in the tracked scenario-matrix EDH lane (`npm run
-// test:scenario-matrix`), which launches Electron and is therefore not part of
-// this gate.
+// model. The scripted S1-S7 scenario matrix and real-model T1-T7 measurement
+// both launch outside this process (Electron / a live provider) and are
+// internal-only.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -58,7 +58,6 @@ const STEPS = [
   // schemas, gates — against a stubbed `vscode` and scripted model doubles. Zero model calls, so
   // naming them for AI would report inference coverage the step does not have.
   npmRun('unit: agent runtime', 'test:runtime'),
-  npmRun('unit: prompts (golden)', 'test:prompts'),
 
   // `pretest:integration` is `build` plus the integration-test compile, which keeps the optional
   // E2E tests from rotting without launching a host here.
@@ -111,12 +110,10 @@ process.stdout.write(`${results.length - failed.length}/${results.length} green\
 // green gate for evidence about model behaviour, which no step here produces.
 process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n');
 process.stdout.write(
-  'NOT covered: extension-host behaviour (npm run test:e2e-electron — scripted provider, still 0 '
-  + 'inference); model behaviour, which only the headless live-provider lane measures '
-  + '(npm run test:live-provider -- --lane <azure-foundry|openrouter|local-mlx> --prompt <P1-P3|T1-T7>, '
-  + 'needs provider credentials in .env, and bypasses vscode.lm); or the product path itself — real '
-  + "VS Code with the user's own Copilot model — which no automated suite covers and only UAT does. "
-  + 'See docs/E2E_TESTING.md.\n',
+  'NOT covered: extension-host behaviour (npm run test:edh — smoke lanes only, still 0 '
+  + 'inference); model behaviour, which is measured internally, never by this repository; or the '
+  + "product path itself — real VS Code with the user's own Copilot model — which no automated "
+  + 'suite covers and only UAT does. See docs/EDH_TESTING.md.\n',
 );
 
 process.exit(failed.length === 0 ? 0 : 1);

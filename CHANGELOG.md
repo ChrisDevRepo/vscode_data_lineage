@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.1] - 2026-08-20
+
+### Changed
+- A depth stated in your question is now a hard limit, per direction; objects just past it are reported as follow-up leads, and the approval window separates what you asked for from what the assistant chose, labeling a revised scope with its revision.
+
+### Fixed
+- Formulas in AI descriptions render as mathematics — inline and as centred blocks — matching the chat panel.
+- Depth is measured along the direction the data flows, so objects linked through a shared audit table are no longer treated as closer than they are.
+
 ## [1.1.0] - 2026-08-20
 
 ### Added

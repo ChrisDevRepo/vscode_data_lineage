@@ -124,7 +124,7 @@ describe('Present Result Closure', () => {
     }
 
     // Formatting never rejects (UAT turn-9 class): the verbatim payloads that killed turn 9 must be
-    // ACCEPTED — the webview renderer degrades invalid math to red source text, and formatting
+    // ACCEPTED — the webview renderer degrades invalid math to its original source text, and formatting
     // quality is measured by the offline harness, never by a runtime guard.
     {
       const sections = [{

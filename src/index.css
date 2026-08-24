@@ -512,13 +512,11 @@ body {
   overflow-wrap: normal;
   overflow-x: auto;
 }
-/* KaTeX parse errors — show as readable red text (matches VS Code behavior) */
-.ln-ai-description-md .katex-error {
-  color: var(--vscode-errorForeground, #f44747);
-  font-size: 0.85em;
-  font-family: var(--vscode-editor-font-family, monospace);
-  white-space: pre-wrap;
-  word-break: break-word;
+/* Display math renders as its own centred block, matching VS Code chat. */
+.ln-ai-description-md .katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .ln-ai-description-md h1,
 .ln-ai-description-md h2,

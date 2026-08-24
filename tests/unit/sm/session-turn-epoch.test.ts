@@ -133,6 +133,7 @@ describe("session turn-epoch guard tests", () => {
         estimatedDdlChars: 0,
         estimatedDdlTokens: 0,
         bySchema: {},
+        scopeNotes: [],
         activeFilters: { schemas: [], types: [], nodeIds: [], passNodeIds: [] },
       },
     };
@@ -208,6 +209,7 @@ describe("session turn-epoch guard tests", () => {
         depthIntent: { kind: 'default_start' as const }, direction: 'upstream' as const,
         analysisMode: 'bb' as const, columnAspectActive: false,
         estimatedDdlChars: 0, estimatedDdlTokens: 0, bySchema: {},
+        scopeNotes: [],
         activeFilters: { schemas: [], types: [], nodeIds: [], passNodeIds: [] },
       },
     };
@@ -233,6 +235,7 @@ describe("session turn-epoch guard tests", () => {
       depthIntent: { kind: 'default_start' as const }, direction: 'upstream' as const,
       analysisMode: 'bb' as const, columnAspectActive: false,
       estimatedDdlChars: 0, estimatedDdlTokens: 0, bySchema: {},
+      scopeNotes: [],
       activeFilters: { schemas: [], types: [], nodeIds: [], passNodeIds: [] },
     };
     const left = {
@@ -243,6 +246,7 @@ describe("session turn-epoch guard tests", () => {
     };
     const reordered = {
       summary: {
+        scopeNotes: [],
         activeFilters: { passNodeIds: [], nodeIds: [], types: [], schemas: [] },
         bySchema: {}, estimatedDdlTokens: 0, estimatedDdlChars: 0, columnAspectActive: false,
         analysisMode: 'bb' as const, direction: 'upstream' as const,

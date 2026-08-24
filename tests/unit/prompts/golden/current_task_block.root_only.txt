@@ -1,3 +1,0 @@
-<current_task>
-  <root_question>How is FactSales loaded?</root_question>
-</current_task>

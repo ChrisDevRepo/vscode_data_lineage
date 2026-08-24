@@ -23,7 +23,6 @@ import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from '../tools/tools';
 import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
-import { unescapeProseNewlines } from '../support/text';
 import { bfsDepthMap, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import { normalizeColName } from '../../utils/sql';
@@ -277,8 +276,26 @@ export class NavigationEngine implements IHopStateMachine {
   protected depthFromOrigin = new Map<string, number>();
   /** The configurable depth budget. */
   protected depthBudget: number | null = null;
-  /** Legacy checkpoint/diagnostic field; approved depth is an initial seed and is never enforced. */
+  /**
+   * Per-side depth ceilings from the approved intent; `Infinity` where that side is unbounded.
+   *
+   * @remarks
+   * Kept alongside {@link depthBudget} because a single scalar cannot express an asymmetric ask:
+   * collapsing `{upstream: 2, downstream: 1}` to its maximum enforces 2 on both sides, admitting
+   * a node the user capped out. Only consulted when {@link depthEnforcement} is `'strict'`.
+   */
+  protected depthLimits: { upstream: number; downstream: number } = {
+    upstream: Number.POSITIVE_INFINITY,
+    downstream: Number.POSITIVE_INFINITY,
+  };
+  /**
+   * Whether the approved depth is a hard border (`'strict'`) or an initial seed the model may grow
+   * (`'silent'`). Set from the AI's own `depthIntent`: a level count the AI copied from the user's
+   * question binds; an omitted depth does not.
+   */
   protected depthEnforcement: 'strict' | 'soft' | 'silent' = 'silent';
+  /** Memoised directed distance/side from the origin; cleared whenever the BFS seed is recomputed. */
+  private directedDepthCache = new Map<string, { depth: number; side: 'upstream' | 'downstream' } | null>();
   /** History of explicit AI expansions beyond the initial BFS seed. */
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
@@ -812,6 +829,62 @@ export class NavigationEngine implements IHopStateMachine {
     return 'bidirectional';
   }
 
+  /**
+   * Directed distance from the origin to `targetId`, and which side of the origin it lies on.
+   *
+   * @remarks
+   * The lineage question is directional: "three levels upstream" counts edges the data actually
+   * flows along. An undirected shortest path can route around through a shared sink — an audit or
+   * logging table every procedure writes to — and report a node as nearer than it is, which would
+   * enforce a border in the wrong place. Returns `null` when no directed path exists on either
+   * side; callers then fall back to their local hop-relative estimate.
+   *
+   * @param targetId - Node to measure.
+   * @returns The directed depth and side, or `null` when the node is unreachable directionally.
+   */
+  private directedDepthFromOrigin(targetId: string): { depth: number; side: 'upstream' | 'downstream' } | null {
+    if (!this.originNodeId) return null;
+    if (targetId === this.originNodeId) return { depth: 0, side: 'downstream' };
+    const cached = this.directedDepthCache.get(targetId);
+    if (cached !== undefined) return cached;
+
+    let best: { depth: number; side: 'upstream' | 'downstream' } | null = null;
+    for (const [mode, side] of [['inbound', 'upstream'], ['outbound', 'downstream']] as const) {
+      let found: number | null = null;
+      bfsFromNode(this.graph, this.originNodeId, (key, _attr, depth) => {
+        if (key === targetId) { found = depth; return true; }
+        return false;
+      }, { mode });
+      if (found !== null && (best === null || found < best.depth)) best = { depth: found, side };
+    }
+    this.directedDepthCache.set(targetId, best);
+    return best;
+  }
+
+  /**
+   * Whether admitting `targetId` would cross a depth border the user fixed.
+   *
+   * @remarks
+   * Only ever true under `'strict'` enforcement — i.e. only when the AI reported that the user
+   * stated a level count. An omitted depth leaves the seed growable exactly as before.
+   *
+   * @param targetId - Candidate node.
+   * @param fallbackDepth - Hop-relative depth to judge by when no directed path resolves.
+   * @returns The breaching depth when the border is crossed, otherwise `null`.
+   */
+  private depthBorderBreach(targetId: string, fallbackDepth: number | undefined): number | null {
+    if (this.depthEnforcement !== 'strict') return null;
+    const directed = this.directedDepthFromOrigin(targetId);
+    const depth = directed?.depth ?? fallbackDepth;
+    if (depth === undefined) return null;
+    // Without a resolved side the node is judged against the tighter of the two ceilings: a border
+    // the user fixed must not be crossed by a node whose side we could not establish.
+    const limit = directed
+      ? this.depthLimits[directed.side]
+      : Math.min(this.depthLimits.upstream, this.depthLimits.downstream);
+    return depth > limit ? depth : null;
+  }
+
   /** True when a route target is reachable from the origin within the approved traversal direction. */
   private isReachableInApprovedDirection(targetId: string): boolean {
     const direction = this.effectiveDirection();
@@ -1029,6 +1102,7 @@ export class NavigationEngine implements IHopStateMachine {
       estimatedDdlChars,
       estimatedDdlTokens: estimateTokens(estimatedDdlChars),
       bySchema,
+      scopeNotes: this.memory.getScopeNotes(),
       activeFilters: {
         schemas: Array.from(this.excludedSchemas).sort(),
         types: Array.from(this.excludedTypes).sort(),
@@ -1254,6 +1328,10 @@ export class NavigationEngine implements IHopStateMachine {
       this.memory.setMissionBrief(params.mission_brief);
       this.log('debug', `[Mission] provenance=engine_init len=${params.mission_brief.length}`);
     }
+    if (params.scopeNotes?.length) {
+      this.memory.setScopeNotes(params.scopeNotes);
+      this.log('debug', `[Mission] scope_notes count=${params.scopeNotes.length}`);
+    }
 
     this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
     this.excludedSchemas = new Set((params.excludeSchemas ?? []).map(s => s.toLowerCase()));
@@ -1269,28 +1347,45 @@ export class NavigationEngine implements IHopStateMachine {
     switch (depthIntent.kind) {
       case 'explicit':
         this.depthBudget = depthIntent.levels;
-        this.depthEnforcement = 'silent';
+        // The AI reported a level count copied from the user's question: a hard border.
+        this.depthEnforcement = 'strict';
+        this.depthLimits = { upstream: depthIntent.levels, downstream: depthIntent.levels };
         seedDepth = depthIntent.levels;
         depthLabel = String(seedDepth);
         break;
       case 'full_frontier':
         this.depthBudget = null;
         this.depthEnforcement = 'silent';
+        this.depthLimits = { upstream: Number.POSITIVE_INFINITY, downstream: Number.POSITIVE_INFINITY };
         seedDepth = Number.POSITIVE_INFINITY;
         depthLabel = 'all';
         break;
       case 'asymmetric': {
-        const finite = [depthIntent.upstream, depthIntent.downstream]
-          .filter((value): value is number => typeof value === 'number');
-        this.depthBudget = finite.length === 2 ? Math.max(...finite) : null;
-        this.depthEnforcement = 'silent';
-        seedDepth = this.depthBudget ?? Number.POSITIVE_INFINITY;
+        // Each side keeps its own ceiling — `'all'` unbounds only the side it was given, and the
+        // scalar budget stays a display/checkpoint summary, never the enforcement value.
+        const sideLimit = (value: number | 'all'): number =>
+          value === 'all' ? Number.POSITIVE_INFINITY : value;
+        this.depthLimits = {
+          upstream: sideLimit(depthIntent.upstream),
+          downstream: sideLimit(depthIntent.downstream),
+        };
+        // The scalar summary is null unless BOTH sides are capped: reporting the finite side as the
+        // one budget would state a ceiling for a side that has none.
+        const bothFinite = Number.isFinite(this.depthLimits.upstream)
+          && Number.isFinite(this.depthLimits.downstream);
+        this.depthBudget = bothFinite
+          ? Math.max(this.depthLimits.upstream, this.depthLimits.downstream)
+          : null;
+        // An asymmetric ask is still user-stated, so it binds on both sides independently.
+        this.depthEnforcement = 'strict';
+        seedDepth = Math.max(this.depthLimits.upstream, this.depthLimits.downstream);
         depthLabel = `up=${depthIntent.upstream} down=${depthIntent.downstream}`;
         break;
       }
       case 'default_start':
         this.depthBudget = DEFAULT_SM_START_DEPTH;
         this.depthEnforcement = 'silent';
+        this.depthLimits = { upstream: Number.POSITIVE_INFINITY, downstream: Number.POSITIVE_INFINITY };
         seedDepth = DEFAULT_SM_START_DEPTH;
         depthLabel = `default:${DEFAULT_SM_START_DEPTH}`;
         this.log('debug', `[Depth] default applied levels=${DEFAULT_SM_START_DEPTH} reason=ai_and_user_omitted_depth`);
@@ -1793,7 +1888,7 @@ export class NavigationEngine implements IHopStateMachine {
       );
       this.memory.storePrunedDetail(
         this.nodeMap.get(focusId)!,
-        (finding.sections ?? []).map(s => ({ ...s, text: unescapeProseNewlines(s.text) })),
+        finding.sections ?? [],
         finding.summary ?? '',
         { badge_label: finding.badge_label, reason_for_visit: this.currentFocusQuestion || 'Historical path investigation' },
       );
@@ -1900,28 +1995,36 @@ export class NavigationEngine implements IHopStateMachine {
 
         const schemaBlocked = routeBorder.kind === 'out_of_allowlist';
 
-        let candidateDepth = this.depthFromOrigin.get(nid);
-        if (candidateDepth === undefined && this.originNodeId) {
-          const path = bidirectional(this.graph, this.originNodeId, nid);
-          candidateDepth = Array.isArray(path) ? path.length - 1 : undefined;
-        }
+        const directedDepth = this.directedDepthFromOrigin(nid)?.depth;
+        let candidateDepth = this.depthFromOrigin.get(nid) ?? directedDepth;
         if (candidateDepth === undefined) {
           const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
           candidateDepth = focusDepth + 1;
         }
 
-        // The approved depth defines the initial BFS seed only. Explicit AI routes may grow the
-        // agenda beyond it; exclusions, direction, and schema approval remain mechanical guards.
-        if (schemaBlocked) {
-          const deferReason: 'schema' = 'schema';
+        // An omitted depth leaves the approved depth an initial BFS seed the model may grow. A
+        // user-stated level count is a border: the route is still recorded, but as a deferred
+        // follow-up rather than an admission — exactly what the active-hop protocol promises.
+        const depthBreach = this.depthBorderBreach(nid, candidateDepth);
+        if (schemaBlocked || depthBreach !== null) {
+          const deferReason: 'schema' | 'depth' | 'schema_and_depth' = schemaBlocked
+            ? (depthBreach !== null ? 'schema_and_depth' : 'schema')
+            : 'depth';
           deferredRoutes.push({
             nodeId: nNode.id,
             schema: nNode.schema,
             question: req.question ?? '',
             reason: deferReason,
-            depth: candidateDepth,
+            depth: depthBreach ?? candidateDepth,
           });
           routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: deferReason });
+          if (depthBreach !== null) {
+            this.log(
+              'debug',
+              `[Depth] border reached hop=${this.hopCount} id=${nNode.id} ← ${focusId} `
+              + `depth=${depthBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`,
+            );
+          }
           continue;
         }
 
@@ -2000,10 +2103,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     // analyze/pass path: commit the detail slot + CT edges (prune exits early above) — stage its sections + CT passthrough roles.
     {
-      stagedSections = (finding.sections ?? []).map(s => ({
-        ...s,
-        text: unescapeProseNewlines(s.text),
-      }));
+      stagedSections = (finding.sections ?? []).map(s => ({ ...s }));
       stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       stagedSummaryChars = finding.summary?.length ?? 0;
 
@@ -2130,7 +2230,9 @@ export class NavigationEngine implements IHopStateMachine {
     for (const nid of scopeAddNids) {
       this.scopeNodeIds.add(nid);
       const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
-      if (!this.depthFromOrigin.has(nid)) this.depthFromOrigin.set(nid, focusDepth + 1);
+      if (!this.depthFromOrigin.has(nid)) {
+        this.depthFromOrigin.set(nid, this.directedDepthFromOrigin(nid)?.depth ?? focusDepth + 1);
+      }
       this.budgetExpansions.push({ nodeId: nid, depth: focusDepth + 1, atHop: this.hopCount });
       this.log('debug', `[Depth] auto-add beyond initial scope id=${nid} depth=${focusDepth + 1} hop=${this.hopCount}`);
     }
@@ -2276,6 +2378,7 @@ export class NavigationEngine implements IHopStateMachine {
   ): Set<string> {
     const seen = new Set<string>();
     this.depthFromOrigin.clear();
+    this.directedDepthCache.clear();
 
     const limit = (side: 'upstream' | 'downstream'): number => {
       switch (depthIntent.kind) {
@@ -2499,8 +2602,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[Disposition] enqueue drop ${targetId} — out-of-scope target (priority=${priority}, not deferred) via focus=${this.currentFocusNodeId ?? this.originNodeId ?? '(none)'}`);
         return;
       }
-      const path = this.originNodeId ? bidirectional(this.graph, this.originNodeId, targetId) : null;
-      const admittedDepth = Array.isArray(path) ? path.length - 1 : depth;
+      const admittedDepth = this.directedDepthFromOrigin(targetId)?.depth ?? depth;
       this.scopeNodeIds.add(targetId);
       // Bodied by construction (canAdmitCtContraction asserts SCRIPT_TYPES) — mirror supplementAgenda
       // so the bodied denominator stays source-measured, not stale on this admission path.
@@ -2805,6 +2907,10 @@ export class NavigationEngine implements IHopStateMachine {
       direction: this._direction,
       depthBudget: this.depthBudget,
       depthEnforcement: this.depthEnforcement,
+      depthLimits: {
+        upstream: Number.isFinite(this.depthLimits.upstream) ? this.depthLimits.upstream : null,
+        downstream: Number.isFinite(this.depthLimits.downstream) ? this.depthLimits.downstream : null,
+      },
       depthFromOrigin: Array.from(this.depthFromOrigin.entries()),
       extendedDepthCap: this.extendedDepthCap,
       budgetExpansions: this.budgetExpansions.map(b => ({ ...b })),
@@ -2900,10 +3006,20 @@ export class NavigationEngine implements IHopStateMachine {
     engine.originNodeId = internals.originNodeId;
     engine._direction = internals.direction;
     engine.depthBudget = internals.depthBudget;
-    if (internals.depthEnforcement !== 'silent' || internals.extendedDepthCap !== 0) {
-      log('debug', `[Depth] normalized legacy checkpoint authority enforcement=${internals.depthEnforcement} extension=${internals.extendedDepthCap} to seed-only routing`);
+    if (internals.depthLimits) {
+      // A border the user stated outlives the resume it was approved in.
+      engine.depthLimits = {
+        upstream: internals.depthLimits.upstream ?? Number.POSITIVE_INFINITY,
+        downstream: internals.depthLimits.downstream ?? Number.POSITIVE_INFINITY,
+      };
+      engine.depthEnforcement = internals.depthEnforcement;
+      log('debug', `[Depth] restored border enforcement=${internals.depthEnforcement} cap=up:${engine.depthLimits.upstream}/down:${engine.depthLimits.downstream}`);
+    } else {
+      if (internals.depthEnforcement !== 'silent' || internals.extendedDepthCap !== 0) {
+        log('debug', `[Depth] normalized legacy checkpoint authority enforcement=${internals.depthEnforcement} extension=${internals.extendedDepthCap} to seed-only routing`);
+      }
+      engine.depthEnforcement = 'silent';
     }
-    engine.depthEnforcement = 'silent';
     engine.depthFromOrigin = new Map(internals.depthFromOrigin);
     engine.extendedDepthCap = 0;
     engine.budgetExpansions = internals.budgetExpansions.map(b => ({ ...b }));

@@ -150,6 +150,8 @@ export interface MemoryStateSnapshot {
   slotCount: number;
   /** The AI-composed mission brief, surviving sliding-memory wipes. */
   missionBrief: string;
+  /** User-stated analysis constraints no filter expresses, surviving sliding-memory wipes. */
+  scopeNotes: string[];
   /** Running verdict tally. */
   verdictCounts: { analyze: number; passthrough: number; prune: number };
   /** Ring buffer (≤5) of recent route rejections surfaced in working memory. */
@@ -175,6 +177,7 @@ export class AiMemoryManager {
   private prunedDetails = new Map<string, DetailSlot>();
   private userQuestion = '';
   private missionBrief = '';
+  private scopeNotes: string[] = [];
   private verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
   private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
 
@@ -184,6 +187,7 @@ export class AiMemoryManager {
     this.prunedDetails.clear();
     this.userQuestion = '';
     this.missionBrief = '';
+    this.scopeNotes = [];
     this.verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
     this.recentRejections = [];
   }
@@ -235,6 +239,23 @@ export class AiMemoryManager {
   /** The mission brief the AI composed at discovery→active transition. */
   public getMissionBrief(): string {
     return this.missionBrief;
+  }
+
+  /**
+   * Records the user-stated analysis constraints that no filter field expresses.
+   *
+   * @remarks
+   * Fixed once at `start_exploration` approval, so it is stable-prefix-safe: every hop renders the
+   * same bytes. Without this carrier an instruction like "ignore filter criteria" reaches the first
+   * hop only as conversation history and is dropped by the sliding-memory wipe.
+   */
+  public setScopeNotes(notes: readonly string[]): void {
+    this.scopeNotes = [...notes];
+  }
+
+  /** User-stated constraints carried verbatim to every hop. */
+  public getScopeNotes(): string[] {
+    return [...this.scopeNotes];
   }
 
   /**
@@ -363,6 +384,7 @@ export class AiMemoryManager {
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
     return {
       userQuestion: this.userQuestion,
+      scopeNotes: [...this.scopeNotes],
       detailSlots: slots,
       slotCount: this.detailSlots.size,
       missionBrief: this.missionBrief,
@@ -387,6 +409,7 @@ export class AiMemoryManager {
     const m = new AiMemoryManager();
     m.userQuestion = snapshot.userQuestion;
     m.missionBrief = snapshot.missionBrief;
+    m.scopeNotes = [...(snapshot.scopeNotes ?? [])];
     m.verdictCounts = { ...snapshot.verdictCounts };
     m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
     // Object key order preserves insertion order for the non-integer node-id keys used here.
@@ -407,6 +430,7 @@ export class AiMemoryManager {
     this.detailSlots = restored.detailSlots;
     this.userQuestion = restored.userQuestion;
     this.missionBrief = restored.missionBrief;
+    this.scopeNotes = [...(restored.scopeNotes ?? [])];
     this.verdictCounts = restored.verdictCounts;
     this.recentRejections = restored.recentRejections;
   }

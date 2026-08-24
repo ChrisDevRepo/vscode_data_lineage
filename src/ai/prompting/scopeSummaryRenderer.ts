@@ -20,21 +20,96 @@ function typeLabel(type: string, count: number): string {
   return count === 1 ? capitalized : `${capitalized}s`;
 }
 
-/** Renders a self-contained main-equivalent approval summary for native chat. */
-export function renderScopeSummaryMd(summary: ScopeSummary): string {
+/**
+ * Renders the depth line for one side of the ask.
+ *
+ * @remarks
+ * Wording carries the consequence, not a label: a border the user fixed says the trace stops,
+ * a depth the assistant chose says it may move, and an unbounded side says there is no stop at all.
+ * The caller decides which block it lands in.
+ */
+function depthLine(levels: number | 'all', side: string, binding: boolean): string {
+  if (levels === 'all') return `- Depth: all levels ${side} — no depth limit`;
+  const value = binding ? plural(levels, 'level') : `≈${plural(levels, 'level')}`;
+  const suffix = binding
+    ? ' — I will not go past this'
+    : ' — my estimate, I may extend it if the trace needs it';
+  return `- Depth: ${value} ${side}${suffix}`;
+}
+
+/**
+ * Renders a self-contained main-equivalent approval summary for native chat.
+ *
+ * @param summary - The proposed scope to render.
+ * @param revision - Proposal revision; stamped in the heading from the second round on so a
+ * re-approval is distinguishable from the first.
+ */
+export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): string {
   const lines: string[] = [];
   const direction = summary.direction === 'bidirectional' ? 'bidirectional' : summary.direction;
-  const depth = summary.depthIntent.kind === 'asymmetric'
-    ? `depth u:${summary.depthIntent.upstream} d:${summary.depthIntent.downstream}`
-    : (summary.depth !== null ? `depth ${summary.depth}` : 'unbounded depth');
   const columns = summary.targetColumns?.length
     ? ` — columns: [${summary.targetColumns.join(', ')}]`
     : '';
   const tracing = summary.analysisMode === 'ct' ? `Column-Trace${columns}` : 'Blackboard';
 
-  lines.push('### Exploration plan (proposed)');
+  // A depth the user stated binds the run; one the assistant inferred does not. The block a line
+  // sits in is what tells the user which it is — so the same fact is never rendered ambiguously.
+  const intent = summary.depthIntent;
+  const depthIsBinding = intent.kind === 'explicit' || intent.kind === 'asymmetric';
+  const stated: string[] = [];
+  const chosen: string[] = [];
+  const depthTarget = depthIsBinding ? stated : chosen;
+  const depthSide = direction === 'bidirectional' ? 'each way' : direction;
+  if (intent.kind === 'asymmetric') {
+    depthTarget.push(depthLine(intent.upstream, 'upstream', true));
+    depthTarget.push(depthLine(intent.downstream, 'downstream', true));
+  } else if (intent.kind === 'full_frontier') {
+    depthTarget.push(depthLine('all', depthSide, false));
+  } else if (summary.depth !== null) {
+    depthTarget.push(depthLine(summary.depth, depthSide, depthIsBinding));
+  }
+
+  // A filter is the assistant's mechanization of the request, never the request itself. Rendering
+  // it beside the user's own words under one "from your question" heading claims an origin the
+  // engine cannot know, so a field the assistant picked reads as one the user asked for.
+  const readAs: string[] = [];
+  const filters = summary.activeFilters;
+  if (filters.nodeIds.length > 0) {
+    readAs.push(`- Exclude: ${filters.nodeIds.map(x => `\`${x}\``).join(', ')} — removed from the graph`);
+  }
+  if (filters.passNodeIds.length > 0) {
+    readAs.push(`- Keep but skip: ${filters.passNodeIds.map(x => `\`${x}\``).join(', ')} — stays in the graph, not analysed`);
+  }
+  if (filters.schemas.length > 0) {
+    readAs.push(`- Schemas excluded: ${filters.schemas.map(x => `\`${x}\``).join(', ')}`);
+  }
+  if (filters.types.length > 0) {
+    readAs.push(`- Types excluded: ${filters.types.map(x => `\`${x}\``).join(', ')}`);
+  }
+  // The user's own words, verbatim. Placed next to the mechanization above so a misreading is
+  // visible side by side while the user can still correct it — after approval the run is autonomous.
+  for (const note of summary.scopeNotes) {
+    stated.push(`- Noted: "${note}"`);
+  }
+
+  const heading = revision && revision > 1
+    ? `### Exploration plan (proposed · revision ${revision})`
+    : '### Exploration plan (proposed)';
+  lines.push(heading);
   lines.push('');
-  lines.push(`- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${depth}, ${direction}`);
+  if (stated.length > 0) {
+    lines.push('**From your question**');
+    lines.push(...stated);
+    lines.push('');
+  }
+  if (readAs.length > 0) {
+    lines.push('**How I read it**');
+    lines.push(...readAs);
+    lines.push('');
+  }
+  lines.push('**My plan**');
+  lines.push(...chosen);
+  lines.push(`- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${direction}`);
   lines.push(`- **Tracing:** ${tracing}`);
   lines.push('');
 
@@ -57,22 +132,12 @@ export function renderScopeSummaryMd(summary: ScopeSummary): string {
         return passSet.has(fq) ? `${name} _(pass)_` : name;
       }).join(', ');
       const omitted = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
-      lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}): ${names}${omitted}`);
+      // A type group with no bodied node is auto-passed by the engine — it carries no body to read,
+      // so it stays in the graph unanalysed whether or not anyone asked. Saying so here is what
+      // makes "keep it but skip it" visibly already satisfied, instead of an edit the user retries.
+      const autoPassed = leaf.hops === 0 ? ' · kept, not analysed' : '';
+      lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}${autoPassed}): ${names}${omitted}`);
     }
-  }
-
-  const filters = summary.activeFilters;
-  const hasFilters = filters.schemas.length > 0
-    || filters.types.length > 0
-    || filters.nodeIds.length > 0
-    || filters.passNodeIds.length > 0;
-  if (hasFilters) {
-    lines.push('');
-    lines.push('**Active filters**');
-    if (filters.schemas.length > 0) lines.push(`- Schemas excluded: ${filters.schemas.map(x => `\`${x}\``).join(', ')}`);
-    if (filters.types.length > 0) lines.push(`- Types excluded: ${filters.types.map(x => `\`${x}\``).join(', ')}`);
-    if (filters.nodeIds.length > 0) lines.push(`- Nodes excluded: ${filters.nodeIds.map(x => `\`${x}\``).join(', ')}`);
-    if (filters.passNodeIds.length > 0) lines.push(`- Nodes pass-through: ${filters.passNodeIds.map(x => `\`${x}\``).join(', ')}`);
   }
 
   return lines.join('\n');

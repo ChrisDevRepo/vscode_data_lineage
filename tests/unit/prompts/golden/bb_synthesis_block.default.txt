@@ -1,5 +1,0 @@
-## Flow-Role Highlights
-Engine-computed graph facts for highlight_groups (mechanical candidates only — final coloring is your question-relative judgment per the highlights template):
-- highlight_groups.target — the queried origin node: dbo.FactSales
-- highlight_groups.source candidates — terminal data-origin nodes the trace reached (base feeds never written to within the trace); color the ones whose DATA feeds the answer, leave filter-only lookups bare: dbo.OrderDetailA, dbo.DimProduct
-- highlight_groups.transform — not enumerated: choose the important transformations yourself — nodes that CREATE or CHANGE the answer's values (formula, condition, classification, status transition). Carry-through nodes (renames, SELECT * bridges, movement procs, plain storage tables, row filters) stay uncolored — they are still rendered, and are captioned in notes[].

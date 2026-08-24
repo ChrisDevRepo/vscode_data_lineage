@@ -26,6 +26,15 @@ const MissionBriefValueSchema = z.string()
   .regex(/\S/, 'Mission brief must contain non-whitespace content.')
   .describe('Compact investigation goal and relevance criteria preserved verbatim across exploration hops. Keep it compact (a few sentences); length is never a rejection axis.');
 
+const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope note must contain non-whitespace content.'))
+  .max(8)
+  .describe(
+    'Analysis constraints the user stated that no filter field can express — e.g. "ignore filter criteria", '
+    + '"explain the discount logic on [ai].[spBuildSalesReport] in detail". One short note per instruction, in the '
+    + "user's own terms. These are echoed back at the approval gate for the user to confirm, and are carried to "
+    + 'every hop, so record an instruction here rather than dropping it when it maps to no filter.',
+  );
+
 const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(AI_MAX_SCOPE_NODE_IDS).describe(
   'Resolved object IDs that require new per-node analysis in the completed exploration; use present_result add_node_ids for presentation-only additions.',
 );
@@ -104,6 +113,7 @@ export const StartExplorationInputSchema = z.object({
    * the call to reject with `unknown_node_ids`.
    */
   passNodeIds: z.array(z.string()).optional().describe('Resolved object IDs to keep as topology-only passthrough nodes without analyzing them.'),
+  scopeNotes: ScopeNotesValueSchema.optional(),
   mission_brief: MissionBriefValueSchema.optional(),
   // Keep decision guidance on the field schema so every adapter advertising this Zod contract
   // gives the model the same classification semantics.
@@ -181,6 +191,7 @@ const StartExcludeTypesSchema = z.array(z.string()).optional().describe('Object 
 const StartExcludeSchemasSchema = z.array(z.string()).optional().describe('Complete replacement list of schema names excluded from the approved scope.');
 const StartExcludeNodeIdsSchema = z.array(z.string()).optional().describe('Resolved object IDs to remove, including dependent branches reachable only through them.');
 const StartPassNodeIdsSchema = z.array(z.string()).optional().describe('Resolved object IDs to keep as topology-only passthrough nodes without analyzing them.');
+const StartScopeNotesSchema = ScopeNotesValueSchema.optional();
 const StartMissionBriefSchema = MissionBriefValueSchema.optional();
 const StartClassificationSchema = z.enum(['business', 'technical', 'both']).describe(
   'Required answer angle. Use technical only for explicit implementation, performance, or data-quality asks; use both only when explicitly requested; otherwise use business.',
@@ -198,6 +209,7 @@ const StartPatchFields = {
   excludeSchemas: StartExcludeSchemasSchema,
   excludeNodeIds: StartExcludeNodeIdsSchema,
   passNodeIds: StartPassNodeIdsSchema,
+  scopeNotes: StartScopeNotesSchema,
   mission_brief: StartMissionBriefSchema,
   classification: StartClassificationSchema.optional(),
 };

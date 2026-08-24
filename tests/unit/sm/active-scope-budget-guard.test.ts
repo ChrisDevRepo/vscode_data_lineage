@@ -60,49 +60,55 @@ describe('checkActiveScopeAdmission (pure)', () => {
 });
 
 describe('NavigationEngine active-phase admission', () => {
-  const chainNodes: LineageNode[] = [
-    makeNode({ id: 'n0', schema: 'dbo', name: 'n0', type: 'view' }),
-    makeNode({ id: 'n1', schema: 'dbo', name: 'n1', type: 'view' }),
-    makeNode({ id: 'n2', schema: 'dbo', name: 'n2', type: 'view' }),
-    makeNode({ id: 'n3', schema: 'dbo', name: 'n3', type: 'view' }),
+  // Six nodes so the default seed (DEFAULT_SM_START_DEPTH = 3) covers {n0..n3} and leaves n4
+  // genuinely outside it. The depth intent is deliberately `default_start`: this test is about
+  // the node-cap admission guard, so the depth border must stay non-binding or it would refuse
+  // the route first and the guard under test would never run.
+  const chainNodes: LineageNode[] = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5'].map(id =>
+    makeNode({ id, schema: 'dbo', name: id, type: 'view' }),
+  );
+  const chainEdges: Array<[string, string]> = [
+    ['n0', 'n1'], ['n1', 'n2'], ['n2', 'n3'], ['n3', 'n4'], ['n4', 'n5'],
   ];
-  const chainEdges: Array<[string, string]> = [['n0', 'n1'], ['n1', 'n2'], ['n2', 'n3']];
   const chainModel: DatabaseModel = makeModel(chainNodes, chainEdges, ['dbo']);
   const chainGraph = makeGraph(chainNodes, chainEdges);
 
   it('an over-cap route commit is held and rejected before scope mutates; a pruned amend completes', () => {
-    // Approved seed at depth 1 is {n0, n1}; cap 2 means any growth rejects.
-    setExplorationNodeCap(2);
+    // Default seed is {n0, n1, n2, n3}; cap 4 means any growth past it rejects.
+    setExplorationNodeCap(4);
     const engine = new NavigationEngine(chainModel, chainGraph, () => {}, {});
-    engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
+    engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'default_start' } });
 
-    const first = engine.getHopContext() as { focus_node?: { id: string } };
-    assert(first.focus_node?.id === 'n0', 'first focus is the origin');
-    const ok = engine.submitFindings({
-      focus_node_id: 'n0',
-      sections: [{ angle: 'business' as const, text: 'origin analysis' }],
-      summary: 'n0',
-      verdict: 'analyze',
-      route_requests: [{ nodeId: 'n1', question: 'trace' }],
-    }) as { ok?: boolean };
-    assert(ok.ok === true, 'route to an in-scope node commits without tripping the guard');
+    // Walk the in-scope prefix; none of these routes grow the scope, so none trip the guard.
+    for (const [focus, next] of [['n0', 'n1'], ['n1', 'n2'], ['n2', 'n3']] as const) {
+      const ctx = engine.getHopContext() as { focus_node?: { id: string } };
+      assert(ctx.focus_node?.id === focus, `focus is ${focus}`);
+      const ok = engine.submitFindings({
+        focus_node_id: focus,
+        sections: [{ angle: 'business' as const, text: `${focus} analysis` }],
+        summary: focus,
+        verdict: 'analyze',
+        route_requests: [{ nodeId: next, question: 'trace' }],
+      }) as { ok?: boolean };
+      assert(ok.ok === true, `route to in-scope ${next} commits without tripping the guard`);
+    }
 
-    const second = engine.getHopContext() as { focus_node?: { id: string } };
-    assert(second.focus_node?.id === 'n1', 'second focus is n1');
+    const atBorder = engine.getHopContext() as { focus_node?: { id: string } };
+    assert(atBorder.focus_node?.id === 'n3', 'final in-scope focus is n3');
     const rejected = engine.submitFindings({
-      focus_node_id: 'n1',
-      sections: [{ angle: 'business' as const, text: 'n1 analysis prose' }],
-      summary: 'n1',
+      focus_node_id: 'n3',
+      sections: [{ angle: 'business' as const, text: 'n3 analysis prose' }],
+      summary: 'n3',
       verdict: 'analyze',
-      route_requests: [{ nodeId: 'n2', question: 'grow beyond the cap' }],
+      route_requests: [{ nodeId: 'n4', question: 'grow beyond the cap' }],
     }) as { error?: string; hint?: string; detail?: Record<string, unknown> };
     assert(rejected.error === 'over_active_scope_budget', 'growth beyond the cap rejects with the stable code');
     assert(typeof rejected.hint === 'string' && rejected.hint.includes('held'), 'hint tells the model its analysis is held');
-    assert(rejected.detail?.node_cap === 2, 'detail carries the effective cap');
+    assert(rejected.detail?.node_cap === 4, 'detail carries the effective cap');
 
     // Amend with the growth pruned: sections may be empty — the held draft restores the prose.
     const amended = engine.submitFindings({
-      focus_node_id: 'n1',
+      focus_node_id: 'n3',
       sections: [],
       summary: '',
       verdict: 'analyze',
@@ -115,6 +121,6 @@ describe('NavigationEngine active-phase admission', () => {
     assert(drained.done === true, 'no further hops remain — the rejected route never entered the queue');
     assert(engine.status === 'complete', 'engine completes without the over-budget node');
     const slotIds = new Set(engine.getResult().detail_slots.map((s) => s.nodeId));
-    assert(slotIds.has('n1') && !slotIds.has('n2'), 'n1 analyzed with held prose; n2 never entered scope');
+    assert(slotIds.has('n3') && !slotIds.has('n4'), 'n3 analyzed with held prose; n4 never entered scope');
   });
 });

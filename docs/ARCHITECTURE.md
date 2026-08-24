@@ -187,6 +187,35 @@ nothing; they are ignored with a debug log and no notification, because the
 replaced card stays visible in the transcript. No `NavigationEngine` is
 published as active until approval succeeds.
 
+#### What the approval binds
+
+The gate is where a rule becomes binding, so the card is split by *whose* rule each line
+is. **From your question** carries what the user stated — a depth they fixed, and their own
+words verbatim as `Noted: "…"`. **How I read it** carries the assistant's mechanization of
+that request: excluded objects, kept-but-skipped objects, excluded schemas, excluded types.
+**My plan** carries what the assistant chose — hop and scope counts, tracing mode, and a
+depth it estimated, written `≈3 levels` with the consequence spelled out in words. A
+re-approval is stamped `· revision N`, and a type group holding no bodied node is marked
+`· kept, not analysed`, because such a node is passed through by the engine whether or not
+anyone asked.
+
+Which strength a rule carries is the model's semantic call, delivered as a typed field —
+never a sentence the host parses. The host enforces, monitors, and rejects; it never guesses
+what the user meant.
+
+What the user approves is then what runs, by construction: `approveGateNode` builds the
+engine with `init(proposal.init)` — the same object that produced the summary the user read.
+`activatePendingExploration` refuses a stale revision before the engine is constructed and
+restores session memory on any failure, so no partially-approved plan goes live. Afterwards
+one predicate, `checkBorder`, is consulted at every admission purpose the engine has — seed
+BFS, routing, supplement, column-trace contraction, display — with the sole scope-add write
+site behind it. Approved exclusions, passthroughs, schema and type filters, and a hard depth
+border are therefore the same fact everywhere the engine looks.
+
+One class of instruction cannot be bound this way. An instruction that maps to no filter
+field is carried as `scopeNotes` to the gate and into every hop, but it is prose addressed to
+the model: nothing rejects a violation of it, because the engine has no field to test.
+
 ### Active exploration
 
 After approval, the engine drains an agenda one focus at a time. The model sees
@@ -271,10 +300,11 @@ and follow-up edit paths and again when the result is read.
 The AI owns summary text, report sections, section-to-node associations,
 captions, and semantic highlights. The engine owns node-ID resolution,
 structural validation, section numbering, badge derivation, object links,
-Markdown and KaTeX validation, assembly, and commit. Invalid block/fenced math,
-unclosed block-math fences, and unmatched inline-code delimiters are rejected
-before graph commit. Nodes may remain visible without a badge or highlight;
-pruning is the only operation that removes them from the answer graph.
+assembly, and commit. Markdown and KaTeX formatting is never validated and
+never rejects a commit: an expression the renderer cannot parse degrades to its
+original source text on screen. Nodes may remain visible without a badge or
+highlight; pruning is the only operation that removes them from the answer
+graph.
 
 In CT, validated terminal source nodes must remain visible in the final source
 presentation surface so the rendered answer cannot silently drop the root of a
@@ -313,12 +343,11 @@ npm run typecheck:tests
 npm test
 npm run test:bfs
 npm run test:runtime
-npm run test:prompts
 npm run gate
 ```
 
 Prompt or tool-policy changes require matching prompt/schema/registry tests.
 Navigation changes require success, rejection, cancellation, malformed-input,
 and closure coverage as applicable. The complete extension can optionally be
-checked with `npm run test:e2e-electron` in the Extension Development Host; see
-[`E2E_TESTING.md`](E2E_TESTING.md).
+checked with `npm run test:edh` in the Extension Development Host; see
+[`EDH_TESTING.md`](EDH_TESTING.md).

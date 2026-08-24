@@ -236,41 +236,6 @@ export function sanitizeDescriptionForChat(description: string): string {
 }
 
 /**
- * A complete verbatim span — content that must survive byte-identical: a fenced code block
- * (three or more backticks, closed by an equal run), a `~~~` fence, a `$$...$$` math block, or an
- * inline code span (a backtick run closed by an equal run on the same line).
- */
-const VERBATIM_SPAN_PATTERN = /(`{3,})[\s\S]*?\1|~~~[\s\S]*?~~~|\$\$[\s\S]*?\$\$|(`+)(?!`)[^`\n]*\2(?!`)/g;
-
-/**
- * Unescapes literal `\n` sequences a model double-escapes into a JSON tool-call string argument
- * (e.g. `\\n` survives `JSON.parse` as the two literal characters `\` + `n` instead of a real
- * newline), but only in prose — never inside a fenced code block, an inline code span, or a
- * `$$...$$` math block.
- *
- * @remarks
- * A KaTeX macro such as `\not`, `\neq`, or `\nabla` also starts with a literal backslash followed
- * by `n`; unescaping those unconditionally splits the macro into a real newline plus the trailing
- * letters (`\not` -> newline + `ot`) — the exact corruption this guards against. Inline code spans
- * are protected with the same equal-backtick-run closure rule `validateMarkdownFormat`
- * (`src/ai/tools/presentResult.ts`) enforces; an unclosed/malformed span is left as ordinary
- * prose, since that content is rejected by that validator regardless.
- *
- * @param text - Raw AI-submitted prose (intro/closing/summary/section text).
- * @returns The same text with literal `\n` in prose turned into a real newline; verbatim spans
- *   pass through unchanged.
- */
-export function unescapeProseNewlines(text: string): string {
-  let out = '';
-  let last = 0;
-  for (const match of text.matchAll(VERBATIM_SPAN_PATTERN)) {
-    out += text.slice(last, match.index).replace(/\\n/g, '\n') + match[0];
-    last = match.index + match[0].length;
-  }
-  return out + text.slice(last).replace(/\\n/g, '\n');
-}
-
-/**
  * Renders ids as a backticked, comma-separated list for a rejection message — the single home for
  * the offender-list quoting rule.
  *

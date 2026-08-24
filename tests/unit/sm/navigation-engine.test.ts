@@ -197,12 +197,45 @@ describe("NavigationEngine Robustness", () => {
   assert(d2.archiveChars === 165, 'archiveChars 165');
 });
 
-  it("and later explicit route requests may grow beyond the reviewed seed.", () => {
-  // Explicit level count → initial seed (origin + child_a only).
+  it("and a later route beyond an explicit level count is deferred, not admitted.", () => {
+  // A level count the AI copied from the user's question is a border, not a seed: the route is
+  // still recorded — as a post-synthesis follow-up — but the node never enters the analysis.
   const engine = new NavigationEngine(model, graph, () => {}, {});
   const res = engine.init({ origin: 'origin', question: 'Show the downstream flow, 1 level down', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
   assert(!('error' in res) && res.scopeSize === 2, 'explicit depth seeds the reviewed scope');
-  assert(engine.currentDepth === 1, 'explicit depth is retained as the initial seed');
+  assert(engine.currentDepth === 1, 'explicit depth is retained as the border');
+
+  engine.getHopContext();
+  engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'root' }], summary: 'root', verdict: 'analyze' });
+  const child = engine.getHopContext();
+  assert(child.focus_node?.id === 'child_a', 'seeded child is the next focus');
+  const beyond = engine.submitFindings({
+    focus_node_id: 'child_a',
+    sections: [{ angle: 'business' as const, text: 'child' }],
+    summary: 'child',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'child_b', question: 'Inspect the next transformation.' }],
+  });
+  assert(!('error' in beyond), 'routing past the border is accepted, not rejected — it is deferred');
+  assert(
+    engine.deferredQuestions.some(q => q.nodeId.toLowerCase() === 'child_b' && q.reason === 'depth'),
+    'the node past the border surfaces as a depth-reason follow-up lead',
+  );
+  const drained = engine.getHopContext();
+  assert(drained.done === true, 'no work past the border remains on the agenda');
+  assert(engine.status === 'complete', 'the border resolves the agenda');
+  assert(
+    !engine.getResult().detail_slots.some(s => s.nodeId.toLowerCase() === 'child_b'),
+    'a deferred node is never analyzed',
+  );
+});
+
+  it("but an unstated depth stays a seed the AI may grow, and an expanded focus may still be pruned.", () => {
+  // The soft path is unchanged: with no level count from the user, an explicit route still
+  // grows the agenda, and the AI may prune the expanded focus after inspecting it.
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const res = engine.init({ origin: 'origin', question: 'Show the downstream flow', direction: 'downstream', depthIntent: { kind: 'default_start' } });
+  assert(!('error' in res), 'default_start seeds without error');
 
   engine.getHopContext();
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'root' }], summary: 'root', verdict: 'analyze' });
@@ -215,7 +248,7 @@ describe("NavigationEngine Robustness", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: 'child_b', question: 'Inspect the next transformation.' }],
   });
-  assert(!('error' in expanded), 'explicit AI route grows beyond the reviewed seed');
+  assert(!('error' in expanded), 'an unstated depth lets an explicit AI route grow the seed');
   const beyondSeed = engine.getHopContext();
   assert(beyondSeed.focus_node?.id === 'child_b', 'beyond-seed route becomes active agenda work');
   const pruned = engine.submitFindings({

@@ -194,18 +194,17 @@ evidence surfaces for synthesis, the verbatim-reuse constraint for preview, the
 depth and heading rules that license only the text-authoring stages — lives with
 its stage. A stage that reaches the tool without that contract is a stage judged
 by rules it was never given. The contract also states the enforced mechanical
-checks upfront — markdown/math delimiter integrity, unique section labels,
-highlight legend labels, the 1-5 highlight-group cap, and the held-draft
-repair convention — so a first rejection is no longer how a model discovers a
-rule. The CT terminal-source mandate (terminal sources must appear in a
-section's node ids or a source highlight group) is stated in the synthesis
-prompt, matching the validator.
+checks upfront — unique section labels, highlight legend labels, the 1-5
+highlight-group cap, and the held-draft repair convention — so a first rejection
+is no longer how a model discovers a rule. The CT terminal-source mandate
+(terminal sources must appear in a section's node ids or a source highlight
+group) is stated in the synthesis prompt, matching the validator.
 
-Validation is field-scoped and runs before commit. Malformed fenced or block
-KaTeX, unclosed block-math fences, and unmatched inline-code delimiters reject
-the affected text fields. A held-draft retry may repair only those rejected
-text fields; graph membership, node associations, and highlights remain
-unchanged.
+Validation is field-scoped and runs before commit, and it is structural only.
+Markdown and math formatting never reject a call: an expression the renderer
+cannot parse degrades to its original source text on screen. A held-draft retry
+may repair only the rejected text fields; graph membership, node associations,
+and highlights remain unchanged.
 
 One submission produces one complete rejection. Checks that need context the
 validator does not hold — the cached discovery answer, the result graph — report
@@ -264,10 +263,16 @@ directly according to the phase policy.
   Schema, depth, and budget limits remain explicit deferred follow-up leads.
 - The overlay keeps focus links interactive, while chat replay removes focus
   anchors for readability.
-- [`src/components/aiDescriptionMarkdown.ts`](../src/components/aiDescriptionMarkdown.ts)
-  is a non-destructive preprocessing boundary.
-- The overlay renders inline, block, and fenced math through `remark-math` and
-  `rehype-katex`. Preserving source text takes priority over cosmetic rewriting.
+- [`src/components/markdown/renderAiMarkdown.ts`](../src/components/markdown/renderAiMarkdown.ts)
+  renders the assembled document with `marked`, the KaTeX extension vendored from
+  VS Code in
+  [`markedKatexExtension.ts`](../src/components/markdown/markedKatexExtension.ts),
+  and DOMPurify. Math therefore follows the same delimiter rules VS Code applies
+  to chat responses: `$…$` inline and `$$…$$` for a block, with prose amounts such
+  as `$20,000` excluded by the surrounding-character guards rather than by
+  disabling the delimiter. An expression KaTeX cannot parse renders as its
+  original source text — preserving source takes priority over cosmetic rewriting,
+  and no formatting flaw can reject a call or end a turn.
 - Heading ownership: the engine owns the document title, numbered section
   headings, and object link headers (H1-H3). AI-authored section bodies must
   not emit `#`, `##`, or `###` headings; use bold labels inside a body. The

@@ -104,24 +104,29 @@ describe("Bipartite Agenda Rule", () => {
 });
 
   it("\"Hop X of Y\" drift where X could exceed Y because out-of-scope route growth never bumped total).", () => {
-  // sp -> table -> viewA -> viewD, init at depthIntent: { kind: 'explicit', levels: 2 } so {sp, table, viewA} are the initial BFS scope
-  // (viewA already agenda'd via table's bipartite contraction) and viewD starts genuinely out-of-scope.
+  // sp -> table -> viewA -> tableC -> viewD. The depth intent is deliberately `default_start`:
+  // this test is about the hop-progress denominator, so the depth border must stay non-binding
+  // or the growth route would be deferred and the accounting under test would never happen.
+  // The default seed (depth 3) is {sp4, table4, viewA4, tableC4}, leaving viewD4 (depth 4)
+  // genuinely out-of-scope while bipartite contraction still makes it a direct neighbour of viewA4.
   const n4: LineageNode[] = [
     makeNode({ id: 'sp4',    schema: 'dbo', name: 'sp4',    type: 'procedure' }),
     makeNode({ id: 'table4', schema: 'dbo', name: 'table4', type: 'table' }),
     makeNode({ id: 'viewA4', schema: 'dbo', name: 'viewA4', type: 'view' }),
+    makeNode({ id: 'tableC4', schema: 'dbo', name: 'tableC4', type: 'table' }),
     makeNode({ id: 'viewD4', schema: 'dbo', name: 'viewD4', type: 'view' }),
   ];
   const e4: Array<[string, string]> = [
     ['sp4', 'table4'],
     ['table4', 'viewA4'],
-    ['viewA4', 'viewD4'],
+    ['viewA4', 'tableC4'],
+    ['tableC4', 'viewD4'],
   ];
   const model4: DatabaseModel = makeModel(n4, e4, ['dbo']);
   const graph4 = makeGraph(n4, e4);
 
   const engine = new NavigationEngine(model4, graph4, () => {}, {});
-  engine.init({ origin: 'sp4', question: 'test, 2 levels down', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+  engine.init({ origin: 'sp4', question: 'test', direction: 'downstream', depthIntent: { kind: 'default_start' } });
 
   const recordInvariant = (label: string) => {
     const p = engine.hopProgress;
@@ -129,8 +134,8 @@ describe("Bipartite Agenda Rule", () => {
     assert(p.total >= p.current + p.open, `${label}: total (${p.total}) covers current + open (${p.current} + ${p.open})`);
   };
 
-  // bodiedScopeSize = sp4 (procedure) + viewA4 (view); table4 doesn't count (non-bodied); viewD4 is
-  // out of the depthIntent: { kind: 'explicit', levels: 2 } BFS scope entirely.
+  // bodiedScopeSize = sp4 (procedure) + viewA4 (view); table4/tableC4 don't count (non-bodied);
+  // viewD4 is out of the default BFS seed entirely.
   assert(engine.hopProgress.total === 2, `initial total is bodiedScopeSize (sp4 + viewA4) — got ${engine.hopProgress.total}`);
 
   // Hop 1: sp4 routes only its direct table4 neighbor. Direct-neighbor action policy forbids
@@ -160,6 +165,9 @@ describe("Bipartite Agenda Rule", () => {
     summary: 'viewA4 routes downstream',
     verdict: 'analyze',
     route_requests: [
+      // tableC4 is an approved in-scope continuation neighbour, so it must be accounted for;
+      // being non-bodied it contracts through to viewD4 rather than adding to the denominator.
+      { nodeId: 'tableC4', question: 'required direct neighbor' },
       { nodeId: 'viewD4', question: 'trace viewD4 (first)' },
       { nodeId: 'viewD4', question: 'trace viewD4 (duplicate in same hop)' },
     ],

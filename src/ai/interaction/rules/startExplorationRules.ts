@@ -16,10 +16,15 @@ type StartRejectIssue = { code: string; path: string; message: string; action: s
  * User-authored text always wins over the model's paraphrase: the retained
  * verbatim discovery prompt covers approve-gate and follow-up flows, the current
  * turn's verbatim prompt covers direct free-text entry, and only then does the
- * model-supplied `question` (or the refined proposal's retained question) apply.
- * Without this precedence the stored question is frequently the model's
- * restatement — or the literal default `'Explore lineage'` — which then anchors
- * every hop and synthesis to the wrong text.
+ * model-supplied `question` apply. Without this precedence the stored question is
+ * frequently the model's restatement — or the literal default `'Explore lineage'`
+ * — which then anchors every hop and synthesis to the wrong text.
+ *
+ * `pendingInitQuestion` outranks the current turn's prompt because callers supply
+ * it only while refining a held proposal, where the turn's prompt is the scope
+ * change ("skip DimCalendar") rather than the question. It is the last surviving
+ * copy of what the user asked, and the sliding-memory wipe removes the original
+ * chat turn after the first hop.
  *
  * @param sources - The candidate question sources in provenance order.
  * @returns The canonical question, or null when no source is available.
@@ -37,9 +42,9 @@ export function resolveCanonicalQuestion(sources: {
       ? v
       : null;
   return pick(sources.lastDiscoveryQuestion)
+    ?? pick(sources.pendingInitQuestion)
     ?? pick(sources.currentTurnPrompt)
-    ?? pick(sources.modelQuestion)
-    ?? pick(sources.pendingInitQuestion);
+    ?? pick(sources.modelQuestion);
 }
 
 const BB_ACTION = 'Omit targetColumns and resubmit the BB specification. If the provider emits an empty array, the encoding boundary normalizes it automatically.';

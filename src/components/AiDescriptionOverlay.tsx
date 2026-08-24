@@ -1,11 +1,7 @@
-import React, { memo, useState } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
+import React, { memo, useMemo, useState } from 'react';
 import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
-import { preprocessDescriptionMarkdown } from './aiDescriptionMarkdown';
+import { FOCUS_NODE_HREF_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
 
 interface AiDescriptionOverlayProps {
   /** The name of the AI-generated view or analysis. */
@@ -22,9 +18,9 @@ interface AiDescriptionOverlayProps {
  * A floating overlay component that displays AI-generated descriptions and logic summaries.
  *
  * @remarks
- * Renders markdown with GitHub Flavored Markdown (GFM) and KaTeX math via
- * `remark-math` + `rehype-katex`, supporting inline `$...$`, block `$$...$$`,
- * and fenced ` ```math ` formulas. Raw source and clipboard copy are also available.
+ * Renders GitHub Flavored Markdown and KaTeX math through the same `marked` extension VS Code
+ * applies to chat responses, so a description renders identically in both surfaces. Raw source
+ * and clipboard copy are also available.
  *
  * @param props - The component props.
  */
@@ -40,37 +36,14 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const [maximized, setMaximized] = useState(false);
   const [fontScale, setFontScale] = useState<0 | 1 | 2>(0);
 
-  function AnchorComponent({ href, children, ...props }: React.HTMLAttributes<HTMLAnchorElement> & { href?: string }) {
-    if (href?.startsWith('#focus-node:') && onFocusNode) {
-      return (
-        <a
-          href={href}
-          {...props}
-          role="button"
-          tabIndex={0}
-          onClick={(e) => { e.preventDefault(); onFocusNode(decodeURIComponent(href.slice('#focus-node:'.length))); }}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onFocusNode(decodeURIComponent(href.slice('#focus-node:'.length))); } }}
-        >
-          {children}
-        </a>
-      );
+  function handleMarkdownClick(e: React.MouseEvent<HTMLDivElement>) {
+    const anchor = (e.target as HTMLElement).closest('a');
+    const href = anchor?.getAttribute('href');
+    if (!href?.startsWith(FOCUS_NODE_HREF_PREFIX) || !onFocusNode) {
+      return;
     }
-    return <a href={href} {...props}>{children}</a>;
-  }
-
-  function H3Component({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-    const arr = React.Children.toArray(children);
-    const first = arr[0];
-    if (typeof first === 'string' && first.startsWith('Objects ')) {
-      return (
-        <h3 {...props}>
-          <span className="ln-ai-objects-label">Objects</span>
-          {first.slice('Objects '.length)}
-          {arr.slice(1)}
-        </h3>
-      );
-    }
-    return <h3 {...props}>{children}</h3>;
+    e.preventDefault();
+    onFocusNode(decodeURIComponent(href.slice(FOCUS_NODE_HREF_PREFIX.length)));
   }
 
   /**
@@ -83,7 +56,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     }).catch(err => window.vscode?.postMessage({ type: 'error', error: `Clipboard write failed: ${err instanceof Error ? err.message : String(err)}` }));
   }
 
-  const processedDescription = preprocessDescriptionMarkdown(description);
+  const html = useMemo(() => renderAiMarkdown(description), [description]);
   const overlayClassName = [
     'ln-ai-description-overlay',
     maximized ? 'ln-ai-description-overlay-maximized' : '',
@@ -186,13 +159,11 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             {rawMode ? (
               <pre className="ln-ai-description-raw">{description}</pre>
             ) : (
-              <div className="ln-ai-description-md">
-                <Markdown
-                  remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
-                  rehypePlugins={[rehypeKatex]}
-                  components={{ a: AnchorComponent, h3: H3Component }}
-                >{processedDescription}</Markdown>
-              </div>
+              <div
+                className="ln-ai-description-md"
+                onClick={handleMarkdownClick}
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
             )}
           </div>
         </div>

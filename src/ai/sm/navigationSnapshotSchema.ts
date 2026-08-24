@@ -93,6 +93,8 @@ const MemorySnapshotSchema = z.object({
   detailSlots: z.record(z.string(), DetailSlotSchema),
   slotCount: NonNegativeInt,
   missionBrief: z.string(),
+  // Optional so a checkpoint written before scope notes existed still restores (tolerant read).
+  scopeNotes: z.array(z.string()).default([]),
   verdictCounts: z.object({
     analyze: NonNegativeInt,
     passthrough: NonNegativeInt,
@@ -178,6 +180,12 @@ const EngineInternalsSchema = z.object({
   direction: z.enum(['upstream', 'downstream', 'bidirectional']),
   depthBudget: NonNegativeInt.nullable(),
   depthEnforcement: z.enum(['strict', 'soft', 'silent']),
+  // Per-side ceilings; `null` on a side means unbounded, since `Infinity` has no JSON form.
+  // Absent in a v1 checkpoint, which restores to seed-only routing instead.
+  depthLimits: z.object({
+    upstream: NonNegativeInt.nullable(),
+    downstream: NonNegativeInt.nullable(),
+  }).strict().optional(),
   depthFromOrigin: z.array(z.tuple([NonEmptyString, NonNegativeInt])),
   extendedDepthCap: NonNegativeInt,
   budgetExpansions: z.array(z.object({ nodeId: NonEmptyString, depth: NonNegativeInt, atHop: NonNegativeInt }).strict()),

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Gate step: every unit test file runs in exactly one of the gate's three unit projects.
 //
-// `npm test` runs `tests/unit/**/*.test.ts` from one glob, but the gate runs `test:core`,
-// `test:runtime` and `test:prompts` — three hard-coded path lists. They happen to cover the same
-// files today, and nothing enforces it: a new `tests/unit/<dir>/` would be picked up by `npm test`
-// and silently never run by the gate, so a green gate would stop meaning "the unit suite passed".
+// `npm test` runs `tests/unit/**/*.test.ts` from one glob, but the gate runs `test:core` and
+// `test:runtime` — two hard-coded path lists. They happen to cover the same files today, and
+// nothing enforces it: a new `tests/unit/<dir>/` would be picked up by `npm test` and silently
+// never run by the gate, so a green gate would stop meaning "the unit suite passed".
 //
 // This compares the two and fails on either half of the mismatch — a file no project claims, or a
 // file two projects both claim (which double-counts a suite total and makes a per-project failure
@@ -21,7 +21,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const UNIT_ROOT = path.join(repoRoot, 'tests', 'unit');
 
 /** The scripts the gate runs as its unit steps. Keep in step with `STEPS` in gate.mjs. */
-const GATE_UNIT_SCRIPTS = ['test:core', 'test:runtime', 'test:prompts'];
+const GATE_UNIT_SCRIPTS = ['test:core', 'test:runtime'];
 
 /** Repo-relative POSIX path, so package.json arguments and disk paths compare as strings. */
 const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');
@@ -110,7 +110,7 @@ for (const [file, scripts] of claimedBy) {
 if (problems.length > 0) {
   console.error('FAIL  the gate unit steps do not cover the unit suite exactly:\n');
   for (const problem of problems) console.error(`  - ${problem}\n`);
-  console.error('See docs/E2E_TESTING.md §Pre-push gate.');
+  console.error('See docs/EDH_TESTING.md §Pre-push gate.');
   process.exit(1);
 }
 

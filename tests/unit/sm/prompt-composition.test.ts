@@ -124,10 +124,9 @@ describe('prompt composition', () => {
       'a node ID appears in exactly ONE section',
       'Decoration follows documentation',
       '`highlight_groups[]` (REQUIRED',
-      // validateMarkdownFormat's four checks (unclosed fence / odd $$ / unclosed backtick run /
-      // KaTeX parse failure) reject the field silently unless the contract states them upfront.
+      // Delimiter balance stays stated upfront so a model closes what it opens. Formatting is
+      // never validated, so this is authoring guidance, not a rejection the contract must warn of.
       'Close every ``` fence',
-      'KaTeX-parseable',
       // The two label rules the validator enforces (duplicate-label reject at presentResult
       // "Duplicate section label"; empty group label reject at "Group label is required").
       'Give each section a different label',
@@ -281,6 +280,19 @@ describe('prompt composition', () => {
       lastDiscoveryQuestion: DEFAULT_EXPLORATION_QUESTION,
       currentTurnPrompt: 'trace the revenue rules',
     })).toBe('trace the revenue rules');
+  });
+
+  it('keeps the pre-refine question when a refine turn supplies new prompt text', () => {
+    // A refine turn's `currentTurnPrompt` is the scope-change instruction ("skip X"), not
+    // the question. The retained proposal question is the only surviving copy of what the
+    // user actually asked, and it anchors every hop and synthesis after approval — so it
+    // must outrank the refinement text, never be replaced by it.
+    expect(resolveCanonicalQuestion({
+      lastDiscoveryQuestion: null,
+      currentTurnPrompt: 'do not prune it only skip dimcalendar and ignore filter criteria',
+      modelQuestion: undefined,
+      pendingInitQuestion: 'Trace [TotalRevenue] in [ai].[FactSalesReport] but only three levels down.',
+    })).toBe('Trace [TotalRevenue] in [ai].[FactSalesReport] but only three levels down.');
   });
 
   it('never invents SQL Server platform context', () => {

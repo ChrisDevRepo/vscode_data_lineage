@@ -153,6 +153,7 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
   const missionBrief = buildMissionBriefBlock(
     sess.memory.getMissionBrief(),
     sess.memory.getUserQuestion() ?? '',
+    sess.memory.getScopeNotes(),
   );
   // Session-constant (resolved once at start_exploration), so stable-prefix-safe.
   const originalQuestion = buildOriginalQuestionBlock(sess.memory.getUserQuestion());

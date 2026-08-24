@@ -148,9 +148,9 @@ export type AiTraceRecord = RuntimeLifecycleRecord | WireRecord;
  *
  * @remarks
  * `extension-host` is a live VS Code session — real user, real Copilot/provider traffic, valid as
- * production evidence. `headless-harness` is `npm run test:live-provider`, which runs the production
- * runtime as a plain Node process against a substituted model port: useful for regression, never
- * evidence about the shipped extension's transport behaviour.
+ * production evidence. `headless-harness` is the internal live-provider harness, which runs the
+ * production runtime as a plain Node process against a substituted model port: useful for
+ * regression, never evidence about the shipped extension's transport behaviour.
  */
 export type TraceOrigin = 'extension-host' | 'headless-harness';
 

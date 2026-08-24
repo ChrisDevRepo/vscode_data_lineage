@@ -12,7 +12,7 @@ import {
   type PresentResultRepairField,
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
-import { quoteIds, unescapeProseNewlines } from '../support/text';
+import { quoteIds } from '../support/text';
 import type { z } from 'zod';
 
 /**
@@ -481,35 +481,6 @@ export function findBareNonPrunedNodes(
 }
 
 /**
- * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
- *
- * @remarks
- * Handles only mechanical normalization the model cannot self-correct: double-escaped newlines.
- * Skips fenced code blocks and `$$...$$` math (see {@link unescapeProseNewlines}) so a KaTeX macro
- * like `\not`/`\neq` is never split by this correction. It does NOT touch content length —
- * GUI-label bounds are enforced by the Zod boundary caps (which reject-and-self-heal past the
- * tolerance), never by silently truncating authored text.
- *
- * @param input - The raw input from the AI.
- * @returns The normalized input.
- */
-export function autoFixPresentResult(input: PresentResultInput): PresentResultInput {
-  let fixed = { ...input };
-
-  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args).
-  // Tolerate a mistyped (non-string) field: pass it through untouched so the downstream
-  // validator reports a clean field error instead of throwing on `.replace` (→ swallowed internal_error).
-  const unescapeNewlines = (s: string): string =>
-    typeof s === 'string' ? unescapeProseNewlines(s) : s;
-  if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
-  if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
-  if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
-  if (fixed.sections) fixed = { ...fixed, sections: fixed.sections.map(s => ({ ...s, text: s.text ? unescapeNewlines(s.text) : s.text })) };
-
-  return fixed;
-}
-
-/**
  * Validates the full `present_result` input against mechanical contracts only.
  *
  * @remarks
@@ -614,8 +585,8 @@ export function validatePresentResult(
   }
 
   // Markdown/KaTeX formatting is never validated here: a formatting flaw must not reject a call
-  // or kill a session. The webview renderer degrades invalid math to red source text
-  // (rehype-katex fallback) and formatting quality is checked by the offline test harness only.
+  // or kill a session. The webview renderer degrades invalid math to its original source text
+  // and formatting quality is checked by the offline test harness only.
 
   // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
   if (hasSections) {

@@ -162,9 +162,9 @@ assembles the rendered description from structured result parts. See
 
 ## Testing
 
-The framework has four logical suites over two runners: Core, Agent runtime, and
-prompt goldens use Vitest; optional E2E uses VS Code Electron. SQL parsing and
-graph traversal remain protected Core subsets and must not shrink.
+The framework has two logical suites over two runners: Core and Agent runtime
+use Vitest; optional Electron smoke lanes are a separate, optional tier. SQL
+parsing and graph traversal remain protected Core subsets and must not shrink.
 
 | Tier | Command | Scope |
 |------|---------|-------|
@@ -172,17 +172,16 @@ graph traversal remain protected Core subsets and must not shrink.
 | **Unit suite** | `npm test` | Every maintained unit test. Use the runner output for current totals. |
 | **Protected core** | `npm run test:core` | Parser and engine unit projects. |
 | **Agent runtime** | `npm run test:runtime` | Deterministic agent-runtime and state-machine logic with a stubbed VS Code API and model doubles. Zero model calls — not an AI test. |
-| **Prompt goldens** | `npm run test:prompts` | Prompt-composition golden files under `tests/unit/prompts`. |
 | **Core subsets** | `npm run test:parser`, `npm run test:bfs` | Focused parser or graph traversal/analysis verification. |
 | **Test type-checking** | `npm run typecheck:tests` | Type-checks `tests/unit/**` against production source. |
-| **Optional Electron lanes** | `npm run test:e2e-electron` | Runs the extension in a real VS Code host across all five labels. Two deliberately have no provider; three use a local scripted one. No external model is contacted, so this is not end-to-end in the product sense. See [`E2E_TESTING.md`](E2E_TESTING.md). |
+| **Optional Electron lanes** | `npm run test:edh` | Runs the extension in a real VS Code host across four smoke labels. Three deliberately have no provider; one uses a local scripted one. No external model is contacted, so this is not end-to-end in the product sense. See [`EDH_TESTING.md`](EDH_TESTING.md). |
 
 Run `npm run typecheck` after every structural change; the type system is the
 first line of defence.
 
-The `scripted-provider` and `participant-turn` lanes use deterministic scripted
-language-model fixtures registered through the real public `vscode.lm` API.
-They verify extension/API wiring with fixed responses; they do not perform
+The `participant-turn` lane uses a deterministic scripted language-model
+fixture registered through the real public `vscode.lm` API. It verifies
+extension/API wiring with fixed responses; it does not perform
 inference, contact an external model provider, or require or read an API key.
 Model reasoning and the rendered Chat UI remain outside the automated suite.
 Real-provider or manual UAT runs are separate lanes and must be started
