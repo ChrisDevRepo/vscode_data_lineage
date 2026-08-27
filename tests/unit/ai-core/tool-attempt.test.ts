@@ -1060,6 +1060,72 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     return { state, results };
   }
 
+  it('answers a cross-attempt resend of an accepted read with an uncharged duplicate_read envelope instead of a silent replay', async () => {
+    const { registry, invocations } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { text: 'Two objects changed.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 3; index++) {
+      const result = await executeToolAttempt(port, plan, { priorState: state });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    expect(invocations).toHaveLength(1);
+    expect(results[1].calls.map((call) => call.status)).toEqual(['rejected']);
+    expect(results[1].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
+    expect(results[1].semanticFailures).toBe(0);
+    expect(state.semanticFailures).toBe(0);
+    expect(state.stopReason).toBeNull();
+    const replayed = port.requests[2].messages;
+    const trailing = JSON.parse(String(replayed[replayed.length - 1].content)) as Record<string, unknown>;
+    expect(trailing.code).toBe(REJECTION_CODES.duplicateRead);
+    expect(String(trailing.reason)).toContain('call-1');
+    expect(replayed.map((message) => String(message.content)).join(' ')).toContain('[ai].[vwpricelist]');
+  });
+
+  it('retires a rejection once the same tool is accepted, so the repaired call is not replayed as a standing correction', async () => {
+    const { registry } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [invalidCall('call-1', 'lineage_get_screen_state', 'invalid_tool_input', 'filter: Send either ids or filter, never both.', ['filter'])] },
+      { toolCalls: [validCall('call-2', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { toolCalls: [validCall('call-3', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { text: 'Two objects changed.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < 4; index++) {
+      state = recordToolAttempt(state, await executeToolAttempt(port, plan, { priorState: state }));
+    }
+
+    expect(state.rejections.map((rejection) => rejection.code)).toEqual([REJECTION_CODES.duplicateRead]);
+    expect(state.observations.map((observation) => observation.callId)).toEqual(['call-2']);
+    const rendered = (index: number) => port.requests[index].messages.map((message) => String(message.content)).join(' ');
+    expect(rendered(1)).toContain('invalid_tool_input');
+    expect(rendered(2)).not.toContain('invalid_tool_input');
+    expect(rendered(3)).not.toContain('invalid_tool_input');
+    expect(rendered(3)).toContain('[ai].[vwpricelist]');
+  });
+
   it('replays turn 23: two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {
     const envelope = presentResultRejectionEnvelope({
       reason: 'highlight_groups node_ids must be explained by sections[].node_ids or notes[]: [dbo].[Orders]',

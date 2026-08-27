@@ -117,24 +117,27 @@ export class ColumnTracer {
   }
 
   /**
-   * Generates chain-continuation questions for the real upstream column edges staged at the given hop.
-   * Injected as `<lineage_questions>` in the next hop's `<current_task>`.
+   * Generates chain-continuation questions for the real upstream column edges staged at the given
+   * hop, grouped by the upstream node that must next answer each one. Injected as
+   * `<lineage_questions>` in that node's own `<current_task>` — never a different, unrelated hop.
    *
    * @remarks
    * Terminal/current-node production is represented by a flow entry with `upstream_columns: []`, which
-   * stages no edge and therefore spawns no continuation question.
+   * stages no edge and therefore spawns no continuation question. Each question is labelled by
+   * `edge.from_col` — the column that is actually active once the named node is traced — not
+   * `edge.to_col`, so the wording matches that hop's own `<column_trace>` active-column label.
    *
    * @param focusId - The id of the focus node.
    * @param hopCount - The hop count matching the edges to query.
-   * @returns An array of continuation questions for unaccounted upstream columns.
+   * @returns Continuation questions keyed by the upstream node id that must answer each one.
    */
-  getColumnLineageQuestions(focusId: string, hopCount: number): string[] {
+  getColumnLineageQuestionsByNode(focusId: string, hopCount: number): Map<string, string[]> {
     const hopEdges = this.aspect.edges.filter(
       e => e.hop_node === focusId && e.hop === hopCount,
     );
-    if (hopEdges.length === 0) return [];
+    const byNode = new Map<string, string[]>();
+    if (hopEdges.length === 0) return byNode;
 
-    const questions: string[] = [];
     const seen = new Set<string>();
 
     for (const edge of hopEdges) {
@@ -142,11 +145,25 @@ export class ColumnTracer {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      questions.push(
-        `Column \`${edge.to_col}\`: flows from \`${edge.from_node}.${edge.from_col}\` — trace its origin at \`${edge.from_node}\`.`,
-      );
+      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into \`${edge.to_col}\` at \`${edge.hop_node}\` — determine its origin here.`;
+      const existing = byNode.get(edge.from_node);
+      if (existing) existing.push(question);
+      else byNode.set(edge.from_node, [question]);
     }
-    return questions;
+    return byNode;
+  }
+
+  /**
+   * Flat form of {@link getColumnLineageQuestionsByNode} — every continuation question for the hop,
+   * irrespective of which upstream node must answer it. Diagnostics/telemetry use only; the live
+   * per-hop render path reads the grouped form so each node sees only its own questions.
+   *
+   * @param focusId - The id of the focus node.
+   * @param hopCount - The hop count matching the edges to query.
+   * @returns An array of continuation questions for unaccounted upstream columns.
+   */
+  getColumnLineageQuestions(focusId: string, hopCount: number): string[] {
+    return Array.from(this.getColumnLineageQuestionsByNode(focusId, hopCount).values()).flat();
   }
 
   /**

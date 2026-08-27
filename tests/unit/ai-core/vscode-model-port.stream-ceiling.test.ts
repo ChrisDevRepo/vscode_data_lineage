@@ -70,8 +70,9 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
     const prefix = turn24Prefix();
     const filler = 'f'.repeat(50_000);
     // prefix + 4 filler chunks crosses STREAM_TEXT_CHAR_CEILING (200,000) on the 4th filler chunk;
-    // a 5th "poison" chunk must never be fetched if the drain is actually aborted.
-    const chunks = [prefix, filler, filler, filler, filler, 'POISON-SHOULD-NOT-STREAM'];
+    // a 5th benign filler absorbs the bridge's one-chunk read-ahead, so the POISON chunk after it
+    // is never fetched if the drain is actually aborted.
+    const chunks = [prefix, filler, filler, filler, filler, filler, 'POISON-SHOULD-NOT-STREAM'];
     const { port, script } = portOver(chunks);
 
     const result = await port.generateToolTurn({
@@ -96,7 +97,11 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
 
     // The drain actually stopped early (not merely truncated by luck): the poison chunk was never
     // pulled, and the underlying stream was closed exactly once through the normal return path.
-    expect(script.nextCalls()).toBe(5);
+    // Contract: `IterableReadableStream.fromAsyncGenerator`'s WHATWG ReadableStream (default
+    // highWaterMark 1) reads one chunk ahead of the consumer, so the ceiling breaks on the 5th
+    // `next()` call and the read-ahead consumes the 6th (a benign filler) — the poison chunk is
+    // never pulled.
+    expect(script.nextCalls()).toBe(6);
     expect(script.returnCalls()).toBe(1);
   });
 

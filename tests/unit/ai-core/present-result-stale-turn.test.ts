@@ -195,6 +195,22 @@ describe('executePresentResult — turn-lease enforcement', () => {
     expect(resultGraph.summary).toBe('How Orders is populated.');
   });
 
+  it('attaches runId and engine checkpoint to the artifact through the single guarded commit', async () => {
+    const session = new AiSession();
+    seedResultGraph(session);
+    const epoch = session.beginTurn();
+    const snapshot = { scopeNodeIds: [ORIGIN_NODE] };
+    session.stateMachine = { toJSON: () => snapshot } as never;
+    const probe = handlerProbe(session, epoch);
+
+    const result = parseResult(await executePresentResult(validPresentResultInput(), probe.services));
+
+    expect(result.success).toBe(true);
+    expect(session.presentationArtifact?.runId).toBe(session.id);
+    expect(session.presentationArtifact?.checkpoint).toBe(snapshot);
+    expect(session.presentationArtifact?.aiMetadata.runId).toBe(session.id);
+  });
+
   it('marks a result auto-dispatched only after the webview accepts it', async () => {
     const session = new AiSession();
     seedResultGraph(session);

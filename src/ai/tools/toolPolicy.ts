@@ -6,12 +6,12 @@
  *
  * | Stage                     | Tools                                                                                            |
  * |---------------------------|--------------------------------------------------------------------------------------------------|
- * | `discover`                | get_context, search_objects, get_scope_bundle, search_ddl, get_object_detail, detect_graph_patterns |
+ * | `discover`                | get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl, get_object_detail, detect_graph_patterns |
  * | `visual_preview`          | present_result (restructures the cached discovery answer)                                  |
- * | `sm_entry`                | search_objects, start_exploration (resolve origin + open the consent gate)                        |
+ * | `sm_entry`                | get_screen_state, search_objects, start_exploration (resolve origin + open the consent gate)      |
  * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | present_result                                                                                    |
- * | `completed`               | present_result, get_object_detail, search_ddl, search_objects, start_exploration (supplement-only) |
+ * | `completed`               | present_result, get_object_detail, get_screen_state, search_ddl, search_objects, start_exploration (supplement-only) |
  *
  * SM keeps `present_result` synthesis-only because the agenda drains across many hops.
  */
@@ -40,6 +40,7 @@ export type LmStage =
 /** Tools visible when the session is idle or answering ad-hoc questions. */
 const DISCOVERY_TOOLS: readonly string[] = [
   'lineage_get_context',
+  'lineage_get_screen_state',
   'lineage_search_objects',
   'lineage_get_scope_bundle',
   'lineage_search_ddl',
@@ -52,8 +53,9 @@ const VISUAL_PREVIEW_TOOLS: readonly string[] = [
   'lineage_present_result',
 ];
 
-/** Tools visible while resolving the SM origin and opening the consent gate. */
+/** Tools visible while resolving the SM origin and opening the consent gate; the screen card resolves an origin the user referred to as "this trace". */
 const SM_ENTRY_TOOLS: readonly string[] = [
+  'lineage_get_screen_state',
   'lineage_search_objects',
   'lineage_start_exploration',
 ];
@@ -76,6 +78,7 @@ const SYNTHESIS_TOOLS: readonly string[] = [
 const COMPLETED_TOOLS: readonly string[] = [
   'lineage_present_result',
   'lineage_get_object_detail',
+  'lineage_get_screen_state',
   'lineage_search_ddl',
   'lineage_search_objects',
   'lineage_start_exploration',

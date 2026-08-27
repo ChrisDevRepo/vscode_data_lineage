@@ -13,6 +13,7 @@ import type { AiSession } from '../../session/session';
 import type { Logger } from '../../../utils/log';
 import type { DatabaseModel, LineageNode } from '../../../engine/types';
 import type { SerializedFilterState } from '../../../engine/projectStore';
+import type { StoredRunReader } from '../../session/runStore';
 
 /** Host capabilities available to mutating lineage-tool handlers. */
 export interface ToolServices {
@@ -20,6 +21,8 @@ export interface ToolServices {
   readonly getSession: () => AiSession;
   /** Accessor for the active webview panel; `present_result` posts the rendered view to it. */
   readonly getPanel: () => vscode.WebviewPanel | undefined;
+  /** Resolves the persisted AI run behind an applied bookmark; absent when the host wires no store. */
+  readonly getStoredRun?: StoredRunReader;
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */
   readonly logger: Logger;
   /** Current turn epoch — the turn lease wins over the session field so stale-turn writes are rejectable. */

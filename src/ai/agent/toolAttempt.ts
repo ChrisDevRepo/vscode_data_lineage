@@ -49,11 +49,20 @@ import { longestPrefixFitting } from '../support/textTruncation';
 /** Cumulative semantic failures allowed in one logical phase/hop before termination. */
 export const MAX_TOOL_SEMANTIC_FAILURES = 3;
 
-/** Rejection codes that are provider/transport artifacts, never charged to the model's semantic budget. */
+/**
+ * Rejection codes exempt from the model's semantic budget: provider/transport artifacts
+ * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration}) plus
+ * {@link REJECTION_CODES.duplicateRead}, a deliberate policy exemption for a model resending a
+ * call it already has the answer to — not a transport artifact.
+ */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
   REJECTION_CODES.emptyGeneration,
+  REJECTION_CODES.duplicateRead,
 ]);
+
+/** Hint paired with a `duplicate_read` rejection: the answer material is already in the observations. */
+const DUPLICATE_READ_HINT = 'Use that result to answer the user, or call the tool with different input.';
 
 /** Reports whether a rejection code counts against {@link MAX_TOOL_SEMANTIC_FAILURES}. */
 function isChargeableRejection(code: string): boolean {
@@ -495,6 +504,12 @@ function boundStoredRejections(rejections: readonly ToolAttemptRejection[]): Too
 /**
  * Appends one attempt without resetting semantic failures after successful calls.
  *
+ * @remarks
+ * An accepted observation retires every rejection of the same tool recorded by an earlier attempt:
+ * the correction it carried has been applied, and replaying it as the standing exchange would
+ * instruct the model to resend a call it already repaired. A rejection from the same attempt as the
+ * accepted call is kept for one more generation.
+ *
  * @param state - Existing phase-local cumulative state.
  * @param attempt - Exactly one completed graph attempt.
  * @returns Updated state with independent semantic and physical-call hard stops.
@@ -506,7 +521,11 @@ export function recordToolAttempt(
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const semanticFailures = state.semanticFailures + attempt.semanticFailures;
   const observations = boundStoredObservations([...state.observations, ...attempt.observations]);
-  const rejections = boundStoredRejections([...state.rejections, ...attempt.rejections]);
+  const repairedTools = new Set(attempt.observations.map((observation) => observation.toolName));
+  const rejections = boundStoredRejections([
+    ...state.rejections.filter((rejection) => !repairedTools.has(rejection.toolName)),
+    ...attempt.rejections,
+  ]);
   const acceptedTerminal = attempt.stop === 'final'
     || attempt.stop === 'gate'
     || attempt.stop === 'reroute'
@@ -1166,6 +1185,8 @@ function emitSynthesizedRejection(
  * @param model - Request-scoped model port; must record exactly one provider call.
  * @param input - Turn context: message history, registry, tool choice, and phase/gate detectors.
  * @returns The attempt's calls, observations, rejections, and terminal `stop` classification.
+ * @throws When the model port violates the single-generation contract by recording more or fewer
+ *   than one provider call for this attempt.
  */
 export async function executeToolGenerationAttempt(
   model: SingleGenerationModelPort,
@@ -1256,9 +1277,14 @@ export async function executeToolGenerationAttempt(
   // scan order: prior-attempt observations are seeded first, then this batch's own accepted reads are
   // folded in as they are recorded, and a key already present is never overwritten.
   const reusableObservations = new Map<string, ToolAttemptObservation>();
+  // Keys already answered by an earlier generation: a resend of one of these is the model asking
+  // again for a result it holds, and is answered with a `duplicate_read` envelope instead of a
+  // silent replay it cannot see. Same-batch siblings stay silently reused.
+  const priorObservationKeys = new Set<string>();
   for (const observation of input.priorObservations ?? []) {
     if (observation.acceptedCallKey !== undefined && !reusableObservations.has(observation.acceptedCallKey)) {
       reusableObservations.set(observation.acceptedCallKey, observation);
+      priorObservationKeys.add(observation.acceptedCallKey);
     }
   }
 
@@ -1319,6 +1345,17 @@ export async function executeToolGenerationAttempt(
     const reused = reusableKey ? reusableObservations.get(reusableKey) : undefined;
     if (reused) {
       input.onToolResult?.(call.toolName, call.input, false, reused.result);
+      if (reusableKey && priorObservationKeys.has(reusableKey)) {
+        recordToolOutcome(call, {
+          status: 'rejected',
+          code: REJECTION_CODES.duplicateRead,
+          message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
+          correction: { hint: DUPLICATE_READ_HINT },
+          detail: { acceptedCallId: reused.callId },
+        }, calls, observations, rejections, input.traceSyntheticRejection);
+        input.debugLog?.(`[AI] tool-result-duplicate phase=${safeLogIdentifier(input.phase, 'unknown')} tool=${safeLogIdentifier(call.toolName, 'unknown')} callId=${safeCallId(call.callId)}`);
+        continue;
+      }
       recordToolOutcome(call, {
         status: 'executed',
         detail: { result: reused.result, observe: false },

@@ -140,7 +140,13 @@ export type PresentResultError = {
   detail?: ReadonlyArray<{ readonly path: string }>;
 };
 
-/** Splits the cached discovery answer into engine-owned title/summary and verbatim section source. */
+/**
+ * Splits the cached discovery answer into engine-owned title/summary and verbatim section source.
+ *
+ * @param answer - The cached discovery chat answer (Markdown), title already inline if present.
+ * @returns The split-off `title` (absent when the answer has no leading heading), the remaining
+ *   `body`, and a one-line `summary` derived from the title or first non-empty body line.
+ */
 export function discoveryPreviewNarrative(answer: string): {
   title?: string;
   body: string;
@@ -253,6 +259,12 @@ export function isRepairablePresentResultFailure(failure: PresentResultError): b
  * Patch fields replace whole presentation collections by design. The model does not send partial
  * array operations; it sends the corrected sections/notes/highlight_groups collection, and the
  * normal validation/assembly path checks the merged full draft.
+ *
+ * @param draft - The held full `present_result` draft the patch amends.
+ * @param patch - The repair patch fields sent by the model.
+ * @param allowedFields - The fields this rejection authorized for repair.
+ * @returns The draft with `allowedFields` keys from `patch` merged in.
+ * @throws When `patch` names a key outside `allowedFields`.
  */
 export function mergePresentResultRepairPatch(
   draft: PresentResultInput,
@@ -497,7 +509,7 @@ export function findBareNonPrunedNodes(
  * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
  * never read from `input`. The AI does not write the assembled document.
  *
- * @param input - The (possibly auto-fixed) AI input.
+ * @param input - The raw AI input.
  * @param resolvedNodeIds - The canonical set of node IDs.
  * @param assembledBadges - Pre-assembled numbered badges for consistency.
  * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
@@ -505,6 +517,9 @@ export function findBareNonPrunedNodes(
  *   Completed Phase, so `highlight_groups` may be inherited from that prior render. A held synthesis
  *   draft is not an amendment and must still pass the complete new-render contract. Computed by the
  *   dispatcher — never the model's raw `is_update` flag.
+ * @param externalViolations - Findings from checks that need context this function does not hold
+ *   (the cached discovery answer, the result graph), reported through this accumulator alongside the
+ *   structural rules below — see {@link PresentResultViolation}.
  * @param stage - The calling stage (engine-derived), used to keep the unknown-node-id repair hint
  *   caller-possible — see {@link presentNodeIdHint}. Defaults to `'completed'`, the only stage whose
  *   tool policy includes `lineage_search_objects`, so existing callers that do not pass a stage keep

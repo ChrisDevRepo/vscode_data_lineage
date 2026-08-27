@@ -48,8 +48,9 @@ model.
 ```
 
 Use it to ask dependency questions, preview graph scopes, save useful previews as
-bookmarks, and — where the metadata allows — follow column mappings or explain
-SQL logic.
+bookmarks, ask about what is on screen (*"explain this trace"*, or `#lineageView`),
+recall what an earlier analysis found from its saved AI bookmark, and — where the
+metadata allows — follow column mappings or explain SQL logic.
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
@@ -71,7 +72,7 @@ demo data, profiling, and export features work without one.
 - **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
 - **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
-- **Optional `@lineage` AI** — use VS Code Chat to ask lineage questions, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows.
+- **Optional `@lineage` AI** — use VS Code Chat to ask lineage questions, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows. The assistant can read what is currently on screen, and a bookmark saved from an AI-authored view keeps that run's findings so a later question can recall them.
 - **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).

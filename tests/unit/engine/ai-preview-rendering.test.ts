@@ -1,22 +1,35 @@
 import { describe, it, expect } from 'vitest';
-import { buildTableTraceColumns, groupCtFlowsByNeighbor, type CtTooltipFlow } from '../../../src/components/CustomNode';
+import { buildColumnTraceView, type ColumnTraceRelation, type ColumnTraceViewObject } from '../../../src/engine/columnTraceView';
 
 describe('ai preview rendering', () => {
-  const flows: CtTooltipFlow[] = [
-    { neighborNode: '[ai].[vwPriceList]', direction: 'in', fromCol: 'UnitPrice', toCol: 'TotalRevenue' },
-    { neighborNode: '[ai].[vwConsolidatedSales]', direction: 'in', fromCol: 'Qty', toCol: 'TotalRevenue' },
-    { neighborNode: '[ai].[vwPriceList]', direction: 'in', fromCol: 'UnitPrice', toCol: 'TotalRevenue' }, // duplicate
+  const objects = new Map<string, ColumnTraceViewObject>([
+    ['[ai].[vwpricelist]', { id: '[ai].[vwPriceList]', label: 'vwPriceList', schema: 'ai', objectType: 'view' }],
+    ['[ai].[vwconsolidatedsales]', { id: '[ai].[vwConsolidatedSales]', label: 'vwConsolidatedSales', schema: 'ai', objectType: 'view' }],
+    ['[ai].[factsalesreport]', { id: '[ai].[FactSalesReport]', label: 'FactSalesReport', schema: 'ai', objectType: 'table' }],
+  ]);
+
+  const relations: ColumnTraceRelation[] = [
+    { hopNode: '[ai].[FactSalesReport]', fromNode: '[ai].[vwPriceList]', fromCol: 'UnitPrice', toNode: '[ai].[FactSalesReport]', toCol: 'TotalRevenue' },
+    { hopNode: '[ai].[FactSalesReport]', fromNode: '[ai].[vwConsolidatedSales]', fromCol: 'Qty', toNode: '[ai].[FactSalesReport]', toCol: 'TotalRevenue' },
+    { hopNode: '[ai].[FactSalesReport]', fromNode: '[ai].[vwPriceList]', fromCol: 'UnitPrice', toNode: '[ai].[FactSalesReport]', toCol: 'TotalRevenue' },
   ];
 
-  it('table tooltip columns are unique and sorted without arrow semantics', () => {
-    expect(buildTableTraceColumns(flows)).toEqual(['Qty', 'TotalRevenue', 'UnitPrice']);
+  it('a repeated relation does not repeat the row it lands on', () => {
+    const view = buildColumnTraceView({ relations, objects });
+    const target = view.nodes.find(n => n.id === '[ai].[FactSalesReport]');
+    expect(target?.rows.map(r => r.name)).toEqual(['TotalRevenue']);
   });
 
-  it('flows are grouped by neighbor and deduplicated within a group', () => {
-    const grouped = groupCtFlowsByNeighbor(flows);
-    expect(grouped.length).toBe(2);
-    expect(grouped[0]?.neighborNode).toBe('[ai].[vwConsolidatedSales]');
-    expect(grouped[1]?.neighborNode).toBe('[ai].[vwPriceList]');
-    expect(grouped[1]?.rows.length).toBe(1);
+  it('a repeated relation does not draw a second edge', () => {
+    const view = buildColumnTraceView({ relations, objects });
+    expect(view.edges.length).toBe(2);
+    expect(new Set(view.edges.map(e => e.id)).size).toBe(2);
+  });
+
+  it('two distinct upstream columns feeding one output read as a fan-in of two', () => {
+    const view = buildColumnTraceView({ relations, objects });
+    const row = view.nodes.find(n => n.id === '[ai].[FactSalesReport]')?.rows[0];
+    expect(row?.shape).toBe('fan-in');
+    expect(row?.contributors).toBe(2);
   });
 });

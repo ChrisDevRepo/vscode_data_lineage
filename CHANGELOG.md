@@ -1,13 +1,20 @@
 # Changelog
 
-## [1.1.1] - 2026-08-20
+## [1.1.1] - 2026-08-26
+
+### Added
+- The assistant reads what is on screen, and recalls a saved AI view's findings and open questions in later chats.
 
 ### Changed
-- A depth stated in your question is now a hard limit, per direction; objects just past it are reported as follow-up leads, and the approval window separates what you asked for from what the assistant chose, labeling a revised scope with its revision.
+- A depth stated in a question is a hard limit per direction; objects past it become follow-up leads.
+- Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.
 
 ### Fixed
-- Formulas in AI descriptions render as mathematics — inline and as centred blocks — matching the chat panel.
-- Depth is measured along the direction the data flows, so objects linked through a shared audit table are no longer treated as closer than they are.
+- Formulas in AI descriptions render as mathematics, inline and as blocks.
+- Depth follows data-flow direction, so a shared audit table no longer makes objects look closer.
+- Repeated identical tool calls no longer loop a turn without an answer.
+- Improved column tracking: each hop of a column trace receives its own lineage questions.
+- A column trace no longer hands a procedure a column the source table does not have, so bidirectional traces starting at a view now complete.
 
 ## [1.1.0] - 2026-08-20
 

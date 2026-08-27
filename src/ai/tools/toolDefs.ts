@@ -11,6 +11,7 @@ import type { z } from 'zod';
 import type { ToolDefinition } from './registry';
 import {
   GetContextInputSchema,
+  GetScreenStateInputSchema,
   SearchObjectsInputSchema,
   GetScopeBundleModelSchema,
   StartExplorationProviderInputSchema,
@@ -94,7 +95,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_object_detail', inputSchema: GetObjectDetailInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Get full details for a specific database object.',
-    modelDescription: 'Primary single-object lookup for discovery and synthesis. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls. During active SM exploration, use lineage_get_neighbor_columns instead.',
+    modelDescription: 'Primary single-object lookup for discovery and synthesis. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.',
     progressLabel: 'Fetching object details…',
   },
   {
@@ -112,8 +113,14 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_neighbor_columns', inputSchema: GetNeighborColumnsInputSchema, tags: ['lineage'], effect: 'read',
     userDescription: 'Inspect a neighbor\'s columns for pruning decisions during active SM exploration.',
-    modelDescription: 'Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. Use this exclusively when the focus DDL is opaque (e.g., \'SELECT *\' or ambiguous joins) and the column names are hidden. For explicit DDL, derive the structure directly from the text instead. NEVER returns DDL bodies. Pass neighbor ids only, excluding the focus node itself.',
+    modelDescription: 'Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. Use this exclusively when the focus DDL is opaque (e.g., \'SELECT *\' or ambiguous joins) and the column names are hidden. For explicit DDL, derive the structure directly from the text instead. DDL text is not returned. Pass neighbor ids only, excluding the focus node itself.',
     progressLabel: 'Inspecting neighbor columns…',
+  },
+  {
+    name: 'lineage_get_screen_state', inputSchema: GetScreenStateInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
+    userDescription: 'Shows what is currently on screen: active trace, analysis, or applied bookmark.',
+    modelDescription: 'Returns what the user currently sees in the lineage graph: the active trace (origin, depth, nodes added or pruned by hand), the active graph analysis (type, selected group), the applied bookmark (name, source; for an AI-authored bookmark also the original run question, start object, scope and open questions), and the view level. Call this when the user says "this trace", "the analysis I ran", "this view / bookmark", or "what am I looking at". Use lineage_get_context for schemas, statistics and filters instead. Without input it returns the screen card. When an AI-authored bookmark is applied, the run that produced it is stored with the bookmark: pass ids to recall what that run found about specific objects (summary, decision with its reason, and whether the object\'s definition changed since), or pass filter to list one class — "pruned" (objects removed, with the reason), "open_leads" (questions the run left open), "stale" (objects whose definition changed since the run). Recalled findings describe an object as it was at run time; for a stale object, confirm with lineage_get_object_detail before answering.',
+    progressLabel: 'Reading screen state…',
   },
 ] as const satisfies readonly ToolContract[];
 

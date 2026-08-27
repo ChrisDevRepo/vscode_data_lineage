@@ -46,7 +46,11 @@ model would break that inheritance rather than extend it.
 
 `vscode.lm` has no system role, so `VscodeLangChainBridge` downgrades a
 `SystemMessage` to a User turn. Anything that depends on system-role semantics
-has to survive that mapping.
+has to survive that mapping. Copilot Chat also prepends its own `system`
+message to every request (content policy, "keep answers short", Markdown,
+KaTeX `$`/`$$`, mermaid code blocks); the extension's depth and "never draw
+diagrams" rules must therefore be explicit in its own instruction text — they
+cannot rely on being the only instructions the model sees.
 
 Tool calls run through the local strict-Zod dispatcher, not
 `vscode.lm.invokeTool`. The bridge preserves tool-selection semantics across the
@@ -55,6 +59,18 @@ and a named choice exposes only that tool. Unsupported choices and missing
 tool-call IDs fail before model dispatch, where the diagnosis is still cheap.
 The `package.json` `languageModelTools` manifest is generated from the Zod
 schemas and a drift test guards the pair.
+
+An AI-authored view carries its run forward. `present_result` stamps the run id
+onto the view metadata and, once the presentation commits, captures the engine
+checkpoint onto the session artifact; the capture is try/catch-guarded and
+observed at debug, so it can never fail an answer the model already earned. The
+user's bookmark save is what persists it: the record is written to `globalState`
+under `dataLineageViz.aiRun.<bookmarkId>` only when the profile is AI-authored
+and its run id matches the captured presentation, and a failed or oversized
+write logs a warning while the bookmark save itself stays successful. Deleting
+the bookmark clears the record. `lineage_get_screen_state` is the only reader
+and is read-only; the record is read tolerantly, so an absent, older, or
+foreign-shaped one answers `no_run_memory` rather than failing the call.
 
 ## How a turn runs
 
@@ -74,6 +90,13 @@ Active exploration begins only through the approve-gate path, and
 engine. Every mutating or panel-presenting tool call runs under the active turn
 lease — including calls arriving through externally registered `vscode.lm` tools
 from Copilot agent mode, not only through the internal dispatcher.
+
+Within one phase the retry context re-projects accepted observations and the
+newest rejection. An accepted call retires every earlier rejection of the same
+tool, and a resend byte-identical to a read accepted in an earlier attempt is
+answered with an uncharged `duplicate_read` envelope naming the accepted call —
+a silent replay left the model with no response to act on and it repeated the
+call until the provider-call stop.
 
 `NavigationEngine` owns BFS scope, agenda, gates, route validation, pruning,
 closure, and termination. Bounding traversal in the engine rather than in the
@@ -108,6 +131,14 @@ alike, so a rule given to one stage and not the other surfaces as a rejection
 the model could not have avoided — a prompt-composition defect, not a model
 defect. Stage-specific text stays with its stage; everything else belongs in the
 shared builder.
+
+`assets/aiOutputTemplates.yaml` owns *what* an answer contains and *when* a
+template block applies — the user-overridable layer. Code-owned prompt text and
+tool `.describe()` strings own *how* the model operates the mechanism (which
+field carries which template, which phase allows which call). Never move a
+content rule or threshold out of the YAML into `prompts.ts` or a schema
+description; a description may reference the template entry, never restate it.
+Contract: `docs/AI_PROMPTS.md` §Source of truth.
 
 `validatePresentResult` is the single rejection point. Checks that need context
 the validator does not hold — a cached discovery answer, the result graph — pass
@@ -202,10 +233,11 @@ source and tests are the implementation baseline.
 
 `npm run gate` is the deterministic pre-merge check; `CONTRIBUTING.md` and the
 `package.json` scripts list the command set. Beyond type-checking, builds, and the
-unit suites it enforces five derived contracts: the
+unit suites it enforces six derived contracts: the
 `contributes.languageModelTools` manifest drift check, the AI template
-schema-version gate, the honest-test-label scan, the packaged-VSIX contents check,
-and the `assert-no-langsmith` bundle check.
+schema-version gate, the honest-test-label scan, the unit-project coverage check
+that makes the two unit steps add up to the whole suite, the packaged-VSIX
+contents check, and the `assert-no-langsmith` bundle check.
 
 `npm run test:edh` runs the extended VS Code Electron lanes outside the gate,
 against a scripted provider registered through the real `vscode.lm` API — it

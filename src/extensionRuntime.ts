@@ -9,6 +9,7 @@ import { notifyError, notifyWarning } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
 import { type AiOutputTemplates, EMPTY_AI_TEMPLATES, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
 import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
+import { readStoredRun } from './ai/session/runStore';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { DEFAULT_MAX_ROUNDS } from './ai/core/agentCore';
@@ -148,8 +149,11 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     // Retain contributed language-model tools for external VS Code compatibility.
     // Their invocations route through the same canonical strict registry builder;
     // the @lineage runtime dispatches its graph calls directly.
+    const aiToolHost = {
+      getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId),
+    };
     context.subscriptions.push(
-      ...registerAiTools(getSession, outputChannel, getActivePanel),
+      ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
     );
 
     // One native runtime. Every turn receives its exact ChatRequest.model and a
@@ -157,7 +161,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     lineageRuntime = new LineageRuntime({
       getSession,
       createRegistry: (lease) =>
-        buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease),
+        buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, aiToolHost),
       logger: Logger.create(outputChannel, 'AI'),
       maxRounds: vscode.workspace
         .getConfiguration('dataLineageViz')

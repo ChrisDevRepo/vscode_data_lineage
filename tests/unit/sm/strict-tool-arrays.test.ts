@@ -9,7 +9,7 @@ import { assert, assertEq } from '../helpers/testUtils';
 import { describe, it } from 'vitest';
 
 describe("strict-tool-arrays tests", () => {
-  const PINNED_ENTRY_DETECTION_SCHEMA = '{"type":"object","properties":{"entry":{"type":"string","enum":["column_trace","visual_render","discovery"],"description":"Discrete entry route selected from the user request."},"targetColumns":{"description":"Explicit user-named columns for column_trace; null for discovery or visual_render.","anyOf":[{"type":"array","items":{"type":"string","minLength":1,"pattern":"^[^*%?]+$","description":"A real, user-named column identifier. NEVER a wildcard — if the user did not name a specific column, omit targetColumns entirely."}},{"type":"null"}]}},"required":["entry"],"additionalProperties":false}';
+  const PINNED_ENTRY_DETECTION_SCHEMA = '{"type":"object","properties":{"entry":{"type":"string","enum":["column_trace","visual_render","discovery"],"description":"Discrete entry route selected from the user request."},"targetColumns":{"description":"Explicit user-named columns for column_trace; null for discovery or visual_render.","anyOf":[{"type":"array","items":{"type":"string","minLength":1,"pattern":"^[^*%?]+$","description":"A column the user named verbatim. When the user named no specific column, omit targetColumns; wildcards are rejected at the boundary."}},{"type":"null"}]}},"required":["entry"],"additionalProperties":false}';
   const entryCoerced = EntryDetectionSchema.safeParse({ entry: 'column_trace', targetColumns: '["TotalRevenue"]' });
   it("entry detection accepts string-encoded array", () => { assert(entryCoerced.success, 'entry detection accepts string-encoded array'); });
 

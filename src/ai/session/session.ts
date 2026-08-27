@@ -7,7 +7,7 @@ import {
 } from '../model/modelPort';
 import type { DatabaseModel } from '../../engine/types';
 import { getGlobalSingleton } from '../../utils/globalSingleton';
-import type { SerializedFilterState, FilterProfile } from '../../engine/projectStore';
+import type { SerializedFilterState } from '../../engine/projectStore';
 import { ColumnStore } from '../../engine/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
 import { type ResultGraph, type AiOutputTemplates, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES } from '../session/types';
@@ -174,9 +174,6 @@ export class AiSession {
   public graph: Graph | null = null;
   /** Active schema/object filters applied by the user. */
   public filter: SerializedFilterState | null = null;
-  /** List of saved filter profiles (views) for the current project. */
-  public views: FilterProfile[] = [];
-
   /** The name or ID of the language model active for the current turn. */
   public modelName?: string;
   /**
@@ -192,6 +189,11 @@ export class AiSession {
    * webview's responsibility before it posts.
    */
   public traceState: unknown = null;
+  /**
+   * Render-state snapshot — passthrough buffer from the webview's `render-state` message,
+   * consumed by the screen-state presenter.
+   */
+  public renderState: unknown = null;
   /** Current graph rendering mode: 'full' or 'overview'. */
   public graphMode: 'full' | 'overview' = 'full';
   /** Total count of nodes after all active filters are applied (from webview). */

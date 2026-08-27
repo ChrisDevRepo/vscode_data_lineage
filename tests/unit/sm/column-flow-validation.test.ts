@@ -1,5 +1,6 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
+import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { activeModeOf } from '../../../src/ai/tools/toolPolicy';
 import type { LogFn } from '../../../src/engine/graphGuards';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
@@ -634,4 +635,415 @@ describe("Column Flow Validation", () => {
   );
 });
 
+  // J16-1: <lineage_questions> must reach the AgendaEntry they were opened for, never whichever
+  // node happens to dequeue next, and must be labelled by the column active at that node.
+  const lqNodes: LineageNode[] = [
+    makeNode({ id: 'lq_origin', schema: 'dbo', name: 'lq_origin', type: 'view', columns: [{ name: 'TargetCol', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    makeNode({ id: 'lq_node_a', schema: 'dbo', name: 'lq_node_a', type: 'view', columns: [{ name: 'ColA', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    makeNode({ id: 'lq_node_b', schema: 'dbo', name: 'lq_node_b', type: 'view', columns: [{ name: 'ColB', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+  ];
+  const lqEdges: Array<[string, string]> = [['lq_node_a', 'lq_origin'], ['lq_node_b', 'lq_origin']];
+  const lqModel: DatabaseModel = makeModel(lqNodes, lqEdges, ['dbo']);
+  const lqGraph = makeGraph(lqNodes, lqEdges);
+  function lqRoutedEngine() {
+    const engine = new NavigationEngine(lqModel, lqGraph, () => {}, {});
+    const init = engine.init({ origin: 'lq_origin', question: 'trace TargetCol upstream', direction: 'upstream', analysisMode: 'ct', targetColumns: ['TargetCol'] });
+    assert('ok' in init, 'J16-1: upstream CT session initializes');
+    engine.getHopContext();
+    const result = engine.submitFindings({
+      focus_node_id: 'lq_origin',
+      sections: [{ angle: 'business' as const, text: 'origin analysis' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'TargetCol',
+        upstream_columns: [
+          { node: 'lq_node_a', col: 'ColA' },
+          { node: 'lq_node_b', col: 'ColB' },
+        ],
+      }],
+      route_requests: [
+        { nodeId: 'lq_node_a', question: 'Does lq_node_a compute ColA directly?' },
+        { nodeId: 'lq_node_b', question: 'Does lq_node_b compute ColB directly?' },
+      ],
+    });
+    assert(!('error' in result), 'J16-1: routing two real upstream column contributors is accepted');
+    return engine;
+  }
+
+  it("J16-1: lineage questions reach the hop for the node they were routed to, not the next dequeued node", () => {
+  const engine = lqRoutedEngine();
+
+  const firstHop = engine.getHopContext() as { done?: boolean };
+  assert(!firstHop.done, 'J16-1: a second hop is dispatched');
+  const firstFocus = engine.currentFocus;
+  assert(firstFocus === 'lq_node_a' || firstFocus === 'lq_node_b', 'J16-1: dispatch lands on one of the two routed nodes');
+  const otherNode = firstFocus === 'lq_node_a' ? 'lq_node_b' : 'lq_node_a';
+  const ownCol = firstFocus === 'lq_node_a' ? 'ColA' : 'ColB';
+  const otherCol = firstFocus === 'lq_node_a' ? 'ColB' : 'ColA';
+
+  const firstQuestions = engine.pendingLineageQuestions;
+  assertEq(firstQuestions.length, 1, `J16-1: ${firstFocus} sees exactly its own continuation, not both`);
+  assert(firstQuestions[0].includes(ownCol), `J16-1: ${firstFocus}'s question names its own column ${ownCol}`);
+  assert(!firstQuestions[0].includes(otherCol), `J16-1: ${firstFocus}'s question does not name the other node's column ${otherCol}`);
+  assert(firstQuestions[0].includes('TargetCol'), 'J16-1: question names the column it continues the trace into (label uses the traced column)');
+
+  // Terminal submission at the first-dequeued node — accounts for its sole active column.
+  const firstResult = engine.submitFindings({
+    focus_node_id: firstFocus!,
+    sections: [{ angle: 'business' as const, text: 'terminal' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: ownCol, upstream_columns: [] }],
+  });
+  assert(!('error' in firstResult), `J16-1: terminal submission at ${firstFocus} is accepted`);
+
+  const secondHop = engine.getHopContext() as { done?: boolean };
+  assert(!secondHop.done, 'J16-1: the second routed node still dispatches');
+  assertEq(engine.currentFocus, otherNode, 'J16-1: the remaining routed node dequeues next');
+
+  const secondQuestions = engine.pendingLineageQuestions;
+  assertEq(secondQuestions.length, 1, `J16-1: ${otherNode} sees exactly its own continuation`);
+  assert(secondQuestions[0].includes(otherCol), `J16-1: ${otherNode}'s question names its own column ${otherCol}`);
+  assert(!secondQuestions[0].includes(ownCol), `J16-1: ${otherNode}'s question does not carry over ${firstFocus}'s column`);
+});
+
+  it("J16-1: no pending lineage questions renders no <lineage_questions> block", () => {
+  const withQuestions = buildCurrentTaskBlock(
+    [{ kind: 'root', question: 'Trace TargetCol' }],
+    ['TargetCol'],
+    ['Column `ColA` at `lq_node_a`: continues the trace into `TargetCol` at `lq_origin` — determine its origin here.'],
+  );
+  assert(withQuestions.includes('<lineage_questions>'), 'J16-1: a non-empty list renders the block');
+
+  const noneUndefined = buildCurrentTaskBlock([{ kind: 'root', question: 'Trace TargetCol' }], ['TargetCol'], undefined);
+  assert(!noneUndefined.includes('<lineage_questions>'), 'J16-1: an omitted list renders no block');
+
+  const noneEmpty = buildCurrentTaskBlock([{ kind: 'root', question: 'Trace TargetCol' }], ['TargetCol'], []);
+  assert(!noneEmpty.includes('<lineage_questions>'), 'J16-1: an empty list renders no block');
+});
+});
+
+describe("J23 — CT active columns through contracted tables (red reproductions)", () => {
+  // T8-shaped fixture: a view (origin_view) fed by a table (staging, contracted — non-bodied) and a
+  // second table (rules). staging has both an upstream WRITER (writer_proc, the true source of
+  // staging.OrderAmount) and an unrelated downstream READER (reader_proc, which consumes staging and
+  // writes archive). Because `directionalNeighbors` under `direction: 'bidirectional'` returns
+  // `graph.neighbors()` — every adjacent node regardless of edge direction — `enqueueHop`'s non-bodied
+  // contraction branch (smBase.ts `enqueueHop`, the `directionalNeighbors(targetId, this._direction)`
+  // loop) forwards staging's active columns to writer_proc AND reader_proc alike, with no data-flow
+  // direction test. The reproductions below pin that leak at three observation points: the dispatched
+  // hop's live active columns (RC1/RC2), the durable `toJSON()` agenda snapshot (RC3), the resulting
+  // `column_chain_incomplete` hint (RC4), and the isolated `ColumnTracer` unit (RC5).
+  const j23Nodes: LineageNode[] = [
+    makeNode({
+      id: 'origin_view', schema: 'ai', name: 'origin_view', type: 'view',
+      columns: [
+        { name: 'Discount', type: 'decimal(5,2)', nullable: 'NOT NULL', extra: '' },
+        { name: 'BaseAmt', type: 'decimal(18,2)', nullable: 'NOT NULL', extra: '' },
+      ],
+    }),
+    makeNode({
+      id: 'staging', schema: 'ai', name: 'staging', type: 'table',
+      columns: [
+        { name: 'OrderAmount', type: 'decimal(18,2)', nullable: 'NOT NULL', extra: '' },
+        { name: 'OrderDate', type: 'date', nullable: 'NOT NULL', extra: '' },
+      ],
+    }),
+    makeNode({ id: 'writer_proc', schema: 'ai', name: 'writer_proc', type: 'procedure', columns: [] }),
+    makeNode({ id: 'reader_proc', schema: 'ai', name: 'reader_proc', type: 'procedure', columns: [] }),
+    makeNode({
+      id: 'archive', schema: 'ai', name: 'archive', type: 'table',
+      columns: [{ name: 'OrderAmount', type: 'decimal(18,2)', nullable: 'NOT NULL', extra: '' }],
+    }),
+    makeNode({
+      id: 'rules', schema: 'ai', name: 'rules', type: 'table',
+      columns: [{ name: 'DiscountPct', type: 'decimal(5,2)', nullable: 'NOT NULL', extra: '' }],
+    }),
+    makeNode({ id: 'consumer_proc', schema: 'ai', name: 'consumer_proc', type: 'procedure', columns: [] }),
+  ];
+  const j23Edges: Array<[string, string]> = [
+    ['staging', 'origin_view'],
+    ['rules', 'origin_view'],
+    ['writer_proc', 'staging'],
+    ['staging', 'reader_proc'],
+    ['reader_proc', 'archive'],
+    ['origin_view', 'consumer_proc'],
+  ];
+  const j23Model: DatabaseModel = makeModel(j23Nodes, j23Edges, ['ai']);
+  const j23Graph = makeGraph(j23Nodes, j23Edges);
+
+  /**
+   * Builds a fresh engine, dispatches origin_view, and commits its column_flow (Discount ←
+   * staging.OrderAmount + rules.DiscountPct) with route_requests to all three direct neighbors.
+   * Fresh per test — no cross-test state coupling.
+   */
+  function j23OriginCommittedEngine(): NavigationEngine {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    assert('ok' in init, 'J23: CT session initializes at origin_view');
+    const hop = engine.getHopContext() as { done?: boolean };
+    assert(!hop.done && engine.currentFocus === 'origin_view', 'J23: first dispatched hop is origin_view');
+    const result = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount is computed from staging.OrderAmount and rules.DiscountPct' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'Discount',
+        upstream_columns: [
+          { node: 'staging', col: 'OrderAmount' },
+          { node: 'rules', col: 'DiscountPct' },
+        ],
+      }],
+      route_requests: [
+        { nodeId: 'staging', question: 'Trace OrderAmount as upstream input for Discount.' },
+        { nodeId: 'rules', question: 'Trace DiscountPct as upstream input for Discount.' },
+        { nodeId: 'consumer_proc', question: 'Does consumer_proc consume Discount unchanged?' },
+      ],
+    });
+    assert(!('error' in result), `J23: origin_view commit accepted (${'error' in result ? result.error : ''})`);
+    return engine;
+  }
+
+  /** Terminal submission covering every column the engine reports active at the current focus. */
+  function j23TerminalSubmit(engine: NavigationEngine, focusId: string) {
+    const cols = engine.columnAspect?.active_columns ?? [];
+    return engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: 'terminal' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: cols.map((c) => ({ out_col: c, upstream_columns: [] })),
+    });
+  }
+
+  /** Drives `getHopContext()` forward, terminal-submitting any hop that is not `targetId`. */
+  function j23DispatchUntil(engine: NavigationEngine, targetId: string, maxHops = 6): void {
+    for (let i = 0; i < maxHops; i++) {
+      const hop = engine.getHopContext() as { done?: boolean };
+      assert(!hop.done, `J23: exploration completed before reaching ${targetId}`);
+      if (engine.currentFocus === targetId) return;
+      const focusId = engine.currentFocus!;
+      const submitted = j23TerminalSubmit(engine, focusId);
+      assert(!('error' in submitted), `J23: terminal submission at ${focusId} accepted while routing to ${targetId} (${'error' in submitted ? submitted.error : ''})`);
+    }
+    throw new Error(`J23: ${targetId} not reached within ${maxHops} hops`);
+  }
+
+  it("RC1: writer_proc — the true upstream producer of staging.OrderAmount — must dispatch with exactly ['OrderAmount'], not the seed target plus the routed column", () => {
+    const engine = j23OriginCommittedEngine();
+    j23DispatchUntil(engine, 'writer_proc');
+    const active = [...(engine.columnAspect?.active_columns ?? [])].sort();
+    assertEq(
+      active.join(','),
+      'OrderAmount',
+      `J23 RC1: writer_proc's dispatched active_columns must equal exactly ['OrderAmount'] — today it also carries 'Discount', forwarded at seed time (init()'s seedAgenda walks origin_view's bidirectional neighbors before any column_flow exists) through staging's non-bodied contraction, then merged (AgendaManager.push unions activeColumns) with the later real 'OrderAmount' route`,
+    );
+  });
+
+  /**
+   * Contract: the `enqueueHop` non-bodied contraction bound ({@link NavigationEngine.resolveActiveColumnsForNode})
+   * stops a seed-time or route-admission contraction at any carrier that does not declare the
+   * routed column, so neither `writer_proc` nor `reader_proc` inherits `Discount` en route to
+   * their own `OrderAmount` agenda entry.
+   */
+  it("RC2: the origin-resolved target column no longer leaks through the carrier's SEED-time contraction (writer_proc, pure-inbound chain) — symmetric with its later route-admission (reader_proc, contraction-extension)", () => {
+    // Stage 1 — immediately after init()+one getHopContext() (origin_view dispatched), BEFORE any
+    // column_flow has run: staging (the carrier) never declares 'Discount', so the seed-time
+    // contraction stops at staging and neither sibling gets an entry yet.
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    assert('ok' in init, 'J23 RC2: CT session initializes at origin_view');
+    const firstHop = engine.getHopContext() as { done?: boolean };
+    assert(!firstHop.done && engine.currentFocus === 'origin_view', 'J23 RC2: first dispatched hop is origin_view');
+
+    const seedSnap = engine.toJSON() as { agenda: Array<{ nodeId: string; activeColumns?: string[] }> };
+    const seedWriter = seedSnap.agenda.find((e) => e.nodeId === 'writer_proc');
+    const seedReader = seedSnap.agenda.find((e) => e.nodeId === 'reader_proc');
+    // GREEN: writer_proc is on the pure-inbound BFS chain, but the carrier-bounded contraction at
+    // staging (which never declares 'Discount') stops before recursing to any bodied neighbour —
+    // no seed-time entry, the same outcome as reader_proc below, not a leaked one.
+    assert(
+      seedWriter === undefined,
+      `J23 RC2 stage 1: writer_proc has no seed-time agenda entry (found: ${JSON.stringify(seedWriter)}) — the carrier-bounded contraction at 'staging' stops before it, since 'staging' never declares 'Discount'`,
+    );
+    // GREEN (documentary): reader_proc sits on a mixed in-then-out path relative to
+    // origin_view, so computeBfsScope's inbound/outbound split never reaches it — it has no
+    // seed-time entry to leak into at all, confirmed here rather than assumed.
+    assert(
+      seedReader === undefined,
+      `J23 RC2 stage 1 (documented, green): reader_proc has no seed-time agenda entry (found: ${JSON.stringify(seedReader)}) — it is outside the initial bidirectional BFS scope until routed`,
+    );
+
+    // Stage 2 — commit origin_view's column_flow naming staging.OrderAmount as the sole real
+    // upstream contributor to Discount (route_requests omitted: routeQuestionsByNode auto-adds
+    // staging from the upstream_columns reference, which contracts through to both writer_proc and
+    // reader_proc, both newly admitted).
+    const commit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount is computed from staging.OrderAmount' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] }],
+    });
+    assert(!('error' in commit), `J23 RC2 stage 2: origin_view commit accepted (${'error' in commit ? commit.error : ''})`);
+
+    const routedSnap = engine.toJSON() as { agenda: Array<{ nodeId: string; activeColumns?: string[] }> };
+    const routedWriter = routedSnap.agenda.find((e) => e.nodeId === 'writer_proc');
+    const routedReader = routedSnap.agenda.find((e) => e.nodeId === 'reader_proc');
+    assertEq(
+      [...(routedWriter?.activeColumns ?? [])].sort().join(','),
+      'OrderAmount',
+      `J23 RC2 stage 2b (GREEN, mirrors 2c): writer_proc's activeColumns after the staging.OrderAmount route must deep-equal ['OrderAmount'] — actual: [${(routedWriter?.activeColumns ?? []).join(',')}]`,
+    );
+    assertEq(
+      [...(routedReader?.activeColumns ?? [])].sort().join(','),
+      'OrderAmount',
+      `J23 RC2 stage 2c (GREEN control, pins the asymmetry): reader_proc's freshly route-admitted activeColumns already deep-equal ['OrderAmount'] — no prior seed entry existed to merge a leaked 'Discount' into; actual: [${(routedReader?.activeColumns ?? []).join(',')}]`,
+    );
+
+    // Stage 3 — dispatch reader_proc (terminal-submitting writer_proc first if it dequeues ahead,
+    // since both tie at priority=2) and submit its sole legitimate column, OrderAmount. GREEN
+    // control: reader_proc's clean active-column set (stage 2c) fully accounts for the hop.
+    j23DispatchUntil(engine, 'reader_proc');
+    const readerResult = engine.submitFindings({
+      focus_node_id: 'reader_proc',
+      sections: [{ angle: 'business' as const, text: 'reader_proc forwards staging.OrderAmount into archive' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+    });
+    assert(
+      !('error' in readerResult),
+      `J23 RC2 stage 3 (GREEN control): reader_proc submitting only its legitimate OrderAmount contribution is accepted, not rejected — actual: ${'error' in readerResult ? `${readerResult.error}: ${readerResult.hint ?? ''}` : 'ok'}`,
+    );
+  });
+
+  it("green pin: a carrier-adjacent node with no declared columns array forwards the candidate active-column set unchanged (existence exemption preserved, not itself a defect)", () => {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    // resolveActiveColumnsForNode has no public accessor; this test exercises it directly, not through a dispatched hop.
+    const resolved = (engine as unknown as {
+      resolveActiveColumnsForNode(nodeId: string, columns?: string[]): string[] | undefined;
+    }).resolveActiveColumnsForNode('writer_proc', ['Discount', 'OrderAmount']);
+    assertEq(
+      [...(resolved ?? [])].sort().join(','),
+      ['Discount', 'OrderAmount'].sort().join(','),
+      "J23 green pin: writer_proc declares no columns (columns: []), so resolveActiveColumnsForNode's existence exemption ('if (nodeColumns.length === 0) return columns' — smBase.ts) must forward the candidate set unchanged rather than filtering it to empty. This is deliberate (a procedure may write columns elsewhere with no local column surface to filter against) and must survive any fix to the RC2 seed-time Discount leak — the fix belongs in what gets forwarded (seedAgenda/enqueueHop), not in this exemption.",
+    );
+  });
+
+  it("RC4: writer_proc rejects with column_chain_incomplete when a routed column is left unaccounted, and rejects again on resubmission of the same escape", () => {
+    // A1a's dispatch-scope fix pins writer_proc to exactly its routed contributor columns
+    // (RC1/RC2), so the single-target 'Discount' commit j23OriginCommittedEngine() performs no
+    // longer leaves anything unaccounted at writer_proc — that premise moved elsewhere. Re-based on
+    // a second origin target column: Discount routes through staging.OrderAmount and BaseAmt routes
+    // through staging.OrderDate, so `routeColumnsByNode` (smBase.ts) forwards both staging columns
+    // through the contraction, and writer_proc — declaring no columns of its own, forwarded
+    // unfiltered by the existence exemption (green pin) — dispatches with both. Submitting only one
+    // reproduces a genuine column_chain_incomplete here, independent of the RC1/RC2 leak.
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    assert('ok' in init, 'J23 RC4: CT session initializes at origin_view');
+    const hop = engine.getHopContext() as { done?: boolean };
+    assert(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC4: first dispatched hop is origin_view');
+    const originCommit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+    });
+    assert(!('error' in originCommit), `J23 RC4: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`);
+    j23DispatchUntil(engine, 'writer_proc');
+    assertEq(
+      [...(engine.columnAspect?.active_columns ?? [])].sort().join(','),
+      ['OrderAmount', 'OrderDate'].sort().join(','),
+      'J23 RC4: writer_proc dispatches with both routed columns (OrderAmount, OrderDate) — the genuine premise for this rejection',
+    );
+
+    const result = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc produces staging.OrderAmount' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+    });
+    assert('error' in result && result.error === 'column_chain_incomplete', 'J23 RC4: OrderDate left unaccounted at writer_proc → column_chain_incomplete (genuine premise)');
+
+    // Loop proof (NOT red — documents the resulting stall, not a fixed contract): resubmitting the
+    // hint's own literal suggestion returns the identical rejection.
+    const again = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [],
+    });
+    assert(
+      'error' in again && again.error === 'column_chain_incomplete',
+      "J23 RC4 (loop proof, passes today): resubmitting verdict:'passthrough', column_flow:[] at writer_proc returns column_chain_incomplete again — the hint's literal suggested escape does not resolve the hop",
+    );
+  });
+
+  /** Held: the column_chain_incomplete hint at writer_proc must name pruning the leaked column, not repeat the rejected escape. */
+  it.skip("RC4: the column_chain_incomplete hint at writer_proc must name pruning the leaked column, not repeat the escape it just rejected — held: hint rewrite pending replay (OPEN-ISSUES row 2)", () => {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    assert('ok' in init, 'J23 RC4: CT session initializes at origin_view');
+    const hop = engine.getHopContext() as { done?: boolean };
+    assert(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC4: first dispatched hop is origin_view');
+    const originCommit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+    });
+    assert(!('error' in originCommit), `J23 RC4: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`);
+    j23DispatchUntil(engine, 'writer_proc');
+
+    const result = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc produces staging.OrderAmount' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+    });
+    assert('error' in result && result.error === 'column_chain_incomplete', 'J23 RC4: OrderDate left unaccounted at writer_proc → column_chain_incomplete (genuine premise)');
+    if ('error' in result) {
+      const hint = result.hint ?? '';
+      assert(
+        /prune/i.test(hint),
+        `J23 RC4: the hint must name pruning the spurious leaked 'OrderDate' as the corrective action — actual hint: "${hint}"`,
+      );
+      assert(
+        !/column_flow:\s*\[\]/.test(hint),
+        `J23 RC4: the hint must not re-suggest 'column_flow:[]' — that exact retry was already submitted this hop (Test 3's own "no self-prune" contract) and would reject again with the identical error, looping — actual hint: "${hint}"`,
+      );
+    }
+  });
+
+  it("RC5: ColumnTracer.determineActiveColumnsForCandidate cannot tell a genuine upstream producer from an unrelated contracted neighbor when neither has a recorded edge of its own — inert by design, the enqueueHop contraction bound never lets its unfiltered output reach an agenda entry unbounded", () => {
+    const tracer = new ColumnTracer(['Discount']);
+    tracer.edges.push({
+      hop: 1, hop_node: 'origin_view', to_node: 'origin_view', to_col: 'Discount',
+      from_node: 'staging', from_col: 'OrderAmount',
+    } as any);
+
+    // Contract: a candidate with no edge of its own falls through to the unfiltered entryColumns by design; bounding that output is `resolveActiveColumnsForNode`'s job at the enqueueHop/contractThroughPassNode call sites, not this function's.
+    const writerCols = tracer.determineActiveColumnsForCandidate('writer_proc', ['Discount', 'OrderAmount']);
+    assertEq(
+      [...writerCols].sort().join(','),
+      ['Discount', 'OrderAmount'].sort().join(','),
+      `J23 RC5 (documented, not red): writer_proc resolves to the unfiltered entryColumns here — actual: [${writerCols.join(',')}]`,
+    );
+  });
 });

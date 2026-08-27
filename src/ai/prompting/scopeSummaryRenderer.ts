@@ -43,6 +43,7 @@ function depthLine(levels: number | 'all', side: string, binding: boolean): stri
  * @param summary - The proposed scope to render.
  * @param revision - Proposal revision; stamped in the heading from the second round on so a
  * re-approval is distinguishable from the first.
+ * @returns The assembled scope-summary markdown.
  */
 export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): string {
   const lines: string[] = [];

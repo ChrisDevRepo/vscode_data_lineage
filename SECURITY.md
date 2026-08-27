@@ -35,10 +35,12 @@ Include:
   model receives the user's prompt, native `@lineage` chat history, and lineage
   metadata or DDL returned by local snapshot tools. The AI runtime cannot
   connect to a database, execute SQL, start an import, or start profiling
-- AI trace logging is disabled by default. Enabling it for a session writes full
-  model and tool diagnostics under the VS Code extension log directory. These
-  files can contain database identifiers, SQL, prompts, responses, and tool
-  payloads; review them before sharing
+- AI trace logging is disabled by default. Enabling it for a session requires an
+  open workspace folder and writes full model and tool diagnostics to
+  `tmp/lm-trace/` inside the first workspace folder; the writer is disabled again
+  when the extension host restarts. These files can contain database identifiers,
+  SQL, prompts, responses, and tool payloads; keep them out of version control and
+  review them before sharing
 - **Copy Debug Info** can include project/source/schema names, filter state, GUI
   state, database-model metadata, and AI session metadata. Review and redact
   identifiers before sharing it

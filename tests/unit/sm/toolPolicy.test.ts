@@ -16,6 +16,7 @@ describe("toolPolicy", () => {
       stage: { kind: 'discover' },
       expected: [
         'lineage_get_context',
+        'lineage_get_screen_state',
         'lineage_search_objects',
         'lineage_get_scope_bundle',
         'lineage_search_ddl',
@@ -27,6 +28,17 @@ describe("toolPolicy", () => {
       name: 'visual preview',
       stage: { kind: 'visual_preview' },
       expected: ['lineage_present_result'],
+    },
+    {
+      // The screen card resolves an origin the user referred to as "this trace", so sm_entry
+      // exposes three tools, not the two the origin-resolution path started with.
+      name: 'sm entry',
+      stage: { kind: 'sm_entry' },
+      expected: [
+        'lineage_get_screen_state',
+        'lineage_search_objects',
+        'lineage_start_exploration',
+      ],
     },
     {
       name: 'active / sm_bb',
@@ -49,6 +61,7 @@ describe("toolPolicy", () => {
       expected: [
         'lineage_present_result',
         'lineage_get_object_detail',
+        'lineage_get_screen_state',
         'lineage_search_ddl',
         'lineage_search_objects',
         'lineage_start_exploration',

@@ -21,6 +21,7 @@ import {
 import { UNKNOWN_DB_PLATFORM, type DatabaseModel } from '../../engine/types';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
+import { describeScreen } from '../tools/screenStatePresenter';
 
 /**
  * The grounding context surfaced in the system prompt's `## Context` block.
@@ -88,14 +89,18 @@ export function tryBuildDeterministicContextAnswer(
  *
  * @param model - The session's loaded model, or `null` when none is loaded.
  * @param filter - The active serialized filter, or `null`.
+ * @param uiState - Raw UI-state payload passed to {@link describeScreen}; absent or unrecognized
+ *   shapes simply omit the `screen` field.
  * @returns The prompt grounding values derived from the current model and filter.
  */
 export function deriveStagePromptContext(
   model: DatabaseModel | null,
   filter: SerializedFilterState | null,
+  uiState: unknown = null,
 ): StagePromptContext {
+  const screen = describeScreen(uiState);
   if (!model) {
-    return { dbPlatform: UNKNOWN_DB_PLATFORM, filterSchemas: [], totalSchemaCount: 0, visibleNodes: 0, totalNodes: 0 };
+    return { dbPlatform: UNKNOWN_DB_PLATFORM, filterSchemas: [], totalSchemaCount: 0, visibleNodes: 0, totalNodes: 0, ...(screen ? { screen } : {}) };
   }
   const filterSchemas = filter?.schemas ?? [];
   const totalNodes = model.nodes.length;
@@ -108,6 +113,7 @@ export function deriveStagePromptContext(
     totalSchemaCount: model.schemas.length,
     visibleNodes,
     totalNodes,
+    ...(screen ? { screen } : {}),
   };
 }
 
@@ -140,12 +146,12 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
     '',
     "Return 'column_trace' only when the user clearly names one or more specific columns to follow. Extract those exact names into targetColumns.",
     "Return 'visual_render' when the user explicitly asks to see, show, render, draw, preview, or open a lineage graph, diagram, canvas, or panel. This means approval-gated hop-by-hop exploration. Set targetColumns to null.",
-    "Return 'discovery' for everything else, including broad dependency questions that do not explicitly request a visual. Set targetColumns to null.",
+    "Return 'discovery' for everything else: broad dependency questions that do not explicitly request a visual, and questions about what is already on screen — \"what am I looking at\", \"explain this view\", \"has anything changed since\" — because those are answered from the current screen state, not by opening a new exploration. Set targetColumns to null.",
     "TIEBREAKER — when in doubt, do NOT choose 'column_trace'. Column tracing requires an unambiguous, specifically named column; if the request names only an object/table with no column, choose 'discovery'. But a request that DOES name a specific column — even one described as a calculation or metric — is not ambiguous: choose 'column_trace'. Column trace is the exception only for vague requests, never for an explicitly named column.",
     '',
     'The conversation may include earlier turns. Classify ONLY the latest user message; use earlier turns solely to resolve what it refers to (e.g. resolving which object a bare column name belongs to).',
     '',
-    `Context: platform ${ctx.dbPlatform}; ${ctx.totalSchemaCount} schemas; ${ctx.visibleNodes} of ${ctx.totalNodes} objects visible.`,
+    `Context: platform ${ctx.dbPlatform}; ${ctx.totalSchemaCount} schemas; ${ctx.visibleNodes} of ${ctx.totalNodes} objects visible.${ctx.screen ? ` On screen: ${ctx.screen}.` : ''}`,
   ].join('\n');
 }
 
@@ -165,7 +171,7 @@ export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string 
  * Directive system prompt for the restricted **SM-entry** turn.
  *
  * @remarks
- * Paired with a 2-tool registry (`lineage_search_objects` + `lineage_start_exploration`) and
+ * Paired with a 3-tool registry (`lineage_get_screen_state` + `lineage_search_objects` + `lineage_start_exploration`) and
  * a graph-enforced required terminal tool, so a weak model can only resolve the origin and open the exploration
  * → the `confirm_sm_start` gate fires deterministically (instead of answering in prose). For a
  * column trace, the detected columns are surfaced so the model passes them as `targetColumns`.
@@ -185,7 +191,7 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     '1. Call `lineage_search_objects` to resolve the user-named object to its exact id.',
     '2. Call `lineage_start_exploration` with `origin` set to that id, `analysisMode` (bb or ct), and a `classification` (business, technical, or both).',
     'This is a fresh exploration: set `origin`; do not set the `supplement` field (that is only for extending a finished exploration).',
-    'Set `direction` from the request: upstream for sources/inputs ("all the way up", "show sources"), downstream for usage/impact, bidirectional when the user wants both — or wants different depths per side.',
+    'Set `direction` from the request: upstream for sources/inputs ("all the way up", "show sources"), downstream for usage/impact, bidirectional when the user wants both.',
     'Pass a depth only when the user stated one — a level count (e.g. "3 levels"), "all" for the whole chain, or a per-side ask (e.g. "2 up, 1 down") as {upstream, downstream}. If the user gave no depth, omit it.',
     ctLine,
     'The `confirm_sm_start` gate fires after step 2 — that is expected control flow, not an error to retry around.',

@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
+import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface InlineTraceControlsProps {
   /** ID of the node starting the trace. */
@@ -83,8 +84,8 @@ export const InlineTraceControls = memo(function InlineTraceControls({
   const handleApply = () => {
     onApply({
       startNodeId,
-      upstreamLevels: isUpstreamAll ? Number.MAX_SAFE_INTEGER : upstream,
-      downstreamLevels: isDownstreamAll ? Number.MAX_SAFE_INTEGER : downstream,
+      upstreamLevels: isUpstreamAll ? TRACE_ALL_LEVELS : upstream,
+      downstreamLevels: isDownstreamAll ? TRACE_ALL_LEVELS : downstream,
     });
   };
 

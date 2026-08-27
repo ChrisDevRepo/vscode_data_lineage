@@ -8,6 +8,7 @@ import {
   useReactFlow,
   applyNodeChanges,
   applyEdgeChanges,
+  MarkerType,
   type Node as FlowNode,
   type Edge as FlowEdge,
   type NodeTypes,
@@ -42,6 +43,13 @@ import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseMode
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
+import { ColumnTraceNode, type ColumnTraceNodeData } from './ColumnTraceNode';
+import {
+  buildColumnTraceView,
+  columnRowKey,
+  type ColumnTraceViewObject,
+  type ColumnLineState,
+} from '../engine/columnTraceView';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
@@ -54,7 +62,7 @@ import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
  * If defined inside, React Flow remounts all nodes on every render, causing
  * severe performance degradation and loss of state.
  */
-const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode } satisfies NodeTypes;
+const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode, columnTraceNode: ColumnTraceNode } satisfies NodeTypes;
 
 const AiDescriptionOverlay = lazy(async () => {
   const module = await import('./AiDescriptionOverlay');
@@ -788,6 +796,9 @@ export function GraphCanvas({
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
   const [notesVisible, setNotesVisible] = useState(true);
+  const [columnView, setColumnView] = useState(false);
+  const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
+  const [columnPositions, setColumnPositions] = useState<Record<string, { x: number; y: number }>>({});
 
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) {
@@ -812,6 +823,27 @@ export function GraphCanvas({
     (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
     []
   );
+
+  /**
+   * Node changes while the column view is on stage.
+   *
+   * @remarks
+   * Column nodes carry the same ids as the object nodes they replace, so routing their changes
+   * through `onNodesChange` would apply a column-view drag to the object node of the same id and
+   * corrupt the positions a bookmark saves. Only the drag is kept — selection and dimensions are
+   * derived per render in the column branch of `displayNodes`.
+   */
+  const onColumnNodesChange: OnNodesChange = useCallback((changes) => {
+    setColumnPositions((prev) => {
+      let next = prev;
+      for (const change of changes) {
+        if (change.type !== 'position' || !change.position) continue;
+        if (next === prev) next = { ...prev };
+        next[change.id] = { x: change.position.x, y: change.position.y };
+      }
+      return next;
+    });
+  }, []);
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => setLocalEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -885,50 +917,56 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  const ctEdgeMap = useMemo((): Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>> => {
-    const m = new Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>>();
-    const edges = activeAiMetadata?.columnAspect?.edges;
-    if (!edges) return m;
-    const add = (
-      nodeId: string,
-      pair: { neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }
-    ) => {
-      const k = nodeId.toLowerCase();
-      if (!m.has(k)) m.set(k, []);
-      const arr = m.get(k)!;
-      if (!arr.some(p =>
-        p.neighborNode === pair.neighborNode &&
-        p.direction === pair.direction &&
-        p.fromCol === pair.fromCol &&
-        p.toCol === pair.toCol
-      )) {
-        arr.push(pair);
-      }
-    };
-    for (const e of edges) {
-      add(e.toNode, {
-        neighborNode: e.fromNode,
-        direction: 'in',
-        fromCol: e.fromCol,
-        toCol: e.toCol,
+  /** Column-level rendering of the active trace; null when the run recorded no column findings. */
+  const columnTraceView = useMemo(() => {
+    const relations = activeAiMetadata?.columnAspect?.edges;
+    if (!relations?.length) return null;
+    const objects = new Map<string, ColumnTraceViewObject>();
+    for (const node of flowNodes) {
+      if (node.type === 'schemaNode') continue;
+      const data = node.data as CustomNodeData;
+      objects.set(node.id.toLowerCase(), {
+        id: node.id,
+        label: data.label,
+        schema: data.schema,
+        objectType: data.objectType,
       });
-      add(e.fromNode, {
-        neighborNode: e.toNode,
-        direction: 'out',
-        fromCol: e.fromCol,
-        toCol: e.toCol,
-      });
-      if (e.hopNode.toLowerCase() !== e.toNode.toLowerCase()) {
-        add(e.hopNode, {
-          neighborNode: e.fromNode,
-          direction: 'in',
-          fromCol: e.fromCol,
-          toCol: e.toCol,
-        });
+    }
+    const verdicts = activeAiMetadata?.nodeVerdicts?.length
+      ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
+      : undefined;
+    return buildColumnTraceView({
+      relations,
+      objects,
+      verdicts,
+      layoutDirection: activeAiMetadata?.layoutDirection,
+    });
+  }, [activeAiMetadata, flowNodes]);
+
+  const columnViewActive = columnView && !!columnTraceView;
+
+  /**
+   * Node-and-column keys reachable from the hovered row in either direction.
+   *
+   * @remarks
+   * Traversal walks the column edges as an undirected graph so the whole thread lights up, not just
+   * its upstream or downstream half.
+   */
+  const hoveredColumnPath = useMemo((): Set<string> | null => {
+    if (!hoveredColumn || !columnTraceView) return null;
+    const seen = new Set<string>([columnRowKey(hoveredColumn.nodeId, hoveredColumn.column)]);
+    const queue = [...seen];
+    while (queue.length > 0) {
+      const current = queue.pop()!;
+      for (const edge of columnTraceView.edges) {
+        const from = columnRowKey(edge.source, edge.sourceColumn);
+        const to = columnRowKey(edge.target, edge.targetColumn);
+        if (current === from && !seen.has(to)) { seen.add(to); queue.push(to); }
+        else if (current === to && !seen.has(from)) { seen.add(from); queue.push(from); }
       }
     }
-    return m;
-  }, [activeAiMetadata]);
+    return seen;
+  }, [hoveredColumn, columnTraceView]);
 
   // Full-model graph backing the shared prune-safety guard; scope is bounded per call.
   const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
@@ -957,7 +995,56 @@ export function GraphCanvas({
     return controls;
   }, [localNodes, model, modelGraph, modelNodeMap, modelNodeMapLower, onTraceAddNeighbor, onTracePruneNode, trace.mode, trace.selectedNodeId, highlightedNodeId, canEditTraceScope]);
 
+  const handleColumnHover = useCallback((nodeId: string, column: string | null) => {
+    setHoveredColumn(column === null ? null : { nodeId, column });
+  }, []);
+
+  // Leaving column mode drops the hovered thread; otherwise returning to it opens with an arbitrary
+  // thread lit and every other row dimmed.
+  const handleToggleColumnView = useCallback((next: boolean) => {
+    setColumnView(next);
+    setHoveredColumn(null);
+  }, []);
+
+  // A view with no column findings has no column mode to be in; drop back rather than render empty.
+  useEffect(() => {
+    setColumnPositions({});
+    if (!columnTraceView) {
+      setColumnView(false);
+      setHoveredColumn(null);
+    }
+  }, [columnTraceView]);
+
   const displayNodes = useMemo((): FlowNode[] => {
+    if (columnViewActive && columnTraceView) {
+      const statesByRow = new Map<string, ColumnLineState>();
+      for (const edge of columnTraceView.edges) {
+        statesByRow.set(columnRowKey(edge.target, edge.targetColumn), edge.state);
+      }
+      return columnTraceView.nodes.map(view => {
+        const rowLineStates: Record<string, ColumnLineState> = {};
+        for (const row of view.rows) {
+          const state = statesByRow.get(columnRowKey(view.id, row.name));
+          if (state) rowLineStates[row.name] = state;
+        }
+        const onPath = hoveredColumnPath
+          ? view.rows.find(r => hoveredColumnPath.has(columnRowKey(view.id, r.name)))?.name
+          : undefined;
+        const data: ColumnTraceNodeData = {
+          view,
+          rowsVisible: notesVisible,
+          rowLineStates,
+          onColumnHover: handleColumnHover,
+          ...(onPath ? { hoveredColumn: onPath } : {}),
+        };
+        return {
+          id: view.id,
+          type: 'columnTraceNode',
+          position: columnPositions[view.id] ?? view.position,
+          data: data as unknown as FlowNode['data'],
+        } as FlowNode;
+      });
+    }
     return localNodes.map(node => {
       if (node.type === 'schemaNode') {
         return {
@@ -987,13 +1074,37 @@ export function GraphCanvas({
           aiHighlight: aiHighlightMap.get(node.id),
           aiBadge: aiBadgeMap.get(node.id),
           aiNote: notesVisible ? aiNoteMap.get(node.id) : undefined,
-          ctColumnFlows: ctEdgeMap.get(node.id.toLowerCase()),
         },
       };
     });
-  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, ctEdgeMap, trace.mode, trace.selectedNodeId]);
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnPositions, hoveredColumnPath, handleColumnHover]);
 
   const displayEdges = useMemo(() => {
+    if (columnViewActive && columnTraceView) {
+      const onPath = (edge: { source: string; sourceColumn: string; target: string; targetColumn: string }) => {
+        if (!hoveredColumnPath) return true;
+        return hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn))
+          && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn));
+      };
+      return columnTraceView.edges.map(edge => {
+        const lit = onPath(edge);
+        return {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+          ...(edge.state === 'transformation' ? { label: '◆' } : {}),
+          labelShowBg: false,
+          labelStyle: { fill: 'var(--ln-fg-muted)', fontSize: 9 },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+          style: {
+            strokeWidth: lit ? 1.6 : 1,
+            opacity: lit ? 1 : 0.25,
+          },
+        } as FlowEdge;
+      });
+    }
     if (!highlightedNodeId) return localEdges;
 
     return localEdges.map(edge => {
@@ -1014,7 +1125,7 @@ export function GraphCanvas({
         ),
       };
     });
-  }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
+  }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
 
   // Stable allNodes list for autocomplete/search — derived from full model catalog,
   // not displayNodes (which only contains Schema Cluster entries in Schema View).
@@ -1214,6 +1325,9 @@ export function GraphCanvas({
           nodeCount={aiPreview.nodeIds.size}
           onDiscard={onDiscardAiPreview}
           onSaveAsBookmark={onSaveAiBookmark ? handleSaveAiAsBookmark : undefined}
+          columnViewAvailable={!!columnTraceView}
+          columnView={columnViewActive}
+          onToggleColumnView={handleToggleColumnView}
         />
       )}
 
@@ -1248,7 +1362,7 @@ export function GraphCanvas({
             <ReactFlow
               nodes={displayNodes}
               edges={displayEdges}
-              onNodesChange={onNodesChange}
+              onNodesChange={columnViewActive ? onColumnNodesChange : onNodesChange}
               onEdgesChange={onEdgesChange}
               nodeTypes={nodeTypes}
               onNodeClick={handleNodeClick}

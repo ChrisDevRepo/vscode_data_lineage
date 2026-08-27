@@ -282,7 +282,7 @@ export interface AgentGraphDeps {
 export function buildAgentGraph(deps: AgentGraphDeps) {
   const maxRounds = deps.maxRounds ?? DEFAULT_MAX_ROUNDS;
   const getCtx = (state: AgentStateType): StagePromptContext =>
-    state.ctx ?? deriveStagePromptContext(deps.getSession().model, deps.getSession().filter);
+    state.ctx ?? deriveStagePromptContext(deps.getSession().model, deps.getSession().filter, deps.getSession().uiState);
 
   // `buildDiscoveryInstruction` is documented byte-identical for the whole discovery phase turn
   // (session + ctx are both fixed for this graph instance — one `buildAgentGraph` call is one
@@ -538,7 +538,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   const detectEntryNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
     const sess = deps.getSession();
-    const ctx = deriveStagePromptContext(sess.model, sess.filter);
+    const ctx = deriveStagePromptContext(sess.model, sess.filter, sess.uiState);
     deps.sink.status('scoping', 'Scoping...');
     // Depth is entirely AI-owned through the lineage_start_exploration tool payload; the entry
     // detector does not extract it upfront.
@@ -1644,6 +1644,10 @@ function safeHopCount(engine: NavigationEngine): number {
  * advances at focus dequeue and would salvage empty explorations. A truncation stop never
  * salvages: its `model_output_truncated` error exit and streamed truncation note must not be
  * followed by a success render.
+ *
+ * @param reason - The attempt-budget or truncation stop that ended the active hop.
+ * @param submittedHops - The graph's `activeHopCount` at the point of the stop.
+ * @returns Whether the turn should render the submitted hops instead of failing outright.
  */
 export function shouldSalvageActiveStop(
   reason: 'semantic_failures' | 'provider_calls' | 'output_limit',

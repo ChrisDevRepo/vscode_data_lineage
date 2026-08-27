@@ -50,6 +50,12 @@ CTAS-style targets, procedure calls, and file references from `OPENROWSET`,
 [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml) for the
 current names and regex bodies; that file is the source of truth.
 
+Not supported: temp tables (`#local`, `##global`), table variables (`@name`), and CTE names are
+never lineage nodes — captured names starting with `#` or `@` are discarded before edge
+extraction. A data flow that crosses procedures through a global temp table (one procedure
+writes `##t`, another reads it) therefore produces no edge between the two procedures, and the
+AI column trace ends at that boundary.
+
 ## XML fallback direction
 
 When the regex set misses a dependency that the dacpac XML or DMV catalog *does* report, the extension still emits the edge — direction inferred from the referenced object's type:

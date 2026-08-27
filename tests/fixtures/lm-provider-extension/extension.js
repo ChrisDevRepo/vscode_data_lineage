@@ -15,7 +15,7 @@ let requests = [];
 // `null` reproduces the ORIGINAL fixed-sequence behavior byte-for-byte (structured_output ->
 // discovery/null, one lineage_search_objects round-trip keyed on 'search-001', one
 // lineage_present_result keyed on 'scripted-call-001', else 'SCRIPTED_RUNTIME_COMPLETE').
-// tests/integration/scripted-provider.test.ts asserts against exactly that sequence and never calls
+// The internal scripted lanes assert against exactly that sequence and never call
 // `lineageTestModel.setCase`, so the legacy path must stay byte-identical when no case is active.
 let activeCase = null;
 /** Monotonic per-active-hop counter, reset on every setCase/reset so callIds stay unique per turn. */
@@ -115,8 +115,8 @@ function normalizePart(part) {
  *
  * @remarks
  * An ACCEPTED tool observation carries back as a user-role `<runtime_tool_context>` text block
- * (see `renderObservationsContext`, tests/integration/scripted-provider.test.ts documents the same
- * check); a REJECTED one carries as a native assistant tool-call + tool-result pair
+ * (see `renderObservationsContext`; the internal scripted lanes document the same check); a
+ * REJECTED one carries as a native assistant tool-call + tool-result pair
  * (`renderRejectionExchange`, toolAttempt.ts:589). Checking only one shape lets a case's tool call
  * re-emit forever until the provider-call breaker trips.
  */
@@ -582,7 +582,7 @@ function activate(context) {
         return;
       }
 
-      // ── legacy fixed sequence (no active case — tests/integration/scripted-provider.test.ts) ───────────
+      // ── legacy fixed sequence (no active case — asserted by the internal scripted lanes) ─────────────
       // Must run BEFORE any case-scripted phase branch: the legacy discovery-phase request offers
       // both lineage_get_context and lineage_search_objects together (DISCOVERY_TOOLS), so a
       // get_context-keyed branch below would otherwise shadow this path when no case is active.

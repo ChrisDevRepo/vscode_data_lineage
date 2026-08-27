@@ -39,7 +39,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) return s.logAndReturn('submit_findings', {
         error: 'no_active_session',
-        hint: 'No active state machine. Call start_exploration first to begin an investigation.',
+        hint: 'No active exploration. Call lineage_start_exploration first.',
         next_action: 'start_exploration',
       }, input);
 

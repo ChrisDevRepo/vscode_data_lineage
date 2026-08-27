@@ -22,7 +22,7 @@ import { ColumnStore } from '../../engine/columnStore';
 import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
 import { normalizeBodyScript, minifyDdlForHop } from '../../utils/sql';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
-import type { SerializedFilterState, FilterProfile } from '../../engine/projectStore';
+import type { SerializedFilterState } from '../../engine/projectStore';
 import {
   strip, edgeApiType,
   presentNode, presentColumn, presentColumnCompact, presentFkCompact,
@@ -192,7 +192,6 @@ export function buildHopFocusNode(
  * @param model - The database model.
  * @param activeFilter - The current UI filter state.
  * @param projectName - The name of the active project.
- * @param savedViews - The list of user-saved bookmarks/views.
  * @param store - Optional column store.
  * @returns An object containing project metadata and potentially the full catalog.
  */
@@ -200,7 +199,6 @@ export function getContext(
   model: DatabaseModel,
   activeFilter: SerializedFilterState | null,
   projectName: string | null,
-  savedViews: FilterProfile[],
   store?: import('../../engine/columnStore').ColumnStore,
 ) {
   const visibleNodes = activeFilter
@@ -244,7 +242,6 @@ export function getContext(
     schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
-    saved_views:   savedViews.map(v => ({ id: v.id, name: v.name })),
     _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars) },
   };
 

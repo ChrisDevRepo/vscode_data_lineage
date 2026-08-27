@@ -1,22 +1,10 @@
-import { memo, useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, SHORT_TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { Tooltip } from './ui/Tooltip';
 import { CloseIcon } from './ui/CloseIcon';
 import type { ObjectType } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
-
-/** One column-level flow row shown in a node tooltip. */
-export type CtTooltipFlow = {
-  /** Neighbor node that contributes or receives the traced column value. */
-  neighborNode: string;
-  /** Lineage side where the neighbor participates in the column trace. */
-  direction: 'in' | 'out';
-  /** Source-side column shown in the tooltip flow row. */
-  fromCol: string;
-  /** Target-side column shown in the tooltip flow row. */
-  toCol: string;
-};
 
 /** One selectable direct neighbor for interactive trace add/prune controls. */
 export type TraceNeighborOption = {
@@ -66,43 +54,6 @@ type TraceNeighborPicker = {
   side: NeighborSide;
   options: TraceNeighborOption[];
 };
-
-/**
- * Returns sorted unique columns for table-style CT tooltip display.
- *
- * @param flows - Column-flow entries to transform.
- *
- * @returns Sorted unique column names across all from/to flow endpoints.
- */
-export function buildTableTraceColumns(flows: CtTooltipFlow[]): string[] {
-  const cols = new Set<string>();
-  for (const f of flows) {
-    if (f.fromCol) cols.add(f.fromCol);
-    if (f.toCol) cols.add(f.toCol);
-  }
-  return Array.from(cols).sort((a, b) => a.localeCompare(b));
-}
-
-/**
- * Groups CT flows by neighbor with deterministic ordering and de-duplication.
- *
- * @param flows - Column-flow entries to transform.
- *
- * @returns One group per neighbor node with its de-duplicated flow rows, sorted by neighbor.
- */
-export function groupCtFlowsByNeighbor(flows: CtTooltipFlow[]): Array<{ neighborNode: string; rows: CtTooltipFlow[] }> {
-  const groups = new Map<string, CtTooltipFlow[]>();
-  for (const f of flows) {
-    if (!groups.has(f.neighborNode)) groups.set(f.neighborNode, []);
-    const arr = groups.get(f.neighborNode)!;
-    if (!arr.some(x => x.direction === f.direction && x.fromCol === f.fromCol && x.toCol === f.toCol)) {
-      arr.push(f);
-    }
-  }
-  return Array.from(groups.keys())
-    .sort((a, b) => a.localeCompare(b))
-    .map((neighborNode) => ({ neighborNode, rows: groups.get(neighborNode) ?? [] }));
-}
 
 function traceActionLabel(action: TraceNeighborAction, side: NeighborSide): string {
   return `${action === 'add' ? 'Add' : 'Prune'} ${side === 'in' ? 'inbound' : 'outbound'} neighbor`;
@@ -242,8 +193,6 @@ export type CustomNodeData = {
   aiNote?: { text: string };
   /** AI-authored highlight styling applied to the node border and glow. */
   aiHighlight?: { color: string; glow: string; shadow: string };
-  /** Column-trace rows rendered in the node tooltip. */
-  ctColumnFlows?: CtTooltipFlow[];
   /** Whether the scoped-view remove control is shown. */
   showRemoveButton?: boolean;
   /** Removes the node from the active allowlist-backed view. */
@@ -273,44 +222,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   tooltipLines.push(`Object Type: ${TYPE_LABELS[data.objectType]}${isVirtual ? (data.externalType === 'file' ? ' (File Source)' : ' (Cross-Database)') : ''}`);
   tooltipLines.push(`In: ${data.inDegree} | Out: ${data.outDegree}`);
 
-  const buildCtTooltipContent = (): ReactNode => {
-    if (!data.ctColumnFlows?.length) return tooltipLines.join('\n');
-
-    if (data.objectType === 'table') {
-      const cols = buildTableTraceColumns(data.ctColumnFlows);
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {tooltipLines.map((line, i) => <div key={i}>{line}</div>)}
-          <div style={{ borderTop: '1px solid var(--vscode-widget-border, #555)', margin: '3px 0' }} />
-          <div style={{ fontWeight: 600, fontSize: '0.85em', color: 'var(--ln-fg-muted)' }}>Trace columns:</div>
-          {cols.map((c) => (
-            <div key={c} style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>{c}</div>
-          ))}
-        </div>
-      );
-    }
-
-    const grouped = groupCtFlowsByNeighbor(data.ctColumnFlows);
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {tooltipLines.map((line, i) => <div key={i}>{line}</div>)}
-        <div style={{ borderTop: '1px solid var(--vscode-widget-border, #555)', margin: '3px 0' }} />
-        <div style={{ fontWeight: 600, fontSize: '0.85em', color: 'var(--ln-fg-muted)' }}>Column trace:</div>
-        {grouped.map(({ neighborNode, rows }) => (
-          <div key={neighborNode} style={{ marginTop: 3 }}>
-            <div style={{ fontWeight: 600, fontSize: '0.8em', color: 'var(--ln-fg-muted)' }}>{neighborNode}</div>
-            {rows.map((r, i) => (
-              <div key={`${neighborNode}-${r.direction}-${r.fromCol}-${r.toCol}-${i}`} style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>
-                {r.direction === 'in' ? `${r.fromCol} → ${r.toCol}` : `${r.toCol} ← ${r.fromCol}`}
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  const tooltipContent: string | ReactNode = buildCtTooltipContent();
+  const tooltipContent: string = tooltipLines.join('\n');
 
   const [picker, setPicker] = useState<TraceNeighborPicker | null>(null);
 

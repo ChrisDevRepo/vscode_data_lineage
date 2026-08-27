@@ -21,6 +21,12 @@ export interface AgendaEntry {
   depth: number;
   /** Specific columns of interest for this node (primarily used in Column Trace mode). */
   activeColumns?: string[];
+  /**
+   * CT chain-continuation questions opened for this node by an earlier hop's `column_flow`
+   * edges — rendered as `<lineage_questions>` only when this entry is dispatched, never by
+   * whichever node happens to dequeue next.
+   */
+  lineageQuestions?: string[];
 }
 
 
@@ -69,6 +75,11 @@ export class AgendaManager {
         const cols = new Set(existing.activeColumns ?? []);
         for (const c of entry.activeColumns) cols.add(c);
         existing.activeColumns = Array.from(cols);
+      }
+      if (entry.lineageQuestions) {
+        const questions = new Set(existing.lineageQuestions ?? []);
+        for (const q of entry.lineageQuestions) questions.add(q);
+        existing.lineageQuestions = Array.from(questions);
       }
       existing.priority = Math.max(existing.priority, entry.priority);
       existing.depth = Math.min(existing.depth, entry.depth);

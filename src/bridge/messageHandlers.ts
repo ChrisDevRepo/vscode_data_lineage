@@ -33,6 +33,7 @@ import {
   type ProjectStore,
 } from '../engine/projectStore';
 import { buildBareGraph } from '../ai/support/graphUtils';
+import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
 import { formatRenderConnectivity, type RenderConnectivity } from '../engine/renderConnectivity';
@@ -569,9 +570,18 @@ export function createMessageHandlers(
     'delete-project': async (msg) => {
       host.log('debug', 'Bridge', `Deleting project: ${msg.id}`);
       const store = loadProjectStore(context);
+      // Captured before the delete: the profiles vanish with the project, and each may file an AI run record.
+      const profileIds = (store.projects.find(p => p.id === msg.id)?.filterProfiles ?? []).map(fp => fp.id);
       const updated = deleteProject(store, msg.id);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
+      for (const profileId of profileIds) {
+        try {
+          await clearStoredRun(context.globalState, profileId);
+        } catch (err) {
+          host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     },
     'load-demo': async () => {
       host.log('debug', 'Bridge', 'Loading demo');
@@ -667,8 +677,10 @@ export function createMessageHandlers(
       }
     },
     'render-state': (msg) => {
-      const state = getUiDiagnostics(getSession());
+      const sess = getSession();
+      const state = getUiDiagnostics(sess);
       state.renderState = msg.renderState ?? null;
+      sess.renderState = msg.renderState ?? null;
       state.lastUiSyncAt = Date.now();
     },
     'db-connect': () => {
@@ -690,6 +702,16 @@ export function createMessageHandlers(
         await saveProjectStore(context, updated);
         logger.info(`Successfully saved filter view: "${msg.profile?.name}"`);
         postProjectsList(host, updated);
+        try {
+          const sess = getSession();
+          const run = buildStoredRun(msg.profile, sess.presentationArtifact, id => sess.columnStore.getDdl(id));
+          if (run) {
+            const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
+            logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
+          }
+        } catch (runErr) {
+          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);
+        }
       } catch (err) {
         logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
         throw err;
@@ -705,6 +727,11 @@ export function createMessageHandlers(
       const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
+      try {
+        await clearStoredRun(context.globalState, msg.profileId);
+      } catch (err) {
+        host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${msg.profileId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');

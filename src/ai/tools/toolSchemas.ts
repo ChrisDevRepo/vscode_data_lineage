@@ -18,7 +18,7 @@ import { coercedBoolean, coercedStringArray } from '../support/inputNormalizatio
  * wildcard target column locks an unwinnable CT session because no real column can match it.
  */
 export const ColumnIdentifierSchema = z.string().trim().min(1).regex(/^[^*%?]+$/, 'wildcards are not column identifiers').describe(
-  'A real, user-named column identifier. NEVER a wildcard — if the user did not name a specific column, omit targetColumns entirely.',
+  'A column the user named verbatim. When the user named no specific column, omit targetColumns; wildcards are rejected at the boundary.',
 );
 
 const MissionBriefValueSchema = z.string()
@@ -30,7 +30,7 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
   .max(8)
   .describe(
     'Analysis constraints the user stated that no filter field can express — e.g. "ignore filter criteria", '
-    + '"explain the discount logic on [ai].[spBuildSalesReport] in detail". One short note per instruction, in the '
+    + '"explain the discount logic on [schema].[spBuildReportA] in detail". One short note per instruction, in the '
     + "user's own terms. These are echoed back at the approval gate for the user to confirm, and are carried to "
     + 'every hop, so record an instruction here rather than dropping it when it maps to no filter.',
   );
@@ -394,7 +394,7 @@ const RouteRequestSchema = z.object({
   question: z.string().describe(
     'Verification sub-question for the routed node, self-contained so a later hop can act on it after ' +
     'older turns are wiped. Name the node being routed to, the specific column or value to resolve there, ' +
-    'and the mission decision it answers — e.g. "Does spCleanOrders derive OrderQty from RawQty or pass it ' +
+    'and the mission decision it answers — e.g. "Does spCleanOrdersA derive QtyA from RawQtyA or pass it ' +
     'through? Resolves whether the qty chain continues upstream." Frame it around the routed node, not the ' +
     'current focus; "analyze this node" carries no decision and is not a usable sub-question.',
   ),
@@ -450,8 +450,8 @@ const HopFindingBaseSchema = z.object({
   summary: z.string().describe(
     'One-line digest a later hop reads in isolation after older turns are wiped. Name what this node does ' +
     'to the traced value — the transform, filter, or pass-through — and which column it hands to which ' +
-    'downstream node. Example: "vwPriceList carries ListPrice through unchanged and feeds spBuildSalesReport ' +
-    'with UnitPrice." Aim for one line; length is never a rejection axis.',
+    'downstream node. Example: "vwPriceA carries ListPriceA through unchanged and feeds spBuildFactA ' +
+    'with UnitPriceA." Aim for one line; length is never a rejection axis.',
   ),
   /**
    * Optional list of neighbors to queue for the next hops. Each entry's
@@ -532,8 +532,23 @@ export const GetNeighborColumnsInputSchema = z.object({
 // session or graph state.
 // ──────────────────────────────────────────────────────────────────────────────
 
+/** Maximum object ids one `lineage_get_screen_state` recall may name. */
+export const SCREEN_STATE_MAX_IDS = 20;
+
 /** `lineage_get_context` takes no input. */
 export const GetContextInputSchema = z.object({}).strict();
+
+/** `lineage_get_screen_state` input: no field returns the screen card; `ids` or `filter` recalls the stored run. */
+export const GetScreenStateInputSchema = z.object({
+  ids: z.array(z.string()).min(1).max(SCREEN_STATE_MAX_IDS).optional()
+    .describe('Canonical object ids, e.g. "[dbo].[factsales]", to recall from the stored run. Use without filter.'),
+  filter: z.enum(['pruned', 'open_leads', 'stale']).optional()
+    .describe('One class of the stored run to list: pruned, open_leads, or stale. Use without ids.'),
+}).strict().superRefine((value, ctx) => {
+  if (value.ids && value.filter) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['filter'], message: 'Send either ids or filter, never both. Drop one of the two and call lineage_get_screen_state again.' });
+  }
+});
 
 /** `lineage_search_objects` input. */
 export const SearchObjectsInputSchema = z.object({

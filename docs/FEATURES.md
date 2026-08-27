@@ -80,6 +80,22 @@ When the selected surface would render more than `renderLimit` React Flow nodes,
 
 Save the current filter state as a named bookmark. Bookmarks retain schema, object-type, isolation, external-reference, focus, and exclusion choices; trace, analysis, path, and AI views can also be saved as bounded bookmarks. Restore them from the toolbar dropdown. Bookmarks are saved per project.
 
+#### AI bookmarks keep the run's memory
+
+Saving a bookmark from an AI-authored view also stores the exploration behind it: the question the
+run started from, the start object, every per-object finding and the decision that produced it, the
+objects the run pruned, the questions it left open, and a content hash of each in-scope object's DDL
+at save time.
+
+With that bookmark applied, `@lineage` can recall the run instead of repeating it — what the run
+found about a named object, which objects it pruned and why, and which questions it left open. Each
+recalled finding describes the object as it was at run time, so an object whose DDL has changed
+since is reported as stale and the assistant confirms it against the current definition before
+answering.
+
+The record lives with the bookmark: deleting the bookmark deletes it, and a bookmark saved by an
+earlier build simply has no run to recall.
+
 ---
 
 ## Exclusion rules
@@ -232,6 +248,18 @@ Triggered by the **Show graph preview** follow-up. The assistant resolves a
 finite scope and opens an **AI Preview** in
 the side panel. The preview is transient; use **Save as Bookmark** to retain it.
 
+#### Columns view in an AI preview
+
+When the run recorded column findings, the preview banner offers an **Objects / Columns** switch.
+Objects is the default. Columns redraws the same scope with one row per traced column, threads
+running column to column, procedures and scalar functions drawn as ports rather than columns, and a
+glyph on a line where the value changed between its two endpoints. Hovering a row lights that whole
+thread and dims the rest; the rows collapse to a summary line when you zoom out.
+
+This is a rendering of the AI-generated column analysis — the same best-effort finding described
+under **Tips** below, shown on the graph instead of only in the write-up. Verify it against the
+database for compliance-critical claims.
+
 #### Deep analysis
 
 Triggered by an explicit graph/render request, `/trace`, a named-column trace,
@@ -282,6 +310,7 @@ enforced throughout.
 - **Column-level questions are best-effort.** The AI traces column mappings, joins, and formulas from the loaded metadata. Always verify against the database for compliance-critical claims.
 - **Ask for a graph preview.** Try *"show me the lineage for `dbo.udfLeadingZeros` in the app"*. The preview is transient; save it explicitly if you want a bookmark.
 - **The assistant is context-aware.** It knows what filters are active and which schemas are visible. Ask *"what's filtered out?"*.
+- **It also sees the screen.** With a trace, a graph analysis, or a bookmark applied, ask *"explain this"*, *"what am I looking at?"*, or — for an AI bookmark — *"what did you find about X?"*, *"which objects did you drop and why?"*, *"has anything changed since?"*. Type `#lineageView` in the chat input to attach the screen explicitly; the lineage tools appear in the `#` picker once a model is loaded.
 - **Customise output.** Command Palette → **Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). See [`AI_PROMPTS.md`](AI_PROMPTS.md) for what each key controls.
 
 ### Requirements

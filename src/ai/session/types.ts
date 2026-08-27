@@ -1,4 +1,4 @@
-import type { ColumnEdge, SmNodeState } from '../sm/smTypes';
+import type { ColumnEdge, SmNodeState, SmState } from '../sm/smTypes';
 import type { AIViewMetadata } from '../../engine/projectStore';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
@@ -15,6 +15,10 @@ export interface PresentationArtifact {
   readonly name: string;
   readonly nodeIds: readonly string[];
   readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
+  /** Identifier of the run that authored this presentation. */
+  readonly runId?: string;
+  /** Engine checkpoint captured at present time; absent when no exploration engine was live. */
+  readonly checkpoint?: SmState;
 }
 
 /**
@@ -68,14 +72,14 @@ export interface ResultGraph {
  * @remarks
  * The single source of truth for template-structure compatibility. The built-in YAML carries a
  * matching `schemaVersion`; a user's custom overlay (`ai.outputTemplateFile`) is honoured only when
- * its `schemaVersion` equals this. **Bump this whenever a released change to the built-in YAML would
- * make a previous release's overlay wrong** — a key renamed/removed, the `instruction` shape changed,
- * or an instruction's *content* changed a rule `validatePresentResult` enforces (heading ownership,
- * section counts, grounding). Content is deliberately NOT exempt: an overlay that still clears the
- * version gate keeps instructing the model against the current validator, and that silent
- * mis-application is the failure this gate exists to prevent. Additive-only changes (a new optional
- * key that older YAML simply lacks) do NOT require a bump — the overlay tolerates absent keys.
- * `tests/tools/assert-template-schema-version.mjs` fails the gate when the asset changes without one.
+ * its `schemaVersion` equals this. **Bump this whenever a released change to the built-in YAML's
+ * structure would make a previous release's overlay unreadable** — a template key renamed or
+ * removed, a field added, removed, or retyped. The gate exists for crash-avoidance only: the
+ * mismatch skips the overlay, falls back to the built-in templates, and warns in the Output channel.
+ * Wording inside `instruction` / `example` is content, never a reason to bump — an older overlay
+ * with different prose still parses and renders. `tests/tools/assert-template-schema-version.mjs`
+ * compares the structural fingerprint against the last release tag and fails the gate when the
+ * structure changes without a bump.
  */
 export const AI_TEMPLATE_SCHEMA_VERSION = 2;
 

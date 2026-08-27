@@ -31,6 +31,7 @@ import {
   DetectGraphPatternsInputSchema,
   SearchDdlInputSchema,
   GetContextInputSchema,
+  GetScreenStateInputSchema,
 } from '../tools/toolSchemas';
 import { type DatabaseModel } from '../../engine/types';
 import { type SerializedFilterState } from '../../engine/projectStore';
@@ -41,7 +42,10 @@ import { getToolInvocationLabel } from '../tools/toolLabels';
 import { readToolError, rejectionIssuePaths, isConsentGateRejection } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
-import type { ToolServices } from './handlers/toolServices';
+import type { StoredRunReader } from '../session/runStore';
+import { presentRunRecall, presentScreenState } from './screenStatePresenter';
+import { resolveModelNodeId } from '../support/inputNormalization';
+import { getModelNodeMap, type ToolServices } from './handlers/toolServices';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
@@ -60,6 +64,7 @@ class ToolHandler implements ToolServices {
     outputChannel: vscode.LogOutputChannel,
     public readonly getPanel: () => vscode.WebviewPanel | undefined,
     private readonly turnLease?: TurnLease,
+    public readonly getStoredRun?: StoredRunReader,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
@@ -181,9 +186,41 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetContextInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_context', parsed.error, input);
       const sess = this.getSession();
-      const ctx = getContext(this.requireModel(), sess.filter, sess.projectName, sess.views, sess.columnStore);
+      const ctx = getContext(this.requireModel(), sess.filter, sess.projectName, sess.columnStore);
       return this.logAndReturn('get_context', ctx, input);
     } catch (err) { return this.toolError('get_context', err); }
+  }
+
+  public getScreenState(input: unknown) {
+    try {
+      const parsed = parseToolInput(GetScreenStateInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_screen_state', parsed.error, input);
+      const sess = this.getSession();
+      const model = this.requireModel();
+      const getDdl = (id: string) => sess.columnStore.getDdl(id);
+      const { ids, filter } = parsed.data;
+      if (ids || filter) {
+        const nodeMap = getModelNodeMap(model);
+        return this.logAndReturn('get_screen_state', presentRunRecall({
+          uiState: sess.uiState,
+          getStoredRun: this.getStoredRun,
+          ids: ids?.map(id => resolveModelNodeId(id, nodeMap) ?? id),
+          filter,
+          getDdl,
+          isInModel: id => nodeMap.has(id),
+        }), input);
+      }
+      const screen = presentScreenState({
+        uiState: sess.uiState,
+        renderState: sess.renderState,
+        graphMode: sess.graphMode,
+        filteredCount: sess.filteredCount,
+        totalNodes: model.nodes.length,
+        getStoredRun: this.getStoredRun,
+        getDdl,
+      });
+      return this.logAndReturn('get_screen_state', screen, input);
+    } catch (err) { return this.toolError('get_screen_state', err); }
   }
 
   public searchObjects(input: unknown) {
@@ -301,7 +338,7 @@ class ToolHandler implements ToolServices {
       if (!engine) {
         return this.logAndReturn('get_neighbor_columns', {
           error: 'no_active_session',
-          hint: 'This tool is only available during an active SM exploration. Call start_exploration first.',
+          hint: 'No active exploration. Call lineage_start_exploration first.',
         }, input);
       }
 
@@ -351,6 +388,7 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
  * @param outputChannel - Log channel for tracing tool activity.
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
+ * @param host - Optional host seam; `getStoredRun` resolves the AI run behind an applied bookmark.
  * @returns A ready-to-dispatch canonical registry.
  */
 export function buildAiToolRegistry(
@@ -358,12 +396,14 @@ export function buildAiToolRegistry(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
   turnLease?: TurnLease,
+  host?: { getStoredRun?: StoredRunReader },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun);
 
   // Exhaustive catalog binding: adding or removing a tool requires a matching handler entry.
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
+    lineage_get_screen_state: (input) => handler.getScreenState(input),
     lineage_search_objects: (input) => handler.searchObjects(input),
     lineage_get_scope_bundle: (input) => handler.getScopeBundle(input),
     lineage_start_exploration: (input) => handler.startExploration(input),
@@ -436,15 +476,17 @@ const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(
  * @param getSession - Factory for the active AI session.
  * @param outputChannel - Log channel for tracing tool activity.
  * @param getPanel - Accessor for the active webview panel.
+ * @param host - Optional host seam forwarded to the shared registry builder.
  * @returns Disposables for the registered `vscode.lm` tool bindings.
  */
 export function registerAiTools(
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
-  getPanel: () => vscode.WebviewPanel | undefined
+  getPanel: () => vscode.WebviewPanel | undefined,
+  host?: { getStoredRun?: StoredRunReader },
 ): vscode.Disposable[] {
   const external = filterRegistry(
-    buildAiToolRegistry(getSession, outputChannel, getPanel),
+    buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, host),
     EXTERNAL_TOOL_NAMES,
   );
 

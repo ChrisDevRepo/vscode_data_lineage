@@ -1,30 +1,16 @@
 # Third-Party Notices
 
-This project incorporates material from the projects listed below. The original
-copyright notices and licenses under which that material was received are set out
-in full.
+This project incorporates third-party material. The original copyright notices and
+licenses under which it was received are set out in full below.
 
 ---
 
-## Visual Studio Code
+## Visual Studio Code — MIT
 
-- **Source**: https://github.com/microsoft/vscode
-- **File**: `src/vs/workbench/contrib/markdown/common/markedKatexExtension.ts`
-- **Destination**: `src/components/markdown/markedKatexExtension.ts`
-- **License**: MIT
-
-Itself derived from [marked-katex-extension](https://github.com/UziTech/marked-katex-extension) (MIT).
-
-**Why**: this is the extension VS Code applies to chat responses. Vendoring it makes the
-AI description overlay render math identically to the chat panel, using the same
-delimiter rules rather than a reimplementation.
-
-**Modifications**:
-- The `MarkedKatexExtension` namespace was flattened to module exports, and the exported
-  factory renamed from `extension` to `markedKatexExtension`.
-- VS Code-internal imports (`base/common/marked/marked.js`, `base/common/strings.js`) were
-  replaced with the `marked` and `katex` packages plus a local `htmlAttributeEncodeValue`.
-- Unused `options` parameters were dropped from the two tokenizer factories.
+`src/components/markdown/markedKatexExtension.ts` is vendored, with modifications, from
+[microsoft/vscode](https://github.com/microsoft/vscode)
+(`src/vs/workbench/contrib/markdown/common/markedKatexExtension.ts`), itself derived from
+[marked-katex-extension](https://github.com/UziTech/marked-katex-extension).
 
 ```
 MIT License

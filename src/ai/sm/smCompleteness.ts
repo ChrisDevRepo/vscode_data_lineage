@@ -51,7 +51,7 @@ export function buildIncompleteRejection(
 ): SubmitResult {
   return {
     error: 'column_chain_incomplete',
-    hint: `REJECTED: Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. You MUST explicitly add a column_flow entry for each, or return verdict:'passthrough' with column_flow:[]. Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`,
+    hint: `Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. Add a column_flow entry for each, or return verdict:'passthrough' with column_flow:[]. Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`,
     detail: { unaccounted, available_columns: available },
   };
 }

@@ -57,7 +57,7 @@ interface NavigationWorkingMemory extends WorkingMemory {
   };
   /** Active depth budget at session start (omitted when unbounded). */
   depth_budget?: number;
-  /** Legacy checkpoint projection; active routing always reports `silent`. */
+  /** Checkpoint projection of the live enforcement mode — `strict` for an explicit/asymmetric depth intent, `silent` otherwise. */
   depth_enforcement?: 'strict' | 'soft' | 'silent';
   /** Initial reviewed seed depth retained for diagnostics; never a route ceiling. */
   depth_cap?: number | null;
@@ -368,7 +368,7 @@ export class NavigationEngine implements IHopStateMachine {
   protected lastRoutedDeferred = 0;
   /** column_flow entries submitted this hop (CT only — 0 when CT not active). */
   protected lastHopColumnFlowEntries = 0;
-  /** CT lineage-continuation questions, computed at the prior hop's submit (when focus/hop are correct) and cached so the next hop's worker message receives them — the live accessor reads engine state that has since advanced. */
+  /** CT lineage-continuation questions for the hop currently in flight, set at dispatch in {@link getHopContext} from that hop's own {@link AgendaEntry.lineageQuestions} — never a different node's. */
   protected _pendingLineageQuestions: string[] = [];
   /**
    * Initializes a new NavigationEngine.
@@ -700,9 +700,11 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Continuation questions cached at the previous hop's submit (when focus/hop matched the new edges).
-   * The live per-hop worker message reads this — not {@link getColumnLineageQuestions}, whose engine
-   * state has advanced by the time the next hop is composed (it would filter to the wrong hop → []).
+   * Continuation questions carried on the dequeued {@link AgendaEntry} for the hop currently in
+   * flight — set at dispatch in {@link getHopContext}, from that entry's own `lineageQuestions`,
+   * never from whichever node happened to commit most recently. The live per-hop worker message
+   * reads this — not {@link getColumnLineageQuestions}, a diagnostics-only recompute against the
+   * engine's current (already-advanced) focus/hop.
    */
   public get pendingLineageQuestions(): string[] {
     return this._pendingLineageQuestions;
@@ -1696,6 +1698,10 @@ export class NavigationEngine implements IHopStateMachine {
     if (this.mode.kind === 'ct' && this.tracer) {
       this.tracer!.setActiveColumns(entry.activeColumns || []);
     }
+    // Read continuation questions from THIS entry, not a global cache last written by whichever
+    // hop committed most recently — the render site must see only the questions opened for the
+    // node actually being dispatched.
+    this._pendingLineageQuestions = entry.lineageQuestions ? [...entry.lineageQuestions] : [];
 
     const node = this.nodeMap.get(entry.nodeId)!;
 
@@ -1912,6 +1918,10 @@ export class NavigationEngine implements IHopStateMachine {
       depth: number | undefined;
     }> = [];
     const prunedNeighborNids = new Set<string>();
+    // Populated at commit, keyed by upstream node id, so each routed hop's own AgendaEntry (not
+    // the next node to dequeue, whichever it turns out to be) carries only the questions opened
+    // for it.
+    let lineageQuestionsByNode: Map<string, string[]> | undefined;
     let stagedSections: Parameters<AiMemoryManager['storeDetail']>[1] = [];
     let stagedDetailChars = 0;
     let stagedSummaryChars = 0;
@@ -1995,8 +2005,7 @@ export class NavigationEngine implements IHopStateMachine {
 
         const schemaBlocked = routeBorder.kind === 'out_of_allowlist';
 
-        const directedDepth = this.directedDepthFromOrigin(nid)?.depth;
-        let candidateDepth = this.depthFromOrigin.get(nid) ?? directedDepth;
+        let candidateDepth = this.depthFromOrigin.get(nid) ?? this.directedDepthFromOrigin(nid)?.depth;
         if (candidateDepth === undefined) {
           const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
           candidateDepth = focusDepth + 1;
@@ -2103,7 +2112,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     // analyze/pass path: commit the detail slot + CT edges (prune exits early above) — stage its sections + CT passthrough roles.
     {
-      stagedSections = (finding.sections ?? []).map(s => ({ ...s }));
+      stagedSections = finding.sections ?? [];
       stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       stagedSummaryChars = finding.summary?.length ?? 0;
 
@@ -2186,7 +2195,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.heldFindingDraft.hold(structuredClone(finding));
         return {
           error: 'over_active_scope_budget',
-          hint: `REJECTED: Committing ${scopeAddNids.size} new routes would exceed the exploration budget (nodes ${admission.counts.nodes}/${admission.limits.node_cap}, est. tokens ${admission.counts.tokens}/${admission.limits.token_budget}). Your analysis is held: resend submit_findings keeping only the routes essential to the question — prune or defer the rest, or mark remaining branches terminal so the engine can close and synthesize.`,
+          hint: `Committing ${scopeAddNids.size} new routes would exceed the exploration budget (nodes ${admission.counts.nodes}/${admission.limits.node_cap}, est. tokens ${admission.counts.tokens}/${admission.limits.token_budget}). Your analysis is held: resend submit_findings keeping only the routes essential to the question — prune or defer the rest, or mark remaining branches terminal so the engine can close and synthesize.`,
           detail: {
             staged_routes: scopeAddNids.size,
             projected_nodes: admission.counts.nodes,
@@ -2261,8 +2270,10 @@ export class NavigationEngine implements IHopStateMachine {
 
       if ((this.mode.kind === 'ct' && this.tracer) && stagedColumnEdges.length > 0) {
         this.tracer!.edges.push(...stagedColumnEdges);
-        // Cache continuation questions NOW (focusId + hopCount still match these edges); the next hop reads them.
-        this._pendingLineageQuestions = this.tracer!.getColumnLineageQuestions(focusId, this.hopCount);
+        // Group continuation questions NOW (focusId + hopCount still match these edges) by the
+        // upstream node that must answer each; the route loop below hands each group to that
+        // node's own AgendaEntry so it renders only there, never at an unrelated next hop.
+        lineageQuestionsByNode = this.tracer!.getColumnLineageQuestionsByNode(focusId, this.hopCount);
         this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this.tracer!.edges.length} active_cols=${this.tracer!.activeColumns.join(',')}`);
       }
     }
@@ -2305,6 +2316,7 @@ export class NavigationEngine implements IHopStateMachine {
         // route targeting an already-visited node, so reactivation only ever arises via supplementAgenda.
         this.enqueueHop(nid, req.question, 0, 2, {
           columns: routeColumns ? [...routeColumns] : undefined,
+          lineageQuestions: lineageQuestionsByNode?.get(nid),
           freshScopeExpansion: isFreshExpansion,
           admitCtContractedBodiedTarget: this.mode.kind === 'ct' && !targetIsBodied,
         });
@@ -2480,9 +2492,16 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private contractThroughPassNode(entry: AgendaEntry): void {
     // Bound carried columns to this pass node's on-trace spine before propagation.
-    const carried = (this.mode.kind === 'ct' && this.tracer)
+    const spineBound = (this.mode.kind === 'ct' && this.tracer)
       ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [])
       : entry.activeColumns;
+    // Spine-empty candidates fall back to the requested set verbatim (determineActiveColumnsForCandidate
+    // above) — bound that result to the pass node's own declared columns too, same predicate as enqueueHop.
+    const carried = this.mode.kind === 'ct' ? (this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []) : spineBound;
+    if (this.mode.kind === 'ct' && (carried?.length ?? 0) === 0) {
+      this.log('debug', `[Disposition] pass-node ${entry.nodeId} declares none of the carried columns — contraction stops here`);
+      return;
+    }
     const questions = entry.taskIds
       .map(taskId => this.taskLedger.getTask(taskId)?.question)
       .filter((question): question is string => Boolean(question));
@@ -2556,6 +2575,12 @@ export class NavigationEngine implements IHopStateMachine {
     opts: {
       /** Columns of interest (column-trace mode); BB tasks must not carry any. */
       readonly columns?: string[];
+      /**
+       * CT chain-continuation questions opened for `targetId` by the committing hop's
+       * `column_flow` edges — carried onto the agenda entry itself so `<lineage_questions>`
+       * renders only when this exact node is dispatched.
+       */
+      readonly lineageQuestions?: string[];
       /** Internal cycle guard for the recursive contraction step. */
       readonly visitedRefs?: Set<string>;
       /**
@@ -2582,6 +2607,7 @@ export class NavigationEngine implements IHopStateMachine {
   ): void {
     const {
       columns,
+      lineageQuestions,
       visitedRefs = new Set<string>(),
       freshScopeExpansion = !this.scopeNodeIds.has(targetId),
       reactivated = false,
@@ -2632,7 +2658,7 @@ export class NavigationEngine implements IHopStateMachine {
       const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId);
       const alreadyQueued = this._agenda.has(targetId);
       // Bodied node — push directly (or merge into existing entry).
-      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(activeColumns) });
+      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(activeColumns), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       // Only grow the denominator if we expand beyond the approved scope or reactivate a cycle,
       // so that Y matches the approved scope "contract" for normal in-scope exploration.
       if (!alreadyQueued && (freshScopeExpansion || reactivated)) {
@@ -2650,7 +2676,7 @@ export class NavigationEngine implements IHopStateMachine {
       // hop" oracle here: a non-bodied origin/supplement target may already be in scopeNodeIds
       // (contracted-through earlier) yet never have had its own agenda slot until now.
       const alreadyQueued = this._agenda.has(targetId);
-      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(activeColumns) });
+      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(activeColumns), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       if (!alreadyQueued && !SCRIPT_TYPES.has(node.type)) {
         this._totalNodes++;
         this.log('debug', `[Agenda] enqueue ${targetId} — non-bodied direct push (total +1 → ${this._totalNodes})`);
@@ -2662,8 +2688,27 @@ export class NavigationEngine implements IHopStateMachine {
     // question to the target's bodied neighbors in the exploration direction.
     if (visitedRefs.has(targetId)) return;
     visitedRefs.add(targetId);
+    // CT-only: `columns` here is resolved against the ORIGIN (seed) or an earlier carrier, never
+    // against `targetId` itself — bound it to what this carrier actually declares before it can
+    // reach a bodied neighbour. `agendaColumnsFor` runs first so an omitted `columns` is resolved
+    // to the tracer's target set before the bound, not left to escape the bound as `undefined`.
+    const ctCarried = this.mode.kind === 'ct'
+      ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(columns)) ?? []
+      : undefined;
+    if (ctCarried && ctCarried.length === 0) {
+      // Carrier declares none of the forwarded columns: stop the contraction here instead of
+      // dispatching a bodied neighbour with a column it cannot carry.
+      this.log('debug', `[Disposition] enqueue drop ${targetId} — carrier declares none of the forwarded columns, contraction stops here`);
+      this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
+        columns: ctCarried,
+        viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
+        atHop: this.hopCount,
+      });
+      return;
+    }
+    const carried = ctCarried ?? columns;
     this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
-      columns,
+      columns: carried,
       viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
       atHop: this.hopCount,
     });
@@ -2676,7 +2721,7 @@ export class NavigationEngine implements IHopStateMachine {
         ? buildPassthroughReAnchor(targetId, nid, this.mode.kind)
         : '';
       const forwarded = `${question}${reAnchor}`;
-      this.enqueueHop(nid, forwarded, depth + 1, priority, { columns, visitedRefs, parentTaskId, admitCtContractedBodiedTarget });
+      this.enqueueHop(nid, forwarded, depth + 1, priority, { columns: carried, lineageQuestions, visitedRefs, parentTaskId, admitCtContractedBodiedTarget });
     }
   }
 
@@ -2871,12 +2916,16 @@ export class NavigationEngine implements IHopStateMachine {
         priority: a.priority,
         depth: a.depth,
         ...(a.activeColumns ? { activeColumns: a.activeColumns } : {}),
+        ...(a.lineageQuestions ? { lineageQuestions: a.lineageQuestions } : {}),
       })),
       currentFocusNodeId: this.currentFocusNodeId,
       memory: this.memory.toJSON(),
       engineInternals: this.serializeInternals(),
       ...(this.mode.kind === 'ct' && this.tracer ? {
-        lineageQuestionsLastHop: this.getColumnLineageQuestions(),
+        // The in-flight hop's own questions (set from its AgendaEntry at dispatch), not a fresh
+        // recompute against `currentFocusNodeId` — that would describe the just-committed hop,
+        // not the one a mid-hop resume needs to keep showing.
+        lineageQuestionsLastHop: [...this._pendingLineageQuestions],
         ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds),
       } : {}),
     };
@@ -2999,6 +3048,7 @@ export class NavigationEngine implements IHopStateMachine {
         priority: a.priority,
         depth: a.depth,
         ...(a.activeColumns ? { activeColumns: a.activeColumns } : {}),
+        ...(a.lineageQuestions ? { lineageQuestions: a.lineageQuestions } : {}),
       });
     });
 

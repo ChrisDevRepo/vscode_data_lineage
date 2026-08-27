@@ -32,6 +32,16 @@ const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 /** Upper bound on scope arrays carried across the bridge (DoS / payload guard). */
 export const AI_MAX_SCOPE_NODE_IDS = 500;
 
+/**
+ * Sentinel `upstreamLevels`/`downstreamLevels` value meaning "every level", not a literal depth.
+ *
+ * @remarks
+ * The trace controls encode an unbounded side as this value and the banner decodes it back to
+ * "All", so it crosses the bridge as an ordinary number. Every producer and consumer must use
+ * this constant: a surface that treats it as a depth reports nine quadrillion levels.
+ */
+export const TRACE_ALL_LEVELS = Number.MAX_SAFE_INTEGER;
+
 const AiScopeListSchema = z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS);
 
 /** Typed structural and free-text edits accepted when revising a pending exploration gate. */
@@ -286,6 +296,11 @@ const ColumnAspectSchema = z.object({
   edges: z.array(ColumnAspectEdgeSchema),
 }).strict();
 
+const NodeVerdictSchema = z.object({
+  nodeId: z.string(),
+  verdict: z.enum(['analyze', 'passthrough', 'prune']),
+}).strict();
+
 /**
  * Zod schema defining AI-generated metadata for enhancing the lineage graph UI.
  *
@@ -297,12 +312,16 @@ const AIViewMetadataSchema = z.object({
   description: z.string().optional(),
   createdAt: z.string(),
   modelName: z.string(),
+  /** Identifier of the AI run that authored the view; pairs the bookmark with its persisted run record. */
+  runId: z.string().optional(),
   highlightGroups: z.array(AIHighlightGroupSchema),
   badges: z.array(AINodeTextSchema),
   notes: z.array(AINodeTextSchema).optional(),
   layoutDirection: z.enum(['LR', 'TB']).optional(),
   /** Column trace edges. Each edge carries the analyzing hop node plus source/destination so every result node can show column flow data. Only present during CT sessions. */
   columnAspect: ColumnAspectSchema.optional(),
+  /** Per-node CT verdict, so the webview can symbol column lines without an AI-contract change. Only present during CT sessions. */
+  nodeVerdicts: z.array(NodeVerdictSchema).optional(),
 }).strict();
 
 /** AI-generated metadata layered onto the lineage graph UI: grouping, badges, highlights, and descriptive text. */
@@ -447,6 +466,7 @@ const AIViewMetadataReadSchema = z.object({
     ...ColumnAspectSchema.shape,
     edges: z.array(z.object(ColumnAspectEdgeSchema.shape)),
   }).optional(),
+  nodeVerdicts: z.array(z.object(NodeVerdictSchema.shape)).optional(),
 });
 
 const FilterProfileReadSchema = z.object({

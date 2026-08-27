@@ -50,7 +50,7 @@ const STEPS = [
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'AI template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'honest test labels', cmd: nodeBin, args: ['tests/tools/assert-honest-test-labels.mjs'] },
-  // Runs before the three unit steps below, because it is what makes them add up to the whole
+  // Runs before the two unit steps below, because it is what makes them add up to the whole
   // unit suite. Without it a new tests/unit/ directory is run by `npm test` and by no gate step.
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
   npmRun('unit: core', 'test:core'),

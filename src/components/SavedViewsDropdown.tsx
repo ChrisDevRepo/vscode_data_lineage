@@ -147,6 +147,8 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
             {filterProfiles.length > 0 && (
               <>
                 <div className="w-full h-px my-1.5" style={{ background: 'var(--ln-border)' }} />
+                {/* Scrolls past the viewport rather than clipping the tail of a long bookmark list. */}
+                <div style={{ maxHeight: 'min(60vh, 400px)', overflowY: 'auto', overflowX: 'hidden' }}>
                 {filterProfiles.map((profile) => {
                   if (confirmDeleteId === profile.id) {
                     return (
@@ -256,6 +258,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                     </div>
                   );
                 })}
+                </div>
               </>
             )}
           </div>

@@ -851,6 +851,8 @@ export interface SmState {
     depth: number;
     /** Column-trace columns of interest for this node. */
     activeColumns?: string[];
+    /** CT chain-continuation questions opened for this node by an earlier hop, owned by this entry. */
+    lineageQuestions?: string[];
   }>;
   /** ID of the node currently under analysis, if any. */
   currentFocusNodeId: string | null;
@@ -865,9 +867,9 @@ export interface SmState {
    */
   engineInternals: EngineInternalsSnapshot;
   /**
-   * Engine-generated lineage sub-questions from the last successful hop (CT only).
-   * Populated from `getColumnLineageQuestions()` at dump time — shows what questions
-   * would be fed to the next hop, critical for diagnosing CT tracking failures.
+   * Lineage questions owned by the in-flight hop's own {@link AgendaEntry}, captured at
+   * dispatch time (CT only) — shows what questions would be fed to the next hop, critical
+   * for diagnosing CT tracking failures.
    */
   lineageQuestionsLastHop?: string[];
   /**

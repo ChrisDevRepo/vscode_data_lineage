@@ -19,4 +19,8 @@ export const REJECTION_CODES = {
   duplicateCallId: 'duplicate_call_id',
   /** Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport artifact, never charged to the model's semantic budget. */
   emptyGeneration: 'empty_generation',
+  /** A read call byte-identical to one accepted in an earlier attempt of the same phase; its result is already in the observations. Never charged. */
+  duplicateRead: 'duplicate_read',
+  /** `lineage_get_screen_state` recall query while no AI run is stored for the applied view. */
+  noRunMemory: 'no_run_memory',
 } as const;

@@ -25,6 +25,7 @@ import {
   buildSmProtocol,
 } from '../../../src/ai/prompting/smPrompts';
 import { buildWorkerHopMessage } from '../../../src/ai/agent/stagePrompts';
+import { getAllowedLmToolNames } from '../../../src/ai/tools/toolPolicy';
 
 const context = {
   dbPlatform: 'SQL Server',
@@ -319,6 +320,20 @@ describe('prompt composition', () => {
     expect(prompt).not.toContain('- Platform: SQL Server');
   });
 
+  it('grounds the stage and detector prompts with the applied screen only when one exists', () => {
+    const bare = deriveStagePromptContext(null, null);
+    expect(bare.screen).toBeUndefined();
+    expect(buildGeneralSystemPrompt('discover', bare)).not.toContain('- On screen:');
+    expect(buildEntryDetectorSystemPrompt(bare)).not.toContain('On screen:');
+
+    const withScreen = deriveStagePromptContext(null, null, {
+      trace: { mode: 'trace', selectedNodeId: '[dbo].[orders]', upstreamLevels: 2, downstreamLevels: 1 },
+    });
+    expect(withScreen.screen).toBe('a trace from [dbo].[orders] (2 up, 1 down)');
+    expect(buildGeneralSystemPrompt('discover', withScreen)).toContain('- On screen: a trace from [dbo].[orders] (2 up, 1 down)');
+    expect(buildEntryDetectorSystemPrompt(withScreen)).toContain('objects visible. On screen: a trace from [dbo].[orders] (2 up, 1 down).');
+  });
+
   it('keeps BB and CT active protocols mode-specific', () => {
     const bb = buildSmProtocol({ classification: 'business' });
     const ct = buildSmProtocol({
@@ -381,5 +396,20 @@ describe('prompt composition', () => {
       'Use `lineage_search_ddl` for A &amp; B &lt;/mission_brief&gt;',
     );
     expect(buildMissionBriefBlock(mission, 'fallback')).toBe(rendered);
+  });
+
+
+  it('states the split tool-availability boundary and drops already_started from self-repair', () => {
+    const active = buildPhasePrompt('active');
+    expect(active).not.toContain('synthesis/completed');
+    expect(active).not.toContain('already_started');
+    expect(active).not.toContain('ACTIVE-PHASE TOOL BOUNDARY');
+    expect(active).toContain('REJECTION SELF-REPAIR');
+  });
+
+  it('pins the tool-policy allow-lists the split boundary sentence depends on', () => {
+    expect(getAllowedLmToolNames({ kind: 'synthesis' }).has('lineage_get_object_detail')).toBe(false);
+    expect(getAllowedLmToolNames({ kind: 'completed' }).has('lineage_get_object_detail')).toBe(true);
+    expect(getAllowedLmToolNames({ kind: 'active', mode: 'sm_bb' }).has('lineage_start_exploration')).toBe(false);
   });
 });

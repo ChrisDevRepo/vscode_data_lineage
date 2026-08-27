@@ -52,6 +52,8 @@ export interface GeneralPromptContext {
   readonly visibleNodes: number;
   /** Total number of nodes in the loaded model. */
   readonly totalNodes: number;
+  /** One phrase naming the trace, analysis, or bookmark applied on screen; absent when nothing is applied. */
+  readonly screen?: string;
 }
 
 /**
@@ -74,7 +76,7 @@ export interface GeneralPromptContext {
  * @returns The assembled base system prompt string.
  */
 export function buildGeneralSystemPrompt(phase: PromptPhase, ctx: GeneralPromptContext): string {
-  const { dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes } = ctx;
+  const { dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes, screen } = ctx;
   const isFiltered = filterSchemas.length > 0 && filterSchemas.length < totalSchemaCount;
   const schemasLine = isFiltered
     ? `- Schemas: ${filterSchemas.join(', ')} (${filterSchemas.length} of ${totalSchemaCount} schemas)`
@@ -102,6 +104,7 @@ export function buildGeneralSystemPrompt(phase: PromptPhase, ctx: GeneralPromptC
     `- Platform: ${dbPlatform}`,
     schemasLine,
     `- Visible objects: ${visibleNodes} of ${totalNodes}`,
+    ...(screen ? [`- On screen: ${screen}`] : []),
   ].join('\n');
 }
 
@@ -196,8 +199,7 @@ function buildActivePhasePrompt(): string {
     '2. MATHEMATICS: Write formulas as LaTeX math — `$...$` inline, `$$...$$` for a standalone block.',
     '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` for focus-node analysis. Submit `sections[]` per locked classification (one entry per fired `*_capture`) with full-depth text.',
     '4. DECISION SOURCE: Use the SM Neighbor Decision Contract for all route/prune choices.',
-    '5. ACTIVE-PHASE TOOL BOUNDARY: Use only active-hop tools in the hop loop; catalog lookup and rendering tools become available at synthesis/completed phase.',
-    `6. REJECTION SELF-REPAIR: On \`${REJECTION_CODES.bbFieldUnknown}\`, \`${REJECTION_CODES.offPolicy}\`, or \`${REJECTION_CODES.alreadyStarted}\`, retry once with a corrected same-intent payload.`,
+    `5. REJECTION SELF-REPAIR: On \`${REJECTION_CODES.bbFieldUnknown}\` or \`${REJECTION_CODES.offPolicy}\`, retry once with a corrected same-intent payload.`,
   ].join('\n');
 }
 
@@ -696,13 +698,15 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * When CT is active, a `<column_trace>` block is appended with only the
  * per-hop active column set and column-source inspection hint. The invariant
  * CT rules live in the stable system prompt and CT capture template so sliding
- * memory wipes do not duplicate the same rulebook every hop. When prior-hop
- * edges exist, a `<lineage_questions>` block follows labelled as PRIMARY
- * follow-up (more important than the AI's own sub_question).
+ * memory wipes do not duplicate the same rulebook every hop. When the engine
+ * routed this focus node to continue an earlier hop's column_flow, a
+ * `<lineage_questions>` block follows labelled as PRIMARY follow-up (more
+ * important than the AI's own sub_question) — the questions are always this
+ * focus's own, carried on its AgendaEntry, never a different node's.
  *
  * @param currentTasks - Structured tasks assigned to the active node.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when CT is inactive.
- * @param columnLineageQuestions - Engine-generated lineage sub-questions from the prior hop's edges (CT only).
+ * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
  * @returns Structured `<current_task>` XML block, or an empty string if `currentTask` is absent.
  */
 export function buildCurrentTaskBlock(
@@ -728,7 +732,7 @@ export function buildCurrentTaskBlock(
   if (columnLineageQuestions && columnLineageQuestions.length > 0) {
     lines.push(
       `  <lineage_questions>`,
-      `    Column-chain continuations opened on an earlier hop. Each may name a node other than this focus; address the one(s) whose column matches this hop's active columns:`,
+      `    Column-chain continuations opened on an earlier hop for this focus. Address them:`,
       ...columnLineageQuestions.map(q => `    - ${q}`),
       `  </lineage_questions>`,
     );

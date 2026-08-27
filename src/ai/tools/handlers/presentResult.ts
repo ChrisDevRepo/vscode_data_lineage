@@ -204,7 +204,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         return reject({
           success: false,
           errors: fieldErrors,
-          hint: 'Fix the listed fields and call lineage_present_result again with the same content.',
+          hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
         }, { clearDraft: true });
       }
       const presentInput = boundary.data as PresentResultInput;
@@ -386,6 +386,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         description: validation.description,
         createdAt: new Date().toISOString(),
         modelName: sess.modelName ?? 'unknown',
+        runId: sess.id,
         highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
         badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
         notes: validation.notes.map(n => ({ nodeId: n.node_id, text: n.text })),
@@ -400,12 +401,33 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               toCol:    e.to_col,
             })),
           },
+          // Every node the column edges reference needs a verdict, hop nodes included — a hop that
+          // is not itself an answer node still decides whether its lines read as a transformation.
+          // Compared case-insensitively: node ids reach these two lists from different sources.
+          nodeVerdicts: (() => {
+            const referenced = new Set(validation.node_ids.map(id => id.toLowerCase()));
+            for (const e of resultGraph.columnAspect.edges) referenced.add(e.hop_node.toLowerCase());
+            return (resultGraph.node_states ?? [])
+              .filter(ns => referenced.has(ns.nodeId.toLowerCase()))
+              .map(ns => ({ nodeId: ns.nodeId, verdict: ns.action }));
+          })(),
         } : {}),
       };
+      // The engine checkpoint rides the artifact so a bookmark saved from this view can recall the
+      // run; captured here so the single guarded commit below is the only write of the artifact.
+      let checkpoint: PresentationArtifact['checkpoint'];
+      if (sess.stateMachine) {
+        try {
+          checkpoint = sess.stateMachine.toJSON();
+        } catch (error) {
+          s.logger.debug(`presentResult checkpoint capture skipped: ${error instanceof Error ? error.name : 'Error'}`);
+        }
+      }
       const artifact: PresentationArtifact = {
         name: validation.name,
         nodeIds: [...validation.node_ids],
         aiMetadata,
+        ...(checkpoint ? { runId: sess.id, checkpoint } : {}),
       };
 
       const panel = s.getPanel();
@@ -450,8 +472,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       {
         resultGraph.description = validation.description ?? undefined;
         resultGraph.summary = validation.summary ?? undefined;
-        // Persist the autoFixed parts — the raw input may still carry literal \n artifacts
-        // the fixer already corrected in the rendered description.
         resultGraph.title = presentInput.title ?? undefined;
         resultGraph.intro = presentInput.intro ?? undefined;
         resultGraph.closing = presentInput.closing ?? undefined;

@@ -173,6 +173,7 @@ const AgendaEntrySchema = z.object({
   priority: NonNegativeInt,
   depth: NonNegativeInt,
   activeColumns: NonEmptyStrings.optional(),
+  lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
 
 const EngineInternalsSchema = z.object({
@@ -320,6 +321,7 @@ const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     });
     snapshot.agenda.forEach((entry, i) => {
       if (entry.activeColumns !== undefined) issue('BB agenda cannot carry active columns', ['agenda', i, 'activeColumns']);
+      if (entry.lineageQuestions !== undefined) issue('BB agenda cannot carry lineage questions', ['agenda', i, 'lineageQuestions']);
     });
   } else {
     if (init?.analysisMode !== 'ct') issue('CT snapshot requires CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
@@ -343,6 +345,7 @@ type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
  *
  * @param input - Untrusted checkpoint payload to validate.
  * @returns A strict current-format navigation snapshot.
+ * @throws {@link InvalidEngineCheckpointError} when `input` fails schema validation.
  */
 export function parseNavigationSnapshot(input: unknown): NavigationSnapshot {
   const result = NavigationSnapshotSchema.safeParse(input);

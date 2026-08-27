@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { ModeBanner } from './ModeBanner';
+import { Tooltip } from './ui/Tooltip';
 
 interface AiViewBannerProps {
   /** The name or title of the AI-generated view. */
@@ -14,6 +15,18 @@ interface AiViewBannerProps {
    * @param withPositions - Whether to save the current visual positions of nodes.
    */
   onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  /**
+   * Whether the run recorded column-level findings, which is what the column view renders.
+   *
+   * @remarks
+   * The switch is offered only when it has something to show; a run without column findings
+   * keeps the object view as its only view.
+   */
+  columnViewAvailable?: boolean;
+  /** Whether the column view is the one currently rendered. */
+  columnView?: boolean;
+  /** Switches between the object view and the column view of the same scope. */
+  onToggleColumnView?: (columnView: boolean) => void;
 }
 
 /** SVG path for the AI/Sparkle icon. */
@@ -27,7 +40,31 @@ export const AiViewBanner = memo(function AiViewBanner({
   nodeCount,
   onDiscard,
   onSaveAsBookmark,
+  columnViewAvailable,
+  columnView,
+  onToggleColumnView,
 }: AiViewBannerProps) {
+  const viewToggle = columnViewAvailable && onToggleColumnView ? (
+    <Tooltip content={'Objects shows dependencies between objects.\nColumns shows the column-level findings of this analysis.'} placement="bottom" multiline>
+      <div className="flex items-center gap-0.5" role="group" aria-label="Preview detail level">
+        <button
+          onClick={() => onToggleColumnView(false)}
+          aria-pressed={!columnView}
+          className={`ln-mode-banner__btn-sm ${columnView ? 'ln-btn-secondary' : 'ln-btn-primary'}`}
+        >
+          Objects
+        </button>
+        <button
+          onClick={() => onToggleColumnView(true)}
+          aria-pressed={!!columnView}
+          className={`ln-mode-banner__btn-sm ${columnView ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
+        >
+          Columns
+        </button>
+      </div>
+    </Tooltip>
+  ) : null;
+
   return (
     <ModeBanner
       variant="ai"
@@ -42,6 +79,7 @@ export const AiViewBanner = memo(function AiViewBanner({
       }
       onClose={onDiscard}
       onSaveAsBookmark={onSaveAsBookmark}
+      extraControls={viewToggle}
     />
   );
 });
