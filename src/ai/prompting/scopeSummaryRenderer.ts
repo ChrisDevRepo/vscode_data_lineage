@@ -6,8 +6,23 @@
  * the VS Code module surface. Single source of truth for the native gate markdown.
  */
 
+import type { ClassificationValue } from '../session/classification';
 import type { ScopeSummary } from '../sm/smTypes';
 import { pluralize } from '../support/text';
+
+/**
+ * User-facing wording for the locked classification.
+ *
+ * @remarks
+ * Named for its consequence rather than its enum value: the classification decides which capture
+ * angles survive commit, so the gate states what the answer will and will not cover. Without this
+ * line the one scope field that discards analysis is the only one the user cannot correct.
+ */
+const CLASSIFICATION_LABELS: Record<ClassificationValue, string> = {
+  business: 'business logic (technical-only findings are dropped)',
+  technical: 'technical mechanics (business findings, incl. data-quality caveats, are dropped)',
+  both: 'business logic and technical mechanics',
+};
 
 /** Formats a count with its noun; the suffix rule itself lives in the shared `pluralize`. */
 function plural(n: number, noun: string): string {
@@ -112,6 +127,7 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
   lines.push(...chosen);
   lines.push(`- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${direction}`);
   lines.push(`- **Tracing:** ${tracing}`);
+  if (summary.classification) lines.push(`- **Reporting on:** ${CLASSIFICATION_LABELS[summary.classification]}`);
   lines.push('');
 
   const passSet = new Set(summary.activeFilters.passNodeIds.map(nodeId => nodeId.toLowerCase()));

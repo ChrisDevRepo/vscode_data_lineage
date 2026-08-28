@@ -190,6 +190,7 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     'Resolve the origin object, then call `lineage_start_exploration`. Do not answer in prose.',
     '1. Call `lineage_search_objects` to resolve the user-named object to its exact id.',
     '2. Call `lineage_start_exploration` with `origin` set to that id, `analysisMode` (bb or ct), and a `classification` (business, technical, or both).',
+    'Choose `classification` by what the user asked for, not by how the object is built: "business" unless the user named a technical lens (performance, indexes, execution plan, query shape, load pattern), "both" when the request spans both, "technical" only when the user asked for the technical lens alone. Sections whose angle the classification did not request are dropped at commit, so a wrong value silently discards analysis: a data-quality caveat (a COALESCE fallback, a filter that drops rows, a stale-rule join) is business content and is lost under "technical".',
     'This is a fresh exploration: set `origin`; do not set the `supplement` field (that is only for extending a finished exploration).',
     'Set `direction` from the request: upstream for sources/inputs ("all the way up", "show sources"), downstream for usage/impact, bidirectional when the user wants both.',
     'Pass a depth only when the user stated one — a level count (e.g. "3 levels"), "all" for the whole chain, or a per-side ask (e.g. "2 up, 1 down") as {upstream, downstream}. If the user gave no depth, omit it.',

@@ -1097,6 +1097,7 @@ export class NavigationEngine implements IHopStateMachine {
       estimatedDdlTokens: estimateTokens(estimatedDdlChars),
       bySchema,
       scopeNotes: this.memory.getScopeNotes(),
+      classification: this.classification,
       activeFilters: {
         schemas: Array.from(this.excludedSchemas).sort(),
         types: Array.from(this.excludedTypes).sort(),

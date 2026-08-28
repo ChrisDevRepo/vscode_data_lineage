@@ -6,6 +6,7 @@
  * types from smBase) so it can be unit-tested without a live engine.
  */
 
+import type { ClassificationValue } from '../session/classification';
 import type { CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
 
 
@@ -487,6 +488,12 @@ export interface ScopeSummary {
    * before an autonomous run begins.
    */
   scopeNotes: string[];
+  /**
+   * Gate-locked mission-type verdict. Surfaced at the approval gate because it is the only
+   * scope field that discards captured analysis: sections whose angle it did not request are
+   * dropped at commit by `filterSectionsForClassification`. Undefined until the AI sets it.
+   */
+  classification?: ClassificationValue;
 }
 
 /**
