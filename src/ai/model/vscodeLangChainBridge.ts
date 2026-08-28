@@ -27,7 +27,7 @@ import {
 } from '@langchain/core/messages';
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
-import { toJsonSchema, type JSONSchema } from '@langchain/core/utils/json_schema';
+import { toJsonSchema } from '@langchain/core/utils/json_schema';
 import { ModelPortError, type ModelPortErrorCode } from './modelPort';
 import type { WireEvent } from '../observability/wireLog';
 import { toWireMessage } from '../observability/vscodeWireLog';
@@ -65,8 +65,7 @@ export interface VscodeLangChainBridgeFields {
  * The instance is request-scoped and has no model-selection or provider-fallback behavior.
  */
 export class VscodeLangChainBridge extends BaseChatModel<
-  VscodeLangChainCallOptions,
-  AIMessageChunk
+  VscodeLangChainCallOptions
 > {
   private readonly model: vscode.LanguageModelChat;
   private readonly token: vscode.CancellationToken;
@@ -324,7 +323,7 @@ function readInputSchema(tool: Record<string, unknown>): Record<string, unknown>
   if (isRecord(tool.inputSchema)) return tool.inputSchema;
   if (isRecord(tool.function) && isRecord(tool.function.parameters)) return tool.function.parameters;
   if (!('schema' in tool) || !tool.schema) return null;
-  const schema = toJsonSchema(tool.schema as Parameters<typeof toJsonSchema>[0]) as JSONSchema;
+  const schema = toJsonSchema(tool.schema as Parameters<typeof toJsonSchema>[0]);
   return isRecord(schema) ? schema : null;
 }
 

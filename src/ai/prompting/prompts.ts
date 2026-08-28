@@ -407,7 +407,7 @@ function buildFollowUpPrompt(): string {
     '',
     '## Chat response format',
     '',
-    `${CHAT_MARKDOWN_FORMAT}`,
+    CHAT_MARKDOWN_FORMAT,
     '',
     buildPresentationDetailContract(undefined, 'completed'),
   ].join('\n');

@@ -1104,7 +1104,7 @@ async function handleTableStatsRequestHost(
       }
       statsConnState.uri = result.connectionUri;
     }
-    const connectionUri = statsConnState.uri!;
+    const connectionUri = statsConnState.uri;
     const serverInfo = await getServerInfo(connectionUri);
     const engineEdition = serverInfo.engineEditionId;
 

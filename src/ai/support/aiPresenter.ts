@@ -71,7 +71,7 @@ export function presentNode(
     t:   node.type,
     deg,
     ext: node.externalType || undefined,
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -92,7 +92,7 @@ export function presentColumn(col: ColumnDef): Record<string, unknown> {
     pk: col.pkOrdinal ?? undefined,
     uq: col.unique    || undefined,
     ck: col.check     || undefined,
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -167,7 +167,7 @@ export function presentSchema(schema: SchemaInfo): Record<string, unknown> {
     p:    schema.types['procedure'] || undefined,
     f:    schema.types['function']  || undefined,
     ext:  schema.types['external']  || undefined,
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -199,7 +199,7 @@ export function presentNeighbor(
     n:  n?.name   ?? nid,
     t:  n?.type   || undefined,
     e:  edgeMap.get(edgeKey) ?? 'read',
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -224,5 +224,5 @@ export function presentFilter(filter: SerializedFilterState): Record<string, unk
     externalRefTypes:  filter.externalRefTypes?.length > 0 ? filter.externalRefTypes : undefined,
     exclusionPatterns: filter.exclusionPatterns?.length ? filter.exclusionPatterns : undefined,
     bookmark_nodes:    bookmarkCount && bookmarkCount > 0 ? bookmarkCount : undefined,
-  } as Record<string, unknown>);
+  });
 }

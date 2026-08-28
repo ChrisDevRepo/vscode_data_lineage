@@ -334,7 +334,7 @@ export function searchObjects(
   }
 
   const typeSet   = types?.length ? new Set<ObjectType>(types) : undefined;
-  const schemaSet = appliedSchemaFilter ? new Set<string>(normalizedSchemas!) : undefined;
+  const schemaSet = appliedSchemaFilter ? new Set<string>(normalizedSchemas) : undefined;
   const schemaSetLower = appliedSchemaFilter ? new Set(appliedSchemaFilter.map(s => s.toLowerCase())) : undefined;
 
   const nameHits = listAllInSchemas
@@ -342,7 +342,7 @@ export function searchObjects(
         (!schemaSetLower || schemaSetLower.has(n.schema.toLowerCase())) &&
         (!typeSet || typeSet.has(n.type)))
     : searchCatalog(
-        model.nodes as SearchableNode[],
+        model.nodes,
         effectiveQuery,
         typeSet,
         schemaSet,
@@ -386,7 +386,7 @@ export function searchObjects(
   const visibleNodeCount = activeFilter
     ? model.nodes.filter(n => {
         const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => s.toLowerCase() === n.schema.toLowerCase());
-        const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type as ObjectType);
+        const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type);
         return schemaOk && typeOk;
       }).length
     : model.nodes.length;
@@ -411,7 +411,7 @@ export function searchObjects(
       // Probe cross-schema to surface where the object actually lives — return schema names only,
       // not the results themselves, so the AI self-corrects its filter on the next call.
       const crossHits = searchCatalog(
-        model.nodes as SearchableNode[],
+        model.nodes,
         effectiveQuery,
         typeSet,
         undefined,
@@ -494,7 +494,7 @@ export function getObjectDetail(
     dn:            dn.length > 0 ? dn : undefined,
     up_more:       upMore > 0 ? upMore : undefined,
     dn_more:       dnMore > 0 ? dnMore : undefined,
-  } as Record<string, unknown>);
+  });
 
   const ddl = getNodeDdl(node.id, nodeMap, store) ?? null;
 
@@ -567,9 +567,9 @@ export function getScopeBundle(
   };
 
   if (direction === 'upstream') {
-    walkWithCap('inbound', singleDepth!);
+    walkWithCap('inbound', singleDepth);
   } else if (direction === 'downstream') {
-    walkWithCap('outbound', singleDepth!);
+    walkWithCap('outbound', singleDepth);
   } else {
     walkWithCap('inbound', upstreamDepth!);
     walkWithCap('outbound', downstreamDepth!);
@@ -688,7 +688,7 @@ export function getNeighborColumns(
       type:         node.type,
       columns:      cols?.length ? cols.map(c => presentColumn(c)) : undefined,
       foreign_keys: foreignKeys?.length ? foreignKeys : undefined,
-    } as Record<string, unknown>);
+    });
   });
   return { results, total: results.length };
 }
@@ -772,7 +772,7 @@ export function searchDdl(
   }
 
   const ddlTypes: ObjectType[] = types
-    ? (types as ObjectType[])
+    ? (types)
     : [...SCRIPT_TYPES];
   const typeSet = new Set<ObjectType>(ddlTypes);
 

@@ -624,7 +624,7 @@ export function App() {
         setContextMenu(null);
         return;
       }
-      const data = node.data as Record<string, unknown>;
+      const data = node.data;
       setContextMenu({
         kind: 'object',
         x: Math.min(x, window.innerWidth - OBJECT_CONTEXT_MENU_WIDTH),
@@ -1057,7 +1057,7 @@ export function App() {
       if (msg.type === 'detail-closed') {
         setIsDetailOpen(false);
       } else if (msg.type === 'projects-list') {
-        const updatedProjects: Project[] = (msg.projects ?? []) as Project[];
+        const updatedProjects: Project[] = (msg.projects ?? []);
         setProjects(updatedProjects);
         setLastOpenedId(msg.lastOpenedId ?? null);
         if (msg.lastWizardView) setLastWizardView(msg.lastWizardView as 'main' | 'projects');
@@ -1111,7 +1111,7 @@ export function App() {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;
         let unresolved: string[] = [];
-        let metadata = msg.aiMetadata as AIViewMetadata;
+        let metadata = msg.aiMetadata;
         if (renderModel) {
           const reconciled = reconcileAiView(msg.nodeIds, metadata, renderModel);
           resolvedIds = reconciled.nodeIds;

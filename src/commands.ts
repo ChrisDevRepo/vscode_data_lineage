@@ -5,7 +5,7 @@ import { getActivePanel } from './panelProvider';
 import { postToWebview } from './bridge/host';
 import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
-import { searchCatalog, type SearchableNode } from './utils/modelSearch';
+import { searchCatalog } from './utils/modelSearch';
 import { applyModelToSession, buildExtensionConfig } from './bridge/messageHandlers';
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 
@@ -213,7 +213,7 @@ export function registerCommands(
 
       qp.onDidChangeValue(value => {
         if (!value.trim()) { qp.items = []; return; }
-        const results = searchCatalog(model.nodes as SearchableNode[], value, undefined, undefined, 20);
+        const results = searchCatalog(model.nodes, value, undefined, undefined, 20);
         qp.items = results.map(n => ({
           label:       n.name,
           description: `[${n.schema}]`,

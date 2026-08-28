@@ -72,7 +72,7 @@ export function searchCatalog(
   query: string,
   types?: Set<ObjectType>,
   schemas?: Set<string>,
-  limit: number = 20,
+  limit = 20,
   mode: 'substring' | 'regex' = 'substring',
 ): SearchableNode[] {
   if (query.length < 1) return [];
@@ -121,8 +121,8 @@ export function searchBodyScripts(
   nodes: SearchableNode[],
   query: string,
   types?: Set<ObjectType>,
-  contextLines: number = 2,
-  limit: number = 100,
+  contextLines = 2,
+  limit = 100,
 ): DdlMatch[] {
   if (query.length < 2) return [];
   const lower = query.toLowerCase();
@@ -151,7 +151,7 @@ export function searchBodyScripts(
 export function searchColumns(
   nodes: SearchableNode[],
   query: string,
-  limit: number = 100,
+  limit = 100,
 ): DdlMatch[] {
   if (query.length < 2) return [];
   const lower = query.toLowerCase();

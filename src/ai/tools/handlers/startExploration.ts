@@ -180,13 +180,13 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
         s.logger.debug(`[AI] [Proposal] completed result preserved during replacement review origin=${sanitizeForLog(data.origin ?? '')}`);
       }
-      if (priorLive && prior!.sessionId && prior!.sessionId !== sess.id) {
+      if (priorLive && prior.sessionId && prior.sessionId !== sess.id) {
         sess.pendingUserNotice.add('A previous exploration was still running when you started this one. Its in-memory findings were discarded.');
         sess.resetExploration();
       } else if (priorLive) {
         const alreadyStarted = evaluateAlreadyStartedRule(
           priorLive,
-          prior!.sessionId === sess.id,
+          prior.sessionId === sess.id,
           isRefining,
         );
         if (alreadyStarted) return s.logAndReturn('start_exploration', alreadyStarted, loggedInput);

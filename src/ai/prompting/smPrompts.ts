@@ -174,7 +174,7 @@ export function buildSmProtocol({
   );
 
   if (isColumnAspectActive) {
-    sections.push('', buildColumnAspectPrompt(targetColumns!));
+    sections.push('', buildColumnAspectPrompt(targetColumns));
   }
 
   return sections.join('\n');

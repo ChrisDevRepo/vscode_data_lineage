@@ -16,7 +16,6 @@ import {
   TRACKED_ELEMENT_TYPES,
   XmlElement,
   XmlProperty,
-  XmlReference,
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
@@ -490,7 +489,7 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
                 for (const typeRel of asArray(tsEl.Relationship)) {
                   if (typeRel['@_Name'] !== 'Type') continue;
                   for (const typeEntry of asArray(typeRel.Entry)) {
-                    for (const ref of asArray(typeEntry.References as XmlReference | XmlReference[] | undefined)) {
+                    for (const ref of asArray(typeEntry.References)) {
                       typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']) : '?';
                     }
                   }
@@ -519,7 +518,7 @@ function getRelRefs(el: XmlElement, relName: string): string[] {
   const rel = asArray(el.Relationship).find(r => r['@_Name'] === relName);
   if (!rel) return [];
   return asArray(rel.Entry).flatMap(e =>
-    asArray(e.References as XmlReference | XmlReference[] | undefined).map(r => r['@_Name'] ?? '').filter(Boolean)
+    asArray(e.References).map(r => r['@_Name'] ?? '').filter(Boolean)
   );
 }
 
@@ -552,7 +551,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
       for (const entry of asArray(colSpecRel?.Entry)) {
         for (const specEl of asArray(entry.Element)) {
-          const colRef = getRelRefs(specEl as XmlElement, 'Column')[0];
+          const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
           const colName = stripBrackets(colRef.split('.').pop() ?? '');
           uqColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
@@ -597,7 +596,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       let ordinal = 1;
       for (const entry of asArray(colSpecRel?.Entry)) {
         for (const specEl of asArray(entry.Element)) {
-          const colRef = getRelRefs(specEl as XmlElement, 'Column')[0];
+          const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
           const colName = stripBrackets(colRef.split('.').pop() ?? '');
           if (colName) pkOrdinalMap.set(`${tableKey}.${colName.toLowerCase()}`, ordinal++);
@@ -643,7 +642,7 @@ function collectDeps(el: XmlElement, deps: string[]): void {
     const entries = asArray(rel.Entry);
     if (DEPENDENCY_RELATIONSHIPS.has(rel['@_Name'])) {
       for (const entry of entries) {
-        const refs = asArray(entry.References as XmlReference | XmlReference[] | undefined);
+        const refs = asArray(entry.References);
         for (const ref of refs) {
           if (ref['@_ExternalSource']) continue;
           const refName = ref['@_Name'];
@@ -655,7 +654,7 @@ function collectDeps(el: XmlElement, deps: string[]): void {
       }
     }
     for (const entry of entries) {
-      for (const child of asArray(entry.Element as XmlElement | XmlElement[] | undefined)) {
+      for (const child of asArray(entry.Element)) {
         collectDeps(child, deps);
       }
     }

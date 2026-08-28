@@ -685,8 +685,8 @@ export class NavigationEngine implements IHopStateMachine {
       scopeExpansions: this.budgetExpansions.length,
       allowedSchemaCount: this.sessionAllowedSchemas.size,
       ...(this.mode.kind === 'ct' && this.tracer ? {
-        columnEdgeCount: this.tracer!.edges.length,
-        activeColumnCount: this.tracer!.activeColumns.length,
+        columnEdgeCount: this.tracer.edges.length,
+        activeColumnCount: this.tracer.activeColumns.length,
         columnFlowEntries: this.lastHopColumnFlowEntries,
       } : {}),
     };
@@ -1044,7 +1044,7 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param namesPerType - Cap on names listed under each (schema,type) pair. Default 8.
    */
-  public getScopeSummary(namesPerType: number = 8): ScopeSummary {
+  public getScopeSummary(namesPerType = 8): ScopeSummary {
     const bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }> = {};
     let hopCount = 0;
 
@@ -1724,7 +1724,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     // Synchronize the Column Aspect to only show columns relevant to this specific path
     if (this.mode.kind === 'ct' && this.tracer) {
-      this.tracer!.setActiveColumns(entry.activeColumns || []);
+      this.tracer.setActiveColumns(entry.activeColumns || []);
     }
     // Read continuation questions from THIS entry, not a global cache last written by whichever
     // hop committed most recently — the render site must see only the questions opened for the
@@ -1756,7 +1756,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const path = bidirectional(this.graph, this.originNodeId!, entry.nodeId);
-    const navPath = path ? (path as string[]).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
+    const navPath = path ? (path).map(id => this.nodeMap.get(id)?.name || id).join(' → ') : 'Direct';
 
     const workingMemory = this.memory.getWorkingMemory(this.hopCount, this.scopeNodeIds.size, {
       rounds_used: this.hopCount,
@@ -1783,7 +1783,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
     workingMemory.deferred_count = this.deferredQuestions.length;
     if (this.mode.kind === 'ct' && this.tracer) {
-      workingMemory.column_aspect = this.tracer!.state;
+      workingMemory.column_aspect = this.tracer.state;
     }
 
     this._lastCurrentTask = this.currentFocusQuestion ?? '';
@@ -2297,12 +2297,12 @@ export class NavigationEngine implements IHopStateMachine {
       this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
 
       if ((this.mode.kind === 'ct' && this.tracer) && stagedColumnEdges.length > 0) {
-        this.tracer!.edges.push(...stagedColumnEdges);
+        this.tracer.edges.push(...stagedColumnEdges);
         // Group continuation questions NOW (focusId + hopCount still match these edges) by the
         // upstream node that must answer each; the route loop below hands each group to that
         // node's own AgendaEntry so it renders only there, never at an unrelated next hop.
-        lineageQuestionsByNode = this.tracer!.getColumnLineageQuestionsByNode(focusId, this.hopCount);
-        this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this.tracer!.edges.length} active_cols=${this.tracer!.activeColumns.join(',')}`);
+        lineageQuestionsByNode = this.tracer.getColumnLineageQuestionsByNode(focusId, this.hopCount);
+        this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this.tracer.edges.length} active_cols=${this.tracer.activeColumns.join(',')}`);
       }
     }
 
@@ -2460,9 +2460,9 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Returns directional graph neighbors based on the active exploration direction. */
   private directionalNeighbors(nodeId: string, direction: 'upstream' | 'downstream' | 'bidirectional'): string[] {
-    if (direction === 'upstream') return this.graph.inNeighbors(nodeId) as string[];
-    if (direction === 'downstream') return this.graph.outNeighbors(nodeId) as string[];
-    return this.graph.neighbors(nodeId) as string[];
+    if (direction === 'upstream') return this.graph.inNeighbors(nodeId);
+    if (direction === 'downstream') return this.graph.outNeighbors(nodeId);
+    return this.graph.neighbors(nodeId);
   }
 
   /**
@@ -2826,8 +2826,8 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns Array of metadata structures matching neighbor hop properties.
    */
   private buildNeighborList(focusId: string): HopNeighbor[] {
-    const inSet = new Set(this.graph.inNeighbors(focusId) as string[]);
-    const outSet = new Set(this.graph.outNeighbors(focusId) as string[]);
+    const inSet = new Set(this.graph.inNeighbors(focusId));
+    const outSet = new Set(this.graph.outNeighbors(focusId));
     const ids = Array.from(new Set([...inSet, ...outSet]));
     const hasSchemaFilter = this.sessionAllowedSchemas.size > 0;
     return ids.map(nid => {
@@ -2875,7 +2875,7 @@ export class NavigationEngine implements IHopStateMachine {
     let scopeForBfs = this.scopeNodeIds;
     if (this.mode.kind === 'ct' && this.tracer) {
       const ctNodes = new Set<string>([this.originNodeId!]);
-      for (const e of this.tracer!.edges) {
+      for (const e of this.tracer.edges) {
         ctNodes.add(e.hop_node);
         ctNodes.add(e.from_node);
         ctNodes.add(e.to_node);

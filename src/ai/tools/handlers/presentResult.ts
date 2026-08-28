@@ -112,7 +112,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         input = { ...(input as Record<string, unknown>), is_update: coercedIsUpdate.data };
         s.logger.debug(`presentResult normalization: is_update "${rawIsUpdate}" → ${coercedIsUpdate.data} (string-encoded boolean unwrapped)`);
       }
-      const requestedRepair = coercedIsUpdate.success && coercedIsUpdate.data === true;
+      const requestedRepair = coercedIsUpdate.success && coercedIsUpdate.data;
 
       if (isVisualPreview && !sess.presentResultRepairDraft.hasRepairableDraft()) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch

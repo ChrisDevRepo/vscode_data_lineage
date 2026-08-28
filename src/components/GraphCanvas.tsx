@@ -842,7 +842,7 @@ export function GraphCanvas({
   }, [flowEdges]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
+    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds)),
     []
   );
 
@@ -1086,8 +1086,8 @@ export function GraphCanvas({
           id: view.id,
           type: 'columnTraceNode',
           position: columnPositions[view.id] ?? view.position,
-          data: data as unknown as FlowNode['data'],
-        } as FlowNode;
+          data: data,
+        };
       });
     }
     return localNodes.map(node => {
@@ -1147,7 +1147,7 @@ export function GraphCanvas({
             strokeWidth: lit ? 1.6 : 1,
             opacity: lit ? 1 : 0.25,
           },
-        } as FlowEdge;
+        };
       });
     }
     if (!highlightedNodeId) return localEdges;
@@ -1311,7 +1311,7 @@ export function GraphCanvas({
       {trace.mode === 'configuring' && trace.selectedNodeId && (
         <InlineTraceControls
           startNodeId={trace.selectedNodeId}
-          startNodeName={selectedNodeLabel ?? trace.selectedNodeId!}
+          startNodeName={selectedNodeLabel ?? trace.selectedNodeId}
           defaultUpstream={config.trace.defaultUpstreamLevels}
           defaultDownstream={config.trace.defaultDownstreamLevels}
           onApply={(traceConfig) => {
@@ -1324,7 +1324,7 @@ export function GraphCanvas({
       {/* Traced Filter Banner - shown during applied or filtered (immediate) mode */}
       {(trace.mode === 'applied' || trace.mode === 'filtered') && trace.selectedNodeId && (
         <TracedFilterBanner
-          startNodeName={selectedNodeLabel ?? trace.selectedNodeId!}
+          startNodeName={selectedNodeLabel ?? trace.selectedNodeId}
           upstreamLevels={trace.upstreamLevels}
           downstreamLevels={trace.downstreamLevels}
           totalNodes={trace.tracedNodeIds.size}
@@ -1342,7 +1342,7 @@ export function GraphCanvas({
       {/* Path Finder Bar — shown during pathfinding modes */}
       {(trace.mode === 'pathfinding' || trace.mode === 'path-applied') && trace.selectedNodeId && onApplyPath && (
         <PathFinderBar
-          sourceNodeName={selectedNodeLabel ?? trace.selectedNodeId!}
+          sourceNodeName={selectedNodeLabel ?? trace.selectedNodeId}
           allNodes={allNodes}
           pathResult={trace.mode === 'path-applied' ? {
             found: true,

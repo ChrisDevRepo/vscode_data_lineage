@@ -187,13 +187,13 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
   // `extractExternalRefs` scans with `exec` and never advances `lastIndex`, so it spins forever;
   // `collectMatchesWith` spins until its iteration cap; a preprocessing `replace` silently rewrites
   // only the first occurrence and under-cleans the body. One check covers all three.
-  if (!(r.flags as string).includes('g')) {
+  if (!(r.flags).includes('g')) {
     return { valid: false, name, error: `${name}: flags '${r.flags}' must include 'g' — a non-global pattern hangs or silently under-matches` };
   }
 
   // Test-compile the regex and check for empty-match patterns
   try {
-    const testRegex = new RegExp(r.pattern as string, r.flags as string);
+    const testRegex = new RegExp(r.pattern, r.flags);
     if (testRegex.test('')) {
       return { valid: false, name, error: `${name}: regex matches empty string — this would cause infinite loops` };
     }
@@ -227,7 +227,7 @@ export function loadRules(config: RawParseRulesConfig): LoadRulesResult {
   for (let i = 0; i < config.rules.length; i++) {
     const raw = config.rules[i];
 
-    if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
+    if (raw && typeof raw === 'object' && !(raw as ParseRule).enabled) continue;
 
     const check = validateRule(raw, i);
     if (check.valid) {

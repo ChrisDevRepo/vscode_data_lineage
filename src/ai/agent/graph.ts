@@ -13,7 +13,6 @@ import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
 import { PendingGateSchema, type PendingGate } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
-import type { SmState } from '../sm/smTypes';
 import { InvalidEngineCheckpointError } from '../sm/navigationSnapshotSchema';
 import { activeModeOf, type LmStage } from '../tools/toolPolicy';
 import {
@@ -1606,7 +1605,7 @@ function ensureEngine(state: AgentStateType, deps: AgentGraphDeps): NavigationEn
   const sess = deps.getSession();
   const live = sess.stateMachine as NavigationEngine | null;
   if (live) return live;
-  const snapshot = state.engineSnapshot as SmState | null;
+  const snapshot = state.engineSnapshot;
   if (!snapshot) return null;
   if (!sess.model || !sess.graph) {
     throw new Error('Cannot restore exploration engine without a loaded model and graph.');

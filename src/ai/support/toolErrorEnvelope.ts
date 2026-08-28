@@ -105,7 +105,7 @@ export function readToolError(data: unknown): ToolRejection | null {
 
   const code = hasError ? String(env.error) : 'validation';
   let reason = '';
-  if (hasErrors) reason = String((errorsArray as unknown[])[0] ?? '');
+  if (hasErrors) reason = String((errorsArray)[0] ?? '');
   if (!reason && typeof env.message === 'string') reason = env.message;
   if (!reason && typeof env.detail === 'string') reason = env.detail;
   if (!reason && hasError) reason = String(env.error);

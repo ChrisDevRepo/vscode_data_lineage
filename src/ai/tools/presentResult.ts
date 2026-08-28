@@ -549,7 +549,7 @@ export function validatePresentResult(
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
   assembledDescription?: string,
-  isAmendment: boolean = false,
+  isAmendment = false,
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
 ): PresentResultRequest | PresentResultError {
@@ -626,7 +626,7 @@ export function validatePresentResult(
     const resolvedSet = new Set(resolvedNodeIds);
     const labels = new Set<string>();
     const nodeToSectionLabel = new Map<string, string>();
-    for (const [sectionIndex, sec] of input.sections!.entries()) {
+    for (const [sectionIndex, sec] of input.sections.entries()) {
       const label = (sec.label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
       const normalizedLabel = normalizePresentSectionLabel(sec.label);
       if (!label) {

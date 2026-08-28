@@ -167,7 +167,7 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
  * @param maxChains - Maximum number of chains to return.
  * @returns Result object containing the discovered dependency chains.
  */
-export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
+export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }

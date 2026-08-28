@@ -415,7 +415,7 @@ function repairFieldsFromDetail(detail: unknown): readonly string[] {
 function touchesNoRepairField(input: unknown, repairFields: readonly string[]): boolean {
   if (repairFields.length === 0) return false;
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
-  const keys = new Set(Object.keys(input as Record<string, unknown>));
+  const keys = new Set(Object.keys(input));
   return !repairFields.some(field => keys.has(field));
 }
 
