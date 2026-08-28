@@ -1,100 +1,137 @@
 /**
- * Snapshot-based baseline test for graph analysis on AdventureWorks2025_AI.dacpac.
- * COMPARES AGAINST: tests/fixtures/graph-baseline-aw.json (Verified with NetworkX)
+ * Snapshot baseline for graph analysis over AdventureWorks2025_AI.dacpac.
  *
+ * COMPARES AGAINST: tests/fixtures/graph-baseline-aw.json (verified with NetworkX)
+ *
+ * @remarks
+ * One test per baseline dimension, deliberately. These assertions are not independent
+ * observations of one fact — a node-count drift and a BFS reachability drift are
+ * different defects with different causes, and collapsing them into a single block
+ * meant the first one to fail hid every one after it. The dacpac is extracted once in
+ * `beforeAll` and shared read-only, so the split costs nothing.
  */
 
 import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { describe, it } from 'vitest';
+import Graph from 'graphology';
+import { bidirectional } from 'graphology-shortest-path';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  analyzeIslands,
-  analyzeHubs,
   analyzeCycles,
+  analyzeHubs,
+  analyzeIslands,
   analyzeLongestPath,
 } from '../../../src/engine/graphAnalysis';
 import { buildGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
 import { filterBySchemas } from '../../../src/engine/dacpacExtractor';
 import { bfsReachable } from '../../../src/engine/graphGuards';
-import { assert, assertEq, loadAdventureWorksModel } from '../helpers/testUtils';
-import { bidirectional } from 'graphology-shortest-path';
+import type { DatabaseModel } from '../../../src/engine/types';
+import { loadAdventureWorksModel } from '../helpers/testUtils';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BASELINE_PATH = resolve(__dirname, '../../fixtures/graph-baseline-aw.json');
 
-describe('AdventureWorks Graph Baseline (Snapshot)', () => {
-  it('runs all adventureworks graph analysis assertions', async () => {
+type Baseline = {
+  stats: { nodes: number; edges: number };
+  analysis: {
+    cycles: { groupCount: number; totalNodes: number };
+    islands: { groupCount: number; totalNodes: number };
+    hubs: { topId: string; topDegree: number };
+    longestPath: { maxDepth: number };
+  };
+  reachability: { origin: string; undirectedCount: number; upstreamCount: number; downstreamCount: number };
+  pathfinding: { start: string; target: string; minPathLength: number };
+};
 
-async function main() {
-  console.log('═══ AdventureWorks Graph Analysis Snapshot Verification ═══');
+const baseline = JSON.parse(
+  readFileSync(resolve(__dirname, '../../fixtures/graph-baseline-aw.json'), 'utf8'),
+) as Baseline;
 
-  const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8'));
-  const model = await loadAdventureWorksModel();
-  const { graph } = buildGraph(model);
+let model: DatabaseModel;
+let graph: Graph;
 
-  console.log(`Graph: ${graph.order} nodes, ${graph.size} edges`);
-  assertEq(graph.order, baseline.stats.nodes, `AW: ${baseline.stats.nodes} nodes`);
-  assertEq(graph.size, baseline.stats.edges, `AW: ${baseline.stats.edges} edges`);
+beforeAll(async () => {
+  model = await loadAdventureWorksModel();
+  graph = buildGraph(model).graph;
+});
 
-  // 1. SCCs (Cycles)
-  console.log('\n── SCCs (Cycles) ──');
-  const cycleResult = analyzeCycles(graph);
-  assertEq(cycleResult.groups.length, baseline.analysis.cycles.groupCount, `AW-Cycles: ${baseline.analysis.cycles.groupCount} cycle groups`);
-  const totalCycleNodes = cycleResult.groups.reduce((s, g) => s + g.nodeIds.length, 0);
-  assertEq(totalCycleNodes, baseline.analysis.cycles.totalNodes, `AW-Cycles: ${baseline.analysis.cycles.totalNodes} nodes involved`);
+describe('AdventureWorks baseline — graph shape', () => {
+  it(`carries ${baseline.stats.nodes} nodes`, () => {
+    expect(graph.order).toBe(baseline.stats.nodes);
+  });
 
-  // 2. Islands (Disconnected Components)
-  console.log('\n── Islands ──');
-  const islandResult = analyzeIslands(graph, 1000);
-  assertEq(islandResult.groups.length, baseline.analysis.islands.groupCount, `AW-Islands: ${baseline.analysis.islands.groupCount} islands`);
-  const totalIslandNodes = islandResult.groups.reduce((s, g) => s + g.nodeIds.length, 0);
-  assertEq(totalIslandNodes, baseline.analysis.islands.totalNodes, `AW-Islands: ${baseline.analysis.islands.totalNodes} nodes`);
+  it(`carries ${baseline.stats.edges} edges`, () => {
+    expect(graph.size).toBe(baseline.stats.edges);
+  });
+});
 
-  // 3. Hubs
-  console.log('\n── Hubs ──');
-  const hubResult = analyzeHubs(graph, 10);
-  assertEq(hubResult.groups[0].id, baseline.analysis.hubs.topId, `AW-Hubs: Top hub matches baseline (${baseline.analysis.hubs.topId})`);
-  assertEq(hubResult.groups[0].meta?.degree, baseline.analysis.hubs.topDegree, `AW-Hubs: Top degree=${baseline.analysis.hubs.topDegree}`);
+describe('AdventureWorks baseline — analysis', () => {
+  it(`finds ${baseline.analysis.cycles.groupCount} cycle groups over ${baseline.analysis.cycles.totalNodes} nodes`, () => {
+    const groups = analyzeCycles(graph).groups;
+    expect(groups).toHaveLength(baseline.analysis.cycles.groupCount);
+    expect(groups.reduce((total, group) => total + group.nodeIds.length, 0))
+      .toBe(baseline.analysis.cycles.totalNodes);
+  });
 
-  // 4. Longest Path
-  console.log('\n── Longest Path ──');
-  const pathResult = analyzeLongestPath(graph, 3, 100);
-  const maxDepth = Math.max(...pathResult.groups.map(g => g.nodeIds.length));
-  assertEq(maxDepth, baseline.analysis.longestPath.maxDepth, `AW-Path: Longest path matches baseline (${baseline.analysis.longestPath.maxDepth})`);
+  it(`finds ${baseline.analysis.islands.groupCount} islands over ${baseline.analysis.islands.totalNodes} nodes`, () => {
+    const groups = analyzeIslands(graph, 1000).groups;
+    expect(groups).toHaveLength(baseline.analysis.islands.groupCount);
+    expect(groups.reduce((total, group) => total + group.nodeIds.length, 0))
+      .toBe(baseline.analysis.islands.totalNodes);
+  });
 
-  // 5. Reachability (undirected)
-  console.log('\n── BFS Reachability Consistency ──');
-  const origin = baseline.reachability.origin;
-  const aiReachable = bfsReachable(graph, origin, new Set());
-  assertEq(aiReachable.size, baseline.reachability.undirectedCount, `AW-BFS: Undirected reachability from ${origin} is ${baseline.reachability.undirectedCount}`);
+  it(`ranks ${baseline.analysis.hubs.topId} top, at degree ${baseline.analysis.hubs.topDegree}`, () => {
+    const top = analyzeHubs(graph, 10).groups[0];
+    expect(top.id).toBe(baseline.analysis.hubs.topId);
+    expect(top.meta?.degree).toBe(baseline.analysis.hubs.topDegree);
+  });
 
-  // 5.1 Trace directionality
-  const upTrace = traceNodeWithLevels(graph, origin, Infinity, 0);
-  assertEq(upTrace.nodeIds.size, baseline.reachability.upstreamCount, `AW-BFS: Upstream trace matches baseline (${baseline.reachability.upstreamCount})`);
-  const downTrace = traceNodeWithLevels(graph, origin, 0, Infinity);
-  assertEq(downTrace.nodeIds.size, baseline.reachability.downstreamCount, `AW-BFS: Downstream trace matches baseline (${baseline.reachability.downstreamCount})`);
+  it(`finds a longest chain of ${baseline.analysis.longestPath.maxDepth} nodes`, () => {
+    const depths = analyzeLongestPath(graph, 3, 100).groups.map(group => group.nodeIds.length);
+    expect(Math.max(...depths)).toBe(baseline.analysis.longestPath.maxDepth);
+  });
+});
 
-  // 6. Pathfinding
-  console.log('\n── Path Finding (A to B) ──');
-  const startId = baseline.pathfinding.start;
-  const targetId = baseline.pathfinding.target;
-  const path = bidirectional(graph, startId, targetId);
-  assert(!!path, `AW-Pathfinding: Path exists between ${startId} and ${targetId}`);
-  assert(path!.length >= baseline.pathfinding.minPathLength, `AW-Pathfinding: Path is at least ${baseline.pathfinding.minPathLength} nodes`);
+describe('AdventureWorks baseline — BFS reachability', () => {
+  const { origin } = baseline.reachability;
 
-  // 7. Filter Interaction (Sanity)
-  console.log('\n── Filter Interaction ──');
-  const salesModel = filterBySchemas(model, new Set(['Sales']));
-  const { graph: salesGraph } = buildGraph(salesModel);
-  const salesOrigin = '[sales].[vsalesperson]';
-  const salesTrace = traceNodeWithLevels(salesGraph, salesOrigin, Infinity, Infinity);
-  for (const tid of salesTrace.nodeIds) {
-    assert(salesGraph.hasNode(tid), `AW-Trace-Filter: Traced node ${tid} is within the filtered Sales graph`);
-  }
+  it(`reaches ${baseline.reachability.undirectedCount} nodes undirected from ${origin}`, () => {
+    expect(bfsReachable(graph, origin, new Set()).size).toBe(baseline.reachability.undirectedCount);
+  });
 
-}
+  it(`reaches ${baseline.reachability.upstreamCount} node(s) tracing upstream only`, () => {
+    expect(traceNodeWithLevels(graph, origin, Infinity, 0).nodeIds.size)
+      .toBe(baseline.reachability.upstreamCount);
+  });
 
-await main();
+  it(`reaches ${baseline.reachability.downstreamCount} nodes tracing downstream only`, () => {
+    expect(traceNodeWithLevels(graph, origin, 0, Infinity).nodeIds.size)
+      .toBe(baseline.reachability.downstreamCount);
+  });
+
+  it('reaches no more in one direction than it does undirected', () => {
+    const up = traceNodeWithLevels(graph, origin, Infinity, 0).nodeIds.size;
+    const down = traceNodeWithLevels(graph, origin, 0, Infinity).nodeIds.size;
+    expect(Math.max(up, down)).toBeLessThanOrEqual(bfsReachable(graph, origin, new Set()).size);
+  });
+});
+
+describe('AdventureWorks baseline — pathfinding', () => {
+  const { start, target, minPathLength } = baseline.pathfinding;
+
+  it(`finds a path of at least ${minPathLength} nodes from ${start} to ${target}`, () => {
+    const path = bidirectional(graph, start, target);
+    expect(path).not.toBeNull();
+    expect(path!.length).toBeGreaterThanOrEqual(minPathLength);
+  });
+});
+
+describe('AdventureWorks baseline — schema filter', () => {
+  it('keeps every traced node inside the filtered Sales graph', () => {
+    const salesGraph = buildGraph(filterBySchemas(model, new Set(['Sales']))).graph;
+    const traced = traceNodeWithLevels(salesGraph, '[sales].[vsalesperson]', Infinity, Infinity);
+
+    expect(traced.nodeIds.size).toBeGreaterThan(0);
+    expect([...traced.nodeIds].filter(id => !salesGraph.hasNode(id))).toEqual([]);
   });
 });

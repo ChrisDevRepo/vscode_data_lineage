@@ -1,500 +1,548 @@
 /**
  * Comprehensive syntactic edge-case tests for the SQL body parser.
+ *
+ * @remarks
+ * Every case is its own test. These are independent claims about T-SQL — that a string
+ * containing `--` is not a comment, that a CTE name is not a table, that a CLR method call
+ * is not a cross-database reference — and one failing must not conceal the rest.
+ *
+ * Uniform cases go through the `CASES` tables below; a case needing a bespoke assertion
+ * gets its own `it`. `-- EXPECT`-annotated .sql fixtures under tests/fixtures/sql/targeted/
+ * cover the same parser through tsql-complex.test.ts and are the cheaper place to add a
+ * new construct — prefer a fixture unless the assertion cannot be expressed there.
  */
 
-import { describe, it } from 'vitest';
-import { parseSqlBody, extractExternalRefs } from '../../../src/engine/sqlBodyParser';
-import { assert, hasName, loadParseRules } from '../helpers/testUtils';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { extractExternalRefs, parseSqlBody } from '../../../src/engine/sqlBodyParser';
+import { hasName, loadParseRules } from '../helpers/testUtils';
 
-describe('SQL Body Parser Edge Cases', () => {
-  loadParseRules();
+beforeAll(() => { loadParseRules(); });
 
-/** Helper: check exact match including schema (case-insensitive) */
+/** Exact match including schema, ignoring brackets and case. */
 function hasExact(list: string[], name: string): boolean {
   const lower = name.toLowerCase();
-  return list.some(s => s.replace(/\[|\]/g, '').toLowerCase() === lower);
+  return list.some(entry => entry.replace(/\[|\]/g, '').toLowerCase() === lower);
 }
 
+const mentions = (list: string[], needle: string) =>
+  list.some(entry => entry.toLowerCase().includes(needle.toLowerCase()));
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 1. Preprocessing (clean_sql)
-// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * One parser expectation.
+ *
+ * @remarks
+ * `no*` fields are case-insensitive substring checks, which is how the original
+ * negatives were written: a false positive shows up as the fragment appearing anywhere
+ * in the captured name.
+ */
+type ParseCase = {
+  name: string;
+  sql: string;
+  /** Matched on the last name part (see `hasName`). */
+  sources?: string[];
+  /** Matched on the full `schema.object`. */
+  exactSources?: string[];
+  noSources?: string[];
+  targets?: string[];
+  noTargets?: string[];
+  exec?: string[];
+  noExec?: string[];
+  /** Compared verbatim against the lower-cased cross-database arrays. */
+  crossDbSources?: string[];
+  crossDbTargets?: string[];
+  sourceCount?: number;
+};
 
-function testPreprocessing() {
-  console.log('\n\u2500\u2500 1. Preprocessing (clean_sql) \u2500\u2500');
+function check(testCase: ParseCase): void {
+  const result = parseSqlBody(testCase.sql);
 
-  // String with -- inside
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE x = '-- not a comment' AND y = 1`);
-    assert(hasName(r.sources, 'T1'), 'String with "--" inside: T1 found as source');
+  for (const name of testCase.sources ?? []) {
+    expect(hasName(result.sources, name), `source ${name}`).toBe(true);
   }
-
-  // String with /* inside
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE x = '/* not a comment */' AND y = 1`);
-    assert(hasName(r.sources, 'T1'), 'String with "/*...*/" inside: T1 found as source');
+  for (const name of testCase.exactSources ?? []) {
+    expect(hasExact(result.sources, name), `exact source ${name}`).toBe(true);
   }
-
-  // Block comment removing table
-  {
-    const r = parseSqlBody(`SELECT /* FROM [dbo].[Fake] */ * FROM [dbo].[Real]`);
-    assert(hasName(r.sources, 'Real'), 'Block comment: Real found as source');
-    assert(!hasName(r.sources, 'Fake'), 'Block comment: Fake NOT found (inside comment)');
+  for (const name of testCase.noSources ?? []) {
+    expect(mentions(result.sources, name), `${name} must not be a source`).toBe(false);
   }
-
-  // Line comment at end
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[T1] -- FROM [dbo].[Fake]`);
-    assert(hasName(r.sources, 'T1'), 'Line comment at end: T1 found');
-    assert(!hasName(r.sources, 'Fake'), 'Line comment at end: Fake NOT found');
+  for (const name of testCase.targets ?? []) {
+    expect(hasName(result.targets, name), `target ${name}`).toBe(true);
   }
-
-  // Bracket-quoted name with dash
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[my-table]`);
-    assert(hasExact(r.sources, 'dbo.my-table'), 'Bracket name with dash: dbo.my-table found');
+  for (const name of testCase.noTargets ?? []) {
+    expect(mentions(result.targets, name), `${name} must not be a target`).toBe(false);
   }
-
-  // Bracket-quoted name with space
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[my table]`);
-    assert(hasExact(r.sources, 'dbo.my table'), 'Bracket name with space: "dbo.my table" found');
+  for (const name of testCase.exec ?? []) {
+    expect(hasName(result.execCalls, name), `exec ${name}`).toBe(true);
   }
-
-  // Bracket-quoted name with --
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[my--table]`);
-    assert(hasExact(r.sources, 'dbo.my--table'), 'Bracket name with "--": "dbo.my--table" found');
+  for (const name of testCase.noExec ?? []) {
+    expect(mentions(result.execCalls, name), `${name} must not be an exec call`).toBe(false);
   }
-
-  // N-prefix strings
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[Real] WHERE Name = N'FROM [dbo].[Fake]' AND x = 1`);
-    assert(hasName(r.sources, 'Real'), 'N-prefix string: Real found');
-    assert(!hasName(r.sources, 'Fake'), 'N-prefix string: Fake NOT found (inside N-string)');
+  for (const name of testCase.crossDbSources ?? []) {
+    expect(result.crossDbSources.map(entry => entry.toLowerCase())).toContain(name);
   }
-
-  // Empty string
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE x = '' AND y = 1`);
-    assert(hasName(r.sources, 'T1'), 'Empty string: T1 found');
+  for (const name of testCase.crossDbTargets ?? []) {
+    expect(result.crossDbTargets.map(entry => entry.toLowerCase())).toContain(name);
   }
-
-  // Escaped quotes
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE x = 'it''s' AND y = 1`);
-    assert(hasName(r.sources, 'T1'), 'Escaped quotes: T1 found');
-  }
-
-  // Multiple strings
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE x = 'a' AND y = 'b' AND z = 1`);
-    assert(hasName(r.sources, 'T1'), 'Multiple strings: T1 found');
+  if (testCase.sourceCount !== undefined) {
+    expect(result.sources, 'source count').toHaveLength(testCase.sourceCount);
   }
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 2. Source extraction (FROM/JOIN)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testSourceExtraction() {
-  console.log('\n\u2500\u2500 2. Source extraction (FROM/JOIN) \u2500\u2500');
-
-  // Simple FROM
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[Orders]`);
-    assert(hasExact(r.sources, 'dbo.Orders'), 'Simple FROM: dbo.Orders found');
-  }
-
-  // FROM with schema
-  {
-    const r = parseSqlBody(`SELECT * FROM [Sales].[Orders]`);
-    assert(hasExact(r.sources, 'Sales.Orders'), 'FROM with schema: Sales.Orders found');
-  }
-
-  // INNER JOIN
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] INNER JOIN [dbo].[B] ON A.id = B.id`);
-    assert(hasName(r.sources, 'A'), 'INNER JOIN: A found');
-    assert(hasName(r.sources, 'B'), 'INNER JOIN: B found');
-  }
-
-  // LEFT OUTER JOIN
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] LEFT OUTER JOIN [dbo].[B] ON 1=1`);
-    assert(hasName(r.sources, 'A'), 'LEFT OUTER JOIN: A found');
-    assert(hasName(r.sources, 'B'), 'LEFT OUTER JOIN: B found');
-  }
-
-  // CROSS JOIN
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] CROSS JOIN [dbo].[B]`);
-    assert(hasName(r.sources, 'A'), 'CROSS JOIN: A found');
-    assert(hasName(r.sources, 'B'), 'CROSS JOIN: B found');
-  }
-
-  // Multiple JOINs
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] JOIN [dbo].[B] ON 1=1 JOIN [dbo].[C] ON 1=1`);
-    assert(hasName(r.sources, 'A'), 'Multiple JOINs: A found');
-    assert(hasName(r.sources, 'B'), 'Multiple JOINs: B found');
-    assert(hasName(r.sources, 'C'), 'Multiple JOINs: C found');
-  }
-
-  // Bare names (no brackets)
-  {
-    const r = parseSqlBody(`SELECT * FROM dbo.Orders`);
-    assert(hasExact(r.sources, 'dbo.Orders'), 'Bare name: dbo.Orders found');
-  }
-
-  // CROSS APPLY
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] CROSS APPLY [dbo].[Func](A.id)`);
-    assert(hasName(r.sources, 'A'), 'CROSS APPLY: A found');
-    assert(hasName(r.sources, 'Func'), 'CROSS APPLY: Func found');
-  }
-
-  // OUTER APPLY
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] OUTER APPLY [dbo].[TVF](A.id)`);
-    assert(hasName(r.sources, 'A'), 'OUTER APPLY: A found');
-    assert(hasName(r.sources, 'TVF'), 'OUTER APPLY: TVF found');
-  }
-
-  // MERGE USING
-  {
-    const r = parseSqlBody(`MERGE [dbo].[Target] USING [dbo].[Source] ON 1=1 WHEN MATCHED THEN DELETE;`);
-    assert(hasName(r.sources, 'Source'), 'MERGE USING: Source found');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 3. Target extraction (INSERT/UPDATE/MERGE/CTAS/SELECT INTO)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testTargetExtraction() {
-  console.log('\n\u2500\u2500 3. Target extraction (INSERT/UPDATE/MERGE/CTAS/SELECT INTO/COPY INTO/BULK INSERT) \u2500\u2500');
-
-  // INSERT INTO
-  {
-    const r = parseSqlBody(`INSERT INTO [dbo].[Target](col1) SELECT * FROM [dbo].[Source]`);
-    assert(hasName(r.targets, 'Target'), 'INSERT INTO: Target found');
-    assert(hasName(r.sources, 'Source'), 'INSERT INTO: Source found from SELECT');
-  }
-
-  // INSERT without INTO
-  {
-    const r = parseSqlBody(`INSERT [dbo].[Target] SELECT * FROM [dbo].[Source]`);
-    assert(hasName(r.targets, 'Target'), 'INSERT (no INTO): Target found');
-    assert(hasName(r.sources, 'Source'), 'INSERT (no INTO): Source found');
-  }
-
-  // UPDATE
-  {
-    const r = parseSqlBody(`UPDATE [dbo].[Target] SET col = 1`);
-    assert(hasName(r.targets, 'Target'), 'UPDATE: Target found');
-  }
-
-  // UPDATE FROM
-  {
-    const r = parseSqlBody(`UPDATE [dbo].[Target] SET col = s.val FROM [dbo].[Source] s`);
-    assert(hasName(r.targets, 'Target'), 'UPDATE FROM: Target found');
-    assert(hasName(r.sources, 'Source'), 'UPDATE FROM: Source found');
-  }
-
-  // MERGE INTO
-  {
-    const r = parseSqlBody(`MERGE INTO [dbo].[Target] USING [dbo].[Source] ON 1=1 WHEN NOT MATCHED THEN INSERT(col) VALUES(1);`);
-    assert(hasName(r.targets, 'Target'), 'MERGE INTO: Target found');
-    assert(hasName(r.sources, 'Source'), 'MERGE INTO: Source found via USING');
-  }
-
-  // CTAS
-  {
-    const r = parseSqlBody(`CREATE TABLE [dbo].[NewTable] AS SELECT * FROM [dbo].[Source]`);
-    assert(hasName(r.targets, 'NewTable'), 'CTAS: NewTable found as target');
-    assert(hasName(r.sources, 'Source'), 'CTAS: Source found');
-  }
-
-  // SELECT INTO
-  {
-    const r = parseSqlBody(`SELECT * INTO [dbo].[NewTable] FROM [dbo].[Source]`);
-    assert(hasName(r.targets, 'NewTable'), 'SELECT INTO: NewTable found as target');
-    assert(hasName(r.sources, 'Source'), 'SELECT INTO: Source found');
-  }
-
-  // INSERT INTO with column list (UDF false positive guard)
-  {
-    const r = parseSqlBody(`INSERT INTO [dbo].[T1](col1, col2) VALUES(1, dbo.udfCalc(x))`);
-    assert(hasName(r.targets, 'T1'), 'INSERT INTO + UDF: T1 is target');
-    assert(hasName(r.sources, 'dbo.udfCalc') || hasExact(r.sources, 'dbo.udfCalc'),
-      'INSERT INTO + UDF: dbo.udfCalc captured as source (UDF)');
-  }
-
-  // COPY INTO (Fabric/Synapse)
-  {
-    const r = parseSqlBody(`COPY INTO [staging].[RawData] FROM 'https://storage.blob.core.windows.net/container/file.parquet'`);
-    assert(hasName(r.targets, 'RawData'), 'COPY INTO: RawData found as target');
-  }
-
-  // COPY INTO with brackets
-  {
-    const r = parseSqlBody(`COPY INTO [dbo].[FactSales]
-      FROM 'abfss://container@account.dfs.core.windows.net/data/*.csv'
-      WITH (FILE_TYPE = 'CSV', FIRSTROW = 2)`);
-    assert(hasName(r.targets, 'FactSales'), 'COPY INTO bracketed: FactSales found as target');
-  }
-
-  // BULK INSERT
-  {
-    const r = parseSqlBody(`BULK INSERT [dbo].[ImportData] FROM '\\\\server\\share\\data.csv'`);
-    assert(hasName(r.targets, 'ImportData'), 'BULK INSERT: ImportData found as target');
-  }
-
-  // BULK INSERT with options
-  {
-    const r = parseSqlBody(`BULK INSERT [staging].[RawImport]
-      FROM 'C:\\data\\export.csv'
-      WITH (FIELDTERMINATOR = ',', ROWTERMINATOR = '\\n', FIRSTROW = 2)`);
-    assert(hasName(r.targets, 'RawImport'), 'BULK INSERT with options: RawImport found as target');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 4. EXEC calls
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testExecCalls() {
-  console.log('\n\u2500\u2500 4. EXEC calls \u2500\u2500');
-
-  // Simple EXEC
-  {
-    const r = parseSqlBody(`EXEC [dbo].[MyProc]`);
-    assert(hasName(r.execCalls, 'MyProc'), 'Simple EXEC: MyProc found');
-  }
-
-  // EXECUTE
-  {
-    const r = parseSqlBody(`EXECUTE [dbo].[MyProc]`);
-    assert(hasName(r.execCalls, 'MyProc'), 'EXECUTE: MyProc found');
-  }
-
-  // EXEC with params
-  {
-    const r = parseSqlBody(`EXEC [dbo].[MyProc] @p1 = 1, @p2 = 'abc'`);
-    assert(hasName(r.execCalls, 'MyProc'), 'EXEC with params: MyProc found');
-  }
-
-  // EXEC with return var
-  {
-    const r = parseSqlBody(`EXEC @result = [dbo].[MyProc] @p1 = 1`);
-    assert(hasName(r.execCalls, 'MyProc'), 'EXEC with return var: MyProc found');
-  }
-
-  // EXEC bare name
-  {
-    const r = parseSqlBody(`EXEC dbo.MyProc`);
-    assert(hasName(r.execCalls, 'MyProc'), 'EXEC bare name: MyProc found');
-  }
-
-  // Multiple EXECs
-  {
-    const r = parseSqlBody(`EXEC [dbo].[P1]\nEXEC [dbo].[P2]`);
-    assert(hasName(r.execCalls, 'P1'), 'Multiple EXECs: P1 found');
-    assert(hasName(r.execCalls, 'P2'), 'Multiple EXECs: P2 found');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 5. UDF extraction (extract_udf_calls)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testUdfExtraction() {
-  console.log('\n\u2500\u2500 5. UDF extraction (extract_udf_calls) \u2500\u2500');
-
-  // Inline scalar
-  {
-    const r = parseSqlBody(`SELECT dbo.udfDivide(x, y) FROM [dbo].[T1]`);
-    assert(hasName(r.sources, 'T1'), 'Inline scalar UDF: T1 found');
-    assert(hasExact(r.sources, 'dbo.udfDivide'), 'Inline scalar UDF: dbo.udfDivide found as source');
-  }
-
-  // Multiple UDFs
-  {
-    const r = parseSqlBody(`SELECT dbo.udfA(1), dbo.udfB(2) FROM [dbo].[T1]`);
-    assert(hasName(r.sources, 'T1'), 'Multiple UDFs: T1 found');
-    assert(hasExact(r.sources, 'dbo.udfA'), 'Multiple UDFs: dbo.udfA found');
-    assert(hasExact(r.sources, 'dbo.udfB'), 'Multiple UDFs: dbo.udfB found');
-  }
-
-  // UDF with schema brackets
-  {
-    const r = parseSqlBody(`SELECT [dbo].[udfCalc](x) FROM [dbo].[T1]`);
-    assert(hasName(r.sources, 'T1'), 'UDF with brackets: T1 found');
-    assert(hasExact(r.sources, 'dbo.udfCalc'), 'UDF with brackets: dbo.udfCalc found');
-  }
-
-  // UDF NOT captured as target
-  {
-    const r = parseSqlBody(`INSERT INTO [dbo].[Target](col) SELECT dbo.udfCalc(x) FROM [dbo].[Source]`);
-    assert(hasName(r.targets, 'Target'), 'UDF not target: Target is target');
-    assert(hasName(r.sources, 'Source'), 'UDF not target: Source is source');
-    assert(hasExact(r.sources, 'dbo.udfCalc'), 'UDF not target: dbo.udfCalc is source');
-    assert(!hasExact(r.targets, 'dbo.udfCalc'), 'UDF not target: dbo.udfCalc is NOT a target');
-  }
-
-  // Single-part name NOT captured (built-in functions)
-  {
-    const r = parseSqlBody(`SELECT GETDATE()`);
-    assert(r.sources.length === 0, 'Single-part GETDATE(): no sources (needs 2+ parts)');
-  }
-
-  // ISNULL etc NOT captured
-  {
-    const r = parseSqlBody(`SELECT ISNULL(x, 0) FROM [dbo].[T1]`);
-    assert(r.sources.length === 1, `ISNULL: only 1 source (got ${r.sources.length})`);
-    assert(hasName(r.sources, 'T1'), 'ISNULL: only T1 as source');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 6. CTE exclusion
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testCteExclusion() {
-  console.log('\n\u2500\u2500 6. CTE exclusion \u2500\u2500');
-
-  // Single CTE
-  {
-    const r = parseSqlBody(`WITH MyCTE AS (SELECT * FROM [dbo].[T1]) SELECT * FROM MyCTE JOIN [dbo].[T2] ON 1=1`);
-    assert(hasName(r.sources, 'T1'), 'Single CTE: T1 found (inside CTE)');
-    assert(hasName(r.sources, 'T2'), 'Single CTE: T2 found (outside CTE)');
-    assert(!hasName(r.sources, 'MyCTE'), 'Single CTE: MyCTE NOT in sources');
-  }
-
-  // Multiple CTEs
-  {
-    const r = parseSqlBody(`WITH A AS (SELECT 1), B AS (SELECT 2) SELECT * FROM A JOIN B ON 1=1 JOIN [dbo].[T1] ON 1=1`);
-    assert(hasName(r.sources, 'T1'), 'Multiple CTEs: T1 found');
-    assert(!r.sources.some(s => s.replace(/\[|\]/g, '').toLowerCase() === 'a'), 'Multiple CTEs: A NOT in sources');
-    assert(!r.sources.some(s => s.replace(/\[|\]/g, '').toLowerCase() === 'b'), 'Multiple CTEs: B NOT in sources');
-  }
-
-  // CTE UPDATE alias substitution (substituteCteUpdateAliases preprocessing pass)
-  // The alias is rewritten to the real base table before YAML rules run
-  {
-    const r = parseSqlBody(`WITH Alias AS (SELECT * FROM [dbo].[Orders]) UPDATE Alias SET Amount = 0`);
-    assert(hasName(r.targets, 'Orders'),  'CTE UPDATE alias: base table in targets');
-    assert(!hasName(r.targets, 'Alias'),  'CTE UPDATE alias: alias NOT in targets');
-    assert(hasName(r.sources, 'Orders'),  'CTE UPDATE alias: base table also in sources (from CTE FROM)');
-  }
-
-  // CTE UPDATE alias with WHERE clause
-  {
-    const r = parseSqlBody(`WITH Upd AS (SELECT Id, Val FROM [sales].[Prices]) UPDATE Upd SET Val = Val * 2 WHERE Id > 0`);
-    assert(hasName(r.targets, 'Prices'), 'CTE UPDATE alias WHERE: base table in targets');
-    assert(!hasName(r.targets, 'Upd'),   'CTE UPDATE alias WHERE: CTE name NOT in targets');
-  }
-
-  // CTE UPDATE alias-FROM: UPDATE w SET ... FROM cte w (the CTE name is in FROM, not UPDATE target)
-  // Pass 1.6 rewrites FROM cte → FROM [schema].[table], enabling extract_update_alias_target
-  {
-    const r = parseSqlBody(`
-      WITH cte_Result AS (SELECT * FROM [staging].[OrderWorker])
-      UPDATE w SET w.Col = 1 FROM cte_Result w
-    `);
-    assert(hasName(r.targets, 'OrderWorker'), 'CTE UPDATE alias-FROM: OrderWorker in targets');
-    assert(hasName(r.sources, 'OrderWorker'), 'CTE UPDATE alias-FROM: OrderWorker also in sources');
-    assert(!r.targets.some(s => s.toLowerCase().includes('cte_result')), 'CTE UPDATE alias-FROM: cte_Result NOT in targets');
-  }
-
-  // Chained CTE: cte_B → cte_A → schema.table, UPDATE cte_B SET (chain resolution)
-  {
-    const r = parseSqlBody(`
-      WITH BaseOrders AS (SELECT * FROM [dbo].[SalesOrder] WHERE Status = 'PENDING'),
-      OrdersWithLimit AS (SELECT * FROM BaseOrders WHERE TotalAmount > 100)
-      UPDATE OrdersWithLimit SET Status = 'APPROVED'
-    `);
-    assert(hasName(r.targets, 'SalesOrder'), 'Chained CTE UPDATE: SalesOrder in targets (chain resolved)');
-    assert(hasName(r.sources, 'SalesOrder'), 'Chained CTE UPDATE: SalesOrder in sources');
-  }
-
-  // Chained CTE + alias-FROM: cte_B → cte_A → schema.table, UPDATE w SET ... FROM cte_B w
-  {
-    const r = parseSqlBody(`
-      WITH cte_Base AS (SELECT * FROM [warehouse].[Inventory]),
-      cte_Filtered AS (SELECT * FROM cte_Base WHERE Qty > 0)
-      UPDATE inv SET inv.Qty = 0 FROM cte_Filtered inv
-    `);
-    assert(hasName(r.targets, 'Inventory'), 'Chained CTE alias-FROM: Inventory in targets');
-    assert(hasName(r.sources, 'Inventory'), 'Chained CTE alias-FROM: Inventory in sources');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 7. Parser extraction boundaries
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testSkipPatterns() {
-  console.log('\n\u2500\u2500 7. Parser extraction boundaries \u2500\u2500');
-
-  // Temp table — regex can't match # (not a word character)
-  {
-    const r = parseSqlBody(`SELECT * FROM #TempTable`);
-    assert(!r.sources.some(s => s.includes('#')), 'Temp table: #TempTable not matched by regex');
-  }
-
-  // Table variable — regex can't match @ (not a word character)
-  {
-    const r = parseSqlBody(`SELECT * FROM @TableVar`);
-    assert(!r.sources.some(s => s.includes('@')), 'Table variable: @TableVar not matched by regex');
-  }
-
-  // System proc (unqualified) — normalizeCaptured filters unqualified names early (no schema.obj)
-  {
-    const r = parseSqlBody(`EXEC sp_executesql @sql`);
-    assert(!r.execCalls.some(s => s.toLowerCase().includes('sp_executesql')),
-      'System proc: sp_executesql NOT in execCalls (unqualified — filtered by normalizeCaptured)');
-  }
-
-  // System fn (unqualified) — normalizeCaptured filters unqualified names early (no schema.obj)
-  {
-    const r = parseSqlBody(`SELECT * FROM fn_helpcollations`);
-    assert(!r.sources.some(s => s.toLowerCase().includes('fn_helpcollations')),
-      'System fn: fn_helpcollations NOT in sources (unqualified — filtered by normalizeCaptured)');
-  }
-
-  // Single char alias — parser-level guard (always table aliases)
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[Orders] o`);
-    assert(hasExact(r.sources, 'dbo.Orders'), 'Single char alias: dbo.Orders found');
-    assert(!r.sources.some(s => s.replace(/\[|\]/g, '') === 'o'),
-      'Single char alias: "o" NOT captured as source');
-  }
-
-  // SQL keyword after WHERE — no regex pattern matches it (not after FROM/JOIN/INSERT etc.)
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[T1] WHERE set = 1`);
-    assert(hasName(r.sources, 'T1'), 'Keyword context: T1 found');
-    assert(!r.sources.some(s => s.replace(/\[|\]/g, '').toLowerCase() === 'set'),
-      'Keyword context: "set" not matched (no regex captures after WHERE)');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 8. Combined complex SQL
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testCombinedComplexSql() {
-  console.log('\n\u2500\u2500 8. Combined complex SQL \u2500\u2500');
-
+const table = (cases: ParseCase[]) => it.each(cases)('$name', check);
+
+// ─── 1. Preprocessing (clean_sql) ─────────────────────────────────────────────
+
+describe('preprocessing — comments and strings', () => {
+  table([
+    {
+      name: 'a string containing -- is not treated as a comment',
+      sql: `SELECT * FROM [dbo].[T1] WHERE x = '-- not a comment' AND y = 1`,
+      sources: ['T1'],
+    },
+    {
+      name: 'a string containing /* */ is not treated as a comment',
+      sql: `SELECT * FROM [dbo].[T1] WHERE x = '/* not a comment */' AND y = 1`,
+      sources: ['T1'],
+    },
+    {
+      name: 'a table named inside a block comment is not extracted',
+      sql: `SELECT /* FROM [dbo].[Fake] */ * FROM [dbo].[Real]`,
+      sources: ['Real'],
+      noSources: ['Fake'],
+    },
+    {
+      name: 'a table named after a trailing line comment is not extracted',
+      sql: `SELECT * FROM [dbo].[T1] -- FROM [dbo].[Fake]`,
+      sources: ['T1'],
+      noSources: ['Fake'],
+    },
+    {
+      name: 'a table named inside an N-prefixed string is not extracted',
+      sql: `SELECT * FROM [dbo].[Real] WHERE Name = N'FROM [dbo].[Fake]' AND x = 1`,
+      sources: ['Real'],
+      noSources: ['Fake'],
+    },
+    {
+      name: 'an empty string literal does not break extraction',
+      sql: `SELECT * FROM [dbo].[T1] WHERE x = '' AND y = 1`,
+      sources: ['T1'],
+    },
+    {
+      name: 'a doubled quote inside a string does not break extraction',
+      sql: `SELECT * FROM [dbo].[T1] WHERE x = 'it''s' AND y = 1`,
+      sources: ['T1'],
+    },
+    {
+      name: 'several string literals do not break extraction',
+      sql: `SELECT * FROM [dbo].[T1] WHERE x = 'a' AND y = 'b' AND z = 1`,
+      sources: ['T1'],
+    },
+  ]);
+});
+
+describe('preprocessing — bracketed identifiers', () => {
+  table([
+    { name: 'a bracketed name containing a dash', sql: 'SELECT * FROM [dbo].[my-table]', exactSources: ['dbo.my-table'] },
+    { name: 'a bracketed name containing a space', sql: 'SELECT * FROM [dbo].[my table]', exactSources: ['dbo.my table'] },
+    { name: 'a bracketed name containing --', sql: 'SELECT * FROM [dbo].[my--table]', exactSources: ['dbo.my--table'] },
+  ]);
+});
+
+describe('preprocessing — nested block comments', () => {
+  table([
+    {
+      name: 'a non-nested block comment is removed',
+      sql: 'SELECT * FROM /* this is a comment */ [dbo].[Orders]',
+      sources: ['Orders'],
+    },
+    {
+      name: 'a nested block comment leaves no trailing text behind',
+      sql: 'SELECT * FROM [dbo].[Orders] /* outer /* inner */ still here */ WHERE 1=1',
+      sources: ['Orders'],
+      noSources: ['still'],
+    },
+    {
+      name: 'a block comment nested three deep is removed whole',
+      sql: '/* depth /* two /* three */ two */ one */ INSERT INTO [dbo].[T] SELECT * FROM [dbo].[S]',
+      targets: ['T'],
+      sources: ['S'],
+    },
+  ]);
+});
+
+// ─── 2. Source extraction (FROM / JOIN) ───────────────────────────────────────
+
+describe('source extraction', () => {
+  table([
+    { name: 'FROM with a bracketed two-part name', sql: 'SELECT * FROM [dbo].[Orders]', exactSources: ['dbo.Orders'] },
+    { name: 'FROM with a non-dbo schema', sql: 'SELECT * FROM [Sales].[Orders]', exactSources: ['Sales.Orders'] },
+    { name: 'FROM with a bare, unbracketed name', sql: 'SELECT * FROM dbo.Orders', exactSources: ['dbo.Orders'] },
+    {
+      name: 'INNER JOIN captures both sides',
+      sql: 'SELECT * FROM [dbo].[A] INNER JOIN [dbo].[B] ON A.id = B.id',
+      sources: ['A', 'B'],
+    },
+    {
+      name: 'LEFT OUTER JOIN captures both sides',
+      sql: 'SELECT * FROM [dbo].[A] LEFT OUTER JOIN [dbo].[B] ON 1=1',
+      sources: ['A', 'B'],
+    },
+    {
+      name: 'FULL OUTER JOIN captures both sides',
+      sql: 'SELECT * FROM [dbo].[A] FULL OUTER JOIN [dbo].[B] ON 1=1',
+      sources: ['A', 'B'],
+    },
+    {
+      name: 'RIGHT JOIN captures the joined table',
+      sql: 'SELECT * FROM [dbo].[A] RIGHT JOIN [dbo].[B] ON 1=1',
+      sources: ['B'],
+    },
+    { name: 'CROSS JOIN captures both sides', sql: 'SELECT * FROM [dbo].[A] CROSS JOIN [dbo].[B]', sources: ['A', 'B'] },
+    {
+      name: 'a chain of JOINs captures every table',
+      sql: 'SELECT * FROM [dbo].[A] JOIN [dbo].[B] ON 1=1 JOIN [dbo].[C] ON 1=1',
+      sources: ['A', 'B', 'C'],
+    },
+    {
+      name: 'CROSS APPLY captures the table and the applied function',
+      sql: 'SELECT * FROM [dbo].[A] CROSS APPLY [dbo].[Func](A.id)',
+      sources: ['A', 'Func'],
+    },
+    {
+      name: 'OUTER APPLY captures the table and the applied function',
+      sql: 'SELECT * FROM [dbo].[A] OUTER APPLY [dbo].[TVF](A.id)',
+      sources: ['A', 'TVF'],
+    },
+    {
+      name: 'MERGE USING captures the source side',
+      sql: 'MERGE [dbo].[Target] USING [dbo].[Source] ON 1=1 WHEN MATCHED THEN DELETE;',
+      sources: ['Source'],
+    },
+    {
+      name: 'FROM separated by newlines',
+      sql: 'SELECT *\n  FROM\n    [dbo].[Orders]',
+      sources: ['Orders'],
+    },
+    {
+      name: 'a mixed bracketed and bare name',
+      sql: 'SELECT * FROM [dbo].Orders',
+      sources: ['Orders'],
+    },
+    {
+      name: 'a bracketed name that is a SQL keyword is still a table',
+      sql: 'SELECT * FROM [dbo].[select]',
+      exactSources: ['dbo.select'],
+    },
+    {
+      name: 'a double-quoted identifier normalizes to bracket form',
+      sql: 'SELECT * FROM "dbo"."Orders"',
+      exactSources: ['dbo.Orders'],
+    },
+  ]);
+});
+
+// ─── 3. Target extraction ─────────────────────────────────────────────────────
+
+describe('target extraction', () => {
+  table([
+    {
+      name: 'INSERT INTO captures the target and the SELECT source',
+      sql: 'INSERT INTO [dbo].[Target](col1) SELECT * FROM [dbo].[Source]',
+      targets: ['Target'], sources: ['Source'],
+    },
+    {
+      name: 'INSERT without INTO captures the target',
+      sql: 'INSERT [dbo].[Target] SELECT * FROM [dbo].[Source]',
+      targets: ['Target'], sources: ['Source'],
+    },
+    { name: 'UPDATE captures the target', sql: 'UPDATE [dbo].[Target] SET col = 1', targets: ['Target'] },
+    {
+      name: 'UPDATE ... FROM captures the target and the source',
+      sql: 'UPDATE [dbo].[Target] SET col = s.val FROM [dbo].[Source] s',
+      targets: ['Target'], sources: ['Source'],
+    },
+    {
+      name: 'MERGE INTO captures the target and the USING source',
+      sql: 'MERGE INTO [dbo].[Target] USING [dbo].[Source] ON 1=1 WHEN NOT MATCHED THEN INSERT(col) VALUES(1);',
+      targets: ['Target'], sources: ['Source'],
+    },
+    {
+      name: 'CTAS captures the new table as a target',
+      sql: 'CREATE TABLE [dbo].[NewTable] AS SELECT * FROM [dbo].[Source]',
+      targets: ['NewTable'], sources: ['Source'],
+    },
+    {
+      name: 'SELECT INTO captures the new table as a target',
+      sql: 'SELECT * INTO [dbo].[NewTable] FROM [dbo].[Source]',
+      targets: ['NewTable'], sources: ['Source'],
+    },
+    {
+      name: 'INSERT INTO with a column list keeps the UDF a source, not a target',
+      sql: 'INSERT INTO [dbo].[T1](col1, col2) VALUES(1, dbo.udfCalc(x))',
+      targets: ['T1'], exactSources: ['dbo.udfCalc'],
+    },
+    {
+      name: 'COPY INTO captures the target',
+      sql: `COPY INTO [staging].[RawData] FROM 'https://storage.blob.core.windows.net/container/file.parquet'`,
+      targets: ['RawData'],
+    },
+    {
+      name: 'COPY INTO with a WITH clause captures the target',
+      sql: `COPY INTO [dbo].[FactSales]
+        FROM 'abfss://container@account.dfs.core.windows.net/data/*.csv'
+        WITH (FILE_TYPE = 'CSV', FIRSTROW = 2)`,
+      targets: ['FactSales'],
+    },
+    {
+      name: 'BULK INSERT captures the target',
+      sql: `BULK INSERT [dbo].[ImportData] FROM '\\\\server\\share\\data.csv'`,
+      targets: ['ImportData'],
+    },
+    {
+      name: 'BULK INSERT with options captures the target',
+      sql: `BULK INSERT [staging].[RawImport]
+        FROM 'C:\\data\\export.csv'
+        WITH (FIELDTERMINATOR = ',', ROWTERMINATOR = '\\n', FIRSTROW = 2)`,
+      targets: ['RawImport'],
+    },
+    {
+      name: 'INSERT separated by tabs captures both sides',
+      sql: 'INSERT\tINTO\t[dbo].[Target]\tSELECT * FROM\t[dbo].[Source]',
+      targets: ['Target'], sources: ['Source'],
+    },
+    {
+      name: 'a table written and read in one UPDATE is both target and source',
+      sql: 'UPDATE [dbo].[T1] SET col = s.val FROM [dbo].[T1] s WHERE s.id > 0',
+      targets: ['T1'], sources: ['T1'],
+    },
+    {
+      name: 'UPDATE through an alias resolves to the aliased table, which is also a source',
+      sql: 'UPDATE t SET t.col = s.val FROM [dbo].[Target] t INNER JOIN [dbo].[Source] s ON t.id = s.id',
+      targets: ['Target'], sources: ['Target', 'Source'],
+    },
+    {
+      name: 'several statements in one body each contribute their own dependency',
+      sql: `
+        INSERT INTO [dbo].[A] SELECT * FROM [dbo].[B]
+        UPDATE [dbo].[C] SET x = 1
+        EXEC [dbo].[D]
+      `,
+      targets: ['A', 'C'], sources: ['B'], exec: ['D'],
+    },
+  ]);
+
+  it('does not treat a column list as a UDF call that reads the target', () => {
+    const result = parseSqlBody(`INSERT INTO [dbo].[Audit](msg, ts) VALUES('test', GETDATE())`);
+    expect(hasName(result.targets, 'Audit')).toBe(true);
+    expect(hasExact(result.sources, 'dbo.Audit')).toBe(false);
+  });
+
+  it('does not report the target of a column-list INSERT as a source', () => {
+    const result = parseSqlBody('INSERT [staging].[Orders](id, amount) SELECT id, amt FROM [dbo].[Raw]');
+    expect(hasName(result.targets, 'Orders')).toBe(true);
+    expect(hasExact(result.sources, 'staging.Orders')).toBe(false);
+    expect(hasName(result.sources, 'Raw')).toBe(true);
+  });
+
+  it('does not make DELETE FROM a target — it removes rows, writing no column data', () => {
+    const result = parseSqlBody('DELETE FROM [dbo].[Target] WHERE Id = 1');
+    expect(hasName(result.targets, 'Target')).toBe(false);
+    // The FROM keyword still fires source extraction, so it remains a read reference.
+    expect(hasName(result.sources, 'Target')).toBe(true);
+  });
+});
+
+// ─── 4. EXEC calls ────────────────────────────────────────────────────────────
+
+describe('procedure calls', () => {
+  table([
+    { name: 'EXEC with a bracketed name', sql: 'EXEC [dbo].[MyProc]', exec: ['MyProc'] },
+    { name: 'EXECUTE spelled in full', sql: 'EXECUTE [dbo].[MyProc]', exec: ['MyProc'] },
+    { name: 'EXEC with parameters', sql: `EXEC [dbo].[MyProc] @p1 = 1, @p2 = 'abc'`, exec: ['MyProc'] },
+    { name: 'EXEC assigning a return value', sql: 'EXEC @result = [dbo].[MyProc] @p1 = 1', exec: ['MyProc'] },
+    { name: 'EXEC assigning a return value without spaces', sql: 'EXEC @result=[dbo].[CalcTotal] @input=5', exec: ['CalcTotal'] },
+    { name: 'EXEC with a bare name', sql: 'EXEC dbo.MyProc', exec: ['MyProc'] },
+    { name: 'two EXEC statements', sql: 'EXEC [dbo].[P1]\nEXEC [dbo].[P2]', exec: ['P1', 'P2'] },
+    {
+      name: 'an EXEC after a string containing -- is still found',
+      sql: `
+        SET @msg = ' <--- Start ETL --->'
+        EXEC [dbo].[LogStart]
+        INSERT INTO [dbo].[Target] SELECT * FROM [dbo].[Source]
+        EXEC [dbo].[LogEnd]
+      `,
+      exec: ['LogStart', 'LogEnd'], targets: ['Target'], sources: ['Source'],
+    },
+  ]);
+
+  it('preserves a dot inside a bracketed procedure name as part of the identifier', () => {
+    expect(parseSqlBody('EXEC [dbo].[spLoad_Case4.5]').execCalls
+      .map(entry => entry.toLowerCase())).toContain('[dbo].[spload_case4.5]');
+  });
+
+  it('preserves a dot inside a bracketed table name as part of the identifier', () => {
+    expect(parseSqlBody('SELECT * FROM [staging].[view.name]').sources
+      .map(entry => entry.toLowerCase())).toContain('[staging].[view.name]');
+  });
+});
+
+// ─── 5. UDF extraction ────────────────────────────────────────────────────────
+
+describe('UDF extraction', () => {
+  table([
+    {
+      name: 'an inline scalar UDF is captured as a source',
+      sql: 'SELECT dbo.udfDivide(x, y) FROM [dbo].[T1]',
+      sources: ['T1'], exactSources: ['dbo.udfDivide'],
+    },
+    {
+      name: 'two UDFs in one SELECT are both captured',
+      sql: 'SELECT dbo.udfA(1), dbo.udfB(2) FROM [dbo].[T1]',
+      sources: ['T1'], exactSources: ['dbo.udfA', 'dbo.udfB'],
+    },
+    {
+      name: 'a bracketed UDF name is captured',
+      sql: 'SELECT [dbo].[udfCalc](x) FROM [dbo].[T1]',
+      sources: ['T1'], exactSources: ['dbo.udfCalc'],
+    },
+    {
+      name: 'a UDF in an INSERT ... SELECT is a source, never the target',
+      sql: 'INSERT INTO [dbo].[Target](col) SELECT dbo.udfCalc(x) FROM [dbo].[Source]',
+      targets: ['Target'], sources: ['Source'], exactSources: ['dbo.udfCalc'], noTargets: ['udfcalc'],
+    },
+    {
+      name: 'a single-part built-in such as GETDATE() is not a dependency',
+      sql: 'SELECT GETDATE()',
+      sourceCount: 0,
+    },
+    {
+      name: 'a single-part built-in alongside a real table leaves only the table',
+      sql: 'SELECT ISNULL(x, 0) FROM [dbo].[T1]',
+      sources: ['T1'], sourceCount: 1,
+    },
+  ]);
+});
+
+// ─── 6. CTE exclusion ─────────────────────────────────────────────────────────
+
+describe('CTE exclusion', () => {
+  table([
+    {
+      name: 'a CTE name is not a source, but the tables inside and outside it are',
+      sql: 'WITH MyCTE AS (SELECT * FROM [dbo].[T1]) SELECT * FROM MyCTE JOIN [dbo].[T2] ON 1=1',
+      sources: ['T1', 'T2'], noSources: ['mycte'],
+    },
+    {
+      name: 'an UPDATE through a CTE resolves to the base table, not the CTE name',
+      sql: 'WITH Alias AS (SELECT * FROM [dbo].[Orders]) UPDATE Alias SET Amount = 0',
+      targets: ['Orders'], sources: ['Orders'], noTargets: ['alias'],
+    },
+    {
+      name: 'an UPDATE through a CTE with a WHERE clause resolves to the base table',
+      sql: 'WITH Upd AS (SELECT Id, Val FROM [sales].[Prices]) UPDATE Upd SET Val = Val * 2 WHERE Id > 0',
+      targets: ['Prices'], noTargets: ['upd'],
+    },
+    {
+      name: 'an UPDATE aliasing a CTE in its FROM clause resolves to the base table',
+      sql: `
+        WITH cte_Result AS (SELECT * FROM [staging].[OrderWorker])
+        UPDATE w SET w.Col = 1 FROM cte_Result w
+      `,
+      targets: ['OrderWorker'], sources: ['OrderWorker'], noTargets: ['cte_result'],
+    },
+    {
+      name: 'an UPDATE through a chain of CTEs resolves to the original table',
+      sql: `
+        WITH BaseOrders AS (SELECT * FROM [dbo].[SalesOrder] WHERE Status = 'PENDING'),
+        OrdersWithLimit AS (SELECT * FROM BaseOrders WHERE TotalAmount > 100)
+        UPDATE OrdersWithLimit SET Status = 'APPROVED'
+      `,
+      targets: ['SalesOrder'], sources: ['SalesOrder'],
+    },
+    {
+      name: 'an UPDATE aliasing a chained CTE resolves to the original table',
+      sql: `
+        WITH cte_Base AS (SELECT * FROM [warehouse].[Inventory]),
+        cte_Filtered AS (SELECT * FROM cte_Base WHERE Qty > 0)
+        UPDATE inv SET inv.Qty = 0 FROM cte_Filtered inv
+      `,
+      targets: ['Inventory'], sources: ['Inventory'],
+    },
+  ]);
+
+  it('excludes every CTE name when several are declared', () => {
+    const result = parseSqlBody(
+      'WITH A AS (SELECT 1), B AS (SELECT 2) SELECT * FROM A JOIN B ON 1=1 JOIN [dbo].[T1] ON 1=1',
+    );
+    expect(hasName(result.sources, 'T1')).toBe(true);
+    expect(result.sources.filter(entry => ['a', 'b'].includes(entry.replace(/\[|\]/g, '').toLowerCase())))
+      .toEqual([]);
+  });
+});
+
+// ─── 7. Extraction boundaries ─────────────────────────────────────────────────
+
+describe('extraction boundaries', () => {
+  table([
+    { name: 'a temp table is not a dependency', sql: 'SELECT * FROM #TempTable', noSources: ['#'] },
+    { name: 'a table variable is not a dependency', sql: 'SELECT * FROM @TableVar', noSources: ['@'], sourceCount: 0 },
+    {
+      name: 'an unqualified system procedure is not an exec call',
+      sql: 'EXEC sp_executesql @sql',
+      noExec: ['sp_executesql'],
+    },
+    {
+      name: 'an unqualified system function is not a source',
+      sql: 'SELECT * FROM fn_helpcollations',
+      noSources: ['fn_helpcollations'],
+    },
+    {
+      name: 'an unqualified table name is rejected — a dependency needs a schema',
+      sql: 'SELECT * FROM UnqualifiedTable',
+      sourceCount: 0,
+    },
+    {
+      name: 'a temp-table INSERT target is dropped but the real source is kept',
+      sql: 'INSERT INTO #TempTable SELECT * FROM [dbo].[Src]',
+      noTargets: ['#'], sources: ['Src'],
+    },
+    {
+      name: 'a keyword used as a column name after WHERE is not a source',
+      sql: 'SELECT * FROM [dbo].[T1] WHERE set = 1',
+      sources: ['T1'], noSources: ['set'],
+    },
+    {
+      name: 'SQL inside an OPENQUERY string literal is not extracted',
+      sql: `SELECT * FROM OPENQUERY(LinkedServer, 'SELECT * FROM dbo.Remote')`,
+      noSources: ['remote'],
+    },
+    {
+      name: 'SQL inside a dynamic EXEC string is not extracted',
+      sql: `EXEC('INSERT INTO dbo.Secret SELECT * FROM dbo.Source')`,
+      noTargets: ['Secret'], noSources: ['Source'],
+    },
+  ]);
+
+  it('does not capture a single-character table alias as a source', () => {
+    const result = parseSqlBody('SELECT * FROM [dbo].[Orders] o');
+    expect(hasExact(result.sources, 'dbo.Orders')).toBe(true);
+    expect(result.sources.map(entry => entry.replace(/\[|\]/g, ''))).not.toContain('o');
+  });
+
+  it.each([
+    ['an empty body', ''],
+    ['a whitespace-only body', '   \n\t  '],
+  ])('returns no dependencies for %s', (_label, sql) => {
+    const result = parseSqlBody(sql);
+    expect(result.sources).toEqual([]);
+    expect(result.targets).toEqual([]);
+    expect(result.execCalls).toEqual([]);
+  });
+});
+
+// ─── 8. Combined complex SQL ──────────────────────────────────────────────────
+
+describe('a complete procedure body', () => {
   const sql = `
 -- This is a comment
 INSERT INTO [dbo].[Audit](Msg)
@@ -505,532 +553,341 @@ WHERE s.status = 'active -- not inactive'
 EXEC [dbo].[LogComplete]
 `;
 
-  const r = parseSqlBody(sql);
-
-  // Sources
-  assert(hasName(r.sources, 'Source'), 'Complex: Source found');
-  assert(hasName(r.sources, 'Lookup'), 'Complex: Lookup found');
-  assert(hasExact(r.sources, 'dbo.udfFormat'), 'Complex: dbo.udfFormat found as source (UDF)');
-
-  // Targets
-  assert(hasName(r.targets, 'Audit'), 'Complex: Audit found as target');
-
-  // Exec
-  assert(hasName(r.execCalls, 'LogComplete'), 'Complex: LogComplete found as exec call');
-
-  // Negatives
-  assert(!hasName(r.sources, 'Audit'), 'Complex: Audit NOT in sources');
-  assert(!r.sources.some(s => s.toLowerCase().includes('inactive')),
-    'Complex: string content "inactive" not captured');
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 9. Edge cases from critical review
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testCriticalReviewEdgeCases() {
-  console.log('\n\u2500\u2500 9. Edge cases from critical review \u2500\u2500');
-
-  // DELETE FROM does NOT produce a target — removes rows, contributes no column data to lineage.
-  // The FROM keyword still fires extract_sources_ansi, so Target appears as a source (read ref only).
-  {
-    const r = parseSqlBody(`DELETE FROM [dbo].[Target] WHERE Id = 1`);
-    assert(!hasName(r.targets, 'Target'),
-      'DELETE FROM: Target NOT in targets (DELETE removes rows, not a column-data write)');
-    assert(hasName(r.sources, 'Target'),
-      'DELETE FROM: Target appears as source (via FROM keyword — read reference)');
-  }
-
-  // OPENQUERY: content inside string should not be extracted
-  {
-    const r = parseSqlBody(`SELECT * FROM OPENQUERY(LinkedServer, 'SELECT * FROM dbo.Remote')`);
-    assert(!r.sources.some(s => s.toLowerCase().includes('remote')),
-      'OPENQUERY: dbo.Remote inside string NOT extracted');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 10. Regression guards (from 4-agent cross-review)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testRegressionGuards() {
-  console.log('\n\u2500\u2500 10. Regression guards (4-agent cross-review) \u2500\u2500');
-
-  // RG1: String containing -- must NOT eat subsequent EXEC calls
-  {
-    const r = parseSqlBody(`
-      SET @msg = ' <--- Start ETL --->'
-      EXEC [dbo].[LogStart]
-      INSERT INTO [dbo].[Target] SELECT * FROM [dbo].[Source]
-      EXEC [dbo].[LogEnd]
-    `);
-    assert(hasName(r.execCalls, 'LogStart'), 'RG1: EXEC after string with -- is found');
-    assert(hasName(r.execCalls, 'LogEnd'), 'RG1: Second EXEC also found');
-    assert(hasName(r.targets, 'Target'), 'RG1: INSERT target found');
-    assert(hasName(r.sources, 'Source'), 'RG1: FROM source found');
-  }
-
-  // RG2: INSERT INTO table(cols) — target must NOT appear as source (UDF false-positive guard)
-  {
-    const r = parseSqlBody(`INSERT INTO [dbo].[Audit](msg, ts) VALUES('test', GETDATE())`);
-    assert(hasName(r.targets, 'Audit'), 'RG2: Audit is target');
-    assert(!hasExact(r.sources, 'dbo.Audit'), 'RG2: Audit is NOT a source (column list, not UDF)');
-  }
-
-  // RG3: INSERT without INTO + column list
-  {
-    const r = parseSqlBody(`INSERT [staging].[Orders](id, amount) SELECT id, amt FROM [dbo].[Raw]`);
-    assert(hasName(r.targets, 'Orders'), 'RG3: INSERT (no INTO) target found');
-    assert(!hasExact(r.sources, 'staging.Orders'), 'RG3: target NOT in sources');
-    assert(hasName(r.sources, 'Raw'), 'RG3: FROM source found');
-  }
-
-  // RG4: EXEC @retval = [dbo].[Proc] — no spaces around =
-  {
-    const r = parseSqlBody(`EXEC @result=[dbo].[CalcTotal] @input=5`);
-    assert(hasName(r.execCalls, 'CalcTotal'), 'RG4: EXEC @var=proc (no spaces) found');
-  }
-
-  // RG5: Three-part name (database.schema.table — cross-db ref → crossDbSources)
-  {
-    const r = parseSqlBody(`SELECT * FROM OtherDB.dbo.RemoteTable`);
-    assert(r.crossDbSources.some(s => s === 'otherdb.dbo.remotetable'),
-      'RG5: Three-part name → crossDbSources (not local sources)');
-    assert(!r.sources.some(s => s.toLowerCase().includes('remotetable')),
-      'RG5: Three-part name NOT in local sources');
-  }
-
-  // RG6: Newlines between keyword and table name
-  {
-    const r = parseSqlBody(`SELECT *\n  FROM\n    [dbo].[Orders]`);
-    assert(hasName(r.sources, 'Orders'), 'RG6: FROM + newline + table name found');
-  }
-
-  // RG7: Tabs between keyword and table name
-  {
-    const r = parseSqlBody(`INSERT\tINTO\t[dbo].[Target]\tSELECT * FROM\t[dbo].[Source]`);
-    assert(hasName(r.targets, 'Target'), 'RG7: INSERT\\tINTO\\ttable found');
-    assert(hasName(r.sources, 'Source'), 'RG7: FROM\\ttable found');
-  }
-
-  // RG8: FULL OUTER JOIN
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] FULL OUTER JOIN [dbo].[B] ON 1=1`);
-    assert(hasName(r.sources, 'A'), 'RG8: FULL OUTER JOIN: A found');
-    assert(hasName(r.sources, 'B'), 'RG8: FULL OUTER JOIN: B found');
-  }
-
-  // RG9: RIGHT JOIN
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[A] RIGHT JOIN [dbo].[B] ON 1=1`);
-    assert(hasName(r.sources, 'B'), 'RG9: RIGHT JOIN: B found');
-  }
-
-  // RG10: Same table as both source and target (bidirectional)
-  {
-    const r = parseSqlBody(`UPDATE [dbo].[T1] SET col = s.val FROM [dbo].[T1] s WHERE s.id > 0`);
-    assert(hasName(r.targets, 'T1'), 'RG10: Bidirectional: T1 is target');
-    assert(hasName(r.sources, 'T1'), 'RG10: Bidirectional: T1 is also source (self-join UPDATE)');
-  }
-
-  // RG11: Multiple statements in one SP body
-  {
-    const r = parseSqlBody(`
-      INSERT INTO [dbo].[A] SELECT * FROM [dbo].[B]
-      UPDATE [dbo].[C] SET x = 1
-      EXEC [dbo].[D]
-    `);
-    assert(hasName(r.targets, 'A'), 'RG11: Multi-stmt: A is target');
-    assert(hasName(r.sources, 'B'), 'RG11: Multi-stmt: B is source');
-    assert(hasName(r.targets, 'C'), 'RG11: Multi-stmt: C is target');
-    assert(hasName(r.execCalls, 'D'), 'RG11: Multi-stmt: D is exec');
-  }
-
-  // RG12: Dynamic SQL — string content must NOT be extracted
-  {
-    const r = parseSqlBody(`EXEC('INSERT INTO dbo.Secret SELECT * FROM dbo.Source')`);
-    assert(!hasName(r.targets, 'Secret'), 'RG12: Dynamic SQL: Secret NOT in targets');
-    assert(!hasName(r.sources, 'Source'), 'RG12: Dynamic SQL: Source NOT in sources');
-  }
-
-  // RG13: Empty/whitespace body
-  {
-    const r = parseSqlBody('');
-    assert(r.sources.length === 0 && r.targets.length === 0 && r.execCalls.length === 0,
-      'RG13: Empty body returns no deps');
-  }
-  {
-    const r = parseSqlBody('   \n\t  ');
-    assert(r.sources.length === 0 && r.targets.length === 0 && r.execCalls.length === 0,
-      'RG13: Whitespace-only body returns no deps');
-  }
-
-  // RG14: Mixed bracket and bare name parts
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].Orders`);
-    assert(r.sources.some(s => s.toLowerCase().includes('orders')),
-      'RG14: Mixed [dbo].Orders found');
-  }
-
-  // RG15: Bracket name containing SQL keyword
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[select]`);
-    assert(r.sources.some(s => s.toLowerCase().includes('select') && s.includes('.')),
-      'RG15: Bracket [dbo].[select] found (keyword in brackets is a valid table name)');
-  }
-
-  // RG16: UPDATE alias resolved via extract_update_alias_target rule
-  // UPDATE t SET ... FROM [dbo].[Target] t — alias rule captures [dbo].[Target] as write target.
-  // Target also appears as source (bidirectional ⇄ edge expected).
-  {
-    const r = parseSqlBody(`UPDATE t SET t.col = s.val FROM [dbo].[Target] t INNER JOIN [dbo].[Source] s ON t.id = s.id`);
-    assert(hasName(r.targets, 'Target'),
-      'RG16: UPDATE alias — Target captured as write target by extract_update_alias_target');
-    assert(hasName(r.sources, 'Target'),
-      'RG16: UPDATE alias — Target also appears as source (⇄ bidirectional edge)');
-    assert(hasName(r.sources, 'Source'), 'RG16: Source found');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 11. Cleansing and normalization improvements
-//     Tests for: nested block comments, bracket-aware name splitting,
-//     @var/#temp filtering, double-quote identifiers, 3/4-part names
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testCleansingAndNormalization() {
-  console.log('\n── 11. Cleansing and normalization improvements ──');
-
-  // ── Nested block comments ─────────────────────────────────────────────────
-
-  // Non-nested block comment — still works
-  {
-    const r = parseSqlBody(`SELECT * FROM /* this is a comment */ [dbo].[Orders]`);
-    assert(hasName(r.sources, 'Orders'), 'BC1: Non-nested block comment removed, table found');
-  }
-
-  // Nested block comment — inner */ no longer leaves "still here" text
-  {
-    const r = parseSqlBody(`SELECT * FROM [dbo].[Orders] /* outer /* inner */ still here */ WHERE 1=1`);
-    assert(hasName(r.sources, 'Orders'), 'BC2: Nested comment: Orders still found');
-    assert(!r.sources.some(s => s.toLowerCase().includes('still')),
-      'BC2: Nested comment: "still" NOT extracted as spurious reference');
-  }
-
-  // Deep nesting — depth 3
-  {
-    const r = parseSqlBody(`/* depth /* two /* three */ two */ one */ INSERT INTO [dbo].[T] SELECT * FROM [dbo].[S]`);
-    assert(hasName(r.targets, 'T'), 'BC3: Depth-3 nested comment: T is target');
-    assert(hasName(r.sources, 'S'), 'BC3: Depth-3 nested comment: S is source');
-  }
-
-  // ── Bracket-aware name splitting ──────────────────────────────────────────
-
-  // Object name containing a dot inside brackets
-  {
-    const r = parseSqlBody(`EXEC [dbo].[spLoad_Case4.5]`);
-    assert(r.execCalls.some(s => s.toLowerCase() === '[dbo].[spload_case4.5]'),
-      'BN1: Object name with dot in brackets treated as one identifier');
-  }
-
-  // 2-part bracket-quoted — dot inside object name is NOT a separator
-  {
-    const r = parseSqlBody(`SELECT * FROM [staging].[view.name]`);
-    assert(r.sources.some(s => s.toLowerCase() === '[staging].[view.name]'),
-      'BN2: Dot inside bracket-quoted name preserved as part of identifier');
-  }
-
-  // ── @var / #temp filtered early ───────────────────────────────────────────
-
-  // @tableVar — not captured by regex (@ not a word char), should not appear
-  {
-    const r = parseSqlBody(`SELECT * FROM @tableVar`);
-    assert(r.sources.length === 0, 'NF1: @tableVar not in sources');
-  }
-
-  // #TempTable — not captured by regex (# not a word char), should not appear
-  {
-    const r = parseSqlBody(`INSERT INTO #TempTable SELECT * FROM [dbo].[Src]`);
-    assert(!r.targets.some(s => s.includes('#')),
-      'NF2: #TempTable not in targets');
-    assert(hasName(r.sources, 'Src'), 'NF2: [dbo].[Src] source still found');
-  }
-
-  // Unqualified name (no dot) — rejected by normalizeCaptured
-  {
-    const r = parseSqlBody(`SELECT * FROM UnqualifiedTable`);
-    assert(r.sources.length === 0,
-      'NF3: Unqualified table name (no schema) rejected — not in sources');
-  }
-
-  // ── Double-quote identifiers ──────────────────────────────────────────────
-
-  // "schema"."table" — should be treated as [schema].[table]
-  {
-    const r = parseSqlBody(`SELECT * FROM "dbo"."Orders"`);
-    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
-      'DQ1: Double-quoted "dbo"."Orders" normalized to [dbo].[orders]');
-  }
-
-  // ── 3-part names: routed to crossDb arrays (not local sources/targets) ────
-
-  // db.schema.object → crossDbSources
-  {
-    const r = parseSqlBody(`SELECT * FROM MyDB.dbo.Orders`);
-    assert(r.crossDbSources.some(s => s === 'mydb.dbo.orders'),
-      'MP1: 3-part MyDB.dbo.Orders → crossDbSources');
-    assert(!r.sources.some(s => s.toLowerCase().includes('orders')),
-      'MP1: 3-part NOT in local sources');
-  }
-
-  // Bracket-quoted 3-part → crossDbTargets
-  {
-    const r = parseSqlBody(`INSERT INTO [MyDB].[staging].[Orders] SELECT 1`);
-    assert(r.crossDbTargets.some(s => s === 'mydb.staging.orders'),
-      'MP2: Bracket-quoted 3-part → crossDbTargets');
-    assert(!r.targets.some(s => s.toLowerCase().includes('orders')),
-      'MP2: 3-part NOT in local targets');
-  }
-
-  // 4-part linked server → server stripped, treated as 3-part cross-DB
-  {
-    const r = parseSqlBody(`SELECT * FROM [Server].[DB].[dbo].[Orders]`);
-    assert(!r.sources.some(s => s.toLowerCase() === '[dbo].[orders]'),
-      'MP3: 4-part NOT in local sources');
-    assert(r.crossDbSources.some(s => s === 'db.dbo.orders'),
-      'MP3: 4-part → crossDbSources (server stripped, last 3 parts)');
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Run all tests
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 12. External file/URL reference extraction (pre-cleansing)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testExternalRefExtraction() {
-  console.log('\n\u2500\u2500 12. External file/URL reference extraction \u2500\u2500');
-
-  // OPENROWSET BULK
-  {
-    const refs = extractExternalRefs(`
-      SELECT * FROM OPENROWSET(BULK 'https://storage.blob.core.windows.net/data/sales.parquet',
-      FORMAT = 'PARQUET') AS r
-    `);
-    assert(refs.length === 1, 'ER1: OPENROWSET BULK detected');
-    assert(refs[0].kind === 'openrowset', 'ER1: kind is openrowset');
-    assert(refs[0].url.includes('sales.parquet'), 'ER1: URL captured');
-  }
-
-  // COPY INTO
-  {
-    const refs = extractExternalRefs(`
-      COPY INTO dbo.TargetTable FROM 'https://storage.blob.core.windows.net/data/input.csv'
-      WITH (FILE_TYPE = 'CSV')
-    `);
-    assert(refs.length === 1, 'ER2: COPY INTO FROM detected');
-    assert(refs[0].kind === 'copy_from', 'ER2: kind is copy_from');
-  }
-
-  // BULK INSERT
-  {
-    const refs = extractExternalRefs(`
-      BULK INSERT dbo.TargetTable FROM 'C:\\Data\\import.csv'
-      WITH (FIELDTERMINATOR = ',')
-    `);
-    assert(refs.length === 1, 'ER3: BULK INSERT FROM detected');
-    assert(refs[0].kind === 'bulk_from', 'ER3: kind is bulk_from');
-  }
-
-  // Deduplication: same URL in multiple statements → single ref
-  {
-    const refs = extractExternalRefs(`
-      SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT = 'PARQUET') AS a
-      UNION ALL
-      SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT = 'PARQUET') AS b
-    `);
-    assert(refs.length === 1, 'ER4: Duplicate URL deduplicated');
-  }
-
-  // Multiple distinct URLs
-  {
-    const refs = extractExternalRefs(`
-      SELECT * FROM OPENROWSET(BULK 'https://lake/a.parquet', FORMAT = 'PARQUET') AS a
-      UNION ALL
-      SELECT * FROM OPENROWSET(BULK 'https://lake/b.parquet', FORMAT = 'PARQUET') AS b
-    `);
-    assert(refs.length === 2, 'ER5: Two distinct URLs \u2192 two refs');
-  }
-
-  // No match — regular SQL
-  {
-    const refs = extractExternalRefs(`SELECT * FROM dbo.Orders`);
-    assert(refs.length === 0, 'ER6: Regular SQL \u2192 no external refs');
-  }
-
-  // OPENROWSET with connection string (non-BULK) — should NOT match
-  {
-    const refs = extractExternalRefs(`
-      SELECT * FROM OPENROWSET('SQLNCLI', 'Server=remote;Database=Sales;Trusted_Connection=yes;',
-        'SELECT * FROM dbo.Orders')
-    `);
-    assert(refs.length === 0, 'ER7: Non-BULK OPENROWSET (connection string) \u2192 no file refs');
-  }
-
-  // COPY INTO with URL — captured
-  {
-    const refs = extractExternalRefs(`
-      COPY INTO dbo.Sales
-      FROM 'https://lake/a.csv'
-      WITH (FILE_TYPE = 'CSV')
-    `);
-    assert(refs.length >= 1, 'ER8: COPY INTO URL captured');
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 13. CETAS rule extraction
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testCetasExtraction() {
-  console.log('\n\u2500\u2500 13. CETAS rule extraction \u2500\u2500');
-
-  // CREATE EXTERNAL TABLE AS SELECT → target
-  {
-    const r = parseSqlBody(`
-      CREATE EXTERNAL TABLE [ext].[SalesExport]
-      WITH (LOCATION = '/export/sales/', DATA_SOURCE = ExtDS, FILE_FORMAT = ParquetFF)
-      AS SELECT * FROM [dbo].[Sales]
-    `);
-    assert(r.targets.some(t => t.toLowerCase() === '[ext].[salesexport]'),
-      'CETAS1: CREATE EXTERNAL TABLE target captured');
-    assert(r.sources.some(s => s.toLowerCase() === '[dbo].[sales]'),
-      'CETAS1: FROM source also captured');
-  }
-
-  // Not a CETAS (no AS SELECT)
-  {
-    const r = parseSqlBody(`
-      CREATE EXTERNAL TABLE [ext].[RawData] (id INT, name VARCHAR(100))
-      WITH (LOCATION = '/raw/', DATA_SOURCE = ExtDS)
-    `);
-    assert(!r.targets.some(t => t.toLowerCase().includes('rawdata')),
-      'CETAS2: Plain CREATE EXTERNAL TABLE (no AS SELECT) NOT captured as target');
-  }
-
-  // CETAS with complex multi-option WITH clause
-  {
-    const r = parseSqlBody(`
-      CREATE PROCEDURE [dbo].[spExportPartitioned] AS
-      CREATE EXTERNAL TABLE [ext].[PartitionedExport]
-      WITH (
-        LOCATION = '/export/partitioned/',
-        DATA_SOURCE = MyLake,
-        FILE_FORMAT = ParquetFormat,
-        REJECT_TYPE = VALUE,
-        REJECT_VALUE = 0
-      )
-      AS SELECT col1, col2 FROM [dbo].[BigTable]
-    `);
-    assert(r.targets.some(t => t.toLowerCase().includes('partitionedexport')),
-      'CETAS3: Multi-option WITH clause parsed correctly');
-    assert(r.sources.some(t => t.toLowerCase().includes('bigtable')),
-      'CETAS3: FROM source in CETAS SELECT captured');
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 14. Real-world external ref patterns (Synapse/Fabric/PolyBase)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function testRealWorldExternalRefs() {
-  console.log('\n── 14. Real-world external ref patterns ──');
-
-  // Synapse Serverless: OPENROWSET with wildcard path (Fabric/Synapse common pattern)
-  {
-    const refs = extractExternalRefs(`
-      SELECT r.filepath(1) AS [Year], r.filepath(2) AS [Month], *
-      FROM OPENROWSET(
-        BULK 'https://myaccount.dfs.core.windows.net/curated/fact_sales/year=*/month=*/*.parquet',
-        FORMAT = 'DELTA'
-      ) WITH (
-        SalesKey INT, OrderDate DATE, Amount DECIMAL(18,2)
-      ) AS r
-    `);
-    assert(refs.length === 1, 'RW1: Synapse serverless OPENROWSET with wildcard path');
-    assert(refs[0].kind === 'openrowset', 'RW1: Correct kind');
-  }
-
-  // COPY INTO with SAS token in URL (Synapse Dedicated common pattern)
-  {
-    const refs = extractExternalRefs(`
-      COPY INTO dbo.FactSales
-      FROM 'https://mydatalake.blob.core.windows.net/staging/sales/*.parquet'
-      WITH (
-        FILE_TYPE = 'PARQUET',
-        CREDENTIAL = (IDENTITY = 'Shared Access Signature', SECRET = 'sv=2020-08-04&ss=b')
-      )
-    `);
-    assert(refs.length === 1, 'RW2: COPY INTO with SAS credential');
-    assert(refs[0].kind === 'copy_from', 'RW2: Correct kind');
-  }
-
-  // Cross-DB 3-part: Synapse cross-database query (common in lakehouse architecture)
-  {
-    const r = parseSqlBody(`
-      CREATE PROCEDURE [dbo].[spConsolidate] AS
-      INSERT INTO dbo.ConsolidatedSales
-      SELECT s.*, p.ProductName
-      FROM SalesDB.dbo.FactSales s
-      INNER JOIN ProductDB.catalog.DimProduct p ON s.ProductKey = p.ProductKey
-    `);
-    assert(r.crossDbSources.length >= 2, `RW3: Two cross-DB sources detected (got ${r.crossDbSources.length})`);
-    assert(r.crossDbSources.some(s => s.includes('salesdb')), 'RW3: SalesDB source detected');
-    assert(r.crossDbSources.some(s => s.includes('productdb')), 'RW3: ProductDB source detected');
-  }
-
-  // 4-part linked server → strip server, keep 3-part
-  {
-    const r = parseSqlBody(`
+  table([
+    {
+      name: 'captures both joined sources, the UDF, the insert target and the exec call',
+      sql,
+      sources: ['Source', 'Lookup'],
+      exactSources: ['dbo.udfFormat'],
+      targets: ['Audit'],
+      exec: ['LogComplete'],
+      noSources: ['Audit', 'inactive'],
+    },
+  ]);
+});
+
+// ─── 9. Three- and four-part names ────────────────────────────────────────────
+
+describe('cross-database references', () => {
+  table([
+    {
+      name: 'a three-part name is a cross-database source, not a local one',
+      sql: 'SELECT * FROM OtherDB.dbo.RemoteTable',
+      crossDbSources: ['otherdb.dbo.remotetable'], noSources: ['remotetable'],
+    },
+    {
+      name: 'a three-part bare name routes to the cross-database sources',
+      sql: 'SELECT * FROM MyDB.dbo.Orders',
+      crossDbSources: ['mydb.dbo.orders'], noSources: ['orders'],
+    },
+    {
+      name: 'a three-part bracketed INSERT target routes to the cross-database targets',
+      sql: 'INSERT INTO [MyDB].[staging].[Orders] SELECT 1',
+      crossDbTargets: ['mydb.staging.orders'], noTargets: ['orders'],
+    },
+    {
+      name: 'a four-part linked-server name drops the server and keeps the last three parts',
+      sql: 'SELECT * FROM [Server].[DB].[dbo].[Orders]',
+      crossDbSources: ['db.dbo.orders'], noSources: ['orders'],
+    },
+    {
+      name: 'two cross-database joins are both captured',
+      sql: `
+        CREATE PROCEDURE [dbo].[spConsolidate] AS
+        INSERT INTO dbo.ConsolidatedSales
+        SELECT s.*, p.ProductName
+        FROM SalesDB.dbo.FactSales s
+        INNER JOIN ProductDB.catalog.DimProduct p ON s.ProductKey = p.ProductKey
+      `,
+      crossDbSources: ['salesdb.dbo.factsales', 'productdb.catalog.dimproduct'],
+    },
+    {
+      name: 'a four-part linked-server reference in a procedure strips the server name',
+      sql: `
+        CREATE PROCEDURE [dbo].[spRemoteLoad] AS
+        SELECT * FROM LinkedSrv.RemoteDB.dbo.Customers
+      `,
+      crossDbSources: ['remotedb.dbo.customers'],
+    },
+  ]);
+
+  it('does not leave the linked-server name anywhere in the cross-database sources', () => {
+    const result = parseSqlBody(`
       CREATE PROCEDURE [dbo].[spRemoteLoad] AS
       SELECT * FROM LinkedSrv.RemoteDB.dbo.Customers
     `);
-    assert(r.crossDbSources.some(s => s.includes('remotedb')), 'RW4: 4-part linked server → 3-part cross-DB source');
-    assert(!r.crossDbSources.some(s => s.includes('linkedsrv')), 'RW4: Server name stripped');
-  }
+    expect(mentions(result.crossDbSources, 'linkedsrv')).toBe(false);
+  });
+});
 
-  // OPENROWSET inside a view (not just SPs)
-  {
-    const refs = extractExternalRefs(`
-      CREATE VIEW [lake].[vwRawSales] AS
-      SELECT * FROM OPENROWSET(
-        BULK 'https://adls.dfs.core.windows.net/bronze/sales/*.csv',
-        FORMAT = 'CSV', PARSER_VERSION = '2.0',
-        HEADER_ROW = TRUE
-      ) AS csv_data
+// ─── 10. CLR method false positives ───────────────────────────────────────────
+
+describe('CLR method calls are not cross-database references', () => {
+  // `alias.column.Method(args)` is textually a three-part name. Admitting one invents a
+  // database that does not exist, so each CLR family is guarded separately.
+  table([
+    {
+      name: 'HierarchyID GetAncestor inside a recursive CTE',
+      sql: `
+        WITH EMP_cte (EmployeeID, OrganizationNode) AS (
+          SELECT e.BusinessEntityID, e.OrganizationNode FROM HumanResources.Employee e
+          UNION ALL
+          SELECT e.BusinessEntityID, e.OrganizationNode
+          FROM HumanResources.Employee e
+          INNER JOIN EMP_cte ON EMP_cte.OrganizationNode.GetAncestor(1) = e.OrganizationNode
+        )
+        SELECT * FROM EMP_cte WHERE EmployeeID = @BusinessEntityID
+      `,
+      sources: ['Employee'],
+    },
+    {
+      name: 'HierarchyID GetLevel in a SELECT list',
+      sql: `
+        SELECT e.BusinessEntityID, e.OrganizationNode.GetLevel() AS [Level]
+        FROM HumanResources.Employee e
+      `,
+      sources: ['Employee'],
+    },
+    {
+      name: 'geography STDistance in a SELECT and a WHERE',
+      sql: `
+        SELECT s.StoreID, s.Location.STDistance(@pt) AS Dist
+        FROM Sales.Store s
+        WHERE s.Location.STDistance(@pt) < 50000
+      `,
+      sources: ['Store'],
+    },
+    {
+      name: 'geometry STArea in a SELECT list',
+      sql: 'SELECT g.Name, g.SpatialLocation.STArea() AS Area FROM dbo.GeoObjects g',
+      sources: ['GeoObjects'],
+    },
+  ]);
+
+  it.each([
+    ['HierarchyID GetAncestor', `
+      WITH EMP_cte (EmployeeID, OrganizationNode) AS (
+        SELECT e.BusinessEntityID, e.OrganizationNode FROM HumanResources.Employee e
+        UNION ALL
+        SELECT e.BusinessEntityID, e.OrganizationNode FROM HumanResources.Employee e
+        INNER JOIN EMP_cte ON EMP_cte.OrganizationNode.GetAncestor(1) = e.OrganizationNode
+      )
+      SELECT * FROM EMP_cte`, ['getancestor', 'organizationnode']],
+    ['HierarchyID GetLevel',
+      'SELECT e.OrganizationNode.GetLevel() AS [Level] FROM HumanResources.Employee e', ['getlevel']],
+    ['mixed-bracket GetAncestor',
+      'INNER JOIN [EMP_cte] ON [EMP_cte].[OrganizationNode].GetAncestor(1) = e.OrganizationNode', ['getancestor']],
+    ['geography STDistance',
+      'SELECT s.Location.STDistance(@pt) AS Dist FROM Sales.Store s', ['stdistance', 'location']],
+    ['geometry STArea',
+      'SELECT g.SpatialLocation.STArea() AS Area FROM dbo.GeoObjects g', ['starea']],
+    ['XML nodes() and value()', `
+      SELECT x.n.value('text()[1]', 'nvarchar(100)') AS Val
+      FROM dbo.XmlTable CROSS APPLY xmlcol.nodes('/root/item') x(n)`, ['value', 'nodes']],
+  ])('%s produces no cross-database source', (_label, sql, fragments) => {
+    const { crossDbSources } = parseSqlBody(sql);
+    for (const fragment of fragments as string[]) {
+      expect(mentions(crossDbSources, fragment), `${fragment} must not be a cross-DB source`).toBe(false);
+    }
+  });
+
+  it('still captures a genuine three-part FROM and JOIN', () => {
+    const result = parseSqlBody(`
+      SELECT * FROM OtherDB.dbo.RemoteTable t
+      INNER JOIN OtherDB.dbo.Lookup l ON t.id = l.id
     `);
-    assert(refs.length === 1, 'RW5: OPENROWSET in view body detected');
-  }
+    expect(result.crossDbSources.map(entry => entry.toLowerCase()))
+      .toEqual(expect.arrayContaining(['otherdb.dbo.remotetable', 'otherdb.dbo.lookup']));
+  });
 
-  // BULK INSERT with UNC path (SQL Server on-prem pattern)
-  {
-    const refs = extractExternalRefs(`
-      BULK INSERT dbo.ImportedData
-      FROM '\\\\fileserver\\data\\export_20240101.csv'
-      WITH (FIELDTERMINATOR = '|', ROWTERMINATOR = '\\n', FIRSTROW = 2)
+  it('still captures a cross-database table-valued function reached through CROSS APPLY', () => {
+    const result = parseSqlBody(`
+      SELECT * FROM dbo.FactSales s
+      CROSS APPLY OtherDB.dbo.fn_tvf(s.key) t
     `);
-    assert(refs.length === 1, 'RW6: BULK INSERT with UNC path');
-    assert(refs[0].kind === 'bulk_from', 'RW6: Correct kind');
-  }
+    expect(mentions(result.crossDbSources, 'otherdb')).toBe(true);
+    expect(mentions(result.crossDbSources, 'fn_tvf')).toBe(true);
+  });
+});
 
-  // Mixed: SP with both OPENROWSET and cross-DB in same body
-  {
+// ─── 11. CETAS ────────────────────────────────────────────────────────────────
+
+describe('CETAS', () => {
+  table([
+    {
+      name: 'CREATE EXTERNAL TABLE AS SELECT captures the external target and the source',
+      sql: `
+        CREATE EXTERNAL TABLE [ext].[SalesExport]
+        WITH (LOCATION = '/export/sales/', DATA_SOURCE = ExtDS, FILE_FORMAT = ParquetFF)
+        AS SELECT * FROM [dbo].[Sales]
+      `,
+      exactSources: ['dbo.Sales'], targets: ['SalesExport'],
+    },
+    {
+      name: 'a plain CREATE EXTERNAL TABLE with no AS SELECT is not a target',
+      sql: `
+        CREATE EXTERNAL TABLE [ext].[RawData] (id INT, name VARCHAR(100))
+        WITH (LOCATION = '/raw/', DATA_SOURCE = ExtDS)
+      `,
+      noTargets: ['rawdata'],
+    },
+    {
+      name: 'a CETAS with a multi-option WITH clause captures both sides',
+      sql: `
+        CREATE PROCEDURE [dbo].[spExportPartitioned] AS
+        CREATE EXTERNAL TABLE [ext].[PartitionedExport]
+        WITH (
+          LOCATION = '/export/partitioned/',
+          DATA_SOURCE = MyLake,
+          FILE_FORMAT = ParquetFormat,
+          REJECT_TYPE = VALUE,
+          REJECT_VALUE = 0
+        )
+        AS SELECT col1, col2 FROM [dbo].[BigTable]
+      `,
+      targets: ['PartitionedExport'], sources: ['BigTable'],
+    },
+    {
+      name: 'a CETAS with an aggregate SELECT captures both sides',
+      sql: `
+        CREATE EXTERNAL TABLE [export].[DailyReport]
+        WITH (
+          LOCATION = '/reports/daily/',
+          DATA_SOURCE = ExternalDataSource,
+          FILE_FORMAT = ParquetFileFormat
+        )
+        AS SELECT
+          OrderDate, SUM(Amount) AS TotalAmount
+        FROM dbo.FactSales
+        GROUP BY OrderDate
+      `,
+      targets: ['DailyReport'], sources: ['FactSales'],
+    },
+  ]);
+});
+
+// ─── 12. External file and URL references ─────────────────────────────────────
+
+describe('extractExternalRefs', () => {
+  const REFS: Array<{ name: string; sql: string; count: number; kind?: string }> = [
+    {
+      name: 'OPENROWSET BULK',
+      sql: `
+        SELECT * FROM OPENROWSET(BULK 'https://storage.blob.core.windows.net/data/sales.parquet',
+        FORMAT = 'PARQUET') AS r
+      `,
+      count: 1, kind: 'openrowset',
+    },
+    {
+      name: 'COPY INTO ... FROM',
+      sql: `
+        COPY INTO dbo.TargetTable FROM 'https://storage.blob.core.windows.net/data/input.csv'
+        WITH (FILE_TYPE = 'CSV')
+      `,
+      count: 1, kind: 'copy_from',
+    },
+    {
+      name: 'BULK INSERT ... FROM',
+      sql: `
+        BULK INSERT dbo.TargetTable FROM 'C:\\Data\\import.csv'
+        WITH (FIELDTERMINATOR = ',')
+      `,
+      count: 1, kind: 'bulk_from',
+    },
+    {
+      name: 'a Synapse serverless OPENROWSET with a wildcard path',
+      sql: `
+        SELECT r.filepath(1) AS [Year], r.filepath(2) AS [Month], *
+        FROM OPENROWSET(
+          BULK 'https://myaccount.dfs.core.windows.net/curated/fact_sales/year=*/month=*/*.parquet',
+          FORMAT = 'DELTA'
+        ) WITH (
+          SalesKey INT, OrderDate DATE, Amount DECIMAL(18,2)
+        ) AS r
+      `,
+      count: 1, kind: 'openrowset',
+    },
+    {
+      name: 'COPY INTO carrying a SAS credential',
+      sql: `
+        COPY INTO dbo.FactSales
+        FROM 'https://mydatalake.blob.core.windows.net/staging/sales/*.parquet'
+        WITH (
+          FILE_TYPE = 'PARQUET',
+          CREDENTIAL = (IDENTITY = 'Shared Access Signature', SECRET = 'sv=2020-08-04&ss=b')
+        )
+      `,
+      count: 1, kind: 'copy_from',
+    },
+    {
+      name: 'OPENROWSET inside a view body',
+      sql: `
+        CREATE VIEW [lake].[vwRawSales] AS
+        SELECT * FROM OPENROWSET(
+          BULK 'https://adls.dfs.core.windows.net/bronze/sales/*.csv',
+          FORMAT = 'CSV', PARSER_VERSION = '2.0',
+          HEADER_ROW = TRUE
+        ) AS csv_data
+      `,
+      count: 1, kind: 'openrowset',
+    },
+    {
+      name: 'BULK INSERT from a UNC path',
+      sql: `
+        BULK INSERT dbo.ImportedData
+        FROM '\\\\fileserver\\data\\export_20240101.csv'
+        WITH (FIELDTERMINATOR = '|', ROWTERMINATOR = '\\n', FIRSTROW = 2)
+      `,
+      count: 1, kind: 'bulk_from',
+    },
+    {
+      name: 'the same URL read twice, deduplicated',
+      sql: `
+        SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT = 'PARQUET') AS a
+        UNION ALL
+        SELECT * FROM OPENROWSET(BULK 'https://lake/data.parquet', FORMAT = 'PARQUET') AS b
+      `,
+      count: 1,
+    },
+    {
+      name: 'two distinct URLs',
+      sql: `
+        SELECT * FROM OPENROWSET(BULK 'https://lake/a.parquet', FORMAT = 'PARQUET') AS a
+        UNION ALL
+        SELECT * FROM OPENROWSET(BULK 'https://lake/b.parquet', FORMAT = 'PARQUET') AS b
+      `,
+      count: 2,
+    },
+    {
+      name: 'ordinary SQL with no external reference',
+      sql: 'SELECT * FROM dbo.Orders',
+      count: 0,
+    },
+    {
+      name: 'a non-BULK OPENROWSET connection string, which names no file',
+      sql: `
+        SELECT * FROM OPENROWSET('SQLNCLI', 'Server=remote;Database=Sales;Trusted_Connection=yes;',
+          'SELECT * FROM dbo.Orders')
+      `,
+      count: 0,
+    },
+  ];
+
+  it.each(REFS)('$name', ({ sql, count, kind }) => {
+    const refs = extractExternalRefs(sql);
+    expect(refs).toHaveLength(count);
+    if (kind) expect(refs[0].kind).toBe(kind);
+  });
+
+  it('captures the URL itself, not merely the fact of a reference', () => {
+    const [ref] = extractExternalRefs(`
+      SELECT * FROM OPENROWSET(BULK 'https://storage.blob.core.windows.net/data/sales.parquet',
+      FORMAT = 'PARQUET') AS r
+    `);
+    expect(ref.url).toContain('sales.parquet');
+  });
+
+  it('finds both an external file and a cross-database reference in one body', () => {
     const body = `
       CREATE PROCEDURE [etl].[spLoadMixed] AS
       INSERT INTO dbo.Staging
@@ -1038,148 +895,192 @@ function testRealWorldExternalRefs() {
       UNION ALL
       SELECT * FROM ArchiveDB.dbo.HistoricalData
     `;
-    const refs = extractExternalRefs(body);
-    assert(refs.length === 1, 'RW7: OPENROWSET detected in mixed body');
+    expect(extractExternalRefs(body)).toHaveLength(1);
+    expect(mentions(parseSqlBody(body).crossDbSources, 'archivedb')).toBe(true);
+  });
+});
 
-    const r = parseSqlBody(body);
-    assert(r.crossDbSources.some(s => s.includes('archivedb')), 'RW7: Cross-DB ref also detected in same body');
-  }
+// ─── 13. Constructs with no dedicated parse rule ──────────────────────────────
+// None of these have a rule of their own; each rides on FROM/JOIN, INSERT, or the string-
+// cleansing pass. Pinned here so a future rule change shows up as a diff against a known value.
 
-  // CETAS with multi-line WITH clause (real Synapse pattern)
-  {
-    const r = parseSqlBody(`
-      CREATE EXTERNAL TABLE [export].[DailyReport]
-      WITH (
-        LOCATION = '/reports/daily/',
-        DATA_SOURCE = ExternalDataSource,
-        FILE_FORMAT = ParquetFileFormat
-      )
-      AS SELECT
-        OrderDate, SUM(Amount) AS TotalAmount
-      FROM dbo.FactSales
-      GROUP BY OrderDate
+describe('PIVOT and UNPIVOT', () => {
+  table([
+    {
+      name: 'PIVOT captures the base table, not the pivot column list',
+      sql: `SELECT * FROM dbo.SalesData
+        PIVOT (SUM(Amount) FOR Year IN ([2020],[2021],[2022])) AS PivotTable`,
+      exactSources: ['dbo.SalesData'],
+      noSources: ['2020', '2021', '2022', 'pivottable'],
+      sourceCount: 1,
+    },
+    {
+      name: 'UNPIVOT captures the base table, not the pivot column list',
+      sql: `SELECT * FROM dbo.SalesWide
+        UNPIVOT (Amount FOR Year IN ([Y2020],[Y2021])) AS UnpivotTable`,
+      exactSources: ['dbo.SalesWide'],
+      noSources: ['y2020', 'y2021', 'unpivottable'],
+      sourceCount: 1,
+    },
+  ]);
+});
+
+describe('OPENJSON and OPENXML', () => {
+  // Both are single-part identifiers to the ANSI FROM rule (`normalizeCaptured` drops anything
+  // under 2 dot-separated parts), and neither is followed by a `.` so `extract_udf_calls` never
+  // sees them either — the function name itself never becomes a dependency.
+  table([
+    {
+      name: 'OPENJSON is not captured as a source',
+      sql: `SELECT * FROM OPENJSON(@json) WITH (id INT '$.id', name NVARCHAR(50) '$.name')`,
+      sourceCount: 0,
+    },
+    {
+      name: 'OPENJSON does not suppress the real INSERT target',
+      sql: `INSERT INTO dbo.Target SELECT * FROM OPENJSON(@json) WITH (id INT '$.id')`,
+      targets: ['Target'],
+      sourceCount: 0,
+    },
+  ]);
+
+  it('OPENXML and its preparedocument handle produce no source, target, or exec call', () => {
+    const result = parseSqlBody(`
+      EXEC sp_xml_preparedocument @hdoc OUTPUT, @xml
+      SELECT * FROM OPENXML(@hdoc, '/root/row', 2) WITH (id INT, name NVARCHAR(50))
     `);
-    assert(hasName(r.targets, 'DailyReport'), 'RW8: CETAS target detected');
-    assert(hasName(r.sources, 'FactSales'),   'RW8: FROM source in CETAS SELECT captured');
-  }
-}
+    expect(result.sources).toEqual([]);
+    expect(result.targets).toEqual([]);
+    expect(result.execCalls).toEqual([]);
+  });
+});
 
-function testClrMethodFalsePositives() {
-  // CLR type methods (HierarchyID, XML, geometry/geography) are called on column values
-  // with the syntax alias.column.Method(args). They look like 3-part names to the regex
-  // parser but are NOT cross-DB catalog references.
-  // extract_udf_calls is excluded from collectCrossDbMatches, so these must produce
-  // zero cross-DB sources/targets.
+describe('OPENQUERY and OPENDATASOURCE', () => {
+  table([
+    {
+      name: 'OPENQUERY captures no source — the linked-server name and the quoted remote query both stay out',
+      sql: `SELECT * FROM OPENQUERY(LinkedServer, 'SELECT * FROM dbo.Remote')`,
+      sourceCount: 0,
+    },
+    {
+      name: 'OPENDATASOURCE captures no source — the provider string and connection string do not leak',
+      // The four-part `OPENDATASOURCE(...).dbo.RemoteTable` reference itself is not recognized either:
+      // real T-SQL treats it as a source, but nothing here precedes `dbo.RemoteTable` with FROM/JOIN or
+      // a dot-prefixed call, so it is silently dropped rather than falsely captured.
+      sql: `SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Server=Remote;Trusted_Connection=yes').dbo.RemoteTable`,
+      sourceCount: 0,
+    },
+  ]);
 
-  // HierarchyID — AdventureWorks uspGetEmployeeManagers pattern
-  {
-    const r = parseSqlBody(`
-      WITH EMP_cte (EmployeeID, OrganizationNode) AS (
-        SELECT e.BusinessEntityID, e.OrganizationNode FROM HumanResources.Employee e
-        UNION ALL
-        SELECT e.BusinessEntityID, e.OrganizationNode
-        FROM HumanResources.Employee e
-        INNER JOIN EMP_cte ON EMP_cte.OrganizationNode.GetAncestor(1) = e.OrganizationNode
-      )
-      SELECT * FROM EMP_cte WHERE EmployeeID = @BusinessEntityID
-    `);
-    assert(!r.crossDbSources.some(s => s.includes('getancestor')),
-      'CLR1: HierarchyID GetAncestor not a cross-DB source');
-    assert(!r.crossDbSources.some(s => s.includes('organizationnode')),
-      'CLR1: HierarchyID column not a cross-DB source');
-    assert(r.sources.some(s => s.toLowerCase().includes('employee')),
-      'CLR1: Real source HumanResources.Employee still captured');
-  }
+  it('neither OPENQUERY nor OPENDATASOURCE is picked up as an external file/URL reference', () => {
+    expect(extractExternalRefs(`SELECT * FROM OPENQUERY(LinkedServer, 'SELECT * FROM dbo.Remote')`)).toEqual([]);
+    expect(extractExternalRefs(
+      `SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Server=Remote;Trusted_Connection=yes').dbo.RemoteTable`,
+    )).toEqual([]);
+  });
+});
 
-  // HierarchyID GetLevel
-  {
-    const r = parseSqlBody(`
-      SELECT e.BusinessEntityID, e.OrganizationNode.GetLevel() AS [Level]
-      FROM HumanResources.Employee e
-    `);
-    assert(!r.crossDbSources.some(s => s.includes('getlevel')),
-      'CLR2: HierarchyID GetLevel not a cross-DB source');
-  }
+describe('FOR SYSTEM_TIME AS OF', () => {
+  table([
+    {
+      name: 'the temporal table itself is still captured as a source',
+      sql: `SELECT * FROM dbo.Employee FOR SYSTEM_TIME AS OF '2020-01-01'`,
+      exactSources: ['dbo.Employee'],
+      sourceCount: 1,
+    },
+  ]);
+});
 
-  // Mixed-bracket form: [EMP_cte].[OrganizationNode].GetAncestor (last part unbracketed)
-  {
-    const r = parseSqlBody(`
-      INNER JOIN [EMP_cte] ON [EMP_cte].[OrganizationNode].GetAncestor(1) = e.OrganizationNode
-    `);
-    assert(!r.crossDbSources.some(s => s.includes('getancestor')),
-      'CLR3: Mixed-bracket HierarchyID GetAncestor not a cross-DB source');
-  }
+describe('table hints', () => {
+  table([
+    {
+      name: 'WITH (NOLOCK) leaves the table captured and the hint uncaptured',
+      sql: 'SELECT * FROM dbo.T WITH (NOLOCK)',
+      exactSources: ['dbo.T'],
+      noSources: ['nolock'],
+      sourceCount: 1,
+    },
+  ]);
+});
 
-  // Geometry/Geography STDistance
-  {
-    const r = parseSqlBody(`
-      SELECT s.StoreID, s.Location.STDistance(@pt) AS Dist
-      FROM Sales.Store s
-      WHERE s.Location.STDistance(@pt) < 50000
-    `);
-    assert(!r.crossDbSources.some(s => s.includes('stdistance')),
-      'CLR4: Geography STDistance not a cross-DB source');
-    assert(!r.crossDbSources.some(s => s.includes('location')),
-      'CLR4: Location column not misidentified as cross-DB schema');
-  }
+describe('OPTION (RECOMPILE)', () => {
+  table([
+    {
+      name: 'a trailing OPTION clause leaves the table captured and RECOMPILE uncaptured',
+      sql: 'SELECT * FROM dbo.T WHERE 1 = 1 OPTION (RECOMPILE)',
+      exactSources: ['dbo.T'],
+      noSources: ['recompile'],
+      sourceCount: 1,
+    },
+  ]);
+});
 
-  // Geometry STArea
-  {
-    const r = parseSqlBody(`
-      SELECT g.Name, g.SpatialLocation.STArea() AS Area FROM dbo.GeoObjects g
-    `);
-    assert(!r.crossDbSources.some(s => s.includes('starea')),
-      'CLR5: Geometry STArea not a cross-DB source');
-  }
+describe('COLLATE clause', () => {
+  table([
+    {
+      name: 'a COLLATE clause leaves the table captured and the collation name uncaptured',
+      sql: `SELECT * FROM dbo.T WHERE Name = 'x' COLLATE SQL_Latin1_General_CP1_CI_AS`,
+      exactSources: ['dbo.T'],
+      noSources: ['collate', 'latin1'],
+      sourceCount: 1,
+    },
+  ]);
+});
 
-  // XML data type .value() in 3-part form (nodes() + value() pattern)
-  {
-    const r = parseSqlBody(`
-      SELECT x.n.value('text()[1]', 'nvarchar(100)') AS Val
-      FROM dbo.XmlTable CROSS APPLY xmlcol.nodes('/root/item') x(n)
-    `);
-    assert(!r.crossDbSources.some(s => s.includes('value')),
-      'CLR6: XML .value() method not a cross-DB source');
-    assert(!r.crossDbSources.some(s => s.includes('nodes')),
-      'CLR6: XML .nodes() method not a cross-DB source');
-  }
+describe('UNION / EXCEPT / INTERSECT', () => {
+  table([
+    {
+      name: 'UNION captures the FROM of every branch',
+      sql: 'SELECT * FROM dbo.A UNION SELECT * FROM dbo.B',
+      exactSources: ['dbo.A', 'dbo.B'],
+      sourceCount: 2,
+    },
+    {
+      name: 'UNION ALL captures the FROM of every branch',
+      sql: 'SELECT * FROM dbo.A UNION ALL SELECT * FROM dbo.B',
+      exactSources: ['dbo.A', 'dbo.B'],
+      sourceCount: 2,
+    },
+    {
+      name: 'EXCEPT captures the FROM of both branches',
+      sql: 'SELECT * FROM dbo.A EXCEPT SELECT * FROM dbo.B',
+      exactSources: ['dbo.A', 'dbo.B'],
+      sourceCount: 2,
+    },
+    {
+      name: 'INTERSECT captures the FROM of both branches',
+      sql: 'SELECT * FROM dbo.A INTERSECT SELECT * FROM dbo.B',
+      exactSources: ['dbo.A', 'dbo.B'],
+      sourceCount: 2,
+    },
+  ]);
+});
 
-  // Sanity check: legitimate 3-part FROM/JOIN refs still captured (not affected by fix)
-  {
-    const r = parseSqlBody(`
-      SELECT * FROM OtherDB.dbo.RemoteTable t
-      INNER JOIN OtherDB.dbo.Lookup l ON t.id = l.id
-    `);
-    assert(r.crossDbSources.some(s => s.includes('otherdb') && s.includes('remotetable')),
-      'CLR7: Legitimate 3-part FROM ref still captured');
-    assert(r.crossDbSources.some(s => s.includes('otherdb') && s.includes('lookup')),
-      'CLR7: Legitimate 3-part JOIN ref still captured');
-  }
+describe('GO batch separators', () => {
+  table([
+    {
+      name: 'a GO between two SELECT statements does not stop either FROM from being captured',
+      sql: 'SELECT * FROM dbo.A\nGO\nSELECT * FROM dbo.B',
+      exactSources: ['dbo.A', 'dbo.B'],
+      sourceCount: 2,
+    },
+    {
+      name: 'a GO between an INSERT and a SELECT still captures the target on one side and the source on the other',
+      sql: 'INSERT INTO dbo.Log(Msg) VALUES (1)\nGO\nSELECT * FROM dbo.T',
+      targets: ['Log'],
+      exactSources: ['dbo.T'],
+      sourceCount: 1,
+    },
+  ]);
+});
 
-  // Sanity check: cross-DB TVF via APPLY still captured (uses extract_sources_tsql_apply)
-  {
-    const r = parseSqlBody(`
-      SELECT * FROM dbo.FactSales s
-      CROSS APPLY OtherDB.dbo.fn_tvf(s.key) t
-    `);
-    assert(r.crossDbSources.some(s => s.includes('otherdb') && s.includes('fn_tvf')),
-      'CLR8: Cross-DB TVF via CROSS APPLY still captured');
-  }
-}
-
-  it('preprocesses SQL safely', testPreprocessing);
-  it('extracts sources', testSourceExtraction);
-  it('extracts targets', testTargetExtraction);
-  it('extracts procedure calls', testExecCalls);
-  it('extracts UDF calls', testUdfExtraction);
-  it('excludes CTE names', testCteExclusion);
-  it('applies skip patterns', testSkipPatterns);
-  it('handles combined complex SQL', testCombinedComplexSql);
-  it('covers critical review edge cases', testCriticalReviewEdgeCases);
-  it('preserves regression guards', testRegressionGuards);
-  it('cleanses and normalizes identifiers', testCleansingAndNormalization);
-  it('extracts external references', testExternalRefExtraction);
-  it('extracts CETAS targets', testCetasExtraction);
-  it('handles real-world external references', testRealWorldExternalRefs);
-  it('rejects CLR method false positives', testClrMethodFalsePositives);
+describe('TABLESAMPLE', () => {
+  table([
+    {
+      name: 'TABLESAMPLE leaves the table captured and the sample clause uncaptured',
+      sql: 'SELECT * FROM dbo.T TABLESAMPLE (10 PERCENT)',
+      exactSources: ['dbo.T'],
+      noSources: ['percent', 'tablesample'],
+      sourceCount: 1,
+    },
+  ]);
 });

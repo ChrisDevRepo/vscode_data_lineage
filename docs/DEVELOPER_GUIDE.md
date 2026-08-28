@@ -172,6 +172,7 @@ parsing and graph traversal remain protected Core subsets and must not shrink.
 | **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, the AI template schema-version gate, unit tests, builds, and package checks. Run before push; GitHub does not run tests. |
 | **Unit suite** | `npm test` | Every maintained unit test. Use the runner output for current totals. |
 | **Protected core** | `npm run test:core` | Parser and engine unit projects. |
+| **Core coverage floors** | `npm run coverage:core` | The protected core under v8 coverage, with per-file thresholds on `sqlBodyParser.ts`, `graphAnalysis.ts`, `graphBuilder.ts`, `shared/sqlRegex.ts`, `shared/nodeIdResolution.ts`. Floors are measured, never aspirational; report lands in `test-results/coverage-core/`. This is what the gate's `unit: core (+ core coverage floors)` step runs. |
 | **Agent runtime** | `npm run test:runtime` | Deterministic agent-runtime and state-machine logic with a stubbed VS Code API and model doubles. Zero model calls — not an AI test. |
 | **Core subsets** | `npm run test:parser`, `npm run test:bfs` | Focused parser or graph traversal/analysis verification. |
 | **Test type-checking** | `npm run typecheck:tests` | Type-checks `tests/unit/**` against production source. |
@@ -179,6 +180,16 @@ parsing and graph traversal remain protected Core subsets and must not shrink.
 
 Run `npm run typecheck` after every structural change; the type system is the
 first line of defence.
+
+Assert with vitest `expect`, and give each case its own `it` (or an `it.each`
+table). The homegrown `assert`/`assertEq` in `tests/unit/helpers/testUtils.ts`
+throw a bare `Error`, so they carry no value diff, no case name, and abort every
+remaining assertion in their block — one regression then hides the rest.
+`tests/tools/assert-no-legacy-assert.mjs` fails the gate on any *new* file using
+them; the files still on its allowlist are migrated opportunistically, and the
+list may only shrink. `tests/unit/parser/tsql-complex.test.ts` shows the
+data-driven form, and a new SQL parser case is cheapest as an `-- EXPECT`
+fixture under `tests/fixtures/sql/targeted/` rather than as TypeScript.
 
 The `participant-turn` lane uses a deterministic scripted language-model
 fixture registered through the real public `vscode.lm` API. It verifies

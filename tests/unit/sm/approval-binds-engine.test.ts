@@ -14,7 +14,7 @@ import { renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRend
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { assert, makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
 import { describe, it } from 'vitest';
 
 describe('Approval binds the engine — hard vs soft, and every approved filter', () => {
@@ -34,19 +34,7 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
 
   /** Drives the chain to completion, routing one hop further at every focus. */
   function drain(engine: NavigationEngine): void {
-    let safety = 20;
-    while (safety-- > 0) {
-      const ctx = engine.getHopContext() as any;
-      if (ctx.done || !ctx.focus_node) break;
-      const next = succ[ctx.focus_node.id];
-      engine.submitFindings({
-        focus_node_id: ctx.focus_node.id,
-        sections: [{ angle: 'business' as const, text: `analysis for ${ctx.focus_node.id}` }],
-        summary: ctx.focus_node.id,
-        verdict: 'analyze',
-        route_requests: next ? [{ nodeId: next, question: 'trace downstream' }] : [],
-      });
-    }
+    driveEngine(engine, { succ, limit: 20 });
   }
 
   function analyzed(engine: NavigationEngine): Set<string> {

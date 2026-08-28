@@ -50,10 +50,17 @@ const STEPS = [
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'AI template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'honest test labels', cmd: nodeBin, args: ['tests/tools/assert-honest-test-labels.mjs'] },
+  { name: 'no legacy assertions', cmd: nodeBin, args: ['tests/tools/assert-no-legacy-assert.mjs'] },
+  // Structural, so it runs with the other seconds-long checks rather than with the suites. Line
+  // coverage cannot answer this: a rule matched by no fixture still reads as covered.
+  { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },
   // Runs before the two unit steps below, because it is what makes them add up to the whole
   // unit suite. Without it a new tests/unit/ directory is run by `npm test` and by no gate step.
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
-  npmRun('unit: core', 'test:core'),
+  // Runs the same suite as `test:core`, with per-file coverage floors on the deterministic
+  // core — SQL parsing and graph/BFS — so a regression there fails the gate rather than
+  // showing up as a silently smaller number. Floors are measured, never aspirational.
+  npmRun('unit: core (+ core coverage floors)', 'coverage:core'),
   // Not "unit: AI". These cover the agent runtime's own logic — state machine, tool dispatch,
   // schemas, gates — against a stubbed `vscode` and scripted model doubles. Zero model calls, so
   // naming them for AI would report inference coverage the step does not have.

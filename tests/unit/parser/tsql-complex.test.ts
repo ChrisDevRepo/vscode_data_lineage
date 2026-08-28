@@ -1,8 +1,8 @@
 /**
  * SQL Pattern Test Suite
  *
- * Loads all .sql files from test/sql/targeted/ and verifies the parser
- * against expected results embedded in the file as a -- EXPECT comment:
+ * Loads every .sql file from tests/fixtures/sql/targeted/ and verifies the parser against
+ * expectations embedded in the file as an `-- EXPECT` comment:
  *
  *   -- EXPECT  sources:[dbo].[T1],[dbo].[T2]  targets:[dbo].[Out]  exec:[dbo].[usp_Log]
  *
@@ -12,22 +12,27 @@
  *   exec:     schema.object names the parser must find in result.execCalls
  *   absent:   names that must NOT appear in any result (verifies comments/strings are cleaned)
  *
- * Files without a -- EXPECT line are run as stability-only tests
- * (parser must not crash; no assertion on content).
+ * A file with no `-- EXPECT` line is a stability case: the parser must not crash or run away,
+ * and nothing is asserted about its content.
  *
- * Exit code 1 if any test fails.
+ * @remarks
+ * This is the cheapest place to add a parser case — one .sql file, no TypeScript — and each
+ * fixture reports as its own named test. `assert-core-cases-complete.mjs` requires every rule
+ * in assets/defaultParseRules.yaml to be matched by this corpus or by a parser test.
  */
 
-import { readFileSync, readdirSync, existsSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { basename } from 'path';
-import { describe, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { parseSqlBody } from '../../../src/engine/sqlBodyParser';
-import { assert, loadParseRules, testPath } from '../helpers/testUtils';
+import { loadParseRules, testPath } from '../helpers/testUtils';
 
-describe('SQL Pattern Tests', () => {
-  loadParseRules();
+beforeAll(() => { loadParseRules(); });
 
-// ─── EXPECT annotation parser ─────────────────────────────────────────────────
+/** Runaway guards: a rule that over-matches produces hundreds of spurious references. */
+const MAX_SOURCES = 500;
+const MAX_TARGETS = 200;
+
 interface Expectation {
   sources: string[];
   targets: string[];
@@ -36,98 +41,80 @@ interface Expectation {
 }
 
 function parseExpectation(sql: string): Expectation | null {
-  const lines = sql.split(/\r?\n/);
-  for (const line of lines) {
-    const m = /--\s*EXPECT\b(.*)/i.exec(line);
-    if (!m) continue;
+  for (const line of sql.split(/\r?\n/)) {
+    const match = /--\s*EXPECT\b(.*)/i.exec(line);
+    if (!match) continue;
 
-    const body = m[1];
-    const parseField = (field: string): string[] => {
-      const fm = new RegExp(`\\b${field}:(.*?)(?=\\s+(?:sources|targets|exec|absent):|$)`, 'i').exec(body);
-      if (!fm || !fm[1].trim()) return [];
-      return fm[1].split(',').map(s => s.trim()).filter(Boolean);
+    const body = match[1];
+    const field = (name: string): string[] => {
+      const found = new RegExp(`\\b${name}:(.*?)(?=\\s+(?:sources|targets|exec|absent):|$)`, 'i').exec(body);
+      if (!found || !found[1].trim()) return [];
+      return found[1].split(',').map(entry => entry.trim()).filter(Boolean);
     };
 
-    return {
-      sources: parseField('sources'),
-      targets: parseField('targets'),
-      exec:    parseField('exec'),
-      absent:  parseField('absent'),
-    };
+    return { sources: field('sources'), targets: field('targets'), exec: field('exec'), absent: field('absent') };
   }
   return null;
 }
 
-// ─── Normalization for comparison (strip brackets + lowercase) ────────────────
-function norm(s: string): string {
-  return s.replace(/\[|\]/g, '').toLowerCase().trim();
-}
+/** Strips brackets and case so `[dbo].[T1]` and `dbo.t1` compare equal. */
+const norm = (value: string) => value.replace(/\[|\]/g, '').toLowerCase().trim();
+const includes = (list: string[], item: string) => list.some(entry => norm(entry) === norm(item));
 
-function includes(list: string[], item: string): boolean {
-  const n = norm(item);
-  return list.some(x => norm(x) === n);
-}
+const targetedDir = testPath('sql/targeted');
+if (!existsSync(targetedDir)) throw new Error(`${targetedDir} not found`);
+const files = readdirSync(targetedDir).filter(name => name.endsWith('.sql')).sort();
 
-// ─── Single file test ──────────────────────────────────────────────────────────
-function runFile(filePath: string): boolean {
-  const fileName = basename(filePath);
-  const sql = readFileSync(filePath, 'utf-8');
+describe('SQL fixture corpus', () => {
+  // A count floor, not an exact match: fixtures are expected to be added, never to disappear.
+  // `length > 0` would still pass if the glob broke and matched a single file.
+  it('is not empty — the corpus is what makes this suite meaningful', () => {
+    expect(files.length).toBeGreaterThanOrEqual(55);
+  });
 
-  let result;
-  try {
-    result = parseSqlBody(sql);
-  } catch (e) {
-    assert(false, `[CRASH] ${fileName}: ${e instanceof Error ? e.message : String(e)}`);
-    return false;
-  }
+  // parseExpectation returning null downgrades a fixture to stability-only, so a deleted or
+  // mistyped EXPECT line silently removes its assertions while the suite stays green.
+  it('keeps an EXPECT annotation on every fixture that carries one today', () => {
+    const annotated = files.filter(
+      file => parseExpectation(readFileSync(testPath('sql/targeted', file), 'utf-8')) !== null,
+    );
+    expect(annotated).toHaveLength(files.length);
+  });
 
-  if (result.sources.length >= 500 || result.targets.length >= 200) {
-    assert(false, `[RUNAWAY] ${fileName}: src=${result.sources.length} tgt=${result.targets.length}`);
-    return false;
-  }
+  it.each(files)('%s', (file) => {
+    const fileName = basename(file);
+    const sql = readFileSync(testPath('sql/targeted', file), 'utf-8');
 
-  const expect = parseExpectation(sql);
-  if (!expect) {
-    assert(true, `[STABLE] ${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
-    return true;
-  }
+    const result = parseSqlBody(sql);
 
-  const all = [...result.sources, ...result.targets, ...result.execCalls];
-  const errors: string[] = [];
+    expect(result.sources.length, `${fileName}: source count ran away`).toBeLessThan(MAX_SOURCES);
+    expect(result.targets.length, `${fileName}: target count ran away`).toBeLessThan(MAX_TARGETS);
 
-  for (const exp of expect.sources) {
-    if (!includes(result.sources, exp)) errors.push(`source ${exp} not found`);
-  }
-  for (const exp of expect.targets) {
-    if (!includes(result.targets, exp)) errors.push(`target ${exp} not found`);
-  }
-  for (const exp of expect.exec) {
-    if (!includes(result.execCalls, exp)) errors.push(`exec ${exp} not found`);
-  }
-  for (const abs of expect.absent) {
-    if (includes(all, abs)) errors.push(`${abs} should not be extracted (false positive)`);
-  }
+    const expectation = parseExpectation(sql);
+    if (!expectation) return; // Stability-only fixture: parsing without crashing is the assertion.
 
-  if (errors.length > 0) {
-    for (const err of errors) console.error(`        → ${err}`);
-    console.error(`        actual src=[${result.sources.join(', ')}]`);
-    console.error(`        actual tgt=[${result.targets.join(', ')}]`);
-    console.error(`        actual exec=[${result.execCalls.join(', ')}]`);
-    assert(false, fileName);
-    return false;
-  }
+    // Collected, then asserted once, so a failure lists every miss in the fixture rather
+    // than stopping at the first — the whole point of driving the corpus from one place.
+    const misses: string[] = [];
+    for (const name of expectation.sources) {
+      if (!includes(result.sources, name)) misses.push(`source ${name} not found`);
+    }
+    for (const name of expectation.targets) {
+      if (!includes(result.targets, name)) misses.push(`target ${name} not found`);
+    }
+    for (const name of expectation.exec) {
+      if (!includes(result.execCalls, name)) misses.push(`exec ${name} not found`);
+    }
+    const all = [...result.sources, ...result.targets, ...result.execCalls];
+    for (const name of expectation.absent) {
+      if (includes(all, name)) misses.push(`${name} was extracted but must be absent`);
+    }
 
-  assert(true, `${fileName}  (src=${result.sources.length} tgt=${result.targets.length} exec=${result.execCalls.length})`);
-  return true;
-}
-
-  const targetedDir = testPath('sql/targeted');
-  if (!existsSync(targetedDir)) {
-    throw new Error('tests/fixtures/sql/targeted not found');
-  }
-
-  const files = readdirSync(targetedDir).filter(f => f.endsWith('.sql')).sort();
-  it.each(files)('parses %s', (file) => {
-    runFile(testPath('sql/targeted', file));
+    expect(misses, [
+      `${fileName} did not match its -- EXPECT line.`,
+      `  sources: [${result.sources.join(', ')}]`,
+      `  targets: [${result.targets.join(', ')}]`,
+      `  exec:    [${result.execCalls.join(', ')}]`,
+    ].join('\n')).toEqual([]);
   });
 });

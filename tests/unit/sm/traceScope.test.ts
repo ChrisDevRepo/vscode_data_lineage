@@ -3,12 +3,14 @@ import {
   buildVisibleTraceScope,
   canPruneTraceNode,
   collectScopeEdgeIds,
+  isManualTraceScopeEdit,
 } from '../../../src/engine/traceScope';
 import {
   bfsReachable,
   firstDisconnectedRequiredNode,
   findShortestPathOrdered,
 } from '../../../src/engine/graphGuards';
+import type { TraceState } from '../../../src/engine/types';
 import type { LineageEdge } from '../../../src/engine/types';
 import { describe, it } from 'vitest';
 
@@ -275,6 +277,206 @@ describe("Trace Scope Safety Tests", () => {
   assert(result !== null, 'single hop: not null');
   assertEq(result!.path.length, 2, 'single hop: path length=2');
   assertEq(result!.direction, 'source_to_target', "single hop: direction='source_to_target'");
+});
+
+});
+
+describe("isManualTraceScopeEdit", () => {
+  // Baseline: both editable mode, all compared scalar/set fields identical, no manual delta.
+  // Overrides layer on top per case so each test isolates exactly one field.
+  function baseState(overrides: Partial<TraceState> = {}): TraceState {
+    return {
+      mode: 'applied',
+      selectedNodeId: 'ORIGIN',
+      targetNodeId: null,
+      upstreamLevels: 2,
+      downstreamLevels: 2,
+      baseNodeIds: new Set(['ORIGIN', 'A', 'B']),
+      baseEdgeIds: new Set(['ORIGIN→A', 'A→B']),
+      manualAddedNodeIds: new Set(),
+      manualPrunedNodeIds: new Set(),
+      tracedNodeIds: new Set(['ORIGIN', 'A', 'B']),
+      tracedEdgeIds: new Set(['ORIGIN→A', 'A→B']),
+      autoPromoted: false,
+      ...overrides,
+    };
+  }
+
+  it("identical states, no manual delta: false (nothing to preserve viewport for)", () => {
+  const previous = baseState();
+  const next = baseState();
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'identical states: false');
+});
+
+  it("previous.mode='none': false (non-editable previous mode short-circuits)", () => {
+  const previous = baseState({ mode: 'none' });
+  const next = baseState({ manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='none': false");
+});
+
+  it("previous.mode='configuring': false (non-editable previous mode)", () => {
+  const previous = baseState({ mode: 'configuring' });
+  const next = baseState({ manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='configuring': false");
+});
+
+  it("previous.mode='pathfinding': false (non-editable previous mode)", () => {
+  const previous = baseState({ mode: 'pathfinding' });
+  const next = baseState({ mode: 'pathfinding', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='pathfinding': false");
+});
+
+  it("previous.mode='path-applied': false (non-editable previous mode)", () => {
+  const previous = baseState({ mode: 'path-applied' });
+  const next = baseState({ mode: 'path-applied', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='path-applied': false");
+});
+
+  it("previous.mode='analysis': false (non-editable previous mode)", () => {
+  const previous = baseState({ mode: 'analysis' });
+  const next = baseState({ mode: 'analysis', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='analysis': false");
+});
+
+  it("next.mode='none': false (non-editable next mode short-circuits)", () => {
+  const previous = baseState();
+  const next = baseState({ mode: 'none', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "next.mode='none': false");
+});
+
+  it("next.mode='analysis': false (non-editable next mode)", () => {
+  const previous = baseState();
+  const next = baseState({ mode: 'analysis', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "next.mode='analysis': false");
+});
+
+  it("mode 'applied' -> 'filtered', otherwise identical: false (both editable, no manual delta)", () => {
+  // Both modes pass isEditableTraceMode individually; the function never compares mode
+  // equality between previous and next, only editability of each side.
+  const previous = baseState({ mode: 'applied' });
+  const next = baseState({ mode: 'filtered' });
+  assertEq(isManualTraceScopeEdit(previous, next), false, "mode transition, no manual delta: false");
+});
+
+  it("mode 'filtered' -> 'applied', with manual add delta: true (both editable)", () => {
+  const previous = baseState({ mode: 'filtered' });
+  const next = baseState({ mode: 'applied', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), true, "mode transition, with manual delta: true");
+});
+
+  it("selectedNodeId differs: false (origin change is not a manual scope edit)", () => {
+  const previous = baseState({ selectedNodeId: 'ORIGIN' });
+  const next = baseState({ selectedNodeId: 'OTHER', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'selectedNodeId differs: false');
+});
+
+  it("selectedNodeId null vs non-null: false", () => {
+  const previous = baseState({ selectedNodeId: null });
+  const next = baseState({ selectedNodeId: 'ORIGIN' });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'selectedNodeId null vs non-null: false');
+});
+
+  it("targetNodeId differs: false (pathfinding target change is not a manual scope edit)", () => {
+  const previous = baseState({ targetNodeId: null });
+  const next = baseState({ targetNodeId: 'TARGET', manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'targetNodeId differs: false');
+});
+
+  it("upstreamLevels differs: false (depth change is not a manual scope edit)", () => {
+  const previous = baseState({ upstreamLevels: 2 });
+  const next = baseState({ upstreamLevels: 3, manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'upstreamLevels differs: false');
+});
+
+  it("downstreamLevels differs: false (depth change is not a manual scope edit)", () => {
+  const previous = baseState({ downstreamLevels: 2 });
+  const next = baseState({ downstreamLevels: 3, manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'downstreamLevels differs: false');
+});
+
+  it("autoPromoted differs (false -> true): false (promotion is a fresh scope, not a manual edit)", () => {
+  const previous = baseState({ autoPromoted: false });
+  const next = baseState({ autoPromoted: true, manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'autoPromoted false->true: false');
+});
+
+  it("autoPromoted differs (undefined -> true): false (strict !== treats missing as distinct from true)", () => {
+  const previous = baseState({ autoPromoted: undefined });
+  const next = baseState({ autoPromoted: true, manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'autoPromoted undefined->true: false');
+});
+
+  it("autoPromoted same on both sides (undefined): true when manual delta present", () => {
+  // undefined === undefined passes the strict comparison; only manualAdded/Pruned decide the result.
+  const previous = baseState({ autoPromoted: undefined });
+  const next = baseState({ autoPromoted: undefined, manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), true, 'autoPromoted undefined on both sides: true');
+});
+
+  it("baseNodeIds differs (fresh BFS scope): false, even with a manual delta present", () => {
+  const previous = baseState({ baseNodeIds: new Set(['ORIGIN', 'A', 'B']) });
+  const next = baseState({
+    baseNodeIds: new Set(['ORIGIN', 'A', 'B', 'D']),
+    manualAddedNodeIds: new Set(['C']),
+  });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'baseNodeIds differs: false');
+});
+
+  it("baseNodeIds same size, different membership: false (sameIdSet checks membership, not just size)", () => {
+  const previous = baseState({ baseNodeIds: new Set(['ORIGIN', 'A', 'B']) });
+  const next = baseState({
+    baseNodeIds: new Set(['ORIGIN', 'A', 'D']),
+    manualAddedNodeIds: new Set(['C']),
+  });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'baseNodeIds same size, different membership: false');
+});
+
+  it("baseEdgeIds differs (fresh BFS scope): false, even with a manual delta present", () => {
+  const previous = baseState({ baseEdgeIds: new Set(['ORIGIN→A', 'A→B']) });
+  const next = baseState({
+    baseEdgeIds: new Set(['ORIGIN→A']),
+    manualAddedNodeIds: new Set(['C']),
+  });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'baseEdgeIds differs: false');
+});
+
+  it("manualAddedNodeIds differs, manualPrunedNodeIds identical: true", () => {
+  const previous = baseState({ manualAddedNodeIds: new Set() });
+  const next = baseState({ manualAddedNodeIds: new Set(['C']) });
+  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualAddedNodeIds differs: true');
+});
+
+  it("manualPrunedNodeIds differs, manualAddedNodeIds identical: true", () => {
+  const previous = baseState({ manualPrunedNodeIds: new Set() });
+  const next = baseState({ manualPrunedNodeIds: new Set(['A']) });
+  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualPrunedNodeIds differs: true');
+});
+
+  it("manualAddedNodeIds AND manualPrunedNodeIds both differ: true", () => {
+  const previous = baseState({ manualAddedNodeIds: new Set(), manualPrunedNodeIds: new Set() });
+  const next = baseState({
+    manualAddedNodeIds: new Set(['C']),
+    manualPrunedNodeIds: new Set(['A']),
+  });
+  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualAdded and manualPruned both differ: true');
+});
+
+  it("manualAddedNodeIds same size, different membership: true (sameIdSet checks membership)", () => {
+  const previous = baseState({ manualAddedNodeIds: new Set(['C']) });
+  const next = baseState({ manualAddedNodeIds: new Set(['D']) });
+  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualAddedNodeIds same size, different membership: true');
+});
+
+  it("all compared fields identical (both manual sets non-empty but unchanged): false", () => {
+  const previous = baseState({
+    manualAddedNodeIds: new Set(['C']),
+    manualPrunedNodeIds: new Set(['A']),
+  });
+  const next = baseState({
+    manualAddedNodeIds: new Set(['C']),
+    manualPrunedNodeIds: new Set(['A']),
+  });
+  assertEq(isManualTraceScopeEdit(previous, next), false, 'no manual delta despite non-empty sets: false');
 });
 
 });

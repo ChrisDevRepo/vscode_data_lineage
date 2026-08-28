@@ -64,10 +64,14 @@ The maintained steps live in
 test type-checking, the generated-tool-manifest drift check
 (`scripts/generate-tool-manifest.mjs --check`), the AI template schema-version
 gate (`tests/tools/assert-template-schema-version.mjs`), the honest-test-label
-check (`tests/tools/assert-honest-test-labels.mjs`), the unit-project coverage
+check (`tests/tools/assert-honest-test-labels.mjs`), the no-legacy-assertions
+scan (`tests/tools/assert-no-legacy-assert.mjs`), the core-case-completeness
+check (`tests/tools/assert-core-cases-complete.mjs`), the unit-project coverage
 check that makes the two unit steps add up to the whole suite
-(`tests/tools/assert-unit-projects-cover-all.mjs`), the core and agent-runtime
-unit projects, both bundles plus the integration-test compile,
+(`tests/tools/assert-unit-projects-cover-all.mjs`), the core unit project — run
+under v8 coverage with per-file floors on `sqlBodyParser.ts`, `graphAnalysis.ts`,
+`graphBuilder.ts`, `shared/sqlRegex.ts`, and `shared/nodeIdResolution.ts` — and
+the agent-runtime unit project, both bundles plus the integration-test compile,
 package-content safety, and the no-LangSmith boundary. The gate reports every
 configured step instead of stopping after the first failure. It does not launch
 VS Code Electron or contact a model provider.

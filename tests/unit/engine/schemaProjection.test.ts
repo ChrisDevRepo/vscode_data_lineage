@@ -1,20 +1,20 @@
 /**
  * Tests for the expanded schema view partition (engine/schemaProjection).
+ *
+ * @remarks
+ * The partition is the contract: every node lands in exactly one of `individual` or
+ * `collapsed`, decided by schema membership alone. Each scenario gets its own `it` so a
+ * partition defect names the case that breaks it.
  */
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../../../src/engine/schemaProjection';
-import { makeGraph, assert, assertEq } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 
-describe('Expanded Schema View Core', () => {
-  it('runs all schema projection assertions', () => {
-
-console.log('\n── Expanded Schema View Core ──');
-
-// One expanded schema → its objects individual; every other schema collapses (rendered per schema as
-// the schema-view cluster box). Edges are irrelevant to the partition — membership only.
-{
-  const g = makeGraph(
+describe('partitionBySchema — expanded schemas', () => {
+  // Edges are irrelevant to the partition — membership only — so each graph carries lineage
+  // that would tempt a connectivity-based implementation to leak across the boundary.
+  const lineageGraph = () => makeGraph(
     [
       { id: 'A', schema: 'sales' }, { id: 'B', schema: 'sales' },
       { id: 'D', schema: 'fin' }, { id: 'E', schema: 'fin' },
@@ -22,91 +22,96 @@ console.log('\n── Expanded Schema View Core ──');
     ],
     [['A', 'D'], ['D', 'E']],
   );
-  const r = partitionBySchema(g, new Set(['sales']));
-  assert(r.individual.has('A') && r.individual.has('B'), 'expanded schema shown in full');
-  assert(r.collapsed.has('D') && r.collapsed.has('E'), 'fin (not expanded) collapsed despite lineage to A');
-  assert(r.collapsed.has('Z'), 'unrelated schema collapsed');
-  assert(!r.individual.has('D') && !r.individual.has('Z'), 'non-expanded schemas never individual');
-}
 
-// One schema in the expanded set makes only that schema individual.
-{
-  const g = makeGraph(
-    [
-      { id: 'A', schema: 'sales' }, { id: 'D', schema: 'fin' }, { id: 'Z', schema: 'aud' },
-    ],
-    [['A', 'D'], ['D', 'Z']],
-  );
-  const r = partitionBySchema(g, new Set(['fin']));
-  assert(r.individual.has('D') && !r.individual.has('A'), 'single expanded schema shows only that schema');
-  assert(r.collapsed.has('A') && r.collapsed.has('Z'), 'all other schemas collapse');
-}
+  it('shows every object of the expanded schema individually', () => {
+    const result = partitionBySchema(lineageGraph(), new Set(['sales']));
+    expect([...result.individual].sort()).toEqual(['A', 'B']);
+  });
 
-// Multiple expanded schemas are additive.
-{
-  const g = makeGraph(
+  it('collapses a non-expanded schema despite its lineage into the expanded one', () => {
+    const result = partitionBySchema(lineageGraph(), new Set(['sales']));
+    expect(result.collapsed.has('D')).toBe(true);
+    expect(result.collapsed.has('E')).toBe(true);
+  });
+
+  it('collapses a schema unrelated to the expanded one', () => {
+    expect(partitionBySchema(lineageGraph(), new Set(['sales'])).collapsed.has('Z')).toBe(true);
+  });
+
+  it('expands only the named schema when several carry lineage', () => {
+    const result = partitionBySchema(lineageGraph(), new Set(['fin']));
+    expect([...result.individual].sort()).toEqual(['D', 'E']);
+    expect(result.collapsed.has('A')).toBe(true);
+    expect(result.collapsed.has('Z')).toBe(true);
+  });
+
+  it('treats multiple expanded schemas as additive', () => {
+    const result = partitionBySchema(lineageGraph(), new Set(['sales', 'fin']));
+    expect([...result.individual].sort()).toEqual(['A', 'B', 'D', 'E']);
+    expect(result.collapsed.has('Z')).toBe(true);
+  });
+});
+
+describe('partitionBySchema — degenerate inputs', () => {
+  it('collapses everything when no schema is expanded', () => {
+    const graph = makeGraph(
+      [{ id: 'A', schema: 'sales' }, { id: 'B', schema: 'fin' }],
+      [['A', 'B']],
+    );
+    const result = partitionBySchema(graph, new Set());
+    expect(result.individual.size).toBe(0);
+    expect(result.collapsed.size).toBe(2);
+  });
+
+  it('contributes nothing for an expanded schema absent from the graph', () => {
+    const graph = makeGraph([{ id: 'A', schema: 'sales' }, { id: 'X', schema: 'other' }], []);
+    const result = partitionBySchema(graph, new Set(['ghost']));
+    expect(result.individual.size).toBe(0);
+    expect([...result.collapsed].sort()).toEqual(['A', 'X']);
+  });
+});
+
+describe('partitionBySchema — partition invariant', () => {
+  it('places every node in exactly one side', () => {
+    const graph = makeGraph(
+      [
+        { id: 'A', schema: 's1' }, { id: 'B', schema: 's1' },
+        { id: 'C', schema: 's2' }, { id: 'D', schema: 's3' },
+      ],
+      [['A', 'C']],
+    );
+    const result = partitionBySchema(graph, new Set(['s1']));
+
+    expect(result.individual.size + result.collapsed.size).toBe(graph.order);
+    expect([...result.individual].filter(id => result.collapsed.has(id))).toEqual([]);
+    expect([...result.individual].sort()).toEqual(['A', 'B']);
+  });
+});
+
+describe('countExpandedSchemaViewRenderedNodes', () => {
+  const graph = () => makeGraph(
     [
       { id: 'A', schema: 'sales' }, { id: 'B', schema: 'sales' },
       { id: 'D', schema: 'fin' }, { id: 'Z', schema: 'aud' },
     ],
     [['A', 'D'], ['D', 'Z']],
   );
-  const r = partitionBySchema(g, new Set(['sales', 'fin']));
-  assert(r.individual.has('A') && r.individual.has('B') && r.individual.has('D'), 'expanded schemas are additive');
-  assert(r.collapsed.has('Z'), 'schemas outside the expanded set collapse');
-  assertEq(countExpandedSchemaViewRenderedNodes(g, new Set(['sales', 'fin'])), 4, 'rendered count = expanded objects + collapsed schema clusters');
-  assertEq(
-    countExpandedSchemaViewRenderedNodes(g, new Set(['sales', 'fin']), { includeCollapsedSchemaClusters: false }),
-    3,
-    'hidden schema clusters do not count as rendered nodes',
-  );
-}
 
-// Empty expanded set → everything collapses (no crash).
-{
-  const g = makeGraph(
-    [{ id: 'A', schema: 'sales' }, { id: 'B', schema: 'fin' }],
-    [['A', 'B']],
-  );
-  const r = partitionBySchema(g, new Set());
-  assertEq(r.individual.size, 0, 'nothing individual when no schema is expanded');
-  assertEq(r.collapsed.size, 2, 'all nodes collapsed when no schema is expanded');
-}
+  it('counts expanded objects plus one cluster per collapsed schema', () => {
+    // sales: A, B individual; fin: D individual; aud collapses to one cluster → 4.
+    expect(countExpandedSchemaViewRenderedNodes(graph(), new Set(['sales', 'fin']))).toBe(4);
+  });
 
-// A schema in the expanded set but absent from the graph contributes nothing (no crash).
-{
-  const g = makeGraph(
-    [{ id: 'A', schema: 'sales' }, { id: 'X', schema: 'other' }],
-    [],
-  );
-  const r = partitionBySchema(g, new Set(['ghost']));
-  assertEq(r.individual.size, 0, 'absent expanded schema adds no nodes');
-  assert(r.collapsed.has('A') && r.collapsed.has('X'), 'present schemas collapse when a ghost schema is expanded');
-}
+  it('omits collapsed schema clusters when they are not rendered', () => {
+    expect(countExpandedSchemaViewRenderedNodes(
+      graph(),
+      new Set(['sales', 'fin']),
+      { includeCollapsedSchemaClusters: false },
+    )).toBe(3);
+  });
 
-// Present expanded schema contributes exactly its nodes.
-{
-  const g = makeGraph(
-    [{ id: 'A', schema: 'sales' }, { id: 'X', schema: 'other' }],
-    [],
-  );
-  const r = partitionBySchema(g, new Set(['sales']));
-  assert(r.individual.has('A'), 'present expanded schema individual');
-  assert(r.collapsed.has('X'), 'other schema collapsed');
-  assertEq(r.individual.size, 1, 'only the selected schema is individual');
-  assertEq(countExpandedSchemaViewRenderedNodes(g, new Set(['sales'])), 2, 'one expanded object plus one collapsed schema cluster');
-}
-
-// Every node is accounted for exactly once (disjoint + full coverage).
-{
-  const g = makeGraph(
-    [{ id: 'A', schema: 's1' }, { id: 'B', schema: 's1' }, { id: 'C', schema: 's2' }, { id: 'D', schema: 's3' }],
-    [['A', 'C']],
-  );
-  const r = partitionBySchema(g, new Set(['s1']));
-  assertEq(r.individual.size + r.collapsed.size, 4, 'partition covers every node exactly once');
-  assertEq(r.individual.size, 2, 's1 has two objects individual');
-}
-
+  it('counts one expanded object plus one collapsed cluster', () => {
+    const single = makeGraph([{ id: 'A', schema: 'sales' }, { id: 'X', schema: 'other' }], []);
+    expect(countExpandedSchemaViewRenderedNodes(single, new Set(['sales']))).toBe(2);
   });
 });

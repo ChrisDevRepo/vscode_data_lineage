@@ -2,7 +2,7 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { prunePreserveOnly } from '../../../src/ai/support/viewPrune';
 import { assert, makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
 import { describe, it } from 'vitest';
 
 describe("Navigation Engine — no self-prune cascade", () => {
@@ -27,25 +27,7 @@ describe("Navigation Engine — no self-prune cascade", () => {
   const model: DatabaseModel = makeModel(nodes, edges, ['dbo']);
   const graph = makeGraph(nodes, edges);
   function driveWalk(engine: NavigationEngine, passNodes: Set<string>): Set<string> {
-    const visited = new Set<string>();
-    let ctx = engine.getHopContext();
-    let guard = 0;
-    while (!('done' in ctx && ctx.done) && 'focus_node' in ctx && ctx.focus_node && guard++ < 50) {
-      const nid = ctx.focus_node.id as string;
-      visited.add(nid);
-      const route_requests = (ctx.neighbors ?? [])
-        .filter((n) => n.edge_direction === 'downstream')
-        .map((n) => ({ nodeId: n.id, question: 'trace' }));
-      engine.submitFindings({
-        focus_node_id: nid,
-        sections: [{ angle: 'business' as const, text: nid }],
-        summary: nid,
-        verdict: passNodes.has(nid) ? 'passthrough' : 'analyze',
-        route_requests,
-      });
-      ctx = engine.getHopContext();
-    }
-    return visited;
+    return new Set(driveEngine(engine, { followDownstream: true, passthrough: passNodes }));
   }
   it("Test 1: a `passthrough` node never cascade-drops its descendants — full coverage.", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});

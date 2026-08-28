@@ -1,7 +1,7 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { assert, makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
 import { describe, it } from 'vitest';
 
 describe("Supplement Agenda", () => {
@@ -23,18 +23,7 @@ describe("Supplement Agenda", () => {
   const model: DatabaseModel = makeModel(nodes, edges, ['dbo']);
   const graph = makeGraph(nodes, edges);
   function drain(engine: NavigationEngine, tag: string): void {
-    let safety = 20;
-    while (safety-- > 0) {
-      const ctx = engine.getHopContext() as any;
-      if (ctx.done) break;
-      if (!ctx.focus_node) break;
-      engine.submitFindings({
-        focus_node_id: ctx.focus_node.id,
-        sections: [{ angle: 'business' as const, text: `${tag}: analysis for ${ctx.focus_node.id}` }],
-        summary: `${tag}: ${ctx.focus_node.id}`,
-        verdict: 'analyze',
-      });
-    }
+    driveEngine(engine, { tag, limit: 20 });
   }
   it("Test 1: rejects when engine has not completed yet", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
@@ -218,20 +207,7 @@ describe("Supplement Agenda", () => {
   const extModel: DatabaseModel = makeModel(extNodes, extEdges, ['dbo', 'ext']);
   const extGraph = makeGraph(extNodes, extEdges);
   function drainExt(engine: NavigationEngine): void {
-    const succ: Record<string, string | undefined> = { o: 'mid', mid: 'ext1' };
-    let safety = 20;
-    while (safety-- > 0) {
-      const ctx = engine.getHopContext() as any;
-      if (ctx.done || !ctx.focus_node) break;
-      const next = succ[ctx.focus_node.id];
-      engine.submitFindings({
-        focus_node_id: ctx.focus_node.id,
-        sections: [{ angle: 'business' as const, text: `analysis for ${ctx.focus_node.id}` }],
-        summary: ctx.focus_node.id,
-        verdict: 'analyze',
-        route_requests: next ? [{ nodeId: next, question: 'trace downstream' }] : [],
-      });
-    }
+    driveEngine(engine, { succ: { o: 'mid', mid: 'ext1' }, limit: 20 });
   }
   function makeCompletedExtEngine(): { engine: NavigationEngine; leadId: string } {
     const engine = new NavigationEngine(extModel, extGraph, () => {}, { activeFilter: { schemas: ['dbo'] } as any });

@@ -2,7 +2,7 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { bfsReachable, firstDisconnectedRequiredNode } from '../../../src/engine/graphGuards';
 import { assert, makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
 import { describe, it } from 'vitest';
 
 describe("Navigation Engine — node conservation", () => {
@@ -20,22 +20,7 @@ describe("Navigation Engine — node conservation", () => {
   const model: DatabaseModel = makeModel(nodes, edges, ['dbo']);
   const graph = makeGraph(nodes, edges);
   function driveWalk(engine: NavigationEngine): void {
-    let ctx = engine.getHopContext();
-    let guard = 0;
-    while (!('done' in ctx && ctx.done) && 'focus_node' in ctx && ctx.focus_node && guard++ < 50) {
-      const nid = ctx.focus_node.id as string;
-      const route_requests = (ctx.neighbors ?? [])
-        .filter((n) => n.edge_direction === 'downstream')
-        .map((n) => ({ nodeId: n.id, question: 'trace' }));
-      engine.submitFindings({
-        focus_node_id: nid,
-        sections: [{ angle: 'business' as const, text: nid }],
-        summary: nid,
-        verdict: 'analyze',
-        route_requests,
-      });
-      ctx = engine.getHopContext();
-    }
+    driveEngine(engine, { followDownstream: true });
   }
   it("The render set equals origin-reachable, and no committed detail slot is dropped.", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
@@ -316,6 +301,48 @@ describe("Navigation Engine — node conservation", () => {
   assert('ok' in result, 'topology-safe out-of-scope prune is accepted');
   const state = engine.toJSON();
   assert(state.removedSet.includes('b'), 'out-of-scope neighbor is recorded as removed');
+});
+
+  it("An unprunable id — already analyzed, or unknown — becomes a visible notice, not a rejection.", () => {
+  // Ported from navigation-engine-synthesis-regression.test.ts, which duplicated this file's
+  // origin-prune, node-retention and detail-slot coverage. The unknown-id half was its only
+  // claim not asserted elsewhere: navigation-engine.test.ts covers an unknown *route* target,
+  // never an unknown *prune* target.
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  engine.init({ origin: 'origin', question: 'prune notice', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 4 } });
+
+  // Walk origin → a → b by hand rather than with driveWalk, which runs to completion and
+  // would leave no open hop to submit the prune on. `a` must already be analyzed by then.
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'origin' }],
+    summary: 'origin', verdict: 'analyze', route_requests: [{ nodeId: 'a', question: 'analyze a' }],
+  });
+  const focusA = engine.getHopContext();
+  assert('focus_node' in focusA && focusA.focus_node?.id === 'a', 'second focus is a');
+  engine.submitFindings({
+    focus_node_id: 'a', sections: [{ angle: 'business' as const, text: 'a' }],
+    summary: 'a', verdict: 'analyze', route_requests: [{ nodeId: 'b', question: 'analyze b' }],
+  });
+  const focusB = engine.getHopContext();
+  assert('focus_node' in focusB && focusB.focus_node?.id === 'b', 'third focus is b');
+
+  const result = engine.submitFindings({
+    focus_node_id: 'b',
+    sections: [{ angle: 'business' as const, text: 'b' }],
+    summary: 'b done',
+    verdict: 'analyze',
+    // c is a required in-scope neighbour and must still be routed; the prune list below
+    // carries only ids the engine cannot act on.
+    route_requests: [{ nodeId: 'c', question: 'analyze c' }],
+    prune_neighbors: ['a', '[dbo].[doesNotExist]'],
+  }) as any;
+
+  assert('ok' in result, 'a refused no-op prune does not reject the hop');
+  const rejections = engine.toJSON().memory.recentRejections;
+  assert(rejections.some((r) => r.nodeId === 'a'), 'the already-analyzed prune is visible as a notice');
+  assert(rejections.some((r) => r.nodeId === '[dbo].[doesNotExist]'), 'the unknown prune id is visible as a notice');
+  assert(!engine.toJSON().removedSet.includes('a'), 'the already-analyzed node is not removed');
 });
 
 });

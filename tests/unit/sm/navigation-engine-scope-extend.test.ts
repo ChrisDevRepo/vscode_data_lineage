@@ -2,7 +2,7 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { SubmitFindingsBbInputSchema } from '../../../src/ai/tools/toolSchemas';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { assert, makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
 import { describe, it } from 'vitest';
 
 describe("Scope Extension + Hold-and-Amend", () => {
@@ -21,19 +21,7 @@ describe("Scope Extension + Hold-and-Amend", () => {
   const chainGraph = makeGraph(chainNodes, chainEdges);
   const succ: Record<string, string | undefined> = { n0: 'n1', n1: 'n2', n2: 'n3', n3: 'n4', n4: 'n5' };
   function drainChain(engine: NavigationEngine): void {
-    let safety = 30;
-    while (safety-- > 0) {
-      const ctx = engine.getHopContext() as any;
-      if (ctx.done || !ctx.focus_node) break;
-      const next = succ[ctx.focus_node.id];
-      engine.submitFindings({
-        focus_node_id: ctx.focus_node.id,
-        sections: [{ angle: 'business' as const, text: `analysis for ${ctx.focus_node.id}` }],
-        summary: ctx.focus_node.id,
-        verdict: 'analyze',
-        route_requests: next ? [{ nodeId: next, question: 'trace downstream' }] : [],
-      });
-    }
+    driveEngine(engine, { succ, limit: 30 });
   }
   it("Test 1: WITH a schema filter, a route beyond an explicit level count is still stopped by depth.", () => {
   // A schema filter is a separate axis: passing it does not license crossing a depth border the
