@@ -384,6 +384,9 @@ function normalizeAnsiCommaJoins(sql: string): string {
  * @remarks
  * Regex cannot easily handle nested comments (e.g., `/* ... /* ... *\/ ... *\/`).
  * This O(n) scan handles nested block comments without relying on recursive regular expressions.
+ * It runs before string literals are neutralised, so it skips literals and line comments itself;
+ * otherwise a wildcard storage path would open a comment that never closes and the unterminated
+ * remainder of the body would be discarded.
  *
  * @param sql - Raw SQL text.
  * @returns SQL with all block comments removed.
@@ -394,6 +397,22 @@ function removeBlockComments(sql: string): string {
   let depth = 0;
   let start = 0; // start of current non-comment range
   while (i < sql.length) {
+    // Outside a comment, a string literal and a line comment are opaque: a storage path
+    // such as '.../2024/01/*.parquet' contains `/*` and does not open a comment. Inside a
+    // comment the same characters are plain text, so both skips are gated on depth 0.
+    if (depth === 0 && sql[i] === "'") {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] !== "'") { i++; continue; }
+        if (sql[i + 1] === "'") { i += 2; continue; } // '' is an escaped quote, not the end
+        i++; break;
+      }
+      continue;
+    }
+    if (depth === 0 && sql[i] === '-' && sql[i + 1] === '-') {
+      while (i < sql.length && sql[i] !== '\n') i++;
+      continue;
+    }
     if (sql[i] === '/' && sql[i + 1] === '*') {
       if (depth === 0) parts.push(sql.substring(start, i));
       depth++; i += 2; continue;

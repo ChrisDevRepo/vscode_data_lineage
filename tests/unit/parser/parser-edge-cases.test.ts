@@ -1126,3 +1126,36 @@ describe('CREATE TABLE is not a function call', () => {
     },
   ]);
 });
+
+describe('a wildcard path in a string literal is not a comment', () => {
+  table([
+    {
+      name: 'statements after a wildcard storage path are still parsed',
+      // Pass 0 strips block comments from raw SQL, before Pass 1 neutralises string
+      // literals. A path such as '.../01/*.parquet' contains `/*`, which opens a comment
+      // that never closes — and the unterminated-comment guard then discards the whole
+      // remainder of the body, silently. Wildcards in a storage path are ordinary
+      // OPENROWSET/COPY INTO usage on Fabric and Synapse.
+      sql:
+        "COPY INTO dbo.Fact FROM 'https://acct.blob.core.windows.net/sales/2024/01/*.parquet' WITH (FILE_TYPE = 'PARQUET');"
+        + ' INSERT INTO dbo.Dim SELECT c.id FROM stg.Customer c;'
+        + ' EXEC dbo.usp_Audit;',
+      targets: ['Fact', 'Dim'],
+      exactSources: ['stg.Customer'],
+      exec: ['usp_Audit'],
+    },
+    {
+      name: 'a real block comment is still removed, including a nested one',
+      sql: 'SELECT * FROM dbo.Keep /* outer /* inner */ still comment */ WHERE 1 = 1',
+      exactSources: ['dbo.Keep'],
+      noSources: ['inner', 'outer'],
+      sourceCount: 1,
+    },
+    {
+      name: "an apostrophe inside a block comment does not swallow the statement after it",
+      sql: "/* don't trust this */ SELECT * FROM dbo.Kept",
+      exactSources: ['dbo.Kept'],
+      sourceCount: 1,
+    },
+  ]);
+});
