@@ -53,7 +53,7 @@ export const Legend = memo(function Legend({
   return (
     <div
       className="absolute top-4 ln-legend rounded-md overflow-hidden z-10 transition-all duration-200"
-      style={{ left: isSidebarOpen ? 380 : 16 }}
+      style={{ left: isSidebarOpen ? 'min(380px, calc(100vw - 120px))' : 16 }}
     >
       <button
         onClick={() => setCollapsed(!collapsed)}

@@ -66,7 +66,8 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
       style={{
         position: 'absolute',
         bottom: 40,
-        left: 12,
+        // Clears the React Flow zoom controls, which occupy x 15–41 at the same corner.
+        left: 52,
         zIndex: 5,
         minWidth: 180,
         maxWidth: 320,
