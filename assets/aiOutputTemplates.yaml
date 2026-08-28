@@ -1,60 +1,34 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# AI Output Specification — what evidence and final output @lineage should produce.
+# ──────────────────────────────────────────────────────────────────────────────
+# AI Output Specification — what @lineage writes, and how.
 #
-# This is the user/business tuning surface for evidence and presentation.
-# TypeScript decides WHEN each requirement is injected and owns phases, tools,
-# memory, schemas, retries, routing, validation, dispatch, and engine state.
-# Edit `instruction` text to change output/evidence expectations, not workflow.
+# EDIT `instruction:` — it is the only text sent to the AI. In every block below:
+#   instruction:  sent to the AI. Change this to change the output.
+#   stages:       label only. Routing is decided in code; editing it does nothing.
+#   example:      sample for you to read. Never sent to the AI.
+# Neither ignored field warns you. No `instruction:` changed = nothing changed.
 #
-# VS Code override: `dataLineageViz.ai.outputTemplateFile`. Your overlay
-# merges on top of this default — your keys win.
+# The three stages, and which blocks fire in each:
 #
-# Full key reference (purpose + maintenance for each key): see
-#   docs/AI_PROMPTS.md
+#   discovery   first chat reply, no exploration — trivial questions only
+#               → discovery_chat, general
 #
-# Contract — AI writes parts, engine builds the document:
+#   active      per-hop analysis. Each fired *_capture writes ONE section:
+#               business → 1, technical → 1, both → 2. Blocks are independent.
+#               → business_capture, technical_capture, structural_summary,
+#                 column_trace_capture (column-trace mode only)
 #
-#   AI writes structured PARTS:
-#     active phase: business_capture / technical_capture / structural_summary
-#                   → produces sections[].text bodies stored in the archive
-#     synthesis:    summary, title, intro, sections[], closing, notes[],
-#                   highlight_groups[]
-#                   → assembled by the engine into the rendered document
+#   synthesis   final document. The AI writes these parts; the engine assembles,
+#               numbers, and decorates them — do not template what the engine builds.
+#               → summary, title, intro, closing, highlights, notes, general,
+#                 loading_pattern (technical only)
 #
-#   Engine OWNS deterministic outputs (no instruction template — the AI never
-#   writes these):
-#     - The full markdown document shown in AiDescriptionOverlay (built by
-#       orderAndAssemble in src/ai/tools/presentResult.ts from title + intro + sections[]
-#       + closing).
-#     - Section numbering (## N {label}), badge chips, ### Objects link blocks.
+# Your own copy: set `dataLineageViz.ai.outputTemplateFile`. It merges over this
+# file and your keys win — but only while its `schemaVersion` matches the one
+# below. On a mismatch it is skipped with a warning in the Output channel; re-run
+# "Data Lineage: Create AI Output Templates" and re-apply your edits.
 #
-#   Do NOT add an instruction template for any field the engine builds itself.
-#   The lift+group+label rule for sections[] lives in src/ai/prompting/prompts.ts →
-#   buildSynthesisPrompt(), not here, to avoid duplication.
-#
-# Stages:
-#   discovery  = first chat response, no SM. Trivial questions only.
-#   active     = per-hop analysis. The AI writes one section per fired
-#                *_capture template into `submit_findings.sections[]`.
-#                Each fired *_capture produces ONE section (angle + text).
-#                business classification → 1 section; technical → 1; both → 2.
-#                Templates are independent — no cross-references between
-#                business_capture and technical_capture.
-#   synthesis  = final document assembly. The engine assembles the rendered
-#                document from the AI's submitted parts; the templates here
-#                describe only the parts the AI writes from scratch.
-#
-# Authoritative delivery routing lives in code (templateRenderer.ts → STAGE_BY_KEY).
-# YAML `stages:` documents the intended destination for business authors; it is
-# informational only — overlays that contradict code are logged and ignored.
-#
-# schemaVersion: the template-structure contract version. A custom overlay
-# (dataLineageViz.ai.outputTemplateFile) is applied ONLY when its schemaVersion
-# matches this; a mismatch (or a missing field) means the structure changed in a
-# newer release — the overlay is skipped and a warning is written to the Output
-# channel ("review your YAML"). Keep this field in your custom file and re-scaffold
-# (Create AI Output Templates) after upgrading if you see that warning.
-# ─────────────────────────────────────────────────────────────────────────────
+# Per-key reference: docs/AI_PROMPTS.md
+# ──────────────────────────────────────────────────────────────────────────────
 
 schemaVersion: 2
 

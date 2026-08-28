@@ -118,8 +118,8 @@ equals the version the installed release expects
 
 A release bumps that version whenever the shipped file's structure changes in
 a way an older overlay cannot fit — a template key renamed or removed, a field
-added, removed, or retyped. Wording inside `instruction` and `example` is
-content and never bumps the version: an older overlay with different prose
+added, removed, or retyped. Wording inside `instruction` is content and never
+bumps the version (nor does `example`, which the loader never reads at all): an older overlay with different prose
 still parses and renders, so a wording change in a release leaves existing
 overlays in force. The release gate
 ([`tests/tools/assert-template-schema-version.mjs`](../tests/tools/assert-template-schema-version.mjs))
@@ -141,7 +141,10 @@ To move a customization forward after an upgrade:
 3. Point `dataLineageViz.ai.outputTemplateFile` at the new file, then reload the
    window and confirm the warning is gone from the output channel.
 
-Only `instruction` values are overlaid. Keeping unmodified keys out of your file
+Only `instruction` values are overlaid. The `stages:` and `example:` keys are
+inert: the loader never reads them, so editing them changes nothing and raises no
+warning — the scaffold copies them only so the starter file matches the shipped
+one. Keeping unmodified keys out of your file
 is the lowest-maintenance approach, because those keys then track built-in
 improvements across releases instead of pinning a stale copy.
 

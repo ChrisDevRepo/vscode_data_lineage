@@ -22,8 +22,10 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  *
  * @remarks
  * Authoritative — any `stages:` field in the YAML (user overlay or shipped
- * default) is informational for human readers. If an overlay disagrees with
- * this map the loader warns and uses this routing.
+ * default) is informational for human readers only. The loader never reads it
+ * (`AiOutputTemplatesConfigSchema` passes it through and only `instruction` is
+ * overlaid), so an overlay that disagrees with this map is silently routed by
+ * this map with no warning.
  *
  * Capture keys (`business_capture`, `technical_capture`) fire at active phase;
  * render keys fire at synthesis. There are no synthesis-side mirrors of the
