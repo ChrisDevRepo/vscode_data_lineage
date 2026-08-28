@@ -1084,3 +1084,24 @@ describe('TABLESAMPLE', () => {
     },
   ]);
 });
+
+// ─── 14. Statement boundaries and pass ordering ───────────────────────────────
+
+describe('UPDATE alias target does not cross a statement boundary', () => {
+  table([
+    {
+      name: 'an unqualified UPDATE does not claim a table read by a later statement',
+      // The alias rule exists for `UPDATE u SET ... FROM schema.table`, where the target is
+      // only knowable from the FROM. Bounded by `;` it cannot reach into the next statement,
+      // so an unrelated later read stays a source and never becomes a target.
+      sql: 'UPDATE t SET col = 1;\nSELECT x FROM dbo.UnrelatedNextStatement;',
+      exactSources: ['dbo.UnrelatedNextStatement'],
+      noTargets: ['unrelatednextstatement'],
+    },
+    {
+      name: 'the alias form still resolves its target from the FROM inside one statement',
+      sql: 'UPDATE u SET u.Total = s.Amt FROM dbo.OrderTotal u JOIN dbo.Staging s ON s.id = u.id;',
+      targets: ['OrderTotal'],
+    },
+  ]);
+});
