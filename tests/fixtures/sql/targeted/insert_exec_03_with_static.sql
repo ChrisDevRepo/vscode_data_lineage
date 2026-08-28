@@ -3,6 +3,9 @@
 
 DECLARE @BatchID  INT;
 DECLARE @BatchTS  DATETIME2 = SYSUTCDATETIME();
+-- A procedure parameter value must be a constant or a variable, never an expression.
+DECLARE @StartDt  DATE = CAST(DATEADD(DAY,-1,GETDATE()) AS DATE);
+DECLARE @EndDt    DATE = CAST(GETDATE() AS DATE);
 
 -- 1. Log the batch start (static INSERT)
 INSERT INTO [dbo].[AuditBatch] ([BatchStart],[ProcName],[Status])
@@ -15,8 +18,8 @@ INSERT INTO [dbo].[SalesFact]
     ([BatchID],[OrderDate],[ProductID],[CustomerID],[Qty],[Amount],[CurrencyCode])
 EXEC [etl].[usp_TransformSales]
     @BatchID    = @BatchID,
-    @StartDate  = CAST(DATEADD(DAY,-1,GETDATE()) AS DATE),
-    @EndDate    = CAST(GETDATE() AS DATE);
+    @StartDate  = @StartDt,
+    @EndDate    = @EndDt;
 
 -- 3. Refresh product dimension (static SELECT)
 INSERT INTO [dbo].[DimProduct] ([ProductID],[ProductName],[CategoryName],[ListPrice],[IsActive])
@@ -25,7 +28,7 @@ SELECT
     p.[Name],
     c.[CategoryName],
     p.[ListPrice],
-    p.[SellEndDate] IS NULL
+    CASE WHEN p.[SellEndDate] IS NULL THEN 1 ELSE 0 END
 FROM [dbo].[Product]  AS p
 JOIN [dbo].[Category] AS c ON c.[CategoryID] = p.[ProductCategoryID]
 WHERE p.[ModifiedDate] >= DATEADD(DAY,-2,GETDATE());

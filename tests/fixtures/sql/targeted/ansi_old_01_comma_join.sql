@@ -20,7 +20,7 @@ BEGIN
         p.ProductName
     FROM
         dbo.Customer    c,
-        dbo.Order       o,
+        dbo.[Order]     o,
         dbo.OrderLine   ol,
         dbo.Product     p
     WHERE

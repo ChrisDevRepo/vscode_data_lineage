@@ -7,6 +7,10 @@
 
 EXECUTE AS LOGIN = N'DataOwner';   -- context switch — login name must NOT be captured as exec dep
 
+-- A procedure parameter value must be a constant or a variable, never a function call.
+DECLARE @Login  sysname        = ORIGINAL_LOGIN();
+DECLARE @ErrMsg NVARCHAR(4000);
+
 BEGIN TRY
     -- Real table read under elevated context
     INSERT INTO [dbo].[AuditAccess] ([UserRequested],[AccessTime],[DataSetName],[RowCount])
@@ -19,17 +23,19 @@ BEGIN TRY
     WHERE [ClassificationLevel] >= 3;
 
     EXEC [dbo].[usp_LogAccess]
-        @User     = ORIGINAL_LOGIN(),
+        @User     = @Login,
         @Resource = N'SensitiveData',
         @Success  = 1;
 
 END TRY
 BEGIN CATCH
+    SET @ErrMsg = ERROR_MESSAGE();
+
     EXEC [dbo].[usp_LogAccess]
-        @User     = ORIGINAL_LOGIN(),
+        @User     = @Login,
         @Resource = N'SensitiveData',
         @Success  = 0,
-        @Error    = ERROR_MESSAGE();
+        @Error    = @ErrMsg;
     THROW;
 END CATCH;
 

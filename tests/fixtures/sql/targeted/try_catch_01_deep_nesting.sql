@@ -82,9 +82,12 @@ BEGIN CATCH
     INSERT INTO [dbo].[FatalError] ([Context],[OrderID],[ErrorCode],[ErrorMsg],[OccurredAt])
     VALUES (N'ProcessOrder', @OrderID, ERROR_NUMBER(), ERROR_MESSAGE(), GETUTCDATE());
 
+    -- A procedure parameter value must be a constant or a variable, never a function call.
+    DECLARE @FatalMsg NVARCHAR(4000) = ERROR_MESSAGE();
+
     EXEC [dbo].[usp_NotifyOps]
         @Severity = N'CRITICAL',
-        @Message  = ERROR_MESSAGE(),
+        @Message  = @FatalMsg,
         @OrderID  = @OrderID;
 
 END CATCH;
