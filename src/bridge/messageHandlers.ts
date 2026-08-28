@@ -58,6 +58,15 @@ export type WebviewMessageHandlers = {
   ) => Promise<void> | void;
 };
 
+/**
+ * Panel-lived connection state for table profiling.
+ *
+ * @remarks
+ * `pending` holds the connection negotiation currently in flight, so concurrent stats requests
+ * join it rather than each opening their own connection.
+ */
+type StatsConnState = { uri: string | undefined; pending: Promise<string | undefined> | null };
+
 declare const __BUILD_TIMESTAMP__: string;
 
 /** Maximum number of recent webview errors retained for diagnostics. */
@@ -280,7 +289,10 @@ export function createMessageHandlers(
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
-  const statsConnState: { uri: string | undefined } = { uri: undefined };
+  // `pending` single-flights the connection negotiation. The detail panel's message listener is
+  // async and VS Code does not serialize it, so two table-stats requests can both observe an
+  // empty `uri` and each negotiate their own connection — the second overwriting the first.
+  const statsConnState: StatsConnState = { uri: undefined, pending: null };
   async function cleanupStatsConnection(): Promise<void> {
     if (statsConnState.uri) {
       await disconnectDatabase(statsConnState.uri, outputChannel).catch(err =>
@@ -372,7 +384,7 @@ export function createMessageHandlers(
             notifyError(
               bridgeLogger,
               'Bridge protocol mismatch (detail panel)',
-              `Data Lineage: the detail panel is speaking bridge protocol v${String(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
+              `Data Lineage: the detail panel is speaking bridge protocol v${safeStringifyForLog(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
             );
             return;
           }
@@ -401,9 +413,9 @@ export function createMessageHandlers(
             } else if (m.type === 'close-detail') {
               detailPanel?.dispose();
             } else if (m.type === 'error') {
-              handlers.error(m);
+              await handlers.error(m);
             } else if (m.type === 'show-warning') {
-              handlers['show-warning'](m);
+              await handlers['show-warning'](m);
             }
           } catch (err) {
             host.log('error', 'Bridge', 'Detail panel handler threw unexpectedly', err instanceof Error ? err : new Error(String(err)));
@@ -1068,7 +1080,7 @@ async function withDbProgressHost(host: BridgeHost, title: string, connectFn: ()
 async function handleTableStatsRequestHost(
   host: BridgeHost,
   storedConnectionInfo: IConnectionInfo | undefined,
-  statsConnState: { uri: string | undefined },
+  statsConnState: StatsConnState,
   panel: vscode.WebviewPanel,
   schema: string,
   objectName: string,
@@ -1097,12 +1109,23 @@ async function handleTableStatsRequestHost(
   logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
   try {
     if (!statsConnState.uri) {
-      const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
-      if (!result) {
+      // A concurrent request joins the negotiation already in flight instead of starting a
+      // second one; only the winner's uri is stored, and both callers use it.
+      statsConnState.pending ??= (async () => {
+        const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
+        return result?.connectionUri;
+      })();
+      let negotiated: string | undefined;
+      try {
+        negotiated = await statsConnState.pending;
+      } finally {
+        statsConnState.pending = null;
+      }
+      if (!negotiated) {
         void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
         return;
       }
-      statsConnState.uri = result.connectionUri;
+      statsConnState.uri ??= negotiated;
     }
     const connectionUri = statsConnState.uri;
     const serverInfo = await getServerInfo(connectionUri);

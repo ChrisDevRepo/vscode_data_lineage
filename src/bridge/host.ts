@@ -146,7 +146,7 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
       else if (level === 'error') logger.error(text, err);
       else logger.debug(text);
     },
-    showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+    showErrorMessage: (msg) => { void vscode.window.showErrorMessage(msg); },
     executeCommand: (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args),
     openExternal: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
     showOpenDialog: (opts) => vscode.window.showOpenDialog(opts),
