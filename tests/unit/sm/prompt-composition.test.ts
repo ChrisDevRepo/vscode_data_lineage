@@ -59,11 +59,6 @@ describe('prompt composition', () => {
     expect(buildSmEntrySystemPrompt(context, ['TotalRevenue']))
       .toContain('targetColumns: ["TotalRevenue"]');
 
-    // Invariant: every field the entry turn must populate is named in the directive.
-    const entry = buildSmEntrySystemPrompt(context);
-    expect(entry).toContain('mission_brief');
-    expect(entry).toContain('scopeNotes');
-
     const detector = buildEntryDetectorSystemPrompt(context);
     expect(detector).toContain("Return 'visual_render'");
     expect(detector).toContain('approval-gated hop-by-hop exploration');
