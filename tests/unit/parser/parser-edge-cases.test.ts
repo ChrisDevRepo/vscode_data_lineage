@@ -1159,3 +1159,35 @@ describe('a wildcard path in a string literal is not a comment', () => {
     },
   ]);
 });
+
+describe('CTAS carries its distribution clause', () => {
+  table([
+    {
+      name: 'a Synapse CTAS with a mandatory DISTRIBUTION clause still names its target',
+      // "The CTAS statement requires a distribution option and doesn't have default values."
+      // The WITH clause is therefore present in every valid Synapse CTAS, and a rule that
+      // demands `CREATE TABLE x AS SELECT` with nothing between matches none of them.
+      sql: 'CREATE TABLE dbo.FactCopy WITH ( DISTRIBUTION = HASH([OrderID]), CLUSTERED COLUMNSTORE INDEX ) AS SELECT * FROM dbo.Fact;',
+      targets: ['FactCopy'],
+      exactSources: ['dbo.Fact'],
+    },
+    {
+      name: 'a round-robin CTAS over multiple lines still names its target',
+      sql: 'CREATE TABLE [dbo].[DimCopy]\nWITH\n(\n  DISTRIBUTION = ROUND_ROBIN\n)\nAS\nSELECT * FROM [dbo].[DimCustomer];',
+      targets: ['DimCopy'],
+      exactSources: ['dbo.DimCustomer'],
+    },
+    {
+      name: 'the bare CTAS form keeps working',
+      sql: 'CREATE TABLE [dbo].[NewTable] AS SELECT * FROM [dbo].[Source]',
+      targets: ['NewTable'],
+      exactSources: ['dbo.Source'],
+    },
+    {
+      name: 'a plain CREATE TABLE followed by an unrelated CTAS does not claim the first table',
+      sql: 'CREATE TABLE dbo.Plain (id INT); CREATE TABLE dbo.Derived WITH (DISTRIBUTION = ROUND_ROBIN) AS SELECT id FROM dbo.Src;',
+      targets: ['Derived'],
+      noTargets: ['plain'],
+    },
+  ]);
+});

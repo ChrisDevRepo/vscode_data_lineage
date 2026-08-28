@@ -68,9 +68,9 @@ rules:
     enabled: true
     priority: 13
     category: target
-    pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+AS\\s+SELECT"
+    pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s[^;]{0,500}?\\bAS\\s+SELECT"
     flags: gi
-    description: CREATE TABLE AS SELECT target (Synapse/Fabric)
+    description: CREATE TABLE AS SELECT target (Synapse/Fabric) — the WITH distribution clause is mandatory there
 
   - name: extract_select_into
     enabled: true
