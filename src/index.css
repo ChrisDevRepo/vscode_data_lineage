@@ -269,6 +269,15 @@ body {
   font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
+/* `workbench.reduceMotion` — VS Code sets this class on the body. Transitions here are
+   decorative and are dropped; the loading spinner keeps its animation, because a frozen
+   spinner reads as a hung view rather than as reduced motion. */
+body.vscode-reduce-motion *,
+body.vscode-reduce-motion *::before,
+body.vscode-reduce-motion *::after {
+  transition: none !important;
+}
+
 /* #endregion */
 
 /* #region Tooltips */
@@ -360,7 +369,7 @@ body {
 .ln-ai-description-overlay {
   width: 90vw;
   max-width: 1400px;
-  min-width: 320px;
+  min-width: min(320px, 100vw);
   max-height: 60vh;
   display: flex;
   flex-direction: column;

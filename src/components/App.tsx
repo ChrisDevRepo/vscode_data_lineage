@@ -52,14 +52,6 @@ const DB_TIMEOUT_MS = 60_000;
 const MIN_SPINNER_MS = 1200;
 
 /**
- * Viewport margins reserved when positioning the object context menu, so a menu opened
- * near the right/bottom edge stays fully on screen. Values approximate the menu's rendered
- * footprint; keep in sync with NodeContextMenu.
- */
-const OBJECT_CONTEXT_MENU_WIDTH = 200;
-const OBJECT_CONTEXT_MENU_HEIGHT = 250;
-
-/**
  * Computes the set of schemas that are immediate neighbors of a target schema.
  * A schema is a neighbor if there is at least one edge connecting a node in the
  * target schema to a node in the neighbor schema.
@@ -627,8 +619,8 @@ export function App() {
       const data = node.data;
       setContextMenu({
         kind: 'object',
-        x: Math.min(x, window.innerWidth - OBJECT_CONTEXT_MENU_WIDTH),
-        y: Math.min(y, window.innerHeight - OBJECT_CONTEXT_MENU_HEIGHT),
+        x,
+        y,
         nodeId: node.id,
         nodeName: String(data.label),
         schema: String(data.schema),

@@ -402,6 +402,8 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay" onClick={onClose}>
       <div
+        role="dialog"
+        aria-label="Data Lineage help"
         className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
