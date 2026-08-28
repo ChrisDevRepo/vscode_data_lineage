@@ -15,6 +15,7 @@
 - Repeated identical tool calls no longer loop a turn without an answer.
 - Improved column tracking: each hop of a column trace receives its own lineage questions.
 - A column trace no longer hands a procedure a column the source table does not have, so bidirectional traces starting at a view now complete.
+- SQL parsing corrections: objects are no longer dropped after a wildcard storage path, and a few spurious dependency edges no longer appear.
 - Graph traversal corrections: the longest dependency chain no longer stops where it meets a circular dependency, and a large graph-pattern report no longer overruns a chat turn.
 
 ## [1.1.0] - 2026-08-20
