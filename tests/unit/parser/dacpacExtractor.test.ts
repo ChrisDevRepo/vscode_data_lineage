@@ -43,14 +43,14 @@ async function testExtraction() {
 
   // Catalog and neighborIndex populated
   assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog populated');
-  assert(model.neighborIndex !== undefined, 'NeighborIndex present');
+  assert(Object.keys(model.neighborIndex).length > 0, 'NeighborIndex populated');
 
   return model;
 }
 
 // ─── Edge Integrity ─────────────────────────────────────────────────────────
 
-async function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
+function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
   console.log('\n── Edge Integrity ──');
 
   const nodeIds = new Set(model.nodes.map(n => n.id));
@@ -565,7 +565,7 @@ async function testCrossSchemaCatalogUnderFilter() {
   const [sourceId, targetId] = crossRefs[0];
   assert(model.catalog[targetId] !== undefined,
     `Out-of-filter neighbor ${targetId} is resolvable in the catalog`);
-  assert(model.neighborIndex[targetId]?.in.includes(sourceId) === true,
+  assert(model.neighborIndex[targetId]?.in.includes(sourceId),
     `Reverse neighbor entry: ${targetId}.in includes ${sourceId}`);
 }
 

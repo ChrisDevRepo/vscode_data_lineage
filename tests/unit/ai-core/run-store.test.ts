@@ -7,7 +7,6 @@ import {
   readStoredRun,
   writeStoredRun,
   UNKNOWN_DDL_HASH,
-  type StoredAiRun,
 } from '../../../src/ai/session/runStore';
 import type { PresentationArtifact } from '../../../src/ai/session/types';
 import type { SmState } from '../../../src/ai/sm/smTypes';
@@ -165,7 +164,7 @@ describe('run-store writes', () => {
 
   it('writes and clears a record under the bookmark key', async () => {
     const store = fakeMemento();
-    const run = buildStoredRun(profile(), artifact(), getDdl) as StoredAiRun;
+    const run = buildStoredRun(profile(), artifact(), getDdl)!;
     expect(await writeStoredRun(store, 'bm-1', run)).toBe(JSON.stringify(run).length);
     expect(store.values.get(aiRunStorageKey('bm-1'))).toBe(run);
 
@@ -179,14 +178,14 @@ describe('run-store writes', () => {
       profile(),
       artifact({ checkpoint: checkpoint({ visited: [ 'x'.repeat(2_000_000) ] }) }),
       getDdl,
-    ) as StoredAiRun;
+    )!;
     expect(await writeStoredRun(store, 'bm-1', huge)).toBeGreaterThan(2_000_000);
     expect(store.values.get(aiRunStorageKey('bm-1'))).toBe(huge);
   });
 
   it('reads back a record written by writeStoredRun', async () => {
     const store = fakeMemento();
-    const run = buildStoredRun(profile(), artifact(), getDdl) as StoredAiRun;
+    const run = buildStoredRun(profile(), artifact(), getDdl)!;
     await writeStoredRun(store, 'bm-1', run);
     expect(readStoredRun(store, 'bm-1')).toBe(run);
   });
@@ -198,7 +197,7 @@ describe('run-store writes', () => {
 
   it('returns undefined for a record whose schemaVersion is not 1', async () => {
     const store = fakeMemento();
-    const run = buildStoredRun(profile(), artifact(), getDdl) as StoredAiRun;
+    const run = buildStoredRun(profile(), artifact(), getDdl)!;
     await store.update(aiRunStorageKey('bm-1'), { ...run, schemaVersion: 2 });
     expect(readStoredRun(store, 'bm-1')).toBeUndefined();
   });
@@ -214,7 +213,7 @@ describe('run-store writes', () => {
 
   it('returns undefined after clearStoredRun', async () => {
     const store = fakeMemento();
-    const run = buildStoredRun(profile(), artifact(), getDdl) as StoredAiRun;
+    const run = buildStoredRun(profile(), artifact(), getDdl)!;
     await writeStoredRun(store, 'bm-1', run);
     await clearStoredRun(store, 'bm-1');
     expect(readStoredRun(store, 'bm-1')).toBeUndefined();

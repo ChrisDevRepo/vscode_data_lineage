@@ -38,10 +38,10 @@ describe('AgentRuntime LangSmith egress boundary', () => {
     vi.stubGlobal('fetch', fetchSpy);
     const httpSpy = vi.spyOn(http, 'request').mockImplementation((() => {
       throw new Error('unexpected HTTP request');
-    }) as typeof http.request);
+    }));
     const httpsSpy = vi.spyOn(https, 'request').mockImplementation((() => {
       throw new Error('unexpected HTTPS request');
-    }) as typeof https.request);
+    }));
 
     const session = {
       currentRoundId: 0,

@@ -166,7 +166,7 @@ describe('discovery-memory', () => {
   it('returned array is a copy (caller cannot mutate internal state)', () => {
     const sess = new AiSession();
     sess.appendDiscoveryTurn([new HumanMessage('q1'), new AIMessage('a1')]);
-    sess.getDiscoveryHistory().push(new HumanMessage('injected') as ModelMessage);
+    sess.getDiscoveryHistory().push(new HumanMessage('injected'));
     assertEq(sess.getDiscoveryHistory().length, 2, 'mutating the returned array does not affect memory');
   });
 

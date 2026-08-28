@@ -23,9 +23,9 @@ describe("start-exploration-schema tests", () => {
 
   it("non-string origin rejected", () => { assert(!StartExplorationInputSchema.safeParse({ origin: 123 as any }).success, 'non-string origin rejected'); });
 
-  it("undefined input rejected", () => { assert(!StartExplorationInputSchema.safeParse(undefined as any).success, 'undefined input rejected'); });
+  it("undefined input rejected", () => { assert(!StartExplorationInputSchema.safeParse(undefined).success, 'undefined input rejected'); });
 
-  it("null input rejected", () => { assert(!StartExplorationInputSchema.safeParse(null as any).success, 'null input rejected'); });
+  it("null input rejected", () => { assert(!StartExplorationInputSchema.safeParse(null).success, 'null input rejected'); });
 
   it("origin without classification/analysisMode rejected", () => { assert(
     !StartExplorationInputSchema.safeParse({ origin: '[s].[t]' }).success,
@@ -345,7 +345,7 @@ describe("start-exploration-schema tests", () => {
       maxDepth: '1',
       mission_brief: 'User wants to analyze...',
       classification: 'business',
-    } as any);
+    });
   it("payload without origin rejected cleanly", () => { assert(!missingOrigin.success, 'payload without origin rejected cleanly'); });
 
   it("scenario 68", () => {
@@ -469,12 +469,12 @@ describe("start-exploration-schema tests", () => {
 
   it("budget recovery points to structural narrowing", () => { assert(budgetRecovery?.next_action === 'narrow_scope', 'budget recovery points to structural narrowing'); });
 
-  it("budget hint offers structural narrowing", () => { assert(/excludeSchemas\/excludeNodeIds/.test(budgetRecovery?.hint ?? ''), 'budget hint offers structural narrowing'); });
+  it("budget hint offers structural narrowing", () => { assert((budgetRecovery?.hint ?? '').includes('excludeSchemas/excludeNodeIds'), 'budget hint offers structural narrowing'); });
 
-  it("budget hint frames narrowing as a user question", () => { assert(/ask the user/.test(budgetRecovery?.hint ?? ''), 'budget hint frames narrowing as a user question'); });
+  it("budget hint frames narrowing as a user question", () => { assert((budgetRecovery?.hint ?? '').includes('ask the user'), 'budget hint frames narrowing as a user question'); });
 
-  it("budget hint forbids inventing a depth", () => { assert(/Do not invent a depth/.test(budgetRecovery?.hint ?? ''), 'budget hint forbids inventing a depth'); });
+  it("budget hint forbids inventing a depth", () => { assert((budgetRecovery?.hint ?? '').includes('Do not invent a depth'), 'budget hint forbids inventing a depth'); });
 
-  it("budget hint never proposes an engine depth number", () => { assert(!/depth=/.test(budgetRecovery?.hint ?? ''), 'budget hint never proposes an engine depth number'); });
+  it("budget hint never proposes an engine depth number", () => { assert(!(budgetRecovery?.hint ?? '').includes('depth='), 'budget hint never proposes an engine depth number'); });
 
 });

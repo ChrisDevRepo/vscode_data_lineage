@@ -97,14 +97,14 @@ describe('participant provider/network settlement', () => {
         failure: { message: failure },
       };
     });
-    const participant = makeParticipant(run as never);
+    const participant = makeParticipant(run);
     const stream = makeStream();
 
     const result = await participant.handleChatRequest(
       request as never,
       { history: [{ prompt: 'prior request' }] } as never,
       stream as never,
-      makeToken() as never,
+      makeToken(),
     );
 
     expect(result).toMatchObject({
@@ -125,13 +125,13 @@ describe('participant provider/network settlement', () => {
       input.sink.result('cancelled');
       return { outcome: 'cancelled' as const, modelCalls: 1 };
     });
-    const participant = makeParticipant(run as never);
+    const participant = makeParticipant(run);
 
     const result = await participant.handleChatRequest(
       request as never,
       { history: [{ prompt: 'prior request' }] } as never,
       makeStream() as never,
-      makeToken() as never,
+      makeToken(),
     );
 
     expect(result.metadata).toMatchObject({ status: 'cancelled', modelCalls: 1 });
@@ -144,7 +144,7 @@ describe('participant provider/network settlement', () => {
       return { outcome: 'ok' as const, modelCalls: 1 };
     });
     const stream = makeStream();
-    const participant = makeParticipant(run as never, {
+    const participant = makeParticipant(run, {
       presentResultCalledThisTurn: true,
       presentResultAutoDispatched: true,
       resultGraph: { nodeIds: ['[dbo].[Orders]'] },
@@ -154,7 +154,7 @@ describe('participant provider/network settlement', () => {
       request as never,
       { history: [{ prompt: 'prior request' }] } as never,
       stream as never,
-      makeToken() as never,
+      makeToken(),
     );
 
     expect(stream.button).not.toHaveBeenCalledWith(expect.objectContaining({

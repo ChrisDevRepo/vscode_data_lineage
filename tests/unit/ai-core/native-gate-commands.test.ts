@@ -8,7 +8,7 @@ const vscodeMocks = vi.hoisted(() => ({
   showWarningMessage: vi.fn(),
   participant: {
     onDidReceiveFeedback: vi.fn(),
-    followupProvider: undefined as unknown,
+    followupProvider: undefined,
     dispose: vi.fn(),
   },
 }));

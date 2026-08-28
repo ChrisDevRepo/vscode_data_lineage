@@ -45,7 +45,7 @@ function fakeHost(): BridgeHost {
     getExtensionUri: vi.fn(),
     getGlobalState: vi.fn(),
     getWorkspaceState: vi.fn(),
-  } as unknown as BridgeHost;
+  };
 }
 
 /** A session carrying a column store populated from `model`, as a real model load leaves it. */
@@ -74,7 +74,7 @@ describe('rebuild preserves the column store', () => {
 
     expect(session.columnStore.getDdl('[dbo].[v]')).toBe(VIEW_DDL);
 
-    await handlers['rebuild']({ type: 'rebuild' } as never);
+    await handlers.rebuild({ type: 'rebuild' } as never);
 
     // The detail panel reads both of these; before the fix each came back undefined.
     expect(session.columnStore.getDdl('[dbo].[v]')).toBe(VIEW_DDL);
@@ -102,7 +102,7 @@ describe('rebuild preserves the column store', () => {
       vi.fn(),
     );
 
-    await handlers['rebuild']({ type: 'rebuild' } as never);
+    await handlers.rebuild({ type: 'rebuild' } as never);
 
     expect(hashDdl(session.columnStore.getDdl('[dbo].[v]'))).toBe(storedHash);
   });

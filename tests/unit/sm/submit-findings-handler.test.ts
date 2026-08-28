@@ -155,7 +155,7 @@ describe("Submit Findings Handler", () => {
   engine.submitFindings = (() => {
     engineCalls++;
     return { error: 'invalid_status', current_status: 'complete', hint: 'engine-owned status rejection' };
-  }) as typeof engine.submitFindings;
+  });
   executeSubmitFindings({
     focus_node_id: 'origin',
     sections: [{ angle: 'business', text: 'Complete status probe.' }],
@@ -180,7 +180,7 @@ describe("Submit Findings Handler", () => {
   engine.submitFindings = (() => {
     engineCalls++;
     return { error: 'focus_mismatch', expected: 'origin', got: 'a' };
-  }) as typeof engine.submitFindings;
+  });
   executeSubmitFindings({
     focus_node_id: 'a',
     sections: [{ angle: 'business', text: 'Focus mismatch probe.' }],

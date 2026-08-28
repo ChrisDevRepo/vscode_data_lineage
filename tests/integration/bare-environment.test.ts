@@ -29,11 +29,11 @@ import { announceLaneTier } from './laneTier';
 suite('Bare environment — no Copilot, no chat model, no mssql', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
-  suiteSetup(() => announceLaneTier(
+  suiteSetup(() => { announceLaneTier(
     'bare-environment',
     'none',
     'activation completes and the core command surface registers with every optional integration absent',
-  ));
+  ); });
 
   test('the host really is bare — no optional integration is installed', () => {
     assert.strictEqual(

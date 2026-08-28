@@ -78,7 +78,7 @@ describe('Scope notes — constraints that map to no filter', () => {
   it('survives the engine checkpoint round-trip', () => {
     const engine = new NavigationEngine(model, graph, () => {}, {});
     engine.init({ origin: 'origin', question: 'trace it', direction: 'upstream', scopeNotes: [NOTE] });
-    const restored = NavigationEngine.fromJSON(engine.toJSON() as never, model, graph, () => {}) as NavigationEngine;
+    const restored = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
     assert(
       restored.getScopeSummary().scopeNotes.includes(NOTE),
       'a resumed session keeps the constraints the user approved',

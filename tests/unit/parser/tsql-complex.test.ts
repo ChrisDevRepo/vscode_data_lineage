@@ -38,12 +38,12 @@ interface Expectation {
 function parseExpectation(sql: string): Expectation | null {
   const lines = sql.split(/\r?\n/);
   for (const line of lines) {
-    const m = line.match(/--\s*EXPECT\b(.*)/i);
+    const m = /--\s*EXPECT\b(.*)/i.exec(line);
     if (!m) continue;
 
     const body = m[1];
     const parseField = (field: string): string[] => {
-      const fm = body.match(new RegExp(`\\b${field}:(.*?)(?=\\s+(?:sources|targets|exec|absent):|$)`, 'i'));
+      const fm = new RegExp(`\\b${field}:(.*?)(?=\\s+(?:sources|targets|exec|absent):|$)`, 'i').exec(body);
       if (!fm || !fm[1].trim()) return [];
       return fm[1].split(',').map(s => s.trim()).filter(Boolean);
     };
@@ -77,7 +77,7 @@ function runFile(filePath: string): boolean {
   try {
     result = parseSqlBody(sql);
   } catch (e) {
-    assert(false, `[CRASH] ${fileName}: ${e}`);
+    assert(false, `[CRASH] ${fileName}: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 

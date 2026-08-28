@@ -22,11 +22,11 @@ import { announceLaneTier } from './laneTier';
 suite('Tool surface — invokeTool, no model, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
-  suiteSetup(() => announceLaneTier(
+  suiteSetup(() => { announceLaneTier(
     'tools',
     'none',
     'every contributed read-only lineage tool is registered with vscode.lm and answers through invokeTool',
-  ));
+  ); });
 
   /** Every read-only tool contributed in `package.json` under `languageModelTools`. */
   const READ_TOOLS = [

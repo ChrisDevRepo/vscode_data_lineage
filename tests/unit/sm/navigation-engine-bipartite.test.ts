@@ -67,8 +67,8 @@ describe("Bipartite Agenda Rule", () => {
 
   assert(!!entryA, 'viewA is on agenda after sp routes to table');
   assert(!!entryB, 'viewB is on agenda after sp routes to table');
-  assert(entryA!.taskIds.some(taskId => taskById.get(taskId)?.question.includes(SP_QUESTION)) === true, 'viewA inherits sp\'s authored question verbatim');
-  assert(entryB!.taskIds.some(taskId => taskById.get(taskId)?.question.includes(SP_QUESTION)) === true, 'viewB inherits sp\'s authored question verbatim');
+  assert(entryA!.taskIds.some(taskId => taskById.get(taskId)?.question.includes(SP_QUESTION)), 'viewA inherits sp\'s authored question verbatim');
+  assert(entryB!.taskIds.some(taskId => taskById.get(taskId)?.question.includes(SP_QUESTION)), 'viewB inherits sp\'s authored question verbatim');
   assert(!state.agenda.some(e => e.nodeId === 'table'), 'table is NOT on agenda after route forwarding');
   assert(tableState?.action === 'passthrough', 'routed table keeps pass lifecycle state');
 });
@@ -217,7 +217,7 @@ describe("Bipartite Agenda Rule", () => {
 
   const snap = engine.toJSON();
   assert(snap.agenda.length >= 2, 'Hop progress regression setup: agenda has queued work');
-  snap.engineInternals!.totalNodes = snap.hopCount;
+  snap.engineInternals.totalNodes = snap.hopCount;
 
   const restored = NavigationEngine.fromJSON(snap, model, graph, () => {}, {});
   const progress = restored.hopProgress;

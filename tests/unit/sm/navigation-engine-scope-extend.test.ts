@@ -317,7 +317,7 @@ describe("Scope Extension + Hold-and-Amend", () => {
   assert('error' in rej && rej.error === 'prune_route_conflict', 'routing and pruning the same id is a fatal conflict');
   const state = engine.toJSON();
   assert(!state.removedSet.includes('a'), 'the conflicting id is not removed');
-  assert(state.memory.detailSlots['m'] === undefined, 'the conflicting submit commits nothing for m — atomicity');
+  assert(state.memory.detailSlots.m === undefined, 'the conflicting submit commits nothing for m — atomicity');
 });
 
   it("it into both scope AND removedSet by the same commit.", () => {

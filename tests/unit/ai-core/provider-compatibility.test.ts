@@ -148,5 +148,5 @@ function oneNodeModel(): DatabaseModel {
     nodes: [node], edges: [],
     schemas: [{ name: 'dbo', nodeCount: 1, types: { table: 1, view: 0, procedure: 0, function: 0, external: 0 } }],
     catalog: {}, neighborIndex: { [node.id]: { in: [], out: [] } }, dbPlatform: 'SQL Server',
-  } as DatabaseModel;
+  };
 }

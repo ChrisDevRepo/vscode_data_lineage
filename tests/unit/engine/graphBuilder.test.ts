@@ -23,7 +23,7 @@ import { assert, assertEq, testPath, loadParseRules, loadAdventureWorksModel } f
 describe('Graph Builder', () => {
 // ─── Graph Builder ──────────────────────────────────────────────────────────
 
-async function testGraphBuilder(model: Awaited<ReturnType<typeof extractDacpac>>) {
+function testGraphBuilder(model: Awaited<ReturnType<typeof extractDacpac>>) {
   console.log('\n── Graph Builder ──');
 
   const result = buildGraph(model);

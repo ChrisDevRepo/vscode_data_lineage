@@ -98,10 +98,10 @@ describe('selected VS Code model bridge acceptance', () => {
 
     const bridge = new VscodeLangChainBridge({
       model: selected as never,
-      token: new vscode.CancellationTokenSource().token as never,
+      token: new vscode.CancellationTokenSource().token,
     });
     const chunks = [];
-    for await (const chunk of bridge._streamResponseChunks(messages, {} as never)) {
+    for await (const chunk of bridge._streamResponseChunks(messages, {})) {
       chunks.push(chunk);
     }
 
@@ -162,7 +162,7 @@ describe('selected VS Code model bridge acceptance', () => {
       const selected = selectedModel([new vscode.LanguageModelTextPart(testCase.label)]);
       const bridge = new VscodeLangChainBridge({
         model: selected as never,
-        token: new vscode.CancellationTokenSource().token as never,
+        token: new vscode.CancellationTokenSource().token,
       });
       await collect(bridge.bindTools([...testCase.tools], {
         tool_choice: testCase.choice,
@@ -182,7 +182,7 @@ describe('selected VS Code model bridge acceptance', () => {
     const selected = selectedModel([new vscode.LanguageModelTextPart('unused')]);
     const bridge = new VscodeLangChainBridge({
       model: selected as never,
-      token: new vscode.CancellationTokenSource().token as never,
+      token: new vscode.CancellationTokenSource().token,
     });
     const tools = [
       { name: 'lineage_first', description: 'first', inputSchema: { type: 'object' } },
@@ -233,11 +233,11 @@ describe('selected VS Code model bridge acceptance', () => {
     };
     const bridge = new VscodeLangChainBridge({
       model: selected as never,
-      token: new vscode.CancellationTokenSource().token as never,
+      token: new vscode.CancellationTokenSource().token,
     });
     const stream = bridge._streamResponseChunks(
       [new HumanMessage('cancel me')],
-      { signal: controller.signal } as never,
+      { signal: controller.signal },
     );
     await stream.next();
     controller.abort();

@@ -11,10 +11,10 @@ describe('canonical tool registry', () => {
     const descriptor = TOOL_DEFS.at(0);
     if (!descriptor) throw new Error('registry precondition: expected a contributed descriptor');
 
-    const registry = new ToolRegistry<unknown>();
+    const registry = new ToolRegistry();
     const tool = { ...descriptor, execute: (input: unknown) => input };
     registry.register(tool);
-    expect(() => registry.register(tool)).toThrow(/duplicate/);
+    expect(() => { registry.register(tool); }).toThrow(/duplicate/);
     expect(() => registry.invoke('lineage_not_registered', {})).toThrow(/no tool registered/i);
   });
 
@@ -30,7 +30,7 @@ describe('canonical tool registry', () => {
   it('dispatches the registered raw tool input through the canonical handler', async () => {
     const descriptor = TOOL_DEFS.at(0);
     if (!descriptor) throw new Error('registry precondition: expected a contributed descriptor');
-    const registry = new ToolRegistry<unknown>();
+    const registry = new ToolRegistry();
     const original = { nested: { value: 'original' } };
     registry.register({ ...descriptor, execute: input => input });
 

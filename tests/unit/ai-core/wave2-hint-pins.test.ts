@@ -40,7 +40,7 @@ describe('Wave 2 pins', () => {
           summary: 'ok',
           sections,
           highlight_groups: [{ label: 'Flow', color: 'source' as const, node_ids: [] }],
-        } as Parameters<typeof validatePresentResult>[0],
+        },
         ['a'],
         assembled.badges,
         assembled.description,

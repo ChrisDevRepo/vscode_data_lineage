@@ -13,10 +13,10 @@ import { applyExclusionPatterns } from '../../../src/engine/dacpacExtractor';
 import type { DatabaseModel, LineageNode, LineageEdge, ParseStats } from '../../../src/engine/types';
 
 const node = (schema: string, name: string): LineageNode =>
-  ({ id: `${schema}.${name}`.toLowerCase(), schema, name, fullName: `[${schema}].[${name}]`, type: 'table' }) as LineageNode;
+  ({ id: `${schema}.${name}`.toLowerCase(), schema, name, fullName: `[${schema}].[${name}]`, type: 'table' });
 
 const edge = (source: string, target: string): LineageEdge =>
-  ({ source, target, type: 'body' }) as LineageEdge;
+  ({ source, target, type: 'body' });
 
 function model(nodes: LineageNode[], edges: LineageEdge[], parseStats?: ParseStats): DatabaseModel {
   const counts = new Map<string, number>();

@@ -67,7 +67,7 @@ describe('Present Result Closure', () => {
           { node_id: 'b', text: 'Second source input for the calculation.' },
         ],
       }, ['a', 'b', 'c'], assembled.badges, assembled.description);
-      assert(result.success === true, 'allows unpreviewed graph nodes without notes or highlight colors');
+      assert(result.success, 'allows unpreviewed graph nodes without notes or highlight colors');
     }
 
     {
@@ -78,7 +78,7 @@ describe('Present Result Closure', () => {
         sections: [{ label: '', text: 'Missing label.' }],
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.some(e => e.includes('Section label is required')), 'rejects empty section labels');
+      assert(!result.success && result.errors.some(e => e.includes('Section label is required')), 'rejects empty section labels');
     }
 
     {
@@ -93,7 +93,7 @@ describe('Present Result Closure', () => {
         sections,
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.some(e => e.includes('Duplicate section label')), 'rejects duplicate normalized labels');
+      assert(!result.success && result.errors.some(e => e.includes('Duplicate section label')), 'rejects duplicate normalized labels');
     }
 
     {
@@ -108,7 +108,7 @@ describe('Present Result Closure', () => {
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
         notes: [{ node_id: 'a', text: 'Highlighted node explanation.' }],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === true, 'accepts multi-word section labels (no boundary word-count rejection)');
+      assert(result.success, 'accepts multi-word section labels (no boundary word-count rejection)');
     }
 
     {
@@ -120,7 +120,7 @@ describe('Present Result Closure', () => {
         sections,
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.some(e => e.includes('missing text')), 'rejects empty section text');
+      assert(!result.success && result.errors.some(e => e.includes('missing text')), 'rejects empty section text');
     }
 
     // Formatting never rejects (UAT turn-9 class): the verbatim payloads that killed turn 9 must be
@@ -141,7 +141,7 @@ describe('Present Result Closure', () => {
         notes: [{ node_id: 'a', text: 'Deduplication input node.' }],
       }, ['a'], assembled.badges, assembled.description);
       assert(
-        result.success === true,
+        result.success,
         'accepts block math the KaTeX renderer cannot parse (turn-9 payload 1 — formatting never rejects)',
       );
     }
@@ -161,7 +161,7 @@ describe('Present Result Closure', () => {
         notes: [{ node_id: 'a', text: 'Validation input node.' }],
       }, ['a'], assembled.badges, assembled.description);
       assert(
-        result.success === true,
+        result.success,
         'accepts strict KaTeX failures such as unescaped percent signs (turn-9 payload 2)',
       );
     }
@@ -181,7 +181,7 @@ describe('Present Result Closure', () => {
         notes: [{ node_id: 'a', text: 'Discount rules input node.' }],
       }, ['a'], assembled.badges, assembled.description);
       assert(
-        result.success === true,
+        result.success,
         'accepts an unmatched inline-code delimiter (formatting never rejects)',
       );
     }
@@ -198,7 +198,7 @@ describe('Present Result Closure', () => {
         sections,
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.some(e => e.includes('already appears in section')), 'rejects same node linked to multiple final sections');
+      assert(!result.success && result.errors.some(e => e.includes('already appears in section')), 'rejects same node linked to multiple final sections');
     }
 
     {
@@ -211,7 +211,7 @@ describe('Present Result Closure', () => {
         notes: [{ node_id: 'a', text: 'Source node explanation.' }],
         // highlight_groups intentionally omitted — this call tests runtime rejection of that.
       } as Parameters<typeof validatePresentResult>[0], ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.some(e => e.includes('highlight_groups[] is required')), 'rejects new renders without highlight_groups');
+      assert(!result.success && result.errors.some(e => e.includes('highlight_groups[] is required')), 'rejects new renders without highlight_groups');
     }
 
     {
@@ -228,7 +228,7 @@ describe('Present Result Closure', () => {
         notes: [{ node_id: 'a', text: 'Source node explanation.' }],
         // highlight_groups intentionally omitted — this call tests runtime rejection of that.
       } as Parameters<typeof validatePresentResult>[0], ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.some(e => e.includes('highlight_groups[] is required')), 'raw is_update:true does not waive highlight_groups (waiver is engine-derived)');
+      assert(!result.success && result.errors.some(e => e.includes('highlight_groups[] is required')), 'raw is_update:true does not waive highlight_groups (waiver is engine-derived)');
     }
 
     {
@@ -243,7 +243,7 @@ describe('Present Result Closure', () => {
         notes: [{ node_id: 'a', text: 'Source node explanation.' }],
         // highlight_groups intentionally omitted — isAmendment=true waives the requirement.
       } as Parameters<typeof validatePresentResult>[0], ['a'], assembled.badges, assembled.description, /* isAmendment */ true);
-      assert(result.success === true, 'isAmendment=true waives the highlight_groups legend requirement');
+      assert(result.success, 'isAmendment=true waives the highlight_groups legend requirement');
     }
 
     {
@@ -255,7 +255,7 @@ describe('Present Result Closure', () => {
         sections,
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === true, 'section-linked preview node needs no note (full note coverage is not required)');
+      assert(result.success, 'section-linked preview node needs no note (full note coverage is not required)');
     }
 
     {
@@ -268,11 +268,11 @@ describe('Present Result Closure', () => {
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
         notes: [],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.some(e => e.includes('highlight_groups node_ids must be explained')), 'rejects highlighted nodes without section or note explanation');
-      assert(result.success === false && isRepairablePresentResultFailure(result), 'highlight explanation gap is repairable');
+      assert(!result.success && result.errors.some(e => e.includes('highlight_groups node_ids must be explained')), 'rejects highlighted nodes without section or note explanation');
+      assert(!result.success && isRepairablePresentResultFailure(result), 'highlight explanation gap is repairable');
       // LEVER A regression: the reason names both resolution paths (add-to-section/note AND drop),
       // and the hint no longer forecloses the drop path or drags in the irrelevant unknown-ID hint.
-      if (result.success === false) {
+      if (!result.success) {
         const reason = result.errors.find(e => e.includes('highlight_groups node_ids must be explained'))!;
         assert(reason.includes("add it to a section's node_ids[] or add a note naming it"), 'reason names the add-to-section/note resolution path');
         assert(reason.includes('drop it from highlight_groups[] if it is uncolored plumbing'), 'reason names the drop-from-highlight_groups resolution path');
@@ -295,9 +295,9 @@ describe('Present Result Closure', () => {
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
         notes: [],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && result.errors.includes('name is required'), 'mixed case still reports the non-repairable error');
-      assert(result.success === false && result.errors.some(e => e.includes('highlight_groups node_ids must be explained')), 'mixed case still reports the repairable error');
-      assert(result.success === false && !isRepairablePresentResultFailure(result), 'one non-repairable error in the batch makes the whole failure non-repairable');
+      assert(!result.success && result.errors.includes('name is required'), 'mixed case still reports the non-repairable error');
+      assert(!result.success && result.errors.some(e => e.includes('highlight_groups node_ids must be explained')), 'mixed case still reports the repairable error');
+      assert(!result.success && !isRepairablePresentResultFailure(result), 'one non-repairable error in the batch makes the whole failure non-repairable');
     }
 
     {
@@ -314,7 +314,7 @@ describe('Present Result Closure', () => {
       const repaired = mergePresentResultRepairPatch(fullDraft, patch, ['notes']);
       const assembled = orderAndAssemble(repaired.sections ?? []);
       const result = validatePresentResult(repaired, ['a'], assembled.badges, assembled.description);
-      assert(result.success === true, 'repair patch can explain a highlighted node without reauthoring full draft');
+      assert(result.success, 'repair patch can explain a highlighted node without reauthoring full draft');
     }
 
     {
@@ -337,8 +337,8 @@ describe('Present Result Closure', () => {
         sections,
         highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
       }, ['a'], assembled.badges, assembled.description);
-      assert(result.success === false && isRepairablePresentResultFailure(result), 'duplicate section ownership authorizes a held-draft repair');
-      assert(result.success === false && result.repairFields.join(',') === 'sections', 'duplicate section ownership authorizes sections only');
+      assert(!result.success && isRepairablePresentResultFailure(result), 'duplicate section ownership authorizes a held-draft repair');
+      assert(!result.success && result.repairFields.join(',') === 'sections', 'duplicate section ownership authorizes sections only');
     }
 
     // isRepairablePresentResultFailure reads the STRUCTURAL `repairable` field set at each `addError`

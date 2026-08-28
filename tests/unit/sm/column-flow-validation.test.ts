@@ -250,7 +250,7 @@ describe("Column Flow Validation", () => {
       upstream_columns: [{ node: 'base_table', col: 'raw_amount' }],
     }],
   });
-  assert('ok' in result && result.ok === true, 'valid column_flow accepted');
+  assert('ok' in result && result.ok, 'valid column_flow accepted');
   const edges = engine.columnAspect?.edges ?? [];
   assert(edges.length === 1, 'one upstream column edge accumulated');
   assert(edges[0]?.from_node === 'base_table', 'accumulated edge from_node is base_table');
@@ -300,7 +300,7 @@ describe("Column Flow Validation", () => {
       { out_col: 'region', upstream_columns: [] },
     ],
   });
-  assert('ok' in accepted && accepted.ok === true, 'corrected CT flow commits');
+  assert('ok' in accepted && accepted.ok, 'corrected CT flow commits');
   const committed = engine.toJSON();
   assertEq(committed.columnAspect?.edges.length ?? -1, 1, 'corrected CT flow commits its edge once');
   assertEq(Object.keys(committed.memory.detailSlots).length, 1, 'corrected CT flow stores one detail slot');
@@ -349,7 +349,7 @@ describe("Column Flow Validation", () => {
 
   // Supplement with second_view
   const suppResult = engine.supplementAgenda(['second_view']);
-  assert('ok' in suppResult && suppResult.ok === true, 'supplementAgenda ok');
+  assert('ok' in suppResult && suppResult.ok, 'supplementAgenda ok');
 
   // Advance to second_view hop and verify active_columns = target_columns
   engine.getHopContext();
@@ -536,7 +536,7 @@ describe("Column Flow Validation", () => {
   it("through a non-bodied passthrough, so siblings can't leak downstream.", () => {
   const tracer = new ColumnTracer(['TotalRevenue']);
   // A prior bodied hop declared UnitPrice ← pricemaster.ListPrice → edge with from_node=pricemaster.
-  tracer.state.edges.push({ hop: 1, hop_node: 'vwpricelist', to_node: 'vwpricelist', to_col: 'UnitPrice', from_node: 'pricemaster', from_col: 'ListPrice' } as any);
+  tracer.state.edges.push({ hop: 1, hop_node: 'vwpricelist', to_node: 'vwpricelist', to_col: 'UnitPrice', from_node: 'pricemaster', from_col: 'ListPrice' });
   // The model over-declared pricemaster's route columns; only ListPrice is on the tracked spine.
   const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode']);
   assertEq(bounded.length, 1, 'Part B: over-declared siblings dropped to the on-trace spine');
@@ -1036,7 +1036,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     tracer.edges.push({
       hop: 1, hop_node: 'origin_view', to_node: 'origin_view', to_col: 'Discount',
       from_node: 'staging', from_col: 'OrderAmount',
-    } as any);
+    });
 
     // Contract: a candidate with no edge of its own falls through to the unfiltered entryColumns by design; bounding that output is `resolveActiveColumnsForNode`'s job at the enqueueHop/contractThroughPassNode call sites, not this function's.
     const writerCols = tracer.determineActiveColumnsForCandidate('writer_proc', ['Discount', 'OrderAmount']);

@@ -15,7 +15,7 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
       node_states: [],
       columnAspect: null,
       ...over,
-    } as SmResult;
+    };
   }
   it("(a) kept passthrough node without a slot → exactly one digest line with its writers/readers.", () => {
   const result = makeResult({

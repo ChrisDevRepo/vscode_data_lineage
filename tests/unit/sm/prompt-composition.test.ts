@@ -207,7 +207,7 @@ describe('prompt composition', () => {
     ].join('\n');
     const message = buildWorkerHopMessage(
       {
-        focus_node: { id: 'dbo.spEvil', name: 'spEvil' } as never,
+        focus_node: { id: 'dbo.spEvil', name: 'spEvil' },
         neighbors: [],
         current_task: 'analyze',
         working_memory: { ddl: hostileDdl },

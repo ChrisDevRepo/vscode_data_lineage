@@ -435,7 +435,7 @@ describe("NavigationEngine Robustness", () => {
   businessEngine.classification = 'business';
   businessEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
   const businessHop = businessEngine.getHopContext();
-  const businessDdl = String((businessHop.focus_node as Record<string, unknown> | undefined)?.bb_ddl ?? '');
+  const businessDdl = String((businessHop.focus_node)?.bb_ddl ?? '');
   assert(!/CLUSTERED/i.test(businessDdl), "classification 'business' minifies physical-storage detail (CLUSTERED stripped)");
   const minificationLog = businessLogs.find(line => line.includes('[DDL] Applying hop-by-hop minification')) ?? '';
   assert(!minificationLog.includes('aggressive'), 'per-hop minification log omits the old aggressive wording');
@@ -445,14 +445,14 @@ describe("NavigationEngine Robustness", () => {
   technicalEngine.classification = 'technical';
   technicalEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
   const technicalHop = technicalEngine.getHopContext();
-  const technicalDdl = String((technicalHop.focus_node as Record<string, unknown> | undefined)?.bb_ddl ?? '');
+  const technicalDdl = String((technicalHop.focus_node)?.bb_ddl ?? '');
   assert(/CLUSTERED/i.test(technicalDdl), "classification 'technical' preserves physical-storage detail (CLUSTERED kept)");
 
   const bothEngine = new NavigationEngine(ddlModel, ddlGraph, () => {}, {});
   bothEngine.classification = 'both';
   bothEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
   const bothHop = bothEngine.getHopContext();
-  const bothDdl = String((bothHop.focus_node as Record<string, unknown> | undefined)?.bb_ddl ?? '');
+  const bothDdl = String((bothHop.focus_node)?.bb_ddl ?? '');
   assert(/CLUSTERED/i.test(bothDdl), "classification 'both' preserves physical-storage detail (CLUSTERED kept)");
 
   // Unset classification is a defensive wiring-gap fallback, not an expected path — it must
@@ -460,7 +460,7 @@ describe("NavigationEngine Robustness", () => {
   const unsetEngine = new NavigationEngine(ddlModel, ddlGraph, () => {}, {});
   unsetEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
   const unsetHop = unsetEngine.getHopContext();
-  const unsetDdl = String((unsetHop.focus_node as Record<string, unknown> | undefined)?.bb_ddl ?? '');
+  const unsetDdl = String((unsetHop.focus_node)?.bb_ddl ?? '');
   assert(/CLUSTERED/i.test(unsetDdl), 'unset classification (wiring gap) preserves conservatively rather than minify');
 });
 

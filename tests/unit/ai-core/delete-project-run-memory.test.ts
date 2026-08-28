@@ -90,7 +90,7 @@ function fakeHost(): BridgeHost {
     getExtensionUri: vi.fn(),
     getGlobalState: vi.fn(),
     getWorkspaceState: vi.fn(),
-  } as unknown as BridgeHost;
+  };
 }
 
 function buildHandlers(store: ProjectStore, globalState: ReturnType<typeof fakeMemento>, host: BridgeHost) {

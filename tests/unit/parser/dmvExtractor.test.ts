@@ -110,9 +110,8 @@ function testBuildModelFromDmv() {
   assertEq(customerNode?.schema, 'dbo', 'Customer schema preserved in catalog-original casing');
 
   // Catalog and neighborIndex are present and populated
-  assert(model.catalog !== undefined, 'Catalog present');
   assert(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node');
-  assert(model.neighborIndex !== undefined, 'NeighborIndex present');
+  assert(Object.keys(model.neighborIndex).length > 0, 'NeighborIndex populated');
 
   // neighborIndex: vActiveCustomers should have Customers as inbound neighbor
   const viewId = '[dbo].[vactivecustomers]';
@@ -760,9 +759,9 @@ function testPhase2QueryPredicate() {
   }
 
   // A query with no explicit phase defaults into the sweep.
-  assert(isPhase2Query({ name: 'custom', description: '', sql: '' } as DmvQuery),
+  assert(isPhase2Query({ name: 'custom', description: '', sql: '' }),
     'Untagged query defaults to Phase 2');
-  assert(!isPhase2Query({ name: 'custom', description: '', sql: '', phase: 1 } as DmvQuery),
+  assert(!isPhase2Query({ name: 'custom', description: '', sql: '', phase: 1 }),
     'phase: 1 query is excluded');
 
   // The bridge reports sweep length + 1 to account for the platform-detection step.

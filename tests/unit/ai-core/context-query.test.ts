@@ -102,5 +102,5 @@ function contextModel(): DatabaseModel {
     catalog: {},
     neighborIndex: Object.fromEntries(nodes.map(node => [node.id, { in: [], out: [] }])),
     dbPlatform: 'SQL Server 2025',
-  } as DatabaseModel;
+  };
 }

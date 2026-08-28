@@ -234,7 +234,7 @@ describe("Navigation Engine — node conservation", () => {
   assert('error' in result && result.error === 'prune_origin_forbidden', 'origin prune retains its fatal code');
   const state = engine.toJSON();
   assert(!state.removedSet.includes('origin'), 'origin is never removed');
-  assert(state.memory.detailSlots['origin'] === undefined, 'origin detail does not commit on rejection');
+  assert(state.memory.detailSlots.origin === undefined, 'origin detail does not commit on rejection');
   assert(state.status === 'awaiting_findings', 'origin prune rejection keeps the current hop active');
 });
 

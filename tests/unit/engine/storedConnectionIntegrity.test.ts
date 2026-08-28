@@ -29,7 +29,7 @@ function dbProject(connectionInfo: Record<string, unknown>): Project {
       schemas: ['Sales'],
       connectionInfo: connectionInfo as never,
     },
-  } as Project;
+  };
 }
 
 const cleanConnectionInfo = {
