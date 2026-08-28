@@ -586,7 +586,7 @@ export function GraphCanvas({
   );
 
   const handleFitView = useCallback(() => {
-    fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+    void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }, [fitView]);
 
   const handleSaveTraceAsBookmark = useCallback((name: string, withPositions: boolean) => {
@@ -665,7 +665,7 @@ export function GraphCanvas({
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
-        setCenter(
+        void setCenter(
           targetNode.position.x + NODE_WIDTH / 2,
           targetNode.position.y + NODE_HEIGHT / 2,
           { zoom: 0.8, duration: FIT_VIEW_DURATION }
@@ -809,7 +809,7 @@ export function GraphCanvas({
     }
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     const raf = requestAnimationFrame(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+      void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
     });
     return () => cancelAnimationFrame(raf);
   }, [clearPendingZoomTimer, flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
@@ -829,7 +829,7 @@ export function GraphCanvas({
         return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
       }));
       if (pendingViewport) {
-        requestAnimationFrame(() => setViewport(pendingViewport));
+        requestAnimationFrame(() => { void setViewport(pendingViewport); });
       }
       onPendingPositionsApplied?.();
     } else {
@@ -1330,7 +1330,7 @@ export function GraphCanvas({
           totalNodes={trace.tracedNodeIds.size}
           totalEdges={trace.tracedEdgeIds.size}
           mode={trace.mode}
-          onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
+          onEnd={() => onTraceEnd(() => { void fitView({ padding: 0.2, duration: 800 }); })}
           onReset={() => onResetAll()}
           onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
           useFullModel={useFullModel ?? false}
@@ -1350,7 +1350,7 @@ export function GraphCanvas({
             edgeCount: trace.tracedEdgeIds.size,
           } : null}
           onFindPath={onApplyPath}
-          onClose={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
+          onClose={() => onTraceEnd(() => { void fitView({ padding: 0.2, duration: 800 }); })}
         />
       )}
 

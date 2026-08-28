@@ -181,7 +181,9 @@ function groupBytes(group: readonly ModelMessage[]): number {
     const content = message.content;
     const contentBytes = utf8Bytes(typeof content === 'string' ? content : JSON.stringify(content) ?? '');
     const calls = (message as { tool_calls?: readonly { args?: unknown }[] }).tool_calls;
-    const callBytes = Array.isArray(calls)
+    // A truthiness check, not `Array.isArray`: the built-in guard narrows to `any[]`, which
+    // discards the element type and lets `any` leak into this byte arithmetic.
+    const callBytes = calls
       ? calls.reduce((sum, call) => sum + utf8Bytes(JSON.stringify(call.args) ?? ''), 0)
       : 0;
     return total + contentBytes + callBytes;

@@ -144,7 +144,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   // Listen for messages from VS Code extension host
   useEffect(() => {
-    const handler = async (event: MessageEvent) => {
+    const handler = (event: MessageEvent) => {
       // Single validated inbound dispatcher — host→webview messages are Zod-checked here, never read raw.
       const parsed = ExtensionToWebviewMsgSchema.safeParse(event.data);
       if (!parsed.success) return;
