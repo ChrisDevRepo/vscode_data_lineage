@@ -210,7 +210,29 @@ describe('analyzeLongestPath', () => {
       [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
       [['A', 'B'], ['B', 'C'], ['C', 'A']],
     );
-    expect(analyzeLongestPath(cyclic, 2).type).toBe('longest-path');
+    for (const group of analyzeLongestPath(cyclic, 2).groups) {
+      expect(new Set(group.nodeIds).size).toBe(group.nodeIds.length);
+    }
+  });
+
+  // A chain that enters a two-node cycle and leaves it again. The cycle must not truncate the
+  // chain at its exit: the tail beyond the cycle belongs to the same dependency path.
+  const throughCycle = (ids: string[]) => makeGraph(
+    ids.map(id => ({ id })),
+    [['X1', 'X2'], ['X2', 'X3'], ['X3', 'X4'], ['X4', 'B'], ['B', 'C'], ['C', 'B'], ['C', 'D']],
+  );
+  const CHAIN_ORDER = ['X1', 'X2', 'X3', 'X4', 'B', 'C', 'D'];
+
+  it('follows a chain past a cycle to the far end', () => {
+    const group = analyzeLongestPath(throughCycle(CHAIN_ORDER), 2).groups[0];
+    expect(group.nodeIds).toEqual(CHAIN_ORDER);
+    expect(group.meta?.depth).toBe(6);
+  });
+
+  it('reports the same chain whichever order the nodes were added in', () => {
+    const forward = analyzeLongestPath(throughCycle(CHAIN_ORDER), 2).groups[0];
+    const reversed = analyzeLongestPath(throughCycle([...CHAIN_ORDER].reverse()), 2).groups[0];
+    expect(reversed.nodeIds).toEqual(forward.nodeIds);
   });
 
   it('returns nothing for an empty graph', () => {

@@ -13,6 +13,7 @@
 
 import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
+import { bidirectional } from 'graphology-shortest-path';
 import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
 
 /**
@@ -167,76 +168,139 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
  * @param maxChains - Maximum number of chains to return.
  * @returns Result object containing the discovered dependency chains.
  */
+/**
+ * Condensed view of the graph: one vertex per strongly connected component.
+ *
+ * @remarks
+ * A condensation is acyclic by construction, which is what makes the depth DP in
+ * {@link analyzeLongestPath} exact.
+ */
+interface Condensation {
+  /** Member node ids per component, indexed by component number. */
+  components: string[][];
+  /** Component successors, each remembering the `[tail, head]` node pair that realises the edge. */
+  successors: Map<number, Map<number, [string, string]>>;
+  /** Component in-degree in the condensation. */
+  inDegree: number[];
+}
+
+/** Condenses each strongly connected component of `graph` to a single vertex. */
+function condense(graph: Graph): Condensation {
+  const components = stronglyConnectedComponents(graph);
+  const componentOf = new Map<string, number>();
+  components.forEach((members, index) => {
+    for (const id of members) componentOf.set(id, index);
+  });
+
+  const successors = new Map<number, Map<number, [string, string]>>();
+  const inDegree = new Array<number>(components.length).fill(0);
+  graph.forEachEdge((_edge, _attrs, source, target) => {
+    const from = componentOf.get(source)!;
+    const to = componentOf.get(target)!;
+    if (from === to) return;
+    let edges = successors.get(from);
+    if (!edges) {
+      edges = new Map();
+      successors.set(from, edges);
+    }
+    if (edges.has(to)) return;
+    edges.set(to, [source, target]);
+    inDegree[to]++;
+  });
+
+  return { components, successors, inDegree };
+}
+
+/**
+ * Walks one component from `entry` to `exit`.
+ *
+ * @remarks
+ * A path between two members of a strongly connected component cannot leave it — a node reachable
+ * from `entry` that also reaches `exit` reaches `entry` too, so it belongs to the same component.
+ * The graph-wide search is therefore already confined to the component.
+ */
+function walkComponent(graph: Graph, members: readonly string[], entry: string, exit: string): string[] {
+  if (members.length === 1 || entry === exit) return [entry];
+  return bidirectional(graph, entry, exit) ?? [entry];
+}
+
+/** Walks one component from `entry` to whichever member sits farthest from it. */
+function walkComponentTail(graph: Graph, members: readonly string[], entry: string): string[] {
+  let farthest = [entry];
+  for (const exit of members) {
+    if (exit === entry) continue;
+    const walk = bidirectional(graph, entry, exit);
+    if (walk && walk.length > farthest.length) farthest = walk;
+  }
+  return farthest;
+}
+
+/** Expands a component chain rooted at `root` back into an ordered list of real node ids. */
+function expandChain(graph: Graph, condensation: Condensation, nextOf: readonly number[], root: number): string[] {
+  const { components, successors } = condensation;
+  const chain: string[] = [];
+  let current = root;
+  let entry = components[current][0];
+
+  for (;;) {
+    const next = nextOf[current];
+    if (next === -1) {
+      chain.push(...walkComponentTail(graph, components[current], entry));
+      return chain;
+    }
+    const [exit, head] = successors.get(current)!.get(next)!;
+    chain.push(...walkComponent(graph, components[current], entry, exit));
+    entry = head;
+    current = next;
+  }
+}
+
 export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }
 
-  const depth = new Map<string, number>();
-  const successor = new Map<string, string>();
-  const visiting = new Set<string>();
+  const condensation = condense(graph);
+  const { components, successors, inDegree } = condensation;
 
-  function dfsLP(node: string): number {
-    if (depth.has(node)) return depth.get(node)!;
-    if (visiting.has(node)) return 0;
-    visiting.add(node);
-
-    let maxDown = 0;
-    let bestNext: string | null = null;
-
-    graph.forEachOutNeighbor(node, (neighbor) => {
-      const d = dfsLP(neighbor) + 1;
-      if (d > maxDown) {
-        maxDown = d;
-        bestNext = neighbor;
-      }
-    });
-
-    visiting.delete(node);
-    depth.set(node, maxDown);
-    if (bestNext) successor.set(node, bestNext);
-    return maxDown;
-  }
-
-  graph.forEachNode((id) => dfsLP(id));
-
-  const roots: Array<{ id: string; depth: number }> = [];
-  graph.forEachNode((id) => {
-    const d = depth.get(id) || 0;
-    if (d > 0 && graph.inDegree(id) === 0) {
-      roots.push({ id, depth: d });
+  // Kahn ordering of the condensation, then the depth DP in reverse. Both are iterative, so a chain
+  // spanning thousands of objects cannot exhaust the call stack.
+  const remaining = [...inDegree];
+  const order: number[] = [];
+  for (let i = 0; i < components.length; i++) if (remaining[i] === 0) order.push(i);
+  for (let i = 0; i < order.length; i++) {
+    for (const to of successors.get(order[i])?.keys() ?? []) {
+      if (--remaining[to] === 0) order.push(to);
     }
-  });
-
-  if (roots.length === 0) {
-    graph.forEachNode((id) => {
-      const d = depth.get(id) || 0;
-      if (d > 0) roots.push({ id, depth: d });
-    });
   }
 
-  roots.sort((a, b) => b.depth - a.depth);
+  const depth = new Array<number>(components.length).fill(0);
+  const nextOf = new Array<number>(components.length).fill(-1);
+  for (let i = order.length - 1; i >= 0; i--) {
+    const from = order[i];
+    for (const to of successors.get(from)?.keys() ?? []) {
+      if (depth[to] + 1 > depth[from]) {
+        depth[from] = depth[to] + 1;
+        nextOf[from] = to;
+      }
+    }
+  }
+
+  const roots = order.filter((component) => inDegree[component] === 0);
+  roots.sort((a, b) => depth[b] - depth[a]);
 
   const chains: Array<{ nodeIds: string[]; length: number }> = [];
   const seenEndpoints = new Set<string>();
 
   for (const root of roots) {
-    const chain: string[] = [root.id];
-    let cur = root.id;
-    const visited = new Set<string>([cur]);
-    while (successor.has(cur)) {
-      cur = successor.get(cur)!;
-      if (visited.has(cur)) break;
-      visited.add(cur);
-      chain.push(cur);
-    }
+    const nodeIds = expandChain(graph, condensation, nextOf, root);
 
-    const endNode = chain[chain.length - 1];
+    const endNode = nodeIds[nodeIds.length - 1];
     if (seenEndpoints.has(endNode)) continue;
     seenEndpoints.add(endNode);
 
-    if (chain.length < minNodes) continue;
-    chains.push({ nodeIds: chain, length: chain.length - 1 });
+    if (nodeIds.length < minNodes) continue;
+    chains.push({ nodeIds, length: nodeIds.length - 1 });
     if (chains.length >= maxChains) break;
   }
 

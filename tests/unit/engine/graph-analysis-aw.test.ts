@@ -3,6 +3,11 @@
  *
  * COMPARES AGAINST: tests/fixtures/graph-baseline-aw.json (verified with NetworkX)
  *
+ * `longestPath.maxDepth` is the exception: it was re-derived after the strongly-connected-component
+ * condensation replaced the memoised DFS in `analyzeLongestPath`, which had truncated the chain at
+ * a cycle exit. The 13-node value was validated hop by hop against the graph — every consecutive
+ * pair is a real edge and no node repeats — rather than against the previous implementation.
+ *
  * @remarks
  * One test per baseline dimension, deliberately. These assertions are not independent
  * observations of one fact — a node-count drift and a BFS reachability drift are
