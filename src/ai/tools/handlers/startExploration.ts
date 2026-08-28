@@ -124,7 +124,14 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
             hint: "supplement requires a completed prior exploration. Current engine status: none. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
           }, loggedInput);
         }
-        const res = priorEngine.supplementAgenda(data.supplement.nodeIds ?? []);
+        const supplementIds = data.supplement.nodeIds ?? [];
+        // Extend-then-supplement, the same ordering the approve gate uses: naming a node in a
+        // follow-up is the consent that widens the allowlist to reach it. `supplementAgenda` stays a
+        // side-effect-free reject, so without this step a schema-boundary lead was a dead end — the
+        // target came straight back as `out_of_allowlist` with nothing on this path able to admit
+        // it. Exclusions stay a hard wall.
+        priorEngine.admitSupplementTargets(supplementIds);
+        const res = priorEngine.supplementAgenda(supplementIds);
         if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
         applyFollowUpContext(priorEngine);
         // Unguarded by design: tool dispatch runs synchronously inside the owning turn's graph-owned

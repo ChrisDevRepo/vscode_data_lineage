@@ -38,13 +38,17 @@ export function registerCommands(
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 
     /**
-     * Pushes fresh extension settings to the active panel and clears the column
-     * metadata cache, bringing the view into sync without reloading data.
+     * Pushes fresh extension settings to the active panel, bringing the view into
+     * sync without reloading data.
      *
      * @remarks
      * Equivalent to clicking the toolbar Refresh button, but without the full
      * filter reset — suitable for programmatic callers and keyboard shortcuts.
      * Does not exit active trace, analysis, or AI preview modes.
+     *
+     * The column store is deliberately left intact: it is a pure projection of the
+     * session model, which a settings push does not touch. Clearing it emptied the
+     * detail panel's columns and made every stored run report `stale`.
      */
     vscode.commands.registerCommand('dataLineageViz.refresh', () => {
       const panel = getActivePanel();
@@ -52,7 +56,6 @@ export function registerCommands(
         notifyInfo(configLogger, 'Refresh', 'Open a Data Lineage view first.', { command: 'dataLineageViz.refresh' });
         return;
       }
-      getSession().columnStore.clear();
       const config = buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz'));
       void postToWebview(panel, { type: 'rebuild-config', config }, configLogger);
       configLogger.debug('dataLineageViz.refresh — pushed rebuild-config');

@@ -199,6 +199,13 @@ type BorderVerdict =
   | { kind: 'out_of_direction' }
   | { kind: 'out_of_allowlist' };
 
+/** Prose spelling of a deferral reason, for the user-facing lead text. */
+const DEFERRAL_BOUNDARY_LABEL: Readonly<Record<DeferredQuestion['reason'], string>> = {
+  schema: 'schema',
+  depth: 'depth',
+  schema_and_depth: 'schema and depth',
+};
+
 /**
  * Unified Navigation Engine — The core state machine for all exploration modes.
  *
@@ -517,19 +524,28 @@ export class NavigationEngine implements IHopStateMachine {
     this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
   }
 
-  /** Records the structured task and lead corresponding to an accepted scope-boundary deferral. */
+  /**
+   * Records the structured task and lead corresponding to an accepted scope-boundary deferral.
+   *
+   * @remarks
+   * `'schema_and_depth'` reports as `'schema_boundary'`: the allowlist is the stricter of the two
+   * gates, and the breaching depth still rides the lead's own `depth` field, so nothing about the
+   * deferral is lost. The lead reason is deliberately NOT widened to a composite member —
+   * `PendingLead['reason']` is persisted as a `z.enum` in `navigationSnapshotSchema`, and a new
+   * member would make records written by this build unreadable by an older one.
+   */
   private recordPendingLead(entry: DeferredQuestion): void {
     const task = this.ensureDeferredTask(entry.nodeId, entry.question, entry.atHop);
     this.taskLedger.ensureLead({
       taskId: task.id,
       nodeId: entry.nodeId,
       fromNodeId: entry.fromFocusNodeId,
-      reason: entry.reason === 'schema' ? 'schema_boundary' : 'depth_boundary',
+      reason: entry.reason === 'depth' ? 'depth_boundary' : 'schema_boundary',
       schema: entry.schema,
       ...(entry.depth !== undefined ? { depth: entry.depth } : {}),
       valueToUser: entry.question
         ? `Continue at ${entry.nodeId} to answer: ${entry.question}`
-        : `Continue at ${entry.nodeId} beyond the approved ${entry.reason} boundary.`,
+        : `Continue at ${entry.nodeId} beyond the approved ${DEFERRAL_BOUNDARY_LABEL[entry.reason]} boundary.`,
       createdHop: entry.atHop,
     });
   }
@@ -1516,6 +1532,38 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Admits the named follow-up targets through the schema allowlist.
+   *
+   * @remarks
+   * The consent step the host runs *before* {@link supplementAgenda}, which stays a side-effect-free
+   * reject — the same extend-then-supplement ordering the approve-gate path uses when it calls
+   * {@link extendAllowedSchemas} for each approved `schema:` class. Naming a node in a follow-up is
+   * the user consent that reaches it; without this step a `schema_boundary` lead was a dead end,
+   * because nothing on the supplement path ever widened the allowlist and the target came straight
+   * back as `out_of_allowlist`.
+   *
+   * Consent-scoped, not global: the schema is read from each requested node, so the border grows
+   * exactly enough to reach what was named and no further. Extension is monotonic, so repeated
+   * follow-ups can only widen.
+   *
+   * The depth axis needs no counterpart: `'supplement'` deliberately omits the depth test
+   * ({@link BorderPurpose}), so an approved target is admitted at any depth and each node beyond it
+   * defers as its own lead — one explicit approval per node, which is the intended granularity.
+   *
+   * Exclusion sets are untouched — those are the user's own removals and stay a hard wall in
+   * {@link checkBorder}.
+   *
+   * @param nodeIds - Follow-up targets, canonical or free-cased; unresolvable ids are ignored.
+   */
+  public admitSupplementTargets(nodeIds: readonly string[]): void {
+    for (const raw of nodeIds) {
+      const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      const node = id ? this.nodeMap.get(id) : undefined;
+      if (node) this.extendAllowedSchemas(node.schema);
+    }
+  }
+
+  /**
    * Extends a completed exploration with additional nodes for analysis.
    *
    * @remarks
@@ -1524,6 +1572,10 @@ export class NavigationEngine implements IHopStateMachine {
    * bodied nodes land on the agenda, non-bodied contract through to their
    * bodied neighbors in the exploration direction. Prior `DetailSlot` entries
    * survive — new slots merge in.
+   *
+   * Side-effect-free on reject: a target outside the border is reported in `skippedDetails` and
+   * nothing is mutated. Widening the border is the caller's step, via
+   * {@link admitSupplementTargets}, so consent stays a host decision.
    *
    * @param nodeIds - Node ids to append to the agenda or contract through.
    * @param leadIds - Host-selected pending leads; never accepted from a model tool payload.
@@ -1586,8 +1638,8 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
       // A user-excluded or out-of-allowlist node is a hard wall on the supplement write path — the
-      // border only widens through user consent (the follow-up pill pre-extends the allowlist before
-      // this call), never through an AI-initiated supplement re-adding what the user removed.
+      // border only widens through user consent ({@link admitSupplementTargets}, called by the host
+      // before this), never through an AI-initiated supplement re-adding what the user removed.
       const supNode = this.nodeMap.get(id);
       const supBorder = supNode ? this.checkBorder(id, supNode, 'supplement') : null;
       if (supBorder && supBorder.kind !== 'in_border') {
@@ -2498,13 +2550,19 @@ export class NavigationEngine implements IHopStateMachine {
     // Spine-empty candidates fall back to the requested set verbatim (determineActiveColumnsForCandidate
     // above) — bound that result to the pass node's own declared columns too, same predicate as enqueueHop.
     const carried = this.mode.kind === 'ct' ? (this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []) : spineBound;
-    if (this.mode.kind === 'ct' && (carried?.length ?? 0) === 0) {
-      this.log('debug', `[Disposition] pass-node ${entry.nodeId} declares none of the carried columns — contraction stops here`);
-      return;
-    }
     const questions = entry.taskIds
       .map(taskId => this.taskLedger.getTask(taskId)?.question)
       .filter((question): question is string => Boolean(question));
+    if (this.mode.kind === 'ct' && (carried?.length ?? 0) === 0) {
+      this.log('debug', `[Disposition] pass-node ${entry.nodeId} declares none of the carried columns — contraction stops here`);
+      // The pass node itself is already marked `passthrough` by the dispatcher; what is lost here is
+      // everything behind it. Record the lead so the shortened trace carries its own explanation.
+      const via = this.currentFocusNodeId ?? this.originNodeId ?? undefined;
+      if (via) {
+        this.recordContractedLead(entry.nodeId, via, questions[0] ?? `Continue through ${entry.nodeId}`);
+      }
+      return;
+    }
     for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
       for (const question of questions.length ? questions : [`Continue through ${entry.nodeId}`]) {
         this.enqueueHop(nid, question, entry.depth + 1, entry.priority, { columns: carried });
@@ -2699,11 +2757,15 @@ export class NavigationEngine implements IHopStateMachine {
       // Carrier declares none of the forwarded columns: stop the contraction here instead of
       // dispatching a bodied neighbour with a column it cannot carry.
       this.log('debug', `[Disposition] enqueue drop ${targetId} — carrier declares none of the forwarded columns, contraction stops here`);
+      const via = this.currentFocusNodeId ?? this.originNodeId ?? undefined;
       this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
         columns: ctCarried,
-        viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
+        viaNodeId: via,
         atHop: this.hopCount,
       });
+      // The trace ends short here. Without a lead the truncation is invisible — the user sees a
+      // chain that simply stops, with no record of which carrier broke it or why.
+      if (via) this.recordContractedLead(targetId, via, question);
       return;
     }
     const carried = ctCarried ?? columns;

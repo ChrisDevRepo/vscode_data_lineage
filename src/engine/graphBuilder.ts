@@ -245,44 +245,6 @@ export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig
 }
 
 /**
- * Traces a node's lineage (upstream/downstream) through the graph.
- *
- * @param graph - computational graph.
- * @param nodeId - Origin node ID.
- * @param mode - Trace direction.
- * @returns Nodes and edges in the trace.
- */
-export function traceNode(
-  graph: Graph,
-  nodeId: string,
-  mode: 'upstream' | 'downstream' | 'both'
-): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
-
-  const nodeIds = new Set<string>([nodeId]);
-  const upDepth = new Map<string, number>();
-  const downDepth = new Map<string, number>();
-  if (mode !== 'downstream') upDepth.set(nodeId, 0);
-  if (mode !== 'upstream') downDepth.set(nodeId, 0);
-
-  if (mode === 'upstream' || mode === 'both') {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      nodeIds.add(node);
-      upDepth.set(node, depth);
-    }, { mode: 'inbound' });
-  }
-  if (mode === 'downstream' || mode === 'both') {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      nodeIds.add(node);
-      downDepth.set(node, depth);
-    }, { mode: 'outbound' });
-  }
-
-  const edgeIds = collectTraceEdges(graph, nodeIds, upDepth, downDepth);
-  return { nodeIds, edgeIds };
-}
-
-/**
  * Traces a node's lineage with separate upstream and downstream depth caps.
  *
  * @remarks

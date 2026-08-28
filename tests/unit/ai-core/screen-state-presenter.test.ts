@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { describeScreen, presentRunRecall, presentScreenState, type RunRecallInput } from '../../../src/ai/tools/screenStatePresenter';
 import { aiRunStorageKey, AI_RUN_KEY_PREFIX, hashDdl, type StoredAiRun } from '../../../src/ai/session/runStore';
 import { GetScreenStateInputSchema, parseToolInput } from '../../../src/ai/tools/toolSchemas';
+import { detectOverBudgetFromResult } from '../../../src/ai/agent/graph';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
 import type { SmState } from '../../../src/ai/sm/smTypes';
 
@@ -381,6 +382,29 @@ describe('stored-run recall', () => {
     expect(result.reason).toBe('over_discovery_budget');
     expect(result.hint).toMatch(/^Narrow ids to at most \d+ or use a filter instead\.$/);
     expect(result.objects).toBeUndefined();
+  });
+
+  // `checkScopeBudget` is shared, so its rejection envelope can surface from more than one tool.
+  // Only an oversized *scope* request carries the routing meaning; matching the envelope alone
+  // turned a recall question into a fresh exploration approval gate.
+  it('does not reroute to SM when the over-budget envelope came from a recall, only from a scope bundle', () => {
+    const bulky = recallRun();
+    const slots = (bulky.snapshot as unknown as { memory: { detailSlots: Record<string, unknown> } }).memory.detailSlots;
+    slots['[ai].[a]'] = {
+      nodeId: '[ai].[a]', summary: 'x'.repeat(60_000),
+      sections: [{ angle: 'business', text: 'y'.repeat(60_000) }],
+    };
+    const rejection = JSON.stringify(
+      presentRunRecall(recallInput({ ids: ['[ai].[a]'], getStoredRun: () => bulky })),
+    );
+
+    expect(detectOverBudgetFromResult('lineage_get_screen_state', rejection)).toBe(false);
+    expect(detectOverBudgetFromResult('lineage_get_scope_bundle', rejection)).toBe(true);
+  });
+
+  it('ignores a non-JSON or unrelated tool result', () => {
+    expect(detectOverBudgetFromResult('lineage_get_scope_bundle', 'not json')).toBe(false);
+    expect(detectOverBudgetFromResult('lineage_get_scope_bundle', '{"reason":"something_else"}')).toBe(false);
   });
 });
 

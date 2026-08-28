@@ -9,7 +9,6 @@ import { describe, it } from 'vitest';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
 import {
   buildGraph,
-  traceNode,
   traceNodeWithLevels,
   buildSchemaGraph,
   buildGraphologyGraph,
@@ -69,8 +68,8 @@ function testTraceNoSiblings() {
   assert(leveled.edgeIds.has('P1→C1'), 'Leveled: P1→C1 included (all edges between traced nodes)');
   assert(!leveled.edgeIds.has('GP→P1'), 'Leveled: GP→P1 edge excluded (beyond level)');
 
-  // Test traceNode (unlimited): upstream + downstream
-  const unlimited = traceNode(graph, 'X', 'both');
+  // Unlimited both directions: an infinite cap is the uncapped trace.
+  const unlimited = traceNodeWithLevels(graph, 'X', Infinity, Infinity);
   assert(unlimited.nodeIds.has('GP'), 'Unlimited: GP included');
   assert(unlimited.edgeIds.has('GP→P1'), 'Unlimited: GP→P1 included');
   assert(unlimited.edgeIds.has('P1→X'), 'Unlimited: P1→X included');
@@ -170,13 +169,13 @@ function testBidirectionalTrace() {
   assert(allMatch, 'Bidir-Det: 50 runs produce identical results');
 
   // Unlimited upstream trace — same directional filtering
-  const unlimited = traceNode(graph, 'Table', 'upstream');
+  const unlimited = traceNodeWithLevels(graph, 'Table', Infinity, 0);
   assert(unlimited.nodeIds.size === 7, `Bidir-Unl: All 7 nodes (got ${unlimited.nodeIds.size})`);
   assert(unlimited.edgeIds.size === 6, `Bidir-Unl: 6 upstream-flowing edges (got ${unlimited.edgeIds.size})`);
   assert(!unlimited.edgeIds.has('Table→SP1'), 'Bidir-Unl: Table→SP1 excluded (away from origin)');
 
   // Unlimited both — all edges
-  const unlBoth = traceNode(graph, 'Table', 'both');
+  const unlBoth = traceNodeWithLevels(graph, 'Table', Infinity, Infinity);
   assert(unlBoth.edgeIds.size === 8, `Bidir-UnlBoth: All 8 edges (got ${unlBoth.edgeIds.size})`);
 }
 
@@ -312,7 +311,7 @@ function testVirtualNodeTrace() {
   graph.addEdgeWithKey('SP1→Table1', 'SP1', 'Table1', { type: 'body' });
 
   // Trace from SP1 should include FileNode (upstream) and Table1 (downstream)
-  const traced = traceNode(graph, 'SP1', 'both');
+  const traced = traceNodeWithLevels(graph, 'SP1', Infinity, Infinity);
   assert(traced.nodeIds.has('FileNode'), 'VN-BFS: FileNode reachable upstream from SP1');
   assert(traced.nodeIds.has('Table1'), 'VN-BFS: Table1 reachable downstream from SP1');
   assert(traced.edgeIds.has('FileNode→SP1'), 'VN-BFS: FileNode→SP1 edge in trace');

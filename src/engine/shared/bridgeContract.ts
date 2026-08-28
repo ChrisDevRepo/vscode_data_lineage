@@ -268,10 +268,8 @@ const SerializedFilterStateSchema = z.object({
 /** Serialized visual filter configuration state, persisted and restored across sessions. */
 export type SerializedFilterState = z.infer<typeof SerializedFilterStateSchema>;
 
-const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
-
 /** Semantic highlight color applied to an AI-flagged node or edge. */
-export type AIHighlightColor = z.infer<typeof AIHighlightColorSchema>;
+const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 const AIHighlightGroupSchema = z.object({
   label: z.string(),

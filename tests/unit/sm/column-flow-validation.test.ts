@@ -1046,4 +1046,43 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       `J23 RC5 (documented, not red): writer_proc resolves to the unfiltered entryColumns here — actual: [${writerCols.join(',')}]`,
     );
   });
+
+  // A non-bodied carrier that declares none of the forwarded columns ends the contraction. That is
+  // correct — a bodied neighbour cannot be dispatched with a column the carrier cannot carry — but
+  // the trace then stops short, and with no lead the truncation was invisible: the user saw a chain
+  // that simply ended, with no record of which carrier broke it.
+  it("a carrier declaring none of the forwarded columns leaves a contracted-scope lead", () => {
+    // amount flows origin ← carrier (a table carrying only unrelated_col) ← deep_view.
+    const originNode: LineageNode = makeNode({
+      id: 'origin', schema: 'dbo', name: 'origin_view', type: 'view',
+      columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }],
+    });
+    const carrier: LineageNode = makeNode({
+      id: 'carrier', schema: 'dbo', name: 'carrier', type: 'table',
+      columns: [{ name: 'unrelated_col', type: 'int', nullable: 'NULL', extra: '' }],
+    });
+    const deepView: LineageNode = makeNode({
+      id: 'deep_view', schema: 'dbo', name: 'deep_view', type: 'view',
+      columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }],
+    });
+    const n: LineageNode[] = [originNode, carrier, deepView];
+    const e: Array<[string, string]> = [['carrier', 'origin'], ['deep_view', 'carrier']];
+    const engine = new NavigationEngine(makeModel(n, e, ['dbo']), makeGraph(n, e), () => {}, {});
+    engine.init({ origin: 'origin', question: 'trace amount', direction: 'upstream', targetColumns: ['amount'] });
+
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'carrier', col: 'unrelated_col' }] }],
+    });
+
+    const leads = engine.pendingLeads.filter(l => l.nodeId.toLowerCase() === 'carrier');
+    assert(
+      leads.some(l => l.reason === 'contracted_scope'),
+      `the broken carrier is recorded as a contracted-scope lead (got ${JSON.stringify(engine.pendingLeads.map(l => [l.nodeId, l.reason]))})`,
+    );
+  });
 });

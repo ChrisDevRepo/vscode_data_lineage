@@ -14,7 +14,7 @@ import {
   analyzeCycles,
   analyzeLongestPath,
 } from '../../../src/engine/graphAnalysis';
-import { buildGraph, traceNode } from '../../../src/engine/graphBuilder';
+import { buildGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
 import { filterBySchemas } from '../../../src/engine/dacpacExtractor';
 import { bfsReachable } from '../../../src/engine/graphGuards';
 import { assert, assertEq, loadAdventureWorksModel } from '../helpers/testUtils';
@@ -70,9 +70,9 @@ async function main() {
   assertEq(aiReachable.size, baseline.reachability.undirectedCount, `AW-BFS: Undirected reachability from ${origin} is ${baseline.reachability.undirectedCount}`);
 
   // 5.1 Trace directionality
-  const upTrace = traceNode(graph, origin, 'upstream');
+  const upTrace = traceNodeWithLevels(graph, origin, Infinity, 0);
   assertEq(upTrace.nodeIds.size, baseline.reachability.upstreamCount, `AW-BFS: Upstream trace matches baseline (${baseline.reachability.upstreamCount})`);
-  const downTrace = traceNode(graph, origin, 'downstream');
+  const downTrace = traceNodeWithLevels(graph, origin, 0, Infinity);
   assertEq(downTrace.nodeIds.size, baseline.reachability.downstreamCount, `AW-BFS: Downstream trace matches baseline (${baseline.reachability.downstreamCount})`);
 
   // 6. Pathfinding
@@ -88,7 +88,7 @@ async function main() {
   const salesModel = filterBySchemas(model, new Set(['Sales']));
   const { graph: salesGraph } = buildGraph(salesModel);
   const salesOrigin = '[sales].[vsalesperson]';
-  const salesTrace = traceNode(salesGraph, salesOrigin, 'both');
+  const salesTrace = traceNodeWithLevels(salesGraph, salesOrigin, Infinity, Infinity);
   for (const tid of salesTrace.nodeIds) {
     assert(salesGraph.hasNode(tid), `AW-Trace-Filter: Traced node ${tid} is within the filtered Sales graph`);
   }

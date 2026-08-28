@@ -290,4 +290,81 @@ describe("Supplement Agenda", () => {
   assert(res.skippedDetails[0]?.reason === 'excluded', 'exclusion takes priority over the allowlist axis');
 });
 
+  // Regression: nothing on the production supplement path ever widened the allowlist, so a
+  // schema-boundary lead was a dead end — the follow-up target came straight back as
+  // out_of_allowlist. `admitSupplementTargets` is the consent step the host now runs first,
+  // mirroring the approve gate's extend-then-supplement ordering.
+  it("admitSupplementTargets admits an out-of-allowlist follow-up target.", () => {
+  // A supplement flips the engine out of 'complete', so the with/without comparison needs two.
+  const before = makeCompletedExtEngine().engine.supplementAgenda(['ext1']) as any;
+  assert(before.skipped === 1, 'without consent the target is still refused');
+
+  const { engine } = makeCompletedExtEngine();
+  engine.admitSupplementTargets(['ext1']);
+  const after = engine.supplementAgenda(['ext1']) as any;
+  assert(after.ok === true, 'supplement succeeds once the target has been admitted');
+  assert(after.agendaed === 1, `the admitted target is agendaed (got ${JSON.stringify(after)})`);
+  assert(after.skipped === 0, 'nothing is skipped once the schema is admitted');
+  assert(engine.toJSON().scopeNodeIds.includes('ext1'), 'ext1 is now in scope');
+});
+
+  // A target that breaches BOTH the allowlist and the stated depth defers as 'schema_and_depth'.
+  // That used to be reported as a pure depth boundary, telling the user to approve a depth the
+  // allowlist would still have blocked.
+  it("a schema-and-depth deferral is reported as a schema boundary, keeping the breaching depth.", () => {
+  // dbo chain to depth 2, then an ext node at depth 3; the stated cap is 2, so the last hop
+  // breaches the allowlist and the depth border together.
+  const bothNodes: LineageNode[] = [
+    makeNode({ id: 'b0', schema: 'dbo', name: 'b0', type: 'view' }),
+    makeNode({ id: 'b1', schema: 'dbo', name: 'b1', type: 'view' }),
+    makeNode({ id: 'b2', schema: 'dbo', name: 'b2', type: 'view' }),
+    makeNode({ id: 'bx', schema: 'ext', name: 'bx', type: 'view' }),
+  ];
+  const bothEdges: Array<[string, string]> = [['b0', 'b1'], ['b1', 'b2'], ['b2', 'bx']];
+  const engine = new NavigationEngine(
+    makeModel(bothNodes, bothEdges, ['dbo', 'ext']),
+    makeGraph(bothNodes, bothEdges),
+    () => {},
+    { activeFilter: { schemas: ['dbo'] } as any },
+  );
+  engine.init({ origin: 'b0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+  const succ: Record<string, string | undefined> = { b0: 'b1', b1: 'b2', b2: 'bx' };
+  let safety = 20;
+  while (safety-- > 0) {
+    const ctx = engine.getHopContext() as any;
+    if (ctx.done || !ctx.focus_node) break;
+    const next = succ[ctx.focus_node.id];
+    engine.submitFindings({
+      focus_node_id: ctx.focus_node.id,
+      sections: [{ angle: 'business' as const, text: `analysis for ${ctx.focus_node.id}` }],
+      summary: ctx.focus_node.id,
+      verdict: 'analyze',
+      route_requests: next ? [{ nodeId: next, question: 'trace downstream' }] : [],
+    });
+  }
+
+  // The lead is the persisted record; `deferredQuestions` is a lossy projection back out of it,
+  // so the composite reason is only ever observable through which boundary the lead names.
+  const lead = engine.pendingLeads.find(l => l.nodeId.toLowerCase() === 'bx');
+  assert(lead?.reason === 'schema_boundary', `the lead names the stricter gate (got ${lead?.reason})`);
+  assert(lead?.depth === 3, `the breaching depth is not lost (got ${lead?.depth})`);
+  assert(lead?.schema === 'ext', 'the blocked schema is carried too');
+
+  // A depth-only breach is untouched by the mapping and still reports as a depth boundary.
+  const dboOnly = engine.pendingLeads.find(l => l.reason === 'depth_boundary');
+  assert(dboOnly === undefined, 'the composite breach produced no separate depth-boundary lead');
+});
+
+  it("admitSupplementTargets never overrides an exclusion, and ignores unresolvable ids.", () => {
+  const engine = new NavigationEngine(extModel, extGraph, () => {}, {
+    activeFilter: { schemas: ['dbo'] } as any,
+  });
+  engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 }, excludeNodeIds: ['mid'] });
+  drainExt(engine);
+  engine.admitSupplementTargets(['mid', '[dbo].[doesNotExist]']);
+  const res = engine.supplementAgenda(['mid']) as any;
+  assert(res.skipped === 1, 'consent does not reopen a node the user excluded');
+  assert(res.skippedDetails[0]?.reason === 'excluded', 'the exclusion axis still refuses it');
+});
+
 });
