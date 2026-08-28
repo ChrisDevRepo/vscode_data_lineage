@@ -56,6 +56,23 @@ qualifier, is discarded before edge extraction. A data flow that crosses procedu
 writes `##t`, another reads it) therefore produces no edge between the two procedures, and the
 AI column trace ends at that boundary.
 
+### Known boundaries
+
+Constructs a regex set cannot reach, or reaches only partially. Each is a silent under-capture —
+the object is a real dependency and no edge is emitted — and each is left as is because the
+construct is rare on the supported platforms. Scoped by platform where that matters.
+
+| Construct | Behaviour | Where it applies |
+|---|---|---|
+| `FREETEXTTABLE(dbo.T, col, 'terms')` | the table is not captured | SQL Server, Azure SQL. Full-text search does not exist on Synapse dedicated or Fabric Warehouse |
+| `OPENDATASOURCE(...)...` | nothing is captured, including the four-part table name | SQL Server, Azure SQL only |
+| `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | neither table is captured | partition switching is DDL, not DML; no edge is modelled either way |
+| ANSI-89 comma list followed by `UNION`, `OPTION`, `PIVOT` or `TABLESAMPLE`, or containing a table variable | the whole list fails to normalise, so tables after the first are lost | legacy bodies on any platform |
+| `]]` inside a delimited identifier (`[My]]Table]`) | the identifier is truncated at the first `]` | any platform; Microsoft documents the escape as an oddity |
+
+`CONTAINSTABLE`, `WITH XMLNAMESPACES`, and `CROSS APPLY x.Doc.nodes(...)` were checked and are
+handled correctly — the base table is captured and no phantom reference is produced.
+
 ## XML fallback direction
 
 When the regex set misses a dependency that the dacpac XML or DMV catalog *does* report, the extension still emits the edge — direction inferred from the referenced object's type:
