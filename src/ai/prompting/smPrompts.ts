@@ -19,8 +19,7 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
  * @remarks
  * The per-hop sub-question drives capture depth. Its structural A→B part is
  * engine-derivable (CT auto-generates it via `getColumnLineageQuestionsByNode`, the per-node
- * source of record; `getColumnLineageQuestions` is a diagnostics-only flattened recompute over
- * the same data); the analytical
+ * source of record); the analytical
  * part — what business/technical logic a node applies — is NOT derivable from metadata and
  * must be authored by the AI and carried hop-to-hop. This bullet is the single source for
  * that requirement, rendered in both the BB and CT decision contracts. In CT it feeds the

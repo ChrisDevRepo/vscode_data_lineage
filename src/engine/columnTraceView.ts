@@ -9,7 +9,7 @@
  * mutates the object-view model.
  */
 
-import dagre from '@dagrejs/dagre';
+import { dagreLayout } from './graphBuilder';
 import { normalizeColName } from '../utils/sql';
 import { DEFAULT_CONFIG } from './types';
 
@@ -456,32 +456,19 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     return edge;
   });
 
-  // Reuses graphBuilder's dagreLayout conventions (rankdir/ranksep/nodesep, margins,
-  // setDefaultEdgeLabel) so the column view lays out consistently with the object view.
-  const direction = input.layoutDirection ?? 'LR';
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({
-    rankdir: direction,
-    ranksep: DEFAULT_CONFIG.layout.rankSeparation,
-    nodesep: DEFAULT_CONFIG.layout.nodeSeparation,
-    marginx: 20,
-    marginy: 20,
+  // Laid out by graphBuilder's dagreLayout so the column view shares the object view's
+  // rankdir/separation/margins; only the per-node box differs (rows give variable heights).
+  const boxes = new Map(nodes.map(n => [n.id, { width: n.width, height: n.height }]));
+  const positions = dagreLayout({
+    nodeIds: nodes.map(n => n.id),
+    edges: edges.filter(e => e.source !== e.target).map(e => ({ source: e.source, target: e.target })),
+    config: DEFAULT_CONFIG,
+    direction: input.layoutDirection ?? 'LR',
+    sizeOf: id => boxes.get(id) ?? { width: COLUMN_NODE_WIDTH, height: 0 },
   });
-  g.setDefaultEdgeLabel(() => ({}));
-  for (const node of nodes) g.setNode(node.id, { width: node.width, height: node.height });
-  for (const edge of edges) {
-    if (edge.source !== edge.target) g.setEdge(edge.source, edge.target);
-  }
-
-  try {
-    dagre.layout(g);
-    for (const node of nodes) {
-      const positioned = g.node(node.id);
-      if (positioned) node.position = { x: positioned.x - node.width / 2, y: positioned.y - node.height / 2 };
-    }
-  } catch {
-    // Dagre coordinate assignment can fail on disconnected graphs; nodes keep their {x:0,y:0}
-    // fallback, mirroring graphBuilder's dagreLayout failure handling.
+  for (const node of nodes) {
+    const positioned = positions.get(node.id);
+    if (positioned) node.position = positioned;
   }
 
   return { nodes, edges };

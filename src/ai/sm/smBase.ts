@@ -137,16 +137,6 @@ export interface IHopStateMachine {
   /** Snapshot of per-hop diagnostics (focus, depth, routing counts, tally). */
   getHopDiagnostics(): DiagnosticsSnapshot;
 
-  /**
-   * Derives column lineage sub-questions from edges accumulated in the most recent hop (CT only).
-   *
-   * @remarks
-   * Called after a successful `submitFindings` to generate engine-side lineage questions
-   * for the next hop. Each question names a non-terminal upstream source that still needs
-   * tracing. Returns an empty array when CT is inactive or the hop produced no trackable edges.
-   */
-  getColumnLineageQuestions(): string[];
-
   /** Every captured detail slot in insertion order — diagnostics / telemetry use. */
   getDetailSlots(): DetailSlot[];
 
@@ -703,24 +693,10 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Derives column lineage sub-questions from the most recent hop's edges (CT only).
-   *
-   * @remarks
-   * Delegates to {@link ColumnTracer.getColumnLineageQuestions}; `mode.kind === 'ct'` guarantees the
-   * tracer is present (both are set together at init). Only reached via {@link toJSON} diagnostics —
-   * the live per-hop path reads the tracer directly.
-   */
-  public getColumnLineageQuestions(): string[] {
-    if (!(this.mode.kind === 'ct') || !this.currentFocusNodeId) return [];
-    return this.tracer!.getColumnLineageQuestions(this.currentFocusNodeId, this.hopCount);
-  }
-
-  /**
    * Continuation questions carried on the dequeued {@link AgendaEntry} for the hop currently in
    * flight — set at dispatch in {@link getHopContext}, from that entry's own `lineageQuestions`,
-   * never from whichever node happened to commit most recently. The live per-hop worker message
-   * reads this — not {@link getColumnLineageQuestions}, a diagnostics-only recompute against the
-   * engine's current (already-advanced) focus/hop.
+   * never from whichever node happened to commit most recently. Both the live per-hop worker message
+   * and {@link toJSON} read this, so a restored engine resumes on the questions it was dumped with.
    */
   public get pendingLineageQuestions(): string[] {
     return this._pendingLineageQuestions;

@@ -154,19 +154,6 @@ export class ColumnTracer {
   }
 
   /**
-   * Flat form of {@link getColumnLineageQuestionsByNode} — every continuation question for the hop,
-   * irrespective of which upstream node must answer it. Diagnostics/telemetry use only; the live
-   * per-hop render path reads the grouped form so each node sees only its own questions.
-   *
-   * @param focusId - The id of the focus node.
-   * @param hopCount - The hop count matching the edges to query.
-   * @returns An array of continuation questions for unaccounted upstream columns.
-   */
-  getColumnLineageQuestions(focusId: string, hopCount: number): string[] {
-    return Array.from(this.getColumnLineageQuestionsByNode(focusId, hopCount).values()).flat();
-  }
-
-  /**
    * Validates the submitted column flow, verifying existence of output and upstream columns.
    *
    * @remarks

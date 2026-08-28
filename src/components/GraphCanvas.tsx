@@ -509,6 +509,27 @@ export function GraphCanvas({
   const { fitView, getNode, setCenter, getNodes, getEdges, getViewport, setViewport } = useReactFlow();
   const vscodeApi = useVsCode();
 
+  /**
+   * Object-view nodes to read while the column view is on stage; `null` in the object view.
+   *
+   * @remarks
+   * Assigned during render once the column-view state exists, because the callbacks that read it are
+   * declared above that state. See {@link objectNodes} for why the override is needed.
+   */
+  const columnViewObjectNodesRef = useRef<FlowNode[] | null>(null);
+
+  /**
+   * Node positions in object space, for the callbacks that persist or export them.
+   *
+   * @remarks
+   * React Flow's `getNodes()` returns whatever is mounted, so it yields column-trace nodes while the
+   * column view is active — the same ids in a different coordinate space, which a bookmark would
+   * persist as object positions and a draw.io export would emit as objects. Bookmarks and exports
+   * are object-view artifacts, so they fall back to `localNodes`, the positions that
+   * `onColumnNodesChange` deliberately leaves untouched. The object view is unaffected.
+   */
+  const objectNodes = useCallback(() => columnViewObjectNodesRef.current ?? getNodes(), [getNodes]);
+
   // Pending actions after overview schema expansion (zoom to the revealed object)
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
@@ -573,7 +594,7 @@ export function GraphCanvas({
     const nodeIds = Array.from(trace.tracedNodeIds);
     if (withPositions) {
       const nodeIdSet = new Set(nodeIds);
-      const nodes = getNodes();
+      const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) {
         if (nodeIdSet.has(n.id)) pos[n.id] = n.position;
@@ -582,7 +603,7 @@ export function GraphCanvas({
     } else {
       onSaveTraceBookmark(name, nodeIds, 'trace');
     }
-  }, [onSaveTraceBookmark, trace.tracedNodeIds, getNodes, getViewport]);
+  }, [onSaveTraceBookmark, trace.tracedNodeIds, objectNodes, getViewport]);
 
   const handleSaveAnalysisAsBookmark = useCallback((name: string, withPositions: boolean) => {
     if (!onSaveAnalysisBookmark || !analysisMode) return;
@@ -593,26 +614,26 @@ export function GraphCanvas({
       ? activeGroup.nodeIds
       : analysisMode.result.groups.flatMap(g => g.nodeIds);
     if (withPositions) {
-      const nodes = getNodes();
+      const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) pos[n.id] = n.position;
       onSaveAnalysisBookmark(name, nodeIds, pos, getViewport());
     } else {
       onSaveAnalysisBookmark(name, nodeIds);
     }
-  }, [onSaveAnalysisBookmark, analysisMode, getNodes, getViewport]);
+  }, [onSaveAnalysisBookmark, analysisMode, objectNodes, getViewport]);
 
   const handleSaveAiAsBookmark = useCallback((name: string, withPositions: boolean) => {
     if (!onSaveAiBookmark) return;
     if (withPositions) {
-      const nodes = getNodes();
+      const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) pos[n.id] = n.position;
       onSaveAiBookmark(name, withPositions, pos, getViewport());
     } else {
       onSaveAiBookmark(name, withPositions);
     }
-  }, [onSaveAiBookmark, getNodes, getViewport]);
+  }, [onSaveAiBookmark, objectNodes, getViewport]);
 
   useKeyboardShortcut(SHORTCUT_KEYS.fitView, handleFitView);
 
@@ -723,26 +744,26 @@ export function GraphCanvas({
 
   // Export object nodes in detail views and cluster nodes in schema overview; empty exports no-op.
   const handleExportDrawio = useCallback(() => {
-    const objectNodes: FlowNode<CustomNodeData>[] = [];
+    const exportObjectNodes: FlowNode<CustomNodeData>[] = [];
     const clusterNodes: FlowNode<SchemaNodeData>[] = [];
-    const exportNodes = getNodes();
+    const exportNodes = objectNodes();
     const exportEdges = getEdges();
     for (const n of exportNodes) {
       if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
-      else objectNodes.push(n as FlowNode<CustomNodeData>);
+      else exportObjectNodes.push(n as FlowNode<CustomNodeData>);
     }
     import('../export/drawioExporter').then(({ exportToDrawio, exportSchemaOverviewToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
-      const xml = (objectNodes.length === 0 && clusterNodes.length > 0)
+      const xml = (exportObjectNodes.length === 0 && clusterNodes.length > 0)
         ? exportSchemaOverviewToDrawio(clusterNodes, exportEdges, schemas)
-        : exportToDrawio(objectNodes, exportEdges, schemas, clusterNodes);
+        : exportToDrawio(exportObjectNodes, exportEdges, schemas, clusterNodes);
       if (!xml) return;
       const base = (sourceName?.replace(/\.dacpac$/i, '') || 'lineage').trim().replace(/[\\/:*?"<>|]/g, '_');
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [getNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [objectNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   useEffect(() => {
@@ -945,6 +966,7 @@ export function GraphCanvas({
   }, [activeAiMetadata, flowNodes]);
 
   const columnViewActive = columnView && !!columnTraceView;
+  columnViewObjectNodesRef.current = columnViewActive ? localNodes : null;
 
   /**
    * Node-and-column keys reachable from the hovered row in either direction.
@@ -1024,25 +1046,42 @@ export function GraphCanvas({
     }
   }, [columnTraceView]);
 
+  /**
+   * Per-node data for the column view, keyed by node id.
+   *
+   * @remarks
+   * Deliberately excludes `columnPositions`: React Flow emits a position change per drag frame, so
+   * deriving this inside `displayNodes` would rebuild every node's data object on every frame and
+   * defeat the `React.memo` on `ColumnTraceNode`. Only `position` may vary with a drag.
+   */
+  const columnNodeData = useMemo((): Map<string, ColumnTraceNodeData> => {
+    const byNode = new Map<string, ColumnTraceNodeData>();
+    if (!columnTraceView) return byNode;
+    const statesByRow = resolveRowLineStates(columnTraceView.edges);
+    for (const view of columnTraceView.nodes) {
+      const rowLineStates: Record<string, ColumnLineState> = {};
+      for (const row of view.rows) {
+        const state = statesByRow.get(columnRowKey(view.id, row.name));
+        if (state) rowLineStates[row.name] = state;
+      }
+      const onPath = hoveredColumnPath
+        ? view.rows.find(r => hoveredColumnPath.has(columnRowKey(view.id, r.name)))?.name
+        : undefined;
+      byNode.set(view.id, {
+        view,
+        rowsVisible: notesVisible,
+        rowLineStates,
+        onColumnHover: handleColumnHover,
+        ...(onPath ? { hoveredColumn: onPath } : {}),
+      });
+    }
+    return byNode;
+  }, [columnTraceView, hoveredColumnPath, notesVisible, handleColumnHover]);
+
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
-      const statesByRow = resolveRowLineStates(columnTraceView.edges);
       return columnTraceView.nodes.map(view => {
-        const rowLineStates: Record<string, ColumnLineState> = {};
-        for (const row of view.rows) {
-          const state = statesByRow.get(columnRowKey(view.id, row.name));
-          if (state) rowLineStates[row.name] = state;
-        }
-        const onPath = hoveredColumnPath
-          ? view.rows.find(r => hoveredColumnPath.has(columnRowKey(view.id, r.name)))?.name
-          : undefined;
-        const data: ColumnTraceNodeData = {
-          view,
-          rowsVisible: notesVisible,
-          rowLineStates,
-          onColumnHover: handleColumnHover,
-          ...(onPath ? { hoveredColumn: onPath } : {}),
-        };
+        const data = columnNodeData.get(view.id)!;
         return {
           id: view.id,
           type: 'columnTraceNode',
@@ -1083,7 +1122,7 @@ export function GraphCanvas({
         },
       };
     });
-  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnPositions, hoveredColumnPath, handleColumnHover]);
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
 
   const displayEdges = useMemo(() => {
     if (columnViewActive && columnTraceView) {

@@ -510,7 +510,7 @@ describe("Column Flow Validation", () => {
   for (const e of res.stagedEdges) e.hop = 1;
   tracer.state.edges.push(...res.stagedEdges);
 
-  const questions = tracer.getColumnLineageQuestions('focusview', 1);
+  const questions = Array.from(tracer.getColumnLineageQuestionsByNode('focusview', 1).values()).flat();
   assertEq(questions.length, 2, 'WS4a: every real upstream column edge spawns a continuation question');
   assert(questions.some(q => q.includes('valuesrc')) && questions.some(q => q.includes('filtersrc')), 'WS4a: both upstream nodes are represented');
 });

@@ -542,27 +542,44 @@ export function applyTraceToFlow(
   return { nodes, edges, graph: traceGraph };
 }
 
-interface LayoutInput {
+/**
+ * Input to {@link dagreLayout}.
+ *
+ * @remarks
+ * `direction` and `sizeOf` exist for callers that lay out a non-object view — the column view
+ * carries its own direction and variable row heights. Both participate in the layout cache key.
+ */
+export interface LayoutInput {
   nodeIds: string[];
   edges: Array<{ source: string; target: string }>;
   config: ExtensionConfig;
   ranker?: string;
+  /** Overrides `config.layout.direction`. */
+  direction?: string;
+  /** Per-node box; defaults to the uniform object-view node size. */
+  sizeOf?: (id: string) => { width: number; height: number };
 }
 
 const LAYOUT_CACHE_SIZE = 12;
 const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
 
-function layoutCacheKey(nodeIds: string[], edges: Array<{ source: string; target: string }>, config: ExtensionConfig, ranker?: string): string {
+function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf }: LayoutInput): string {
   const sortedNodes = [...nodeIds].sort();
   const sortedEdges = edges.map(e => `${e.source}→${e.target}`).sort();
-  return `${config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}`;
+  const sizes = sizeOf ? sortedNodes.map(id => { const s = sizeOf(id); return `${s.width}x${s.height}`; }).join(',') : '';
+  return `${direction ?? config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}|${sizes}`;
 }
 
 /**
  * Computes spatial positions using the Dagre layout engine with LRU caching.
+ *
+ * @param input - Nodes, edges, and layout configuration; see {@link LayoutInput}.
+ *
+ * @returns Top-left position per node, or an empty map when Dagre fails.
  */
-function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<string, { x: number; y: number }> {
-  const key = layoutCacheKey(nodeIds, edges, config, ranker);
+export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: number }> {
+  const { nodeIds, edges, config, ranker, direction, sizeOf } = input;
+  const key = layoutCacheKey(input);
   const cached = layoutCache.find(e => e.key === key);
   if (cached) {
     layoutCache.splice(layoutCache.indexOf(cached), 1);
@@ -572,7 +589,7 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
 
   const g = new dagre.graphlib.Graph();
   g.setGraph({
-    rankdir: config.layout.direction,
+    rankdir: direction ?? config.layout.direction,
     ranksep: config.layout.rankSeparation,
     nodesep: config.layout.nodeSeparation,
     ...(ranker && { ranker }),
@@ -581,7 +598,7 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
   });
   g.setDefaultEdgeLabel(() => ({}));
 
-  for (const id of nodeIds) g.setNode(id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  for (const id of nodeIds) g.setNode(id, sizeOf ? sizeOf(id) : { width: NODE_WIDTH, height: NODE_HEIGHT });
   for (const { source, target } of edges) g.setEdge(source, target);
 
   try {
@@ -589,14 +606,14 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
   } catch (e) {
     // Dagre coordinate assignment crashes on disconnected graphs with longest-path ranker.
     // Return empty positions; toFlowResult falls back to {x:0,y:0} per-node.
-    window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}` });
+    if (typeof window !== 'undefined') window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}` });
     return new Map();
   }
 
   const positions = new Map<string, { x: number; y: number }>();
   for (const id of g.nodes()) {
     const n = g.node(id);
-    if (n) positions.set(id, { x: n.x - NODE_WIDTH / 2, y: n.y - NODE_HEIGHT / 2 });
+    if (n) positions.set(id, { x: n.x - n.width / 2, y: n.y - n.height / 2 });
   }
 
   layoutCache.unshift({ key, positions });
