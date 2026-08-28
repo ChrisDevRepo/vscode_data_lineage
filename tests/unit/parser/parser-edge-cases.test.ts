@@ -1105,3 +1105,24 @@ describe('UPDATE alias target does not cross a statement boundary', () => {
     },
   ]);
 });
+
+describe('CREATE TABLE is not a function call', () => {
+  table([
+    {
+      name: 'a permanent table created in the body is not captured as a source',
+      // extract_udf_calls matches any `schema.name(`, and the suppression that rescues
+      // `INSERT INTO dbo.T (cols)` only drops a UDF source that is also a target — which a
+      // plain CREATE TABLE never is. Without an exclusion the created table becomes a read,
+      // drawing the dependency arrow backwards.
+      sql: 'CREATE TABLE dbo.StageBatch (id INT NOT NULL); SELECT id FROM dbo.Source;',
+      exactSources: ['dbo.Source'],
+      noSources: ['stagebatch'],
+      sourceCount: 1,
+    },
+    {
+      name: 'a genuine schema-qualified UDF call is still captured',
+      sql: 'SELECT dbo.fn_Rate(o.Amount) FROM dbo.Orders o;',
+      sources: ['fn_Rate'],
+    },
+  ]);
+});

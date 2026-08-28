@@ -51,9 +51,9 @@ rules:
     enabled: true
     priority: 10
     category: source
-    pattern: "((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\("
+    pattern: "(?<![\\w.\\]])(?<!\\bCREATE\\s+TABLE\\s+)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\("
     flags: gi
-    description: "Inline scalar UDF calls (schema.func())"
+    description: "Inline scalar UDF calls (schema.func()) — a CREATE TABLE header is not a call"
 
   # ── Target extraction ──────────────────────────────────────────────────────
   - name: extract_targets_dml
