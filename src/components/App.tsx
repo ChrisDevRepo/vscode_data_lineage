@@ -1422,6 +1422,7 @@ export function App() {
     schemaOverviewRenderedCount: schemaNodes.length,
     expandedSchemaViewRenderedCount,
     scopedModeActive: isTraceActive || !!aiPreview,
+    scopedRenderedCount: tracedNodes.length,
   });
 
   if (displayMode === 'renderLimit') {
@@ -1430,8 +1431,9 @@ export function App() {
         <div className="text-center p-8 max-w-md" style={{ color: 'var(--ln-fg)' }}>
           <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
           <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)' }}>
-            The current filter selects {renderedCount.toLocaleString()} nodes (limit: {config.renderLimit.toLocaleString()}).
-            Select schema or type filters to reduce scope, or adjust the render limit in settings.
+            {isTraceActive || aiPreview
+              ? `This view selects ${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()}). Reduce the trace depth, narrow the path, or adjust the render limit in settings.`
+              : `The current filter selects ${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()}). Select schema or type filters to reduce scope, or adjust the render limit in settings.`}
           </div>
         </div>
       </div>

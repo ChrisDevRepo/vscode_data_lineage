@@ -103,6 +103,22 @@ describe('deriveGraphDisplayMode', () => {
       mode: 'scoped',
     },
     {
+      rule: 'a scope within the render limit renders even when the base surface is far over it',
+      input: {
+        graphMode: 'full', filteredCount: 5000, renderLimitHit: 5000,
+        schemaOverviewRenderedCount: 10, scopedModeActive: true, scopedRenderedCount: 40,
+      },
+      mode: 'scoped',
+    },
+    {
+      rule: 'a scope over the render limit is blocked — an all-levels trace reaches the whole model',
+      input: {
+        graphMode: 'full', filteredCount: 1000, renderLimitHit: 1000,
+        schemaOverviewRenderedCount: 10, scopedModeActive: true, scopedRenderedCount: 1000,
+      },
+      mode: 'renderLimit',
+    },
+    {
       rule: 'Object View over renderLimit shows the limit screen instead of silently switching views',
       input: {
         graphMode: 'full', filteredCount: 751, renderLimitHit: 751, schemaOverviewRenderedCount: 2,
