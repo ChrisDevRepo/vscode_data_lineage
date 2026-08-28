@@ -367,4 +367,32 @@ describe("Supplement Agenda", () => {
   assert(res.skippedDetails[0]?.reason === 'excluded', 'the exclusion axis still refuses it');
 });
 
+  // Regression: admitSupplementTargets read every resolvable id's schema, so naming an excluded
+  // node widened sessionAllowedSchemas on its behalf and let a sibling in that schema through a
+  // border the user never opened. Consent is read only from ids the exclusion set still allows.
+  it("admitSupplementTargets does not widen the allowlist on behalf of an excluded id.", () => {
+  const siblingNodes: LineageNode[] = [
+    makeNode({ id: 'o',    schema: 'dbo', name: 'o',    type: 'view' }),
+    makeNode({ id: 'mid',  schema: 'dbo', name: 'mid',  type: 'view' }),
+    makeNode({ id: 'ext1', schema: 'ext', name: 'ext1', type: 'view' }),
+    makeNode({ id: 'ext2', schema: 'ext', name: 'ext2', type: 'view' }),
+  ];
+  const siblingEdges: Array<[string, string]> = [['o', 'mid'], ['mid', 'ext1'], ['mid', 'ext2']];
+  const engine = new NavigationEngine(
+    makeModel(siblingNodes, siblingEdges, ['dbo', 'ext']),
+    makeGraph(siblingNodes, siblingEdges),
+    () => {},
+    { activeFilter: { schemas: ['dbo'] } as any },
+  );
+  engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 }, excludeNodeIds: ['ext1'] });
+  drainExt(engine);
+  assert(engine.status === 'complete', 'sibling engine completes');
+
+  engine.admitSupplementTargets(['ext1']);
+  const res = engine.supplementAgenda(['ext2']) as any;
+  assert(res.skipped === 1, 'the sibling is still refused (got ' + JSON.stringify(res) + ')');
+  assert(res.agendaed === 0, 'the sibling is not agendaed');
+  assert(res.skippedDetails[0]?.reason === 'out_of_allowlist', 'the ext schema was never admitted');
+});
+
 });

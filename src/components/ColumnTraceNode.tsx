@@ -105,7 +105,6 @@ function ColumnTraceRowLine({
   return (
     <div
       style={style}
-      role="button"
       tabIndex={0}
       aria-label={ariaLabel}
       onMouseEnter={onHoverStart}

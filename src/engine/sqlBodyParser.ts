@@ -227,7 +227,7 @@ export function loadRules(config: RawParseRulesConfig): LoadRulesResult {
   for (let i = 0; i < config.rules.length; i++) {
     const raw = config.rules[i];
 
-    if (raw && typeof raw === 'object' && !(raw as ParseRule).enabled) continue;
+    if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
 
     const check = validateRule(raw, i);
     if (check.valid) {

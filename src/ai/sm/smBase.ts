@@ -1535,7 +1535,7 @@ export class NavigationEngine implements IHopStateMachine {
     for (const raw of nodeIds) {
       const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
       const node = id ? this.nodeMap.get(id) : undefined;
-      if (node) this.extendAllowedSchemas(node.schema);
+      if (node && !this.excludedNodeIds.has(node.id.toLowerCase())) this.extendAllowedSchemas(node.schema);
     }
   }
 
