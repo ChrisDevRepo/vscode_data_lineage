@@ -789,7 +789,7 @@
     "@langchain/core": "1.2.3",
     "@langchain/langgraph": "1.4.10",
     "@monaco-editor/react": "4.7.0",
-    "@xyflow/react": "12.11.3",
+    "@xyflow/react": "12.11.5",
     "dompurify": "3.4.14",
     "fast-xml-parser": "5.10.1",
     "graphology": "0.26.0",

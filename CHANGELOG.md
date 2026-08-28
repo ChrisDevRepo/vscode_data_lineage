@@ -10,6 +10,7 @@
 - Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.
 
 ### Fixed
+- Upgraded the graph rendering library and corrected large-graph rendering: dragging stays responsive, and a trace past the render limit reports it instead of drawing an oversized view.
 - Formulas in AI descriptions render as mathematics, inline and as blocks.
 - Depth follows data-flow direction, so a shared audit table no longer makes objects look closer.
 - Repeated identical tool calls no longer loop a turn without an answer.
