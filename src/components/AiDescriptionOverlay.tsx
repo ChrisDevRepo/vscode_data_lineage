@@ -36,14 +36,31 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const [maximized, setMaximized] = useState(false);
   const [fontScale, setFontScale] = useState<0 | 1 | 2>(0);
 
-  function handleMarkdownClick(e: React.MouseEvent<HTMLDivElement>) {
-    const anchor = (e.target as HTMLElement).closest('a');
+  function focusNodeFromEvent(target: EventTarget | null): (() => void) | null {
+    const anchor = (target as HTMLElement | null)?.closest('a');
     const href = anchor?.getAttribute('href');
     if (!href?.startsWith(FOCUS_NODE_HREF_PREFIX) || !onFocusNode) {
-      return;
+      return null;
     }
+    const nodeId = decodeURIComponent(href.slice(FOCUS_NODE_HREF_PREFIX.length));
+    return () => onFocusNode(nodeId);
+  }
+
+  function handleMarkdownClick(e: React.MouseEvent<HTMLDivElement>) {
+    const focus = focusNodeFromEvent(e.target);
+    if (!focus) return;
     e.preventDefault();
-    onFocusNode(decodeURIComponent(href.slice(FOCUS_NODE_HREF_PREFIX.length)));
+    focus();
+  }
+
+  // Enter reaches the click handler through the anchor's own activation behaviour; Space does not
+  // activate a link, so without this the keyboard path is Enter-only.
+  function handleMarkdownKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== ' ') return;
+    const focus = focusNodeFromEvent(e.target);
+    if (!focus) return;
+    e.preventDefault();
+    focus();
   }
 
   /**
@@ -162,6 +179,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
               <div
                 className="ln-ai-description-md"
                 onClick={handleMarkdownClick}
+                onKeyDown={handleMarkdownKeyDown}
                 dangerouslySetInnerHTML={{ __html: html }}
               />
             )}

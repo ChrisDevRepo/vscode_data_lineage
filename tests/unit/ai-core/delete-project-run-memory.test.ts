@@ -165,3 +165,78 @@ describe('delete-project run memory cleanup', () => {
     expect(saveProjectStore).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * A save under an existing profile id replaces that profile in place, so writing the run record
+ * without clearing it would leave a record filed under an id whose view has since changed — and
+ * `lineage_get_screen_state` would recall it as if it still described the applied bookmark.
+ */
+describe('save-view run memory', () => {
+  it('clears the stale record when the saved profile no longer resolves to a captured run', async () => {
+    const store = seededStore();
+    const globalState = fakeMemento(['bm-1', 'bm-2']);
+    const host = fakeHost();
+    // getSession() yields no presentationArtifact, exactly as a fresh window does — so
+    // buildStoredRun cannot rebuild the record for this id.
+    const { handlers } = buildHandlers(store, globalState, host);
+
+    await handlers['save-view']({
+      type: 'save-view',
+      projectId: 'p1',
+      profile: filterProfile('bm-1'),
+    } as never);
+
+    expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(false);
+    expect(globalState.values.has(aiRunStorageKey('bm-2'))).toBe(true);
+  });
+
+  it('leaves every other profile\'s run memory untouched', async () => {
+    const store = seededStore();
+    const globalState = fakeMemento(['bm-1', 'bm-2', 'bm-3']);
+    const host = fakeHost();
+    const { handlers } = buildHandlers(store, globalState, host);
+
+    await handlers['save-view']({
+      type: 'save-view',
+      projectId: 'p1',
+      profile: filterProfile('bm-2'),
+    } as never);
+
+    expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(true);
+    expect(globalState.values.has(aiRunStorageKey('bm-2'))).toBe(false);
+    expect(globalState.values.has(aiRunStorageKey('bm-3'))).toBe(true);
+  });
+
+  it('is a no-op for a profile id that never carried a run record', async () => {
+    const store = seededStore();
+    const globalState = fakeMemento(['bm-3']);
+    const host = fakeHost();
+    const { handlers, saveProjectStore } = buildHandlers(store, globalState, host);
+
+    await expect(handlers['save-view']({
+      type: 'save-view',
+      projectId: 'p1',
+      profile: { ...filterProfile('bm-9'), source: 'manual', aiMetadata: undefined },
+    } as never)).resolves.toBeUndefined();
+
+    expect(globalState.values.has(aiRunStorageKey('bm-9'))).toBe(false);
+    expect(globalState.values.has(aiRunStorageKey('bm-3'))).toBe(true);
+    expect(saveProjectStore).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fail the save when clearing the record rejects', async () => {
+    const store = seededStore();
+    const globalState = fakeMemento(['bm-1'], ['bm-1']);
+    const host = fakeHost();
+    const { handlers, saveProjectStore } = buildHandlers(store, globalState, host);
+
+    await expect(handlers['save-view']({
+      type: 'save-view',
+      projectId: 'p1',
+      profile: filterProfile('bm-1'),
+    } as never)).resolves.toBeUndefined();
+
+    expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(true);
+    expect(saveProjectStore).toHaveBeenCalledTimes(1);
+  });
+});

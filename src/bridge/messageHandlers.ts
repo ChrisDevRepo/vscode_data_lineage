@@ -708,6 +708,12 @@ export function createMessageHandlers(
           if (run) {
             const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
             logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
+          } else {
+            // A save under an existing id replaces that profile in place, so a record filed under it
+            // by an earlier run would survive and be recalled against a scope it no longer describes.
+            // Writing and clearing are the two halves of one decision. A no-op for a profile that
+            // never had a record.
+            await clearStoredRun(context.globalState, msg.profile.id);
           }
         } catch (runErr) {
           logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);

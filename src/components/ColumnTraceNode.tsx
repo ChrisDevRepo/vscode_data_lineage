@@ -57,6 +57,7 @@ function rowCenter(index: number): number {
 
 function ColumnTraceRowLine({
   row,
+  nodeTitle,
   isTransformNode,
   hoveredColumn,
   lineState,
@@ -64,8 +65,11 @@ function ColumnTraceRowLine({
   transition,
   onHoverStart,
   onHoverEnd,
+  onFocusStart,
+  onFocusEnd,
 }: {
   row: ColumnTraceRow;
+  nodeTitle: string;
   isTransformNode: boolean;
   hoveredColumn: string | undefined;
   lineState: ColumnLineState | undefined;
@@ -73,6 +77,8 @@ function ColumnTraceRowLine({
   transition: string;
   onHoverStart: () => void;
   onHoverEnd: () => void;
+  onFocusStart: () => void;
+  onFocusEnd: () => void;
 }) {
   const isHoveredRow = hoveredColumn === row.name;
   const isDeemphasised = hoveredColumn !== undefined && !isHoveredRow;
@@ -86,18 +92,26 @@ function ColumnTraceRowLine({
     padding: '0 8px',
     opacity: isDeemphasised ? 0.5 : 1,
     backgroundColor: isHoveredRow ? 'var(--ln-hover-bg)' : 'transparent',
+    // Focus only — a pointer user already has the hover background and weight to go by, and
+    // painting the focus indicator on hover would also let a mouse move clear a keyboard position.
     boxShadow: focused ? 'inset 0 0 0 2px var(--ln-focus-border)' : undefined,
     transition,
   };
 
+  // Both glyphs are aria-hidden, so the row's own label is the only thing announced; it names the
+  // object as well as the column, since a bare column name is ambiguous across a multi-node trace.
+  const ariaLabel = `${nodeTitle} column ${row.name}${label ? `, ${label}` : ''}`;
+
   return (
     <div
       style={style}
+      role="button"
       tabIndex={0}
+      aria-label={ariaLabel}
       onMouseEnter={onHoverStart}
       onMouseLeave={onHoverEnd}
-      onFocus={onHoverStart}
-      onBlur={onHoverEnd}
+      onFocus={onFocusStart}
+      onBlur={onFocusEnd}
     >
       {isTransformNode ? (
         <span aria-hidden="true" style={{ fontSize: 9, color: 'var(--ln-fg-muted)', width: 8, textAlign: 'center', flexShrink: 0 }}>▹</span>
@@ -192,13 +206,16 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
             <ColumnTraceRowLine
               key={row.name}
               row={row}
+              nodeTitle={`${view.schema}.${view.label}`}
               isTransformNode={view.isTransformNode}
               hoveredColumn={data.hoveredColumn}
               lineState={data.rowLineStates?.[row.name]}
               focused={focusedRow === row.name}
               transition={transition}
-              onHoverStart={() => { setFocusedRow(row.name); hoverStart(row.name); }}
-              onHoverEnd={() => { setFocusedRow(null); hoverEnd(); }}
+              onHoverStart={() => hoverStart(row.name)}
+              onHoverEnd={() => hoverEnd()}
+              onFocusStart={() => { setFocusedRow(row.name); hoverStart(row.name); }}
+              onFocusEnd={() => { setFocusedRow(null); hoverEnd(); }}
             />
           ))
         ) : (

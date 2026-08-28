@@ -218,6 +218,36 @@ export function resolveVerdictLineState(
   return 'unknown';
 }
 
+/**
+ * Reduces every edge arriving at a row to that row's single line state.
+ *
+ * @remarks
+ * A `fan-in` row carries several inbound edges by construction, so a per-row indicator must reduce
+ * them rather than keep whichever the relation list happened to end on — that would make the glyph
+ * depend on hop order rather than on the trace. A transforming contributor makes the value arriving
+ * at the row a transformation; `passthrough` requires every contributor to agree; a disagreement
+ * that involves no transformation is `unknown`, which renders no glyph, matching the honest-unknown
+ * rule {@link resolveVerdictLineState} already applies per edge.
+ *
+ * @param edges - The view's per-column edges.
+ * @returns Line state keyed by the {@link columnRowKey} of each edge's target row.
+ */
+export function resolveRowLineStates(
+  edges: readonly ColumnTraceViewEdge[],
+): Map<string, ColumnLineState> {
+  const byRow = new Map<string, ColumnLineState>();
+  for (const edge of edges) {
+    const key = columnRowKey(edge.target, edge.targetColumn);
+    const seen = byRow.get(key);
+    if (seen === undefined || seen === edge.state) {
+      byRow.set(key, edge.state);
+      continue;
+    }
+    byRow.set(key, seen === 'transformation' || edge.state === 'transformation' ? 'transformation' : 'unknown');
+  }
+  return byRow;
+}
+
 /** One inbound relation, reduced to what shape derivation needs from it. */
 interface RowRelation {
   /** Lower-cased canonical id of the node at the other end of the relation. */

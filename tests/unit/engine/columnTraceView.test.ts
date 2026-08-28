@@ -7,8 +7,12 @@ import { describe, it, expect } from 'vitest';
 import {
   buildColumnTraceView,
   columnHandleId,
+  columnRowKey,
+  resolveRowLineStates,
   resolveVerdictLineState,
+  type ColumnLineState,
   type ColumnTraceRelation,
+  type ColumnTraceViewEdge,
   type ColumnTraceViewInput,
   type ColumnTraceViewObject,
 } from '../../../src/engine/columnTraceView';
@@ -188,5 +192,82 @@ describe('columnTraceView', () => {
     const view = buildColumnTraceView(input);
     expect(view.nodes).toEqual([]);
     expect(view.edges).toEqual([]);
+  });
+});
+
+describe('resolveRowLineStates', () => {
+  function edge(target: string, targetColumn: string, state: ColumnLineState): ColumnTraceViewEdge {
+    return {
+      id: `${target}:${targetColumn}:${state}`,
+      source: 'dbo.s',
+      sourceHandle: columnHandleId(targetColumn, 'source'),
+      sourceColumn: targetColumn,
+      target,
+      targetHandle: columnHandleId(targetColumn, 'target'),
+      targetColumn,
+      state,
+    };
+  }
+
+  it('keeps the state of a row fed by a single edge', () => {
+    const states = resolveRowLineStates([edge('dbo.t', 'Amount', 'passthrough')]);
+    expect(states.get(columnRowKey('dbo.t', 'Amount'))).toBe('passthrough');
+  });
+
+  it('resolves a fan-in row to transformation when any contributor transforms', () => {
+    const states = resolveRowLineStates([
+      edge('dbo.t', 'NetAmount', 'passthrough'),
+      edge('dbo.t', 'NetAmount', 'transformation'),
+    ]);
+    expect(states.get(columnRowKey('dbo.t', 'NetAmount'))).toBe('transformation');
+  });
+
+  it('is independent of edge order — the glyph must not follow hop order', () => {
+    const forward = resolveRowLineStates([
+      edge('dbo.t', 'NetAmount', 'transformation'),
+      edge('dbo.t', 'NetAmount', 'passthrough'),
+    ]);
+    const reversed = resolveRowLineStates([
+      edge('dbo.t', 'NetAmount', 'passthrough'),
+      edge('dbo.t', 'NetAmount', 'transformation'),
+    ]);
+    expect(forward.get(columnRowKey('dbo.t', 'NetAmount')))
+      .toBe(reversed.get(columnRowKey('dbo.t', 'NetAmount')));
+  });
+
+  it('keeps passthrough only when every contributor agrees', () => {
+    const states = resolveRowLineStates([
+      edge('dbo.t', 'Qty', 'passthrough'),
+      edge('dbo.t', 'Qty', 'passthrough'),
+    ]);
+    expect(states.get(columnRowKey('dbo.t', 'Qty'))).toBe('passthrough');
+  });
+
+  it('degrades a passthrough/unknown disagreement to unknown rather than claiming either', () => {
+    const states = resolveRowLineStates([
+      edge('dbo.t', 'Qty', 'passthrough'),
+      edge('dbo.t', 'Qty', 'unknown'),
+    ]);
+    expect(states.get(columnRowKey('dbo.t', 'Qty'))).toBe('unknown');
+  });
+
+  it('keys rows by normalised column identity so a bracketed spelling lands on the same row', () => {
+    const states = resolveRowLineStates([
+      edge('dbo.t', '[Amount]', 'transformation'),
+    ]);
+    expect(states.get(columnRowKey('dbo.t', 'amount'))).toBe('transformation');
+  });
+
+  it('scopes rows per node — the same column name on two nodes stays separate', () => {
+    const states = resolveRowLineStates([
+      edge('dbo.t', 'Amount', 'passthrough'),
+      edge('dbo.u', 'Amount', 'transformation'),
+    ]);
+    expect(states.get(columnRowKey('dbo.t', 'Amount'))).toBe('passthrough');
+    expect(states.get(columnRowKey('dbo.u', 'Amount'))).toBe('transformation');
+  });
+
+  it('returns an empty map for no edges', () => {
+    expect(resolveRowLineStates([]).size).toBe(0);
   });
 });

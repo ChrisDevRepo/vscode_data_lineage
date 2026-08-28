@@ -357,6 +357,24 @@ function normalizePresentSectionLabel(label: string): string {
 }
 
 /**
+ * Encodes a node id for the `#focus-node:` destination of an engine-assembled object link.
+ *
+ * @remarks
+ * A bracketed SQL identifier may legally contain characters that break the link on either side of
+ * the wire. `encodeURIComponent` covers `%`, which raw would make the overlay's `decodeURIComponent`
+ * throw a `URIError` in the click handler (`Discount%`) or silently resolve to a different id
+ * (`Rate%20Card`). It deliberately leaves `(` and `)` alone, so those are escaped after it: an
+ * unbalanced `)` terminates a markdown link destination and truncates the href. Both escapes are
+ * ordinary percent sequences, so the overlay's existing single `decodeURIComponent` reverses them.
+ *
+ * @param id - Canonical node id from the model.
+ * @returns The id as a markdown-safe, `decodeURIComponent`-reversible link destination.
+ */
+function encodeFocusNodeId(id: string): string {
+  return encodeURIComponent(id).replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+/**
  * Builds the rendered description markdown from the AI's structured input parts.
  *
  * @remarks
@@ -442,7 +460,7 @@ export function orderAndAssemble(
       const links = nodeIds
         .map(id => opts.nodeMap!.get(id))
         .filter((node): node is { id: string; name: string } => !!node)
-        .map(node => `[${node.name}](#focus-node:${node.id})`);
+        .map(node => `[${node.name}](#focus-node:${encodeFocusNodeId(node.id)})`);
       if (links.length > 0) objectHeadings = `### Objects ${links.join(', ')}\n\n`;
     }
     parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);

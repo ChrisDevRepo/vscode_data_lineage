@@ -38,6 +38,50 @@ describe('assembled description — the model\'s bytes reach the renderer', () =
   }
 });
 
+/**
+ * The engine writes the `### Objects` link header and the overlay decodes the href on click, so the
+ * two must agree on the encoding. A bracketed SQL identifier may legally contain `%` or `)`, which
+ * raw would throw a `URIError` in the click handler, resolve to a different id, or terminate the
+ * markdown link before the href is complete.
+ */
+describe('focus-node object links round-trip to the id the overlay resolves', () => {
+  /** The overlay's own decode step, mirrored from `AiDescriptionOverlay.handleMarkdownClick`. */
+  function resolvedIds(markdown: string): string[] {
+    const host = document.createElement('div');
+    host.innerHTML = renderAiMarkdown(markdown);
+    return Array.from(host.querySelectorAll<HTMLAnchorElement>('a[href^="#focus-node:"]'))
+      .map(anchor => decodeURIComponent(anchor.getAttribute('href')!.slice('#focus-node:'.length)));
+  }
+
+  function assembleLinkFor(id: string, name: string): string {
+    const { description } = orderAndAssemble(
+      [{ label: 'Result', text: 'Body.', node_ids: [id] }],
+      { nodeMap: new Map([[id, { id, name }]]) },
+    );
+    return description;
+  }
+
+  const ids: ReadonlyArray<readonly [string, string]> = [
+    ['[dbo].[factsales]', 'FactSales'],
+    ['[dbo].[discount%]', 'Discount%'],
+    ['[dbo].[rate%20card]', 'Rate%20Card'],
+    ['[dbo].[foo)bar]', 'Foo)Bar'],
+    ['[dbo].[order (eu)]', 'Order (EU)'],
+  ];
+
+  for (const [id, name] of ids) {
+    it(`resolves back to ${id}`, () => {
+      expect(resolvedIds(assembleLinkFor(id, name))).toEqual([id]);
+    });
+  }
+
+  it('emits exactly one link per node id and survives sanitization', () => {
+    const description = assembleLinkFor('[dbo].[discount%]', 'Discount%');
+    expect(description).toContain('### Objects ');
+    expect(resolvedIds(description)).toHaveLength(1);
+  });
+});
+
 describe('intro and closing reach the renderer unchanged', () => {
   for (const { name, markdown } of MATH_PARITY_CASES) {
     it(`carries intro and closing byte-identical: ${name}`, () => {

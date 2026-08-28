@@ -47,6 +47,7 @@ import { ColumnTraceNode, type ColumnTraceNodeData } from './ColumnTraceNode';
 import {
   buildColumnTraceView,
   columnRowKey,
+  resolveRowLineStates,
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
@@ -1006,9 +1007,17 @@ export function GraphCanvas({
     setHoveredColumn(null);
   }, []);
 
-  // A view with no column findings has no column mode to be in; drop back rather than render empty.
+  // Hand-placed column nodes belong to the relation set that produced the layout, so only a new
+  // relation set invalidates them. Keying this on `columnTraceView` would also fire on every
+  // re-derivation of the rendered node array — a filter toggle would silently discard the drags
+  // `onColumnNodesChange` exists to keep.
+  const columnRelations = activeAiMetadata?.columnAspect;
   useEffect(() => {
     setColumnPositions({});
+  }, [columnRelations]);
+
+  // A view with no column findings has no column mode to be in; drop back rather than render empty.
+  useEffect(() => {
     if (!columnTraceView) {
       setColumnView(false);
       setHoveredColumn(null);
@@ -1017,10 +1026,7 @@ export function GraphCanvas({
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
-      const statesByRow = new Map<string, ColumnLineState>();
-      for (const edge of columnTraceView.edges) {
-        statesByRow.set(columnRowKey(edge.target, edge.targetColumn), edge.state);
-      }
+      const statesByRow = resolveRowLineStates(columnTraceView.edges);
       return columnTraceView.nodes.map(view => {
         const rowLineStates: Record<string, ColumnLineState> = {};
         for (const row of view.rows) {
