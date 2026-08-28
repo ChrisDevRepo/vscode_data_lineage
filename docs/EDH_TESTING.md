@@ -88,8 +88,8 @@ npm run test:parser
 npm run test:bfs
 ```
 
-`test:core` runs parser and non-AI engine tests (`tests/unit/parser`,
-`tests/unit/engine`).
+`test:core` runs parser, non-AI engine, and webview tests (`tests/unit/parser`,
+`tests/unit/engine`, `tests/unit/webview`).
 `test:runtime` runs agent-runtime and state-machine tests (`tests/unit/ai-core`,
 `tests/unit/sm`) — deterministic logic, stubbed `vscode`, scripted doubles, zero model calls.
 
@@ -152,7 +152,7 @@ npx vscode-test --label kill-switch
 | Label | Fixture model | Proves | If it goes red |
 |---|---|---|---|
 | `bare-environment` | none, deliberately | Activation completes and the core command surface registers with no Copilot, no chat model and no `ms-mssql.mssql`. Adding the provider fixture here would void the proof. | The extension may fail to start for a user who has none of the optional integrations. A throw escaping `activate()` unregisters *everything*, so someone who only opens a `.dacpac` loses the graph because of an AI feature they never use. Treat as release-blocking. |
-| `tools` | none, deliberately | Every contributed lineage tool is registered with `vscode.lm` and answers through `vscode.lm.invokeTool` — the external entry point Copilot agent mode uses — including the phase-authorization refusal an out-of-phase external call must get. | Either an outside caller (Copilot agent mode, a `#lineage_*` reference) gets broken results, or — worse — a tool that should not be externally reachable now is. Check which assertion failed before shipping. |
+| `tools` | none, deliberately | Every contributed lineage tool is registered with `vscode.lm` and answers through `vscode.lm.invokeTool` — the external entry point Copilot agent mode uses — while the mutating tools stay unregistered. | Either an outside caller (Copilot agent mode, a `#lineage_*` reference) gets broken results, or — worse — a tool that should not be externally reachable now is. Check which assertion failed before shipping. |
 | `participant-turn` | scripted | A real `@lineage` turn through the production `handleChatRequest` API: the no-data notice, and a full turn that streams progress and settles with a terminal `ChatResult`. | A chat turn does not complete: it throws, hangs, or never reaches a terminal result. Users see a stuck or empty response. |
 | `kill-switch` | none, seeded `--user-data-dir` | With `dataLineageViz.ai.enabled: false` on disk before activation — the branch a real user reaches from the Settings UI — the core product still registers in full while the AI surface genuinely does not: no participant gate command, and an unregistered tool rejects cleanly on invocation rather than hanging. No npm alias: run it as `npx vscode-test --label kill-switch`. | Disabling the AI setting no longer actually removes the AI surface, or breaks the core product it should leave untouched. Treat as release-blocking — this is the only proof a real user's opt-out works. |
 
@@ -165,7 +165,8 @@ Run the lanes through `npm run test:edh`, or one label at a time. Never run two
 labels concurrently, and never edit [`.vscode-test.mjs`](../.vscode-test.mjs) to
 make concurrency possible.
 
-Every label shares one Electron profile — `@vscode/test-electron` appends
+Every label except `kill-switch`, which carries its own seeded directory, shares
+one Electron profile — `@vscode/test-electron` appends
 `--user-data-dir=<cache>/user-data` whenever `launchArgs` does not already carry
 one — and they share the single `out/` build the whole run reads from. Two hosts
 at once contend for both. This is not a limit worth engineering around: these

@@ -290,7 +290,8 @@ intent:
 - “all” seeds the full reachable frontier;
 - bidirectional questions can use different upstream and downstream depths,
   including zero to disable one side;
-- omitted depth uses the configured upstream and downstream defaults.
+- omitted depth uses a fixed default of three levels per side, not the
+  `trace.default*Levels` settings, which apply to the GUI trace.
 
 **A level count you state is a hard border; a depth the assistant chose is a
 starting point.** When your question names a number of levels, the trace stops

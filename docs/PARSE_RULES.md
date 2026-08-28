@@ -40,7 +40,7 @@ Categories drive edge direction:
 - `target` — adds an outbound edge (focus SP → referenced object).
 - `exec` — adds an outbound execution edge (`EXEC SomeProc`).
 - `external_ref` — captures non-catalog references (file paths, URLs); rendered as virtual external-ref nodes when `dataLineageViz.externalRefs.enabled = true`.
-- `preprocessing` — applied during Pass 2 as additional cleansing; not an extractor.
+- `preprocessing` — applied after the built-in cleansing passes and before extraction; not an extractor.
 
 ## Built-in coverage
 
@@ -51,8 +51,8 @@ CTAS-style targets, procedure calls, and file references from `OPENROWSET`,
 current names and regex bodies; that file is the source of truth.
 
 Not supported: temp tables (`#local`, `##global`), table variables (`@name`), and CTE names are
-never lineage nodes — captured names starting with `#` or `@` are discarded before edge
-extraction. A data flow that crosses procedures through a global temp table (one procedure
+never lineage nodes — a captured name starting with `#` or `@`, or carrying no schema
+qualifier, is discarded before edge extraction. A data flow that crosses procedures through a global temp table (one procedure
 writes `##t`, another reads it) therefore produces no edge between the two procedures, and the
 AI column trace ends at that boundary.
 

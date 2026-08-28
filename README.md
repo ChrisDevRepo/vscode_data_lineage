@@ -82,7 +82,7 @@ For the full feature catalogue, settings, and customisation paths see [`docs/FEA
 
 ## Limitations
 
-The extension is built from database DDL/catalog metadata only. The following are out of scope:
+The lineage graph is built from database DDL/catalog metadata only. The following are out of scope:
 
 - **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source. Target tables appear as leaves; the upstream pipeline does not.
 - **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected.

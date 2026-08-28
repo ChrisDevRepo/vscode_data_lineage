@@ -88,8 +88,8 @@ gate, rotates the session ID, and runs `AiSession.resetExploration()`.
 Active exploration begins only through the approve-gate path, and
 `activatePendingExploration` is the single site that publishes a navigation
 engine. Every mutating or panel-presenting tool call runs under the active turn
-lease — including calls arriving through externally registered `vscode.lm` tools
-from Copilot agent mode, not only through the internal dispatcher.
+lease. Only read-effect tools are registered with `vscode.lm`, so an external
+caller in Copilot agent mode cannot reach a mutating tool at all.
 
 Within one phase the retry context re-projects accepted observations and the
 newest rejection. An accepted call retires every earlier rejection of the same
@@ -182,18 +182,15 @@ dependency. Four layers keep it inert: an npm `overrides` entry redirecting
 guard that trips before any graph or model call, the `assert-no-langsmith` gate
 step, and a pin on `@langchain/core`.
 
-The pin exists for a specific reason. From 1.2.8 that package vendors
-`src/utils/gateway.ts`, which rewrites a model call's `baseURL` to a LangSmith
-gateway when `LANGSMITH_GATEWAY` or `LANGSMITH_GATEWAY_API_KEY` is set. The npm
+The pin exists for a specific reason. From 1.2.5 that package vendors
+`src/utils/gateway.ts`, which supplies a model call's `baseURL` from a LangSmith
+gateway when the call sets none and `LANGSMITH_GATEWAY` is set; an explicit
+`baseURL` is returned unchanged. The npm
 override cannot reach that code — it lives inside `@langchain/core`, not in the
 `langsmith` package — and the runtime guard watches different variables than the
 gateway reads, so only the bundle-signature gate catches it. An outdated-
 dependency report is not a reason to unpin. `@langchain/langgraph` is unaffected
 and may advance on its own.
-
-Trace export is Langfuse-only. A test-only REST exporter is the sanctioned
-exception: plain HTTP from dev-box test tooling, no vendor SDK, no tracing
-flags, never bundled.
 
 ## Diagnostics and logging
 
