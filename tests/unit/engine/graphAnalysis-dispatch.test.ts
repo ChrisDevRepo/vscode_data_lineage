@@ -72,6 +72,26 @@ describe('runAnalysis — dispatch', () => {
     expect(runAnalysis(graph, 'islands', { ...CONFIG, islandMaxSize: 3 }, 3).groups).toHaveLength(1);
   });
 
+  it('caps how many chains longest-path reports, without displacing the deepest one', () => {
+    // 40 independent 6-node chains, plus one 9-node chain that must survive the cap at rank 0.
+    const nodes: Array<{ id: string }> = [];
+    const edges: Array<[string, string]> = [];
+    for (let chain = 0; chain < 40; chain++) {
+      for (let step = 0; step < 6; step++) {
+        nodes.push({ id: `n${chain}_${step}` });
+        if (step > 0) edges.push([`n${chain}_${step - 1}`, `n${chain}_${step}`]);
+      }
+    }
+    for (let step = 0; step < 9; step++) {
+      nodes.push({ id: `deep_${step}` });
+      if (step > 0) edges.push([`deep_${step - 1}`, `deep_${step}`]);
+    }
+
+    const groups = runAnalysis(makeGraph(nodes, edges), 'longest-path', CONFIG).groups;
+    expect(groups.length).toBeLessThan(40);
+    expect(groups[0].nodeIds).toHaveLength(9);
+  });
+
   it('threads hubMinDegree through rather than applying a built-in default', () => {
     const graph = mixedGraph();
     expect(runAnalysis(graph, 'hubs', { ...CONFIG, hubMinDegree: 4 }).groups.map(group => group.id)).toContain('hub-H');

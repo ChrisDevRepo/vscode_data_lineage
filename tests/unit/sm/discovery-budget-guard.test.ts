@@ -16,12 +16,12 @@
  * `model`/`graph`/`origin` populated before any it() runs.
  */
 
-import { assert, assertEq, loadDemoModel } from '../helpers/testUtils';
+import { assert, assertEq, loadDemoModel, makeGraph } from '../helpers/testUtils';
 import { buildBareGraph } from '../../../src/ai/support/graphUtils';
-import { getScopeBundle, setDiscoveryNodeCap, setDiscoveryTokenBudget } from '../../../src/ai/tools/tools';
+import { getScopeBundle, runAnalysis, setDiscoveryNodeCap, setDiscoveryTokenBudget } from '../../../src/ai/tools/tools';
 import { GetScopeBundleInputSchema } from '../../../src/ai/tools/toolSchemas';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { describe, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 
 function makeDdlModel(bodyScript: string): DatabaseModel {
   const nodes: LineageNode[] = [
@@ -145,5 +145,41 @@ describe('discovery-budget-guard', () => {
     // bidirectional-both-zero combination is degenerate.
     const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', upstream_depth: 0, downstream_depth: 2 }) as Record<string, unknown>;
     assert(res.error === undefined, 'one-side-0/one-side-active bidirectional scope is not rejected');
+  });
+
+  // ── the same token guard on the pattern-detection report ──
+  // Hub, orphan and external-ref reports are bounded by the graph rather than by a threshold, so
+  // the group list is the one discovery payload that had no budget guard at all.
+  describe('detect_graph_patterns group list', () => {
+    /** 60 hub centres, each with 4 inbound spokes — every centre clears a min-degree of 4. */
+    function hubHeavyGraph() {
+      const nodes: Array<{ id: string }> = [];
+      const edges: Array<[string, string]> = [];
+      for (let hub = 0; hub < 60; hub++) {
+        nodes.push({ id: `hub${hub}` });
+        for (let spoke = 0; spoke < 4; spoke++) {
+          nodes.push({ id: `hub${hub}_spoke${spoke}` });
+          edges.push([`hub${hub}_spoke${spoke}`, `hub${hub}`]);
+        }
+      }
+      return makeGraph(nodes, edges);
+    }
+
+    it('inlines the group list when the report fits the discovery budget', () => {
+      setDiscoveryTokenBudget(10_000);
+      const res = runAnalysis(hubHeavyGraph(), 'hubs', 4) as Record<string, unknown>;
+      expect(res.total_groups).toBe(60);
+      expect(res.groups).toHaveLength(60);
+      expect(res.groups_omitted).toBeUndefined();
+    });
+
+    it('omits the group list rather than slicing it when the report exceeds the budget', () => {
+      setDiscoveryTokenBudget(1_000);
+      const res = runAnalysis(hubHeavyGraph(), 'hubs', 4) as Record<string, unknown>;
+      expect(res.total_groups).toBe(60);
+      expect(res.groups).toBeUndefined();
+      expect(res.groups_omitted).toBe(true);
+      expect(typeof res.hint).toBe('string');
+    });
   });
 });

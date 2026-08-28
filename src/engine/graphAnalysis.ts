@@ -169,6 +169,17 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
  * @returns Result object containing the discovered dependency chains.
  */
 /**
+ * Default number of dependency chains {@link analyzeLongestPath} reports.
+ *
+ * @remarks
+ * A chain count, not a node count. Chains are emitted deepest first, so the cap drops the shallow
+ * tail of the ranking and never displaces the deepest chain. The previous default reused
+ * `DEFAULT_CONFIG.maxNodes`, which is a node-count safety limit — three orders of magnitude too
+ * loose for a per-chain group list, and a payload risk on a warehouse with many staging roots.
+ */
+const DEFAULT_MAX_CHAINS = 25;
+
+/**
  * Condensed view of the graph: one vertex per strongly connected component.
  *
  * @remarks
@@ -255,7 +266,7 @@ function expandChain(graph: Graph, condensation: Condensation, nextOf: readonly 
   }
 }
 
-export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
+export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number = DEFAULT_MAX_CHAINS): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }
@@ -433,7 +444,9 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
  * @param graph - The graphology instance.
  * @param type - Type of analysis to perform.
  * @param analysisConfig - Analysis-specific thresholds.
- * @param maxNodes - Safety limit for graph exploration.
+ * @param maxNodes - Upper bound on island size, applied as the tighter of it and `islandMaxSize`.
+ *   It is a node count and bounds no other analysis; longest-path chain count is capped by
+ *   {@link DEFAULT_MAX_CHAINS}.
  * @returns The resulting analysis report.
  */
 export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
@@ -441,7 +454,7 @@ export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: An
     case 'islands': return analyzeIslands(graph, Math.min(analysisConfig.islandMaxSize, maxNodes));
     case 'hubs': return analyzeHubs(graph, analysisConfig.hubMinDegree);
     case 'orphans': return analyzeOrphans(graph);
-    case 'longest-path': return analyzeLongestPath(graph, analysisConfig.longestPathMinNodes, maxNodes);
+    case 'longest-path': return analyzeLongestPath(graph, analysisConfig.longestPathMinNodes);
     case 'cycles': return analyzeCycles(graph);
     case 'external-refs': return analyzeExternalRefs(graph);
   }

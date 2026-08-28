@@ -734,6 +734,23 @@ export function runAnalysis(
   };
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
+
+  // Same discovery budget guard as the catalog listing, token axis only — an analysis report has no
+  // per-node scope semantics. Hub, orphan and external-ref reports are bounded by the graph rather
+  // than by a threshold, so a wide warehouse can produce a group list far past the turn budget.
+  // Over budget → the counts WITHOUT the group list, never a sliced one: the pattern total stays
+  // usable and the AI narrows the query with min_degree or a different type.
+  const groupChars = JSON.stringify(result.groups).length;
+  if (!checkScopeBudget(0, groupChars).ok) {
+    return {
+      type:            result.type,
+      summary:         result.summary,
+      total_groups:    result.groups.length,
+      groups_omitted:  true as const,
+      hint: 'The full group list exceeds the discovery token budget and was not inlined. Raise min_degree, pick a narrower pattern type, or inspect individual objects with lineage_get_object_detail.',
+    };
+  }
+
   return {
     type:         result.type,
     summary:      result.summary,
