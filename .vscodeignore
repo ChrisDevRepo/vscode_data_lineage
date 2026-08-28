@@ -54,6 +54,10 @@ tmpclaude-*
 # Code-audit workspace (tool output, inventories, classification artifacts).
 .audit/**
 
+# Package-verification scratch trees (.verify-tmp, .verify2, …). Each holds a full copy of the
+# repository, so an unignored one ships the whole source and test tree inside the VSIX.
+.verify*/**
+
 # KaTeX TTF fonts — never loaded by VS Code's webview (Chromium picks
 # woff2 > woff > ttf; TTF only matters for legacy browsers). Keep woff+woff2
 # as the actual delivery formats.
