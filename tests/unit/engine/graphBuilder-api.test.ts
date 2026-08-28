@@ -153,4 +153,44 @@ describe('traceNodeWithLevels — directional depth caps', () => {
   it('returns nothing for an unknown origin', () => {
     expect(traceNodeWithLevels(chain(), 'nope', 2, 2).nodeIds.size).toBe(0);
   });
+
+  it('applies each cap to its own direction, admitting different node counts per side', () => {
+    const longChain = makeGraph(
+      [{ id: 'U2' }, { id: 'U1' }, { id: 'O' }, { id: 'D1' }, { id: 'D2' }, { id: 'D3' }],
+      [['U2', 'U1'], ['U1', 'O'], ['O', 'D1'], ['D1', 'D2'], ['D2', 'D3']],
+    );
+    expect(traceNodeWithLevels(longChain, 'O', 1, 3).nodeIds)
+      .toEqual(new Set(['U1', 'O', 'D1', 'D2', 'D3']));
+    expect(traceNodeWithLevels(longChain, 'O', 2, 1).nodeIds)
+      .toEqual(new Set(['U2', 'U1', 'O', 'D1']));
+  });
+});
+
+// ─── traceNodeWithLevels — edge membership ────────────────────────────────────
+
+describe('traceNodeWithLevels — edge membership', () => {
+  // Direction decides which nodes a trace admits, not which edges are drawn between them. An edge
+  // between two admitted nodes is a real dependency the user must see, whichever way it points.
+  const withBackEdge = () => makeGraph(
+    [{ id: 'ORIGIN' }, { id: 'A' }, { id: 'S' }],
+    [['A', 'ORIGIN'], ['S', 'A'], ['A', 'S']],
+  );
+
+  it('draws an edge between two admitted nodes even when it points away from the origin', () => {
+    const traced = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 2, 0);
+    expect([...traced.nodeIds].sort()).toEqual(['A', 'ORIGIN', 'S']);
+    expect([...traced.edgeIds].sort()).toEqual(['A→ORIGIN', 'A→S', 'S→A']);
+  });
+
+  it('draws the same edges upstream-only as it does with both directions active', () => {
+    const upstreamOnly = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 2, 0);
+    const bothWays = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 2, 2);
+    expect([...upstreamOnly.edgeIds].sort()).toEqual([...bothWays.edgeIds].sort());
+  });
+
+  it('leaves out an edge whose other endpoint the depth cap excluded', () => {
+    const traced = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 1, 0);
+    expect([...traced.nodeIds].sort()).toEqual(['A', 'ORIGIN']);
+    expect([...traced.edgeIds].sort()).toEqual(['A→ORIGIN']);
+  });
 });

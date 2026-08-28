@@ -116,10 +116,13 @@ describe('traceNodeWithLevels — bidirectional edges', () => {
       .toEqual(['SP1', 'SP2', 'SP3', 'Table', 'TableA', 'TableB', 'TableC']);
   });
 
-  it('keeps only the toward-origin half of each bidirectional pair when tracing upstream', () => {
+  it('keeps both halves of a bidirectional pair, because each endpoint is inside the trace', () => {
     const traced = traceNodeWithLevels(graph(), 'Table', 7, 0);
     expect([...traced.edgeIds].sort())
-      .toEqual(['SP1→Table', 'SP2→TableA', 'SP3→TableB', 'TableA→SP1', 'TableB→SP2', 'TableC→SP3']);
+      .toEqual([
+        'SP1→Table', 'SP1→TableA', 'SP2→TableA', 'SP3→TableB',
+        'TableA→SP1', 'TableB→SP2', 'TableC→SP3', 'Table→SP1',
+      ]);
   });
 
   it('keeps every edge when both directions are active', () => {
@@ -132,14 +135,15 @@ describe('traceNodeWithLevels — bidirectional edges', () => {
   it('stops at the depth cap, counting the bidirectional hop once', () => {
     const traced = traceNodeWithLevels(graph(), 'Table', 2, 0);
     expect([...traced.nodeIds].sort()).toEqual(['SP1', 'Table', 'TableA']);
-    expect([...traced.edgeIds].sort()).toEqual(['SP1→Table', 'TableA→SP1']);
+    // Every edge among the three admitted nodes, both halves of each pair included.
+    expect([...traced.edgeIds].sort()).toEqual(['SP1→Table', 'SP1→TableA', 'TableA→SP1', 'Table→SP1']);
   });
 
-  it('treats an infinite cap as the uncapped trace, with the same edge filtering', () => {
+  it('treats an infinite cap as the uncapped trace', () => {
     const traced = traceNodeWithLevels(graph(), 'Table', Infinity, 0);
     expect(traced.nodeIds.size).toBe(7);
-    expect(traced.edgeIds.size).toBe(6);
-    expect(traced.edgeIds.has('Table→SP1')).toBe(false);
+    expect(traced.edgeIds.size).toBe(8);
+    expect(traced.edgeIds.has('Table→SP1')).toBe(true);
   });
 
   it('is deterministic across repeated runs', () => {

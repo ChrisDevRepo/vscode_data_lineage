@@ -82,14 +82,12 @@ describe('traceNodeWithLevels — self-loop', () => {
     expect(traced(selfLoop(), 'X', Infinity, Infinity)).toEqual(['X']);
   });
 
-  // Documents current behaviour, which is a defect (D8 in the audit): collectTraceEdges gates
-  // every branch on `upDepth.size > 1` / `downDepth.size > 1`, so a trace whose reachable set is
-  // the origin alone returns no edges at all. That is right for an isolated node and wrong for a
-  // self-loop, whose edge has both endpoints inside the trace. Reached only by a self-referencing
-  // object (a procedure that EXECs itself); no self-loop filter exists in extraction, so the
-  // model can carry one. Change this expectation when the gate is repaired.
-  it('drops the self-edge, because a single-node trace collects no edges', () => {
-    expect(traceNodeWithLevels(selfLoop(), 'X', Infinity, Infinity).edgeIds).toEqual(new Set());
+  // The gate this used to document is gone: collectTraceEdges no longer branches on the depth
+  // maps, so an edge with both endpoints inside the trace is kept whatever the trace direction.
+  // Reached only by a self-referencing object (a procedure that EXECs itself); no self-loop filter
+  // exists in extraction, so the model can carry one.
+  it('keeps the self-edge, whose endpoints are both inside the trace', () => {
+    expect(traceNodeWithLevels(selfLoop(), 'X', Infinity, Infinity).edgeIds).toEqual(new Set(['X→X']));
   });
 });
 

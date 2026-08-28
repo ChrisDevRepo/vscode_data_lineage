@@ -56,48 +56,25 @@ const GRID_DEFAULT_COLS = 4;
 const GRID_CELL_PADDING = 40;
 
 /**
- * Collects edges between traced nodes with direction-aware filtering.
+ * Collects every edge whose endpoints both sit inside the traced node set.
+ *
+ * @remarks
+ * Direction governs which nodes a trace admits, not which edges are drawn between them. A
+ * one-direction trace previously filtered edges by the depth gradient as well, which hid real
+ * dependencies between two objects already on screen — an upstream-only trace holding both `A` and
+ * `S` omitted `A → S`. Bidirectional traces never applied that filter, and the AI scope bundle
+ * does not either, so the same scope was drawn two different ways. Membership is now the only
+ * rule, matching both.
  *
  * @param graph - The underlying computational graph.
  * @param nodeIds - Set of node identifiers within the trace scope.
- * @param upDepth - Upstream depth mapping.
- * @param downDepth - Downstream depth mapping.
- * @returns A set of edge identifiers that conform to the tracing directionality.
+ * @returns A set of edge identifiers connecting two traced nodes.
  */
-function collectTraceEdges(
-  graph: Graph,
-  nodeIds: Set<string>,
-  upDepth: Map<string, number>,
-  downDepth: Map<string, number>
-): Set<string> {
+function collectTraceEdges(graph: Graph, nodeIds: Set<string>): Set<string> {
   const edgeIds = new Set<string>();
-  const hasUp = upDepth.size > 1;
-  const hasDown = downDepth.size > 1;
 
   graph.forEachEdge((edge, _attrs, source, target) => {
-    if (!nodeIds.has(source) || !nodeIds.has(target)) return;
-
-    if (hasUp && hasDown) {
-      edgeIds.add(edge);
-      return;
-    }
-
-    if (hasUp) {
-      const sD = upDepth.get(source);
-      const tD = upDepth.get(target);
-      if (sD !== undefined && tD !== undefined && sD >= tD) {
-        edgeIds.add(edge);
-      }
-      return;
-    }
-
-    if (hasDown) {
-      const sD = downDepth.get(source);
-      const tD = downDepth.get(target);
-      if (sD !== undefined && tD !== undefined && tD >= sD) {
-        edgeIds.add(edge);
-      }
-    }
+    if (nodeIds.has(source) && nodeIds.has(target)) edgeIds.add(edge);
   });
 
   return edgeIds;
@@ -266,16 +243,11 @@ export function traceNodeWithLevels(
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
   const nodeIds = new Set<string>([nodeId]);
-  const upDepth = new Map<string, number>();
-  const downDepth = new Map<string, number>();
-  if (upstreamLevels > 0) upDepth.set(nodeId, 0);
-  if (downstreamLevels > 0) downDepth.set(nodeId, 0);
 
   if (upstreamLevels > 0) {
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       if (depth > upstreamLevels) return true;
       nodeIds.add(node);
-      upDepth.set(node, depth);
     }, { mode: 'inbound' });
   }
 
@@ -283,12 +255,10 @@ export function traceNodeWithLevels(
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       if (depth > downstreamLevels) return true;
       nodeIds.add(node);
-      downDepth.set(node, depth);
     }, { mode: 'outbound' });
   }
 
-  const edgeIds = collectTraceEdges(graph, nodeIds, upDepth, downDepth);
-  return { nodeIds, edgeIds };
+  return { nodeIds, edgeIds: collectTraceEdges(graph, nodeIds) };
 }
 
 /**

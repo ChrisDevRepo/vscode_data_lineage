@@ -11,6 +11,7 @@
 import type { Edge as FlowEdge, Node as FlowNode } from '@xyflow/react';
 import { describe, expect, it } from 'vitest';
 import { applyTraceToFlow } from '../../../src/engine/graphBuilder';
+import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import type { TraceState } from '../../../src/engine/types';
 
 function traceState(overrides: Partial<TraceState> = {}): TraceState {
@@ -132,5 +133,97 @@ describe('applyTraceToFlow — layout', () => {
     }));
     const placed = new Set(result.nodes.map(entry => `${entry.position.x},${entry.position.y}`));
     expect(placed.size).toBe(3);
+  });
+});
+
+// ─── Out-of-filter synthesis ─────────────────────────────────────────────────
+
+describe('applyTraceToFlow — out-of-filter synthesis', () => {
+  // A path trace may run through objects the active filter hides. Those must be injected into the
+  // rendered flow rather than dropped, or the path is drawn with a gap where a real object sits.
+  const modelNode = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, schema: 'dbo', name: id, fullName: `[dbo].[${id}]`, type: 'table' as const, columns: [], ...extra,
+  });
+
+  const hiddenModel = {
+    nodes: [modelNode('A'), modelNode('B'), modelNode('HIDDEN')],
+    edges: [],
+    schemas: [],
+    catalog: {},
+    neighborIndex: {},
+  } as unknown as Parameters<typeof applyTraceToFlow>[4];
+
+  const pathTrace = () => traceState({
+    mode: 'path-applied',
+    tracedNodeIds: new Set(['A', 'HIDDEN', 'B']),
+    tracedEdgeIds: new Set(['A→HIDDEN', 'HIDDEN→B']),
+  });
+
+  it('injects a traced object the current filter hid', () => {
+    const result = applyTraceToFlow([node('A'), node('B')], [], pathTrace(), DEFAULT_CONFIG, hiddenModel);
+    expect(result.nodes.map(entry => entry.id).sort()).toEqual(['A', 'B', 'HIDDEN']);
+  });
+
+  it('injects the edges that reconnect the injected object', () => {
+    const result = applyTraceToFlow([node('A'), node('B')], [], pathTrace(), DEFAULT_CONFIG, hiddenModel);
+    expect(result.edges.map(entry => entry.id).sort()).toEqual(['A→HIDDEN', 'HIDDEN→B']);
+  });
+
+  it('gives an injected object its degrees from the synthesized edges, not zero', () => {
+    const result = applyTraceToFlow([node('A'), node('B')], [], pathTrace(), DEFAULT_CONFIG, hiddenModel);
+    const injected = result.nodes.find(entry => entry.id === 'HIDDEN');
+    expect(injected?.data.inDegree).toBe(1);
+    expect(injected?.data.outDegree).toBe(1);
+  });
+
+  it('carries an external reference\'s own attributes onto the injected node', () => {
+    const externalModel = {
+      ...hiddenModel,
+      nodes: [modelNode('A'), modelNode('EXT', { externalType: 'db', externalDatabase: 'Other', externalUrl: 'x://y' })],
+    } as unknown as Parameters<typeof applyTraceToFlow>[4];
+    const result = applyTraceToFlow([node('A')], [], traceState({
+      mode: 'path-applied',
+      tracedNodeIds: new Set(['A', 'EXT']),
+      tracedEdgeIds: new Set(['A→EXT']),
+    }), DEFAULT_CONFIG, externalModel);
+    const injected = result.nodes.find(entry => entry.id === 'EXT');
+    expect(injected?.data.externalType).toBe('db');
+    expect(injected?.data.externalDatabase).toBe('Other');
+  });
+
+  it('skips a traced id the model does not know, instead of injecting a blank node', () => {
+    const result = applyTraceToFlow([node('A')], [], traceState({
+      mode: 'path-applied',
+      tracedNodeIds: new Set(['A', 'GHOST']),
+      tracedEdgeIds: new Set<string>(),
+    }), DEFAULT_CONFIG, hiddenModel);
+    expect(result.nodes.map(entry => entry.id)).toEqual(['A']);
+  });
+
+  it('does not synthesize in applied mode unless the caller asks for it', () => {
+    const applied = traceState({
+      mode: 'applied',
+      tracedNodeIds: new Set(['A', 'HIDDEN']),
+      tracedEdgeIds: new Set(['A→HIDDEN']),
+    });
+    expect(applyTraceToFlow([node('A')], [], applied, DEFAULT_CONFIG, hiddenModel).nodes.map(e => e.id))
+      .toEqual(['A']);
+    expect(applyTraceToFlow([node('A')], [], applied, DEFAULT_CONFIG, hiddenModel, true).nodes.map(e => e.id).sort())
+      .toEqual(['A', 'HIDDEN']);
+  });
+
+  it('leaves an already-rendered bidirectional edge alone rather than adding a duplicate', () => {
+    const result = applyTraceToFlow(
+      [node('A'), node('B')],
+      [edge('A↔B', 'A', 'B')],
+      traceState({
+        mode: 'path-applied',
+        tracedNodeIds: new Set(['A', 'B']),
+        tracedEdgeIds: new Set(['A→B']),
+      }),
+      DEFAULT_CONFIG,
+      hiddenModel,
+    );
+    expect(result.edges.map(entry => entry.id)).toEqual(['A↔B']);
   });
 });
