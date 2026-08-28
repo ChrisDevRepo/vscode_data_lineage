@@ -51,6 +51,7 @@ import {
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
+import { createNodeDecorationCache, decorateFlowNodes } from '../engine/nodeDecoration';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
@@ -75,6 +76,12 @@ const FIT_VIEW_PADDING = 0.15;
 
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
+
+/** Zoom below which AI notes are hidden once they are showing. */
+const NOTES_ZOOM_OUT = 0.45;
+
+/** Zoom above which AI notes are shown once they are hidden. */
+const NOTES_ZOOM_IN = 0.55;
 
 /**
  * Max time (ms) to wait for a pending zoom target to appear in flowNodes before
@@ -822,6 +829,10 @@ export function GraphCanvas({
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
   const [columnPositions, setColumnPositions] = useState<Record<string, { x: number; y: number }>>({});
 
+  // Retains each node's decorated result so a drag — which only ever changes one node's position —
+  // leaves every other node's `data` reference untouched and its `React.memo` intact.
+  const nodeDecorationCache = useRef(createNodeDecorationCache());
+
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) {
       setLocalNodes(flowNodes.map(n => {
@@ -873,10 +884,20 @@ export function GraphCanvas({
   );
 
   /** Hide AI notes when zoomed out below threshold for readability. */
+  /**
+   * Shows or hides AI notes as the canvas crosses the legibility zoom.
+   *
+   * @remarks
+   * The band is deliberately wider than a single threshold: `notesVisible` feeds every node's
+   * decoration, so a gesture resting on one exact zoom value would rebuild the whole node set each
+   * time it crossed. Notes turn off below {@link NOTES_ZOOM_OUT} and back on above
+   * {@link NOTES_ZOOM_IN}, leaving the span between them at whatever state it entered with.
+   */
   const handleViewportChange = useCallback((vp: { zoom: number }) => {
     setNotesVisible(prev => {
-      const next = vp.zoom >= 0.5;
-      return prev === next ? prev : next;
+      if (prev && vp.zoom < NOTES_ZOOM_OUT) return false;
+      if (!prev && vp.zoom > NOTES_ZOOM_IN) return true;
+      return prev;
     });
   }, []);
 
@@ -1090,38 +1111,23 @@ export function GraphCanvas({
         };
       });
     }
-    return localNodes.map(node => {
-      if (node.type === 'schemaNode') {
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            onExpandSchema: graphMode === 'overview' ? onExpandExpandedSchemaViewSchema : undefined,
-            onMakeSchemaCenter: graphMode === 'overview' ? onCenterExpandedSchemaViewSchema : undefined,
-          },
-        };
-      }
-
-      const isHighlighted = highlightedNodeId === node.id;
-      const isTraceOrigin = node.id === trace.selectedNodeId && (
-        trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied'
-      );
-      const shouldBeDimmed = highlightedNodeId && !isHighlighted && !isTraceOrigin && !level1Neighbors.has(node.id);
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
-          dimmed: !!shouldBeDimmed,
-          showRemoveButton: isBookmarkMode && canRemoveNodeFromScopedView,
-          onRemoveFromView: isBookmarkMode && canRemoveNodeFromScopedView ? onRemoveFromView : undefined,
-          traceControls: traceControlsByNode.get(node.id),
-          aiHighlight: aiHighlightMap.get(node.id),
-          aiBadge: aiBadgeMap.get(node.id),
-          aiNote: notesVisible ? aiNoteMap.get(node.id) : undefined,
-        },
-      };
-    });
+    return decorateFlowNodes(localNodes, {
+      graphMode,
+      highlightedNodeId,
+      level1Neighbors,
+      traceMode: trace.mode,
+      traceSelectedNodeId: trace.selectedNodeId,
+      isBookmarkMode,
+      canRemoveNodeFromScopedView,
+      notesVisible,
+      onRemoveFromView,
+      traceControlsByNode,
+      aiHighlightMap,
+      aiBadgeMap,
+      aiNoteMap,
+      onExpandSchema: onExpandExpandedSchemaViewSchema,
+      onMakeSchemaCenter: onCenterExpandedSchemaViewSchema,
+    }, nodeDecorationCache.current);
   }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
 
   const displayEdges = useMemo(() => {
