@@ -59,6 +59,10 @@ describe('prompt composition', () => {
     expect(buildSmEntrySystemPrompt(context, ['TotalRevenue']))
       .toContain('targetColumns: ["TotalRevenue"]');
 
+    // Invariant: the entry directive names mission_brief so a fresh exploration carries it to
+    // every later hop (injection-screened win: 6/6 vs 1/6 baseline presence, replay n=6 pairs).
+    expect(buildSmEntrySystemPrompt(context)).toContain('mission_brief');
+
     const detector = buildEntryDetectorSystemPrompt(context);
     expect(detector).toContain("Return 'visual_render'");
     expect(detector).toContain('approval-gated hop-by-hop exploration');
