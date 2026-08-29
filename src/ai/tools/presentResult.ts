@@ -641,9 +641,9 @@ export function validatePresentResult(
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
-          // Repair authorization deliberately left empty (unchanged): only the offending entry path
-          // is added, so `rejectionCode` alone no longer has to identify which rule fired.
-          addError('sections', `Section "${sec.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, [], [`sections.${sectionIndex}`]);
+          // Scoped repair: an unknown node_ids entry taints only this section's linking, never the
+          // section text or any other section/note/highlight content the model already got right.
+          addError('sections', `Section "${sec.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, ['sections'], [`sections.${sectionIndex}`]);
         }
         for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
           sectionLinkedNodeIds.add(nodeId);
@@ -668,7 +668,9 @@ export function validatePresentResult(
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
-        addError('notes', `notes[].node_id contains unknown ID: ${renderUnknownNodeIds([note.node_id])} — ${presentNodeIdHint(stage)}`, [], [`notes.${noteIndex}`]);
+        // Scoped repair: an unknown note node_id taints only the notes[] collection, never
+        // sections or highlight_groups the model already got right.
+        addError('notes', `notes[].node_id contains unknown ID: ${renderUnknownNodeIds([note.node_id])} — ${presentNodeIdHint(stage)}`, ['notes'], [`notes.${noteIndex}`]);
       }
       if (typeof note.text !== 'string' || note.text.trim().length === 0) {
         addError('notes', `Note for "${note.node_id}" is missing text`);
@@ -693,7 +695,9 @@ export function validatePresentResult(
       if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
       const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
       if (unknownIds.length > 0) {
-        addError('highlight_groups', `highlight_groups "${g.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, [], [`highlight_groups.${groupIndex}`]);
+        // Scoped repair: an unknown highlight node_ids entry taints only highlight_groups, never
+        // the sections/notes content the model already got right.
+        addError('highlight_groups', `highlight_groups "${g.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`]);
       }
       for (const nodeId of g.node_ids ?? []) {
         if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
