@@ -6,6 +6,7 @@ import {
   Controls,
   MiniMap,
   useReactFlow,
+  useNodesInitialized,
   applyNodeChanges,
   applyEdgeChanges,
   MarkerType,
@@ -51,7 +52,8 @@ import {
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
-import { createNodeDecorationCache, decorateFlowNodes } from '../engine/nodeDecoration';
+import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes } from '../engine/nodeDecoration';
+import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
@@ -514,6 +516,7 @@ export function GraphCanvas({
   collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getEdges, getViewport, setViewport } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const vscodeApi = useVsCode();
 
   /**
@@ -652,6 +655,11 @@ export function GraphCanvas({
         return isExpandedSchemaViewActive
           ? `color-mix(in srgb, ${color} 28%, transparent)`
           : color;
+      }
+      // Column nodes keep their identity under `data.view`, not at the top level.
+      if (node.type === 'columnTraceNode') {
+        const view = (node.data as ColumnTraceNodeData).view;
+        return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema);
       }
       const d = node.data as CustomNodeData;
       return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema)));
@@ -832,6 +840,15 @@ export function GraphCanvas({
   // Retains each node's decorated result so a drag — which only ever changes one node's position —
   // leaves every other node's `data` reference untouched and its `React.memo` intact.
   const nodeDecorationCache = useRef(createNodeDecorationCache());
+
+  // Same retention for the column view, where a stale node object also costs a re-measure.
+  const columnNodeCache = useRef(createColumnNodeCache());
+
+  // Object-view viewport held while the column view is on stage, restored when it leaves.
+  const objectViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
+
+  // One fit per entry into column mode; a later node measurement must not re-frame the canvas.
+  const columnViewFittedRef = useRef(false);
 
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) {
@@ -1043,12 +1060,41 @@ export function GraphCanvas({
     setHoveredColumn(column === null ? null : { nodeId, column });
   }, []);
 
+  const columnHover = useMemo((): ColumnHoverState => ({
+    hoveredPath: hoveredColumnPath,
+    onColumnHover: handleColumnHover,
+  }), [hoveredColumnPath, handleColumnHover]);
+
   // Leaving column mode drops the hovered thread; otherwise returning to it opens with an arbitrary
-  // thread lit and every other row dimmed.
+  // thread lit and every other row dimmed. The viewport is kept so the return lands where the user
+  // left the object view.
   const handleToggleColumnView = useCallback((next: boolean) => {
+    if (next) objectViewportRef.current = getViewport();
     setColumnView(next);
     setHoveredColumn(null);
-  }, []);
+  }, [getViewport]);
+
+  // The column view lays its nodes out in its own coordinate space, so the object view's viewport
+  // frames nothing in it. Fit once the switched-in nodes are on stage, and restore the object
+  // viewport on the way back rather than fitting a view the user had already positioned.
+  useEffect(() => {
+    if (columnViewActive) {
+      if (columnViewFittedRef.current || !nodesInitialized) return;
+      columnViewFittedRef.current = true;
+      const raf = requestAnimationFrame(() => {
+        void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+    columnViewFittedRef.current = false;
+    const restore = objectViewportRef.current;
+    if (!restore) return;
+    objectViewportRef.current = null;
+    const raf = requestAnimationFrame(() => {
+      void setViewport(restore, { duration: FIT_VIEW_DURATION });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [columnViewActive, nodesInitialized, fitView, setViewport]);
 
   // Hand-placed column nodes belong to the relation set that produced the layout, so only a new
   // relation set invalidates them. Keying this on `columnTraceView` would also fire on every
@@ -1071,9 +1117,10 @@ export function GraphCanvas({
    * Per-node data for the column view, keyed by node id.
    *
    * @remarks
-   * Deliberately excludes `columnPositions`: React Flow emits a position change per drag frame, so
-   * deriving this inside `displayNodes` would rebuild every node's data object on every frame and
-   * defeat the `React.memo` on `ColumnTraceNode`. Only `position` may vary with a drag.
+   * Deliberately excludes `columnPositions` and the hovered thread: React Flow re-measures any node
+   * whose object identity changed, so deriving this from a drag frame or a pointer move would
+   * re-measure the whole canvas instead of moving or highlighting one node. Position varies per
+   * node in {@link projectColumnNodes}; hover reaches the rows through {@link ColumnHoverProvider}.
    */
   const columnNodeData = useMemo((): Map<string, ColumnTraceNodeData> => {
     const byNode = new Map<string, ColumnTraceNodeData>();
@@ -1085,31 +1132,18 @@ export function GraphCanvas({
         const state = statesByRow.get(columnRowKey(view.id, row.name));
         if (state) rowLineStates[row.name] = state;
       }
-      const onPath = hoveredColumnPath
-        ? view.rows.find(r => hoveredColumnPath.has(columnRowKey(view.id, r.name)))?.name
-        : undefined;
       byNode.set(view.id, {
         view,
         rowsVisible: notesVisible,
         rowLineStates,
-        onColumnHover: handleColumnHover,
-        ...(onPath ? { hoveredColumn: onPath } : {}),
       });
     }
     return byNode;
-  }, [columnTraceView, hoveredColumnPath, notesVisible, handleColumnHover]);
+  }, [columnTraceView, notesVisible]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
-      return columnTraceView.nodes.map(view => {
-        const data = columnNodeData.get(view.id)!;
-        return {
-          id: view.id,
-          type: 'columnTraceNode',
-          position: columnPositions[view.id] ?? view.position,
-          data: data,
-        };
-      });
+      return projectColumnNodes(columnTraceView.nodes, columnNodeData, columnPositions, columnNodeCache.current);
     }
     return decorateFlowNodes(localNodes, {
       graphMode,
@@ -1410,6 +1444,7 @@ export function GraphCanvas({
           </div>
         ) : (
           <div style={{ width: '100%', height: '100%', position: 'absolute' }}>
+            <ColumnHoverProvider value={columnHover}>
             <ReactFlow
               nodes={displayNodes}
               edges={displayEdges}
@@ -1509,6 +1544,7 @@ export function GraphCanvas({
                 </Panel>
               )}
             </ReactFlow>
+            </ColumnHoverProvider>
           </div>
         )}
 

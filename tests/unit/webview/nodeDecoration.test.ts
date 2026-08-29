@@ -18,8 +18,12 @@ import { buildGraphNoLayout } from '../../../src/engine/graphBuilder';
 import {
   createNodeDecorationCache,
   decorateFlowNodes,
+  createColumnNodeCache,
+  projectColumnNodes,
   type NodeDecorationInputs,
 } from '../../../src/engine/nodeDecoration';
+import type { ColumnTraceViewNode } from '../../../src/engine/columnTraceView';
+import type { ColumnTraceNodeData } from '../../../src/components/ColumnTraceNode';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { buildLargeModel } from './largeGraphFixture';
 
@@ -155,5 +159,74 @@ describe('decorateFlowNodes — decoration correctness', () => {
 
     decorateFlowNodes(nodes.slice(0, 10), baseInputs(), cache);
     expect(cache.size).toBe(10);
+  });
+});
+
+/**
+ * Lane for the column view's measurement loop.
+ *
+ * React Flow adopts any node whose object identity changed: it clears that node's handle bounds and
+ * re-measures it. The column branch used to rebuild the whole array on every render, so a hover or a
+ * drag frame re-measured the entire canvas — which is what the ResizeObserver loop, the hover
+ * flicker, and the blank minimap all came from. Declared dimensions close the same loop from the
+ * other side: without them a node is never "initialized" and the minimap skips it.
+ */
+describe('projectColumnNodes', () => {
+  function views(count: number): ColumnTraceViewNode[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `n${i}`,
+      label: `t${i}`,
+      schema: 'dbo',
+      objectType: 'table',
+      isTransformNode: false,
+      rows: [{ name: 'Col' }],
+      width: 214,
+      height: 50,
+      position: { x: i * 300, y: 0 },
+    }));
+  }
+
+  function dataFor(nodes: ColumnTraceViewNode[]): Map<string, ColumnTraceNodeData> {
+    return new Map(nodes.map(view => [view.id, { view, rowsVisible: true, rowLineStates: {} }]));
+  }
+
+  it('declares the view box so the node counts as measured', () => {
+    const nodes = views(2);
+    const projected = projectColumnNodes(nodes, dataFor(nodes), {}, createColumnNodeCache());
+    expect(projected[0].width).toBe(214);
+    expect(projected[0].height).toBe(50);
+    expect(projected[0].position).toEqual({ x: 0, y: 0 });
+  });
+
+  it('returns the same node objects when nothing changed', () => {
+    const nodes = views(3);
+    const data = dataFor(nodes);
+    const cache = createColumnNodeCache();
+    const before = projectColumnNodes(nodes, data, {}, cache);
+    const after = projectColumnNodes(nodes, data, {}, cache);
+    expect(after.every((node, i) => node === before[i])).toBe(true);
+  });
+
+  it('rebuilds only the node a drag moved', () => {
+    const nodes = views(3);
+    const data = dataFor(nodes);
+    const cache = createColumnNodeCache();
+    const before = projectColumnNodes(nodes, data, {}, cache);
+    const after = projectColumnNodes(nodes, data, { n1: { x: 40, y: 80 } }, cache);
+    expect(after[0]).toBe(before[0]);
+    expect(after[2]).toBe(before[2]);
+    expect(after[1]).not.toBe(before[1]);
+    expect(after[1].position).toEqual({ x: 40, y: 80 });
+  });
+
+  it('releases cache entries for nodes a new relation set removed', () => {
+    const nodes = views(4);
+    const cache = createColumnNodeCache();
+    projectColumnNodes(nodes, dataFor(nodes), {}, cache);
+    expect(cache.size).toBe(4);
+
+    const fewer = nodes.slice(0, 2);
+    projectColumnNodes(fewer, dataFor(fewer), {}, cache);
+    expect(cache.size).toBe(2);
   });
 });

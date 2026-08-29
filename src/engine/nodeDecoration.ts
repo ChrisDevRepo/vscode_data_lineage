@@ -1,5 +1,7 @@
 import type { Node as FlowNode } from '@xyflow/react';
 import type { CustomNodeData, TraceNodeControls } from '../components/CustomNode';
+import type { ColumnTraceNodeData } from '../components/ColumnTraceNode';
+import type { ColumnTraceViewNode } from './columnTraceView';
 import type { GraphMode, TraceState } from './types';
 
 /**
@@ -180,4 +182,78 @@ export function decorateFlowNodes(
     if (!present.has(id)) cache.delete(id);
   }
   return decorated;
+}
+
+/** One column node's last projection, kept with the inputs that produced it. */
+interface ColumnCacheEntry {
+  data: ColumnTraceNodeData;
+  x: number;
+  y: number;
+  result: FlowNode;
+}
+
+/** Retains the React Flow node produced for each column-view node across renders. */
+export type ColumnNodeCache = Map<string, ColumnCacheEntry>;
+
+/**
+ * Creates the retention map {@link projectColumnNodes} reuses across renders.
+ *
+ * @returns An empty cache, owned by the caller for the lifetime of the canvas.
+ */
+export function createColumnNodeCache(): ColumnNodeCache {
+  return new Map();
+}
+
+/**
+ * Projects the column-trace view onto React Flow nodes, reusing the previous object for every node
+ * whose data and position are unchanged.
+ *
+ * @remarks
+ * React Flow adopts a node whose object identity changed: it resets that node's handle bounds and
+ * re-measures it. Rebuilding the whole array each render therefore re-measures the whole canvas on
+ * every hover and drag frame, so identity is preserved here for the nodes that did not move.
+ *
+ * Width and height are declared from the view box rather than measured. A column node's height is
+ * `header + rows`, so it is known before layout — the same number dagre positioned against — and
+ * declaring it lets the minimap draw the node on its first render instead of after a measurement
+ * round-trip.
+ *
+ * Entries for ids absent from `views` are dropped, so the cache tracks the rendered set.
+ *
+ * @param views - Positioned column-view nodes, in render order.
+ * @param dataById - Per-node render data, keyed by node id; must cover every id in `views`.
+ * @param positions - Hand-placed positions by node id, overriding the laid-out position.
+ * @param cache - Retention map from {@link createColumnNodeCache}, mutated in place.
+ * @returns The projected nodes, in the order given.
+ */
+export function projectColumnNodes(
+  views: readonly ColumnTraceViewNode[],
+  dataById: ReadonlyMap<string, ColumnTraceNodeData>,
+  positions: Readonly<Record<string, { x: number; y: number }>>,
+  cache: ColumnNodeCache,
+): FlowNode[] {
+  const present = new Set<string>();
+  const projected = views.map((view) => {
+    present.add(view.id);
+    const data = dataById.get(view.id)!;
+    const position = positions[view.id] ?? view.position;
+    const cached = cache.get(view.id);
+    if (cached && cached.data === data && cached.x === position.x && cached.y === position.y) {
+      return cached.result;
+    }
+    const result: FlowNode = {
+      id: view.id,
+      type: 'columnTraceNode',
+      position,
+      width: view.width,
+      height: view.height,
+      data,
+    };
+    cache.set(view.id, { data, x: position.x, y: position.y, result });
+    return result;
+  });
+  for (const id of [...cache.keys()]) {
+    if (!present.has(id)) cache.delete(id);
+  }
+  return projected;
 }

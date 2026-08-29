@@ -2,13 +2,16 @@ import { memo, useState, type CSSProperties } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import {
   columnHandleId,
+  columnRowKey,
   COLUMN_NODE_WIDTH,
   COLUMN_NODE_HEADER_HEIGHT,
+  COLUMN_NODE_BORDER_WIDTH,
   COLUMN_ROW_HEIGHT,
   type ColumnTraceRow,
   type ColumnTraceViewNode,
   type ColumnLineState,
 } from '../engine/columnTraceView';
+import { useColumnHover } from '../contexts/ColumnHoverContext';
 import { TYPE_COLORS, SHORT_TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
 import type { ObjectType } from '../engine/types';
 
@@ -20,10 +23,6 @@ export type ColumnTraceNodeData = {
   view: ColumnTraceViewNode;
   /** Whether the row list renders; false collapses the node to a single summary line. */
   rowsVisible?: boolean;
-  /** Column name currently on the hovered path; unset rows de-emphasise while this is set. */
-  hoveredColumn?: string;
-  /** Fires on row hover/focus enter with the column name, and on leave with `null`. */
-  onColumnHover?: (nodeId: string, column: string | null) => void;
   /**
    * Per-row line state for the state dot, keyed by row name.
    *
@@ -57,31 +56,28 @@ function rowCenter(index: number): number {
 
 function ColumnTraceRowLine({
   row,
+  nodeId,
   nodeTitle,
   isTransformNode,
-  hoveredColumn,
   lineState,
   focused,
   transition,
-  onHoverStart,
-  onHoverEnd,
   onFocusStart,
   onFocusEnd,
 }: {
   row: ColumnTraceRow;
+  nodeId: string;
   nodeTitle: string;
   isTransformNode: boolean;
-  hoveredColumn: string | undefined;
   lineState: ColumnLineState | undefined;
   focused: boolean;
   transition: string;
-  onHoverStart: () => void;
-  onHoverEnd: () => void;
   onFocusStart: () => void;
   onFocusEnd: () => void;
 }) {
-  const isHoveredRow = hoveredColumn === row.name;
-  const isDeemphasised = hoveredColumn !== undefined && !isHoveredRow;
+  const { hoveredPath, onColumnHover } = useColumnHover();
+  const isHoveredRow = !!hoveredPath?.has(columnRowKey(nodeId, row.name));
+  const isDeemphasised = !!hoveredPath && !isHoveredRow;
   const label = shapeLabel(row);
 
   const style: CSSProperties = {
@@ -107,10 +103,10 @@ function ColumnTraceRowLine({
       style={style}
       tabIndex={0}
       aria-label={ariaLabel}
-      onMouseEnter={onHoverStart}
-      onMouseLeave={onHoverEnd}
-      onFocus={onFocusStart}
-      onBlur={onFocusEnd}
+      onMouseEnter={() => onColumnHover(nodeId, row.name)}
+      onMouseLeave={() => onColumnHover(nodeId, null)}
+      onFocus={() => { onFocusStart(); onColumnHover(nodeId, row.name); }}
+      onBlur={() => { onFocusEnd(); onColumnHover(nodeId, null); }}
     >
       {isTransformNode ? (
         <span aria-hidden="true" style={{ fontSize: 9, color: 'var(--ln-fg-muted)', width: 8, textAlign: 'center', flexShrink: 0 }}>▹</span>
@@ -154,16 +150,14 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
-  const hoverStart = (column: string) => data.onColumnHover?.(id, column);
-  const hoverEnd = () => data.onColumnHover?.(id, null);
-
   return (
     <div
-      className="rounded-lg border-2 ln-node-card"
+      className="rounded-lg border ln-node-card"
       style={{
         position: 'relative',
         width: view.width || COLUMN_NODE_WIDTH,
         height: view.height,
+        borderWidth: COLUMN_NODE_BORDER_WIDTH,
         borderColor: 'var(--ln-node-border)',
         borderLeftColor: schemaColor,
         borderLeftWidth: 6,
@@ -205,16 +199,14 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
             <ColumnTraceRowLine
               key={row.name}
               row={row}
+              nodeId={id}
               nodeTitle={`${view.schema}.${view.label}`}
               isTransformNode={view.isTransformNode}
-              hoveredColumn={data.hoveredColumn}
               lineState={data.rowLineStates?.[row.name]}
               focused={focusedRow === row.name}
               transition={transition}
-              onHoverStart={() => hoverStart(row.name)}
-              onHoverEnd={() => hoverEnd()}
-              onFocusStart={() => { setFocusedRow(row.name); hoverStart(row.name); }}
-              onFocusEnd={() => { setFocusedRow(null); hoverEnd(); }}
+              onFocusStart={() => setFocusedRow(row.name)}
+              onFocusEnd={() => setFocusedRow(null)}
             />
           ))
         ) : (

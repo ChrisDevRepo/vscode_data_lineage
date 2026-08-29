@@ -101,12 +101,13 @@ export interface ColumnTraceViewEdge {
   /** Whether the value changed between the two endpoints. */
   state: ColumnLineState;
   /**
-   * Hop node that performed the work when it is not itself an endpoint.
+   * Hop node that performed the work when it is not itself an endpoint and is not on the canvas.
    *
    * @remarks
    * The tracer emits two edge shapes — one where a procedure is an endpoint, one where it is only
-   * the analysing hop on a table-to-table pair. Normalisation records the latter here so the same
-   * procedure renders identically whichever shape produced the relation.
+   * the analysing hop on a table-to-table pair. When that hop is a node the view renders, the
+   * relation is drawn through it as two legs and this stays unset; a hop outside the view has
+   * nothing to route through, so it is recorded here instead.
    */
   viaNode?: string;
 }
@@ -160,6 +161,15 @@ export const COLUMN_NODE_HEADER_HEIGHT = 28;
 
 /** Height of one column row. */
 export const COLUMN_ROW_HEIGHT = 22;
+
+/**
+ * Card border width of a column-trace node.
+ *
+ * @remarks
+ * Part of the node height because the card is laid out `border-box`: the header and rows occupy the
+ * padding box, so a height that counted only them would clip the last row by the border.
+ */
+export const COLUMN_NODE_BORDER_WIDTH = 2;
 
 
 /**
@@ -346,8 +356,15 @@ function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
  * Once declared column lists arrive (a later package), that ordinal order must supersede this
  * first-seen order.
  *
- * A relation recorded more than once — the same endpoints and the same via node — collapses to one
+ * A relation recorded more than once — the same endpoints and the same hop node — collapses to one
  * edge, so a column re-submitted across hops does not stack overlapping lines on the canvas.
+ *
+ * A relation analysed by a hop node that is neither endpoint but is itself on the canvas is drawn
+ * through that node as two legs, source to hop and hop to target, rather than as one line past it.
+ * A collapsed line would leave the hop with no inbound edge, which ranks a procedure as a source and
+ * parks it at the left margin with a canvas-spanning line to its output. The split is a drawing
+ * decision only: the target's fan-in count and rename signal still describe the original endpoint
+ * pair, since that is where the value came from.
  *
  * A relation whose source or target node is absent from `input.objects` is skipped: it has no node
  * to draw a row in. The trace scope is derived from the same relation list that produced these
@@ -377,6 +394,9 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     targetId: string;
     targetCol: string;
     hopNode: string;
+    /** Rendered hop node the relation is drawn through; unset when the hop is an endpoint. */
+    viaId?: string;
+    /** Hop node outside the view, kept as an annotation because there is nothing to route through. */
     viaNode?: string;
   }
 
@@ -395,6 +415,9 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const sourceKey = sourceObj.id.toLowerCase();
     const targetKey = targetObj.id.toLowerCase();
 
+    // The semantic relation stays source-to-target even when the drawing goes through a hop: the
+    // target's fan-in count and rename signal describe where its value came from, not which node
+    // carried it there.
     addOutbound(sourceAcc.outbound, sourceRowKey, `${targetKey}::${targetRowKey}`);
     pushInbound(targetAcc.inbound, targetRowKey, {
       otherNodeKey: sourceKey,
@@ -404,13 +427,39 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     });
 
     const hopKey = relation.hopNode.toLowerCase();
+    let viaId: string | undefined;
     let viaNode: string | undefined;
     if (hopKey !== sourceKey && hopKey !== targetKey) {
       const hopObj = input.objects.get(hopKey);
-      viaNode = hopObj ? hopObj.id : relation.hopNode;
+      if (hopObj) {
+        viaId = hopObj.id;
+        const viaAcc = getAcc(hopObj);
+        // One port per column passing through, under the name it carries on each side: a rename
+        // inside the hop shows as two ports, an unchanged name as one.
+        const inRowKey = touchRow(viaAcc, relation.fromCol);
+        const outRowKey = touchRow(viaAcc, relation.toCol);
+        pushInbound(viaAcc.inbound, inRowKey, {
+          otherNodeKey: sourceKey,
+          otherColKey: sourceRowKey,
+          fromColRaw: relation.fromCol,
+          toColRaw: relation.fromCol,
+        });
+        addOutbound(viaAcc.outbound, outRowKey, `${targetKey}::${targetRowKey}`);
+        if (inRowKey !== outRowKey) {
+          addOutbound(viaAcc.outbound, inRowKey, `${hopKey}::${outRowKey}`);
+          pushInbound(viaAcc.inbound, outRowKey, {
+            otherNodeKey: hopKey,
+            otherColKey: inRowKey,
+            fromColRaw: relation.fromCol,
+            toColRaw: relation.toCol,
+          });
+        }
+      } else {
+        viaNode = relation.hopNode;
+      }
     }
 
-    const identity = [sourceKey, normalizeColName(relation.fromCol), targetKey, normalizeColName(relation.toCol), viaNode?.toLowerCase() ?? ''].join('->');
+    const identity = [sourceKey, normalizeColName(relation.fromCol), targetKey, normalizeColName(relation.toCol), hopKey].join('->');
     if (seenRelations.has(identity)) return;
     seenRelations.add(identity);
 
@@ -421,13 +470,14 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetId: targetObj.id,
       targetCol: relation.toCol,
       hopNode: relation.hopNode,
+      viaId,
       viaNode,
     });
   });
 
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map((acc) => {
     const rows = buildRows(acc);
-    const height = COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT;
+    const height = COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH;
     return {
       id: acc.object.id,
       label: acc.object.label,
@@ -441,20 +491,47 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     };
   });
 
-  const edges: ColumnTraceViewEdge[] = normalized.map((relation) => {
+  const edges: ColumnTraceViewEdge[] = [];
+  const seenLegs = new Set<string>();
+
+  function pushEdge(
+    index: number,
+    leg: string,
+    source: string,
+    sourceCol: string,
+    target: string,
+    targetCol: string,
+    state: ColumnLineState,
+    viaNode?: string,
+  ): void {
+    // Two relations through the same hop share a leg — the two inbound halves stay distinct, their
+    // outbound halves are one line. Drawing both would stack identical lines on the same handles.
+    const legKey = `${source.toLowerCase()}::${normalizeColName(sourceCol)}->${target.toLowerCase()}::${normalizeColName(targetCol)}`;
+    if (seenLegs.has(legKey)) return;
+    seenLegs.add(legKey);
     const edge: ColumnTraceViewEdge = {
-      id: `${relation.sourceId}::${normalizeColName(relation.sourceCol)}->${relation.targetId}::${normalizeColName(relation.targetCol)}#${relation.index}`,
-      source: relation.sourceId,
-      sourceHandle: columnHandleId(relation.sourceCol, 'source'),
-      sourceColumn: relation.sourceCol,
-      target: relation.targetId,
-      targetHandle: columnHandleId(relation.targetCol, 'target'),
-      targetColumn: relation.targetCol,
-      state: resolveVerdictLineState(relation.hopNode, input.verdicts),
+      id: `${source}::${normalizeColName(sourceCol)}->${target}::${normalizeColName(targetCol)}#${index}${leg}`,
+      source,
+      sourceHandle: columnHandleId(sourceCol, 'source'),
+      sourceColumn: sourceCol,
+      target,
+      targetHandle: columnHandleId(targetCol, 'target'),
+      targetColumn: targetCol,
+      state,
     };
-    if (relation.viaNode) edge.viaNode = relation.viaNode;
-    return edge;
-  });
+    if (viaNode) edge.viaNode = viaNode;
+    edges.push(edge);
+  }
+
+  for (const relation of normalized) {
+    const state = resolveVerdictLineState(relation.hopNode, input.verdicts);
+    if (relation.viaId) {
+      pushEdge(relation.index, 'a', relation.sourceId, relation.sourceCol, relation.viaId, relation.sourceCol, state);
+      pushEdge(relation.index, 'b', relation.viaId, relation.targetCol, relation.targetId, relation.targetCol, state);
+      continue;
+    }
+    pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state, relation.viaNode);
+  }
 
   // Laid out by graphBuilder's dagreLayout so the column view shares the object view's
   // rankdir/separation/margins; only the per-node box differs (rows give variable heights).

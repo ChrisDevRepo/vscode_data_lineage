@@ -84,11 +84,18 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     });
 
     window.addEventListener('error', (event) => {
+      // A browser notice — a ResizeObserver loop report, a failed resource load — arrives as an
+      // error event with nothing thrown behind it. Reporting it as an application failure spends a
+      // modal toast on something the user cannot act on, so it goes to the log instead.
+      if (!(event.error instanceof Error)) {
+        window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[Graph] Window notice: ${event.message}` });
+        return;
+      }
       window.vscode?.postMessage({
         type: 'error',
         source: 'window-error',
         error: event.message,
-        stack: event.error instanceof Error ? event.error.stack : undefined,
+        stack: event.error.stack,
         timestamp: Date.now(),
       });
     });

@@ -10,6 +10,9 @@ import {
   columnRowKey,
   resolveRowLineStates,
   resolveVerdictLineState,
+  COLUMN_NODE_BORDER_WIDTH,
+  COLUMN_NODE_HEADER_HEIGHT,
+  COLUMN_ROW_HEIGHT,
   type ColumnLineState,
   type ColumnTraceRelation,
   type ColumnTraceViewEdge,
@@ -192,6 +195,102 @@ describe('columnTraceView', () => {
     const view = buildColumnTraceView(input);
     expect(view.nodes).toEqual([]);
     expect(view.edges).toEqual([]);
+  });
+
+  it('includes the card border in the node height so the last row is not clipped', () => {
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t', toCol: 'A' },
+      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'B', toNode: 'dbo.t', toCol: 'B' },
+    ];
+
+    const node = findNode(buildColumnTraceView({ relations, objects }), 'dbo.t');
+    expect(node.rows).toHaveLength(2);
+    expect(node.height).toBe(
+      COLUMN_NODE_HEADER_HEIGHT + 2 * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
+    );
+  });
+});
+
+/**
+ * Lane for the transform node's place in the chain.
+ *
+ * A relation names the hop that produced it. Drawing the source straight to the target left that
+ * hop with no inbound edge, so dagre ranked the procedure as a source and parked it at the left
+ * margin with a single line spanning the canvas to its own output. The procedure is on the path, so
+ * the path is drawn through it.
+ */
+describe('buildColumnTraceView — routing through the analysing hop', () => {
+  const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
+
+  // The shape from a real trace: two feeders whose values a procedure combines into one output.
+  const relations: ColumnTraceRelation[] = [
+    { hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total' },
+    { hopNode: 'dbo.p', fromNode: 'dbo.s2', fromCol: 'Price', toNode: 'dbo.t', toCol: 'Total' },
+  ];
+
+  it('draws each relation as two legs through the hop rather than past it', () => {
+    const view = buildColumnTraceView({ relations, objects });
+    const legs = view.edges.map((e) => `${e.source}.${e.sourceColumn}->${e.target}.${e.targetColumn}`);
+
+    expect(legs).toContain('dbo.s1.Qty->dbo.p.Qty');
+    expect(legs).toContain('dbo.s2.Price->dbo.p.Price');
+    expect(legs).toContain('dbo.p.Total->dbo.t.Total');
+    // No line goes straight from a feeder to the target.
+    expect(legs.some((leg) => leg.startsWith('dbo.s1.Qty->dbo.t'))).toBe(false);
+    expect(view.edges.every((e) => e.viaNode === undefined)).toBe(true);
+  });
+
+  it('gives the hop an inbound edge, which is what puts it mid-chain', () => {
+    const view = buildColumnTraceView({ relations, objects });
+    expect(view.edges.some((e) => e.target === 'dbo.p')).toBe(true);
+  });
+
+  it('draws the shared outbound leg once', () => {
+    const view = buildColumnTraceView({ relations, objects });
+    const outbound = view.edges.filter((e) => e.source === 'dbo.p' && e.target === 'dbo.t');
+    expect(outbound).toHaveLength(1);
+    expect(new Set(view.edges.map((e) => e.id)).size).toBe(view.edges.length);
+  });
+
+  it('keeps the target fan-in on the original endpoints, not on the legs', () => {
+    const view = buildColumnTraceView({ relations, objects });
+    const row = findRow(view, 'dbo.t', 'Total');
+    expect(row.shape).toBe('fan-in');
+    expect(row.contributors).toBe(2);
+  });
+
+  it('keeps the rename signal across the split', () => {
+    const view = buildColumnTraceView({
+      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' }],
+      objects,
+    });
+    expect(findRow(view, 'dbo.t', 'Amount').shape).toBe('renamed');
+  });
+
+  it('gives the hop one port per name the column carries, so a rename shows two', () => {
+    const renaming = buildColumnTraceView({
+      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' }],
+      objects,
+    });
+    expect(findNode(renaming, 'dbo.p').rows.map((r) => r.name)).toEqual(['Amt', 'Amount']);
+
+    const unchanged = buildColumnTraceView({
+      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amount', toNode: 'dbo.t', toCol: 'Amount' }],
+      objects,
+    });
+    expect(findNode(unchanged, 'dbo.p').rows.map((r) => r.name)).toEqual(['Amount']);
+  });
+
+  it('leaves a hop outside the view as an annotation, having nothing to route through', () => {
+    const withoutProc = mkObjects(mkObj('dbo.s1'), mkObj('dbo.t'));
+    const view = buildColumnTraceView({
+      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Qty' }],
+      objects: withoutProc,
+    });
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(['dbo.s1', 'dbo.t']);
+    expect(view.edges).toHaveLength(1);
+    expect(view.edges[0].viaNode).toBe('dbo.p');
   });
 });
 

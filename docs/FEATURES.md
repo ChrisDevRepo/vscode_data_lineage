@@ -256,6 +256,13 @@ running column to column, procedures and scalar functions drawn as ports rather 
 glyph on a line where the value changed between its two endpoints. Hovering a row lights that whole
 thread and dims the rest; the rows collapse to a summary line when you zoom out.
 
+A procedure or function that transformed a value sits in the chain between the columns it reads and
+the columns it writes, with a port for each name the value carries — two ports when it renames one.
+The thread therefore runs source → transform → target rather than past the transform. Structure
+labels stay on the endpoints: a target column fed by two sources still reads `fan-in (2)`, whichever
+object combined them. Switching to Columns fits the new layout to the window, and switching back
+returns to the object view where you left it.
+
 This is a rendering of the AI-generated column analysis — the same best-effort finding described
 under **Tips** below, shown on the graph instead of only in the write-up. Verify it against the
 database for compliance-critical claims.
