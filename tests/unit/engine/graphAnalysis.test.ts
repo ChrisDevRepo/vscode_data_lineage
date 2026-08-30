@@ -238,6 +238,28 @@ describe('analyzeLongestPath', () => {
   it('returns nothing for an empty graph', () => {
     expect(analyzeLongestPath(emptyGraph(), 2).groups).toEqual([]);
   });
+
+  // Two roots: one crosses only singleton components (component-hop depth == real length), the
+  // other crosses a 5-node cycle that condenses to a single component (component-hop depth 2, but
+  // a real length of 6 once expanded). Ranking/capping candidates by component-hop depth instead
+  // of real expanded length would rank the shorter singleton chain first and drop the true longest
+  // chain once `maxChains` is reached.
+  const competingRoots = () => makeGraph(
+    [
+      { id: 'R1a' }, { id: 'R1b' }, { id: 'R1c' }, { id: 'R1d' }, { id: 'R1e' },
+      { id: 'R2a' }, { id: 'C1' }, { id: 'C2' }, { id: 'C3' }, { id: 'C4' }, { id: 'C5' }, { id: 'R2b' },
+    ],
+    [
+      ['R1a', 'R1b'], ['R1b', 'R1c'], ['R1c', 'R1d'], ['R1d', 'R1e'],
+      ['R2a', 'C1'], ['C1', 'C2'], ['C2', 'C3'], ['C3', 'C4'], ['C4', 'C5'], ['C5', 'C1'], ['C5', 'R2b'],
+    ],
+  );
+
+  it('ranks a root crossing a multi-node cycle by its real expanded length, not component-hop count', () => {
+    const group = analyzeLongestPath(competingRoots(), 2, 1).groups[0];
+    expect(group.nodeIds).toEqual(['R2a', 'C1', 'C2', 'C3', 'C4', 'C5', 'R2b']);
+    expect(group.meta?.depth).toBe(6);
+  });
 });
 
 // ─── analyzeCycles ───────────────────────────────────────────────────────────

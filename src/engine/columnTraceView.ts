@@ -100,16 +100,6 @@ export interface ColumnTraceViewEdge {
   targetColumn: string;
   /** Whether the value changed between the two endpoints. */
   state: ColumnLineState;
-  /**
-   * Hop node that performed the work when it is not itself an endpoint and is not on the canvas.
-   *
-   * @remarks
-   * The tracer emits two edge shapes — one where a procedure is an endpoint, one where it is only
-   * the analysing hop on a table-to-table pair. When that hop is a node the view renders, the
-   * relation is drawn through it as two legs and this stays unset; a hop outside the view has
-   * nothing to route through, so it is recorded here instead.
-   */
-  viaNode?: string;
 }
 
 /** The complete column-level rendering of one trace. */
@@ -397,8 +387,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     hopNode: string;
     /** Rendered hop node the relation is drawn through; unset when the hop is an endpoint. */
     viaId?: string;
-    /** Hop node outside the view, kept as an annotation because there is nothing to route through. */
-    viaNode?: string;
   }
 
   const normalized: NormalizedRelation[] = [];
@@ -429,7 +417,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
 
     const hopKey = relation.hopNode.toLowerCase();
     let viaId: string | undefined;
-    let viaNode: string | undefined;
     if (hopKey !== sourceKey && hopKey !== targetKey) {
       const hopObj = input.objects.get(hopKey);
       if (hopObj) {
@@ -455,8 +442,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
             toColRaw: relation.toCol,
           });
         }
-      } else {
-        viaNode = relation.hopNode;
       }
     }
 
@@ -472,7 +457,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetCol: relation.toCol,
       hopNode: relation.hopNode,
       viaId,
-      viaNode,
     });
   });
 
@@ -503,7 +487,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     target: string,
     targetCol: string,
     state: ColumnLineState,
-    viaNode?: string,
   ): void {
     // Two relations through the same hop share a leg — the two inbound halves stay distinct, their
     // outbound halves are one line. Drawing both would stack identical lines on the same handles.
@@ -520,7 +503,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetColumn: targetCol,
       state,
     };
-    if (viaNode) edge.viaNode = viaNode;
     edges.push(edge);
   }
 
@@ -531,7 +513,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       pushEdge(relation.index, 'b', relation.viaId, relation.targetCol, relation.targetId, relation.targetCol, state);
       continue;
     }
-    pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state, relation.viaNode);
+    pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state);
   }
 
   // Laid out by graphBuilder's dagreLayout so the column view shares the object view's

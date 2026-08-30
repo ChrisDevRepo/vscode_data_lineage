@@ -80,10 +80,6 @@ describe('columnTraceView', () => {
     expect(viaEdge.sourceHandle).toBe(endpointEdge.sourceHandle);
     expect(viaEdge.targetHandle).toBe(endpointEdge.targetHandle);
     expect(viaEdge.state).toBe(endpointEdge.state);
-
-    // The only structural difference is the viaNode annotation.
-    expect(endpointEdge.viaNode).toBeUndefined();
-    expect(viaEdge.viaNode).toBe('dbo.p');
   });
 
   it('marks a procedure as a transform node', () => {
@@ -238,7 +234,6 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     expect(legs).toContain('dbo.p.Total->dbo.t.Total');
     // No line goes straight from a feeder to the target.
     expect(legs.some((leg) => leg.startsWith('dbo.s1.Qty->dbo.t'))).toBe(false);
-    expect(view.edges.every((e) => e.viaNode === undefined)).toBe(true);
   });
 
   it('gives the hop an inbound edge, which is what puts it mid-chain', () => {
@@ -282,7 +277,7 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     expect(findNode(unchanged, 'dbo.p').rows.map((r) => r.name)).toEqual(['Amount']);
   });
 
-  it('leaves a hop outside the view as an annotation, having nothing to route through', () => {
+  it('renders a hop outside the view as a direct edge, having nothing to route through', () => {
     const withoutProc = mkObjects(mkObj('dbo.s1'), mkObj('dbo.t'));
     const view = buildColumnTraceView({
       relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Qty' }],
@@ -290,7 +285,8 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     });
     expect(view.nodes.map((n) => n.id).sort()).toEqual(['dbo.s1', 'dbo.t']);
     expect(view.edges).toHaveLength(1);
-    expect(view.edges[0].viaNode).toBe('dbo.p');
+    expect(view.edges[0].source).toBe('dbo.s1');
+    expect(view.edges[0].target).toBe('dbo.t');
   });
 });
 

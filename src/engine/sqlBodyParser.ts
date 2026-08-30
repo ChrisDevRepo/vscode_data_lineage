@@ -409,6 +409,17 @@ function removeBlockComments(sql: string): string {
       }
       continue;
     }
+    // A double-quoted identifier (SET QUOTED_IDENTIFIER ON) is opaque the same way: a name such
+    // as "My/*Table" must not open a comment either.
+    if (depth === 0 && sql[i] === '"') {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] !== '"') { i++; continue; }
+        if (sql[i + 1] === '"') { i += 2; continue; } // "" is an escaped quote, not the end
+        i++; break;
+      }
+      continue;
+    }
     if (depth === 0 && sql[i] === '-' && sql[i + 1] === '-') {
       while (i < sql.length && sql[i] !== '\n') i++;
       continue;

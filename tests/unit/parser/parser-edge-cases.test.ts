@@ -1160,6 +1160,24 @@ describe('a wildcard path in a string literal is not a comment', () => {
   ]);
 });
 
+describe('a double-quoted identifier is not a comment', () => {
+  table([
+    {
+      name: 'statements after a double-quoted identifier containing /* are still parsed',
+      // SET QUOTED_IDENTIFIER ON treats "..." as a delimited identifier, not a string literal.
+      // A `/*` inside one (e.g. an alias carrying odd characters) must not open a block comment
+      // that swallows the rest of the batch.
+      sql:
+        'SELECT c.id AS "My/*Alias" FROM stg.Customer c;'
+        + ' INSERT INTO dbo.Dim SELECT 1;'
+        + ' EXEC dbo.usp_Audit;',
+      targets: ['Dim'],
+      exactSources: ['stg.Customer'],
+      exec: ['usp_Audit'],
+    },
+  ]);
+});
+
 describe('CTAS carries its distribution clause', () => {
   table([
     {

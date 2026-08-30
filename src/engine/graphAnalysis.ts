@@ -298,14 +298,19 @@ export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number
   }
 
   const roots = order.filter((component) => inDegree[component] === 0);
-  roots.sort((a, b) => depth[b] - depth[a]);
+
+  // Component-hop depth only ranks roots correctly when every component is a singleton; a root
+  // whose path crosses a multi-node strongly-connected component gets the same "+1" as one that
+  // crosses only singletons, so ranking (and capping) by that count can drop a genuinely longer
+  // real-node chain. Expand every root's chain first and rank by the real node count instead —
+  // the number of roots is bounded by the graph's entry points, not by maxChains.
+  const expandedChains = roots.map((root) => expandChain(graph, condensation, nextOf, root));
+  expandedChains.sort((a, b) => b.length - a.length);
 
   const chains: Array<{ nodeIds: string[]; length: number }> = [];
   const seenEndpoints = new Set<string>();
 
-  for (const root of roots) {
-    const nodeIds = expandChain(graph, condensation, nextOf, root);
-
+  for (const nodeIds of expandedChains) {
     const endNode = nodeIds[nodeIds.length - 1];
     if (seenEndpoints.has(endNode)) continue;
     seenEndpoints.add(endNode);

@@ -522,6 +522,9 @@ export function GraphCanvas({
    */
   const columnViewObjectNodesRef = useRef<FlowNode[] | null>(null);
 
+  /** Object-view edges to read while the column view is on stage; `null` in the object view. See {@link columnViewObjectNodesRef} for why this is a ref rather than a direct read of `localEdges`. */
+  const columnViewEdgesRef = useRef<FlowEdge[] | null>(null);
+
   /**
    * Node positions in object space, for the callbacks that persist or export them.
    *
@@ -757,7 +760,7 @@ export function GraphCanvas({
     const clusterNodes: FlowNode<SchemaNodeData>[] = [];
     const exportNodes = objectNodes();
     // Column view renders column-to-column trace edges; export always uses the object-level graph.
-    const exportEdges = columnViewActive ? localEdges : getEdges();
+    const exportEdges = columnViewEdgesRef.current ?? getEdges();
     for (const n of exportNodes) {
       if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
       else exportObjectNodes.push(n as FlowNode<CustomNodeData>);
@@ -773,7 +776,7 @@ export function GraphCanvas({
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [objectNodes, getEdges, columnViewActive, localEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [objectNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   useEffect(() => {
@@ -998,6 +1001,7 @@ export function GraphCanvas({
 
   const columnViewActive = columnView && !!columnTraceView;
   columnViewObjectNodesRef.current = columnViewActive ? localNodes : null;
+  columnViewEdgesRef.current = columnViewActive ? localEdges : null;
 
   /**
    * Node-and-column keys reachable from the hovered row in either direction.
