@@ -66,6 +66,14 @@ debug.log
 # as the actual delivery formats.
 dist/assets/KaTeX_*.ttf
 
+# Internal agent artifacts (gitignored, but vsce ignores .gitignore — each needs its own
+# entry). GLM.md is the agent orientation map, .glm-skills/ the vendored GLM skills catalog,
+# .agents/ the repo's agent skills and MCP config. None of these belong in a VSIX.
+GLM.md
+.GLM.md
+.glm-skills/**
+.agents/**
+
 # Misc
 PLAN*.md
 AGENTS.md

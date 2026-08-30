@@ -13,23 +13,47 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const vsceCli = path.join(repoRoot, 'node_modules', '@vscode', 'vsce', 'vsce');
-const result = spawnSync(process.execPath, [vsceCli, 'ls'], {
-  cwd: repoRoot,
-  encoding: 'utf8',
-  maxBuffer: 16 * 1024 * 1024,
-  shell: false,
-});
 
+function runVsce(extraArgs = []) {
+  return spawnSync(process.execPath, [vsceCli, 'ls', ...extraArgs], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    shell: false,
+  });
+}
+
+function isKnownOverrideFalsePositive(output) {
+  // npm ls — which vsce runs internally to resolve production dependencies — reports any
+  // dependency replaced by an npm `overrides` entry as `invalid` even when the replacement is
+  // intentional and version-consistent (observed on npm 10.9.x with the LangSmith exclusion
+  // stub, which the repo's containment layer mandates; see docs/ARCHITECTURE.md §LangSmith).
+  // That false positive fails `vsce ls` before it prints a listing. When the failure is
+  // exactly that known case, fall back to `--no-dependencies`: the dependency resolution is
+  // owned by the lockfile, and this step's contract is the VSIX file listing.
+  return /code ELSPROBLEMS/u.test(output) && /invalid: langsmith@/u.test(output);
+}
+
+let result = runVsce();
+let usedFallback = false;
 if (result.error) {
   console.error(`FATAL: could not run the local @vscode/vsce CLI: ${result.error.message}`);
   process.exit(2);
 }
-
 if (result.status !== 0) {
   const output = (result.stderr || result.stdout || '').trim();
-  console.error('FAIL: `vsce ls` did not run successfully.');
-  console.error(output || '(no output captured)');
-  process.exit(result.status ?? 1);
+  if (!isKnownOverrideFalsePositive(output)) {
+    console.error('FAIL: `vsce ls` did not run successfully.');
+    console.error(output || '(no output captured)');
+    process.exit(result.status ?? 1);
+  }
+  result = runVsce(['--no-dependencies']);
+  if (result.error || result.status !== 0) {
+    console.error('FAIL: `vsce ls` did not run successfully, including the documented override fallback.');
+    console.error((result.stderr || result.stdout || '').trim() || '(no output captured)');
+    process.exit(result.status ?? 1);
+  }
+  usedFallback = true;
 }
 
 const files = result.stdout
@@ -60,8 +84,8 @@ const forbidden = [
   // required-file list — these two patterns are what makes their absence PROVEN rather than assumed.
   { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
   { pattern: /^stubs\//u, label: 'dependency stub directory' },
-  { pattern: /^(?:\.agents|\.codex|\.claude|\.gemini|\.cursor|\.continue)\//u, label: 'internal agent directory' },
-  { pattern: /^(?:\.env(?:\..*)?|CLAUDE[^/]*|GEMINI[^/]*)$/iu, label: 'environment/agent-instruction file' },
+  { pattern: /^(?:\.agents|\.codex|\.claude|\.gemini|\.cursor|\.continue|\.glm-skills)\//u, label: 'internal agent directory' },
+  { pattern: /^(?:\.env(?:\..*)?|CLAUDE[^/]*|GEMINI[^/]*|GLM[^/]*|AGENTS[^/]*)$/iu, label: 'environment/agent-instruction file' },
   { pattern: /(?:^|\/)[^/]*internal[^/]*(?:\/|$)/iu, label: '"internal" marker path' },
   { pattern: /(?:^|\/)debug[^/]*\.txt$/iu, label: 'debug*.txt artifact' },
   // `vsce` never reads .gitignore, so an untracked scratch file at the repo root is packaged
@@ -94,6 +118,7 @@ if (missing.length > 0 || leaked.length > 0) {
 
 console.log(
   `PASS: VSIX content OK (${files.length} files; required files present; ` +
-    `no internal, source, test, tmp, tooling, debug-artifact, evidence, .vsix, or environment paths).`,
+    `no internal, source, test, tmp, tooling, debug-artifact, evidence, .vsix, or environment paths).` +
+    (usedFallback ? ' (vsce dependency analysis skipped: known npm-ls override false positive)' : ''),
 );
 process.exit(0);

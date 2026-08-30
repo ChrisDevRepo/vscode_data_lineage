@@ -11,7 +11,9 @@
   "qna": "marketplace",
   "extensionDependencies": [],
   "engines": {
-    "vscode": "^1.101.0"
+    "vscode": "^1.101.0",
+    "node": ">=20",
+    "npm": ">=10"
   },
   "categories": [
     "Data Science",
@@ -780,8 +782,9 @@
     "test:bare-environment": "vscode-test --label bare-environment",
     "test:tools": "vscode-test --label tools",
     "test:participant-turn": "vscode-test --label participant-turn",
-    "package": "vsce package",
-    "gate": "node tests/tools/gate.mjs"
+    "package": "vsce package --no-dependencies",
+    "gate": "node tests/tools/gate.mjs",
+    "postinstall": "node scripts/repair-langsmith-stub.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "3.1.1",

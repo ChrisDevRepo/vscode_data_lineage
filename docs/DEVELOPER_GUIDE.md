@@ -2,6 +2,37 @@
 
 Starting point for forking and contributing. The deeper engine concepts live in [`ARCHITECTURE.md`](ARCHITECTURE.md); the YAML knobs in [`AI_PROMPTS.md`](AI_PROMPTS.md) and [`PARSE_RULES.md`](PARSE_RULES.md). Coding standards and PR hygiene live in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
+## Toolchain requirements
+
+| Tool | Requirement | Declared in |
+|------|-------------|-------------|
+| Node.js | `>=20` | `engines.node` in [`package.json`](../package.json) |
+| npm | `>=10` | `engines.npm` in [`package.json`](../package.json) |
+| VS Code | `^1.101.0` | `engines.vscode` in [`package.json`](../package.json) |
+
+npm warns when the installed toolchain falls outside `engines` (it fails only with
+`engine-strict` enabled). Building on an older Node still can fail at runtime —
+e.g. the stream tests depend on Node 20+ iterator-helper semantics — so treat the
+table above as a hard minimum, not a suggestion.
+
+**Always install with `npm ci`** after cloning and after pulling any change that
+touches `package.json` or `package-lock.json`. A `node_modules` tree carried over
+from an older lockfile (another machine, another OS, an earlier dependency set)
+resolves stale packages and fails the bundle step — observed as Vite being unable
+to resolve `monaco-editor/editor/editor.api` after the jump to monaco 0.56 —
+and the only reliable repair is deleting `node_modules` and running `npm ci` again.
+
+**The `postinstall` hook repairs the LangSmith containment stub.** The repo
+replaces the transitive `langsmith` dependency with an inert local stub via npm
+`overrides` (see [`ARCHITECTURE.md`](ARCHITECTURE.md)). Several npm 10.x releases
+fail to materialize the symlink npm declares for that replacement, leaving
+`node_modules/langsmith` dangling; the next bundle then dies with
+`Could not resolve "langsmith"`. The `postinstall` script
+[`scripts/repair-langsmith-stub.mjs`](../scripts/repair-langsmith-stub.mjs)
+detects that state and copies the stub into place; it is idempotent, offline, and
+safe to run by hand (`node scripts/repair-langsmith-stub.mjs`) whenever
+`node_modules` was copied between machines instead of installed.
+
 ## Repository layout
 
 | Path | Owns |
@@ -39,6 +70,15 @@ npm run package               # package with the pinned local @vscode/vsce
 `@vscode/vsce` is an exact-version development dependency. Both packaging and
 the package-content gate use that installed local CLI; they do not invoke
 `npx`, fetch from the network, or depend on an `npx` cache.
+
+Packaging uses `--no-dependencies`: every production dependency is bundled into
+`out/` and `dist/` by esbuild/Vite before packaging, and `vsce`'s dependency
+resolution pass (`npm ls`) misreports dependencies replaced by npm `overrides`
+as `invalid` (npm 10.x, see the LangSmith containment note above). The same
+applies if `vsce package` or `vsce publish` is invoked directly — pass
+`--no-dependencies` there too. The package-content gate
+([`tests/tools/assert-package-contents.mjs`](../tests/tools/assert-package-contents.mjs))
+falls back to that flag automatically when it recognizes the false positive.
 
 ## Two ingestion paths, one model
 

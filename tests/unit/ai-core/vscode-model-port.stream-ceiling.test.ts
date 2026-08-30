@@ -98,10 +98,12 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
     // The drain actually stopped early (not merely truncated by luck): the poison chunk was never
     // pulled, and the underlying stream was closed exactly once through the normal return path.
     // Contract: `IterableReadableStream.fromAsyncGenerator`'s WHATWG ReadableStream (default
-    // highWaterMark 1) reads one chunk ahead of the consumer, so the ceiling breaks on the 5th
-    // `next()` call and the read-ahead consumes the 6th (a benign filler) — the poison chunk is
-    // never pulled.
-    expect(script.nextCalls()).toBe(6);
+    // highWaterMark 1) may read one chunk ahead of the consumer, so the ceiling breaks on the 5th
+    // `next()` call and the read-ahead — when the runtime schedules it (older Node did, current
+    // Node 22.x does not) — consumes the 6th (a benign filler). Either way the poison chunk is
+    // never pulled: 5 consumer pulls to reach the ceiling, at most 1 scheduler read-ahead.
+    expect(script.nextCalls()).toBeGreaterThanOrEqual(5);
+    expect(script.nextCalls()).toBeLessThanOrEqual(6);
     expect(script.returnCalls()).toBe(1);
   });
 

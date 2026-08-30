@@ -29,25 +29,24 @@ debug*.txt
 .DS_Store
 Thumbs.db
 
-# AI assistant config — NEVER commit to public repo
-# These folders contain local context, prompts, credentials, and internal instructions.
+# AI assistant files — NEVER commit to this public repo.
+# Local agent context, prompts, credentials, and internal instructions. Patterns match
+# in any directory; the bare names cover dotted variants and future siblings.
 AGENTS.md
-.AGENTS.md
-CLAUDE.md
-.CLAUDE.md
+CLAUDE*
 .claude/
-**/.claude/**
-GEMINI.md
-.GEMINI.md
+GEMINI*
 .gemini/
-**/.gemini/**
+GLM*
+.glm-skills/
+CODEX*
+codex.md
+.codex/
 .cursor/
-**/.cursor/**
+.cursorrules
 .aider*
 .continue/
-**/.continue/**
 .agents/
-**/.agents/**
 
 # Internal Developer Docs
 *internal*/
@@ -58,6 +57,8 @@ GEMINI.md
 scripts/*
 # The gate's manifest step runs this — it must be committable.
 !scripts/generate-tool-manifest.mjs
+# The postinstall hook runs this — it must be committable or fresh clones break.
+!scripts/repair-langsmith-stub.mjs
 
 # Code-audit workspace (tool output, inventories, classification artifacts)
 .audit/

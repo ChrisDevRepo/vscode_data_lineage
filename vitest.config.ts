@@ -15,6 +15,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // Worker processes default to Node's ~1 MB stack. Dagre's recursive coordinate assignment
+    // overflows it at ~1500 nodes (largeGraph.test.ts) even though the real webview runtime
+    // (Chromium, ~1 MB but different growth) and a plain Node process both succeed. Give the
+    // layout engine the headroom the product runtime effectively has.
+    execArgv: ['--stack-size=8000'],
     include: ['tests/unit/**/*.test.ts'],
     coverage: {
       provider: 'v8',

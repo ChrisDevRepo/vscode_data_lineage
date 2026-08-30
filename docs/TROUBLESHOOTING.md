@@ -68,6 +68,36 @@ usable for deep analysis; pick one from the Model choice guidance above and re-a
 - Profiling is live-DB only (no dacpac). See [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 - On SQL Server 2016 or 2017, set `dataLineageViz.tableStatistics.useApproxDistinct` to `false`; `APPROX_COUNT_DISTINCT` requires SQL Server 2019 or later.
 
+## Development environment
+
+**`Could not resolve "langsmith"` at bundle time.** The npm `overrides` entry that
+contains the LangSmith dependency (see [`ARCHITECTURE.md`](ARCHITECTURE.md)) can
+leave `node_modules/langsmith` as a dangling symlink on some npm 10.x releases.
+The `postinstall` hook (`scripts/repair-langsmith-stub.mjs`) repairs this
+automatically; if it was skipped — `node_modules` copied between machines,
+`--ignore-scripts` in effect — run `node scripts/repair-langsmith-stub.mjs`
+manually, or reinstall with `npm ci`.
+
+**Bundle fails after pulling changes with a missing or wrong package version.**
+The `node_modules` tree predates the lockfile. Delete `node_modules` and run
+`npm ci`; a carried-over tree from another machine or OS (e.g. a Windows
+checkout moved to macOS) resolves stale package versions and cannot be
+incrementally repaired.
+
+**`vsce package` / `vsce publish` fails with `code ELSPROBLEMS`
+(`invalid: langsmith@…`).** npm `ls` misreports dependencies replaced by npm
+`overrides` as invalid — a false positive on this repo's intentional LangSmith
+containment stub, independent of the installed versions. Run
+`npm run package`, or pass `--no-dependencies` to a direct `vsce` invocation;
+all production dependencies are bundled into `out/` and `dist/` before
+packaging, so dependency resolution at package time is unnecessary.
+
+**Tests hang or crash on large graphs (`Maximum call stack size exceeded`).**
+The vitest workers need the enlarged stack configured in [`vitest.config.ts`](../vitest.config.ts)
+(`test.execArgv: ['--stack-size=8000']`) — layout tests with ≥1500 nodes
+overflow Node's default worker stack. If the config is edited, keep that entry
+top-level: Vitest 4 ignores `poolOptions.*.execArgv`.
+
 ## Bug reports
 
 Run **Data Lineage: Copy Debug Info** and include the relevant section from
