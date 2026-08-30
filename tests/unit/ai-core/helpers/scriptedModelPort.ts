@@ -152,8 +152,17 @@ export function invalidCall(
   code: InvalidGeneratedToolCall['code'],
   reason: string,
   issuePaths?: readonly string[],
+  input?: unknown,
 ): InvalidGeneratedToolCall {
-  return { valid: false, callId, toolName, code, reason, ...(issuePaths ? { issuePaths } : {}) };
+  return {
+    valid: false,
+    callId,
+    toolName,
+    code,
+    reason,
+    ...(issuePaths ? { issuePaths } : {}),
+    ...(input !== undefined ? { input } : {}),
+  };
 }
 
 /** One dispatch observed by {@link scriptedRegistry}. */

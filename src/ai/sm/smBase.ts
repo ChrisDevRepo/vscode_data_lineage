@@ -748,13 +748,57 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Engine code for a CT target list that names objects instead of columns. Single owner — emitted
+   * by both CT-target adoption sites ({@link init} and {@link setColumnTargets}) so the reject and
+   * its hint cannot drift between them.
+   */
+  private static readonly TARGET_COLUMNS_NAME_OBJECTS = 'target_columns_name_objects';
+
+  /**
+   * CT target entries that resolve to loaded-model node ids — object references, never columns.
+   *
+   * @remarks
+   * The same boundary class as the Zod wildcard reject in `ColumnIdentifierSchema`: a value that
+   * is an object id locks an unwinnable CT session — the object id becomes an active tracked
+   * column, so every real column the model submits is rejected `out_col_not_on_node` while the
+   * only accepted `out_col` would be the object id itself. Detection is exact, not heuristic:
+   * {@link resolveModelNodeId} only matches schema-qualified two-part object spellings
+   * (`[s].[o]`, `s.o`), so bare column names and three-part column spellings never match.
+   */
+  private nodeRefColumnTargets(columns: readonly string[]): string[] {
+    return columns.filter((column) => resolveModelNodeId(column, this.nodeMap) !== null);
+  }
+
+  /**
+   * Reject envelope for a CT target list containing object references. Verb-led, with both
+   * legitimate alternatives built in so the model never has to guess: BB for the object, real
+   * columns for CT.
+   */
+  private rejectNodeRefColumnTargets(nodeRefs: string[]): { error: string; hint: string } {
+    return {
+      error: NavigationEngine.TARGET_COLUMNS_NAME_OBJECTS,
+      hint: `targetColumns [${trunc(nodeRefs.join(', '), 200)}] resolve to objects in the loaded model, not columns. To trace an object, resend without targetColumns and analysisMode "bb". To trace columns, name the user-named columns of the origin instead.`,
+    };
+  }
+
+  /**
    * Updates column-trace target columns for the current session.
    *
+   * @remarks
+   * Refuses target entries that resolve to node ids — the engine never adopts an object
+   * reference as a column, whatever the calling path. Side-effect-free on reject: the tracer
+   * and mode are untouched, so a rejected follow-up leaves the completed session exactly as it
+   * was.
+   *
    * @param targetColumns - Column names to trace from this point forward.
+   * @returns A rejection envelope when a target names an object, otherwise `null`.
    */
-  public setColumnTargets(targetColumns: string[]): void {
+  public setColumnTargets(targetColumns: string[]): { error: string; hint: string } | null {
+    const nodeRefs = this.nodeRefColumnTargets(targetColumns);
+    if (nodeRefs.length > 0) return this.rejectNodeRefColumnTargets(nodeRefs);
     this.tracer = new ColumnTracer(targetColumns);
     this.mode = { kind: 'ct' };
+    return null;
   }
 
   /**
@@ -1290,6 +1334,14 @@ export class NavigationEngine implements IHopStateMachine {
     // phase 2 only after this (and every other) validation has passed.
     let resolvedActiveColumns: string[] = [];
     if (analysisMode === 'ct' && effectiveTargetColumns && effectiveTargetColumns.length > 0) {
+      // Object references are rejected before any resolution: a node id can never be a column of
+      // the origin, whatever the origin's own column surface. Side-effect-free like every phase-1
+      // reject — a refused fresh/refine proposal leaves the live engine exactly as it was.
+      const nodeRefs = this.nodeRefColumnTargets(effectiveTargetColumns);
+      if (nodeRefs.length > 0) {
+        this.log('debug', `[AI] [CT] target columns [${trunc(nodeRefs.join(','), 120)}] resolve to objects, not columns — rejecting start`);
+        return this.rejectNodeRefColumnTargets(nodeRefs);
+      }
       const resolved = this.resolveActiveColumnsForNode(originNode.id, effectiveTargetColumns) ?? [];
       // No fallback: CT target columns must exist on the origin, or the model must choose BB.
       if (resolved.length === 0) {

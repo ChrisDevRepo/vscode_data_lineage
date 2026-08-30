@@ -14,6 +14,9 @@
 - Formulas in AI descriptions render as mathematics, inline and as blocks.
 - Depth follows data-flow direction, so a shared audit table no longer makes objects look closer.
 - Repeated identical tool calls no longer loop a turn without an answer.
+- A repair turn that keeps resending an identical rejected result is bounded by the attempt budget after a short grace, so it ends with a clear failure instead of looping until the call limit stops it.
+- Schema-invalid tool calls are rejected naming the sent value and the expected shape of every offending field, so one repair round can fix a mistyped field instead of guessing.
+- A column target that names an object is rejected with a pointed explanation instead of failing later in column-flow validation it cannot satisfy.
 - Improved column tracking: each hop of a column trace receives its own lineage questions.
 - A column trace no longer hands a procedure a column the source table does not have, so bidirectional traces starting at a view now complete.
 - SQL parsing corrections: objects are no longer dropped after a wildcard storage path, and a few spurious dependency edges no longer appear.

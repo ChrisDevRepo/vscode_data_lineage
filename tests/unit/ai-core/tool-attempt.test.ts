@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AIMessage, BaseMessage } from '@langchain/core/messages';
 import {
+  MAX_TOOL_PROVIDER_CALLS,
   MAX_TOOL_SEMANTIC_FAILURES,
   executeToolAttempt,
   executeToolGenerationAttempt,
@@ -148,9 +149,12 @@ describe('executeToolGenerationAttempt — mixed valid/invalid tool batch', () =
       // without arguments, so the model must be told to edit-and-resend rather than regenerate.
       hint: 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged.',
       issuePaths: ['column_flow.0.to_col'],
+      // Only a fingerprint of the rejected input survives — enough to bound unproductive resends
+      // across attempts, never the payload itself.
+      inputHash: expect.any(String),
     });
-    // The rejected input is absent by type — the envelope has no payload-bearing key at all.
-    expect(Object.keys(rejection).sort()).toEqual(['callId', 'code', 'hint', 'issuePaths', 'reason', 'toolName']);
+    // The rejected input is absent by type — no key carries the raw payload, only its hash.
+    expect(Object.keys(rejection).sort()).toEqual(['callId', 'code', 'hint', 'inputHash', 'issuePaths', 'reason', 'toolName']);
   });
 
   it('attaches repair guidance to an unknown_tool prevalidation reject, naming the phase\'s valid tools as data', async () => {
@@ -1260,6 +1264,121 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     );
 
     expect(result.semanticFailures).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (h) repair-turn prevalidation exemption is bounded — the free channel must not spin
+// ---------------------------------------------------------------------------
+
+describe('executeToolAttempt — repair-turn prevalidation exemption is bounded', () => {
+  /**
+   * Replays a fixed generation queue through `executeToolAttempt` + `recordToolAttempt` with a
+   * held `present_result` repair draft — the state the graph holds between a rejected submission
+   * and its repair — exactly as the graph replays attempts across one repair turn.
+   */
+  async function runRepairTurnSequence(
+    generations: readonly ScriptedGeneration[],
+    tools: readonly ScriptedTool[],
+  ): Promise<{ state: ToolPhaseAttemptState; results: readonly ToolAttemptResult[] }> {
+    const { registry } = scriptedRegistry(tools);
+    const port = new ScriptedModelPort(generations);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: registry.getTools().map((tool) => tool.name) };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: {
+        messages: [modelUserMessage('Present the final result.')],
+        registry,
+        sink,
+        phase: 'active',
+        instructionContext: context,
+      },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < generations.length; index++) {
+      const result = await executeToolAttempt(port, plan, { priorState: state, presentResultRepairDraftHeld: true });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+    return { state, results };
+  }
+
+  /** One schema-invalid `present_result` call as SDK prevalidation rejects it, payload attached. */
+  function invalidPresentResult(callId: string, input: unknown) {
+    return invalidCall(
+      callId,
+      'lineage_present_result',
+      'invalid_tool_input',
+      'sections: at least one section is required',
+      ['sections'],
+      input,
+    );
+  }
+
+  it('charges identical repair-turn prevalidation resends past the absorbed grace, closing the semantic budget instead of spinning to the provider-call cap', async () => {
+    const resend = { sections: [] };
+    const { state, results } = await runRepairTurnSequence(
+      [1, 2, 3, 4, 5, 6].map((attempt) => ({
+        toolCalls: [invalidPresentResult(`call-${attempt}`, resend)],
+      })),
+      [{ name: 'lineage_present_result', result: '{"success":true}' }],
+    );
+
+    // The first reject is the exemption working (genuine mid-correction); the next two identical
+    // resends ride the shared absorption grace; every identical resend past it charges like any
+    // other invalid call. Without the bound, this exact pattern once looped free until only the
+    // provider-call cap stopped it — a phase that never terminates on its own evidence.
+    expect(results.map((result) => result.semanticFailures)).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(state.semanticFailures).toBe(MAX_TOOL_SEMANTIC_FAILURES);
+    expect(state.stopReason).toBe('semantic_failures');
+    expect(state.providerCalls).toBe(6);
+    expect(state.providerCalls).toBeLessThan(MAX_TOOL_PROVIDER_CALLS);
+  });
+
+  it('never charges a genuine prevalidation repair attempt whose input differs from the just-rejected one', async () => {
+    const repairs = [
+      { sections: [] },
+      { sections: [{ label: 'Source', text: 'One section.' }] },
+      { notes: [{ text: 'A note.' }] },
+      { is_update: true, sections: [{ label: 'Source', text: 'One corrected section.' }] },
+    ];
+    const { state, results } = await runRepairTurnSequence(
+      repairs.map((input, index) => ({ toolCalls: [invalidPresentResult(`call-${index + 1}`, input)] })),
+      [{ name: 'lineage_present_result', result: '{"success":true}' }],
+    );
+
+    // Each attempt is a different payload — a real repair in progress — so the bound from the
+    // previous test must not fire: the streak never grows and nothing charges.
+    expect(results.map((result) => result.semanticFailures)).toEqual([0, 0, 0, 0]);
+    expect(state.semanticFailures).toBe(0);
+    expect(state.stopReason).toBeNull();
+  });
+
+  it('keeps the unproductive-resend streak across a dispatched rejection interleaved between identical prevalidation rejects', async () => {
+    const resend = { sections: [] };
+    const { state, results } = await runRepairTurnSequence(
+      [
+        { toolCalls: [invalidPresentResult('call-1', resend)] },
+        { toolCalls: [invalidPresentResult('call-2', resend)] },
+        // A dispatched rejection of the same payload between prevalidation rejects is itself an
+        // absorbed resend of the identical streak, not a new correction that resets it.
+        { toolCalls: [validCall('call-3', 'lineage_present_result', resend)] },
+        { toolCalls: [invalidPresentResult('call-4', resend)] },
+        { toolCalls: [invalidPresentResult('call-5', resend)] },
+        { toolCalls: [invalidPresentResult('call-6', resend)] },
+      ],
+      [{ name: 'lineage_present_result', result: rejectionEnvelope({ reason: 'sections: at least one section is required' }) }],
+    );
+
+    // If the interleaved dispatched rejection reset the streak, the charge would only land on the
+    // last attempt and the phase would stay open. The streak must survive both channels.
+    expect(results.map((result) => result.semanticFailures)).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(state.semanticFailures).toBe(MAX_TOOL_SEMANTIC_FAILURES);
+    expect(state.stopReason).toBe('semantic_failures');
   });
 });
 

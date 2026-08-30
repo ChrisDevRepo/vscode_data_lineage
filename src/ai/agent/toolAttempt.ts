@@ -1316,11 +1316,30 @@ export async function executeToolGenerationAttempt(
       // A repair-turn present_result SDK-prevalidation reject with a live held draft is the repair
       // mechanism working as intended (the model is mid-correction against an already-diagnosed
       // draft) — charging it would burn shared budget on a case the hold+authorization contract
-      // already governs. Initial (no held draft) present_result prevalidation rejects, and every
-      // other tool's invalid_tool_input, stay chargeable via the untouched shared guard below.
+      // already governs. The exemption is bounded by the shared unproductive-resend absorption:
+      // a resend byte-identical to the just-rejected payload of the same tool is not mid-correction,
+      // it is non-convergence, and past MAX_FREE_UNPRODUCTIVE_RESENDS consecutive ones charge like
+      // every other invalid_tool_input — without this bound the free channel can spin to the
+      // provider-call cap (observed 2026-08-30: one repair turn resent an equivalent rejected
+      // payload until only MAX_TOOL_PROVIDER_CALLS stopped it). Initial (no held draft)
+      // present_result prevalidation rejects, and every other tool's invalid_tool_input, stay
+      // chargeable via the untouched shared guard below.
       const isRepairTurnPresentResultPrevalidation = call.code === 'invalid_tool_input'
         && call.toolName === 'lineage_present_result'
         && input.presentResultRepairDraftHeld === true;
+      // Same normalized identity + streak bookkeeping as the dispatched-rejection path: the
+      // comparison chain must survive attempts whose rejection came from prevalidation, or a
+      // free-channel rejection breaks the streak of the equivalent resends around it.
+      const candidateHash = acceptedCallKey(call.toolName, call.input);
+      const unproductiveStreak = call.code === 'invalid_tool_input'
+        && isUnproductiveResend(input.priorRejection, call.toolName, call.input, candidateHash)
+        ? (input.priorRejection?.unproductiveStreak ?? 0) + 1
+        : 0;
+      const repairResendBeyondAbsorption = isRepairTurnPresentResultPrevalidation
+        && unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS;
+      // The repair-turn exemption, bounded: free only while the resend is not a beyond-absorption
+      // unproductive repeat of the just-rejected payload.
+      const freeBoundedRepairResend = isRepairTurnPresentResultPrevalidation && !repairResendBeyondAbsorption;
       input.debugLog?.(
         `[Reject] source=${call.code === 'invalid_tool_input' ? 'provider_prevalidation' : 'provider_generation'}`
         + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
@@ -1329,11 +1348,22 @@ export async function executeToolGenerationAttempt(
         + ` code=${safeLogIdentifier(call.code, 'unknown')}`
         + ` reason=${sanitizeForLog(rejection.reason)}`
         + ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}`
-        + ` chargeable=${isChargeableRejection(call.code) && !isRepairTurnPresentResultPrevalidation}`,
+        + ` unproductiveStreak=${unproductiveStreak}`
+        + ` chargeable=${isChargeableRejection(call.code) && !freeBoundedRepairResend}`,
       );
-      if (isChargeableRejection(call.code) && !isRepairTurnPresentResultPrevalidation) {
+      if (isChargeableRejection(call.code) && !freeBoundedRepairResend) {
         chargeableFailures++;
         if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
+      }
+      if (call.code === 'invalid_tool_input') {
+        // Retains only a hash of this call's input (never the input itself), so the following
+        // attempt is checked against exactly this rejection — the same contract as the
+        // dispatched-rejection path below.
+        rejections[rejections.length - 1] = {
+          ...rejection,
+          inputHash: candidateHash,
+          ...(unproductiveStreak > 0 ? { unproductiveStreak } : {}),
+        };
       }
       continue;
     }

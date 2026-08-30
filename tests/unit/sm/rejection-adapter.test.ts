@@ -231,6 +231,60 @@ describe('rejection-adapter', () => {
       }
     });
 
+    it('present-but-wrong scalar names the defect of every variant when input is supplied', () => {
+      // Class: a scalar union (number | literal) receiving a quoted JSON number. Both branches
+      // name the same single field, so a bare field listing collapses to "variant N: field"
+      // twice — the model regenerates the identical call blind. The reason must carry each
+      // branch's own expected-vs-received defect plus the bounded verbatim echo.
+      const limitUnion = z.object({ limit: z.union([z.number().int().min(1), z.literal('all')]) });
+      const quotedResult = limitUnion.safeParse({ limit: '1' });
+      expect(quotedResult.success, 'quoted number fails the scalar union as expected').toBe(false);
+      if (!quotedResult.success) {
+        const rejection = rejectionFromZodError(quotedResult.error, { code: 'invalid_tool_input', input: { limit: '1' } });
+        expect(rejection.reason.includes('limit: input matched no variant'), 'scalar-union reason keeps the no-match verdict and path prefix').toBe(true);
+        expect(rejection.reason.includes('expected number, received string'), 'variant 1 prose states the string-vs-number defect').toBe(true);
+        expect(rejection.reason.includes('expected "all"'), 'variant 2 prose states the literal alternative').toBe(true);
+        expect(rejection.reason.includes('sent: "1"'), 'scalar-union prose echoes the sent value verbatim').toBe(true);
+      }
+    });
+
+    it('a wrapper-nested union (nullable) flattens to leaf variants that name their defects', () => {
+      // Class: Zod wrappers (`.nullable()`, `.optional()`) compile to a union whose first branch is
+      // the authored union itself. Unflattened, the nested level renders a bare `"Invalid input"`
+      // variant that names no field and no defect, and hides the authored alternatives entirely.
+      const wrappedUnion = z.object({ limit: z.union([z.number().int().min(1), z.literal('all'), z.object({ a: z.string() })]).nullable().optional() });
+      const quotedResult = wrappedUnion.safeParse({ limit: '1' });
+      expect(quotedResult.success, 'quoted number fails the wrapper-nested union as expected').toBe(false);
+      if (!quotedResult.success) {
+        const rejection = rejectionFromZodError(quotedResult.error, { code: 'invalid_tool_input', input: { limit: '1' } });
+        expect(rejection.reason.includes('variant 3: limit: Invalid input: expected object, received string'), 'flattened variant 3 is the leaf object alternative with its defect').toBe(true);
+        expect(rejection.reason.includes('expected number, received string'), 'flattened variant 1 states the string-vs-number defect').toBe(true);
+        expect(rejection.reason.includes('expected "all"'), 'flattened variant 2 states the literal alternative').toBe(true);
+        expect(rejection.reason.match(/Invalid input;/g)?.length ?? 0, 'no bare wrapper-variant "Invalid input" descriptors remain').toBe(0);
+      }
+    });
+
+    it('absent fields keep their bare-name listing even when input is supplied', () => {
+      const emptyUnionResult = modeUnion.safeParse({});
+      expect(emptyUnionResult.success, 'empty-object args fail the union as expected').toBe(false);
+      if (!emptyUnionResult.success) {
+        const rejection = rejectionFromZodError(emptyUnionResult.error, { code: 'invalid_tool_input', input: {} });
+        expect(rejection.reason.includes('variant 1: origin, classification, analysisMode'), 'absent fields stay bare — the missing name is the defect').toBe(true);
+        expect(rejection.reason.includes('received undefined'), 'absent fields do not add noise from the received-undefined type message').toBe(false);
+      }
+    });
+
+    it('without input the union expansion keeps the bare field listing', () => {
+      const limitUnion = z.object({ limit: z.union([z.number().int().min(1), z.literal('all')]) });
+      const quotedResult = limitUnion.safeParse({ limit: '1' });
+      expect(quotedResult.success, 'quoted number fails the scalar union as expected').toBe(false);
+      if (!quotedResult.success) {
+        const rejection = rejectionFromZodError(quotedResult.error, { code: 'invalid_structured_output' });
+        expect(rejection.reason.includes('variant 1: limit'), 'no input → no enrichment, bare field listing').toBe(true);
+        expect(rejection.reason.includes('sent:'), 'no input → no verbatim echo').toBe(false);
+      }
+    });
+
     it('regression pin: a non-union error keeps the "<path>: <message>" format untouched', () => {
       const nonUnionResult = z.object({ name: z.string() }).strict().safeParse({});
       expect(nonUnionResult.success, 'non-union schema fails as expected').toBe(false);

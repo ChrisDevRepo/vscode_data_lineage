@@ -165,6 +165,7 @@ export class VscodeModelPort implements ModelPort {
             valid: false,
             callId: part.callId,
             toolName: part.toolName,
+            input: part.input,
             code: REJECTION_CODES.duplicateCallId,
             reason: 'The provider repeated a tool call identifier.',
           };
@@ -173,6 +174,7 @@ export class VscodeModelPort implements ModelPort {
             valid: false,
             callId: part.callId,
             toolName: part.toolName,
+            input: part.input,
             code: 'unknown_tool',
             reason: 'Tool is not available in this phase.',
           };
@@ -189,6 +191,7 @@ export class VscodeModelPort implements ModelPort {
                 valid: false,
                 callId: part.callId,
                 toolName: part.toolName,
+                input: part.input,
                 code: 'invalid_tool_input',
                 reason: rejectionFromZodError(
                   parsed.error,

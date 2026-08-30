@@ -14,6 +14,7 @@ import {
 } from '../../../src/ai/support/inputNormalization';
 import { redactMissionBriefForLog } from '../../../src/ai/support/missionBriefDiagnostics';
 import { buildStartExplorationReject, evaluateAlreadyStartedRule, evaluateScopeBudgetRule } from '../../../src/ai/interaction/rules/startExplorationRules';
+import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import { describe, it } from 'vitest';
 
 describe("start-exploration-schema tests", () => {
@@ -87,6 +88,21 @@ describe("start-exploration-schema tests", () => {
 
   const dvNum = StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: '2' });
   it("string \"2\" rejected rather than silently coerced", () => { assert(!dvNum.success, 'string "2" rejected rather than silently coerced'); });
+
+  it('quoted depth reject prose names the string-vs-number defect (port-level reject)', () => {
+    // Class: a provider emitting a JSON number quoted as a string. The strict reject is by design;
+    // the port-level reason must still name the defect (expected number, received string) plus the
+    // echoed sent value, or the model regenerates the identical call blind — it never sees a
+    // variant-level expected type in the bare field listing.
+    const quoted = { origin: 'a', analysisMode: 'bb', classification: 'business', depth: '1' };
+    const parsed = StartExplorationInputSchema.safeParse(quoted);
+    assert(!parsed.success, 'quoted depth still rejected');
+    if (parsed.success) return;
+    const { reason } = rejectionFromZodError(parsed.error, { code: 'invalid_tool_input', input: quoted });
+    assert(reason.includes('depth: input matched no variant'), 'reason keeps the union verdict with the depth path');
+    assert(reason.includes('expected number, received string'), 'reason names the string-vs-number defect');
+    assert(reason.includes('sent: "1"'), 'reason echoes the sent value');
+  });
 
   const dvAll = StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: 'all' });
   it("'all' literal accepted", () => { assert(dvAll.success && dvAll.data.depth === 'all', "'all' literal accepted"); });

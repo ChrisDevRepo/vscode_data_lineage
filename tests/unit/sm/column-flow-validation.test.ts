@@ -1086,3 +1086,54 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     );
   });
 });
+
+describe("CT target boundary: object references are never columns", () => {
+  // Class: the model names an OBJECT (schema-qualified id) in targetColumns. The value passes the
+  // Zod wildcard-only guard, and a column-less procedure origin (procedures may write columns
+  // elsewhere, so absence of a local surface is not proof of anything) would otherwise adopt the
+  // object id as its sole active tracked column — an unwinnable session: every real column the
+  // model submits then rejects out_col_not_on_node. The boundary class is the Zod wildcard
+  // reject's ("this value can never be a column"); the fix rejects at the CT adoption sites.
+  const loadProc: LineageNode = makeNode({
+    id: '[dbo].[load_proc]', schema: 'dbo', name: 'load_proc', type: 'procedure', columns: [],
+  });
+  const srcTable: LineageNode = makeNode({
+    id: '[dbo].[src_table]', schema: 'dbo', name: 'src_table', type: 'table',
+    columns: [{ name: 'order_id', type: 'int', nullable: 'NOT NULL', extra: '' }],
+  });
+  const nodes: LineageNode[] = [loadProc, srcTable];
+  const edgePairs: Array<[string, string]> = [['[dbo].[src_table]', '[dbo].[load_proc]']];
+  const model: DatabaseModel = makeModel(nodes, edgePairs, ['dbo']);
+  const graph = makeGraph(nodes, edgePairs);
+
+  it("init rejects a targetColumns entry that resolves to a node id, side-effect-free", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: '[dbo].[load_proc]', question: 'trace', direction: 'upstream', analysisMode: 'ct', targetColumns: ['[dbo].[load_proc]'] });
+    assert('error' in result && result.error === 'target_columns_name_objects', 'CT: object id as target column → target_columns_name_objects');
+    assert('error' in result && typeof result.hint === 'string' && result.hint.includes('"bb"'), 'CT: object-id reject points to the BB alternative');
+    assert(engine.status === 'created' && !engine.columnAspect, 'rejected object-id start leaves the engine untouched');
+  });
+
+  it("init rejects an unbracketed object spelling as well (exact resolution, not a string match)", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: '[dbo].[load_proc]', question: 'trace', direction: 'upstream', analysisMode: 'ct', targetColumns: ['dbo.src_table'] });
+    assert('error' in result && result.error === 'target_columns_name_objects', 'CT: unbracketed object spelling is rejected through canonical resolution');
+  });
+
+  it("a bare column name on a column-less procedure still passes (written-elsewhere bypass preserved)", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: '[dbo].[load_proc]', question: 'trace', direction: 'upstream', analysisMode: 'ct', targetColumns: ['order_id'] });
+    assert('ok' in result, 'CT: bare column name on a procedure origin still seeds (no zero-trace fallback)');
+    assertEq(engine.columnAspect?.active_columns.join(','), 'order_id', 'CT: bare column name adopted verbatim as the active column');
+  });
+
+  it("setColumnTargets refuses object references and still adopts real columns", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const reject = engine.setColumnTargets(['[dbo].[src_table]']);
+    assert(reject !== null && reject.error === 'target_columns_name_objects', 'setColumnTargets: object reference refused');
+    assert(!engine.columnAspect, 'setColumnTargets: refused call adopts no column aspect');
+    const ok = engine.setColumnTargets(['order_id']);
+    assert(ok === null, 'setColumnTargets: real column accepted');
+    assertEq(engine.columnAspect?.active_columns.join(','), 'order_id', 'setColumnTargets: real column adopted');
+  });
+});

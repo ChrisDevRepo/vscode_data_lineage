@@ -173,6 +173,13 @@ export interface InvalidGeneratedToolCall {
   readonly valid: false;
   readonly callId: string;
   readonly toolName: string;
+  /**
+   * The rejected payload exactly as the provider sent it. Kept so retry-budget guards can compare
+   * a follow-up call against the just-rejected one (by fingerprint, never by retaining it) and
+   * distinguish a genuine repair attempt from an unproductive resend; without it every reject of
+   * the same tool would be indistinguishable. Never dispatched, replayed, or logged raw.
+   */
+  readonly input?: unknown;
   readonly code:
     | 'invalid_tool_input'
     | 'unknown_tool'

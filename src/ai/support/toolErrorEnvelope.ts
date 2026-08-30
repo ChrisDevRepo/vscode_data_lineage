@@ -220,19 +220,83 @@ function unionBranchFieldPaths(branchIssues: readonly z.core.$ZodIssue[], basePa
 }
 
 /**
+ * Enriches one Zod issue's message with the received value: measured size against the bound for
+ * `too_big`/`too_small` (models cannot count characters), and a bounded verbatim echo for scalar
+ * leaves (the rejected call is replayed without arguments). All derived mechanically from the
+ * issue's own metadata — the single enrichment used by every reject prose this module composes.
+ */
+function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): string {
+  if (issue.code === 'too_big' || issue.code === 'too_small') {
+    return describeSizeIssue(issue, received) ?? issue.message;
+  }
+  const echo = scalarEcho(received);
+  return echo !== undefined ? `${issue.message}; sent: ${echo}` : issue.message;
+}
+
+/**
+ * One union-branch sub-issue as model-facing prose: the dotted field path alone when the field was
+ * absent (the missing name *is* the defect), or `"<path>: <enriched message>"` when a value was
+ * present but matched no branch (e.g. `depth: Invalid input: expected number, received string;
+ * sent: "1"`). Without the defect message a scalar union — every variant naming the same single
+ * field — collapses to `variant 1: depth; variant 2: depth`, which names the field but not the
+ * defect, so the model regenerates the identical call blind.
+ */
+function unionBranchFieldDescriptor(
+  sub: z.core.$ZodIssue,
+  basePath: readonly PropertyKey[],
+  input: unknown,
+): string {
+  const full = [...basePath, ...sub.path];
+  const field = full.join('.') || '(root)';
+  if (input === undefined) return field;
+  const received = resolveAtPath(input, full);
+  if (received === undefined) return field;
+  return `${field}: ${enrichedIssueMessage(sub, received)}`;
+}
+
+/**
+ * Splices nested `invalid_union` sub-issues in place so every returned branch is one leaf
+ * alternative — Zod wrappers such as `.nullable()` compile to a union whose first branch is the
+ * authored union itself, and a schema-authored union may nest unions too. Unspliced, the nested
+ * level contributes a `"Invalid input"` variant that names no field and no defect; spliced, variant
+ * numbering counts real alternatives. A branch mixing nested-union and leaf sub-issues keeps its
+ * leaves as one branch next to the spliced ones. Bounded by the schema's own static nesting.
+ */
+function flattenUnionBranches(issue: InvalidUnionIssue): (readonly z.core.$ZodIssue[])[] {
+  const out: (readonly z.core.$ZodIssue[])[] = [];
+  for (const branch of issue.errors.length > 0 ? issue.errors : [[]]) {
+    const leaves: z.core.$ZodIssue[] = [];
+    let spliced = false;
+    for (const sub of branch) {
+      if (sub.code === 'invalid_union') {
+        out.push(...flattenUnionBranches(sub));
+        spliced = true;
+      } else {
+        leaves.push(sub);
+      }
+    }
+    if (leaves.length > 0 || !spliced) out.push(leaves);
+  }
+  return out;
+}
+
+/**
  * Expands one `invalid_union` issue into a mechanical "no variant matched" reason naming every
  * union branch's required fields, plus the flattened, first-branch-first field paths for
  * `issuePaths`. Purely derived from the ZodError's own issue tree — no hand-authored per-tool text,
  * so it stays generic across every union schema (BB/CT `submit_findings`, entry-detection, etc.).
  * @param issue - The narrowed `invalid_union` issue.
+ * @param input - The value that failed parsing, when available — enables the per-field defect
+ * enrichment in {@link unionBranchFieldDescriptor}; absent fields keep their bare-name listing.
  * @returns The composed reason line and the deduped, first-branch-first field paths.
  */
-function describeInvalidUnion(issue: InvalidUnionIssue): { line: string; paths: string[] } {
+function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line: string; paths: string[] } {
   const allPaths: string[] = [];
-  const branches = (issue.errors.length > 0 ? issue.errors : [[]]).map((branchIssues, i) => {
+  const branches = flattenUnionBranches(issue).map((branchIssues, i) => {
     const fields = unionBranchFieldPaths(branchIssues, issue.path);
     for (const field of fields) if (!allPaths.includes(field)) allPaths.push(field);
-    return `variant ${i + 1}: ${fields.length ? fields.join(', ') : '(no field detail)'}`;
+    const descriptors = branchIssues.map((sub) => unionBranchFieldDescriptor(sub, issue.path, input));
+    return `variant ${i + 1}: ${descriptors.length ? descriptors.join(', ') : '(no field detail)'}`;
   });
   const prefix = issue.path.length ? `${issue.path.join('.')}: ` : '';
   return {
@@ -344,7 +408,7 @@ export function rejectionFromZodError(
   const issuePaths: string[] = [];
   const lines = error.issues.map(issue => {
     if (issue.code === 'invalid_union') {
-      const { line, paths } = describeInvalidUnion(issue);
+      const { line, paths } = describeInvalidUnion(issue, opts.input);
       issuePaths.push(...paths);
       return line;
     }
@@ -352,13 +416,7 @@ export function rejectionFromZodError(
     if (path) issuePaths.push(path);
     let message = issue.message;
     if (opts.input !== undefined) {
-      const received = resolveAtPath(opts.input, issue.path);
-      if (issue.code === 'too_big' || issue.code === 'too_small') {
-        message = describeSizeIssue(issue, received) ?? message;
-      } else {
-        const echo = scalarEcho(received);
-        if (echo !== undefined) message = `${message}; sent: ${echo}`;
-      }
+      message = enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path));
     }
     return path ? `${path}: ${message}` : message;
   });

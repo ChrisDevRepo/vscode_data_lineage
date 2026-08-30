@@ -99,8 +99,14 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       }
 
       // Supplements retain the completed engine while updating the follow-up mission context.
-      const applyFollowUpContext = (engine: NavigationEngine): void => {
-        if (data.analysisMode === 'ct' && data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
+      // A rejected CT target list aborts the supplement before any context is applied — the
+      // engine refuses object references as columns on every path, so the reject is surfaced
+      // rather than swallowed.
+      const applyFollowUpContext = (engine: NavigationEngine): { error: string; hint: string } | null => {
+        if (data.analysisMode === 'ct' && data.targetColumns?.length) {
+          const columnTargetReject = engine.setColumnTargets(data.targetColumns);
+          if (columnTargetReject) return columnTargetReject;
+        }
         if (data.classification) sess.setClassification(data.classification);
         if (data.mission_brief !== undefined) sess.memory.setMissionBrief(data.mission_brief);
         // User-authored text wins over the model's paraphrase for the canonical question.
@@ -111,6 +117,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           pendingInitQuestion: undefined,
         });
         if (canonicalQuestion) sess.memory.setUserQuestion(canonicalQuestion);
+        return null;
       };
 
       // Supplement is origin-less by contract; an explicit origin starts a fresh exploration.
@@ -135,7 +142,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         priorEngine.admitSupplementTargets(supplementIds);
         const res = priorEngine.supplementAgenda(supplementIds);
         if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
-        applyFollowUpContext(priorEngine);
+        const followUpReject = applyFollowUpContext(priorEngine);
+        if (followUpReject) return s.logAndReturn('start_exploration', followUpReject, loggedInput);
         // Unguarded by design: tool dispatch runs synchronously inside the owning turn's graph-owned
         // generation attempt, so the live `turnEpoch` is always this turn's — the guard would always accept.
         sess.enterExploring(s.turnEpoch(sess));
