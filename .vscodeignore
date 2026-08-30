@@ -46,6 +46,9 @@ CONTRIBUTING.md
 
 # Assistant session temp files must not leak into VSIX.
 tmpclaude-*
+# Electron/EDH crashpad noise dropped at repo root by a VS Code Extension Development Host run.
+# vsce ignores .gitignore, so a gitignored file at repo root still ships unless listed here.
+debug.log
 # Scratch files any tool drops beside the manifest. vsce ignores .gitignore, so untracked is not
 # the same as unpackaged; assert-package-contents.mjs rejects the same suffix as a backstop.
 *.tmp
