@@ -235,15 +235,41 @@ function walkComponent(graph: Graph, members: readonly string[], entry: string, 
   return bidirectional(graph, entry, exit) ?? [entry];
 }
 
-/** Walks one component from `entry` to whichever member sits farthest from it. */
+/**
+ * Walks one component from `entry` to whichever member sits farthest from it.
+ *
+ * @remarks
+ * One forward BFS from `entry` measures every member's shortest-path length, then one bidirectional
+ * search reconstructs the winning walk — linear in the component instead of one search per member.
+ * BFS distances to members are measured inside the component however far the search ranges: a path
+ * from `entry` to a member cannot leave it (see {@link walkComponent}). Selection keeps the previous
+ * tie-break — the first member, in `members` order, whose distance strictly exceeds the best so far.
+ * An `entry` with no path to any other member stays the whole tail.
+ */
 function walkComponentTail(graph: Graph, members: readonly string[], entry: string): string[] {
-  let farthest = [entry];
-  for (const exit of members) {
-    if (exit === entry) continue;
-    const walk = bidirectional(graph, entry, exit);
-    if (walk && walk.length > farthest.length) farthest = walk;
+  if (members.length === 1) return [entry];
+  const dist = new Map<string, number>([[entry, 0]]);
+  const queue = [entry];
+  for (let i = 0; i < queue.length; i++) {
+    const node = queue[i]!;
+    graph.forEachOutNeighbor(node, (neighbor) => {
+      if (dist.has(neighbor)) return;
+      dist.set(neighbor, dist.get(node)! + 1);
+      queue.push(neighbor);
+    });
   }
-  return farthest;
+  let exit = entry;
+  let best = 0;
+  for (const member of members) {
+    if (member === entry) continue;
+    const memberDist = dist.get(member);
+    if (memberDist !== undefined && memberDist > best) {
+      best = memberDist;
+      exit = member;
+    }
+  }
+  if (exit === entry) return [entry];
+  return bidirectional(graph, entry, exit) ?? [entry];
 }
 
 /** Expands a component chain rooted at `root` back into an ordered list of real node ids. */
