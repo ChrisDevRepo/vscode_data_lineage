@@ -81,6 +81,26 @@ export function coercedStringArray<T extends z.ZodType>(
 }
 
 /**
+ * Preprocess that decodes a string-encoded JSON `null` literal (`"null"`) into real `null` before
+ * validation.
+ *
+ * @remarks
+ * Nullable sibling of {@link coercedStringArray} for the local OpenAI-compatible (Qwen/oMLX and
+ * LM Studio) lanes, which emit JSON `null` arguments as the string literal `"null"`
+ * (`{"targetColumns": "null"}`). This is encoding-only normalization per the middleware contract:
+ * only the exact string `"null"` is unwrapped; every other value (including a genuine `null`, an
+ * array, or any other string) passes through untouched so the wrapped schema's own rejection
+ * surfaces normally. Transparent to `z.toJSONSchema` (`io: 'input'`), so the model-facing tool
+ * schema is unchanged.
+ *
+ * @param schema - Schema to wrap; typically a nullable array or scalar schema.
+ * @returns The preprocess-wrapped schema; output type is identical to the wrapped schema.
+ */
+export function coercedStringNull<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value) => (value === 'null' ? null : value), schema);
+}
+
+/**
  * Decodes a JSON-string-encoded boolean literal (`"true"`/`"True"`/`"false"`/`"False"`) back
  * into its boolean value.
  *

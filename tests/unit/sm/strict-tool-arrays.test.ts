@@ -120,4 +120,17 @@ describe("strict-tool-arrays tests", () => {
 
   it("normalization never mutates the raw model input", () => { assert(rawImmutable.targetColumns === '["A"]', 'normalization never mutates the raw model input'); });
 
+  const nullStringDiscovery = EntryDetectionSchema.safeParse({ entry: 'discovery', targetColumns: 'null' });
+  it("string-encoded \"null\" normalizes to real null", () => { assert(nullStringDiscovery.success && nullStringDiscovery.data.targetColumns === null, 'string-encoded "null" normalizes to real null'); });
+
+  it("string-encoded \"null\" satisfies visual_render (forbids targetColumns)", () => { assert(EntryDetectionSchema.safeParse({ entry: 'visual_render', targetColumns: 'null' }).success, 'string-encoded "null" satisfies visual_render'); });
+
+  it("string-encoded \"null\" still fails column_trace (needs named columns)", () => { assert(!EntryDetectionSchema.safeParse({ entry: 'column_trace', targetColumns: 'null' }).success, 'string-encoded "null" still fails column_trace'); });
+
+  it("genuine null remains valid", () => { assert(EntryDetectionSchema.safeParse({ entry: 'discovery', targetColumns: null }).success, 'genuine null remains valid'); });
+
+  it("string-encoded \"Null\" is NOT unwrapped (allowlist is exact)", () => { assert(!EntryDetectionSchema.safeParse({ entry: 'discovery', targetColumns: 'Null' }).success, 'string-encoded "Null" is not unwrapped'); });
+
+  it("string-encoded \"nullish\" is NOT unwrapped", () => { assert(!EntryDetectionSchema.safeParse({ entry: 'discovery', targetColumns: 'nullish' }).success, 'string-encoded "nullish" is not unwrapped'); });
+
 });

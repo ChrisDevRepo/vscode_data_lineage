@@ -5,7 +5,7 @@ import {
 } from '../model/modelPort';
 import { z } from 'zod';
 import { AiGateRefineSchema, type AiGateRefine } from '../../engine/shared/bridgeContract';
-import { coercedStringArray } from '../support/inputNormalization';
+import { coercedStringArray, coercedStringNull } from '../support/inputNormalization';
 import { ColumnIdentifierSchema } from '../tools/toolSchemas';
 import type { TurnOutcome } from '../core/agentCore';
 import type { StagePromptContext } from '../prompting/hostPrompts';
@@ -64,7 +64,9 @@ export const EntryDetectionSchema = z.object({
   // on non-trace routes and must not hard-reject the whole detection (encoding-only normalization).
   targetColumns: z.preprocess(
     value => (Array.isArray(value) && value.length === 0 ? null : value),
-    coercedStringArray(ColumnIdentifierSchema).nullable().default(null),
+    // The null-unwrap sits INSIDE so the decoded null reaches the nullable branch before the
+    // array schema rejects it (Zod v4 pipes run their transform before outer unions apply).
+    coercedStringNull(coercedStringArray(ColumnIdentifierSchema).nullable().default(null)),
   )
     .describe('Explicit user-named columns for column_trace; null for discovery or visual_render.'),
 }).strict().superRefine((value, ctx) => {
