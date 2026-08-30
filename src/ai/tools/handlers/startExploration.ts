@@ -25,6 +25,7 @@ import {
 } from '../../support/inputNormalization';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
+import { isCancellationOutcome } from '../../support/cancellation';
 import {
   buildStartExplorationReject,
   evaluateBbTargetColumnsRule,
@@ -36,6 +37,7 @@ import {
 } from '../../interaction/rules/startExplorationRules';
 import type { ToolServices } from './toolServices';
 import { AI_MAX_SCOPE_NODE_IDS } from '../../../engine/shared/bridgeContract';
+import { composeDiscoverySummaryText } from '../../support/discoverySummary';
 
 /** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
 const SAFETY_RATIO = 0.7;
@@ -47,7 +49,7 @@ const SAFETY_RATIO = 0.7;
  * @param s - Host capabilities for the active tool session.
  * @returns The structured proposal, gate, hop context, or rejection envelope.
  */
-export function executeStartExploration(input: unknown, s: ToolServices): string {
+export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);
       const sess = s.getSession();
@@ -327,7 +329,27 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         }
 
         const classLabel = CLASSIFICATION_LABEL[classification] + (isCt ? ' (Column Trace)' : '');
-        const detail = `${renderScopeSummaryMd(summary, sess.pendingExploration!.revision)}\n\n_Analysis: ${classLabel}_`;
+        const baseDetail = `${renderScopeSummaryMd(summary, sess.pendingExploration!.revision)}\n\n_Analysis: ${classLabel}_`;
+        // Composed once per shown revision, never recomposed at approval — the same cached string
+        // later rides verbatim into `NavigationEngine.setDiscoverySummary`. Missing discovery
+        // context or a degraded compose just omits the memo; it never blocks the approval card.
+        let discoverySummary: string | undefined;
+        if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
+          discoverySummary = await composeDiscoverySummaryText(
+            s.textModel,
+            s.signal,
+            s.logger,
+            sess.lastDiscoveryQuestion,
+            sess.lastDiscoveryAnswer,
+            classification,
+            engine,
+          );
+          if (discoverySummary) {
+            const attached = sess.attachDiscoverySummary(sess.pendingExploration!.revision, discoverySummary, s.turnEpoch(sess));
+            if (attached.kind !== 'accepted') discoverySummary = undefined;
+          }
+        }
+        const detail = discoverySummary ? `${baseDetail}\n\n${discoverySummary}` : baseDetail;
         s.logger.debug(
           `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
           `scope_nodes=${summary.scopeCount} ` +
@@ -355,6 +377,10 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       const hopResult = engine.getHopContext();
       return s.logAndReturn('start_exploration', { ...initResult, ...hopResult }, loggedInput);
     } catch (err) {
+      // An abort thrown out of the discovery-summary compose call must reach the registry dispatcher
+      // as a thrown cancellation, never a toolError envelope — the generic catch would otherwise
+      // silently convert a user Stop into a normal `internal_error` result.
+      if (isCancellationOutcome(err, s.signal)) throw err;
       return s.toolError('start_exploration', err);
     }
 }

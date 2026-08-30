@@ -14,6 +14,7 @@ import type { Logger } from '../../../utils/log';
 import type { DatabaseModel, LineageNode } from '../../../engine/types';
 import type { SerializedFilterState } from '../../../engine/projectStore';
 import type { StoredRunReader } from '../../session/runStore';
+import type { ModelPort } from '../../model/modelPort';
 
 /** Host capabilities available to mutating lineage-tool handlers. */
 export interface ToolServices {
@@ -25,6 +26,10 @@ export interface ToolServices {
   readonly getStoredRun?: StoredRunReader;
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */
   readonly logger: Logger;
+  /** Turn-neutral text-completion capability; absent on the external `vscode.lm` read-only registration. */
+  readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>;
+  /** Cooperative host cancellation, mirrored from the owning turn's lease. */
+  readonly signal?: AbortSignal;
   /** Current turn epoch — the turn lease wins over the session field so stale-turn writes are rejectable. */
   turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, throwing the standard no-model error when none is loaded. */

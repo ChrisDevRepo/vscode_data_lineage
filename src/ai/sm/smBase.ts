@@ -1202,11 +1202,11 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Stores the AI-composed discovery summary produced by `composeDiscoverySummary` after gate
-   * approval. Empty or whitespace-only input becomes `null`; the memo persists for the engine
-   * lifetime.
+   * Stores the discovery-handoff memo composed at proposal time (`composeDiscoverySummaryText`)
+   * and cached on the reviewed proposal — set verbatim at gate approval, never recomposed. Empty
+   * or whitespace-only input becomes `null`; the memo persists for the engine lifetime.
    *
-   * @param text - The 2–4 sentence memo composed by the AI.
+   * @param text - The reviewed 2–4 sentence memo.
    */
   public setDiscoverySummary(text: string): void {
     const trimmed = text.trim();

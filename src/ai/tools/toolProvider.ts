@@ -49,6 +49,7 @@ import { getModelNodeMap, type ToolServices } from './handlers/toolServices';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
+import type { ModelPort } from '../model/modelPort';
 
 /**
  * Private handler for AI tool execution.
@@ -65,6 +66,8 @@ class ToolHandler implements ToolServices {
     public readonly getPanel: () => vscode.WebviewPanel | undefined,
     private readonly turnLease?: TurnLease,
     public readonly getStoredRun?: StoredRunReader,
+    public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>,
+    public readonly signal?: AbortSignal,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
@@ -388,7 +391,9 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
  * @param outputChannel - Log channel for tracing tool activity.
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
- * @param host - Optional host seam; `getStoredRun` resolves the AI run behind an applied bookmark.
+ * @param host - Optional host seam; `getStoredRun` resolves the AI run behind an applied bookmark,
+ * `model`/`signal` supply the text-completion capability `start_exploration` uses to compose the
+ * discovery-handoff memo shown at the bottom of the approval card.
  * @returns A ready-to-dispatch canonical registry.
  */
 export function buildAiToolRegistry(
@@ -396,9 +401,9 @@ export function buildAiToolRegistry(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
   turnLease?: TurnLease,
-  host?: { getStoredRun?: StoredRunReader },
+  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText'>; signal?: AbortSignal },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal);
 
   // Exhaustive catalog binding: adding or removing a tool requires a matching handler entry.
   const dispatch = {

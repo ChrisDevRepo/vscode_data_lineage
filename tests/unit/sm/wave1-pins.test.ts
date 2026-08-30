@@ -18,7 +18,7 @@ import {
   SubmitFindingsModelSchema,
 } from '../../../src/ai/tools/toolSchemas';
 import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';
-import { DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT } from '../../../src/ai/agent/graph';
+import { DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT } from '../../../src/ai/support/discoverySummary';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 
 type JsonSchemaWithProps = { properties?: Record<string, { description?: string }> };

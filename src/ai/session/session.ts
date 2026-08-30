@@ -29,6 +29,8 @@ export interface PendingExplorationProposal {
   readonly classification: ClassificationValue;
   readonly activeFilter: SerializedFilterState;
   readonly summary: ScopeSummary;
+  /** The discovery-to-hop handoff memo composed for this exact revision; absent until attached. */
+  readonly discoverySummary?: string;
 }
 
 /** Serializes a JSON value with object keys sorted at every level, so key insertion order cannot affect equality. */
@@ -41,11 +43,13 @@ function canonicalJson(value: unknown): string {
 
 /** Structural equality for two fully merged, validated exploration proposals. */
 export function sameExplorationProposal(
-  left: Omit<PendingExplorationProposal, 'revision'>,
+  left: Omit<PendingExplorationProposal, 'revision' | 'discoverySummary'>,
   right: PendingExplorationProposal | Omit<PendingExplorationProposal, 'revision'>,
 ): boolean {
-  const { revision: _revision, ...rightWithoutRevision } = right as PendingExplorationProposal;
-  return canonicalJson(left) === canonicalJson(rightWithoutRevision);
+  // `discoverySummary` is excluded on both sides — it is cached after this comparison runs, so a
+  // prior revision's cached memo must never make a genuinely-unchanged refine look "changed".
+  const { revision: _revision, discoverySummary: _discoverySummary, ...rightRest } = right as PendingExplorationProposal;
+  return canonicalJson(left) === canonicalJson(rightRest);
 }
 
 /**
@@ -740,6 +744,24 @@ export class AiSession {
       ...proposal,
       revision: (this.pendingExploration?.revision ?? 0) + 1,
     };
+    return guard;
+  }
+
+  /**
+   * Attaches the composed discovery-handoff memo to the pending proposal at `revision`.
+   *
+   * @remarks
+   * Runs after {@link storePendingExploration} so the memo is never mutated onto a proposal whose
+   * revision isn't known yet. Silently a no-op when the proposal has since moved past `revision`
+   * (superseded by a newer refine while composition was in flight) — the caller degrades by
+   * omitting the memo rather than treating this as a failure.
+   */
+  public attachDiscoverySummary(revision: number, text: string, token: number): SessionWriteOutcome {
+    const guard = this.guardTurnWrite(token, 'attachDiscoverySummary');
+    if (guard.kind !== 'accepted') return guard;
+    if (this.pendingExploration && this.pendingExploration.revision === revision) {
+      this.pendingExploration = { ...this.pendingExploration, discoverySummary: text };
+    }
     return guard;
   }
 

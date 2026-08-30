@@ -33,7 +33,7 @@ import {
   tryBuildDeterministicContextAnswer,
   type StagePromptContext,
 } from '../prompting/hostPrompts';
-import { buildDiscoverySummaryComposePrompt, PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
+import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
 import { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
 import { buildPendingLeadMessages } from '../support/pendingLeadMessages';
 import { buildChatAnswer } from '../support/chatAnswer';
@@ -127,29 +127,6 @@ const HOLD_GATE_NOTICE =
 /** Absolute floor for {@link turnRecursionLimit} so short-`maxRounds` turns keep generous headroom. */
 const RECURSION_LIMIT_FLOOR = 50;
 
-/** Validated boundary for the optional one-shot discovery-to-exploration memo. */
-// Nonblank only — model-authored content is never length-rejected (R006). Brevity (2–4 sentences)
-// is a prompt target, not a hard cap; the memo's length legitimately scales with the analysis it
-// summarizes.
-const DiscoverySummarySchema = z.string().trim().min(1);
-
-// One mechanical re-ask on a rejected compose reply (empty output or over the char cap) — mirrors
-// the reject-with-hint self-correction convention used at every other Zod boundary in this
-// pipeline. Not a policy cap: a single retry of a one-shot, no-tool text round.
-const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
-
-/**
- * @remarks
- * Compose is otherwise the only model call in the pipeline with no system key on the wire — the
- * memo it produces rides every later hop's stable prefix as established fact, so grounding and
- * formatting instructions belong at the system layer like every other stage.
- */
-export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
-  'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops — no user reads it.',
-  'Every clause must come from the supplied <original_question> and <discovery_answer>, because later hops treat this memo as established fact.',
-  'Plain prose only: no headings, bullets, or diagrams.',
-].join('\n');
-
 /** Provenance shared by both BB and CT members of an exploration-scoped facts value. */
 interface ExplorationFactsShared {
   readonly classification?: ClassificationValue;
@@ -166,7 +143,7 @@ interface ExplorationFactsShared {
  * @param shared - Classification / YAML / memory provenance common to both modes.
  * @returns The discriminated facts member the compiler type-checks against the stage.
  */
-function explorationFacts(
+export function explorationFacts(
   analysisMode: 'bb' | 'ct',
   targetColumns: readonly string[] | undefined,
   shared: ExplorationFactsShared,
@@ -925,6 +902,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const expectedRevision = state.gate.proposalRevision;
     if (!expectedRevision) return fail('Approved gate is missing its exploration proposal revision.');
     if (!sess.model || !sess.graph) return fail('Approved exploration cannot start without a loaded model and graph.');
+    // Captured before activation, which clears `pendingExploration` on success.
+    const cachedDiscoverySummary = sess.pendingExploration?.discoverySummary;
     const engineLog = toEngineLog(deps.logger);
     const activation = sess.activatePendingExploration(expectedRevision, deps.turnEpoch, (proposal) => {
       const candidate = new NavigationEngine(
@@ -951,15 +930,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const engine = activation.engine as NavigationEngine;
     applyGateClasses(state.gate, engine);
-    // Post-approval discovery-summary memo: composes the user's semantic intent into the third
-    // immutable stable-prefix field (<discovery_summary>) so it rides every hop + synthesis.
-    try {
-      await composeDiscoverySummary(deps, sess, engine);
-    } catch {
-      // composeDiscoverySummary re-throws only when deps.signal is aborted; surface as clean cancel.
-      sess.resetExploration();
-      return { outcome: 'cancelled', phase: 'done' };
-    }
+    // The memo was composed and reviewed at proposal time, never here — reuse verbatim.
+    if (cachedDiscoverySummary) engine.setDiscoverySummary(cachedDiscoverySummary);
     return {
       messages: [modelUserMessage('Gate approved. Please proceed with the hop-by-hop analysis.')],
       engineSnapshot: engine.toJSON(),
@@ -1694,90 +1666,5 @@ export function shouldSalvageActiveStop(
   return submittedHops > 0 && reason !== 'output_limit';
 }
 
-/**
- * Composes the post-approval discovery-summary memo (one-shot, no-tool LM round) and stores it on
- * the engine as the third immutable stable-prefix field.
- *
- * @remarks
- * Skipped when SM started directly without a prior multi-object discovery walk (the
- * `lastDiscovery*` fields are null) — clean absence, never a hard failure. A captured walk seeds
- * these fields in {@link discoveryNode}; `enterExploring` preserves them across the gate.
- *
- * A composed reply that fails {@link DiscoverySummarySchema} (empty, or over the char cap) gets
- * one mechanical re-ask carrying the rejection reason back to the model. If the retry also fails,
- * or the round throws for a non-abort reason, this is a **documented, non-fatal degrade**: SM is
- * allowed to start without the memo (matching the "no prior discovery walk" clean-absence case
- * already established above), but — unlike routine per-hop AI self-correction, which stays at
- * DEBUG — losing one of the three SM stable-prefix fields to rejected model output remains DEBUG.
- * A thrown compose operation is ERROR because it is an implementation/provider failure rather
- * than output being self-corrected.
- * The AI itself receives no substitute memo; hop prompts simply omit the `<discovery_summary>`
- * block for this session.
- */
-async function composeDiscoverySummary(
-  deps: AgentGraphDeps,
-  sess: AiSession,
-  engine: NavigationEngine,
-): Promise<void> {
-  if (!sess.lastDiscoveryQuestion || !sess.lastDiscoveryAnswer) return;
-  try {
-    const scope = engine.getScopeSummary();
-    const filters = scope.activeFilters;
-    const classification = sess.requireLockedClassification();
-    const analysisMode = engine.currentAnalysisMode;
-    const targetColumns = analysisMode === 'ct' ? (engine.currentTargetColumns ?? undefined) : undefined;
-    const contractSummary = [
-      `- origin: ${engine.currentOrigin ?? '(unset)'}`,
-      `- scope: ${scope.scopeCount} nodes`,
-      `- direction: ${engine.currentDirection}`,
-      `- analysisMode: ${analysisMode}`,
-      ...(analysisMode === 'ct' ? [`- targetColumns: ${(targetColumns ?? []).join(', ')}`] : []),
-      `- excludeTypes: ${filters.types.length ? filters.types.join(', ') : '(none)'}`,
-      `- excludeSchemas: ${filters.schemas.length ? filters.schemas.join(', ') : '(none)'}`,
-      `- excludeNodeIds: ${filters.nodeIds.length ? filters.nodeIds.join(', ') : '(none)'}`,
-      `- passNodeIds: ${filters.passNodeIds.length ? filters.passNodeIds.join(', ') : '(none)'}`,
-      `- classification: ${classification}`,
-    ].join('\n');
-    const composePrompt = buildDiscoverySummaryComposePrompt(
-      sess.lastDiscoveryQuestion,
-      sess.lastDiscoveryAnswer,
-      contractSummary,
-    );
-    let parsed: z.ZodSafeParseResult<string> | undefined;
-    let rejectReason = '';
-    for (let attempt = 1; attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS; attempt++) {
-      // Structural reject-with-hint retry: feeds the exact Zod issue back, same convention as
-      // every other self-correcting boundary in this pipeline — not new prompt wording/tuning.
-      const prompt = attempt === 1
-        ? composePrompt
-        : `${composePrompt}\n\n## Retry — previous reply rejected\nReason: ${rejectReason}\nReply again as text only: ONE paragraph, 2-4 sentences.`;
-      const composed = await executeInstructionPlan(deps.model, compileInstructionPlan({
-        kind: 'text',
-        phase: 'compose',
-        system: DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
-        // Compose folds three inputs into the memo: the discovery Q/A and the approved contract summary,
-        // declared inline at this — the sole — assembly site.
-        facts: explorationFacts(analysisMode, targetColumns, {
-          classification,
-          memorySections: ['discovery_question', 'discovery_answer', 'approved_contract'],
-        }),
-        messages: [modelUserMessage(prompt)],
-        signal: deps.signal,
-      }));
-      parsed = DiscoverySummarySchema.safeParse(composed);
-      if (parsed.success) break;
-      rejectReason = parsed.error.issues.map((issue: z.core.$ZodIssue) => issue.message).join('; ');
-      deps.logger?.debug(`[AI] [DiscoveryHandoff] attempt=${attempt} rejected reason=${sanitizeForLog(rejectReason)}`);
-    }
-    if (!parsed?.success) {
-      deps.logger?.debug(`[AI] [DiscoveryHandoff] status=degraded reason=invalid_summary_after_retry`);
-      return;
-    }
-    engine.setDiscoverySummary(parsed.data);
-    deps.logger?.debug(`[AI] [DiscoveryHandoff] status=composed chars=${parsed.data.length}`);
-  } catch (err) {
-    // Re-throw on abort so approveGateNode can surface a clean cancel; other errors are non-fatal.
-    if (deps.signal?.aborted) throw err;
-    deps.logger?.error('[AI] [DiscoveryHandoff] compose failed unexpectedly', err);
-  }
-}
+// Discovery-summary composition ({@link composeDiscoverySummaryText}) now runs at proposal-build
+// time in `startExploration.ts`, not here — see `src/ai/support/discoverySummary.ts`.

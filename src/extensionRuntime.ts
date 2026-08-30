@@ -160,8 +160,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     // lease-bound strict registry for direct dispatch.
     lineageRuntime = new LineageRuntime({
       getSession,
-      createRegistry: (lease) =>
-        buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, aiToolHost),
+      createRegistry: (lease, model) =>
+        buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal }),
       logger: Logger.create(outputChannel, 'AI'),
       maxRounds: vscode.workspace
         .getConfiguration('dataLineageViz')

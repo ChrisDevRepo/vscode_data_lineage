@@ -19,6 +19,7 @@ import {
 } from '../../../../src/ai/tools/registry';
 import { TurnEventSink, type TurnEvent } from '../../../../src/ai/runtime/turnEventSink';
 import type {
+  CompleteTextInput,
   GeneratedToolCall,
   InvalidGeneratedToolCall,
   ModelIdentity,
@@ -68,13 +69,36 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
   public readonly identity: ModelIdentity = SCRIPTED_IDENTITY;
   /** Every request received, in call order. */
   public readonly requests: ToolGenerationInput[] = [];
+  /** Every `completeText` request received, in call order. */
+  public readonly textRequests: CompleteTextInput[] = [];
   private calls = 0;
+  private textCalls = 0;
 
-  public constructor(private readonly script: readonly ScriptedGeneration[]) {}
+  public constructor(
+    private readonly script: readonly ScriptedGeneration[],
+    /** Queued replies for `completeText` — the discovery-summary compose round, not tool-turn generation. */
+    private readonly textScript: readonly string[] = [],
+  ) {}
 
   /** {@inheritDoc SingleGenerationModelPort.modelCalls} */
   public get modelCalls(): number {
     return this.calls;
+  }
+
+  /** Replays the next queued text-only reply, standing in for `ModelPort.completeText`. */
+  public async completeText(input: CompleteTextInput): Promise<string> {
+    this.textRequests.push(input);
+    const reply = this.textScript[this.textCalls];
+    this.textCalls += 1;
+    if (reply === undefined) {
+      throw new Error(`ScriptedModelPort: no completeText reply scripted for call #${this.textCalls}`);
+    }
+    return reply;
+  }
+
+  /** Unused by the discovery-summary compose round this double supports; present only to satisfy `ModelPort`. */
+  public generateStructured(): Promise<never> {
+    throw new Error('ScriptedModelPort: generateStructured is not scripted.');
   }
 
   /** Replays the next queued generation, incrementing the physical-call counter exactly once. */

@@ -43,8 +43,8 @@ export interface LineageRuntimeResult {
 /** Long-lived dependencies used to construct request-scoped lineage turns. */
 export interface LineageRuntimeDeps {
   readonly getSession: () => AiSession;
-  /** Builds the strict direct-dispatch registry for the captured turn lease. */
-  readonly createRegistry: (lease: TurnLease) => IToolRegistry<string>;
+  /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
+  readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
   readonly logger?: Logger;
   readonly maxRounds?: number;
   readonly checkpointer?: BaseCheckpointSaver;
@@ -101,7 +101,7 @@ export class LineageRuntime {
         elapsedMs(startedAt),
       );
     });
-    const registry = this.deps.createRegistry(lease);
+    const registry = this.deps.createRegistry(lease, input.model);
     const traceWriter = this.deps.traceWriter;
     const instrumentedRegistry = traceWriter
       ? instrumentRegistry(registry, {
