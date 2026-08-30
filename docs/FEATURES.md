@@ -277,6 +277,9 @@ begins only after the user approves the `confirm_sm_start` consent gate.
 - The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal.
 - The extension walks the approved graph scope one object at a time and validates every requested route against the loaded catalog before visiting it.
 - Recent summaries provide short-term continuity while full hop details are retained for final synthesis.
+- Below the `Hop X/Y` counter, the chat echoes each completed hop's one-line finding as it lands — a
+  transient progress trail, not part of the saved transcript, so it never reaches the model again on
+  a later turn.
 
 ### Why it matters
 

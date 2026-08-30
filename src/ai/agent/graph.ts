@@ -19,6 +19,7 @@ import {
   StartExplorationFreshProviderInputSchema,
   StartExplorationRefineProviderInputSchema,
   StartExplorationSupplementProviderInputSchema,
+  SubmitFindingsModelSchema,
 } from '../tools/toolSchemas';
 import {
   buildActiveContinuationAnchor,
@@ -44,7 +45,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations } from './discoveryCapture';
 import { discoveryPreviewNarrative } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, type ProviderErrorDiagnostic } from '../support/text';
+import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, trunc as truncStatusLabel, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -1063,12 +1064,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const isCtMode = !!engine.columnAspect;
     const systemInstruction = getActiveInstructionCached(state, sess, getCtx(state), isCtMode, focusId);
 
-    // Status-only: emit the hop-progress counter (Hop X/Y). The worker buffers planning prose, so no
-    // worker chatter reaches the chat — only synthesis streams the single final answer. Y
-    // (`hopProgress.total`) shrinks as bodied nodes are pruned, so the denominator reflects the
-    // reducing graph. The PER-HOP prune delta (cumulative now − cumulative at the previous hop's start)
-    // is surfaced next to the updated Y so a drop in "Hop X/Y" is explained (e.g. "−2 pruned"). Show the
-    // bare object name, not the raw `[schema].[id]`, to match main's chat.
+    // Status-only: emit the hop-progress counter (Hop X/Y) here, and the prior hop's committed digest
+    // once it lands below. The worker still buffers planning prose, so no worker chatter reaches the
+    // chat — only the model's own already-committed `summary` is ever echoed, and only through the
+    // transient progress channel (never persisted into `ChatResponseTurn.response`, so it cannot be
+    // replayed back to the model via chat history on a later turn). Y (`hopProgress.total`) shrinks as
+    // bodied nodes are pruned, so the denominator reflects the reducing graph. The PER-HOP prune delta
+    // (cumulative now − cumulative at the previous hop's start) is surfaced next to the updated Y so a
+    // drop in "Hop X/Y" is explained (e.g. "−2 pruned"). Show the bare object name, not the raw
+    // `[schema].[id]`, to match main's chat.
     const progress = engine.hopProgress;
     const focusLabel = focusId.split('.').pop()?.replace(/[[\]]/g, '') ?? focusId;
     // Per-hop graph deltas from the previous hop's submit, shown so the changing "Hop X/Y" is explained:
@@ -1092,6 +1096,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // generation. Read observations and compact rejections are projected into the next invocation;
     // provider-native assistant/tool messages are never retained or replayed.
     let submitted = false;
+    // Boxed (not a plain `let`) so the closure assignment below is visible at the read site — a bare
+    // `let` reassigned only inside `onToolResult` narrows to `never` there under TS's control-flow
+    // analysis. Captured only for the post-commit progress echo below — never stored past this hop.
+    const committedFinding: { value: { summary: string; verdict: z.infer<typeof SubmitFindingsModelSchema>['verdict'] } | null } = { value: null };
     const priorAttempt = attemptStateFor(state, 'active');
     const inputMessages = [...state.messages, hopMessage];
 
@@ -1117,8 +1125,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       proseGate: 'buffer-until-tool',
       // A valid submit commits the hop atomically; rejected submits leave it open for a graph retry.
       isPhaseComplete: () => submitted,
-      onToolResult: (toolName, _input, isError) => {
-        if (toolName === 'lineage_submit_findings' && !isError) submitted = true;
+      onToolResult: (toolName, input, isError) => {
+        if (toolName === 'lineage_submit_findings' && !isError) {
+          submitted = true;
+          const finding = input as z.infer<typeof SubmitFindingsModelSchema>;
+          committedFinding.value = { summary: finding.summary, verdict: finding.verdict };
+        }
       },
     }), priorAttempt));
 
@@ -1186,6 +1198,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messagesBefore: state.messages.length,
     }));
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
+    // Post-commit progress echo: the model's own one-line digest for the node just finished, so the
+    // chat shows a running trail below the "Hop X/Y" counter rather than only that single line. Skipped
+    // for a bare prune with nothing captured (`committedFinding.summary` empty) — nothing to show.
+    if (committedFinding.value && committedFinding.value.summary.trim()) {
+      const verdictMark = committedFinding.value.verdict === 'prune' ? '⛔ pruned' : '✓';
+      deps.sink.status('scoping', `${verdictMark} Hop ${hop}: ${focusLabel} — ${truncStatusLabel(committedFinding.value.summary, 200)}`);
+    }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {
       engineSnapshot: engine.toJSON(),
