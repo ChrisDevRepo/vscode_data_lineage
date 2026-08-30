@@ -11,7 +11,7 @@ import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray } from '../support/inputNormalization';
+import { coercedBoolean, coercedStringArray, coercedStringObject } from '../support/inputNormalization';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -86,7 +86,7 @@ export const StartExplorationInputSchema = z.object({
     'CT only: user-named columns to trace. BB forbids this property; a raw provider empty BB array may normalize to absence.',
   ),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.'),
-  depth: ExplorationDepthSelectionSchema.nullable().optional().describe(
+  depth: coercedStringObject(ExplorationDepthSelectionSchema).nullable().optional().describe(
     'AI-selected hop-by-hop starting scope: a symmetric positive integer, or per-side {upstream,downstream} (requires direction "bidirectional"). When the request explicitly asks for every upstream/downstream source or the complete chain (for example, "all the way up/down"), set "all"; do not omit depth. In a per-side value, 0 means do not seed that direction and must not be replaced by the default. If the user stated no depth, omit the field; omitted/null intent proposes the reviewed default of 3.'
   ),
   excludeTypes: z.array(z.string()).optional().describe('Object types the user explicitly excluded from the approved scope.'),
@@ -184,7 +184,7 @@ export const StartExplorationInputSchema = z.object({
 const StartOriginSchema = z.string().min(1).describe('Canonical object ID that anchors a fresh exploration.');
 const StartQuestionSchema = z.string().optional().describe('The user question this exploration must answer.');
 const StartDirectionSchema = z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.');
-const StartDepthSchema = ExplorationDepthSelectionSchema.nullable().optional().describe(
+const StartDepthSchema = coercedStringObject(ExplorationDepthSelectionSchema).nullable().optional().describe(
   'AI-selected hop-by-hop starting scope: a symmetric positive integer, or per-side {upstream,downstream} (requires direction "bidirectional"). When the request explicitly asks for every upstream/downstream source or the complete chain (for example, "all the way up/down"), set "all"; do not omit depth. In a per-side value, 0 means do not seed that direction and must not be replaced by the default. If the user stated no depth, omit the field; omitted/null intent proposes the reviewed default of 3.',
 );
 const StartExcludeTypesSchema = z.array(z.string()).optional().describe('Object types the user explicitly excluded from the approved scope.');
