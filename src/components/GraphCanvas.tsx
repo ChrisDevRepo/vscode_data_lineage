@@ -343,14 +343,12 @@ interface GraphCanvasProps {
     nodeIds: string[],
     source: 'trace' | 'path',
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => void;
   /** Called when user saves an analysis result as an advanced bookmark. */
   onSaveAnalysisBookmark?: (
     name: string,
     nodeIds: string[],
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => void;
   /** Transient AI preview — shown before user decides to save. */
   aiPreview?: { name: string; nodeIds: Set<string>; aiMetadata: AIViewMetadata } | null;
@@ -359,7 +357,6 @@ interface GraphCanvasProps {
     name: string,
     withPositions: boolean,
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => void;
   /** Called when user discards the AI preview. */
   onDiscardAiPreview?: () => void;
@@ -373,8 +370,6 @@ interface GraphCanvasProps {
   onExitAdvancedBookmark?: () => void;
   /** Saved node positions from a bookmark — applied once after the next rebuild. */
   pendingPositions?: Record<string, { x: number; y: number }>;
-  /** Saved ReactFlow viewport — restored together with pendingPositions. */
-  pendingViewport?: { x: number; y: number; zoom: number };
   /** Incremented when the next graph-data update should keep the current viewport. */
   viewportPreserveVersion?: number;
   /** Called after pendingPositions have been applied so the parent can clear them. */
@@ -495,7 +490,6 @@ export function GraphCanvas({
   bookmarkStaleNames,
   onExitAdvancedBookmark,
   pendingPositions,
-  pendingViewport,
   viewportPreserveVersion = 0,
   onPendingPositionsApplied,
   useFullModel,
@@ -609,11 +603,11 @@ export function GraphCanvas({
       for (const n of nodes) {
         if (nodeIdSet.has(n.id)) pos[n.id] = n.position;
       }
-      onSaveTraceBookmark(name, nodeIds, 'trace', pos, getViewport());
+      onSaveTraceBookmark(name, nodeIds, 'trace', pos);
     } else {
       onSaveTraceBookmark(name, nodeIds, 'trace');
     }
-  }, [onSaveTraceBookmark, trace.tracedNodeIds, objectNodes, getViewport]);
+  }, [onSaveTraceBookmark, trace.tracedNodeIds, objectNodes]);
 
   const handleSaveAnalysisAsBookmark = useCallback((name: string, withPositions: boolean) => {
     if (!onSaveAnalysisBookmark || !analysisMode) return;
@@ -627,11 +621,11 @@ export function GraphCanvas({
       const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) pos[n.id] = n.position;
-      onSaveAnalysisBookmark(name, nodeIds, pos, getViewport());
+      onSaveAnalysisBookmark(name, nodeIds, pos);
     } else {
       onSaveAnalysisBookmark(name, nodeIds);
     }
-  }, [onSaveAnalysisBookmark, analysisMode, objectNodes, getViewport]);
+  }, [onSaveAnalysisBookmark, analysisMode, objectNodes]);
 
   const handleSaveAiAsBookmark = useCallback((name: string, withPositions: boolean) => {
     if (!onSaveAiBookmark) return;
@@ -639,11 +633,11 @@ export function GraphCanvas({
       const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) pos[n.id] = n.position;
-      onSaveAiBookmark(name, withPositions, pos, getViewport());
+      onSaveAiBookmark(name, withPositions, pos);
     } else {
       onSaveAiBookmark(name, withPositions);
     }
-  }, [onSaveAiBookmark, objectNodes, getViewport]);
+  }, [onSaveAiBookmark, objectNodes]);
 
   useKeyboardShortcut(SHORTCUT_KEYS.fitView, handleFitView);
 
@@ -762,7 +756,8 @@ export function GraphCanvas({
     const exportObjectNodes: FlowNode<CustomNodeData>[] = [];
     const clusterNodes: FlowNode<SchemaNodeData>[] = [];
     const exportNodes = objectNodes();
-    const exportEdges = getEdges();
+    // Column view renders column-to-column trace edges; export always uses the object-level graph.
+    const exportEdges = columnViewActive ? localEdges : getEdges();
     for (const n of exportNodes) {
       if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
       else exportObjectNodes.push(n as FlowNode<CustomNodeData>);
@@ -778,7 +773,7 @@ export function GraphCanvas({
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [objectNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [objectNodes, getEdges, columnViewActive, localEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   useEffect(() => {
@@ -856,9 +851,7 @@ export function GraphCanvas({
         const saved = pendingPositions[n.id];
         return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
       }));
-      if (pendingViewport) {
-        requestAnimationFrame(() => { void setViewport(pendingViewport); });
-      }
+      requestAnimationFrame(handleFitView);
       onPendingPositionsApplied?.();
     } else {
       setLocalNodes(flowNodes);
@@ -1357,6 +1350,9 @@ export function GraphCanvas({
           shownCount={localNodes.filter(n => n.type === 'lineageNode').length}
           totalCount={activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0}
           onExit={onExitAdvancedBookmark}
+          columnViewAvailable={!!columnTraceView}
+          columnView={columnViewActive}
+          onToggleColumnView={handleToggleColumnView}
         />
       )}
 

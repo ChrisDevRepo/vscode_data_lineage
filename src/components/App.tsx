@@ -4,6 +4,7 @@ import { StartScreen } from './StartScreen';
 import { CreateFlow } from './CreateFlow';
 import { VisualizingScreen, type LoadingPhase } from './VisualizingScreen';
 import { GraphCanvas } from './GraphCanvas';
+import type { ColumnTraceNodeData } from './ColumnTraceNode';
 import { NodeContextMenu } from './NodeContextMenu';
 import { useExpandedSchemaView, type ExpandedSchemaViewState } from '../hooks/useExpandedSchemaView';
 import { useGraphology } from '../hooks/useGraphology';
@@ -456,7 +457,6 @@ export function App() {
   const preModFilterRef = useRef<FilterState | null>(null);
   /** Saved node positions from a bookmark — applied once after rebuild, then cleared. */
   const [pendingPositions, setPendingPositions] = useState<Record<string, { x: number; y: number }> | undefined>(undefined);
-  const [pendingViewport, setPendingViewport] = useState<{ x: number; y: number; zoom: number } | undefined>(undefined);
 
   /** Names of allowlist node IDs no longer present in the model (stale objects). */
   const bookmarkStaleNames = useMemo(() => {
@@ -614,6 +614,25 @@ export function App() {
       // Schema clusters use the on-node toolbar (selection), not a context window — object nodes only here.
       if (node.type === 'schemaNode') {
         setContextMenu(null);
+        return;
+      }
+      if (node.type === 'columnTraceNode') {
+        const { view } = node.data as ColumnTraceNodeData;
+        // Column rows carry no fullName/external fields of their own; resolve them from the loaded
+        // model so the menu matches what the object-view path shows for the same node.
+        const modelNode = model?.nodes.find(n => n.id === view.id);
+        setContextMenu({
+          kind: 'object',
+          x,
+          y,
+          nodeId: view.id,
+          nodeName: view.label,
+          schema: view.schema,
+          objectType: view.objectType as ObjectType,
+          externalType: modelNode?.externalType as ObjectContextMenuState['externalType'],
+          externalUrl: modelNode?.externalUrl,
+          fullName: modelNode?.fullName ?? view.id,
+        });
         return;
       }
       const data = node.data;
@@ -936,7 +955,6 @@ export function App() {
 
   const handlePendingPositionsApplied = useCallback(() => {
     setPendingPositions(undefined);
-    setPendingViewport(undefined);
   }, []);
 
   /** Removes a specific node from the current bookmark view. */
@@ -1011,7 +1029,6 @@ export function App() {
     const hasPositions = !!profile.positions && Object.keys(profile.positions).length > 0;
     if (hasPositions) {
       setPendingPositions(profile.positions);
-      setPendingViewport(profile.viewport);
     }
     if (isAdvanced) {
       if (!preModFilterRef.current) preModFilterRef.current = filter;
@@ -1287,7 +1304,6 @@ export function App() {
     nodeIds: string[],
     source: 'trace' | 'path',
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1299,7 +1315,6 @@ export function App() {
         allowlistNodeIds: nodeIds,
       },
       ...(positions ? { positions } : {}),
-      ...(viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
@@ -1309,7 +1324,6 @@ export function App() {
     name: string,
     nodeIds: string[],
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1321,7 +1335,6 @@ export function App() {
         allowlistNodeIds: nodeIds,
       },
       ...(positions ? { positions } : {}),
-      ...(viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
@@ -1331,7 +1344,6 @@ export function App() {
     name: string,
     withPositions: boolean,
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     if (!aiPreview) return;
     const profile: FilterProfile = {
@@ -1345,7 +1357,6 @@ export function App() {
       },
       aiMetadata: aiPreview.aiMetadata,
       ...(withPositions && positions ? { positions } : {}),
-      ...(withPositions && viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
   }, [filter, aiPreview, persistFilterProfile]);
@@ -1569,7 +1580,6 @@ export function App() {
         bookmarkStaleNames={bookmarkStaleNames}
         onExitAdvancedBookmark={handleExitAdvancedBookmark}
         pendingPositions={pendingPositions}
-        pendingViewport={pendingViewport}
         viewportPreserveVersion={viewportPreserveVersion}
         onPendingPositionsApplied={handlePendingPositionsApplied}
         useFullModel={useFullModel}

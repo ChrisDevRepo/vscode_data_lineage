@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
 import { Tooltip } from './ui/Tooltip';
+import { ColumnViewToggle } from './ColumnViewToggle';
 
 interface BookmarkBannerProps {
   /** The saved view profile being displayed. */
@@ -11,7 +12,14 @@ interface BookmarkBannerProps {
   totalCount: number;
   /** Callback triggered when the user chooses to exit the bookmarked view. */
   onExit: () => void;
+  /** Whether the run recorded column-level findings, which is what the column view renders. */
+  columnViewAvailable?: boolean;
+  /** Whether the column view is the one currently rendered. */
+  columnView?: boolean;
+  /** Switches between the object view and the column view of the same scope. */
+  onToggleColumnView?: (columnView: boolean) => void;
 }
+
 
 /**
  * Human-readable labels for the different sources of bookmarked views.
@@ -48,6 +56,9 @@ export const BookmarkBanner = memo(function BookmarkBanner({
   shownCount,
   totalCount,
   onExit,
+  columnViewAvailable,
+  columnView,
+  onToggleColumnView,
 }: BookmarkBannerProps) {
   const source = profile.source ?? 'user';
   const label = SOURCE_LABELS[source];
@@ -75,12 +86,17 @@ export const BookmarkBanner = memo(function BookmarkBanner({
         </span>
       </div>
 
-      <button
-        onClick={onExit}
-        className="h-7 px-3 text-xs rounded-sm font-medium transition-colors ln-btn-secondary shrink-0 ml-3"
-      >
-        ✕ Exit View
-      </button>
+      <div className="flex items-center gap-3 shrink-0 ml-3">
+        {columnViewAvailable && onToggleColumnView && (
+          <ColumnViewToggle active={columnView} onToggle={onToggleColumnView} />
+        )}
+        <button
+          onClick={onExit}
+          className="h-7 px-3 text-xs rounded-sm font-medium transition-colors ln-btn-secondary"
+        >
+          ✕ Exit View
+        </button>
+      </div>
     </div>
   );
 });

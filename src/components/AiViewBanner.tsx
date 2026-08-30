@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { ModeBanner } from './ModeBanner';
-import { Tooltip } from './ui/Tooltip';
+import { ColumnViewToggle } from './ColumnViewToggle';
 
 interface AiViewBannerProps {
   /** The name or title of the AI-generated view. */
@@ -45,24 +45,7 @@ export const AiViewBanner = memo(function AiViewBanner({
   onToggleColumnView,
 }: AiViewBannerProps) {
   const viewToggle = columnViewAvailable && onToggleColumnView ? (
-    <Tooltip content={'Objects shows dependencies between objects.\nDetail shows the column-level findings of this analysis.'} placement="bottom" multiline>
-      <div className="flex items-center gap-0.5" role="group" aria-label="Preview detail level">
-        <button
-          onClick={() => onToggleColumnView(false)}
-          aria-pressed={!columnView}
-          className={`ln-mode-banner__btn-sm ${columnView ? 'ln-btn-secondary' : 'ln-btn-primary'}`}
-        >
-          Objects
-        </button>
-        <button
-          onClick={() => onToggleColumnView(true)}
-          aria-pressed={!!columnView}
-          className={`ln-mode-banner__btn-sm ${columnView ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
-        >
-          Detail
-        </button>
-      </div>
-    </Tooltip>
+    <ColumnViewToggle active={columnView} onToggle={onToggleColumnView} />
   ) : null;
 
   return (

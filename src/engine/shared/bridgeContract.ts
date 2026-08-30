@@ -327,8 +327,6 @@ export type AIViewMetadata = z.infer<typeof AIViewMetadataSchema>;
 
 const NodePositionSchema = z.object({ x: z.number(), y: z.number() }).strict();
 
-const ViewportSchema = z.object({ x: z.number(), y: z.number(), zoom: z.number() }).strict();
-
 const ExpandedSchemaViewSchema = z.object({
   focusNodeId: z.string().nullable(),
   expandedSchemas: z.array(z.string()),
@@ -352,7 +350,6 @@ const FilterProfileSchema = z.object({
   filter: SerializedFilterStateSchema,
   source: z.enum(['user', 'trace', 'analysis', 'ai']).optional(),
   positions: z.record(z.string(), NodePositionSchema).optional(),
-  viewport: ViewportSchema.optional(),
   aiMetadata: AIViewMetadataSchema.optional(),
   graphMode: z.enum(['overview', 'full']).optional(),
   expandedSchemaView: ExpandedSchemaViewSchema.optional(),
@@ -471,7 +468,6 @@ const FilterProfileReadSchema = z.object({
   ...FilterProfileSchema.shape,
   filter: z.object(SerializedFilterStateSchema.shape),
   positions: z.record(z.string(), z.object(NodePositionSchema.shape)).optional(),
-  viewport: z.object(ViewportSchema.shape).optional(),
   aiMetadata: AIViewMetadataReadSchema.optional(),
   expandedSchemaView: z.object(ExpandedSchemaViewSchema.shape).optional(),
 });
