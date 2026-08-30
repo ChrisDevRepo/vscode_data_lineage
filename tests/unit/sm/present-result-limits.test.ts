@@ -10,7 +10,6 @@ import {
   PRESENT_RESULT_SECTION_LABEL_MAX,
   PRESENT_RESULT_HIGHLIGHT_LABEL_MAX,
 } from '../../../src/ai/tools/toolSchemas';
-import { assert, assertEq } from '../helpers/testUtils';
 import { describe, expect, it } from 'vitest';
 
 describe("present_result hard/soft text limits", () => {
@@ -29,9 +28,9 @@ describe("present_result hard/soft text limits", () => {
       title: 't'.repeat(PRESENT_RESULT_TITLE_MAX - 5),
       summary: longSummary,
     });
-    assert(result.success, 'a payload within tolerance parses');
-    assertEq(result.data!.name, longName, 'name within tolerance is passed through unmodified');
-    assertEq(result.data!.summary, longSummary, 'summary is never truncated (content, not a GUI label)');
+    expect(result.success, 'a payload within tolerance parses').toBe(true);
+    expect(result.data!.name, 'name within tolerance is passed through unmodified').toBe(longName);
+    expect(result.data!.summary, 'summary is never truncated (content, not a GUI label)').toBe(longSummary);
   });
 
   const textLimitCases: Array<{
@@ -76,16 +75,16 @@ describe("present_result hard/soft text limits", () => {
   ];
 
   it.each(textLimitCases)('$name accepts its hard cap', ({ name, max, char, input }) => {
-    assert(parse(input(char.repeat(max))).success, `${name} at the hard cap is accepted`);
+    expect(parse(input(char.repeat(max))).success, `${name} at the hard cap is accepted`).toBe(true);
   });
 
   it.each(textLimitCases)('$name rejects one character over its hard cap', ({ name, max, char, path, input }) => {
     const result = parse(input(char.repeat(max + 1)));
     if (result.success) throw new Error(`${name} over the hard cap should reject`);
-    assert(result.error.issues.some(issue => issue.path[0] === path), `${name} rejection points at ${path}`);
+    expect(result.error.issues.some(issue => issue.path[0] === path), `${name} rejection points at ${path}`).toBe(true);
   });
 
-  it("a 400-char summary is accepted (was truncated at 300 before)", () => { assert(parse({ ...base, name: 'ok', summary: 's'.repeat(400) }).success, 'a 400-char summary is accepted (was truncated at 300 before)'); });
+  it("a 400-char summary is accepted (was truncated at 300 before)", () => { expect(parse({ ...base, name: 'ok', summary: 's'.repeat(400) }).success, 'a 400-char summary is accepted (was truncated at 300 before)').toBe(true); });
 });
 
 describe('discovery preview prose reuse', () => {

@@ -1,9 +1,9 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { prunePreserveOnly } from '../../../src/ai/support/viewPrune';
-import { assert, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Navigation Engine — no self-prune cascade", () => {
   const nodes: LineageNode[] = [
@@ -38,16 +38,16 @@ describe("Navigation Engine — no self-prune cascade", () => {
   const final = engine.getResult();
   const ids = new Set(final.fullNodes.map((n) => n.id));
   for (const id of ['origin', 'core_a', 'core_b', 'util_log', 'util_a', 'util_b']) {
-    assert(ids.has(id), `${id} kept — passthrough never cascades (agenda drains only by visiting)`);
+    expect(ids.has(id), `${id} kept — passthrough never cascades (agenda drains only by visiting)`).toBe(true);
   }
-  assert(visited.size === 6, 'all six scoped nodes were visited');
+  expect(visited.size === 6, 'all six scoped nodes were visited').toBe(true);
 });
 
   it("Test 2: the immutable origin is always present.", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'origin test', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 5 } });
   const ctx = engine.getHopContext();
-  assert('focus_node' in ctx && ctx.focus_node?.id === 'origin', 'start at origin');
+  expect('focus_node' in ctx && ctx.focus_node?.id === 'origin', 'start at origin').toBe(true);
 
   const result = engine.submitFindings({
     focus_node_id: 'origin',
@@ -56,19 +56,19 @@ describe("Navigation Engine — no self-prune cascade", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: 'core_a', question: '?' }, { nodeId: 'util_log', question: '?' }],
   });
-  assert('ok' in result, 'origin submission accepted');
+  expect('ok' in result, 'origin submission accepted').toBe(true);
   const final = engine.getResult();
-  assert(final.fullNodes.some((n) => n.id === 'origin'), 'origin must still be present');
+  expect(final.fullNodes.some((n) => n.id === 'origin'), 'origin must still be present').toBe(true);
 });
 
   it("Test 3: prunePreserveOnly (present_result prune) — unaffected by the engine change.", () => {
   const nodeIds = ['A', 'B', 'C'];
   const edgesPP: Array<[string, string, string]> = [['A', 'B', 'read'], ['B', 'C', 'read']];
   const result = prunePreserveOnly(nodeIds, edgesPP, ['B']);
-  assert(result.nodeIds.length === 2 && result.nodeIds.includes('A') && result.nodeIds.includes('C'), 'pruned nodeIds');
-  assert(result.edges.length === 0, 'pruned edges');
+  expect(result.nodeIds.length === 2 && result.nodeIds.includes('A') && result.nodeIds.includes('C'), 'pruned nodeIds').toBe(true);
+  expect(result.edges.length === 0, 'pruned edges').toBe(true);
   const result2 = prunePreserveOnly(nodeIds, edgesPP, []);
-  assert(result2.nodeIds.length === 3, 'no-op nodeIds');
+  expect(result2.nodeIds.length === 3, 'no-op nodeIds').toBe(true);
 });
 
   it("queued coverage stays engine-owned and the hop still commits.", () => {
@@ -76,7 +76,7 @@ describe("Navigation Engine — no self-prune cascade", () => {
   engine.init({ origin: 'origin', question: 'in-scope prune rejected', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 5 } });
 
   const ctx = engine.getHopContext();
-  assert('focus_node' in ctx && ctx.focus_node?.id === 'origin', 'start at origin');
+  expect('focus_node' in ctx && ctx.focus_node?.id === 'origin', 'start at origin').toBe(true);
   const result = engine.submitFindings({
     focus_node_id: 'origin',
     sections: [{ angle: 'business' as const, text: 'root' }],
@@ -86,10 +86,10 @@ describe("Navigation Engine — no self-prune cascade", () => {
     prune_neighbors: ['util_log'],
   });
   const state = engine.toJSON();
-  assert('ok' in result, 'queued in-scope prune is a nonfatal notice');
-  assert(!state.removedSet.includes('util_log'), 'queued util_log is not removed by prune_neighbors — it keeps its own focus hop');
-  assert(!state.removedSet.includes('origin'), 'origin is never removed by prune_neighbors');
-  assert(state.memory.recentRejections.some((r) => r.nodeId === 'util_log'), 'queued in-scope prune notice is recorded');
+  expect('ok' in result, 'queued in-scope prune is a nonfatal notice').toBe(true);
+  expect(!state.removedSet.includes('util_log'), 'queued util_log is not removed by prune_neighbors — it keeps its own focus hop').toBe(true);
+  expect(!state.removedSet.includes('origin'), 'origin is never removed by prune_neighbors').toBe(true);
+  expect(state.memory.recentRejections.some((r) => r.nodeId === 'util_log'), 'queued in-scope prune notice is recorded').toBe(true);
 });
 
 });

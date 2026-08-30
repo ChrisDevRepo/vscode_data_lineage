@@ -9,9 +9,9 @@
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { assert, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe('Depth border — explicit depth is hard, omitted depth is soft', () => {
   // n0 → n1 → n2 → n3 → n4 → n5, all in one schema so no schema border can mask the
@@ -48,10 +48,7 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       origin: 'n0', question: 'trace', direction: 'downstream',
       depthIntent: { kind: 'explicit', levels: 2 },
     });
-    assert(
-      engine.currentDepthEnforcement === 'strict',
-      `explicit depth must enforce strictly, got '${engine.currentDepthEnforcement}'`,
-    );
+    expect(engine.currentDepthEnforcement === 'strict', `explicit depth must enforce strictly, got '${engine.currentDepthEnforcement}'`).toBe(true);
   });
 
   it('T11: an omitted depth stays silent — the soft path is untouched', () => {
@@ -60,10 +57,7 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       origin: 'n0', question: 'trace', direction: 'downstream',
       depthIntent: { kind: 'default_start' },
     });
-    assert(
-      engine.currentDepthEnforcement === 'silent',
-      `omitted depth must stay silent, got '${engine.currentDepthEnforcement}'`,
-    );
+    expect(engine.currentDepthEnforcement === 'silent', `omitted depth must stay silent, got '${engine.currentDepthEnforcement}'`).toBe(true);
   });
 
   it('T12: full_frontier leaves the budget unbounded', () => {
@@ -72,10 +66,10 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       origin: 'n0', question: 'trace', direction: 'downstream',
       depthIntent: { kind: 'full_frontier' },
     });
-    assert(engine.currentDepth === null, 'full_frontier must leave depthBudget null');
+    expect(engine.currentDepth === null, 'full_frontier must leave depthBudget null').toBe(true);
     drainChain(engine);
-    assert(analyzedIds(engine).has('n5'), 'unbounded depth still reaches the far end of the chain');
-    assert(!deferredIds(engine).includes('n5'), 'unbounded depth defers nothing on depth grounds');
+    expect(analyzedIds(engine).has('n5'), 'unbounded depth still reaches the far end of the chain').toBe(true);
+    expect(!deferredIds(engine).includes('n5'), 'unbounded depth defers nothing on depth grounds').toBe(true);
   });
 
   // ── T4/T5: the border actually holds, and the frontier is deferred not dropped ───
@@ -87,9 +81,9 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
     });
     drainChain(engine);
     const analyzed = analyzedIds(engine);
-    assert(analyzed.has('n2'), 'n2 is at the border (depth 2) and must still be analyzed');
-    assert(!analyzed.has('n3'), 'n3 is depth 3 — beyond the stated 2 levels — and must not be analyzed');
-    assert(!analyzed.has('n5'), 'n5 is depth 5 and must not be analyzed');
+    expect(analyzed.has('n2'), 'n2 is at the border (depth 2) and must still be analyzed').toBe(true);
+    expect(!analyzed.has('n3'), 'n3 is depth 3 — beyond the stated 2 levels — and must not be analyzed').toBe(true);
+    expect(!analyzed.has('n5'), 'n5 is depth 5 and must not be analyzed').toBe(true);
   });
 
   it('T5: the deferred frontier names the node and carries a depth reason', () => {
@@ -99,21 +93,12 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       depthIntent: { kind: 'explicit', levels: 2 },
     });
     drainChain(engine);
-    assert(
-      deferredIds(engine).includes('n3'),
-      'the first node past the border must surface as a deferred follow-up, not vanish',
-    );
+    expect(deferredIds(engine).includes('n3'), 'the first node past the border must surface as a deferred follow-up, not vanish').toBe(true);
     const depthDeferred = engine.deferredQuestions.filter(
       d => d.reason === 'depth' || d.reason === 'schema_and_depth',
     );
-    assert(
-      depthDeferred.length > 0,
-      'a depth breach must be recorded with a depth reason, not as a schema deferral',
-    );
-    assert(
-      depthDeferred.every(d => typeof d.depth === 'number'),
-      "DeferredQuestion.depth is documented as populated when reason includes 'depth'",
-    );
+    expect(depthDeferred.length > 0, 'a depth breach must be recorded with a depth reason, not as a schema deferral').toBe(true);
+    expect(depthDeferred.every(d => typeof d.depth === 'number'), "DeferredQuestion.depth is documented as populated when reason includes 'depth'").toBe(true);
   });
 
   // ── T2: the border must be enforced against the DIRECTED distance ────────────────
@@ -157,12 +142,9 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       });
     }
     const deferredD = engine.deferredQuestions.find(q => q.nodeId.toLowerCase() === 'd');
-    assert(!!deferredD, "'d' is 4 directed levels out and must be deferred past a 3-level border");
-    assert(
-      deferredD!.depth === 4,
-      `'d' is 4 directed edges from origin; the undirected shortest path is 3. `
-      + `Reported depth=${deferredD!.depth}`,
-    );
+    expect(!!deferredD, "'d' is 4 directed levels out and must be deferred past a 3-level border").toBe(true);
+    expect(deferredD!.depth === 4, `'d' is 4 directed edges from origin; the undirected shortest path is 3. `
+      + `Reported depth=${deferredD!.depth}`).toBe(true);
   });
 
   // ── T3/T13: asymmetric depth must be ENFORCED per side, not collapsed ────────────
@@ -195,15 +177,9 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
     // Math.max(2,1)=2 scalar would wave d2 through on the upstream side's allowance.
     driveRoutes(engine, { origin: ['u1', 'd1'], u1: ['u2'], d1: ['d2'] });
     const analyzed = analyzedIds(engine);
-    assert(analyzed.has('u2'), 'upstream cap of 2 still admits u2');
-    assert(
-      !analyzed.has('d2'),
-      'downstream cap of 1 must refuse d2 — a max-collapsed scalar admits it',
-    );
-    assert(
-      deferredIds(engine).includes('d2'),
-      'd2 must surface as a deferred follow-up rather than vanish',
-    );
+    expect(analyzed.has('u2'), 'upstream cap of 2 still admits u2').toBe(true);
+    expect(!analyzed.has('d2'), 'downstream cap of 1 must refuse d2 — a max-collapsed scalar admits it').toBe(true);
+    expect(deferredIds(engine).includes('d2'), 'd2 must surface as a deferred follow-up rather than vanish').toBe(true);
   });
 
   // ── Resume: the border outlives the checkpoint the consent interrupt writes ──────
@@ -214,14 +190,11 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       depthIntent: { kind: 'explicit', levels: 2 },
     });
     const restored = NavigationEngine.fromJSON(engine.toJSON(), chainModel, chainGraph, () => {});
-    assert(
-      restored.currentDepthEnforcement === 'strict',
-      `a restored engine must still enforce the stated border, got '${restored.currentDepthEnforcement}'`,
-    );
+    expect(restored.currentDepthEnforcement === 'strict', `a restored engine must still enforce the stated border, got '${restored.currentDepthEnforcement}'`).toBe(true);
     drainChain(restored);
     const analyzed = analyzedIds(restored);
-    assert(!analyzed.has('n3'), 'the restored border still refuses the node past level 2');
-    assert(deferredIds(restored).includes('n3'), 'n3 surfaces as a deferred follow-up after resume');
+    expect(!analyzed.has('n3'), 'the restored border still refuses the node past level 2').toBe(true);
+    expect(deferredIds(restored).includes('n3'), 'n3 surfaces as a deferred follow-up after resume').toBe(true);
   });
 
   it('T15: an asymmetric border survives resume per side, and an unbounded side stays unbounded', () => {
@@ -231,19 +204,13 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       depthIntent: { kind: 'asymmetric', upstream: 'all', downstream: 1 },
     });
     const snapshot = engine.toJSON() as { engineInternals: { depthLimits?: { upstream: number | null; downstream: number | null } } };
-    assert(
-      snapshot.engineInternals.depthLimits?.upstream === null,
-      'an unbounded side serializes as null, the only JSON form of no ceiling',
-    );
-    assert(
-      snapshot.engineInternals.depthLimits?.downstream === 1,
-      'the capped side serializes its own ceiling',
-    );
+    expect(snapshot.engineInternals.depthLimits?.upstream === null, 'an unbounded side serializes as null, the only JSON form of no ceiling').toBe(true);
+    expect(snapshot.engineInternals.depthLimits?.downstream === 1, 'the capped side serializes its own ceiling').toBe(true);
     const restored = NavigationEngine.fromJSON(snapshot, forkModel, forkGraph, () => {});
     driveRoutes(restored, { origin: ['u1', 'd1'], u1: ['u2'], d1: ['d2'] });
     const analyzed = analyzedIds(restored);
-    assert(analyzed.has('u2'), 'the unbounded side still reaches the far end after resume');
-    assert(!analyzed.has('d2'), "the capped side keeps its ceiling after resume");
+    expect(analyzed.has('u2'), 'the unbounded side still reaches the far end after resume').toBe(true);
+    expect(!analyzed.has('d2'), "the capped side keeps its ceiling after resume").toBe(true);
   });
 
   it('T16: a checkpoint without depthLimits still restores, as seed-only routing', () => {
@@ -255,10 +222,7 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
     const snapshot = engine.toJSON();
     delete snapshot.engineInternals.depthLimits;
     const restored = NavigationEngine.fromJSON(snapshot, chainModel, chainGraph, () => {});
-    assert(
-      restored.currentDepthEnforcement === 'silent',
-      'a v1 checkpoint is accepted, not discarded, and falls back to seed-only routing',
-    );
+    expect(restored.currentDepthEnforcement === 'silent', 'a v1 checkpoint is accepted, not discarded, and falls back to seed-only routing').toBe(true);
   });
 
   it('T13: asymmetric with "all" on one side keeps the other side capped', () => {
@@ -269,11 +233,8 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
     });
     driveRoutes(engine, { origin: ['u1', 'd1'], u1: ['u2'], d1: ['d2'] });
     const analyzed = analyzedIds(engine);
-    assert(analyzed.has('u2'), 'upstream "all" reaches the far end');
-    assert(
-      !analyzed.has('d2'),
-      "an 'all' on one side must not disable the other side's cap "
-      + '(today the finite-pair filter drops the budget to null entirely)',
-    );
+    expect(analyzed.has('u2'), 'upstream "all" reaches the far end').toBe(true);
+    expect(!analyzed.has('d2'), "an 'all' on one side must not disable the other side's cap "
+      + '(today the finite-pair filter drops the budget to null entirely)').toBe(true);
   });
 });

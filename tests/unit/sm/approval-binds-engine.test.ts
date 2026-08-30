@@ -13,9 +13,9 @@
 import { renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRenderer';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { assert, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe('Approval binds the engine — hard vs soft, and every approved filter', () => {
   // n0 → n1 → n2 → n3, one schema, all bodied: anything refused below was refused on the
@@ -60,12 +60,12 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
       depthIntent: { kind: 'explicit', levels: 2 },
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
-    assert(!md.includes('≈'), `a stated depth must not render as an estimate:\n${md}`);
-    assert(md.includes('I will not go past this'), `a stated depth must render as fixed:\n${md}`);
-    assert(engine.currentDepthEnforcement === 'strict', 'a stated depth enforces strictly');
+    expect(!md.includes('≈'), `a stated depth must not render as an estimate:\n${md}`).toBe(true);
+    expect(md.includes('I will not go past this'), `a stated depth must render as fixed:\n${md}`).toBe(true);
+    expect(engine.currentDepthEnforcement === 'strict', 'a stated depth enforces strictly').toBe(true);
     drain(engine);
-    assert(analyzed(engine).has('n2'), 'the node at the approved border is still analysed');
-    assert(!analyzed(engine).has('n3'), 'nothing past the approved border is analysed');
+    expect(analyzed(engine).has('n2'), 'the node at the approved border is still analysed').toBe(true);
+    expect(!analyzed(engine).has('n3'), 'nothing past the approved border is analysed').toBe(true);
   });
 
   it('A2: an assistant-chosen depth renders as an estimate and stays growable', () => {
@@ -75,9 +75,9 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
       depthIntent: { kind: 'default_start' },
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
-    assert(md.includes('≈'), `an inferred depth must render as an estimate:\n${md}`);
-    assert(md.includes('my estimate'), `an inferred depth must say whose it is:\n${md}`);
-    assert(engine.currentDepthEnforcement === 'silent', 'an inferred depth stays growable');
+    expect(md.includes('≈'), `an inferred depth must render as an estimate:\n${md}`).toBe(true);
+    expect(md.includes('my estimate'), `an inferred depth must say whose it is:\n${md}`).toBe(true);
+    expect(engine.currentDepthEnforcement === 'silent', 'an inferred depth stays growable').toBe(true);
   });
 
   it('A2b: an unbounded plan states that it has no depth limit', () => {
@@ -87,8 +87,8 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
       depthIntent: { kind: 'full_frontier' },
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
-    assert(md.includes('Depth:'), `an unbounded plan must still state a depth:\n${md}`);
-    assert(md.includes('no depth limit'), `an unbounded plan must say it has no limit:\n${md}`);
+    expect(md.includes('Depth:'), `an unbounded plan must still state a depth:\n${md}`).toBe(true);
+    expect(md.includes('no depth limit'), `an unbounded plan must say it has no limit:\n${md}`).toBe(true);
   });
 
   it('A2c: an unbounded side is never summarised as the other side\'s ceiling', () => {
@@ -98,13 +98,10 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
       depthIntent: { kind: 'asymmetric', upstream: 'all', downstream: 2 },
     });
     const summary = engine.getScopeSummary();
-    assert(
-      summary.depth === null,
-      `a scalar cap must not be claimed while a side is unbounded, got ${String(summary.depth)}`,
-    );
+    expect(summary.depth === null, `a scalar cap must not be claimed while a side is unbounded, got ${String(summary.depth)}`).toBe(true);
     const md = renderScopeSummaryMd(summary);
-    assert(md.includes('no depth limit'), `the unbounded side must say so:\n${md}`);
-    assert(md.includes('2 levels downstream'), `the capped side must keep its ceiling:\n${md}`);
+    expect(md.includes('no depth limit'), `the unbounded side must say so:\n${md}`).toBe(true);
+    expect(md.includes('2 levels downstream'), `the capped side must keep its ceiling:\n${md}`).toBe(true);
   });
 
   // ── A3/A4: the two filters with opposite effects bind as approved, not as intended ───
@@ -115,11 +112,11 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
       depthIntent: { kind: 'full_frontier' }, excludeNodeIds: ['n2'],
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
-    assert(md.includes('removed from the graph'), `an exclusion must render as a removal:\n${md}`);
-    assert(!inScope(engine).has('n2'), 'an excluded node is out of scope');
+    expect(md.includes('removed from the graph'), `an exclusion must render as a removal:\n${md}`).toBe(true);
+    expect(!inScope(engine).has('n2'), 'an excluded node is out of scope').toBe(true);
     drain(engine);
-    assert(!analyzed(engine).has('n2'), 'an excluded node is never analysed');
-    assert(!analyzed(engine).has('n3'), 'a node reachable only through an exclusion is not analysed');
+    expect(!analyzed(engine).has('n2'), 'an excluded node is never analysed').toBe(true);
+    expect(!analyzed(engine).has('n3'), 'a node reachable only through an exclusion is not analysed').toBe(true);
   });
 
   it('A4: an approved passthrough keeps the node in the graph and keeps the path open', () => {
@@ -129,11 +126,11 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
       direction: 'downstream', depthIntent: { kind: 'full_frontier' }, passNodeIds: ['n2'],
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
-    assert(md.includes('not analysed'), `a passthrough must render as kept-but-skipped:\n${md}`);
-    assert(inScope(engine).has('n2'), 'a passthrough node stays in scope');
+    expect(md.includes('not analysed'), `a passthrough must render as kept-but-skipped:\n${md}`).toBe(true);
+    expect(inScope(engine).has('n2'), 'a passthrough node stays in scope').toBe(true);
     drain(engine);
-    assert(!analyzed(engine).has('n2'), 'a passthrough node is not analysed');
-    assert(analyzed(engine).has('n3'), 'a passthrough keeps the path through it open');
+    expect(!analyzed(engine).has('n2'), 'a passthrough node is not analysed').toBe(true);
+    expect(analyzed(engine).has('n3'), 'a passthrough keeps the path through it open').toBe(true);
   });
 
   // ── A5: the gate can never display a filter the engine did not accept ────────────────
@@ -143,10 +140,7 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
       origin: 'n0', question: 'trace downstream', direction: 'downstream',
       depthIntent: { kind: 'full_frontier' }, excludeNodeIds: ['nowhere'],
     });
-    assert('error' in result, 'an unknown filter id must reject rather than silently no-op');
-    assert(
-      (result as { unresolved_excludeNodeIds?: string[] }).unresolved_excludeNodeIds?.includes('nowhere') === true,
-      'the rejection names the id that could not be resolved',
-    );
+    expect('error' in result, 'an unknown filter id must reject rather than silently no-op').toBe(true);
+    expect((result as { unresolved_excludeNodeIds?: string[] }).unresolved_excludeNodeIds?.includes('nowhere') === true, 'the rejection names the id that could not be resolved').toBe(true);
   });
 });

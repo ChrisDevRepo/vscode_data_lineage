@@ -1,8 +1,8 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { assert, assertEq, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Navigation Engine Task Ledger", () => {
   const nodes: LineageNode[] = [
@@ -25,7 +25,7 @@ describe("Navigation Engine Task Ledger", () => {
   it("Different exact questions for one node remain distinct; an exact retry is idempotent.", () => {
   const engine = newEngine();
   const first = engine.getHopContext() as any;
-  assert(first.focus_node?.id === 'p', 'origin is first focus');
+  expect(first.focus_node?.id === 'p', 'origin is first focus').toBe(true);
   const accepted = engine.submitFindings({
     focus_node_id: 'p',
     sections: [{ angle: 'business', text: 'p analysis' }],
@@ -37,11 +37,11 @@ describe("Navigation Engine Task Ledger", () => {
       { nodeId: 'x', question: 'Where   does the external result end?' },
     ],
   });
-  assert('ok' in accepted, 'scope-boundary routes commit with the accepted hop');
-  assert(engine.pendingLeads.length === 2, 'exact normalized dedup keeps two distinct questions and removes the duplicate');
-  assert(engine.investigationTasks.every(task => task.activeColumns === undefined), 'BB tasks never carry target columns');
-  assert(new Set(engine.pendingLeads.map(lead => lead.id)).size === 2, 'pending leads have stable distinct ids');
-  assert(engine.pendingLeads.every(lead => lead.reason === 'schema_boundary'), 'schema boundary is recorded mechanically');
+  expect('ok' in accepted, 'scope-boundary routes commit with the accepted hop').toBe(true);
+  expect(engine.pendingLeads.length === 2, 'exact normalized dedup keeps two distinct questions and removes the duplicate').toBe(true);
+  expect(engine.investigationTasks.every(task => task.activeColumns === undefined), 'BB tasks never carry target columns').toBe(true);
+  expect(new Set(engine.pendingLeads.map(lead => lead.id)).size === 2, 'pending leads have stable distinct ids').toBe(true);
+  expect(engine.pendingLeads.every(lead => lead.reason === 'schema_boundary'), 'schema boundary is recorded mechanically').toBe(true);
 });
 
   it("One node hop carries every distinct structured question assigned to that node.", () => {
@@ -58,10 +58,10 @@ describe("Navigation Engine Task Ledger", () => {
     ],
   });
   const next = engine.getHopContext() as any;
-  assert(next.focus_node?.id === 'm', 'the shared-question node consumes one hop');
+  expect(next.focus_node?.id === 'm', 'the shared-question node consumes one hop').toBe(true);
   const questions = engine.getCurrentTasks().map(task => task.question);
-  assert(questions.includes('Which calculation does m apply?'), 'first analytical question remains structured');
-  assert(questions.includes('Where does m send its result?'), 'second analytical question remains structured');
+  expect(questions.includes('Which calculation does m apply?'), 'first analytical question remains structured').toBe(true);
+  expect(questions.includes('Where does m send its result?'), 'second analytical question remains structured').toBe(true);
 });
 
   it("An explicit routed question promotes a pre-seeded node ahead of untouched BFS work.", () => {
@@ -75,9 +75,9 @@ describe("Navigation Engine Task Ledger", () => {
     route_requests: [{ nodeId: 'm', question: 'Follow the authored m branch first.' }],
   });
   const agenda = engine.toJSON().agenda;
-  assert(agenda.find(entry => entry.nodeId === 'm')?.priority === 2, 'explicit route promotes an existing BFS seed to routed priority');
+  expect(agenda.find(entry => entry.nodeId === 'm')?.priority === 2, 'explicit route promotes an existing BFS seed to routed priority').toBe(true);
   const next = engine.getHopContext() as any;
-  assert(next.focus_node?.id === 'm', 'promoted authored work dispatches before untouched equal-depth seeds');
+  expect(next.focus_node?.id === 'm', 'promoted authored work dispatches before untouched equal-depth seeds').toBe(true);
 });
 
   it("Rejected content does not leak staged leads.", () => {
@@ -99,8 +99,8 @@ describe("Navigation Engine Task Ledger", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: 'x', question: 'must not persist' }],
   });
-  assert('error' in mismatch, 'focus mismatch rejects atomically');
-  assert(engine.pendingLeads.length === ('ok' in rejected ? 1 : 0), 'rejected submission creates no additional pending lead');
+  expect('error' in mismatch, 'focus mismatch rejects atomically').toBe(true);
+  expect(engine.pendingLeads.length === ('ok' in rejected ? 1 : 0), 'rejected submission creates no additional pending lead').toBe(true);
 });
 
   it("Lead ids survive checkpointing and schedule the original question through supplement.", () => {
@@ -125,26 +125,26 @@ describe("Navigation Engine Task Ledger", () => {
       verdict: 'analyze',
     });
   }
-  assert(next?.done === true && engine.status === 'complete', 'initial exploration completes');
+  expect(next?.done === true && engine.status === 'complete', 'initial exploration completes').toBe(true);
   const leadId = engine.pendingLeads[0].id;
   const snapshot = JSON.parse(JSON.stringify(engine.toJSON()));
   const restored = NavigationEngine.fromJSON(snapshot, model, makeGraph(nodes, edges), () => {});
-  assert(restored.pendingLeads[0]?.id === leadId, 'checkpoint preserves stable lead id');
+  expect(restored.pendingLeads[0]?.id === leadId, 'checkpoint preserves stable lead id').toBe(true);
 
   const invalid = restored.supplementAgenda([], ['lead_unknown']);
-  assert('error' in invalid && invalid.error === 'invalid_pending_lead', 'unknown lead id rejects');
-  assert(restored.status === 'complete', 'unknown lead rejection leaves engine state unchanged');
+  expect('error' in invalid && invalid.error === 'invalid_pending_lead', 'unknown lead id rejects').toBe(true);
+  expect(restored.status === 'complete', 'unknown lead rejection leaves engine state unchanged').toBe(true);
 
   // The lead target `x` is in the out-of-allowlist `external` schema. The follow-up pill click is the
   // user consent that widens the border: mirror followUpNode by extending the allowlist for the
   // clicked lead's schema BEFORE supplementing, so the border check passes for exactly this lead.
   const approvedSchemas = restored.resolveLeadSchemas([leadId]);
-  assertEq(approvedSchemas.join(','), 'external', 'resolveLeadSchemas derives the lead target schema');
+  expect(approvedSchemas.join(','), 'resolveLeadSchemas derives the lead target schema').toBe('external');
   for (const schema of approvedSchemas) restored.extendAllowedSchemas(schema);
   const scheduled = restored.supplementAgenda([], [leadId]);
-  assert('ok' in scheduled && scheduled.agendaed === 1, 'valid lead schedules a supplement hop after pill-approved schema extension');
+  expect('ok' in scheduled && scheduled.agendaed === 1, 'valid lead schedules a supplement hop after pill-approved schema extension').toBe(true);
   const leadHop = restored.getHopContext() as any;
-  assert(restored.getCurrentTasks().some(task => task.question === 'Trace x to the end of the external branch.'), 'supplement preserves the original lead question');
+  expect(restored.getCurrentTasks().some(task => task.question === 'Trace x to the end of the external branch.'), 'supplement preserves the original lead question').toBe(true);
   restored.submitFindings({
     focus_node_id: leadHop.focus_node.id,
     sections: [{ angle: 'business', text: 'x analysis' }],
@@ -152,11 +152,11 @@ describe("Navigation Engine Task Ledger", () => {
     verdict: 'analyze',
   });
   restored.getHopContext();
-  assert(restored.pendingLeads.length === 0, 'completed lead is not offered repeatedly');
+  expect(restored.pendingLeads.length === 0, 'completed lead is not offered repeatedly').toBe(true);
   const storedLead = restored.toJSON().engineInternals?.pendingLeads?.find(lead => lead.id === leadId);
-  assert(storedLead?.status === 'resolved', 'completed lead remains resolved in the audit snapshot');
+  expect(storedLead?.status === 'resolved', 'completed lead remains resolved in the audit snapshot').toBe(true);
   const repeated = restored.supplementAgenda([], [leadId]);
-  assert('error' in repeated && repeated.error === 'invalid_pending_lead', 'resolved lead id cannot be scheduled again');
+  expect('error' in repeated && repeated.error === 'invalid_pending_lead', 'resolved lead id cannot be scheduled again').toBe(true);
 });
 
   it("A supplement targeting a pruned node rejects structurally and mutates nothing (zombie-lead guard).", () => {
@@ -169,14 +169,14 @@ describe("Navigation Engine Task Ledger", () => {
     verdict: 'analyze',
   });
   const mHop = engine.getHopContext() as any;
-  assert(mHop.focus_node?.id === 'm', 'm is dispatched as the next focus');
+  expect(mHop.focus_node?.id === 'm', 'm is dispatched as the next focus').toBe(true);
   const pruned = engine.submitFindings({
     focus_node_id: mHop.focus_node.id,
     sections: [{ angle: 'business', text: 'm is off the trace' }],
     summary: 'm',
     verdict: 'prune',
   });
-  assert('ok' in pruned, 'pruning focus m commits and removes it from scope');
+  expect('ok' in pruned, 'pruning focus m commits and removes it from scope').toBe(true);
   let next: any;
   let safety = 5;
   while (safety-- > 0) {
@@ -189,15 +189,15 @@ describe("Navigation Engine Task Ledger", () => {
       verdict: 'analyze',
     });
   }
-  assert(next?.done === true && engine.status === 'complete', 'exploration completes with m pruned');
+  expect(next?.done === true && engine.status === 'complete', 'exploration completes with m pruned').toBe(true);
   const statusBefore = engine.status;
   const leadsBefore = engine.pendingLeads.length;
   const tasksBefore = engine.getCurrentTasks().length;
   const rejected = engine.supplementAgenda(['m']);
-  assert('error' in rejected && rejected.error === 'supplement_target_pruned', 'supplement targeting a pruned node rejects with the structured error');
-  assert(engine.status === statusBefore, 'pruned-target rejection leaves engine status unchanged');
-  assert(engine.pendingLeads.length === leadsBefore, 'pruned-target rejection creates no zombie lead');
-  assert(engine.getCurrentTasks().length === tasksBefore, 'pruned-target rejection queues nothing');
+  expect('error' in rejected && rejected.error === 'supplement_target_pruned', 'supplement targeting a pruned node rejects with the structured error').toBe(true);
+  expect(engine.status === statusBefore, 'pruned-target rejection leaves engine status unchanged').toBe(true);
+  expect(engine.pendingLeads.length === leadsBefore, 'pruned-target rejection creates no zombie lead').toBe(true);
+  expect(engine.getCurrentTasks().length === tasksBefore, 'pruned-target rejection queues nothing').toBe(true);
 });
 
   it("A successfully pruned focus resolves its active task instead of leaving pending ledger work.", () => {
@@ -210,7 +210,7 @@ describe("Navigation Engine Task Ledger", () => {
     verdict: 'analyze',
   });
   const mHop = engine.getHopContext() as any;
-  assert(mHop.focus_node?.id === 'm', 'm is active before the prune lifecycle check');
+  expect(mHop.focus_node?.id === 'm', 'm is active before the prune lifecycle check').toBe(true);
   const activeIds = engine.getCurrentTasks().map(task => task.id);
   const result = engine.submitFindings({
     focus_node_id: 'm',
@@ -218,9 +218,9 @@ describe("Navigation Engine Task Ledger", () => {
     summary: 'm pruned',
     verdict: 'prune',
   });
-  assert('ok' in result, 'valid focus prune commits');
+  expect('ok' in result, 'valid focus prune commits').toBe(true);
   const tasks = snapshotTasks(engine);
-  assert(activeIds.every(id => tasks.find(task => task.id === id)?.status === 'resolved'), 'focus prune resolves every active task');
+  expect(activeIds.every(id => tasks.find(task => task.id === id)?.status === 'resolved'), 'focus prune resolves every active task').toBe(true);
 });
 
   it("Contracted non-bodied routes never create task records with missing parents.", () => {
@@ -235,10 +235,10 @@ describe("Navigation Engine Task Ledger", () => {
   engine.init({ origin: 'root', question: 'trace through the bridge', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
   const tasks = snapshotTasks(engine);
   const taskIds = new Set(tasks.map(task => task.id));
-  assert(tasks.every(task => task.parentTaskId === undefined || taskIds.has(task.parentTaskId)), 'contracted seed tasks only reference parents retained in the ledger');
+  expect(tasks.every(task => task.parentTaskId === undefined || taskIds.has(task.parentTaskId)), 'contracted seed tasks only reference parents retained in the ledger').toBe(true);
   const leafTask = tasks.find(task => task.nodeId === 'leaf');
   const rootTask = tasks.find(task => task.kind === 'root');
-  assert(leafTask?.parentTaskId === rootTask?.id, 'contracted leaf remains anchored to the root task');
+  expect(leafTask?.parentTaskId === rootTask?.id, 'contracted leaf remains anchored to the root task').toBe(true);
 });
 
   it("Incomplete and internally inconsistent checkpoints fail closed instead of reconstructing state.", () => {
@@ -252,7 +252,7 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     missingFieldRejected = true;
   }
-  assert(missingFieldRejected, 'snapshot missing currentFocusTaskIds rejects without reconstruction');
+  expect(missingFieldRejected, 'snapshot missing currentFocusTaskIds rejects without reconstruction').toBe(true);
 
   const dangling = JSON.parse(JSON.stringify(engine.toJSON()));
   dangling.engineInternals.currentFocusTaskIds = ['task_missing'];
@@ -262,7 +262,7 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     danglingRejected = true;
   }
-  assert(danglingRejected, 'snapshot with a dangling current task reference rejects');
+  expect(danglingRejected, 'snapshot with a dangling current task reference rejects').toBe(true);
 
   const staleProjection = JSON.parse(JSON.stringify(engine.toJSON()));
   staleProjection.engineInternals.deferredQuestions = [];
@@ -272,13 +272,13 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     unknownFieldRejected = true;
   }
-  assert(unknownFieldRejected, 'removed persisted deferredQuestions field rejects as stale state');
+  expect(unknownFieldRejected, 'removed persisted deferredQuestions field rejects as stale state').toBe(true);
 
   const legacyGuardFlag = JSON.parse(JSON.stringify(engine.toJSON()));
   legacyGuardFlag.engineInternals.qualityGuards = false;
   const restoredLegacy = NavigationEngine.fromJSON(legacyGuardFlag, model, makeGraph(nodes, edges), () => {});
-  assert(restoredLegacy.status === engine.status, 'legacy qualityGuards checkpoint field is accepted but runtime-dead');
-  assert(!('qualityGuards' in restoredLegacy.toJSON().engineInternals), 'legacy qualityGuards field is not re-persisted');
+  expect(restoredLegacy.status === engine.status, 'legacy qualityGuards checkpoint field is accepted but runtime-dead').toBe(true);
+  expect(!('qualityGuards' in restoredLegacy.toJSON().engineInternals), 'legacy qualityGuards field is not re-persisted').toBe(true);
 
   const unknownVersion = JSON.parse(JSON.stringify(engine.toJSON()));
   unknownVersion.snapshotVersion = 2;
@@ -288,7 +288,7 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     unknownVersionRejected = true;
   }
-  assert(unknownVersionRejected, 'unknown snapshot version rejects without migration');
+  expect(unknownVersionRejected, 'unknown snapshot version rejects without migration').toBe(true);
 
   const unknownRootField = JSON.parse(JSON.stringify(engine.toJSON()));
   unknownRootField.compatibilityMode = true;
@@ -298,7 +298,7 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     unknownRootFieldRejected = true;
   }
-  assert(unknownRootFieldRejected, 'unknown snapshot field rejects at the strict boundary');
+  expect(unknownRootFieldRejected, 'unknown snapshot field rejects at the strict boundary').toBe(true);
 
   const bbWithTargets = JSON.parse(JSON.stringify(engine.toJSON()));
   bbWithTargets.engineInternals.initSnapshot.targetColumns = ['amount'];
@@ -308,7 +308,7 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     bbTargetRejected = true;
   }
-  assert(bbTargetRejected, 'BB snapshot rejects target-column state');
+  expect(bbTargetRejected, 'BB snapshot rejects target-column state').toBe(true);
 });
 
   it("live Zod boundary and engine init already accept.", () => {
@@ -334,14 +334,14 @@ describe("Navigation Engine Task Ledger", () => {
   engine.getHopContext();
 
   const snapshot = JSON.parse(JSON.stringify(engine.toJSON()));
-  assertEq(snapshot.engineInternals.initSnapshot.depthIntent.upstream, 2, 'checkpoint persists the upstream side verbatim');
-  assertEq(snapshot.engineInternals.initSnapshot.depthIntent.downstream, 0, 'checkpoint persists the downstream 0 side verbatim');
+  expect(snapshot.engineInternals.initSnapshot.depthIntent.upstream, 'checkpoint persists the upstream side verbatim').toBe(2);
+  expect(snapshot.engineInternals.initSnapshot.depthIntent.downstream, 'checkpoint persists the downstream 0 side verbatim').toBe(0);
 
   const restored = NavigationEngine.fromJSON(snapshot, asymModel, makeGraph(asymNodes, asymEdges), () => {});
   const restoredResult = restored.getResult();
   const restoredScopeIds = new Set(restoredResult.fullNodes.map(n => n.id));
-  assert(restoredScopeIds.has('up1') && restoredScopeIds.has('up2'), 'restored engine retains the upstream scope seeded before the 0-side checkpoint');
-  assert(!restoredScopeIds.has('down1'), 'restored engine still excludes the suppressed downstream side');
+  expect(restoredScopeIds.has('up1') && restoredScopeIds.has('up2'), 'restored engine retains the upstream scope seeded before the 0-side checkpoint').toBe(true);
+  expect(!restoredScopeIds.has('down1'), 'restored engine still excludes the suppressed downstream side').toBe(true);
 
   // Both sides 0 is rejected by the checkpoint boundary too — mirrors the live Zod contract.
   const bothZeroSnapshot = JSON.parse(JSON.stringify(engine.toJSON()));
@@ -352,7 +352,7 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     bothZeroCheckpointRejected = true;
   }
-  assert(bothZeroCheckpointRejected, 'checkpoint with both depth sides 0 rejects at restore, mirroring the live schema boundary');
+  expect(bothZeroCheckpointRejected, 'checkpoint with both depth sides 0 rejects at restore, mirroring the live schema boundary').toBe(true);
 });
 
   it("Deferred-question synthesis output is derived from unresolved boundary leads only.", () => {
@@ -367,8 +367,8 @@ describe("Navigation Engine Task Ledger", () => {
   });
   const lead = engine.pendingLeads[0];
   const deferred = engine.deferredQuestions;
-  assert(deferred.length === 1 && deferred[0].question === 'Trace the external branch later.', 'deferred question projects the typed boundary task question');
-  assert(deferred[0].nodeId === lead.nodeId && deferred[0].fromFocusNodeId === lead.fromNodeId, 'deferred projection retains lead route identity');
+  expect(deferred.length === 1 && deferred[0].question === 'Trace the external branch later.', 'deferred question projects the typed boundary task question').toBe(true);
+  expect(deferred[0].nodeId === lead.nodeId && deferred[0].fromFocusNodeId === lead.fromNodeId, 'deferred projection retains lead route identity').toBe(true);
 });
 
   it("BB enqueue tolerates an explicit empty columns array (normalized to omitted, no throw).", () => {
@@ -379,7 +379,7 @@ describe("Navigation Engine Task Ledger", () => {
   } catch {
     threw = true;
   }
-  assert(!threw, 'BB enqueueHop normalizes an empty columns array instead of throwing');
+  expect(!threw, 'BB enqueueHop normalizes an empty columns array instead of throwing').toBe(true);
 });
 
 });

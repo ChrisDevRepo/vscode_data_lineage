@@ -1,9 +1,9 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRenderer';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { assert, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Discovery-phase refinement loop", () => {
   const nodes: LineageNode[] = [
@@ -34,19 +34,19 @@ describe("Discovery-phase refinement loop", () => {
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeTypes: ['view'] });
   const sum = engine.getScopeSummary();
   const ids = scopeNames(sum);
-  assert(!ids.includes('view_a'),    'excludeTypes=["view"] drops view_a');
-  assert(!ids.includes('view_c'),    'excludeTypes=["view"] drops view_c');
-  assert(ids.includes('proc_b'),     'excludeTypes=["view"] keeps proc_b');
-  assert(sum.activeFilters.types.includes('view'), 'activeFilters.types reflects exclusion');
+  expect(!ids.includes('view_a'), 'excludeTypes=["view"] drops view_a').toBe(true);
+  expect(!ids.includes('view_c'), 'excludeTypes=["view"] drops view_c').toBe(true);
+  expect(ids.includes('proc_b'), 'excludeTypes=["view"] keeps proc_b').toBe(true);
+  expect(sum.activeFilters.types.includes('view'), 'activeFilters.types reflects exclusion').toBe(true);
 });
 
   it("excludeSchemas=[\"staging\"] drops staging schema entirely", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeSchemas: ['staging', 'ext'] });
   const sum = engine.getScopeSummary();
-  assert(!('staging' in sum.bySchema), 'excludeSchemas=["staging"] drops staging schema entirely');
-  assert(!('ext' in sum.bySchema),     'excludeSchemas=["ext"] drops ext schema entirely');
-  assert('dbo' in sum.bySchema,        'dbo schema still present');
+  expect(!('staging' in sum.bySchema), 'excludeSchemas=["staging"] drops staging schema entirely').toBe(true);
+  expect(!('ext' in sum.bySchema), 'excludeSchemas=["ext"] drops ext schema entirely').toBe(true);
+  expect('dbo' in sum.bySchema, 'dbo schema still present').toBe(true);
 });
 
   it("excludeNodeIds drops view_a", () => {
@@ -54,9 +54,9 @@ describe("Discovery-phase refinement loop", () => {
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeNodeIds: ['view_a', 'proc_b'] });
   const sum = engine.getScopeSummary();
   const ids = scopeNames(sum);
-  assert(!ids.includes('view_a'), 'excludeNodeIds drops view_a');
-  assert(!ids.includes('proc_b'), 'excludeNodeIds drops proc_b');
-  assert(ids.includes('view_c'),  'unrelated nodes survive');
+  expect(!ids.includes('view_a'), 'excludeNodeIds drops view_a').toBe(true);
+  expect(!ids.includes('proc_b'), 'excludeNodeIds drops proc_b').toBe(true);
+  expect(ids.includes('view_c'), 'unrelated nodes survive').toBe(true);
 });
 
   it("scope summary restores canonical casing for excluded node IDs", () => {
@@ -74,10 +74,7 @@ describe("Discovery-phase refinement loop", () => {
     excludeNodeIds: ['[AI].[DIMCALENDAR]'],
   });
 
-  assert(
-    engine.getScopeSummary().activeFilters.nodeIds.includes('[ai].[DimCalendar]'),
-    'approval summary uses the model canonical ID rather than the lowercase internal key',
-  );
+  expect(engine.getScopeSummary().activeFilters.nodeIds.includes('[ai].[DimCalendar]'), 'approval summary uses the model canonical ID rather than the lowercase internal key').toBe(true);
 });
 
   it("excluded route regression starts at origin", () => {
@@ -85,7 +82,7 @@ describe("Discovery-phase refinement loop", () => {
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeNodeIds: ['lookup_t'] });
 
   const ctx = engine.getHopContext();
-  assert(ctx.focus_node?.id === 'origin', 'excluded route regression starts at origin');
+  expect(ctx.focus_node?.id === 'origin', 'excluded route regression starts at origin').toBe(true);
   const submit = engine.submitFindings({
     focus_node_id: 'origin',
     sections: [{ angle: 'business' as const, text: 'root' }],
@@ -93,19 +90,19 @@ describe("Discovery-phase refinement loop", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: 'lookup_t', question: 'model tries excluded node' }],
   });
-  assert('ok' in submit, 'excluded route is skipped without hard-rejecting the hop');
+  expect('ok' in submit, 'excluded route is skipped without hard-rejecting the hop').toBe(true);
 
   const state = engine.toJSON();
-  assert(!state.scopeNodeIds.includes('lookup_t'), 'excluded route target is not re-added to scope');
+  expect(!state.scopeNodeIds.includes('lookup_t'), 'excluded route target is not re-added to scope').toBe(true);
   const routeOutcomes = 'route_outcomes' in submit ? submit.route_outcomes ?? [] : [];
-  assert(routeOutcomes.some(o => o.nodeId === 'lookup_t' && o.reason === 'excluded'), 'excluded route is reported as skipped');
+  expect(routeOutcomes.some(o => o.nodeId === 'lookup_t' && o.reason === 'excluded'), 'excluded route is reported as skipped').toBe(true);
 });
 
   it("origin survives even when its type is excluded", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeTypes: ['procedure'] });
   // Origin is `procedure` but it must never be dropped from scope.
-  assert(engine.scopeSize >= 1, 'origin survives even when its type is excluded');
+  expect(engine.scopeSize >= 1, 'origin survives even when its type is excluded').toBe(true);
 });
 
   it("classifyForRefine", () => {
@@ -114,10 +111,10 @@ describe("Discovery-phase refinement loop", () => {
   // Note: lookup_t is a chokepoint to chained_v ONLY if there's no alternate path.
   // In this graph view_a → chained_v provides an alternate path, so lookup_t IS prunable.
   const r1 = engine.classifyForRefine(['lookup_t']);
-  assert(r1.prunable.includes('lookup_t') || r1.mustPass.length === 0, 'lookup_t handled (prunable when alternate path exists)');
+  expect(r1.prunable.includes('lookup_t') || r1.mustPass.length === 0, 'lookup_t handled (prunable when alternate path exists)').toBe(true);
   // proc_b is a leaf — pruning it never orphans anything.
   const r2 = engine.classifyForRefine(['proc_b']);
-  assert(r2.prunable.includes('proc_b') && r2.mustPass.length === 0, 'proc_b is a leaf → prunable');
+  expect(r2.prunable.includes('proc_b') && r2.mustPass.length === 0, 'proc_b is a leaf → prunable').toBe(true);
 });
 
   it("classifyForRefine — true chokepoint with NO alternate path", () => {
@@ -133,8 +130,8 @@ describe("Discovery-phase refinement loop", () => {
   const engine = new NavigationEngine(linearModel, linearGraph, () => {}, {});
   engine.init({ origin: 'o', question: 'q', direction: 'downstream' });
   const r = engine.classifyForRefine(['k']);
-  assert(r.mustPass.includes('k'),   'true chokepoint → mustPass (would orphan d)');
-  assert(!r.prunable.includes('k'),  'true chokepoint NOT prunable');
+  expect(r.mustPass.includes('k'), 'true chokepoint → mustPass (would orphan d)').toBe(true);
+  expect(!r.prunable.includes('k'), 'true chokepoint NOT prunable').toBe(true);
 });
 
   it("classifyForRefine — directional chokepoint, undirected backdoor must NOT save it", () => {
@@ -154,8 +151,8 @@ describe("Discovery-phase refinement loop", () => {
   const engine = new NavigationEngine(m, g, () => {}, {});
   engine.init({ origin: 'o', question: 'q', direction: 'downstream' });
   const r = engine.classifyForRefine(['a']);
-  assert(r.mustPass.includes('a'),  'directional chokepoint → mustPass (removing a orphans b downstream)');
-  assert(!r.prunable.includes('a'), 'directional chokepoint NOT prunable despite undirected backdoor via c');
+  expect(r.mustPass.includes('a'), 'directional chokepoint → mustPass (removing a orphans b downstream)').toBe(true);
+  expect(!r.prunable.includes('a'), 'directional chokepoint NOT prunable despite undirected backdoor via c').toBe(true);
 });
 
   it("passNodeIds auto-pass", () => {
@@ -163,14 +160,14 @@ describe("Discovery-phase refinement loop", () => {
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', passNodeIds: ['view_a'] });
   // First hop: origin (priority 3 for the root push always wins).
   const ctx1 = engine.getHopContext();
-  assert(typeof ctx1.focus_node === 'object', 'first hop returns context');
+  expect(typeof ctx1.focus_node === 'object', 'first hop returns context').toBe(true);
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'root' }], summary: 'ok', verdict: 'analyze' });
   // Next hop: view_a is in passNodeIds — it should be auto-passed and not surfaced.
   // The dispatcher walks past pass-tagged candidates; the user/AI sees the next non-pass node.
   const ctx2 = engine.getHopContext();
   // view_a was on the agenda from seedAgenda — auto-pass should skip it.
   const focusedId = (ctx2.focus_node && !Array.isArray(ctx2.focus_node)) ? (ctx2.focus_node as any).id : null;
-  assert(focusedId !== 'view_a', 'auto-pass skips pass-tagged node from focus');
+  expect(focusedId !== 'view_a', 'auto-pass skips pass-tagged node from focus').toBe(true);
 });
 
   it("getScopeSummary shape", () => {
@@ -187,14 +184,14 @@ describe("Discovery-phase refinement loop", () => {
   const engine = new NavigationEngine(wideModel, wideGraph, () => {}, {});
   engine.init({ origin: 'o', question: 'q', direction: 'downstream' });
   const sum = engine.getScopeSummary(8);
-  assert(sum.scopeCount === 13, 'scopeCount = origin + 12 views');
-  assert(sum.hopCount  >= 1,    'hopCount counts bodied nodes');
+  expect(sum.scopeCount === 13, 'scopeCount = origin + 12 views').toBe(true);
+  expect(sum.hopCount  >= 1, 'hopCount counts bodied nodes').toBe(true);
   const viewLeaf = sum.bySchema.dbo.byType.view;
-  assert(viewLeaf.nodeNames.length === 8, 'nodeNames capped at 8');
-  assert(viewLeaf.omitted === 4, 'omitted = 4 (12 total minus 8 displayed)');
+  expect(viewLeaf.nodeNames.length === 8, 'nodeNames capped at 8').toBe(true);
+  expect(viewLeaf.omitted === 4, 'omitted = 4 (12 total minus 8 displayed)').toBe(true);
 
   const sortedSlice = [...viewLeaf.nodeNames].sort((a, b) => a.localeCompare(b));
-  assert(JSON.stringify(viewLeaf.nodeNames) === JSON.stringify(sortedSlice), 'nodeNames alphabetized');
+  expect(JSON.stringify(viewLeaf.nodeNames) === JSON.stringify(sortedSlice), 'nodeNames alphabetized').toBe(true);
 });
 
   it("renders every reviewed object when the approval summary requests the bridge maximum", () => {
@@ -211,99 +208,99 @@ describe("Discovery-phase refinement loop", () => {
   engine.init({ origin: 'n00', question: 'q', direction: 'downstream', depthIntent: { kind: 'full_frontier' } });
 
   const md = renderScopeSummaryMd(engine.getScopeSummary(500));
-  assert(md.includes('**28 nodes in scope**'), 'approval summary shows the complete scope count');
+  expect(md.includes('**28 nodes in scope**'), 'approval summary shows the complete scope count').toBe(true);
   for (let i = 0; i < 28; i++) {
-    assert(md.includes(`Node${i.toString().padStart(2, '0')}`), `approval summary renders Node${i}`);
+    expect(md.includes(`Node${i.toString().padStart(2, '0')}`), `approval summary renders Node${i}`).toBe(true);
   }
-  assert(!md.includes('more)'), 'approval summary does not truncate reviewed object names');
+  expect(!md.includes('more)'), 'approval summary does not truncate reviewed object names').toBe(true);
 });
 
   it("renderScopeSummaryMd", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeSchemas: ['ext'] });
   const md = renderScopeSummaryMd(engine.getScopeSummary());
-  assert(md.includes('### Exploration plan (proposed)'),                'native gate includes the plan heading');
-  assert(md.includes('nodes in scope'),                                  'native gate includes the scope count');
-  assert(md.includes('downstream'),                                      'native gate includes the direction');
-  assert(md.includes('- **Tracing:** Blackboard'),                       'native gate includes tracing mode');
-  assert(md.includes('- **dbo** —'),                                   'schema heading rendered');
-  assert(md.includes('Procedure (1 node): origin'),                     'type and node count rendered');
+  expect(md.includes('### Exploration plan (proposed)'), 'native gate includes the plan heading').toBe(true);
+  expect(md.includes('nodes in scope'), 'native gate includes the scope count').toBe(true);
+  expect(md.includes('downstream'), 'native gate includes the direction').toBe(true);
+  expect(md.includes('- **Tracing:** Blackboard'), 'native gate includes tracing mode').toBe(true);
+  expect(md.includes('- **dbo** —'), 'schema heading rendered').toBe(true);
+  expect(md.includes('Procedure (1 node): origin'), 'type and node count rendered').toBe(true);
   // A filter is the assistant's mechanization of the request, so it belongs to how the request was
   // read — never to the request itself, whose origin the engine cannot know.
-  assert(md.includes('**How I read it**'),                               'mechanized filters get their own block');
-  assert(md.includes('Schemas excluded: `ext`'),                         'excluded schema surfaced verbatim');
-  assert(!md.includes('**ext**'),                                        'excluded schema not in tree body');
-  assert(!md.includes('**From your question**'),                         'a filter alone never claims the user asked for it');
+  expect(md.includes('**How I read it**'), 'mechanized filters get their own block').toBe(true);
+  expect(md.includes('Schemas excluded: `ext`'), 'excluded schema surfaced verbatim').toBe(true);
+  expect(!md.includes('**ext**'), 'excluded schema not in tree body').toBe(true);
+  expect(!md.includes('**From your question**'), 'a filter alone never claims the user asked for it').toBe(true);
 
   // Provenance is carried by placement: a depth the user stated sits under what they asked for and
   // says it binds; a depth the assistant chose sits under its own plan and says it may move.
-  assert(md.includes('my estimate, I may extend it'),                    'an assistant-chosen depth says it may move');
-  assert(md.includes('Depth: ≈'),                                        'an assistant-chosen depth is marked approximate');
+  expect(md.includes('my estimate, I may extend it'), 'an assistant-chosen depth says it may move').toBe(true);
+  expect(md.includes('Depth: ≈'), 'an assistant-chosen depth is marked approximate').toBe(true);
 
   const bordered = new NavigationEngine(model, graph, () => {}, {});
   bordered.init({ origin: 'origin', question: 'q, 2 levels down', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   const borderedMd = renderScopeSummaryMd(bordered.getScopeSummary(), 2);
   const borderedStated = borderedMd.slice(borderedMd.indexOf('**From your question**'), borderedMd.indexOf('**My plan**'));
-  assert(borderedStated.includes('Depth: 2 levels downstream'),          'a stated depth is attributed to the user');
-  assert(borderedStated.includes('I will not go past this'),             'a stated depth is presented as binding');
-  assert(!borderedStated.includes('≈'),                                  'a stated depth carries no approximation mark');
-  assert(borderedMd.includes('revision 2'),                              'a re-approval round is stamped with its revision');
+  expect(borderedStated.includes('Depth: 2 levels downstream'), 'a stated depth is attributed to the user').toBe(true);
+  expect(borderedStated.includes('I will not go past this'), 'a stated depth is presented as binding').toBe(true);
+  expect(!borderedStated.includes('≈'), 'a stated depth carries no approximation mark').toBe(true);
+  expect(borderedMd.includes('revision 2'), 'a re-approval round is stamped with its revision').toBe(true);
 
   const noted = new NavigationEngine(model, graph, () => {}, {});
   noted.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeSchemas: ['ext'], scopeNotes: ['do not prune it only skip it'] });
   const notedMd = noted.getScopeSummary();
   const notedRendered = renderScopeSummaryMd(notedMd);
   const userBlock = notedRendered.slice(notedRendered.indexOf('**From your question**'), notedRendered.indexOf('**How I read it**'));
-  assert(userBlock.includes('"do not prune it only skip it"'),           "the user's own words are quoted verbatim");
-  assert(!userBlock.includes('Exclude:'),                                'the mechanization is not filed under the user\'s words');
-  assert(notedRendered.indexOf('**From your question**') < notedRendered.indexOf('**How I read it**'), 'the words precede the reading so a misread is adjacent');
+  expect(userBlock.includes('"do not prune it only skip it"'), "the user's own words are quoted verbatim").toBe(true);
+  expect(!userBlock.includes('Exclude:'), 'the mechanization is not filed under the user\'s words').toBe(true);
+  expect(notedRendered.indexOf('**From your question**') < notedRendered.indexOf('**How I read it**'), 'the words precede the reading so a misread is adjacent').toBe(true);
 
   const plain = new NavigationEngine(model, graph, () => {}, {});
   plain.init({ origin: 'origin', question: 'q', direction: 'downstream', depthIntent: { kind: 'full_frontier' } });
   const plainMd = renderScopeSummaryMd(plain.getScopeSummary());
-  assert(!plainMd.includes('**From your question**'),                    'the block is omitted entirely when nothing was constrained');
-  assert(!plainMd.includes('**How I read it**'),                         'the reading block is omitted when nothing was mechanized');
+  expect(!plainMd.includes('**From your question**'), 'the block is omitted entirely when nothing was constrained').toBe(true);
+  expect(!plainMd.includes('**How I read it**'), 'the reading block is omitted when nothing was mechanized').toBe(true);
 
   const ctEngine = new NavigationEngine(model, graph, () => {}, {});
   ctEngine.init({ origin: 'origin', question: 'q', direction: 'downstream', analysisMode: 'ct', targetColumns: ['id'] });
   const ctMd = renderScopeSummaryMd(ctEngine.getScopeSummary());
-  assert(ctMd.includes('- **Tracing:** Column-Trace — columns: [id]'), 'native gate labels CT and its target columns');
+  expect(ctMd.includes('- **Tracing:** Column-Trace — columns: [id]'), 'native gate labels CT and its target columns').toBe(true);
 });
 
   it("REPLACE semantics on re-init", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeSchemas: ['staging'] });
   const before = engine.getScopeSummary();
-  assert(before.activeFilters.schemas.includes('staging'), 'first init: staging excluded');
+  expect(before.activeFilters.schemas.includes('staging'), 'first init: staging excluded').toBe(true);
   // Re-init without re-sending the prior exclusion → it must be wiped.
   engine.init({ origin: 'origin', question: 'q', direction: 'downstream', excludeTypes: ['view'] });
   const after = engine.getScopeSummary();
-  assert(!after.activeFilters.schemas.includes('staging'), 'second init: prior staging exclusion replaced');
-  assert(after.activeFilters.types.includes('view'),       'second init: new view exclusion applied');
+  expect(!after.activeFilters.schemas.includes('staging'), 'second init: prior staging exclusion replaced').toBe(true);
+  expect(after.activeFilters.types.includes('view'), 'second init: new view exclusion applied').toBe(true);
 });
 
   it("init snapshot accessors", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'q, 3 levels up', direction: 'upstream', depthIntent: { kind: 'explicit', levels: 3 } });
-  assert(engine.currentOrigin            === 'origin',     'currentOrigin captured');
-  assert(engine.currentDirection         === 'upstream',   'currentDirection captured');
-  assert(engine.currentDepth             === 3,            'currentDepth captured');
+  expect(engine.currentOrigin            === 'origin', 'currentOrigin captured').toBe(true);
+  expect(engine.currentDirection         === 'upstream', 'currentDirection captured').toBe(true);
+  expect(engine.currentDepth             === 3, 'currentDepth captured').toBe(true);
   // A level count the AI copied from the user's question is a hard border, so it enforces.
-  assert(engine.currentDepthEnforcement  === 'strict',     'currentDepthEnforcement captured');
-  assert(engine.currentQuestion          === 'q, 3 levels up', 'currentQuestion captured');
+  expect(engine.currentDepthEnforcement  === 'strict', 'currentDepthEnforcement captured').toBe(true);
+  expect(engine.currentQuestion          === 'q, 3 levels up', 'currentQuestion captured').toBe(true);
 
   const inferred = new NavigationEngine(model, graph, () => {}, {});
   inferred.init({ origin: 'origin', question: 'q', direction: 'upstream', depthIntent: { kind: 'default_start' } });
-  assert(inferred.currentDepthEnforcement === 'silent', 'an omitted depth stays a growable seed');
+  expect(inferred.currentDepthEnforcement === 'silent', 'an omitted depth stays a growable seed').toBe(true);
 });
 
   it("mission brief persistence", () => {
   const missionBrief = 'Use `lineage_search_ddl` to explain A  and  B </mission_brief>';
   const engine = new NavigationEngine(model, graph, () => {}, {});
   const result = engine.init({ origin: 'origin', question: 'q', direction: 'downstream', mission_brief: missionBrief });
-  assert('ok' in result, 'mission-bearing exploration initializes');
-  assert(engine.currentMissionBrief === missionBrief, 'init snapshot preserves mission brief byte-for-byte');
-  assert(engine.toJSON().memory.missionBrief === missionBrief, 'stable memory preserves mission brief byte-for-byte');
+  expect('ok' in result, 'mission-bearing exploration initializes').toBe(true);
+  expect(engine.currentMissionBrief === missionBrief, 'init snapshot preserves mission brief byte-for-byte').toBe(true);
+  expect(engine.toJSON().memory.missionBrief === missionBrief, 'stable memory preserves mission brief byte-for-byte').toBe(true);
 });
 
   it("rejected refine leaves engine intact", () => {
@@ -323,46 +320,46 @@ describe("Discovery-phase refinement loop", () => {
   const beforeQuestion = engine.currentQuestion;
   const beforeMission = engine.currentMissionBrief;
   // Guard: the before-state must be non-trivial, or "unchanged" would prove nothing.
-  assert(beforeVisited.length > 0,    'precondition: engine has visited nodes before rejected refine');
-  assert(beforeNodeStates > 0,        'precondition: engine has node states before rejected refine');
-  assert(beforeMemQuestion === 'trace sales downstream', 'precondition: memory holds the original question');
-  assert(beforeMemMission.length > 0, 'precondition: memory holds the mission brief');
+  expect(beforeVisited.length > 0, 'precondition: engine has visited nodes before rejected refine').toBe(true);
+  expect(beforeNodeStates > 0, 'precondition: engine has node states before rejected refine').toBe(true);
+  expect(beforeMemQuestion === 'trace sales downstream', 'precondition: memory holds the original question').toBe(true);
+  expect(beforeMemMission.length > 0, 'precondition: memory holds the mission brief').toBe(true);
 
   const assertIntact = (label: string) => {
     const after = engine.toJSON();
-    assert(JSON.stringify([...after.visited].sort()) === JSON.stringify(beforeVisited), `${label}: visited unchanged`);
-    assert(after.nodeStates.length === beforeNodeStates, `${label}: nodeStates unchanged`);
-    assert(after.agendaSize === beforeAgenda,             `${label}: agenda size unchanged`);
-    assert(after.hopCount === beforeHop,                  `${label}: hopCount unchanged`);
-    assert(after.memory.userQuestion === beforeMemQuestion, `${label}: memory user question not reset`);
-    assert(after.memory.missionBrief === beforeMemMission,  `${label}: memory mission brief not reset`);
-    assert(engine.currentQuestion === beforeQuestion,       `${label}: init snapshot question unchanged`);
-    assert(engine.currentMissionBrief === beforeMission,    `${label}: init snapshot mission unchanged`);
+    expect(JSON.stringify([...after.visited].sort()) === JSON.stringify(beforeVisited), `${label}: visited unchanged`).toBe(true);
+    expect(after.nodeStates.length === beforeNodeStates, `${label}: nodeStates unchanged`).toBe(true);
+    expect(after.agendaSize === beforeAgenda, `${label}: agenda size unchanged`).toBe(true);
+    expect(after.hopCount === beforeHop, `${label}: hopCount unchanged`).toBe(true);
+    expect(after.memory.userQuestion === beforeMemQuestion, `${label}: memory user question not reset`).toBe(true);
+    expect(after.memory.missionBrief === beforeMemMission, `${label}: memory mission brief not reset`).toBe(true);
+    expect(engine.currentQuestion === beforeQuestion, `${label}: init snapshot question unchanged`).toBe(true);
+    expect(engine.currentMissionBrief === beforeMission, `${label}: init snapshot mission unchanged`).toBe(true);
   };
 
   // unknown_node_ids — an unresolvable excludeNodeIds entry.
   const rIds = engine.init({ origin: 'origin', question: 'MUTATED', direction: 'downstream', excludeNodeIds: ['does_not_exist_node'] });
-  assert('error' in rIds && rIds.error === 'unknown_node_ids', 'refine with bad excludeNodeIds rejects (unknown_node_ids)');
+  expect('error' in rIds && rIds.error === 'unknown_node_ids', 'refine with bad excludeNodeIds rejects (unknown_node_ids)').toBe(true);
   assertIntact('after unknown_node_ids');
 
   // origin_not_found — an unresolvable origin.
   const rOrigin = engine.init({ origin: 'no_such_origin', question: 'MUTATED', direction: 'downstream' });
-  assert('error' in rOrigin && rOrigin.error === 'origin_not_found', 'refine with bad origin rejects (origin_not_found)');
+  expect('error' in rOrigin && rOrigin.error === 'origin_not_found', 'refine with bad origin rejects (origin_not_found)').toBe(true);
   assertIntact('after origin_not_found');
 
   // unknown_columns — CT target column that is not on the origin (origin exposes only `id`).
   const rCols = engine.init({ origin: 'origin', question: 'MUTATED', direction: 'downstream', analysisMode: 'ct', targetColumns: ['not_a_real_column'] });
-  assert('error' in rCols && rCols.error === 'unknown_columns', 'refine with bad target column rejects (unknown_columns)');
+  expect('error' in rCols && rCols.error === 'unknown_columns', 'refine with bad target column rejects (unknown_columns)').toBe(true);
   assertIntact('after unknown_columns');
 
   // The engine still operates after the rejected refines.
   const ctx = engine.getHopContext();
-  assert(typeof ctx === 'object', 'engine still yields a hop context after rejected refines');
+  expect(typeof ctx === 'object', 'engine still yields a hop context after rejected refines').toBe(true);
 
   // A VALID refine still mutates (phase 2 runs on success), proving the reorder didn't disable it.
   const ok = engine.init({ origin: 'origin', question: 'a genuinely new question', direction: 'downstream' });
-  assert('ok' in ok, 'valid refine still succeeds');
-  assert(engine.currentQuestion === 'a genuinely new question', 'valid refine updates the captured question');
+  expect('ok' in ok, 'valid refine still succeeds').toBe(true);
+  expect(engine.currentQuestion === 'a genuinely new question', 'valid refine updates the captured question').toBe(true);
 });
 
 });

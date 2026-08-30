@@ -7,8 +7,7 @@ import {
   presentResultSchemaForPhase,
   submitFindingsSchemaForMode,
 } from '../../../src/ai/tools/toolSchemas';
-import { assert } from '../helpers/testUtils';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Submit Findings Schema", () => {
   it("BB accepts self-prune verdict (analyze|passthrough|prune)", () => {
@@ -19,7 +18,7 @@ describe("Submit Findings Schema", () => {
     summary: 'ok',
     verdict: 'prune',
   });
-  assert(parsed.success, 'BB accepts self-prune verdict (analyze|passthrough|prune)');
+  expect(parsed.success, 'BB accepts self-prune verdict (analyze|passthrough|prune)').toBe(true);
 });
 
   it("BB accepts prune_neighbors with an analyze verdict", () => {
@@ -31,7 +30,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     prune_neighbors: ['[dbo].[vStaging]'],
   });
-  assert(parsed.success, 'BB accepts prune_neighbors with an analyze verdict');
+  expect(parsed.success, 'BB accepts prune_neighbors with an analyze verdict').toBe(true);
 });
 
   it("BB rejects CT-only column_flow field", () => {
@@ -42,7 +41,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     column_flow: [],
   });
-  assert(!parsed.success, 'BB rejects CT-only column_flow field');
+  expect(!parsed.success, 'BB rejects CT-only column_flow field').toBe(true);
 });
 
   it("BB rejects removed note_caption field", () => {
@@ -53,7 +52,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     note_caption: 'stale preview caption',
   });
-  assert(!parsed.success, 'BB rejects removed note_caption field');
+  expect(!parsed.success, 'BB rejects removed note_caption field').toBe(true);
 });
 
   it("CT accepts explicit column_flow (including empty array)", () => {
@@ -64,7 +63,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     column_flow: [],
   });
-  assert(parsed.success, 'CT accepts explicit column_flow (including empty array)');
+  expect(parsed.success, 'CT accepts explicit column_flow (including empty array)').toBe(true);
 });
 
   it("CT accepts self-prune verdict (analyze|passthrough|prune)", () => {
@@ -76,7 +75,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'prune',
     column_flow: [],
   });
-  assert(parsed.success, 'CT accepts self-prune verdict (analyze|passthrough|prune)');
+  expect(parsed.success, 'CT accepts self-prune verdict (analyze|passthrough|prune)').toBe(true);
 });
 
   it("CT rejects BB-only prune_neighbors", () => {
@@ -88,7 +87,7 @@ describe("Submit Findings Schema", () => {
     prune_neighbors: ['[dbo].[vStaging]'],
     column_flow: [],
   });
-  assert(!parsed.success, 'CT rejects BB-only prune_neighbors');
+  expect(!parsed.success, 'CT rejects BB-only prune_neighbors').toBe(true);
 });
 
   it("CT requires column_flow field", () => {
@@ -98,7 +97,7 @@ describe("Submit Findings Schema", () => {
     summary: 'ok',
     verdict: 'passthrough',
   });
-  assert(!parsed.success, 'CT requires column_flow field');
+  expect(!parsed.success, 'CT requires column_flow field').toBe(true);
 });
 
   it("route_requests[].columns is no longer part of CT; column spine lives in column_flow", () => {
@@ -109,7 +108,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] }],
   });
-  assert(!parsed.success, 'BB rejects route_requests[].columns');
+  expect(!parsed.success, 'BB rejects route_requests[].columns').toBe(true);
 });
 
   it("BB accepts route_requests without columns", () => {
@@ -120,7 +119,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace' }],
   });
-  assert(parsed.success, 'BB accepts route_requests without columns');
+  expect(parsed.success, 'BB accepts route_requests without columns').toBe(true);
 });
 
   it("CT rejects route_requests[].columns", () => {
@@ -132,7 +131,7 @@ describe("Submit Findings Schema", () => {
     column_flow: [],
     route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] }],
   });
-  assert(!parsed.success, 'CT rejects route_requests[].columns');
+  expect(!parsed.success, 'CT rejects route_requests[].columns').toBe(true);
 });
 
   it("CT accepts upstream_columns in column_flow with plain route_requests", () => {
@@ -144,12 +143,12 @@ describe("Submit Findings Schema", () => {
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: '[dbo].[vStaging]', col: 'amount' }] }],
     route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace amount' }],
   });
-  assert(parsed.success, 'CT accepts upstream_columns in column_flow with plain route_requests');
+  expect(parsed.success, 'CT accepts upstream_columns in column_flow with plain route_requests').toBe(true);
 });
 
   it("In a BB session the model must never be shown the `column_flow` box; in CT never `prune_neighbors`.", () => {
-  assert(submitFindingsSchemaForMode('bb') === SubmitFindingsBbInputSchema, 'selector returns the single strict BB schema');
-  assert(submitFindingsSchemaForMode('ct') === SubmitFindingsCtInputSchema, 'selector returns the single strict CT schema');
+  expect(submitFindingsSchemaForMode('bb') === SubmitFindingsBbInputSchema, 'selector returns the single strict BB schema').toBe(true);
+  expect(submitFindingsSchemaForMode('ct') === SubmitFindingsCtInputSchema, 'selector returns the single strict CT schema').toBe(true);
 });
 
   it("host-advertised BB form rejects column_flow (BUG-2)", () => {
@@ -159,13 +158,13 @@ describe("Submit Findings Schema", () => {
   const withColumnFlow = bb.safeParse({
     focus_node_id: '[dbo].[vSales]', sections: [], summary: 'ok', verdict: 'analyze', column_flow: [],
   });
-  assert(!withColumnFlow.success, 'host-advertised BB form rejects column_flow (BUG-2)');
+  expect(!withColumnFlow.success, 'host-advertised BB form rejects column_flow (BUG-2)').toBe(true);
   const repairBb = bb.safeParse({ repair: true, focus_node_id: '[dbo].[vSales]', prune_neighbors: ['[dbo].[vStaging]'] });
-  assert(!repairBb.success, 'host-advertised BB form rejects the unapproved repair protocol');
-  assert(bb.safeParse({
+  expect(!repairBb.success, 'host-advertised BB form rejects the unapproved repair protocol').toBe(true);
+  expect(bb.safeParse({
     focus_node_id: '[dbo].[vSales]', sections: [{ angle: 'business', text: 'ok' }], summary: 'ok', verdict: 'analyze',
-  }).success, 'host-advertised BB form accepts a complete full submission');
-  assert(!bb.safeParse({ focus_node_id: '[dbo].[vSales]' }).success, 'host-advertised BB form rejects an incomplete non-repair submission');
+  }).success, 'host-advertised BB form accepts a complete full submission').toBe(true);
+  expect(!bb.safeParse({ focus_node_id: '[dbo].[vSales]' }).success, 'host-advertised BB form rejects an incomplete non-repair submission').toBe(true);
 });
 
   it("host-advertised CT form rejects prune_neighbors", () => {
@@ -174,9 +173,9 @@ describe("Submit Findings Schema", () => {
     focus_node_id: '[dbo].[vSales]', sections: [], summary: 'ok', verdict: 'analyze',
     column_flow: [], prune_neighbors: ['[dbo].[vStaging]'],
   });
-  assert(!withPruneNeighbors.success, 'host-advertised CT form rejects prune_neighbors');
+  expect(!withPruneNeighbors.success, 'host-advertised CT form rejects prune_neighbors').toBe(true);
   const repairCt = ct.safeParse({ repair: true, focus_node_id: '[dbo].[vSales]', column_flow: [] });
-  assert(!repairCt.success, 'host-advertised CT form rejects the unapproved repair protocol');
+  expect(!repairCt.success, 'host-advertised CT form rejects the unapproved repair protocol').toBe(true);
 });
 
   it("Strict mode boundary without an independent patch protocol.", () => {
@@ -186,16 +185,16 @@ describe("Submit Findings Schema", () => {
     summary: 'summary',
     verdict: 'analyze' as const,
   };
-  assert(!SubmitFindingsBbInputSchema.safeParse({ ...base, focus_node_id: null }).success, 'BB rejects null focus identity');
-  assert(!SubmitFindingsBbInputSchema.safeParse({ ...base, route_requests: [{ nodeId: 'n', question: 'trace', extra: true }] }).success, 'BB rejects unknown nested route fields');
-  assert(!SubmitFindingsBbInputSchema.safeParse({ ...base, repair: true }).success, 'BB rejects repair metadata on a complete finding');
-  assert(!SubmitFindingsCtInputSchema.safeParse({ ...base, column_flow: [], repair: true }).success, 'CT rejects repair metadata on a complete finding');
+  expect(!SubmitFindingsBbInputSchema.safeParse({ ...base, focus_node_id: null }).success, 'BB rejects null focus identity').toBe(true);
+  expect(!SubmitFindingsBbInputSchema.safeParse({ ...base, route_requests: [{ nodeId: 'n', question: 'trace', extra: true }] }).success, 'BB rejects unknown nested route fields').toBe(true);
+  expect(!SubmitFindingsBbInputSchema.safeParse({ ...base, repair: true }).success, 'BB rejects repair metadata on a complete finding').toBe(true);
+  expect(!SubmitFindingsCtInputSchema.safeParse({ ...base, column_flow: [], repair: true }).success, 'CT rejects repair metadata on a complete finding').toBe(true);
 });
 
   it("Host-path synthesis lock: graph-edit fields are not advertised during initial synthesis.", () => {
   const synthesis = presentResultSchemaForPhase('synthesis');
-  assert(synthesis === PresentResultSynthesisModelSchema, 'selector returns the strict new-render synthesis schema');
-  assert(presentResultSchemaForPhase('completed') === PresentResultModelSchema, 'completed keeps the full present_result schema');
+  expect(synthesis === PresentResultSynthesisModelSchema, 'selector returns the strict new-render synthesis schema').toBe(true);
+  expect(presentResultSchemaForPhase('completed') === PresentResultModelSchema, 'completed keeps the full present_result schema').toBe(true);
 
   const withGraphEdit = synthesis.safeParse({
     name: 'Result',
@@ -204,7 +203,7 @@ describe("Submit Findings Schema", () => {
     sections: [{ label: 'Output', text: 'ok', node_ids: ['[dbo].[fact]'] }],
     add_node_ids: ['[dbo].[extra]'],
   });
-  assert(!withGraphEdit.success, 'synthesis schema rejects add_node_ids');
+  expect(!withGraphEdit.success, 'synthesis schema rejects add_node_ids').toBe(true);
 
   const cleanSynthesis = synthesis.safeParse({
     name: 'Result',
@@ -212,20 +211,20 @@ describe("Submit Findings Schema", () => {
     highlight_groups: [{ label: 'Target', color: 'target', node_ids: ['[dbo].[fact]'] }],
     sections: [{ label: 'Output', text: 'ok', node_ids: ['[dbo].[fact]'] }],
   });
-  assert(cleanSynthesis.success, 'synthesis schema accepts text/highlight/section payload');
+  expect(cleanSynthesis.success, 'synthesis schema accepts text/highlight/section payload').toBe(true);
 
   const repairPatch = synthesis.safeParse({
     is_update: true,
     notes: [{ node_id: '[dbo].[fact]', text: 'Explains an already-highlighted node.' }],
   });
-  assert(!repairPatch.success, 'initial synthesis schema does not advertise partial held-draft repair patches');
+  expect(!repairPatch.success, 'initial synthesis schema does not advertise partial held-draft repair patches').toBe(true);
 
   const repairPatchWithUnknown = PresentResultRepairPatchSchema.safeParse({
     is_update: true,
     notes: [{ node_id: '[dbo].[fact]', text: 'Explains an already-highlighted node.' }],
     add_node_ids: ['[dbo].[extra]'],
   });
-  assert(!repairPatchWithUnknown.success, 'repair patch schema rejects unknown graph-edit fields');
+  expect(!repairPatchWithUnknown.success, 'repair patch schema rejects unknown graph-edit fields').toBe(true);
 
   const updateShapedDuringSynthesis = synthesis.safeParse({
     is_update: true,
@@ -234,13 +233,13 @@ describe("Submit Findings Schema", () => {
     highlight_groups: [{ label: 'Target', color: 'target', node_ids: ['[dbo].[fact]'] }],
     sections: [{ label: 'Output', text: 'ok', node_ids: ['[dbo].[fact]'] }],
   });
-  assert(!updateShapedDuringSynthesis.success, 'initial synthesis schema does not advertise is_update on a full new render');
+  expect(!updateShapedDuringSynthesis.success, 'initial synthesis schema does not advertise is_update on a full new render').toBe(true);
 
   const authorizedRepair = presentResultSchemaForPhase('synthesis', ['notes']);
-  assert(authorizedRepair !== PresentResultRepairPatchSchema, 'held-draft synthesis selects a field-scoped strict repair patch schema');
-  assert(authorizedRepair.safeParse({ is_update: true, notes: [{ node_id: '[dbo].[fact]', text: 'Corrected note.' }] }).success, 'authorized repair accepts a strict patch');
-  assert(!authorizedRepair.safeParse({ summary: 'unauthorized' }).success, 'authorized repair rejects a known but unauthorized presentation field');
-  assert(!authorizedRepair.safeParse({ is_update: true, unexpected: true }).success, 'authorized repair remains strict');
+  expect(authorizedRepair !== PresentResultRepairPatchSchema, 'held-draft synthesis selects a field-scoped strict repair patch schema').toBe(true);
+  expect(authorizedRepair.safeParse({ is_update: true, notes: [{ node_id: '[dbo].[fact]', text: 'Corrected note.' }] }).success, 'authorized repair accepts a strict patch').toBe(true);
+  expect(!authorizedRepair.safeParse({ summary: 'unauthorized' }).success, 'authorized repair rejects a known but unauthorized presentation field').toBe(true);
+  expect(!authorizedRepair.safeParse({ is_update: true, unexpected: true }).success, 'authorized repair remains strict').toBe(true);
 
   const completed = presentResultSchemaForPhase('completed');
   const completedEdit = completed.safeParse({
@@ -250,7 +249,7 @@ describe("Submit Findings Schema", () => {
     sections: [{ label: 'Output', text: 'ok', node_ids: ['[dbo].[fact]'] }],
     add_node_ids: ['[dbo].[extra]'],
   });
-  assert(completedEdit.success, 'completed schema still accepts add_node_ids for follow-up edits');
+  expect(completedEdit.success, 'completed schema still accepts add_node_ids for follow-up edits').toBe(true);
 });
 
   it("empty badge_label rejects", () => {
@@ -262,10 +261,10 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
   };
   const emptyLabel = SubmitFindingsBbInputSchema.safeParse({ ...base, badge_label: '' });
-  assert(!emptyLabel.success, 'empty badge_label rejects');
-  assert(!SubmitFindingsBbInputSchema.safeParse({ ...base, badge_label: '   ' }).success, 'whitespace-only badge_label rejects');
+  expect(!emptyLabel.success, 'empty badge_label rejects').toBe(true);
+  expect(!SubmitFindingsBbInputSchema.safeParse({ ...base, badge_label: '   ' }).success, 'whitespace-only badge_label rejects').toBe(true);
   const namedLabel = SubmitFindingsBbInputSchema.safeParse({ ...base, badge_label: 'Price source' });
-  assert(namedLabel.success && namedLabel.data.badge_label === 'Price source', 'non-empty badge_label passes through verbatim');
+  expect(namedLabel.success && namedLabel.data.badge_label === 'Price source', 'non-empty badge_label passes through verbatim').toBe(true);
 });
 
 });

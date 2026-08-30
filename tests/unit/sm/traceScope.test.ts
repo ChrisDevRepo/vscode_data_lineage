@@ -1,4 +1,4 @@
-import { assert, assertEq, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import {
   buildVisibleTraceScope,
   canPruneTraceNode,
@@ -12,7 +12,7 @@ import {
 } from '../../../src/engine/graphGuards';
 import type { TraceState } from '../../../src/engine/types';
 import type { LineageEdge } from '../../../src/engine/types';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Trace Scope Safety Tests", () => {
   function edges(...pairs: Array<[string, string]>): LineageEdge[] {
@@ -22,8 +22,8 @@ describe("Trace Scope Safety Tests", () => {
   // Base only — no add, no prune
   const base = new Set(['A', 'B', 'C']);
   const { nodeIds } = buildVisibleTraceScope(base, new Set(), new Set(), []);
-  assert(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'base only: all base nodes present');
-  assertEq(nodeIds.size, 3, 'base only: exact count 3');
+  expect(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'base only: all base nodes present').toBe(true);
+  expect(nodeIds.size, 'base only: exact count 3').toBe(3);
 });
 
   it("add: A B C all present", () => {
@@ -31,8 +31,8 @@ describe("Trace Scope Safety Tests", () => {
   const base = new Set(['A', 'B']);
   const added = new Set(['C']);
   const { nodeIds } = buildVisibleTraceScope(base, added, new Set(), []);
-  assert(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'add: A B C all present');
-  assertEq(nodeIds.size, 3, 'add: exact count 3');
+  expect(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'add: A B C all present').toBe(true);
+  expect(nodeIds.size, 'add: exact count 3').toBe(3);
 });
 
   it("prune: A and C remain", () => {
@@ -40,9 +40,9 @@ describe("Trace Scope Safety Tests", () => {
   const base = new Set(['A', 'B', 'C']);
   const pruned = new Set(['B']);
   const { nodeIds } = buildVisibleTraceScope(base, new Set(), pruned, []);
-  assert(nodeIds.has('A') && nodeIds.has('C'), 'prune: A and C remain');
-  assert(!nodeIds.has('B'), 'prune: B is gone');
-  assertEq(nodeIds.size, 2, 'prune: exact count 2');
+  expect(nodeIds.has('A') && nodeIds.has('C'), 'prune: A and C remain').toBe(true);
+  expect(!nodeIds.has('B'), 'prune: B is gone').toBe(true);
+  expect(nodeIds.size, 'prune: exact count 2').toBe(2);
 });
 
   it("add+prune: A present", () => {
@@ -51,11 +51,11 @@ describe("Trace Scope Safety Tests", () => {
   const added = new Set(['C', 'D']);
   const pruned = new Set(['B', 'C']); // C added then pruned → absent
   const { nodeIds } = buildVisibleTraceScope(base, added, pruned, []);
-  assert(nodeIds.has('A'), 'add+prune: A present');
-  assert(nodeIds.has('D'), 'add+prune: D present (added, not pruned)');
-  assert(!nodeIds.has('B'), 'add+prune: B absent (base then pruned)');
-  assert(!nodeIds.has('C'), 'add+prune: C absent (added then pruned)');
-  assertEq(nodeIds.size, 2, 'add+prune: exact count 2');
+  expect(nodeIds.has('A'), 'add+prune: A present').toBe(true);
+  expect(nodeIds.has('D'), 'add+prune: D present (added, not pruned)').toBe(true);
+  expect(!nodeIds.has('B'), 'add+prune: B absent (base then pruned)').toBe(true);
+  expect(!nodeIds.has('C'), 'add+prune: C absent (added then pruned)').toBe(true);
+  expect(nodeIds.size, 'add+prune: exact count 2').toBe(2);
 });
 
   it("edge collection: 3 nodes", () => {
@@ -63,93 +63,93 @@ describe("Trace Scope Safety Tests", () => {
   const base = new Set(['A', 'B', 'C']);
   const edgeList = edges(['A', 'B'], ['B', 'C'], ['A', 'C'], ['B', 'D']);
   const { nodeIds, edgeIds } = buildVisibleTraceScope(base, new Set(), new Set(), edgeList);
-  assertEq(nodeIds.size, 3, 'edge collection: 3 nodes');
+  expect(nodeIds.size, 'edge collection: 3 nodes').toBe(3);
   // A→B, B→C, A→C all within scope; B→D excluded (D not in scope)
-  assert(edgeIds.has('A→B'), 'edge collection: A→B included');
-  assert(edgeIds.has('B→C'), 'edge collection: B→C included');
-  assert(edgeIds.has('A→C'), 'edge collection: A→C included');
-  assert(!edgeIds.has('B→D'), 'edge collection: B→D excluded (D not in scope)');
-  assertEq(edgeIds.size, 3, 'edge collection: exact 3 edges');
+  expect(edgeIds.has('A→B'), 'edge collection: A→B included').toBe(true);
+  expect(edgeIds.has('B→C'), 'edge collection: B→C included').toBe(true);
+  expect(edgeIds.has('A→C'), 'edge collection: A→C included').toBe(true);
+  expect(!edgeIds.has('B→D'), 'edge collection: B→D excluded (D not in scope)').toBe(true);
+  expect(edgeIds.size, 'edge collection: exact 3 edges').toBe(3);
 });
 
   it("empty node scope → 0 edges", () => {
   // Empty scope → no edges
   const result = collectScopeEdgeIds(edges(['A', 'B']), new Set());
-  assertEq(result.size, 0, 'empty node scope → 0 edges');
+  expect(result.size, 'empty node scope → 0 edges').toBe(0);
 });
 
   it("self-loop included when node in scope", () => {
   // Self-loop edge — both endpoints are the same node, which is in scope
   const result = collectScopeEdgeIds(edges(['A', 'A']), new Set(['A']));
-  assert(result.has('A→A'), 'self-loop included when node in scope');
+  expect(result.has('A→A'), 'self-loop included when node in scope').toBe(true);
 });
 
   it("bfsReachable", () => {
   // Linear chain A→B→C: from A, all reachable (undirected BFS)
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set());
-  assert(reach.has('A') && reach.has('B') && reach.has('C'), 'chain: A B C reachable from A');
-  assertEq(reach.size, 3, 'chain: exact count 3');
+  expect(reach.has('A') && reach.has('B') && reach.has('C'), 'chain: A B C reachable from A').toBe(true);
+  expect(reach.size, 'chain: exact count 3').toBe(3);
 });
 
   it("removed B: A still reachable from A (start)", () => {
   // B removed → from A: A reachable, B and C not (undirected BFS blocked at B)
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set(['B']));
-  assert(reach.has('A'), 'removed B: A still reachable from A (start)');
-  assert(!reach.has('B'), 'removed B: B not in result');
-  assert(!reach.has('C'), 'removed B: C cut off');
+  expect(reach.has('A'), 'removed B: A still reachable from A (start)').toBe(true);
+  expect(!reach.has('B'), 'removed B: B not in result').toBe(true);
+  expect(!reach.has('C'), 'removed B: C cut off').toBe(true);
 });
 
   it("candidateId B excluded", () => {
   // candidateId excluded — equivalent to removing it without adding to removedSet
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set(), 'B');
-  assert(!reach.has('B'), 'candidateId B excluded');
-  assert(!reach.has('C'), 'C cut off by candidateId exclusion');
+  expect(!reach.has('B'), 'candidateId B excluded').toBe(true);
+  expect(!reach.has('C'), 'C cut off by candidateId exclusion').toBe(true);
 });
 
   it("scope A+B: both reachable", () => {
   // Scope restriction: A→B→C but scope only allows A and B
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set(), undefined, new Set(['A', 'B']));
-  assert(reach.has('A') && reach.has('B'), 'scope A+B: both reachable');
-  assert(!reach.has('C'), 'scope A+B: C outside scope, not reached');
+  expect(reach.has('A') && reach.has('B'), 'scope A+B: both reachable').toBe(true);
+  expect(!reach.has('C'), 'scope A+B: C outside scope, not reached').toBe(true);
 });
 
   it("missing start → empty set", () => {
   // Start node not in graph → empty set
   const g = makeGraph([{ id: 'A' }], []);
   const reach = bfsReachable(g, 'MISSING', new Set());
-  assertEq(reach.size, 0, 'missing start → empty set');
+  expect(reach.size, 'missing start → empty set').toBe(0);
 });
 
   it("empty required set → null", () => {
   // No required nodes → always null
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set());
-  assert(result === null, 'empty required set → null');
+  expect(result === null, 'empty required set → null').toBe(true);
 });
 
   it("removing bridge B disconnects required C", () => {
   // A→B→C: remove B. Required = {C}. C becomes disconnected from A.
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['C']));
-  assertEq(result, 'C', 'removing bridge B disconnects required C');
+  expect(result, 'removing bridge B disconnects required C').toBe('C');
 });
 
   it("removing B when C has direct path from A → no disconnection", () => {
   // A→B, A→C (two paths from A). Removing B leaves C still reachable.
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['A', 'C']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['C']));
-  assert(result === null, 'removing B when C has direct path from A → no disconnection');
+  expect(result === null, 'removing B when C has direct path from A → no disconnection').toBe(true);
 });
 
   it("required node already in removedSet is skipped", () => {
   // removedSet includes a required node — skipped (already removed, not flagged)
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['B']));
-  assert(result === null, 'required node already in removedSet is skipped');
+  expect(result === null, 'required node already in removedSet is skipped').toBe(true);
 });
 
   it("canPruneTraceNode", () => {
@@ -157,8 +157,8 @@ describe("Trace Scope Safety Tests", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'B' }], [['O', 'A'], ['A', 'B']]);
   const visible = new Set(['O', 'A', 'B']);
   const check = canPruneTraceNode(g, 'O', visible, 'O');
-  assert(!check.safe, 'origin prune: not safe');
-  assertEq(check.reason, 'origin', "origin prune: reason='origin'");
+  expect(!check.safe, 'origin prune: not safe').toBe(true);
+  expect(check.reason, "origin prune: reason='origin'").toBe('origin');
 });
 
   it("not-visible prune: not safe", () => {
@@ -166,16 +166,16 @@ describe("Trace Scope Safety Tests", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
   const visible = new Set(['O', 'A']);
   const check = canPruneTraceNode(g, 'O', visible, 'HIDDEN');
-  assert(!check.safe, 'not-visible prune: not safe');
-  assertEq(check.reason, 'not-visible', "not-visible prune: reason='not-visible'");
+  expect(!check.safe, 'not-visible prune: not safe').toBe(true);
+  expect(check.reason, "not-visible prune: reason='not-visible'").toBe('not-visible');
 });
 
   it("null origin: not safe", () => {
   // null origin always returns reason 'origin'
   const g = makeGraph([{ id: 'A' }], []);
   const check = canPruneTraceNode(g, null, new Set(['A']), 'A');
-  assert(!check.safe, 'null origin: not safe');
-  assertEq(check.reason, 'origin', "null origin: reason='origin'");
+  expect(!check.safe, 'null origin: not safe').toBe(true);
+  expect(check.reason, "null origin: reason='origin'").toBe('origin');
 });
 
   it("bridge prune: not safe", () => {
@@ -189,9 +189,9 @@ describe("Trace Scope Safety Tests", () => {
   );
   const visible = new Set(['O', 'B', 'C']);
   const check = canPruneTraceNode(g, 'O', visible, 'B');
-  assert(!check.safe, 'bridge prune: not safe');
-  assertEq(check.reason, 'disconnected', "bridge prune: reason='disconnected'");
-  assertEq(check.disconnectedNodeId, 'C', 'bridge prune: disconnectedNodeId=C');
+  expect(!check.safe, 'bridge prune: not safe').toBe(true);
+  expect(check.reason, "bridge prune: reason='disconnected'").toBe('disconnected');
+  expect(check.disconnectedNodeId, 'bridge prune: disconnectedNodeId=C').toBe('C');
 });
 
   it("safe leaf prune: safe=true", () => {
@@ -203,8 +203,8 @@ describe("Trace Scope Safety Tests", () => {
   );
   const visible = new Set(['O', 'A', 'B']);
   const check = canPruneTraceNode(g, 'O', visible, 'A');
-  assert(check.safe, 'safe leaf prune: safe=true');
-  assert(check.reason === undefined, 'safe leaf prune: no reason');
+  expect(check.safe, 'safe leaf prune: safe=true').toBe(true);
+  expect(check.reason === undefined, 'safe leaf prune: no reason').toBe(true);
 });
 
   it("diamond prune A: safe — C reachable via B", () => {
@@ -215,7 +215,7 @@ describe("Trace Scope Safety Tests", () => {
   );
   const visible = new Set(['O', 'A', 'B', 'C']);
   const check = canPruneTraceNode(g, 'O', visible, 'A');
-  assert(check.safe, 'diamond prune A: safe — C reachable via B');
+  expect(check.safe, 'diamond prune A: safe — C reachable via B').toBe(true);
 });
 
   it("origin not in visible: not safe", () => {
@@ -224,22 +224,22 @@ describe("Trace Scope Safety Tests", () => {
   // visible does NOT contain O
   const visible = new Set(['A']);
   const check = canPruneTraceNode(g, 'O', visible, 'A');
-  assert(!check.safe, 'origin not in visible: not safe');
-  assertEq(check.reason, 'origin', "origin not in visible: reason='origin'");
+  expect(!check.safe, 'origin not in visible: not safe').toBe(true);
+  expect(check.reason, "origin not in visible: reason='origin'").toBe('origin');
 });
 
   it("no-path: disconnected → null", () => {
   // No-path: disconnected graph → null
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], []); // no edges
   const result = findShortestPathOrdered(g, 'A', 'B');
-  assert(result === null, 'no-path: disconnected → null');
+  expect(result === null, 'no-path: disconnected → null').toBe(true);
 });
 
   it("missing endpoint → null", () => {
   // Missing endpoint → null
   const g = makeGraph([{ id: 'A' }], []);
   const result = findShortestPathOrdered(g, 'A', 'GHOST');
-  assert(result === null, 'missing endpoint → null');
+  expect(result === null, 'missing endpoint → null').toBe(true);
 });
 
   it("forward path: result not null", () => {
@@ -249,11 +249,11 @@ describe("Trace Scope Safety Tests", () => {
     [['A', 'B'], ['B', 'C']]
   );
   const result = findShortestPathOrdered(g, 'A', 'C');
-  assert(result !== null, 'forward path: result not null');
-  assertEq(result!.direction, 'source_to_target', "forward path: direction='source_to_target'");
-  assertEq(result!.path[0], 'A', 'forward path: starts at A');
-  assertEq(result!.path[result!.path.length - 1], 'C', 'forward path: ends at C');
-  assertEq(result!.path.length, 3, 'forward path: length=3 (A-B-C)');
+  expect(result !== null, 'forward path: result not null').toBe(true);
+  expect(result!.direction, "forward path: direction='source_to_target'").toBe('source_to_target');
+  expect(result!.path[0], 'forward path: starts at A').toBe('A');
+  expect(result!.path[result!.path.length - 1], 'forward path: ends at C').toBe('C');
+  expect(result!.path.length, 'forward path: length=3 (A-B-C)').toBe(3);
 });
 
   it("reverse path: result not null", () => {
@@ -264,19 +264,19 @@ describe("Trace Scope Safety Tests", () => {
     [['C', 'B'], ['B', 'A']]
   );
   const result = findShortestPathOrdered(g, 'A', 'C');
-  assert(result !== null, 'reverse path: result not null');
-  assertEq(result!.direction, 'target_to_source', "reverse path: direction='target_to_source'");
-  assertEq(result!.path[0], 'C', 'reverse path: starts at C (target)');
-  assertEq(result!.path[result!.path.length - 1], 'A', 'reverse path: ends at A (source)');
+  expect(result !== null, 'reverse path: result not null').toBe(true);
+  expect(result!.direction, "reverse path: direction='target_to_source'").toBe('target_to_source');
+  expect(result!.path[0], 'reverse path: starts at C (target)').toBe('C');
+  expect(result!.path[result!.path.length - 1], 'reverse path: ends at A (source)').toBe('A');
 });
 
   it("single hop: not null", () => {
   // Direct single-hop path A→B
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
   const result = findShortestPathOrdered(g, 'A', 'B');
-  assert(result !== null, 'single hop: not null');
-  assertEq(result!.path.length, 2, 'single hop: path length=2');
-  assertEq(result!.direction, 'source_to_target', "single hop: direction='source_to_target'");
+  expect(result !== null, 'single hop: not null').toBe(true);
+  expect(result!.path.length, 'single hop: path length=2').toBe(2);
+  expect(result!.direction, "single hop: direction='source_to_target'").toBe('source_to_target');
 });
 
 });
@@ -305,49 +305,49 @@ describe("isManualTraceScopeEdit", () => {
   it("identical states, no manual delta: false (nothing to preserve viewport for)", () => {
   const previous = baseState();
   const next = baseState();
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'identical states: false');
+  expect(isManualTraceScopeEdit(previous, next), 'identical states: false').toBe(false);
 });
 
   it("previous.mode='none': false (non-editable previous mode short-circuits)", () => {
   const previous = baseState({ mode: 'none' });
   const next = baseState({ manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='none': false");
+  expect(isManualTraceScopeEdit(previous, next), "previous.mode='none': false").toBe(false);
 });
 
   it("previous.mode='configuring': false (non-editable previous mode)", () => {
   const previous = baseState({ mode: 'configuring' });
   const next = baseState({ manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='configuring': false");
+  expect(isManualTraceScopeEdit(previous, next), "previous.mode='configuring': false").toBe(false);
 });
 
   it("previous.mode='pathfinding': false (non-editable previous mode)", () => {
   const previous = baseState({ mode: 'pathfinding' });
   const next = baseState({ mode: 'pathfinding', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='pathfinding': false");
+  expect(isManualTraceScopeEdit(previous, next), "previous.mode='pathfinding': false").toBe(false);
 });
 
   it("previous.mode='path-applied': false (non-editable previous mode)", () => {
   const previous = baseState({ mode: 'path-applied' });
   const next = baseState({ mode: 'path-applied', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='path-applied': false");
+  expect(isManualTraceScopeEdit(previous, next), "previous.mode='path-applied': false").toBe(false);
 });
 
   it("previous.mode='analysis': false (non-editable previous mode)", () => {
   const previous = baseState({ mode: 'analysis' });
   const next = baseState({ mode: 'analysis', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "previous.mode='analysis': false");
+  expect(isManualTraceScopeEdit(previous, next), "previous.mode='analysis': false").toBe(false);
 });
 
   it("next.mode='none': false (non-editable next mode short-circuits)", () => {
   const previous = baseState();
   const next = baseState({ mode: 'none', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "next.mode='none': false");
+  expect(isManualTraceScopeEdit(previous, next), "next.mode='none': false").toBe(false);
 });
 
   it("next.mode='analysis': false (non-editable next mode)", () => {
   const previous = baseState();
   const next = baseState({ mode: 'analysis', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "next.mode='analysis': false");
+  expect(isManualTraceScopeEdit(previous, next), "next.mode='analysis': false").toBe(false);
 });
 
   it("mode 'applied' -> 'filtered', otherwise identical: false (both editable, no manual delta)", () => {
@@ -355,62 +355,62 @@ describe("isManualTraceScopeEdit", () => {
   // equality between previous and next, only editability of each side.
   const previous = baseState({ mode: 'applied' });
   const next = baseState({ mode: 'filtered' });
-  assertEq(isManualTraceScopeEdit(previous, next), false, "mode transition, no manual delta: false");
+  expect(isManualTraceScopeEdit(previous, next), "mode transition, no manual delta: false").toBe(false);
 });
 
   it("mode 'filtered' -> 'applied', with manual add delta: true (both editable)", () => {
   const previous = baseState({ mode: 'filtered' });
   const next = baseState({ mode: 'applied', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), true, "mode transition, with manual delta: true");
+  expect(isManualTraceScopeEdit(previous, next), "mode transition, with manual delta: true").toBe(true);
 });
 
   it("selectedNodeId differs: false (origin change is not a manual scope edit)", () => {
   const previous = baseState({ selectedNodeId: 'ORIGIN' });
   const next = baseState({ selectedNodeId: 'OTHER', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'selectedNodeId differs: false');
+  expect(isManualTraceScopeEdit(previous, next), 'selectedNodeId differs: false').toBe(false);
 });
 
   it("selectedNodeId null vs non-null: false", () => {
   const previous = baseState({ selectedNodeId: null });
   const next = baseState({ selectedNodeId: 'ORIGIN' });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'selectedNodeId null vs non-null: false');
+  expect(isManualTraceScopeEdit(previous, next), 'selectedNodeId null vs non-null: false').toBe(false);
 });
 
   it("targetNodeId differs: false (pathfinding target change is not a manual scope edit)", () => {
   const previous = baseState({ targetNodeId: null });
   const next = baseState({ targetNodeId: 'TARGET', manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'targetNodeId differs: false');
+  expect(isManualTraceScopeEdit(previous, next), 'targetNodeId differs: false').toBe(false);
 });
 
   it("upstreamLevels differs: false (depth change is not a manual scope edit)", () => {
   const previous = baseState({ upstreamLevels: 2 });
   const next = baseState({ upstreamLevels: 3, manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'upstreamLevels differs: false');
+  expect(isManualTraceScopeEdit(previous, next), 'upstreamLevels differs: false').toBe(false);
 });
 
   it("downstreamLevels differs: false (depth change is not a manual scope edit)", () => {
   const previous = baseState({ downstreamLevels: 2 });
   const next = baseState({ downstreamLevels: 3, manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'downstreamLevels differs: false');
+  expect(isManualTraceScopeEdit(previous, next), 'downstreamLevels differs: false').toBe(false);
 });
 
   it("autoPromoted differs (false -> true): false (promotion is a fresh scope, not a manual edit)", () => {
   const previous = baseState({ autoPromoted: false });
   const next = baseState({ autoPromoted: true, manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'autoPromoted false->true: false');
+  expect(isManualTraceScopeEdit(previous, next), 'autoPromoted false->true: false').toBe(false);
 });
 
   it("autoPromoted differs (undefined -> true): false (strict !== treats missing as distinct from true)", () => {
   const previous = baseState({ autoPromoted: undefined });
   const next = baseState({ autoPromoted: true, manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'autoPromoted undefined->true: false');
+  expect(isManualTraceScopeEdit(previous, next), 'autoPromoted undefined->true: false').toBe(false);
 });
 
   it("autoPromoted same on both sides (undefined): true when manual delta present", () => {
   // undefined === undefined passes the strict comparison; only manualAdded/Pruned decide the result.
   const previous = baseState({ autoPromoted: undefined });
   const next = baseState({ autoPromoted: undefined, manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), true, 'autoPromoted undefined on both sides: true');
+  expect(isManualTraceScopeEdit(previous, next), 'autoPromoted undefined on both sides: true').toBe(true);
 });
 
   it("baseNodeIds differs (fresh BFS scope): false, even with a manual delta present", () => {
@@ -419,7 +419,7 @@ describe("isManualTraceScopeEdit", () => {
     baseNodeIds: new Set(['ORIGIN', 'A', 'B', 'D']),
     manualAddedNodeIds: new Set(['C']),
   });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'baseNodeIds differs: false');
+  expect(isManualTraceScopeEdit(previous, next), 'baseNodeIds differs: false').toBe(false);
 });
 
   it("baseNodeIds same size, different membership: false (sameIdSet checks membership, not just size)", () => {
@@ -428,7 +428,7 @@ describe("isManualTraceScopeEdit", () => {
     baseNodeIds: new Set(['ORIGIN', 'A', 'D']),
     manualAddedNodeIds: new Set(['C']),
   });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'baseNodeIds same size, different membership: false');
+  expect(isManualTraceScopeEdit(previous, next), 'baseNodeIds same size, different membership: false').toBe(false);
 });
 
   it("baseEdgeIds differs (fresh BFS scope): false, even with a manual delta present", () => {
@@ -437,19 +437,19 @@ describe("isManualTraceScopeEdit", () => {
     baseEdgeIds: new Set(['ORIGIN→A']),
     manualAddedNodeIds: new Set(['C']),
   });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'baseEdgeIds differs: false');
+  expect(isManualTraceScopeEdit(previous, next), 'baseEdgeIds differs: false').toBe(false);
 });
 
   it("manualAddedNodeIds differs, manualPrunedNodeIds identical: true", () => {
   const previous = baseState({ manualAddedNodeIds: new Set() });
   const next = baseState({ manualAddedNodeIds: new Set(['C']) });
-  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualAddedNodeIds differs: true');
+  expect(isManualTraceScopeEdit(previous, next), 'manualAddedNodeIds differs: true').toBe(true);
 });
 
   it("manualPrunedNodeIds differs, manualAddedNodeIds identical: true", () => {
   const previous = baseState({ manualPrunedNodeIds: new Set() });
   const next = baseState({ manualPrunedNodeIds: new Set(['A']) });
-  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualPrunedNodeIds differs: true');
+  expect(isManualTraceScopeEdit(previous, next), 'manualPrunedNodeIds differs: true').toBe(true);
 });
 
   it("manualAddedNodeIds AND manualPrunedNodeIds both differ: true", () => {
@@ -458,13 +458,13 @@ describe("isManualTraceScopeEdit", () => {
     manualAddedNodeIds: new Set(['C']),
     manualPrunedNodeIds: new Set(['A']),
   });
-  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualAdded and manualPruned both differ: true');
+  expect(isManualTraceScopeEdit(previous, next), 'manualAdded and manualPruned both differ: true').toBe(true);
 });
 
   it("manualAddedNodeIds same size, different membership: true (sameIdSet checks membership)", () => {
   const previous = baseState({ manualAddedNodeIds: new Set(['C']) });
   const next = baseState({ manualAddedNodeIds: new Set(['D']) });
-  assertEq(isManualTraceScopeEdit(previous, next), true, 'manualAddedNodeIds same size, different membership: true');
+  expect(isManualTraceScopeEdit(previous, next), 'manualAddedNodeIds same size, different membership: true').toBe(true);
 });
 
   it("all compared fields identical (both manual sets non-empty but unchanged): false", () => {
@@ -476,7 +476,7 @@ describe("isManualTraceScopeEdit", () => {
     manualAddedNodeIds: new Set(['C']),
     manualPrunedNodeIds: new Set(['A']),
   });
-  assertEq(isManualTraceScopeEdit(previous, next), false, 'no manual delta despite non-empty sets: false');
+  expect(isManualTraceScopeEdit(previous, next), 'no manual delta despite non-empty sets: false').toBe(false);
 });
 
 });

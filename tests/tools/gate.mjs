@@ -50,7 +50,6 @@ const STEPS = [
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'AI template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'honest test labels', cmd: nodeBin, args: ['tests/tools/assert-honest-test-labels.mjs'] },
-  { name: 'no legacy assertions', cmd: nodeBin, args: ['tests/tools/assert-no-legacy-assert.mjs'] },
   // Structural, so it runs with the other seconds-long checks rather than with the suites. Line
   // coverage cannot answer this: a rule matched by no fixture still reads as covered.
   { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },

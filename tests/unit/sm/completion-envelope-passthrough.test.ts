@@ -1,7 +1,6 @@
 import { buildPassthroughFlowFacts, buildSmCompletionEnvelope } from '../../../src/ai/prompting/smPrompts';
 import type { SmResult } from '../../../src/ai/sm/smTypes';
-import { assert } from '../helpers/testUtils';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Completion Envelope — Passthrough Flow Facts", () => {
   const HEADER = 'Kept passthrough nodes (engine flow facts';
@@ -38,12 +37,9 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
   });
   const block = buildPassthroughFlowFacts(result);
   const lines = block.split('\n');
-  assert(lines[0].startsWith(HEADER), '(a) block opens with the fixed header');
-  assert(lines.length === 2, '(a) exactly one node line under the header');
-  assert(
-    lines[1] === '- [dbo].[stagea] — table, passthrough: written by [dbo].[sploada]; read by [dbo].[vwb]',
-    '(a) line carries type, action, writers and readers',
-  );
+  expect(lines[0].startsWith(HEADER), '(a) block opens with the fixed header').toBe(true);
+  expect(lines.length === 2, '(a) exactly one node line under the header').toBe(true);
+  expect(lines[1] === '- [dbo].[stagea] — table, passthrough: written by [dbo].[sploada]; read by [dbo].[vwb]', '(a) line carries type, action, writers and readers').toBe(true);
 });
 
   it("(b) node WITH a detail slot → no digest line for it.", () => {
@@ -54,7 +50,7 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
       { nodeId: '[dbo].[stagea]', schema: 'dbo', name: 'stagea', type: 'table', sections: [], summary: 's' },
     ],
   });
-  assert(buildPassthroughFlowFacts(result) === '', '(b) slotted node produces no digest');
+  expect(buildPassthroughFlowFacts(result) === '', '(b) slotted node produces no digest').toBe(true);
 });
 
   it("(c) zero qualifying nodes → header absent from the assembled synthesis_reminder.", () => {
@@ -66,7 +62,7 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
     node_states: [{ nodeId: '[dbo].[origina]', action: 'analyze', source: 'ai', reason: 'submitted_analyze' }],
   });
   const envelope = buildSmCompletionEnvelope(result, 'question A?', []);
-  assert(!envelope.synthesis_reminder.includes(HEADER), '(c) no header when nothing qualifies');
+  expect(!envelope.synthesis_reminder.includes(HEADER), '(c) no header when nothing qualifies').toBe(true);
 });
 
   it("(c2) qualifying node → header present in the assembled synthesis_reminder.", () => {
@@ -82,7 +78,7 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
     node_states: [{ nodeId: '[dbo].[stagea]', action: 'passthrough', source: 'ai', reason: 'submitted_passthrough' }],
   });
   const envelope = buildSmCompletionEnvelope(result, 'question A?', []);
-  assert(envelope.synthesis_reminder.includes(HEADER), '(c2) header rides in synthesis_reminder when a node qualifies');
+  expect(envelope.synthesis_reminder.includes(HEADER), '(c2) header rides in synthesis_reminder when a node qualifies').toBe(true);
 });
 
   it("(d) pruned node is never listed, even without a slot and even if it has edges.", () => {
@@ -95,11 +91,10 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
     ],
   });
   const block = buildPassthroughFlowFacts(result);
-  assert(!block.includes('[dbo].[droppeda]') || block.indexOf('[dbo].[droppeda]') > block.indexOf('written by'),
-    '(d) pruned node is not a digest subject');
+  expect(!block.includes('[dbo].[droppeda]') || block.indexOf('[dbo].[droppeda]') > block.indexOf('written by'), '(d) pruned node is not a digest subject').toBe(true);
   // droppeda is not in fullNodes, so it never becomes a subject line; it may appear only as a writer.
   const subjectLines = block.split('\n').slice(1).filter(l => l.startsWith('- [dbo].[droppeda]'));
-  assert(subjectLines.length === 0, '(d) pruned node never appears as its own line');
+  expect(subjectLines.length === 0, '(d) pruned node never appears as its own line').toBe(true);
 });
 
   it("(e) deterministic ordering with 2+ qualifying nodes and multi-neighbor lists.", () => {
@@ -119,10 +114,9 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
     ],
   });
   const lines = buildPassthroughFlowFacts(result).split('\n').slice(1);
-  assert(lines[0].startsWith('- [dbo].[nodea]') && lines[1].startsWith('- [dbo].[nodeb]'),
-    '(e) subject nodes sorted by id');
-  assert(lines[0].includes('written by [dbo].[wa], [dbo].[wz]'), '(e) writer list sorted by id');
-  assert(lines[1].includes('read by (none)'), '(e) empty reader list renders (none)');
+  expect(lines[0].startsWith('- [dbo].[nodea]') && lines[1].startsWith('- [dbo].[nodeb]'), '(e) subject nodes sorted by id').toBe(true);
+  expect(lines[0].includes('written by [dbo].[wa], [dbo].[wz]'), '(e) writer list sorted by id').toBe(true);
+  expect(lines[1].includes('read by (none)'), '(e) empty reader list renders (none)').toBe(true);
 });
 
 });

@@ -1,8 +1,8 @@
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
-import { assert, assertEq, makeGraph } from '../helpers/testUtils';
-import { describe, it } from 'vitest';
+import { makeGraph } from '../helpers/testUtils';
+import { describe, expect, it } from 'vitest';
 
 describe("Submit Findings Handler", () => {
   const nodes = [
@@ -99,10 +99,10 @@ describe("Submit Findings Handler", () => {
   };
   executeSubmitFindings(raw, services);
   const accepted = result() as { error?: string };
-  assert(accepted.error === undefined, 'complete full BB finding passes without repair metadata');
-  assert(engine.toJSON().memory.detailSlots.origin !== undefined, 'accepted full finding commits authored detail');
-  assertEq(raw.focus_node_id, 'ORIGIN', 'normalization does not mutate the raw focus identity');
-  assertEq(raw.route_requests[0].nodeId, 'A', 'normalization does not mutate raw route identities');
+  expect(accepted.error === undefined, 'complete full BB finding passes without repair metadata').toBe(true);
+  expect(engine.toJSON().memory.detailSlots.origin !== undefined, 'accepted full finding commits authored detail').toBe(true);
+  expect(raw.focus_node_id, 'normalization does not mutate the raw focus identity').toBe('ORIGIN');
+  expect(raw.route_requests[0].nodeId, 'normalization does not mutate raw route identities').toBe('A');
 });
 
   it("repair:true is rejected by the strict full BB boundary", () => {
@@ -116,11 +116,11 @@ describe("Submit Findings Handler", () => {
     verdict: 'analyze',
   }, services);
   const rejected = result() as { error?: string; hint?: string };
-  assertEq(rejected.error, 'invalid_input', 'repair:true is rejected by the strict full BB boundary');
-  assert(/repair/i.test(rejected.hint ?? ''), 'strict rejection identifies the unknown repair field');
+  expect(rejected.error, 'repair:true is rejected by the strict full BB boundary').toBe('invalid_input');
+  expect(/repair/i.test(rejected.hint ?? ''), 'strict rejection identifies the unknown repair field').toBe(true);
   const after = engine.toJSON();
-  assertEq(Object.keys(after.memory.detailSlots).length, Object.keys(before.memory.detailSlots).length, 'repair-shaped rejection commits no detail');
-  assertEq(after.agenda.length, before.agenda.length, 'repair-shaped rejection commits no agenda mutation');
+  expect(Object.keys(after.memory.detailSlots).length, 'repair-shaped rejection commits no detail').toBe(Object.keys(before.memory.detailSlots).length);
+  expect(after.agenda.length, 'repair-shaped rejection commits no agenda mutation').toBe(before.agenda.length);
 });
 
   it("BB preserves the established CT-field rejection envelope", () => {
@@ -132,7 +132,7 @@ describe("Submit Findings Handler", () => {
     verdict: 'analyze',
     column_flow: [],
   }, services);
-  assertEq((result() as { error?: string }).error, 'bb_field_unknown', 'BB preserves the established CT-field rejection envelope');
+  expect((result() as { error?: string }).error, 'BB preserves the established CT-field rejection envelope').toBe('bb_field_unknown');
 });
 
   it("CT preserves the established BB-field rejection envelope", () => {
@@ -145,7 +145,7 @@ describe("Submit Findings Handler", () => {
     column_flow: [],
     prune_neighbors: ['base_table'],
   }, services);
-  assertEq((result() as { error?: string }).error, 'bb_field_forbidden_in_ct', 'CT preserves the established BB-field rejection envelope');
+  expect((result() as { error?: string }).error, 'CT preserves the established BB-field rejection envelope').toBe('bb_field_forbidden_in_ct');
 });
 
   it("handler delegates completed-status authority to NavigationEngine", () => {
@@ -162,16 +162,12 @@ describe("Submit Findings Handler", () => {
     summary: 'Complete status probe.',
     verdict: 'analyze',
   }, services);
-  assertEq(engineCalls, 1, 'handler delegates completed-status authority to NavigationEngine');
-  assertEq(
-    JSON.stringify(result()),
-    JSON.stringify({
+  expect(engineCalls, 'handler delegates completed-status authority to NavigationEngine').toBe(1);
+  expect(JSON.stringify(result()), 'engine invalid_status=complete maps to the byte-stable exploration_complete envelope').toBe(JSON.stringify({
       error: 'exploration_complete',
       hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
       next_action: 'present_result',
-    }),
-    'engine invalid_status=complete maps to the byte-stable exploration_complete envelope',
-  );
+    }));
 });
 
   it("handler delegates focus alignment authority to NavigationEngine", () => {
@@ -187,17 +183,13 @@ describe("Submit Findings Handler", () => {
     summary: 'Focus mismatch probe.',
     verdict: 'analyze',
   }, services);
-  assertEq(engineCalls, 1, 'handler delegates focus alignment authority to NavigationEngine');
-  assertEq(
-    JSON.stringify(result()),
-    JSON.stringify({
+  expect(engineCalls, 'handler delegates focus alignment authority to NavigationEngine').toBe(1);
+  expect(JSON.stringify(result()), 'engine focus_mismatch maps to the byte-stable focus_node_id_mismatch envelope').toBe(JSON.stringify({
       error: 'focus_node_id_mismatch',
       expected: 'origin',
       got: 'a',
       hint: 'submit_findings.focus_node_id must match the current focus node. Expected: origin. Resubmit with the correct focus_node_id.',
-    }),
-    'engine focus_mismatch maps to the byte-stable focus_node_id_mismatch envelope',
-  );
+    }));
 });
 
   it("real engine invalid_focus_node preserves authored casing in the byte-stable invalid_input envelope, hint now names the expected id", () => {
@@ -209,16 +201,12 @@ describe("Submit Findings Handler", () => {
     summary: 'Unknown focus probe.',
     verdict: 'analyze',
   }, services);
-  assertEq(
-    JSON.stringify(result()),
-    JSON.stringify({
+  expect(JSON.stringify(result()), 'real engine invalid_focus_node preserves authored casing in the byte-stable invalid_input envelope, hint now names the expected id').toBe(JSON.stringify({
       error: 'invalid_input',
       message: 'focus_node_id `MissingCase` not found in the loaded model.',
       hint: 'Retry lineage_submit_findings with the exact current-hop focus_node.id: `origin`.',
-    }),
-    'real engine invalid_focus_node preserves authored casing in the byte-stable invalid_input envelope, hint now names the expected id',
-  );
-  assertEq(JSON.stringify(engine.toJSON()), before, 'unknown focus commits zero engine state through the real handler path');
+    }));
+  expect(JSON.stringify(engine.toJSON()), 'unknown focus commits zero engine state through the real handler path').toBe(before);
 });
 
 });

@@ -15,9 +15,9 @@ import {
   setExplorationTokenBudget,
 } from '../../../src/ai/support/tokenBudget';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { assert, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
-import { afterEach, describe, it } from 'vitest';
+import { describe, expect, it, afterEach } from 'vitest';
 
 afterEach(() => {
   setExplorationNodeCap(DEFAULT_EXPLORATION_NODE_CAP);
@@ -29,17 +29,17 @@ describe('checkActiveScopeAdmission (pure)', () => {
     setExplorationNodeCap(10);
     setExplorationTokenBudget(1000);
     const res = checkActiveScopeAdmission(10, 4000);
-    assert(res.ok, 'at-cap projection admits (caps are inclusive)');
+    expect(res.ok, 'at-cap projection admits (caps are inclusive)').toBe(true);
   });
 
   it('rejects over the node cap with counts and limits', () => {
     setExplorationNodeCap(10);
     setExplorationTokenBudget(1000);
     const res = checkActiveScopeAdmission(11, 0);
-    assert(!res.ok, 'over-node projection rejects');
+    expect(!res.ok, 'over-node projection rejects').toBe(true);
     if (!res.ok) {
-      assert(res.reason === 'over_active_scope_budget', 'stable reason code');
-      assert(res.counts.nodes === 11 && res.limits.node_cap === 10, 'counts/limits surfaced');
+      expect(res.reason === 'over_active_scope_budget', 'stable reason code').toBe(true);
+      expect(res.counts.nodes === 11 && res.limits.node_cap === 10, 'counts/limits surfaced').toBe(true);
     }
   });
 
@@ -47,15 +47,15 @@ describe('checkActiveScopeAdmission (pure)', () => {
     setExplorationNodeCap(100);
     setExplorationTokenBudget(1000);
     const res = checkActiveScopeAdmission(1, 4001);
-    assert(!res.ok, '4001 chars estimates to 1001 tokens > 1000 budget');
-    if (!res.ok) assert(res.counts.tokens === 1001, 'token estimate is ceil(chars/4)');
+    expect(!res.ok, '4001 chars estimates to 1001 tokens > 1000 budget').toBe(true);
+    if (!res.ok) expect(res.counts.tokens === 1001, 'token estimate is ceil(chars/4)').toBe(true);
   });
 
   it('setters clamp to their minimums', () => {
     setExplorationNodeCap(0);
     setExplorationTokenBudget(1);
-    assert(!checkActiveScopeAdmission(2, 0).ok, 'node cap clamped to 1, so 2 rejects');
-    assert(checkActiveScopeAdmission(1, 4000).ok, 'token budget clamped to 1000, so 1000 tokens admit');
+    expect(!checkActiveScopeAdmission(2, 0).ok, 'node cap clamped to 1, so 2 rejects').toBe(true);
+    expect(checkActiveScopeAdmission(1, 4000).ok, 'token budget clamped to 1000, so 1000 tokens admit').toBe(true);
   });
 });
 
@@ -82,7 +82,7 @@ describe('NavigationEngine active-phase admission', () => {
     // Walk the in-scope prefix; none of these routes grow the scope, so none trip the guard.
     for (const [focus, next] of [['n0', 'n1'], ['n1', 'n2'], ['n2', 'n3']] as const) {
       const ctx = engine.getHopContext() as { focus_node?: { id: string } };
-      assert(ctx.focus_node?.id === focus, `focus is ${focus}`);
+      expect(ctx.focus_node?.id === focus, `focus is ${focus}`).toBe(true);
       const ok = engine.submitFindings({
         focus_node_id: focus,
         sections: [{ angle: 'business' as const, text: `${focus} analysis` }],
@@ -90,11 +90,11 @@ describe('NavigationEngine active-phase admission', () => {
         verdict: 'analyze',
         route_requests: [{ nodeId: next, question: 'trace' }],
       }) as { ok?: boolean };
-      assert(ok.ok === true, `route to in-scope ${next} commits without tripping the guard`);
+      expect(ok.ok === true, `route to in-scope ${next} commits without tripping the guard`).toBe(true);
     }
 
     const atBorder = engine.getHopContext() as { focus_node?: { id: string } };
-    assert(atBorder.focus_node?.id === 'n3', 'final in-scope focus is n3');
+    expect(atBorder.focus_node?.id === 'n3', 'final in-scope focus is n3').toBe(true);
     const rejected = engine.submitFindings({
       focus_node_id: 'n3',
       sections: [{ angle: 'business' as const, text: 'n3 analysis prose' }],
@@ -102,9 +102,9 @@ describe('NavigationEngine active-phase admission', () => {
       verdict: 'analyze',
       route_requests: [{ nodeId: 'n4', question: 'grow beyond the cap' }],
     }) as { error?: string; hint?: string; detail?: Record<string, unknown> };
-    assert(rejected.error === 'over_active_scope_budget', 'growth beyond the cap rejects with the stable code');
-    assert(typeof rejected.hint === 'string' && rejected.hint.includes('held'), 'hint tells the model its analysis is held');
-    assert(rejected.detail?.node_cap === 4, 'detail carries the effective cap');
+    expect(rejected.error === 'over_active_scope_budget', 'growth beyond the cap rejects with the stable code').toBe(true);
+    expect(typeof rejected.hint === 'string' && rejected.hint.includes('held'), 'hint tells the model its analysis is held').toBe(true);
+    expect(rejected.detail?.node_cap === 4, 'detail carries the effective cap').toBe(true);
 
     // Amend with the growth pruned: sections may be empty — the held draft restores the prose.
     const amended = engine.submitFindings({
@@ -114,13 +114,13 @@ describe('NavigationEngine active-phase admission', () => {
       verdict: 'analyze',
       route_requests: [],
     }) as { ok?: boolean };
-    assert(amended.ok === true, 'pruned amend commits against the held draft');
+    expect(amended.ok === true, 'pruned amend commits against the held draft').toBe(true);
 
     // Completion is driven by the hop pull: the queue drains inside getHopContext, which flips status.
     const drained = engine.getHopContext() as { done?: boolean };
-    assert(drained.done === true, 'no further hops remain — the rejected route never entered the queue');
-    assert(engine.status === 'complete', 'engine completes without the over-budget node');
+    expect(drained.done === true, 'no further hops remain — the rejected route never entered the queue').toBe(true);
+    expect(engine.status === 'complete', 'engine completes without the over-budget node').toBe(true);
     const slotIds = new Set(engine.getResult().detail_slots.map((s) => s.nodeId));
-    assert(slotIds.has('n3') && !slotIds.has('n4'), 'n3 analyzed with held prose; n4 never entered scope');
+    expect(slotIds.has('n3') && !slotIds.has('n4'), 'n3 analyzed with held prose; n4 never entered scope').toBe(true);
   });
 });

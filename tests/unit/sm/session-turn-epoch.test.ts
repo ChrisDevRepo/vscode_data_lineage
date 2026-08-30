@@ -1,7 +1,6 @@
-import { assert, assertEq } from '../helpers/testUtils';
 import { AiSession, sameExplorationProposal } from '../../../src/ai/session/session';
 import type { SmResult } from '../../../src/ai/sm/smTypes';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("session turn-epoch guard tests", () => {
   const sampleResult: SmResult = {
@@ -17,26 +16,26 @@ describe("session turn-epoch guard tests", () => {
     const sess = new AiSession();
     const t1 = sess.beginTurn();
     const accepted = sess.enterExploring(t1);
-    assertEq(accepted.kind, 'accepted', 'fresh-token enterExploring is accepted');
-    assertEq(sess.phase.kind, 'exploring', 'phase advanced to exploring');
+    expect(accepted.kind, 'fresh-token enterExploring is accepted').toBe('accepted');
+    expect(sess.phase.kind, 'phase advanced to exploring').toBe('exploring');
 
     // A later turn supersedes t1 without any explicit reset.
     const t2 = sess.beginTurn();
-    assert(t2 !== t1, 'beginTurn bumps the epoch (t2 != t1)');
+    expect(t2 !== t1, 'beginTurn bumps the epoch (t2 != t1)').toBe(true);
 
     const stale = sess.enterIdle(t1);
-    assertEq(stale.kind, 'dropped_stale_turn', 'stale-token enterIdle is dropped');
+    expect(stale.kind, 'stale-token enterIdle is dropped').toBe('dropped_stale_turn');
     if (stale.kind === 'dropped_stale_turn') {
-      assertEq(stale.op, 'enterIdle', 'drop names the op');
-      assertEq(stale.captured, t1, 'drop reports the captured (stale) epoch');
-      assertEq(stale.current, t2, 'drop reports the current live epoch');
+      expect(stale.op, 'drop names the op').toBe('enterIdle');
+      expect(stale.captured, 'drop reports the captured (stale) epoch').toBe(t1);
+      expect(stale.current, 'drop reports the current live epoch').toBe(t2);
     }
-    assertEq(sess.phase.kind, 'exploring', 'phase is unchanged after a dropped stale write');
+    expect(sess.phase.kind, 'phase is unchanged after a dropped stale write').toBe('exploring');
 
     // The live turn's own write still lands.
     const fresh = sess.enterIdle(t2);
-    assertEq(fresh.kind, 'accepted', 'fresh-token enterIdle is accepted');
-    assertEq(sess.phase.kind, 'idle', 'phase advanced to idle on the accepted write');
+    expect(fresh.kind, 'fresh-token enterIdle is accepted').toBe('accepted');
+    expect(sess.phase.kind, 'phase advanced to idle on the accepted write').toBe('idle');
   });
 
   it("storeSmResult epoch guard", () => {
@@ -45,13 +44,13 @@ describe("session turn-epoch guard tests", () => {
     const t2 = sess.beginTurn(); // supersede t1 before the stale write
 
     const stale = sess.storeSmResult(sampleResult, t1);
-    assertEq(stale.kind, 'dropped_stale_turn', 'stale-token storeSmResult is dropped');
-    assertEq(sess.resultGraph, null, 'resultGraph is untouched by a dropped stale write');
+    expect(stale.kind, 'stale-token storeSmResult is dropped').toBe('dropped_stale_turn');
+    expect(sess.resultGraph, 'resultGraph is untouched by a dropped stale write').toBe(null);
 
     const fresh = sess.storeSmResult(sampleResult, t2);
-    assertEq(fresh.kind, 'accepted', 'fresh-token storeSmResult is accepted');
-    assert(sess.resultGraph !== null, 'resultGraph is populated by the accepted write');
-    assertEq(sess.resultGraph?.originNodeId, 'origin', 'resultGraph carries the result origin');
+    expect(fresh.kind, 'fresh-token storeSmResult is accepted').toBe('accepted');
+    expect(sess.resultGraph !== null, 'resultGraph is populated by the accepted write').toBe(true);
+    expect(sess.resultGraph?.originNodeId, 'resultGraph carries the result origin').toBe('origin');
   });
 
   it("diagnostics-write epoch guard", () => {
@@ -60,48 +59,48 @@ describe("session turn-epoch guard tests", () => {
 
     // Fresh-token diagnostics writes land.
     const hopOk = sess.setHopCount(t1, 3);
-    assertEq(hopOk.kind, 'accepted', 'fresh-token setHopCount is accepted');
-    assertEq(sess.hopCount, 3, 'hopCount updated by the accepted write');
+    expect(hopOk.kind, 'fresh-token setHopCount is accepted').toBe('accepted');
+    expect(sess.hopCount, 'hopCount updated by the accepted write').toBe(3);
 
     const evtOk = sess.recordMemoryWipeEvent(t1, { kind: 'sliding', trigger: 'submit_ok', hop: 3, messagesBefore: 7 });
-    assertEq(evtOk.kind, 'accepted', 'fresh-token recordMemoryWipeEvent is accepted');
-    assertEq(sess.memoryWipeEventsThisTurn.length, 1, 'wipe event appended by the accepted write');
+    expect(evtOk.kind, 'fresh-token recordMemoryWipeEvent is accepted').toBe('accepted');
+    expect(sess.memoryWipeEventsThisTurn.length, 'wipe event appended by the accepted write').toBe(1);
 
     // A later turn supersedes t1; the stale writes must be dropped no-ops.
     const t2 = sess.beginTurn();
 
     const hopStale = sess.setHopCount(t1, 99);
-    assertEq(hopStale.kind, 'dropped_stale_turn', 'stale-token setHopCount is dropped');
+    expect(hopStale.kind, 'stale-token setHopCount is dropped').toBe('dropped_stale_turn');
     if (hopStale.kind === 'dropped_stale_turn') {
-      assertEq(hopStale.op, 'setHopCount', 'drop names the setHopCount op');
-      assertEq(hopStale.current, t2, 'drop reports the current live epoch');
+      expect(hopStale.op, 'drop names the setHopCount op').toBe('setHopCount');
+      expect(hopStale.current, 'drop reports the current live epoch').toBe(t2);
     }
-    assertEq(sess.hopCount, 3, 'hopCount untouched by a dropped stale write');
+    expect(sess.hopCount, 'hopCount untouched by a dropped stale write').toBe(3);
 
     const evtStale = sess.recordMemoryWipeEvent(t1, { kind: 'sliding', trigger: 'stale', hop: 99, messagesBefore: 12 });
-    assertEq(evtStale.kind, 'dropped_stale_turn', 'stale-token recordMemoryWipeEvent is dropped');
+    expect(evtStale.kind, 'stale-token recordMemoryWipeEvent is dropped').toBe('dropped_stale_turn');
     if (evtStale.kind === 'dropped_stale_turn') {
-      assertEq(evtStale.op, 'recordMemoryWipeEvent', 'drop names the recordMemoryWipeEvent op');
+      expect(evtStale.op, 'drop names the recordMemoryWipeEvent op').toBe('recordMemoryWipeEvent');
     }
-    assertEq(sess.memoryWipeEventsThisTurn.length, 1, 'wipe events untouched by a dropped stale write');
+    expect(sess.memoryWipeEventsThisTurn.length, 'wipe events untouched by a dropped stale write').toBe(1);
 
     // The live turn's own writes still land.
-    assertEq(sess.setHopCount(t2, 5).kind, 'accepted', 'fresh-token setHopCount (t2) is accepted');
-    assertEq(sess.hopCount, 5, 'hopCount advanced on the accepted t2 write');
-    assertEq(sess.recordMemoryWipeEvent(t2, { kind: 'sliding', trigger: 'submit_ok', hop: 5, messagesBefore: 4 }).kind, 'accepted', 'fresh-token recordMemoryWipeEvent (t2) is accepted');
-    assertEq(sess.memoryWipeEventsThisTurn.length, 2, 'wipe event appended on the accepted t2 write');
+    expect(sess.setHopCount(t2, 5).kind, 'fresh-token setHopCount (t2) is accepted').toBe('accepted');
+    expect(sess.hopCount, 'hopCount advanced on the accepted t2 write').toBe(5);
+    expect(sess.recordMemoryWipeEvent(t2, { kind: 'sliding', trigger: 'submit_ok', hop: 5, messagesBefore: 4 }).kind, 'fresh-token recordMemoryWipeEvent (t2) is accepted').toBe('accepted');
+    expect(sess.memoryWipeEventsThisTurn.length, 'wipe event appended on the accepted t2 write').toBe(2);
   });
 
   it("resetExploration internal path", () => {
     const sess = new AiSession();
     const t1 = sess.beginTurn();
     sess.enterExploring(t1);
-    assertEq(sess.phase.kind, 'exploring', 'precondition: exploring');
+    expect(sess.phase.kind, 'precondition: exploring').toBe('exploring');
 
     const epochBefore = sess.turnEpoch;
     sess.resetExploration();
-    assertEq(sess.phase.kind, 'idle', 'resetExploration returns to idle via its internal enterIdle');
-    assertEq(sess.turnEpoch, epochBefore, 'resetExploration does NOT bump the epoch');
+    expect(sess.phase.kind, 'resetExploration returns to idle via its internal enterIdle').toBe('idle');
+    expect(sess.turnEpoch, 'resetExploration does NOT bump the epoch').toBe(epochBefore);
   });
 
   it("exploration proposal activation", () => {
@@ -138,27 +137,27 @@ describe("session turn-epoch guard tests", () => {
       },
     };
 
-    assertEq(sess.storePendingExploration(proposal, token).kind, 'accepted', 'fresh proposal is stored');
-    assertEq(sess.pendingExploration?.revision, 1, 'first proposal receives revision 1');
-    assertEq(sess.stateMachine, null, 'proposal preview does not publish an engine before approval');
-    assertEq(sess.classification, undefined, 'proposal preview does not lock classification before approval');
-    assertEq(sess.phase.kind, 'idle', 'proposal storage alone does not enter exploring');
+    expect(sess.storePendingExploration(proposal, token).kind, 'fresh proposal is stored').toBe('accepted');
+    expect(sess.pendingExploration?.revision, 'first proposal receives revision 1').toBe(1);
+    expect(sess.stateMachine, 'proposal preview does not publish an engine before approval').toBe(null);
+    expect(sess.classification, 'proposal preview does not lock classification before approval').toBe(undefined);
+    expect(sess.phase.kind, 'proposal storage alone does not enter exploring').toBe('idle');
 
     let staleFactoryCalled = false;
     const stale = sess.activatePendingExploration(99, token, () => {
       staleFactoryCalled = true;
       return {} as any;
     });
-    assertEq(stale.kind, 'rejected', 'stale proposal revision is rejected');
-    assert(!staleFactoryCalled, 'stale revision is rejected before engine construction');
-    assertEq(sess.stateMachine, null, 'stale approval leaves active engine untouched');
-    assertEq(sess.pendingExploration?.revision, 1, 'stale approval preserves the reviewable proposal');
+    expect(stale.kind, 'stale proposal revision is rejected').toBe('rejected');
+    expect(!staleFactoryCalled, 'stale revision is rejected before engine construction').toBe(true);
+    expect(sess.stateMachine, 'stale approval leaves active engine untouched').toBe(null);
+    expect(sess.pendingExploration?.revision, 'stale approval preserves the reviewable proposal').toBe(1);
 
     const failed = sess.activatePendingExploration(1, token, () => ({ error: 'init_failed' }));
-    assertEq(failed.kind, 'rejected', 'failed engine initialization rejects activation');
-    assertEq(sess.stateMachine, null, 'failed activation publishes no partial engine');
-    assertEq(sess.pendingExploration?.revision, 1, 'failed activation preserves the proposal for review/retry');
-    assertEq(sess.memory.getUserQuestion(), 'completed question must survive review', 'failed activation leaves stable session memory unchanged');
+    expect(failed.kind, 'failed engine initialization rejects activation').toBe('rejected');
+    expect(sess.stateMachine, 'failed activation publishes no partial engine').toBe(null);
+    expect(sess.pendingExploration?.revision, 'failed activation preserves the proposal for review/retry').toBe(1);
+    expect(sess.memory.getUserQuestion(), 'failed activation leaves stable session memory unchanged').toBe('completed question must survive review');
 
     const publishFailed = sess.activatePendingExploration(1, token, () => ({
       status: 'initialized',
@@ -167,10 +166,10 @@ describe("session turn-epoch guard tests", () => {
         throw new Error('publish_failed');
       },
     } as any));
-    assertEq(publishFailed.kind, 'rejected', 'memory publication failure rejects activation');
-    assertEq(sess.stateMachine, null, 'memory publication failure publishes no engine');
-    assertEq(sess.pendingExploration?.revision, 1, 'memory publication failure preserves the proposal');
-    assertEq(sess.memory.getUserQuestion(), 'completed question must survive review', 'memory publication failure rolls back session memory');
+    expect(publishFailed.kind, 'memory publication failure rejects activation').toBe('rejected');
+    expect(sess.stateMachine, 'memory publication failure publishes no engine').toBe(null);
+    expect(sess.pendingExploration?.revision, 'memory publication failure preserves the proposal').toBe(1);
+    expect(sess.memory.getUserQuestion(), 'memory publication failure rolls back session memory').toBe('completed question must survive review');
 
     const approvedEngine = {
       status: 'initialized',
@@ -180,15 +179,15 @@ describe("session turn-epoch guard tests", () => {
       },
     } as any;
     const approved = sess.activatePendingExploration(1, token, (reviewed) => {
-      assertEq(reviewed.init.depthIntent?.kind, 'asymmetric', 'factory receives the exact reviewed depth intent');
+      expect(reviewed.init.depthIntent?.kind, 'factory receives the exact reviewed depth intent').toBe('asymmetric');
       return approvedEngine;
     });
-    assertEq(approved.kind, 'accepted', 'matching proposal revision activates');
-    assertEq(sess.stateMachine, approvedEngine, 'approved engine is published atomically');
-    assertEq(sess.pendingExploration, null, 'approved proposal is consumed');
-    assertEq(sess.classification, 'technical', 'approved classification becomes active');
-    assertEq(sess.phase.kind, 'exploring', 'successful activation enters exploring');
-    assertEq(sess.memory.getUserQuestion(), 'new approved question', 'validated engine memory publishes only at approval');
+    expect(approved.kind, 'matching proposal revision activates').toBe('accepted');
+    expect(sess.stateMachine, 'approved engine is published atomically').toBe(approvedEngine);
+    expect(sess.pendingExploration, 'approved proposal is consumed').toBe(null);
+    expect(sess.classification, 'approved classification becomes active').toBe('technical');
+    expect(sess.phase.kind, 'successful activation enters exploring').toBe('exploring');
+    expect(sess.memory.getUserQuestion(), 'validated engine memory publishes only at approval').toBe('new approved question');
   });
 
   it("completed proposal preservation", () => {
@@ -214,19 +213,19 @@ describe("session turn-epoch guard tests", () => {
       },
     };
     sess.storePendingExploration(proposal, token);
-    assert(sameExplorationProposal(proposal, sess.pendingExploration!), 'revision is ignored when detecting a no-op refine');
+    expect(sameExplorationProposal(proposal, sess.pendingExploration!), 'revision is ignored when detecting a no-op refine').toBe(true);
     sess.enterGate({ gate: 'confirm_sm_start', classes: [], nodeIds: [], detail: 'replacement', proposalRevision: 1 }, token);
-    assertEq(sess.stateMachine, completedEngine, 'completed engine remains published during proposal review');
-    assertEq(sess.resultGraph, completedResult, 'completed result remains published during proposal review');
-    assertEq(sess.memory.getUserQuestion(), 'completed answer', 'completed memory remains intact during proposal review');
+    expect(sess.stateMachine, 'completed engine remains published during proposal review').toBe(completedEngine);
+    expect(sess.resultGraph, 'completed result remains published during proposal review').toBe(completedResult);
+    expect(sess.memory.getUserQuestion(), 'completed memory remains intact during proposal review').toBe('completed answer');
 
     const cancelled = sess.cancelPendingExploration(token);
-    assertEq(cancelled.kind, 'accepted', 'proposal cancel is accepted for the owning turn');
-    assertEq(sess.phase.kind, 'completed', 'cancel returns to the preserved completed phase');
-    assertEq(sess.pendingExploration, null, 'cancel clears only the pending replacement');
-    assertEq(sess.stateMachine, completedEngine, 'cancel preserves the completed engine');
-    assertEq(sess.resultGraph, completedResult, 'cancel preserves the completed result');
-    assertEq(sess.memory.getUserQuestion(), 'completed answer', 'cancel preserves completed memory');
+    expect(cancelled.kind, 'proposal cancel is accepted for the owning turn').toBe('accepted');
+    expect(sess.phase.kind, 'cancel returns to the preserved completed phase').toBe('completed');
+    expect(sess.pendingExploration, 'cancel clears only the pending replacement').toBe(null);
+    expect(sess.stateMachine, 'cancel preserves the completed engine').toBe(completedEngine);
+    expect(sess.resultGraph, 'cancel preserves the completed result').toBe(completedResult);
+    expect(sess.memory.getUserQuestion(), 'cancel preserves completed memory').toBe('completed answer');
   });
 
   it('proposal equality ignores object key insertion order', () => {
@@ -257,11 +256,8 @@ describe("session turn-epoch guard tests", () => {
       classification: 'business' as const,
       init: { direction: 'upstream' as const, analysisMode: 'bb' as const, origin: 'o', question: 'q' },
     };
-    assert(sameExplorationProposal(left, reordered), 'key insertion order alone is not a proposal change');
-    assert(
-      !sameExplorationProposal(left, { ...reordered, init: { ...reordered.init, question: 'other' } }),
-      'a real content change is still detected',
-    );
+    expect(sameExplorationProposal(left, reordered), 'key insertion order alone is not a proposal change').toBe(true);
+    expect(!sameExplorationProposal(left, { ...reordered, init: { ...reordered.init, question: 'other' } }), 'a real content change is still detected').toBe(true);
   });
 
 });

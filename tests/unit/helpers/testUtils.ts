@@ -55,32 +55,6 @@ export async function loadDemoModel(): Promise<DatabaseModel> {
   return extractDacpac(buffer);
 }
 
-// ─── Assertions ─────────────────────────────────────────────────────────────
-
-/**
- * Boolean assertion for legacy data-driven tests.
- *
- * @param condition - Must hold; `false` throws.
- * @param msg - What the condition means, quoted verbatim in the failure.
- *
- * @remarks
- * Deliberately not declared `asserts condition`. Narrowing here would be correct for a parse
- * result but wrong for a mutable getter — `engine.status` stays narrowed to its asserted value
- * across the very calls that change it, which turns a live assertion into a compile error. A case
- * that needs to reach into a discriminated union asserts the discriminant first and then keeps the
- * `if` for typing only; the assertion is what fails, the guard only satisfies the compiler.
- */
-export function assert(condition: boolean, msg: string): void {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${msg}`);
-  }
-}
-
-/** Equality assertion with "expected X, got Y" on failure */
-export function assertEq<T>(actual: T, expected: T, msg: string) {
-  assert(actual === expected, `${msg} (expected ${expected}, got ${actual})`);
-}
-
 // ─── Parse Rules Loading ────────────────────────────────────────────────────
 
 /** Load parse rules from assets/defaultParseRules.yaml (single source of truth) */

@@ -1,9 +1,9 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { bfsReachable, firstDisconnectedRequiredNode } from '../../../src/engine/graphGuards';
-import { assert, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Navigation Engine — node conservation", () => {
   const nodes: LineageNode[] = [
@@ -33,14 +33,14 @@ describe("Navigation Engine — node conservation", () => {
   const reachable = bfsReachable(graph, 'origin', new Set(state.removedSet), undefined, new Set(state.scopeNodeIds));
   reachable.add('origin');
 
-  for (const id of reachable) assert(rendered.has(id), `reachable node ${id} is in the render set`);
-  for (const id of rendered) assert(reachable.has(id), `rendered node ${id} is origin-reachable (no phantom)`);
+  for (const id of reachable) expect(rendered.has(id), `reachable node ${id} is in the render set`).toBe(true);
+  for (const id of rendered) expect(reachable.has(id), `rendered node ${id} is origin-reachable (no phantom)`).toBe(true);
 
   // Every committed detail slot resolves to a rendered node — zero silent slot loss.
   for (const slot of result.detail_slots) {
-    assert(rendered.has(slot.nodeId), `detail slot for ${slot.nodeId} survives into the render (no silent loss)`);
+    expect(rendered.has(slot.nodeId), `detail slot for ${slot.nodeId} survives into the render (no silent loss)`).toBe(true);
   }
-  assert(rendered.has('c'), 'the deepest analyzed node survives (full-chain conservation)');
+  expect(rendered.has('c'), 'the deepest analyzed node survives (full-chain conservation)').toBe(true);
 });
 
   it("required-connected, so nothing on the live path is lost between the ledger and the render.", () => {
@@ -51,16 +51,16 @@ describe("Navigation Engine — node conservation", () => {
   // dispatched via getHopContext() before submitFindings will commit against it. Stop before b is
   // dispatched, so b stays queued-unvisited (committed via the agenda, never analyzed).
   const focus1 = engine.getHopContext();
-  assert('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first dispatched focus is origin');
+  expect('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first dispatched focus is origin').toBe(true);
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'o' }], summary: 'o', verdict: 'analyze', route_requests: [{ nodeId: 'a', question: '?' }] });
   const focus2 = engine.getHopContext();
-  assert('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second dispatched focus is a');
+  expect('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second dispatched focus is a').toBe(true);
   engine.submitFindings({ focus_node_id: 'a', sections: [{ angle: 'business' as const, text: 'a' }], summary: 'a', verdict: 'analyze', route_requests: [{ nodeId: 'b', question: '?' }] });
 
   // b is now committed (queued, unvisited). The render must still carry origin, a, and b.
   const result = engine.getResult();
   const rendered = new Set(result.fullNodes.map((n) => n.id));
-  for (const id of ['origin', 'a', 'b']) assert(rendered.has(id), `${id} kept in the render (committed-set conservation)`);
+  for (const id of ['origin', 'a', 'b']) expect(rendered.has(id), `${id} kept in the render (committed-set conservation)`).toBe(true);
 
   // Widened-guard mechanism: reconstruct the engine's committed set K exactly as `committedConnectedIds()` does
   // (noted ∪ agenda) from the observable snapshot, and show it makes b visible to the orphan guard.
@@ -68,20 +68,14 @@ describe("Navigation Engine — node conservation", () => {
   const noted = new Set<string>(Object.keys(snap.memory.detailSlots));
   const committed = new Set<string>([...noted, ...snap.agenda.map((e) => e.nodeId)]);
   const scope = new Set<string>(snap.scopeNodeIds);
-  assert(committed.has('b') && !noted.has('b'), 'b is committed via the agenda, not via noted (the widening is what admits it)');
+  expect(committed.has('b') && !noted.has('b'), 'b is committed via the agenda, not via noted (the widening is what admits it)').toBe(true);
 
   // Removing a's connectivity orphans the queued b. The widened committed set flags b as disconnected
   // (→ prune_would_orphan_noted); a noted-only set would return null and wave the prune through,
   // silently dropping b's detail slot — the exact regression the widened guard prevents.
   const removedIfAPruned = new Set<string>([...snap.removedSet, 'a']);
-  assert(
-    firstDisconnectedRequiredNode(graph, 'origin', removedIfAPruned, committed, scope) === 'b',
-    'committed-set guard flags queued b as orphaned when its connector is pruned',
-  );
-  assert(
-    firstDisconnectedRequiredNode(graph, 'origin', removedIfAPruned, noted, scope) === null,
-    'noted-only set would MISS the queued orphan (documents the pre-widening silent-loss gap)',
-  );
+  expect(firstDisconnectedRequiredNode(graph, 'origin', removedIfAPruned, committed, scope) === 'b', 'committed-set guard flags queued b as orphaned when its connector is pruned').toBe(true);
+  expect(firstDisconnectedRequiredNode(graph, 'origin', removedIfAPruned, noted, scope) === null, 'noted-only set would MISS the queued orphan (documents the pre-widening silent-loss gap)').toBe(true);
 });
 
   it("reactivate articulation node b and attempt to prune it.", () => {
@@ -89,33 +83,33 @@ describe("Navigation Engine — node conservation", () => {
   engine.init({ origin: 'origin', question: 'self-prune orphan', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 5 } });
 
   const focus1 = engine.getHopContext();
-  assert('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first focus is origin');
+  expect('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first focus is origin').toBe(true);
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'o' }], summary: 'o', verdict: 'analyze', route_requests: [{ nodeId: 'a', question: '?' }] });
 
   const focus2 = engine.getHopContext();
-  assert('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second focus is a');
+  expect('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second focus is a').toBe(true);
   engine.submitFindings({ focus_node_id: 'a', sections: [{ angle: 'business' as const, text: 'a' }], summary: 'a', verdict: 'analyze', route_requests: [{ nodeId: 'b', question: '?' }] });
 
   const focus3 = engine.getHopContext();
-  assert('focus_node' in focus3 && focus3.focus_node?.id === 'b', 'third focus is b');
+  expect('focus_node' in focus3 && focus3.focus_node?.id === 'b', 'third focus is b').toBe(true);
   engine.submitFindings({ focus_node_id: 'b', sections: [{ angle: 'business' as const, text: 'b' }], summary: 'b', verdict: 'analyze', route_requests: [{ nodeId: 'c', question: '?' }] });
   const focus4 = engine.getHopContext();
-  assert('focus_node' in focus4 && focus4.focus_node?.id === 'c', 'fourth focus is c');
+  expect('focus_node' in focus4 && focus4.focus_node?.id === 'c', 'fourth focus is c').toBe(true);
   engine.submitFindings({ focus_node_id: 'c', sections: [{ angle: 'business' as const, text: 'c' }], summary: 'c', verdict: 'analyze' });
-  assert(engine.getHopContext().done === true, 'chain completes before articulation reactivation');
+  expect(engine.getHopContext().done === true, 'chain completes before articulation reactivation').toBe(true);
   const supplemented = engine.supplementAgenda(['b']);
-  assert('ok' in supplemented && supplemented.agendaed === 1, 'b is reactivated for the self-prune probe');
+  expect('ok' in supplemented && supplemented.agendaed === 1, 'b is reactivated for the self-prune probe').toBe(true);
   const reactivated = engine.getHopContext();
-  assert('focus_node' in reactivated && reactivated.focus_node?.id === 'b', 'reactivated focus is b');
+  expect('focus_node' in reactivated && reactivated.focus_node?.id === 'b', 'reactivated focus is b').toBe(true);
   const beforeReject = JSON.stringify(engine.toJSON());
 
   // b is c's only connector in this graph. A real self-prune of b must be rejected because the
   // already-analyzed c would be orphaned from origin.
   const result = engine.submitFindings({ focus_node_id: 'b', sections: [{ angle: 'business' as const, text: 'b' }], summary: 'b', verdict: 'prune' });
-  assert('error' in result && result.error === 'prune_would_orphan_noted', 'a real submitFindings self-prune of b is rejected end-to-end');
+  expect('error' in result && result.error === 'prune_would_orphan_noted', 'a real submitFindings self-prune of b is rejected end-to-end').toBe(true);
   const state = engine.toJSON();
-  assert(!state.removedSet.includes('b'), 'the rejected self-prune leaves b unremoved');
-  assert(JSON.stringify(state) === beforeReject, 'rejected self-prune commits zero engine state');
+  expect(!state.removedSet.includes('b'), 'the rejected self-prune leaves b unremoved').toBe(true);
+  expect(JSON.stringify(state) === beforeReject, 'rejected self-prune commits zero engine state').toBe(true);
 });
 
   it("observable nonfatal notices and preserves both targets.", () => {
@@ -138,25 +132,25 @@ describe("Navigation Engine — node conservation", () => {
   engine.submitFindings({ focus_node_id: 'a', sections: [{ angle: 'business' as const, text: 'a' }], summary: 'a', verdict: 'analyze', route_requests: [{ nodeId: 'b', question: '?' }] });
   // d was explicitly routed one hop earlier than b, so routed-priority FIFO dispatches it first.
   const focusD = engine.getHopContext();
-  assert('focus_node' in focusD && focusD.focus_node?.id === 'd', 'earlier promoted route d dispatches before later promoted b');
+  expect('focus_node' in focusD && focusD.focus_node?.id === 'd', 'earlier promoted route d dispatches before later promoted b').toBe(true);
   engine.submitFindings({ focus_node_id: 'd', sections: [{ angle: 'business' as const, text: 'd' }], summary: 'd', verdict: 'analyze', route_requests: [] });
   const focusB = engine.getHopContext();
-  assert('focus_node' in focusB && focusB.focus_node?.id === 'b', 'b dispatches after the earlier routed sibling');
+  expect('focus_node' in focusB && focusB.focus_node?.id === 'b', 'b dispatches after the earlier routed sibling').toBe(true);
   engine.submitFindings({ focus_node_id: 'b', sections: [{ angle: 'business' as const, text: 'b' }], summary: 'b', verdict: 'analyze', route_requests: [] });
-  assert(engine.getHopContext().done === true, 'initial exploration completes before the committed-node prune probe');
+  expect(engine.getHopContext().done === true, 'initial exploration completes before the committed-node prune probe').toBe(true);
 
   // Reactivate d after b is committed so the real prune_neighbors path still exercises its guard.
   const supplement = engine.supplementAgenda(['d']);
-  assert('ok' in supplement, 'd can be reactivated for the committed-node prune probe');
+  expect('ok' in supplement, 'd can be reactivated for the committed-node prune probe').toBe(true);
   const reactivatedD = engine.getHopContext();
-  assert('focus_node' in reactivatedD && reactivatedD.focus_node?.id === 'd', 'reactivated d is the supplement focus');
+  expect('focus_node' in reactivatedD && reactivatedD.focus_node?.id === 'd', 'reactivated d is the supplement focus').toBe(true);
 
   const result = engine.submitFindings({ focus_node_id: 'd', sections: [{ angle: 'business' as const, text: 'd' }], summary: 'd', verdict: 'analyze', route_requests: [], prune_neighbors: ['b', 'ghost_node'] }) as any;
-  assert('ok' in result, 'committed and unknown prune targets are nonfatal notices');
+  expect('ok' in result, 'committed and unknown prune targets are nonfatal notices').toBe(true);
   const state = engine.toJSON();
-  assert(!state.removedSet.includes('b'), 'a committed node is never removed via prune_neighbors');
-  assert(state.memory.recentRejections.some((r) => r.nodeId === 'b'), 'committed-node prune notice is visible');
-  assert(state.memory.recentRejections.some((r) => r.nodeId === 'ghost_node'), 'unknown prune notice is visible');
+  expect(!state.removedSet.includes('b'), 'a committed node is never removed via prune_neighbors').toBe(true);
+  expect(state.memory.recentRejections.some((r) => r.nodeId === 'b'), 'committed-node prune notice is visible').toBe(true);
+  expect(state.memory.recentRejections.some((r) => r.nodeId === 'ghost_node'), 'unknown prune notice is visible').toBe(true);
 });
 
   it("accepts a safe multi-target prune batch in one submit (batched conservation fast path).", () => {
@@ -185,7 +179,7 @@ describe("Navigation Engine — node conservation", () => {
   engine.getHopContext();
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'o' }], summary: 'o', verdict: 'analyze', route_requests: [{ nodeId: 'hub', question: '?' }] });
   const focusHub = engine.getHopContext();
-  assert('focus_node' in focusHub && focusHub.focus_node?.id === 'hub', 'hub is the second focus');
+  expect('focus_node' in focusHub && focusHub.focus_node?.id === 'hub', 'hub is the second focus').toBe(true);
   const result = engine.submitFindings({
     focus_node_id: 'hub',
     sections: [{ angle: 'business' as const, text: 'h' }],
@@ -194,12 +188,12 @@ describe("Navigation Engine — node conservation", () => {
     route_requests: [{ nodeId: 'keep', question: '?' }],
     prune_neighbors: ['x1', 'x2', 'x3'],
   }) as any;
-  assert('ok' in result, 'the safe batch prune commits');
+  expect('ok' in result, 'the safe batch prune commits').toBe(true);
 
   const state = engine.toJSON();
-  for (const id of ['x1', 'x2', 'x3']) assert(state.removedSet.includes(id), `${id} pruned by the batch fast path`);
-  assert(!state.removedSet.includes('keep'), 'the routed sibling survives the batch');
-  assert(!state.memory.recentRejections.some((r) => ['x1', 'x2', 'x3'].includes(r.nodeId)), 'no orphan rejections for the safe batch');
+  for (const id of ['x1', 'x2', 'x3']) expect(state.removedSet.includes(id), `${id} pruned by the batch fast path`).toBe(true);
+  expect(!state.removedSet.includes('keep'), 'the routed sibling survives the batch').toBe(true);
+  expect(!state.memory.recentRejections.some((r) => ['x1', 'x2', 'x3'].includes(r.nodeId)), 'no orphan rejections for the safe batch').toBe(true);
 });
 
   it("and no detail, route, or lifecycle state from the rejected hop commits.", () => {
@@ -207,7 +201,7 @@ describe("Navigation Engine — node conservation", () => {
   engine.init({ origin: 'origin', question: 'origin prune notice', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 5 } });
 
   const focus = engine.getHopContext();
-  assert('focus_node' in focus && focus.focus_node?.id === 'origin', 'first focus is origin');
+  expect('focus_node' in focus && focus.focus_node?.id === 'origin', 'first focus is origin').toBe(true);
   const result = engine.submitFindings({
     focus_node_id: 'origin',
     sections: [{ angle: 'business' as const, text: 'root' }],
@@ -216,11 +210,11 @@ describe("Navigation Engine — node conservation", () => {
     route_requests: [{ nodeId: 'a', question: '?' }],
     prune_neighbors: ['origin'],
   }) as any;
-  assert('error' in result && result.error === 'prune_origin_forbidden', 'origin prune retains its fatal code');
+  expect('error' in result && result.error === 'prune_origin_forbidden', 'origin prune retains its fatal code').toBe(true);
   const state = engine.toJSON();
-  assert(!state.removedSet.includes('origin'), 'origin is never removed');
-  assert(state.memory.detailSlots.origin === undefined, 'origin detail does not commit on rejection');
-  assert(state.status === 'awaiting_findings', 'origin prune rejection keeps the current hop active');
+  expect(!state.removedSet.includes('origin'), 'origin is never removed').toBe(true);
+  expect(state.memory.detailSlots.origin === undefined, 'origin detail does not commit on rejection').toBe(true);
+  expect(state.status === 'awaiting_findings', 'origin prune rejection keeps the current hop active').toBe(true);
 });
 
   it("would disconnect the already-analyzed c.", () => {
@@ -238,7 +232,7 @@ describe("Navigation Engine — node conservation", () => {
   engine.init({ origin: 'origin', question: 'orphan probe', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
 
   const focus1 = engine.getHopContext();
-  assert('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first focus is origin');
+  expect('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first focus is origin').toBe(true);
   engine.submitFindings({
     focus_node_id: 'origin',
     sections: [{ angle: 'business' as const, text: 'o' }],
@@ -248,7 +242,7 @@ describe("Navigation Engine — node conservation", () => {
   });
 
   const focus2 = engine.getHopContext();
-  assert('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second focus is a');
+  expect('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second focus is a').toBe(true);
   engine.submitFindings({
     focus_node_id: 'a',
     sections: [{ angle: 'business' as const, text: 'a' }],
@@ -257,13 +251,13 @@ describe("Navigation Engine — node conservation", () => {
     route_requests: [{ nodeId: 'b', question: 'trace through b' }],
   });
   const focus3 = engine.getHopContext();
-  assert('focus_node' in focus3 && focus3.focus_node?.id === 'c', 'passive b contracts to c');
+  expect('focus_node' in focus3 && focus3.focus_node?.id === 'c', 'passive b contracts to c').toBe(true);
   engine.submitFindings({ focus_node_id: 'c', sections: [{ angle: 'business' as const, text: 'c' }], summary: 'c', verdict: 'analyze' });
-  assert(engine.getHopContext().done === true, 'orphan setup completes before a reactivation');
+  expect(engine.getHopContext().done === true, 'orphan setup completes before a reactivation').toBe(true);
   const supplemented = engine.supplementAgenda(['a']);
-  assert('ok' in supplemented && supplemented.agendaed === 1, 'a is reactivated for the neighbor-prune probe');
+  expect('ok' in supplemented && supplemented.agendaed === 1, 'a is reactivated for the neighbor-prune probe').toBe(true);
   const reactivated = engine.getHopContext();
-  assert('focus_node' in reactivated && reactivated.focus_node?.id === 'a', 'reactivated focus is a');
+  expect('focus_node' in reactivated && reactivated.focus_node?.id === 'a', 'reactivated focus is a').toBe(true);
   const detailBefore = JSON.stringify(engine.toJSON().memory.detailSlots.a);
 
   const rej = engine.submitFindings({
@@ -273,10 +267,10 @@ describe("Navigation Engine — node conservation", () => {
     verdict: 'analyze',
     prune_neighbors: ['b'],
   }) as any;
-  assert('error' in rej && rej.error === 'missing_required_route', 'required in-scope b must be routed');
+  expect('error' in rej && rej.error === 'missing_required_route', 'required in-scope b must be routed').toBe(true);
   const state = engine.toJSON();
-  assert(!state.removedSet.includes('b'), 'the rejected prune leaves b unremoved');
-  assert(JSON.stringify(state.memory.detailSlots.a) === detailBefore, 'required-neighbor rejection does not replace committed detail');
+  expect(!state.removedSet.includes('b'), 'the rejected prune leaves b unremoved').toBe(true);
+  expect(JSON.stringify(state.memory.detailSlots.a) === detailBefore, 'required-neighbor rejection does not replace committed detail').toBe(true);
 });
 
   it("A genuinely out-of-scope neighbor retains the prior topology-safe prune behavior.", () => {
@@ -295,12 +289,12 @@ describe("Navigation Engine — node conservation", () => {
   engine.getHopContext();
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'o' }], summary: 'o', verdict: 'analyze', route_requests: [{ nodeId: 'a', question: '?' }] });
   const focusA = engine.getHopContext();
-  assert('focus_node' in focusA && focusA.focus_node?.id === 'a', 'second focus is a — b was never added to scope (beyond depth 1, never routed)');
+  expect('focus_node' in focusA && focusA.focus_node?.id === 'a', 'second focus is a — b was never added to scope (beyond depth 1, never routed)').toBe(true);
 
   const result = engine.submitFindings({ focus_node_id: 'a', sections: [{ angle: 'business' as const, text: 'a' }], summary: 'a', verdict: 'analyze', prune_neighbors: ['b'] }) as any;
-  assert('ok' in result, 'topology-safe out-of-scope prune is accepted');
+  expect('ok' in result, 'topology-safe out-of-scope prune is accepted').toBe(true);
   const state = engine.toJSON();
-  assert(state.removedSet.includes('b'), 'out-of-scope neighbor is recorded as removed');
+  expect(state.removedSet.includes('b'), 'out-of-scope neighbor is recorded as removed').toBe(true);
 });
 
   it("An unprunable id — already analyzed, or unknown — becomes a visible notice, not a rejection.", () => {
@@ -319,13 +313,13 @@ describe("Navigation Engine — node conservation", () => {
     summary: 'origin', verdict: 'analyze', route_requests: [{ nodeId: 'a', question: 'analyze a' }],
   });
   const focusA = engine.getHopContext();
-  assert('focus_node' in focusA && focusA.focus_node?.id === 'a', 'second focus is a');
+  expect('focus_node' in focusA && focusA.focus_node?.id === 'a', 'second focus is a').toBe(true);
   engine.submitFindings({
     focus_node_id: 'a', sections: [{ angle: 'business' as const, text: 'a' }],
     summary: 'a', verdict: 'analyze', route_requests: [{ nodeId: 'b', question: 'analyze b' }],
   });
   const focusB = engine.getHopContext();
-  assert('focus_node' in focusB && focusB.focus_node?.id === 'b', 'third focus is b');
+  expect('focus_node' in focusB && focusB.focus_node?.id === 'b', 'third focus is b').toBe(true);
 
   const result = engine.submitFindings({
     focus_node_id: 'b',
@@ -338,11 +332,11 @@ describe("Navigation Engine — node conservation", () => {
     prune_neighbors: ['a', '[dbo].[doesNotExist]'],
   }) as any;
 
-  assert('ok' in result, 'a refused no-op prune does not reject the hop');
+  expect('ok' in result, 'a refused no-op prune does not reject the hop').toBe(true);
   const rejections = engine.toJSON().memory.recentRejections;
-  assert(rejections.some((r) => r.nodeId === 'a'), 'the already-analyzed prune is visible as a notice');
-  assert(rejections.some((r) => r.nodeId === '[dbo].[doesNotExist]'), 'the unknown prune id is visible as a notice');
-  assert(!engine.toJSON().removedSet.includes('a'), 'the already-analyzed node is not removed');
+  expect(rejections.some((r) => r.nodeId === 'a'), 'the already-analyzed prune is visible as a notice').toBe(true);
+  expect(rejections.some((r) => r.nodeId === '[dbo].[doesNotExist]'), 'the unknown prune id is visible as a notice').toBe(true);
+  expect(!engine.toJSON().removedSet.includes('a'), 'the already-analyzed node is not removed').toBe(true);
 });
 
 });

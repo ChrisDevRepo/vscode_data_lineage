@@ -12,9 +12,9 @@ import { buildMissionBriefBlock } from '../../../src/ai/prompting/prompts';
 import { StartExplorationInputSchema, StartExplorationFreshProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
 import { AiMemoryManager } from '../../../src/ai/session/memoryManager';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { assert, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe('Scope notes — constraints that map to no filter', () => {
   const nodes: LineageNode[] = [
@@ -37,7 +37,7 @@ describe('Scope notes — constraints that map to no filter', () => {
       analysisMode: 'bb',
       scopeNotes: [NOTE],
     });
-    assert(provider.success, `provider schema must accept scopeNotes: ${JSON.stringify(provider.error?.issues)}`);
+    expect(provider.success, `provider schema must accept scopeNotes: ${JSON.stringify(provider.error?.issues)}`).toBe(true);
 
     const dispatcher = StartExplorationInputSchema.safeParse({
       origin: '[ai].[FactSalesReport]',
@@ -46,7 +46,7 @@ describe('Scope notes — constraints that map to no filter', () => {
       analysisMode: 'bb',
       scopeNotes: [NOTE],
     });
-    assert(dispatcher.success, `dispatcher schema must accept scopeNotes: ${JSON.stringify(dispatcher.error?.issues)}`);
+    expect(dispatcher.success, `dispatcher schema must accept scopeNotes: ${JSON.stringify(dispatcher.error?.issues)}`).toBe(true);
   });
 
   it('is echoed at the approval gate under what the user asked for', () => {
@@ -54,7 +54,7 @@ describe('Scope notes — constraints that map to no filter', () => {
     engine.init({ origin: 'origin', question: 'trace it', direction: 'upstream', scopeNotes: [NOTE] });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
     const stated = md.slice(md.indexOf('**From your question**'), md.indexOf('**My plan**'));
-    assert(stated.includes(`- Noted: "${NOTE}"`), 'a constraint mapping to no filter is still shown for confirmation');
+    expect(stated.includes(`- Noted: "${NOTE}"`), 'a constraint mapping to no filter is still shown for confirmation').toBe(true);
   });
 
   it('reaches every hop, including after the sliding-memory wipe', () => {
@@ -66,33 +66,27 @@ describe('Scope notes — constraints that map to no filter', () => {
     memory.setScopeNotes([NOTE]);
 
     const first = buildMissionBriefBlock(memory.getMissionBrief(), memory.getUserQuestion(), memory.getScopeNotes());
-    assert(first.includes('<user_constraints>'), 'constraints ride the session-stable mission block');
-    assert(first.includes(NOTE), 'the constraint is carried verbatim');
+    expect(first.includes('<user_constraints>'), 'constraints ride the session-stable mission block').toBe(true);
+    expect(first.includes(NOTE), 'the constraint is carried verbatim').toBe(true);
 
     // Rendered from memory, never from conversation history — so a later hop, after the wipe has
     // removed the turn that carried the instruction, still produces the same bytes.
     const later = buildMissionBriefBlock(memory.getMissionBrief(), memory.getUserQuestion(), memory.getScopeNotes());
-    assert(later === first, 'the block is byte-identical across hops — wipe-proof and cache-safe');
+    expect(later === first, 'the block is byte-identical across hops — wipe-proof and cache-safe').toBe(true);
   });
 
   it('survives the engine checkpoint round-trip', () => {
     const engine = new NavigationEngine(model, graph, () => {}, {});
     engine.init({ origin: 'origin', question: 'trace it', direction: 'upstream', scopeNotes: [NOTE] });
     const restored = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
-    assert(
-      restored.getScopeSummary().scopeNotes.includes(NOTE),
-      'a resumed session keeps the constraints the user approved',
-    );
+    expect(restored.getScopeSummary().scopeNotes.includes(NOTE), 'a resumed session keeps the constraints the user approved').toBe(true);
   });
 
   it('is omitted entirely when the user stated no such constraint', () => {
     const engine = new NavigationEngine(model, graph, () => {}, {});
     engine.init({ origin: 'origin', question: 'trace it', direction: 'upstream' });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
-    assert(!md.includes('- Noted:'), 'no empty block appears when nothing was noted');
-    assert(
-      buildMissionBriefBlock('brief', 'q', []) === buildMissionBriefBlock('brief', 'q'),
-      'an empty note list costs nothing in the prompt',
-    );
+    expect(!md.includes('- Noted:'), 'no empty block appears when nothing was noted').toBe(true);
+    expect(buildMissionBriefBlock('brief', 'q', []) === buildMissionBriefBlock('brief', 'q'), 'an empty note list costs nothing in the prompt').toBe(true);
   });
 });

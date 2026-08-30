@@ -222,14 +222,13 @@ Run `npm run typecheck` after every structural change; the type system is the
 first line of defence.
 
 Assert with vitest `expect`, and give each case its own `it` (or an `it.each`
-table). The homegrown `assert`/`assertEq` in `tests/unit/helpers/testUtils.ts`
-throw a bare `Error`, so they carry no value diff, no case name, and abort every
-remaining assertion in their block — one regression then hides the rest.
-`tests/tools/assert-no-legacy-assert.mjs` fails the gate on any *new* file using
-them; the files still on its allowlist are migrated opportunistically, and the
-list may only shrink. `tests/unit/parser/tsql-complex.test.ts` shows the
-data-driven form, and a new SQL parser case is cheapest as an `-- EXPECT`
-fixture under `tests/fixtures/sql/targeted/` rather than as TypeScript.
+table). A homegrown `assert` helper throws a bare `Error`, so it carries no value
+diff, no case name, and aborts every remaining assertion in its block — one
+regression then hides the rest. The former `assert`/`assertEq` helpers and the
+gate exception that tracked their last users are retired: every test asserts
+through `expect`. `tests/unit/parser/tsql-complex.test.ts` shows the data-driven
+form, and a new SQL parser case is cheapest as an `-- EXPECT` fixture under
+`tests/fixtures/sql/targeted/` rather than as TypeScript.
 
 The `participant-turn` lane uses a deterministic scripted language-model
 fixture registered through the real public `vscode.lm` API. It verifies

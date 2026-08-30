@@ -64,8 +64,7 @@ The maintained steps live in
 test type-checking, the generated-tool-manifest drift check
 (`scripts/generate-tool-manifest.mjs --check`), the AI template schema-version
 gate (`tests/tools/assert-template-schema-version.mjs`), the honest-test-label
-check (`tests/tools/assert-honest-test-labels.mjs`), the no-legacy-assertions
-scan (`tests/tools/assert-no-legacy-assert.mjs`), the core-case-completeness
+check (`tests/tools/assert-honest-test-labels.mjs`), the core-case-completeness
 check (`tests/tools/assert-core-cases-complete.mjs`), the unit-project coverage
 check that makes the two unit steps add up to the whole suite
 (`tests/tools/assert-unit-projects-cover-all.mjs`), the core unit project — run

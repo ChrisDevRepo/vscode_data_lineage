@@ -230,12 +230,12 @@ source and tests are the implementation baseline.
 
 `npm run gate` is the deterministic pre-merge check; `CONTRIBUTING.md` and the
 `package.json` scripts list the command set. Beyond type-checking, builds, and the
-unit suites it enforces eight derived contracts: the
+unit suites it enforces seven derived contracts: the
 `contributes.languageModelTools` manifest drift check, the AI template
-schema-version gate, the honest-test-label scan, the no-legacy-assertions scan,
-the core-case-completeness check, the unit-project coverage check
-that makes the two unit steps add up to the whole suite, the packaged-VSIX
-contents check, and the `assert-no-langsmith` bundle check.
+schema-version gate, the honest-test-label scan, the core-case-completeness
+check, the unit-project coverage check that makes the two unit steps add up to
+the whole suite, the packaged-VSIX contents check, and the `assert-no-langsmith`
+bundle check.
 
 `npm run test:edh` runs the extended VS Code Electron lanes outside the gate,
 against a scripted provider registered through the real `vscode.lm` API — it

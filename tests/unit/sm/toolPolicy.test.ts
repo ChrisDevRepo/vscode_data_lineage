@@ -1,9 +1,8 @@
-import { assertEq } from '../helpers/testUtils';
 import {
   getAllowedLmToolNames,
   activeModeOf,
 } from '../../../src/ai/tools/toolPolicy';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("toolPolicy", () => {
   const cases: Array<{
@@ -71,13 +70,13 @@ describe("toolPolicy", () => {
 
   it.each(cases)('$name exposes exactly its allowed tools', ({ name, stage, expected }) => {
     const actual = [...getAllowedLmToolNames(stage)].sort();
-    assertEq(JSON.stringify(actual), JSON.stringify([...expected].sort()), `${name}: exact tool set`);
+    expect(JSON.stringify(actual), `${name}: exact tool set`).toBe(JSON.stringify([...expected].sort()));
   });
 
   it.each([
     { columnTrace: false, expected: 'sm_bb' as const },
     { columnTrace: true, expected: 'sm_ct' as const },
   ])('maps columnTrace=$columnTrace to $expected', ({ columnTrace, expected }) => {
-    assertEq(activeModeOf(columnTrace), expected, `columnTrace=${columnTrace}`);
+    expect(activeModeOf(columnTrace), `columnTrace=${columnTrace}`).toBe(expected);
   });
 });
