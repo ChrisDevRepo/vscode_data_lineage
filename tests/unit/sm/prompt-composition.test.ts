@@ -67,6 +67,11 @@ describe('prompt composition', () => {
     expect(detector).toContain("Return 'visual_render'");
     expect(detector).toContain('approval-gated hop-by-hop exploration');
     expect(detector).toContain("Return 'discovery' for everything else");
+    // 'discovery' is the reversible default; naming a column alone must never force column_trace.
+    expect(detector).toContain("Return 'column_trace' ONLY when the user explicitly asks to trace, follow, or walk");
+    expect(detector).toContain("default to 'discovery' whenever in doubt");
+    expect(detector).toContain('user can switch to a column trace at the approval step');
+    expect(detector).not.toContain('even one described as a calculation or metric');
   });
 
   it('binds scope refinement to the displayed proposal revision and changed fields only', () => {

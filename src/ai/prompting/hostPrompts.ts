@@ -136,6 +136,9 @@ export function buildHostStageSystemPrompt(phase: PromptPhase, ctx: StagePromptC
  * @remarks
  * Classifies semantic intent only. `visual_render` selects approval-gated BB exploration; the
  * host-owned preview action remains a separate RuntimeFrame fact for the bounded preview route.
+ * `discovery` is the default whenever the route is unclear, including a follow-up that merely
+ * names a column already discussed — `column_trace` requires an explicit new trace/walk request,
+ * because the approval gate still lets the user correct the mode before anything runs.
  *
  * @param ctx - Grounding context (see {@link deriveStagePromptContext}).
  * @returns The detector system-prompt string.
@@ -144,10 +147,10 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
   return [
     'You are a routing classifier for a SQL data-lineage tool. Classify the user request into one entry route.',
     '',
-    "Return 'column_trace' only when the user clearly names one or more specific columns to follow. Extract those exact names into targetColumns.",
+    "Return 'column_trace' ONLY when the user explicitly asks to trace, follow, or walk one or more specific named columns as a new lineage request — e.g. \"trace column TotalRevenue\", \"walk the lineage of [dbo].[t].[col]\". Extract those exact names into targetColumns.",
     "Return 'visual_render' when the user explicitly asks to see, show, render, draw, preview, or open a lineage graph, diagram, canvas, or panel. This means approval-gated hop-by-hop exploration. Set targetColumns to null.",
-    "Return 'discovery' for everything else: broad dependency questions that do not explicitly request a visual, and questions about what is already on screen — \"what am I looking at\", \"explain this view\", \"has anything changed since\" — because those are answered from the current screen state, not by opening a new exploration. Set targetColumns to null.",
-    "TIEBREAKER — when in doubt, do NOT choose 'column_trace'. Column tracing requires an unambiguous, specifically named column; if the request names only an object/table with no column, choose 'discovery'. But a request that DOES name a specific column — even one described as a calculation or metric — is not ambiguous: choose 'column_trace'. Column trace is the exception only for vague requests, never for an explicitly named column.",
+    "Return 'discovery' for everything else — this is the default whenever the route is unclear. Broad dependency questions that do not explicitly request a visual or a column trace; questions about what is already on screen or already discussed — \"what am I looking at\", \"explain this view\", \"has anything changed since\", \"how was TotalRevenue calculated\" when TotalRevenue was already named or summarized earlier in this conversation — are answered from the current screen state or conversation, not by opening a new exploration. Set targetColumns to null.",
+    "TIEBREAKER — default to 'discovery' whenever in doubt. Naming a column is not, by itself, a reason to choose 'column_trace': a follow-up that merely refers to a column already named earlier in the conversation, or asks how/why something already on screen behaves, stays 'discovery'. Only an explicit new request to trace or walk a named column earns 'column_trace' — a bare \"trace\"/\"explore\" verb with no column named also stays 'discovery'. Under-choosing 'column_trace' costs nothing: the user can switch to a column trace at the approval step before anything runs, so default to the cheaper, reversible route.",
     '',
     'The conversation may include earlier turns. Classify ONLY the latest user message; use earlier turns solely to resolve what it refers to (e.g. resolving which object a bare column name belongs to).',
     '',

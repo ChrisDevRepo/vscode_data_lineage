@@ -211,6 +211,12 @@ stored for it, the call answers `no_run_memory` with the repair.
 A fresh `lineage_start_exploration` proposal requires an origin, an explicit
 analysis mode, and an answer classification. BB traces whole objects and does
 not accept named target columns. CT requires user-named `targetColumns`.
+`discovery` is the entry detector's default whenever the route is unclear;
+naming a column already discussed earlier in the conversation is not, by
+itself, enough to route into a column trace — that route requires an explicit
+new request to trace or walk a named column. Under-choosing a column trace
+costs nothing: the approval gate still lets the user switch `analysisMode`
+before anything runs.
 Pending-gate refinements are strict patch requests tied to the gate revision.
 Omitted origin, question, mission brief, direction, depth, filters, mode,
 classification, and columns are inherited mechanically. The refine stage may
