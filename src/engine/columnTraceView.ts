@@ -28,11 +28,11 @@ export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';
  *
  * @remarks
  * Never authored by the model — `renamed` means an inbound relation's endpoint names differ,
- * `fan-in` that several
- * upstream columns feed this one, `fan-out` that one upstream column feeds several outputs, and
- * `terminal` that the trace recorded no upstream for it.
+ * `incoming` that several
+ * upstream columns feed this one, `outgoing` that one upstream column feeds several downstream
+ * columns, and `terminal` that the trace recorded no upstream for it.
  */
-export type ColumnRowShape = 'renamed' | 'fan-in' | 'fan-out' | 'terminal';
+export type ColumnRowShape = 'renamed' | 'incoming' | 'outgoing' | 'terminal';
 
 /**
  * One row inside a column-trace node: a traced column, or a port on a transform node.
@@ -46,7 +46,7 @@ export interface ColumnTraceRow {
   name: string;
   /** Derived structural shape; absent when none applies. */
   shape?: ColumnRowShape;
-  /** Contributing upstream column count; present only when `shape` is `fan-in`. */
+  /** Contributing upstream (`incoming`) or feeding downstream (`outgoing`) column count. */
   contributors?: number;
 }
 
@@ -232,7 +232,7 @@ export function resolveVerdictLineState(
  * Reduces every edge arriving at a row to that row's single line state.
  *
  * @remarks
- * A `fan-in` row carries several inbound edges by construction, so a per-row indicator must reduce
+ * An `incoming` row carries several inbound edges by construction, so a per-row indicator must reduce
  * them rather than keep whichever the relation list happened to end on — that would make the glyph
  * depend on hop order rather than on the trace. A transforming contributor makes the value arriving
  * at the row a transformation; `passthrough` requires every contributor to agree; a disagreement
@@ -310,7 +310,7 @@ function touchRow(acc: NodeAccumulator, columnName: string): string {
  *
  * @remarks
  * Shape precedence, most to least specific, applied when more than one condition holds for a row:
- * `fan-in` (multiple distinct upstream tuples) outranks `fan-out` (one upstream column feeding
+ * `incoming` (multiple distinct upstream tuples) outranks `outgoing` (one upstream column feeding
  * multiple targets), which outranks `renamed` (an inbound relation whose endpoint names differ),
  * which outranks `terminal` (no inbound relation at all) — a structural multiplicity is a stronger
  * signal than a naming difference, which is itself stronger than the mere absence of an upstream
@@ -330,10 +330,11 @@ function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
     let shape: ColumnRowShape | undefined;
     let contributors: number | undefined;
     if (upstreamTuples.size > 1) {
-      shape = 'fan-in';
+      shape = 'incoming';
       contributors = upstreamTuples.size;
     } else if (downstreamTuples.size > 1) {
-      shape = 'fan-out';
+      shape = 'outgoing';
+      contributors = downstreamTuples.size;
     } else if (renamed) {
       shape = 'renamed';
     } else if (inbound.length === 0) {
@@ -363,7 +364,7 @@ function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
  * through that node as two legs, source to hop and hop to target, rather than as one line past it.
  * A collapsed line would leave the hop with no inbound edge, which ranks a procedure as a source and
  * parks it at the left margin with a canvas-spanning line to its output. The split is a drawing
- * decision only: the target's fan-in count and rename signal still describe the original endpoint
+ * decision only: the target's incoming count and rename signal still describe the original endpoint
  * pair, since that is where the value came from.
  *
  * A relation whose source or target node is absent from `input.objects` is skipped: it has no node
@@ -416,7 +417,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const targetKey = targetObj.id.toLowerCase();
 
     // The semantic relation stays source-to-target even when the drawing goes through a hop: the
-    // target's fan-in count and rename signal describe where its value came from, not which node
+    // target's incoming count and rename signal describe where its value came from, not which node
     // carried it there.
     addOutbound(sourceAcc.outbound, sourceRowKey, `${targetKey}::${targetRowKey}`);
     pushInbound(targetAcc.inbound, targetRowKey, {

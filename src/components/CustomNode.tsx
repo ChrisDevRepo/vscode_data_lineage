@@ -1,7 +1,9 @@
 import { memo, useEffect, useState } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, SHORT_TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
+import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { Tooltip } from './ui/Tooltip';
+import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { CloseIcon } from './ui/CloseIcon';
 import type { ObjectType } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
@@ -207,13 +209,8 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const isVirtual = data.externalType === 'file' || data.externalType === 'db';
   const displayIcon = isVirtual ? '⬡' : data.externalType === 'et' ? '⬢' : style.icon;
   const schemaColor = isExternal ? getExternalNodeColor() : (data.schemaColor ?? getSchemaColor(data.schema));
-  const dimmed = data.dimmed === true;
-  const highlighted = data.highlighted === true || data.highlighted === 'yellow';
-  const isYellowHighlight = data.highlighted === 'yellow';
-
-  const highlightColor = data.aiHighlight
-    ? data.aiHighlight.color
-    : isYellowHighlight ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
+  const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, transform, zIndex } =
+    resolveNodeHighlightStyle(data.highlighted, data.aiHighlight, data.dimmed);
 
   const tooltipLines: string[] = [];
   if (data.externalType === 'file' && data.externalUrl) tooltipLines.push(data.externalUrl);
@@ -256,20 +253,8 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           }}
         />
       )}
-      {data.aiBadge && (
-        <NodeToolbar position={Position.Top} align="center" offset={2} isVisible>
-          <Tooltip content={data.aiBadge.text} placement="top">
-            <div className="ln-ai-badge">{data.aiBadge.text}</div>
-          </Tooltip>
-        </NodeToolbar>
-      )}
-      {data.aiNote && (
-        <NodeToolbar position={Position.Bottom} align="center" offset={2} isVisible>
-          <Tooltip content={data.aiNote.text} placement="bottom" multiline maxWidth={400} delay={300}>
-            <div className="ln-ai-note-label">{data.aiNote.text.split('\n')[0]}</div>
-          </Tooltip>
-        </NodeToolbar>
-      )}
+      {data.aiBadge && <AiBadgeToolbar text={data.aiBadge.text} />}
+      {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
       <Tooltip content={tooltipContent} placement="top" multiline maxWidth={300} asChild>
         <div
           className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-card"
@@ -279,22 +264,12 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             borderLeftColor: highlighted ? highlightColor : schemaColor,
             borderLeftWidth: 6,
             backgroundColor: 'var(--ln-node-bg)',
-            opacity: dimmed ? 0.25 : 1,
+            opacity,
             width: 180,
             height: 70,
-            boxShadow: highlighted
-              ? (isYellowHighlight
-                ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
-                : data.aiHighlight
-                  ? `0 0 0 5px ${data.aiHighlight.glow}, 0 8px 20px ${data.aiHighlight.shadow}`
-                  : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
-              : data.aiHighlight
-                ? `0 0 0 5px ${data.aiHighlight.glow}, 0 8px 20px ${data.aiHighlight.shadow}`
-                : dimmed
-                  ? 'var(--ln-node-shadow-dimmed)'
-                  : 'var(--ln-node-shadow)',
-            transform: highlighted ? 'scale(1.05)' : 'scale(1)',
-            zIndex: highlighted ? 1000 : 1,
+            boxShadow,
+            transform,
+            zIndex,
           }}
         >
           {data.showRemoveButton && (

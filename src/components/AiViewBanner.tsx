@@ -45,7 +45,7 @@ export const AiViewBanner = memo(function AiViewBanner({
   onToggleColumnView,
 }: AiViewBannerProps) {
   const viewToggle = columnViewAvailable && onToggleColumnView ? (
-    <Tooltip content={'Objects shows dependencies between objects.\nColumns shows the column-level findings of this analysis.'} placement="bottom" multiline>
+    <Tooltip content={'Objects shows dependencies between objects.\nDetail shows the column-level findings of this analysis.'} placement="bottom" multiline>
       <div className="flex items-center gap-0.5" role="group" aria-label="Preview detail level">
         <button
           onClick={() => onToggleColumnView(false)}
@@ -59,7 +59,7 @@ export const AiViewBanner = memo(function AiViewBanner({
           aria-pressed={!!columnView}
           className={`ln-mode-banner__btn-sm ${columnView ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
         >
-          Columns
+          Detail
         </button>
       </div>
     </Tooltip>

@@ -52,7 +52,7 @@ import {
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
-import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes } from '../engine/nodeDecoration';
+import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes, resolveBaseSelectionState } from '../engine/nodeDecoration';
 import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
@@ -1132,14 +1132,22 @@ export function GraphCanvas({
         const state = statesByRow.get(columnRowKey(view.id, row.name));
         if (state) rowLineStates[row.name] = state;
       }
+      // Same selection/AI decoration rule as the object view's decorateFlowNodes (shared via
+      // resolveBaseSelectionState) — column view is the same node, only more drilled into.
+      const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
       byNode.set(view.id, {
         view,
         rowsVisible: notesVisible,
         rowLineStates,
+        highlighted: isHighlighted ? 'yellow' : undefined,
+        dimmed,
+        aiHighlight: aiHighlightMap.get(view.id),
+        aiBadge: aiBadgeMap.get(view.id),
+        aiNote: notesVisible ? aiNoteMap.get(view.id) : undefined,
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
@@ -1166,22 +1174,27 @@ export function GraphCanvas({
 
   const displayEdges = useMemo(() => {
     if (columnViewActive && columnTraceView) {
-      const onPath = (edge: { source: string; sourceColumn: string; target: string; targetColumn: string }) => {
-        if (!hoveredColumnPath) return true;
-        return hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn))
-          && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn));
-      };
+      const litByHover = (edge: { source: string; sourceColumn: string; target: string; targetColumn: string }) =>
+        !!hoveredColumnPath
+        && hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn))
+        && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn));
+      const litBySelection = (edge: { source: string; target: string }) =>
+        !highlightedNodeId || edge.source === highlightedNodeId || edge.target === highlightedNodeId;
+
       return columnTraceView.edges.map(edge => {
-        const lit = onPath(edge);
+        // Row hover is the drilled-in layer on top of node selection: it decides lit/dim while
+        // active, and selection alone decides it otherwise — same rule object-view edges apply,
+        // just at row precision.
+        const lit = hoveredColumnPath ? litByHover(edge) : litBySelection(edge);
         return {
           id: edge.id,
           source: edge.source,
           target: edge.target,
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
-          ...(edge.state === 'transformation' ? { label: '◆' } : {}),
+          ...(edge.state === 'transformation' ? { label: '⚙' } : {}),
           labelShowBg: false,
-          labelStyle: { fill: 'var(--ln-fg-muted)', fontSize: 9 },
+          labelStyle: { fill: 'var(--ln-ai-bu)', fontSize: 15, fontWeight: 700 },
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
           style: {
             strokeWidth: lit ? 1.6 : 1,

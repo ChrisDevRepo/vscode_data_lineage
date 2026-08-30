@@ -26,10 +26,10 @@ describe('ai preview rendering', () => {
     expect(new Set(view.edges.map(e => e.id)).size).toBe(2);
   });
 
-  it('two distinct upstream columns feeding one output read as a fan-in of two', () => {
+  it('two distinct upstream columns feeding one output read as incoming with two contributors', () => {
     const view = buildColumnTraceView({ relations, objects });
     const row = view.nodes.find(n => n.id === '[ai].[FactSalesReport]')?.rows[0];
-    expect(row?.shape).toBe('fan-in');
+    expect(row?.shape).toBe('incoming');
     expect(row?.contributors).toBe(2);
   });
 });

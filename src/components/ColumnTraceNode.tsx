@@ -13,6 +13,8 @@ import {
 } from '../engine/columnTraceView';
 import { useColumnHover } from '../contexts/ColumnHoverContext';
 import { TYPE_COLORS, SHORT_TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
+import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
+import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import type { ObjectType } from '../engine/types';
 
 /**
@@ -31,6 +33,16 @@ export type ColumnTraceNodeData = {
    * edges touching this row, never computed here.
    */
   rowLineStates?: Partial<Record<string, ColumnLineState>>;
+  /** Highlight state applied by node selection, matching {@link CustomNodeData.highlighted}. */
+  highlighted?: boolean | 'yellow';
+  /** Whether the node is de-emphasized because a different node is selected. */
+  dimmed?: boolean;
+  /** AI-authored highlight styling applied to the node border and glow. */
+  aiHighlight?: { color: string; glow: string; shadow: string };
+  /** AI-authored badge rendered above the node. */
+  aiBadge?: { text: string };
+  /** AI-authored note rendered below the node. */
+  aiNote?: { text: string };
 };
 
 function reducedMotionActive(): boolean {
@@ -46,7 +58,9 @@ function lineStateColor(state: ColumnLineState | undefined): string {
 
 function shapeLabel(row: ColumnTraceRow): string | null {
   if (!row.shape) return null;
-  if (row.shape === 'fan-in') return `fan-in${typeof row.contributors === 'number' ? ` (${row.contributors})` : ''}`;
+  if (row.shape === 'incoming' || row.shape === 'outgoing') {
+    return `${row.shape}${typeof row.contributors === 'number' ? ` (${row.contributors})` : ''}`;
+  }
   return row.shape;
 }
 
@@ -150,19 +164,29 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
+  // Shared with CustomNode via resolveNodeHighlightStyle, so a node reads the same in both views.
+  const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, transform, zIndex } =
+    resolveNodeHighlightStyle(data.highlighted, data.aiHighlight, data.dimmed);
+
   return (
+    <>
+      {data.aiBadge && <AiBadgeToolbar text={data.aiBadge.text} />}
+      {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
     <div
-      className="rounded-lg border ln-node-card"
+      className="rounded-lg border ln-node-card transition-all duration-300 ease-in-out"
       style={{
         position: 'relative',
         width: view.width || COLUMN_NODE_WIDTH,
         height: view.height,
         borderWidth: COLUMN_NODE_BORDER_WIDTH,
-        borderColor: 'var(--ln-node-border)',
-        borderLeftColor: schemaColor,
+        borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
+        borderLeftColor: highlighted ? highlightColor : schemaColor,
         borderLeftWidth: 6,
         backgroundColor: 'var(--ln-node-bg)',
-        boxShadow: 'var(--ln-node-shadow)',
+        opacity,
+        boxShadow,
+        transform,
+        zIndex,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -237,6 +261,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         />
       ))}
     </div>
+    </>
   );
 }
 

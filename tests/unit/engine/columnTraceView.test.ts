@@ -113,7 +113,7 @@ describe('columnTraceView', () => {
     expect(row.shape).toBe('renamed');
   });
 
-  it('derives fan-in with the correct contributor count', () => {
+  it('derives incoming with the correct contributor count', () => {
     const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [
       { hopNode: 'dbo.t', fromNode: 'dbo.s1', fromCol: 'A', toNode: 'dbo.t', toCol: 'X' },
@@ -122,11 +122,11 @@ describe('columnTraceView', () => {
 
     const view = buildColumnTraceView({ relations, objects });
     const row = findRow(view, 'dbo.t', 'X');
-    expect(row.shape).toBe('fan-in');
+    expect(row.shape).toBe('incoming');
     expect(row.contributors).toBe(2);
   });
 
-  it('derives fan-out when one upstream column feeds multiple targets', () => {
+  it('derives outgoing when one upstream column feeds multiple targets', () => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t1'), mkObj('dbo.t2'));
     const relations: ColumnTraceRelation[] = [
       { hopNode: 'dbo.s', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t1', toCol: 'X' },
@@ -135,8 +135,8 @@ describe('columnTraceView', () => {
 
     const view = buildColumnTraceView({ relations, objects });
     const row = findRow(view, 'dbo.s', 'A');
-    expect(row.shape).toBe('fan-out');
-    expect(row.contributors).toBeUndefined();
+    expect(row.shape).toBe('outgoing');
+    expect(row.contributors).toBe(2);
   });
 
   it('marks a column with no inbound relation as terminal', () => {
@@ -253,10 +253,10 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     expect(new Set(view.edges.map((e) => e.id)).size).toBe(view.edges.length);
   });
 
-  it('keeps the target fan-in on the original endpoints, not on the legs', () => {
+  it('keeps the target incoming shape on the original endpoints, not on the legs', () => {
     const view = buildColumnTraceView({ relations, objects });
     const row = findRow(view, 'dbo.t', 'Total');
-    expect(row.shape).toBe('fan-in');
+    expect(row.shape).toBe('incoming');
     expect(row.contributors).toBe(2);
   });
 
@@ -313,7 +313,7 @@ describe('resolveRowLineStates', () => {
     expect(states.get(columnRowKey('dbo.t', 'Amount'))).toBe('passthrough');
   });
 
-  it('resolves a fan-in row to transformation when any contributor transforms', () => {
+  it('resolves an incoming row to transformation when any contributor transforms', () => {
     const states = resolveRowLineStates([
       edge('dbo.t', 'NetAmount', 'passthrough'),
       edge('dbo.t', 'NetAmount', 'transformation'),

@@ -248,19 +248,23 @@ Triggered by the **Show graph preview** follow-up. The assistant resolves a
 finite scope and opens an **AI Preview** in
 the side panel. The preview is transient; use **Save as Bookmark** to retain it.
 
-#### Columns view in an AI preview
+#### Detail view in an AI preview
 
-When the run recorded column findings, the preview banner offers an **Objects / Columns** switch.
-Objects is the default. Columns redraws the same scope with one row per traced column, threads
-running column to column, procedures and scalar functions drawn as ports rather than columns, and a
-glyph on a line where the value changed between its two endpoints. Hovering a row lights that whole
-thread and dims the rest; the rows collapse to a summary line when you zoom out.
+When the run recorded column findings, the preview banner offers an **Objects / Detail** switch.
+Objects is the default. Detail redraws the same scope with one row per traced column — not every
+declared column, only the ones the trace actually recorded — threads running column to column,
+procedures and scalar functions drawn as ports rather than columns, and a gear glyph on a line where
+the value changed between its two endpoints; a line with no glyph passed the value through unchanged.
+Hovering a row lights that whole thread and dims the rest; the rows collapse to a summary line when
+you zoom out.
 
 A procedure or function that transformed a value sits in the chain between the columns it reads and
 the columns it writes, with a port for each name the value carries — two ports when it renames one.
 The thread therefore runs source → transform → target rather than past the transform. Structure
-labels stay on the endpoints: a target column fed by two sources still reads `fan-in (2)`, whichever
-object combined them. Switching to Columns fits the new layout to the window, and switching back
+labels stay on the endpoints: a target column fed by two sources still reads `incoming (2)`, one
+column feeding several still reads `outgoing (2)`, whichever object combined or split it. Selecting a
+node highlights and dims exactly as it does in Objects view, and any AI badge or note attached to a
+node carries over unchanged. Switching to Detail fits the new layout to the window, and switching back
 returns to the object view where you left it.
 
 This is a rendering of the AI-generated column analysis — the same best-effort finding described

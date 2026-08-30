@@ -81,12 +81,12 @@ function decorationKey(node: FlowNode, inputs: NodeDecorationInputs): readonly u
       schemaView ? inputs.onMakeSchemaCenter : undefined,
     ];
   }
-  const isHighlighted = inputs.highlightedNodeId === node.id;
+  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(node.id, inputs.highlightedNodeId, inputs.level1Neighbors);
   const isTraceOrigin = isTraceOriginNode(node.id, inputs);
   const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
   return [
     isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
-    !!(inputs.highlightedNodeId && !isHighlighted && !isTraceOrigin && !inputs.level1Neighbors.has(node.id)),
+    baseDimmed && !isTraceOrigin,
     removable,
     removable ? inputs.onRemoveFromView : undefined,
     inputs.traceControlsByNode.get(node.id),
@@ -94,6 +94,24 @@ function decorationKey(node: FlowNode, inputs: NodeDecorationInputs): readonly u
     inputs.aiBadgeMap.get(node.id),
     inputs.notesVisible ? inputs.aiNoteMap.get(node.id) : undefined,
   ];
+}
+
+/**
+ * Base click-selection highlight/dim state, shared by object view and column view.
+ *
+ * @remarks
+ * Object view layers a trace-origin override on top ({@link isTraceOriginNode}); column view has no
+ * trace concept and uses this result unmodified — one rule for "is this the selected node", read by
+ * both callers instead of restated in each.
+ */
+export function resolveBaseSelectionState(
+  nodeId: string,
+  highlightedNodeId: string | null | undefined,
+  level1Neighbors: ReadonlySet<string>,
+): { highlighted: boolean; dimmed: boolean } {
+  const highlighted = highlightedNodeId === nodeId;
+  const dimmed = !!highlightedNodeId && !highlighted && !level1Neighbors.has(nodeId);
+  return { highlighted, dimmed };
 }
 
 function isTraceOriginNode(nodeId: string, inputs: NodeDecorationInputs): boolean {
@@ -115,10 +133,9 @@ function decorateOne(node: FlowNode, inputs: NodeDecorationInputs): FlowNode {
     };
   }
 
-  const isHighlighted = inputs.highlightedNodeId === node.id;
+  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(node.id, inputs.highlightedNodeId, inputs.level1Neighbors);
   const isTraceOrigin = isTraceOriginNode(node.id, inputs);
-  const shouldBeDimmed = inputs.highlightedNodeId && !isHighlighted && !isTraceOrigin
-    && !inputs.level1Neighbors.has(node.id);
+  const shouldBeDimmed = baseDimmed && !isTraceOrigin;
   const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
   return {
     ...node,
