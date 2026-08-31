@@ -19,7 +19,7 @@ import {
 import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
-import { searchCatalog, searchColumns, safeRegex, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
+import { searchCatalog, searchColumns, safeRegex, regexRejectHint, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
 import { normalizeBodyScript, minifyDdlForHop } from '../../utils/sql';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
@@ -785,7 +785,7 @@ export function searchDdl(
 
   // Reject invalid / catastrophically slow regex
   if (safeRegex(query) === null) {
-    return { error: 'invalid_regex' as const, hint: 'Simplify the pattern — avoid nested quantifiers.' };
+    return { error: 'invalid_regex' as const, hint: regexRejectHint(query) };
   }
 
   const ddlTypes: ObjectType[] = types

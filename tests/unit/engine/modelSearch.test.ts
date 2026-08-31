@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  regexRejectHint,
   safeRegex,
   searchBodyScripts,
   searchCatalog,
@@ -149,5 +150,59 @@ describe('model search', () => {
     const detail = searchColumns(nodes, 'ID', 100)
       .find(result => result.node.id === 'sales.orderdetail');
     expect(detail?.snippet.split(', ')).toHaveLength(3);
+  });
+});
+
+describe('regexRejectHint', () => {
+  it('names the flags option instead of blaming nested quantifiers for an inline flag', () => {
+    const hint = regexRejectHint('(?i)order');
+    expect(hint).toContain('inline flag');
+    expect(hint).toContain('already case-insensitive');
+    expect(hint).not.toContain('nested quantifiers');
+  });
+
+  it('flags a Python-style named group with its JavaScript spelling', () => {
+    const hint = regexRejectHint('(?P<name>foo)');
+    expect(hint).toContain('(?<name>...)');
+  });
+
+  it('flags an inline comment group as unsupported', () => {
+    expect(regexRejectHint('(?#comment)foo')).toContain('comment group');
+  });
+
+  it('names the missing closing paren for an unbalanced open group', () => {
+    expect(regexRejectHint('foo(bar')).toContain('closing ")"');
+  });
+
+  it('names the extra closing paren for an unmatched close', () => {
+    expect(regexRejectHint('foo)bar')).toContain('extra ")"');
+  });
+
+  it('names the missing closing bracket for an unterminated character class', () => {
+    expect(regexRejectHint('foo[bar')).toContain('closing "]"');
+  });
+
+  it('names the dangling quantifier for a lone repeat operator', () => {
+    expect(regexRejectHint('foo**')).toContain('quantifier');
+  });
+
+  it('names the out-of-order character range', () => {
+    expect(regexRejectHint('foo[z-a]')).toContain('lower bound comes first');
+  });
+
+  it('names the duplicate named group', () => {
+    expect(regexRejectHint('(?<n>a)(?<n>b)')).toContain('duplicate');
+  });
+
+  it('names the out-of-order quantifier bounds', () => {
+    expect(regexRejectHint('a{2,1}')).toContain('minimum comes first');
+  });
+
+  it('names the trailing backslash', () => {
+    expect(regexRejectHint('foo\\')).toContain('trailing "\\"');
+  });
+
+  it('falls back to a generic simplify hint for a pattern that already compiles', () => {
+    expect(regexRejectHint('order')).toBe('Simplify the pattern.');
   });
 });

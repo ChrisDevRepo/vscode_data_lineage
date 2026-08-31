@@ -28,6 +28,9 @@ interface DdlMatch {
   snippet: string;
 }
 
+/** Heuristic ReDoS guard budget, in milliseconds, shared by `safeRegex` and `regexRejectHint`. */
+const REDOS_BUDGET_MS = 5;
+
 /**
  * Compiles a search pattern into a safe, case-insensitive Regular Expression.
  *
@@ -44,11 +47,83 @@ export function safeRegex(pattern: string): RegExp | null {
     const sample = 'a'.repeat(200);
     const start = performance.now();
     r.test(sample);
-    if (performance.now() - start > 5) return null;
+    if (performance.now() - start > REDOS_BUDGET_MS) return null;
     return r;
   } catch {
     return null;
   }
+}
+
+/**
+ * Explains why `safeRegex` rejected a pattern and names the edit that fixes it.
+ *
+ * @param pattern - The raw regex string that `safeRegex` rejected.
+ * @returns A hint describing the concrete repair, derived from the actual
+ *   `SyntaxError` V8 raises for `pattern` (or from the ReDoS guard, when the
+ *   pattern compiles but ran over budget).
+ *
+ * @remarks
+ * `safeRegex` collapses two distinct rejection reasons — a compile failure and
+ * a pattern that compiled but timed out against the ReDoS sample — into a
+ * single `null`. This re-derives which one actually happened by recompiling
+ * `pattern` and inspecting the real `SyntaxError`, instead of assuming one
+ * fixed cause for every rejection. `searchCatalog`'s regex mode (and its
+ * callers) always add the `i` flag, so patterns never need — and JavaScript
+ * regular expressions never support — an inline case-insensitivity flag.
+ */
+export function regexRejectHint(pattern: string): string {
+  let compiled: RegExp;
+  try {
+    compiled = new RegExp(pattern, 'i');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/\(\?P</.test(pattern) && message.includes('Invalid group')) {
+      return 'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.';
+    }
+    if (/\(\?#/.test(pattern) && message.includes('Invalid group')) {
+      return 'Remove the "(?#...)" comment group — JavaScript regular expressions do not support inline comments.';
+    }
+    if (/\(\?[a-zA-Z-]+[):]/.test(pattern) && message.includes('Invalid group')) {
+      return 'Remove the inline flag group (e.g. "(?i)") — matches are already case-insensitive by default, and JavaScript regular expressions do not support inline flags.';
+    }
+    if (message.includes('Invalid group')) {
+      return 'Remove or correct the unsupported "(?...)" group syntax — JavaScript does not recognize it.';
+    }
+    if (message.includes('Unterminated group')) {
+      return 'Add the missing closing ")" — a "(" (or "(?<name>") was opened but never closed.';
+    }
+    if (message.includes("Unmatched ')'")) {
+      return 'Remove the extra ")" or add the "(" it is meant to close.';
+    }
+    if (message.includes('Unterminated character class')) {
+      return 'Add the missing closing "]" to the character class.';
+    }
+    if (message.includes('Range out of order in character class')) {
+      return 'Reorder the character class range so the lower bound comes first (e.g. "[a-z]", not "[z-a]").';
+    }
+    if (message.includes('Duplicate capture group name')) {
+      return 'Rename one of the duplicate "(?<name>...)" groups — each group name must be unique.';
+    }
+    if (message.includes('numbers out of order in {} quantifier')) {
+      return 'Reorder the quantifier bounds so the minimum comes first (e.g. "{1,2}", not "{2,1}").';
+    }
+    if (message.includes('Nothing to repeat')) {
+      return 'Remove or reposition the quantifier (*, +, ?, or {}) — it has nothing before it to repeat.';
+    }
+    if (message.includes('at end of pattern')) {
+      return 'Remove the trailing "\\" or complete the escape sequence it starts.';
+    }
+    return `Fix the pattern: ${message.replace(/^Invalid regular expression: .*?: /, '')}.`;
+  }
+
+  // Compiled successfully — safeRegex must have rejected it for running over the ReDoS budget.
+  const sample = 'a'.repeat(200);
+  const start = performance.now();
+  compiled.test(sample);
+  if (performance.now() - start > REDOS_BUDGET_MS) {
+    return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") that can backtrack catastrophically.';
+  }
+  return 'Simplify the pattern.';
 }
 
 /**
