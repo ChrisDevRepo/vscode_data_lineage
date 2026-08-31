@@ -53,14 +53,25 @@ try {
 
   // Resolve from Node's own resolver as the second opinion: a dangling link or missing
   // package throws here, confirming the repair is needed even if the filesystem state
-  // above looked ambiguous.
-  const probe = spawnSync(process.execPath, ['-e', 'require.resolve("langsmith/package.json")'], {
+  // above looked ambiguous. Resolving is not on its own a reason to stop — the containment
+  // requires the STUB to be what resolves, so a real `langsmith` that resolves from anywhere
+  // is reported rather than accepted.
+  const probe = spawnSync(process.execPath, ['-p', 'require.resolve("langsmith/package.json")'], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
-  if (probe.status === 0) {
-    console.log('[repair-langsmith-stub] langsmith resolves — leaving the install untouched.');
+  const resolvedDir = probe.status === 0 && probe.stdout.trim()
+    ? path.dirname(probe.stdout.trim())
+    : null;
+  if (resolvedDir && stubIdentityOk(resolvedDir)) {
+    console.log('[repair-langsmith-stub] the inert stub resolves — leaving the install untouched.');
     process.exit(0);
+  }
+  if (resolvedDir && path.resolve(resolvedDir) !== path.resolve(stubTarget)) {
+    // Nested under a dependency, so writing the root stub cannot shadow it. Reported, not
+    // silently repaired: `assert-no-langsmith` is the fail-closed gate that must see this.
+    console.error(`[repair-langsmith-stub] WARNING: a non-stub "langsmith" resolves from ${resolvedDir}.`);
+    console.error('The LangSmith containment is broken there — reinstall with `npm ci` and check the `overrides` entry.');
   }
 
   rmSync(stubTarget, { force: true, recursive: true });
