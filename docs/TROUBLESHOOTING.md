@@ -78,6 +78,15 @@ automatically; if it was skipped — `node_modules` copied between machines,
 `--ignore-scripts` in effect — run `node scripts/repair-langsmith-stub.mjs`
 manually, or reinstall with `npm ci`.
 
+**`WARNING: a non-stub "langsmith" resolves from …` from that hook.** A real
+LangSmith package — not the inert stub — is resolving from somewhere in
+`node_modules` that the root stub cannot shadow (a tree copied between machines,
+an `overrides` entry temporarily reverted). The hook reports it instead of
+claiming success, because writing the root stub would not change what resolves.
+Delete `node_modules`, reinstall with `npm ci`, and confirm the `overrides`
+entry for `langsmith` in [`package.json`](../package.json) is intact. The
+`assert-no-langsmith` gate step is the fail-closed check that must stay green.
+
 **Bundle fails after pulling changes with a missing or wrong package version.**
 The `node_modules` tree predates the lockfile. Delete `node_modules` and run
 `npm ci`; a carried-over tree from another machine or OS (e.g. a Windows

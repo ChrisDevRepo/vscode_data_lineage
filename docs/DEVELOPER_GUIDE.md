@@ -80,6 +80,16 @@ applies if `vsce package` or `vsce publish` is invoked directly — pass
 ([`tests/tools/assert-package-contents.mjs`](../tests/tools/assert-package-contents.mjs))
 falls back to that flag automatically when it recognizes the false positive.
 
+**Excluding a file from the VSIX takes three edits, not one.** `vsce` never
+reads `.gitignore`, so gitignoring an editor/agent artifact keeps it out of the
+repository and leaves it in the shipped package. A new pattern needs an entry in
+[`.gitignore`](../.gitignore) (do not commit it), an entry in
+[`.vscodeignore`](../.vscodeignore) (do not package it), and a forbidden pattern
+in [`tests/tools/assert-package-contents.mjs`](../tests/tools/assert-package-contents.mjs)
+(prove it is absent). The gate's `package contents` step is the only evidence;
+without the third edit a leak is invisible, and without the second the gate fails
+at packaging time instead of the file simply being omitted.
+
 ## Two ingestion paths, one model
 
 Both paths produce the same `DatabaseModel` consumed by `graphBuilder.ts`.

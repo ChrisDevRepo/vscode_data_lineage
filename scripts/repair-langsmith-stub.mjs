@@ -12,7 +12,9 @@
  *
  * This script runs as `postinstall`: whenever the resolved `langsmith` is missing, dangling,
  * or not the stub, it replaces it with a real-directory copy of `stubs/langsmith`. Idempotent,
- * offline, and safe to run repeatedly.
+ * offline, and safe to run repeatedly. One case it reports instead of repairing: a non-stub
+ * `langsmith` resolving from elsewhere in the tree, which the root stub cannot shadow —
+ * `assert-no-langsmith` is the fail-closed gate for that.
  */
 
 import { spawnSync } from 'node:child_process';
