@@ -418,9 +418,10 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * Facts only: writers/readers are derived purely from {@link SmResult.edges} (`written by` = the
  * `from` ends of edges INTO the node; `read by` = the `to` ends of edges FROM it); type is read
  * from {@link SmResult.fullNodes}, action from `node_states`. The base set is `fullNodes`, which
- * `getResult` already restricts to reachable, non-pruned nodes and — in CT — to the column-flow
- * scope, so pruned nodes never appear here (belt-and-suspenders: an explicit `prune` action is
- * also filtered). Deterministic: nodes and neighbor lists sort by id, ids lowercased.
+ * `getResult` already restricts to reachable, non-pruned nodes in both modes, so pruned nodes never
+ * appear here (belt-and-suspenders: an explicit `prune` action is also filtered). A CT dependency
+ * that carries no value into the traced column is kept and unslotted, so it surfaces here and earns
+ * its caption. Deterministic: nodes and neighbor lists sort by id, ids lowercased.
  *
  * @param result - Completed SM result: `fullNodes` the rendered kept set, `detail_slots` the
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
@@ -463,7 +464,8 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
  * rendered flow-role block — the only place the model is told which nodes are terminal sources;
  * those are not reconstructable from the raw archive fields. The block is the CT column chain when
  * column edges exist, else the BB node-edge flow-role buckets — both via the shared
- * {@link computeFlowRoleGroups}. Off-trace nodes (no edges) are excluded by the scope filter. The
+ * {@link computeFlowRoleGroups}. A kept node with no column edge is absent from the flow-role
+ * buckets by construction, so it is never offered as a terminal-source candidate. The
  * reminder then also carries the {@link buildPassthroughFlowFacts} digest — grounded writer/reader
  * facts for kept nodes with no detail slot, which otherwise have no semantic content to document.
  */
