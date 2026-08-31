@@ -261,18 +261,26 @@ function unionBranchFieldDescriptor(
  * level contributes a `"Invalid input"` variant that names no field and no defect; spliced, variant
  * numbering counts real alternatives. A branch mixing nested-union and leaf sub-issues keeps its
  * leaves as one branch next to the spliced ones. Bounded by the schema's own static nesting.
+ *
+ * @param prefix - Path of the nested union being spliced, relative to the outermost union's own
+ * path. Rebased onto every leaf it yields, so a nested union sitting on a named field
+ * (`depth.upstream`) keeps that field in the reason and in `issuePaths` instead of collapsing to
+ * its parent — the collapsed name resolves to the wrong value when the message is enriched.
  */
-function flattenUnionBranches(issue: InvalidUnionIssue): (readonly z.core.$ZodIssue[])[] {
+function flattenUnionBranches(
+  issue: InvalidUnionIssue,
+  prefix: readonly PropertyKey[] = [],
+): (readonly z.core.$ZodIssue[])[] {
   const out: (readonly z.core.$ZodIssue[])[] = [];
   for (const branch of issue.errors.length > 0 ? issue.errors : [[]]) {
     const leaves: z.core.$ZodIssue[] = [];
     let spliced = false;
     for (const sub of branch) {
       if (sub.code === 'invalid_union') {
-        out.push(...flattenUnionBranches(sub));
+        out.push(...flattenUnionBranches(sub, [...prefix, ...sub.path]));
         spliced = true;
       } else {
-        leaves.push(sub);
+        leaves.push(prefix.length > 0 ? { ...sub, path: [...prefix, ...sub.path] } : sub);
       }
     }
     if (leaves.length > 0 || !spliced) out.push(leaves);

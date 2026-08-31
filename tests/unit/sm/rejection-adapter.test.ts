@@ -285,6 +285,27 @@ describe('rejection-adapter', () => {
       }
     });
 
+    it('a nested union on a named field keeps that field in the prose, the echo, and issuePaths', () => {
+      // Class: the shipped `depth` schema — an outer union whose object branch carries a per-side
+      // union (`{upstream: number | "all"}`). Splicing the nested level must rebase its leaves onto
+      // the field it sits on: collapsed to the parent name, the reason blames `depth`, the echo
+      // resolves to the whole object (so no `sent:` at all), and `issuePaths` never names the one
+      // side the model has to change.
+      const sideUnion = z.union([z.number().int().min(0), z.literal('all')]);
+      const depthUnion = z.object({
+        depth: z.union([z.number().int().min(1), z.object({ upstream: sideUnion, downstream: sideUnion })]),
+      });
+      const input = { depth: { upstream: 'two', downstream: 1 } };
+      const nestedResult = depthUnion.safeParse(input);
+      expect(nestedResult.success, 'a bad per-side value fails the nested union as expected').toBe(false);
+      if (!nestedResult.success) {
+        const rejection = rejectionFromZodError(nestedResult.error, { code: 'invalid_tool_input', input });
+        expect(rejection.reason.includes('depth.upstream:'), 'the nested leaf names the offending side, not its parent').toBe(true);
+        expect(rejection.reason.includes('sent: "two"'), 'the echo resolves at the rebased path, not the parent object').toBe(true);
+        expect(rejection.issuePaths?.includes('depth.upstream'), 'issuePaths name the offending side').toBe(true);
+      }
+    });
+
     it('regression pin: a non-union error keeps the "<path>: <message>" format untouched', () => {
       const nonUnionResult = z.object({ name: z.string() }).strict().safeParse({});
       expect(nonUnionResult.success, 'non-union schema fails as expected').toBe(false);
