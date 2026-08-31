@@ -2961,7 +2961,7 @@ export class NavigationEngine implements IHopStateMachine {
     const finalEdges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
       if (finalNodeIds.has(e.source) && finalNodeIds.has(e.target)) {
-        finalEdges.push([e.source, e.target, edgeApiType(e.type)]);
+        finalEdges.push([e.source, e.target, edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '')]);
       }
     }
 

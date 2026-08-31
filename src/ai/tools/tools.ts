@@ -48,9 +48,10 @@ const COLUMN_SEARCH_LIMIT = 50;
  * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge type.
  */
 export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
+  const nodeTypeById = new Map(model.nodes.map(n => [n.id, n.type]));
   const m = new Map<string, string>();
   for (const e of model.edges) {
-    m.set(`${e.source}→${e.target}`, edgeApiType(e.type));
+    m.set(`${e.source}→${e.target}`, edgeApiType(e.type, nodeTypeById.get(e.source) ?? ''));
   }
   return m;
 }
@@ -228,7 +229,8 @@ export function getContext(
     }
     return base;
   });
-  const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type)]);
+  const nodeTypeById = new Map(model.nodes.map(n => [n.id, n.type]));
+  const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type, nodeTypeById.get(e.source) ?? '')]);
   const catalogChars = JSON.stringify(catalog).length + JSON.stringify(edges).length;
 
   const summary = {
@@ -608,7 +610,7 @@ export function getScopeBundle(
 
   const edges = model.edges
     .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
-    .map(e => [e.source, e.target, edgeApiType(e.type)] as [string, string, string]);
+    .map(e => [e.source, e.target, edgeApiType(e.type, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
 
   const nodes = [...scopeIds]
     .map(id => nodeMap.get(id))
