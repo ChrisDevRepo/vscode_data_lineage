@@ -2,12 +2,12 @@
   "model": "AdventureWorks2025_AI.dacpac",
   "stats": {
     "nodes": 148,
-    "edges": 170
+    "edges": 169
   },
   "analysis": {
     "cycles": {
       "groupCount": 4,
-      "totalNodes": 10
+      "totalNodes": 9
     },
     "islands": {
       "groupCount": 6,
