@@ -1072,4 +1072,16 @@ describe("CT target boundary: object references are never columns", () => {
     expect(ok === null, 'setColumnTargets: real column accepted').toBe(true);
     expect(engine.columnAspect?.active_columns.join(','), 'setColumnTargets: real column adopted').toBe('order_id');
   });
+
+  it("checkColumnTargets reports the same reject without adopting anything", () => {
+    // The supplement path widens the allowlist and extends the agenda before it applies follow-up
+    // context, so it screens the target list with this side-effect-free check first; a reject
+    // raised only by `setColumnTargets` would land after those mutations.
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const reject = engine.checkColumnTargets(['[dbo].[src_table]']);
+    expect(reject !== null && reject.error === 'target_columns_name_objects', 'checkColumnTargets: object reference reported').toBe(true);
+    expect(reject?.hint, 'checkColumnTargets: hint is the single owned envelope').toBe(engine.setColumnTargets(['[dbo].[src_table]'])?.hint);
+    expect(engine.checkColumnTargets(['order_id']), 'checkColumnTargets: real column reports no reject').toBeNull();
+    expect(!engine.columnAspect, 'checkColumnTargets: neither call adopts a column aspect').toBe(true);
+  });
 });

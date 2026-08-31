@@ -99,14 +99,10 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       }
 
       // Supplements retain the completed engine while updating the follow-up mission context.
-      // A rejected CT target list aborts the supplement before any context is applied — the
-      // engine refuses object references as columns on every path, so the reject is surfaced
-      // rather than swallowed.
-      const applyFollowUpContext = (engine: NavigationEngine): { error: string; hint: string } | null => {
-        if (data.analysisMode === 'ct' && data.targetColumns?.length) {
-          const columnTargetReject = engine.setColumnTargets(data.targetColumns);
-          if (columnTargetReject) return columnTargetReject;
-        }
+      // The CT target list is screened before the supplement mutates anything (see the
+      // `checkColumnTargets` call below), so by this point adoption cannot fail.
+      const applyFollowUpContext = (engine: NavigationEngine): void => {
+        if (data.analysisMode === 'ct' && data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
         if (data.classification) sess.setClassification(data.classification);
         if (data.mission_brief !== undefined) sess.memory.setMissionBrief(data.mission_brief);
         // User-authored text wins over the model's paraphrase for the canonical question.
@@ -117,7 +113,6 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           pendingInitQuestion: undefined,
         });
         if (canonicalQuestion) sess.memory.setUserQuestion(canonicalQuestion);
-        return null;
       };
 
       // Supplement is origin-less by contract; an explicit origin starts a fresh exploration.
@@ -133,6 +128,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
             hint: "supplement requires a completed prior exploration. Current engine status: none. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
           }, loggedInput);
         }
+        // Screened before `admitSupplementTargets`/`supplementAgenda`: both widen the allowlist
+        // and extend the agenda of the completed engine, so a CT target list refused after them
+        // would leave those mutations behind and make the corrected resend a no-op supplement.
+        if (data.analysisMode === 'ct' && data.targetColumns?.length) {
+          const columnTargetReject = priorEngine.checkColumnTargets(data.targetColumns);
+          if (columnTargetReject) return s.logAndReturn('start_exploration', columnTargetReject, loggedInput);
+        }
         const supplementIds = data.supplement.nodeIds ?? [];
         // Extend-then-supplement, the same ordering the approve gate uses: naming a node in a
         // follow-up is the consent that widens the allowlist to reach it. `supplementAgenda` stays a
@@ -142,8 +144,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         priorEngine.admitSupplementTargets(supplementIds);
         const res = priorEngine.supplementAgenda(supplementIds);
         if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
-        const followUpReject = applyFollowUpContext(priorEngine);
-        if (followUpReject) return s.logAndReturn('start_exploration', followUpReject, loggedInput);
+        applyFollowUpContext(priorEngine);
         // Unguarded by design: tool dispatch runs synchronously inside the owning turn's graph-owned
         // generation attempt, so the live `turnEpoch` is always this turn's — the guard would always accept.
         sess.enterExploring(s.turnEpoch(sess));

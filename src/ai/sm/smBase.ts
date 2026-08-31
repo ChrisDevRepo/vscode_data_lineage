@@ -782,6 +782,23 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Reports the rejection a CT target list would earn for naming objects instead of columns,
+   * without adopting anything.
+   *
+   * @remarks
+   * Lets a caller refuse the whole request before it commits any other state — the supplement
+   * path widens the allowlist and extends the agenda before it applies follow-up context, so
+   * asking {@link setColumnTargets} would only surface the reject after those mutations landed.
+   *
+   * @param targetColumns - Column names the caller is about to adopt.
+   * @returns A rejection envelope when a target names an object, otherwise `null`.
+   */
+  public checkColumnTargets(targetColumns: readonly string[]): { error: string; hint: string } | null {
+    const nodeRefs = this.nodeRefColumnTargets(targetColumns);
+    return nodeRefs.length > 0 ? this.rejectNodeRefColumnTargets(nodeRefs) : null;
+  }
+
+  /**
    * Updates column-trace target columns for the current session.
    *
    * @remarks
@@ -794,8 +811,8 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns A rejection envelope when a target names an object, otherwise `null`.
    */
   public setColumnTargets(targetColumns: string[]): { error: string; hint: string } | null {
-    const nodeRefs = this.nodeRefColumnTargets(targetColumns);
-    if (nodeRefs.length > 0) return this.rejectNodeRefColumnTargets(nodeRefs);
+    const reject = this.checkColumnTargets(targetColumns);
+    if (reject) return reject;
     this.tracer = new ColumnTracer(targetColumns);
     this.mode = { kind: 'ct' };
     return null;
