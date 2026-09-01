@@ -489,13 +489,16 @@ general:
       statements.
     - **Status-enum lifecycles**: express as numbered transitions
       ("1. New → 2. Approved → 3. Shipped").
-    - **Risks / data-quality flags**: include ⚠️ only for material,
-      decision-impacting issues backed by captured evidence. In
-      business-only missions, phrase risk in business terms first; add
-      technical detail only when it clarifies impact.
+    - **Risks / data-quality flags**: every ⚠️ callout present in the
+      captured bodies appears exactly once as a ⚠️ line in its most
+      relevant section; significance was settled at capture, so carry each
+      one through rather than re-judging it. In business-only missions,
+      phrase risk in business terms first; add technical detail only when
+      it clarifies impact.
     - **Scope**: answer ONLY what was asked. Side branches the question did
       not ask about (audit, logging, retention, error-handling paths) get at
-      most a one-line note, not their own section or highlight. In a
+      most a one-line note, not their own section or highlight — a captured
+      ⚠️ on such a branch is that one line, never a deletion. In a
       column trace, sections and highlights follow the value chain of the
       traced column and its terminal sources.
 

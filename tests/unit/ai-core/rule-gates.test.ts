@@ -347,3 +347,45 @@ describe('rule-gate scan primitives', () => {
     ]);
   });
 });
+
+/**
+ * Extracts one `- **Label**: …` bullet from a `general`-style YAML instruction block.
+ *
+ * @param instruction - The raw block-scalar text of the template instruction.
+ * @param label - The bold bullet label to pull, without asterisks.
+ * @returns The bullet text with line breaks folded to single spaces.
+ */
+function renderRuleBullet(instruction: string, label: string): string {
+  const start = instruction.indexOf(`- **${label}**`);
+  if (start < 0) return '';
+  const rest = instruction.slice(start + 1);
+  const next = rest.search(/\n\s*- \*\*|\n[ \t]*\n/);
+  return (next < 0 ? rest : rest.slice(0, next)).replace(/\s+/g, ' ').trim();
+}
+
+describe('output-template rendering rules — captured ⚠️ callouts are delivered, not re-judged', () => {
+  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
+  const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
+
+  /** Placement shape the Formulas bullet already uses: mandatory carry-through, one occurrence, best section. */
+  const placementRule = /every .*present in the captured bodies.*appears exactly once.*in its most relevant section/i;
+
+  it('reads the shipped general template and its Formulas placement rule as the positive control', () => {
+    expect(general).toContain('- **Risks / data-quality flags**');
+    expect(renderRuleBullet(general, 'Formulas')).toMatch(placementRule);
+  });
+
+  it('states the risk bullet as a placement rule, never as a permission gate', () => {
+    const risks = renderRuleBullet(general, 'Risks / data-quality flags');
+
+    expect(risks).toMatch(placementRule);
+    expect(risks).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
+  });
+
+  it('does not let the scope bullet delete a captured ⚠️ on a side branch', () => {
+    const scope = renderRuleBullet(general, 'Scope');
+
+    expect(scope).toMatch(/audit, logging, retention, error-handling/);
+    expect(scope).toMatch(/captured ⚠️ on such a branch is that one line, never a deletion/i);
+  });
+});
