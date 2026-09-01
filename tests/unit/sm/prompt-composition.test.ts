@@ -389,6 +389,67 @@ describe('prompt composition', () => {
     expect(buildCtSynthesisBlock('target', [])).toContain('zero-trace answer');
   });
 
+  it('states edge direction so a sibling reader is never narrated as upstream', () => {
+    const edge = (from: string, to: string, hop: number) => ({
+      hop_node: to, hop, from_node: from, from_col: 'Amount', to_node: to, to_col: 'Amount',
+    });
+    // `sibling` READS stage, exactly as the origin does — it feeds nothing and is on no path to
+    // `target`. Hop order alone puts it between two genuinely upstream hops.
+    const ct = buildCtSynthesisBlock('target', [
+      edge('raw', 'stage', 1),
+      edge('stage', 'target', 2),
+      edge('stage', 'sibling', 3),
+      edge('target', 'consumer', 4),
+    ]);
+
+    expect(ct).toContain('- upstream (data flows INTO the origin): raw, stage');
+    expect(ct).toContain('- downstream (data flows OUT of the origin): consumer');
+    expect(ct).toContain('and lie on NO path to or from the origin: sibling');
+    expect(ct).toContain('HOP order, which is NOT direction order');
+    expect(ct).toContain('Never describe a side branch as upstream');
+  });
+
+  it('states edge direction identically in BB and CT — no per-mode clone', () => {
+    const bb = buildBbSynthesisBlock('target', [
+      ['raw', 'stage', 'lineage'],
+      ['stage', 'target', 'lineage'],
+      ['stage', 'sibling', 'lineage'],
+      ['target', 'consumer', 'lineage'],
+    ]);
+
+    expect(bb).toContain('- upstream (data flows INTO the origin): raw, stage');
+    expect(bb).toContain('- downstream (data flows OUT of the origin): consumer');
+    expect(bb).toContain('and lie on NO path to or from the origin: sibling');
+  });
+
+  it('keeps a source upstream when the column chain routes its hop through a writer proc', () => {
+    const edge = (from: string, to: string, hop: number) => ({
+      hop_node: to, hop, from_node: from, from_col: 'Amount', to_node: to, to_col: 'Amount',
+    });
+    // The column chain records `loader` only as a `to` — the proc writes `stage`, and that write
+    // lives in the node edges alone. Reading direction off the column edges strands `raw` and
+    // `loader` outside every bucket and renders both as side branches.
+    const ct = buildCtSynthesisBlock(
+      'target',
+      [edge('raw', 'loader', 1), edge('stage', 'target', 2)],
+      undefined,
+      [['raw', 'loader', 'lineage'], ['loader', 'stage', 'writes_to'], ['stage', 'target', 'lineage']],
+    );
+
+    expect(ct).toContain('- upstream (data flows INTO the origin): loader, raw, stage');
+    expect(ct).toContain('the origin: (none)');
+  });
+
+  it('reports empty direction buckets rather than omitting them', () => {
+    const ct = buildCtSynthesisBlock('target', [
+      { hop_node: 'target', hop: 1, from_node: 'raw', from_col: 'A', to_node: 'target', to_col: 'A' },
+    ]);
+
+    expect(ct).toContain('- upstream (data flows INTO the origin): raw');
+    expect(ct).toContain('- downstream (data flows OUT of the origin): (none)');
+    expect(ct).toContain('the origin: (none)');
+  });
+
   it('assembles one decision contract and escapes mission XML once', () => {
     const assembled = [
       buildGeneralSystemPrompt('active', { dbPlatform: 'SQL Server', filterSchemas: ['dbo'], totalSchemaCount: 1, visibleNodes: 10, totalNodes: 10 }),
