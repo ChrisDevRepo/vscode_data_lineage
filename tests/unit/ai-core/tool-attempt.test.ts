@@ -1100,6 +1100,40 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(replayed.map((message) => String(message.content)).join(' ')).toContain('[ai].[vwpricelist]');
   });
 
+  it('logs a [Reject] line for every rejection it raises without a dispatch, so the log and the trace count the same rejections', async () => {
+    const { registry } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { text: 'Two objects changed.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    const logged: string[] = [];
+    const traced: string[] = [];
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < 3; index++) {
+      state = recordToolAttempt(state, await executeToolAttempt(port, plan, {
+        priorState: state,
+        debugLog: (message) => { logged.push(message); },
+        traceSyntheticRejection: (rejection) => { traced.push(rejection.code); },
+      }));
+    }
+
+    expect(traced).toEqual([REJECTION_CODES.duplicateRead]);
+    const rejectLines = logged.filter((message) => message.startsWith('[Reject]'));
+    expect(rejectLines).toHaveLength(traced.length);
+    expect(rejectLines[0]).toContain(`code=${REJECTION_CODES.duplicateRead}`);
+    expect(rejectLines[0]).toContain('tool=lineage_get_screen_state');
+    expect(rejectLines[0]).toContain('callId=call-2');
+  });
+
   it('retires a rejection once the same tool is accepted, so the repaired call is not replayed as a standing correction', async () => {
     const { registry } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
     const port = new ScriptedModelPort([
