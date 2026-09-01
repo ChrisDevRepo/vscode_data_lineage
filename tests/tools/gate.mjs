@@ -57,6 +57,9 @@ const STEPS = [
   ...(existsSync('.claude/hooks/test_guard.py')
     ? [{ name: 'process guards', cmd: 'python3', args: ['.claude/hooks/test_guard.py'] }]
     : []),
+  ...(existsSync('.claude/hooks/test_continuity.py')
+    ? [{ name: 'loop continuity', cmd: 'python3', args: ['.claude/hooks/test_continuity.py'] }]
+    : []),
   // Structural, so it runs with the other seconds-long checks rather than with the suites. Line
   // coverage cannot answer this: a rule matched by no fixture still reads as covered.
   { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },
