@@ -282,11 +282,42 @@ only synthesis-stage output reaches the user.
 BB is whole-object analysis. It supports focus verdicts, semantic route
 requests, and engine-validated neighbor pruning.
 
-CT is activated only for explicitly named target columns. It uses the same
-agenda and lifecycle model but requires structured `column_flow` at every
-active submission. Validated upstream column edges drive continuation and are
-preserved for synthesis. CT rejects BB-only neighbor pruning; focus pruning
-still uses the topology-safe engine path.
+CT is BB plus column tracking, never a parallel traversal. It runs the same
+agenda, the same approved scope, the same retention, and the same lifecycle;
+what it adds is that the AI records in `column_flow` which upstream columns feed
+each output column, and that the engine tracks and verifies those records. CT is
+activated only for explicitly named target columns and requires structured
+`column_flow` at every active submission.
+
+The engine's role over `column_flow` is verification, not authorship. It checks
+every declared column against the loaded model, rejects a reference the model
+cannot support, and returns the repair with the rejection, so the AI fails early
+and corrects itself on the next attempt instead of carrying an unsupported chain
+into the answer. Validated upstream column edges drive continuation, are
+preserved for synthesis, and drive emphasis and flow-role grouping. They never
+bound the result: the result scope is the approved BFS scope in both modes, so an
+object that restricts the row set, sets the grain, or feeds a sibling column is
+retained exactly as BB retains it even though it carries no column edge.
+
+CT reuses BB rather than restating it. A behaviour both modes share has one
+implementation and one instruction, composed by both; CT contributes only the
+column-tracking additions on top. A mode-specific copy of a shared rule is the
+defect pattern this design exists to prevent — two copies drift, and the drift
+is invisible until a run diverges. Where a shared guard leaves a single
+implementation behind, the abstraction that carried the two variants is deleted
+with it.
+
+Neighbor visibility is the same in both modes. CT presents the focus node's
+neighbors, and permits routing to them, exactly as BB does — including a neighbor
+that carries none of the traced columns. A view joined with `INNER JOIN`
+restricts the row set through that join, and whether it filters is answerable
+only by reading the view; that reading is part of the trace, not a side branch.
+Withholding such a neighbor from CT would ask the model to describe a column's
+provenance while hiding what decides which rows survive.
+
+CT rejects BB-only neighbor pruning; focus pruning still uses the topology-safe
+engine path. Any other behavioural difference between the two modes is a defect
+in CT, not a design choice.
 
 Both modes keep process state separate from detail text. A table can therefore
 be an important source, target, or passthrough in the final graph even when it
