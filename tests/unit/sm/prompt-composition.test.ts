@@ -22,8 +22,10 @@ import { UNKNOWN_DB_PLATFORM, type DatabaseModel } from '../../../src/engine/typ
 import {
   buildBbSynthesisBlock,
   buildCtSynthesisBlock,
+  buildSmCompletionEnvelope,
   buildSmProtocol,
 } from '../../../src/ai/prompting/smPrompts';
+import type { SmResult } from '../../../src/ai/sm/smTypes';
 import { buildWorkerHopMessage } from '../../../src/ai/agent/stagePrompts';
 import { getAllowedLmToolNames } from '../../../src/ai/tools/toolPolicy';
 
@@ -475,6 +477,26 @@ describe('prompt composition', () => {
     expect(active).not.toContain('already_started');
     expect(active).not.toContain('ACTIVE-PHASE TOOL BOUNDARY');
     expect(active).toContain('REJECTION SELF-REPAIR');
+  });
+
+  // The synthesis reminder rides the completion tool_result at the highest-attention slot, so a
+  // permission gate stated there is the last word the model reads on ⚠️ callouts and outranks the
+  // placement rule assets/aiOutputTemplates.yaml carries. Both surfaces must state the same rule.
+  it('places captured ⚠️ callouts at synthesis instead of re-adjudicating significance', () => {
+    const result: SmResult = {
+      status: 'complete',
+      originNodeId: '[dbo].[origina]',
+      fullNodes: [{ id: '[dbo].[origina]', s: 'dbo', n: 'origina', t: 'view' }],
+      edges: [],
+      detail_slots: [],
+      node_states: [],
+      columnAspect: null,
+    };
+    const reminder = buildSmCompletionEnvelope(result, 'What feeds NetAmountA?', []).synthesis_reminder;
+    const policy = reminder.split('\n').find((line) => line.startsWith('- ⚠️ callout policy')) ?? '';
+
+    expect(policy).toContain('significance was settled at capture');
+    expect(policy).not.toMatch(/only for significant|include risk callouts only/i);
   });
 
   it('pins the tool-policy allow-lists the split boundary sentence depends on', () => {

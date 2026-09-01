@@ -382,6 +382,19 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
     expect(risks).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
   });
 
+  // The `closing` block is the second synthesis surface that renders ⚠️ lines (its example is a
+  // Risk/Scope table), so a surviving permission gate here re-opens the significance question the
+  // general risks bullet already closed.
+  it('states the closing risk block as a placement rule, never as a permission gate', () => {
+    const closing = asset
+      .slice(asset.indexOf('\nclosing:'), asset.indexOf('\nhighlights:'))
+      .replace(/\s+/g, ' ');
+
+    expect(closing).toMatch(/significance was settled at capture/i);
+    expect(closing).not.toMatch(/only when there is a significant/i);
+    expect(closing).not.toMatch(/omit risk callouts/i);
+  });
+
   it('does not let the scope bullet delete a captured ⚠️ on a side branch', () => {
     const scope = renderRuleBullet(general, 'Scope');
 
