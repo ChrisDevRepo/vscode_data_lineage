@@ -36,27 +36,35 @@ import { postToWebview } from '../../../bridge/host';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 
-function findMissingCtTerminalSources(
+// Required set mirrors buildPassthroughFlowFacts' qualifying filter (kept, minus slotted, minus
+// pruned) narrowed to the traced column chain, not to edge-terminal sources: a staging table that is
+// both a from_node and a to_node was excluded by the terminal seed and could never be flagged.
+// Off-chain scope nodes stay out — the CT prompt keeps them out of the column-chain narrative.
+// Accepted surfaces are the three the synthesis self-check names, highlight colour immaterial.
+function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
   input: PresentResultInput,
   resolvedNodeIds: string[],
+  slottedNodeIds: readonly string[],
 ): string[] {
   const edges = resultGraph?.columnAspect?.edges ?? [];
   if (edges.length === 0) return [];
-  const toNodes = new Set(edges.map(e => e.to_node));
-  const terminalSources = Array.from(new Set(edges.map(e => e.from_node)))
-    .filter(id => !toNodes.has(id) && resolvedNodeIds.includes(id));
-  if (terminalSources.length === 0) return [];
+  const lc = (id: string): string => id.toLowerCase();
+  const exempt = new Set<string>(slottedNodeIds.map(lc));
+  for (const st of resultGraph?.node_states ?? []) if (st.action === 'prune') exempt.add(lc(st.nodeId));
+  const chain = new Set(edges.flatMap(e => [lc(e.from_node), lc(e.to_node), lc(e.hop_node)]));
+  const required = resolvedNodeIds.filter(id => chain.has(lc(id)) && !exempt.has(lc(id)));
+  if (required.length === 0) return [];
 
   const linked = new Set<string>();
   for (const sec of input.sections ?? []) {
-    for (const id of sec.node_ids ?? []) linked.add(id);
+    for (const id of sec.node_ids ?? []) linked.add(lc(id));
   }
   for (const group of input.highlight_groups ?? []) {
-    if (group.color !== 'source') continue;
-    for (const id of group.node_ids ?? []) linked.add(id);
+    for (const id of group.node_ids ?? []) linked.add(lc(id));
   }
-  return terminalSources.filter(id => !linked.has(id));
+  for (const note of input.notes ?? []) linked.add(lc(note.node_id));
+  return required.filter(id => !linked.has(lc(id)));
 }
 
 function notePresentResultFailure(sess: AiSession, token: number, data: object): void {
@@ -94,8 +102,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         : null;
 
       // One reject funnel for every uniform failure exit: session-note + logged return, optionally
-      // dropping the held repair draft first. The two draft-HOLDING rejects below (CT terminal
-      // sources, repairable validation) intentionally bypass this — they preserve the draft.
+      // dropping the held repair draft first. The two draft-HOLDING rejects below (CT chain
+      // coverage, repairable validation) intentionally bypass this — they preserve the draft.
       const reject = (failure: object, opts: { clearDraft?: boolean } = {}): string => {
         if (opts.clearDraft) sess.presentResultRepairDraft.clear();
         notePresentResultFailure(sess, turnEpoch, failure);
@@ -346,17 +354,17 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (isVisualPreview && previewNarrative) {
         externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, presentInput));
       }
-      const missingTerminalSources = findMissingCtTerminalSources(resultGraph, presentInput, resolvedNodeIds);
-      if (missingTerminalSources.length > 0) {
+      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, presentInput, resolvedNodeIds, sess.memory.notedNodeIds);
+      if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
           field: 'sections',
           messages: [
-            `CT terminal source node(s) missing from final presentation: ${quoteIds(missingTerminalSources, 5)}.`,
-            'Link them in sections[].node_ids or include them in highlight_groups[] with color:"source". Tables can be source nodes even when they have no detail slot.',
+            `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes, 5)}.`,
+            'For each one: add its id to a sections[].node_ids, or to any highlight_groups[].node_ids, or give it one grounded notes[].node_id caption. Tables carry the traced column even when they have no detail slot.',
           ],
-          repairFields: ['sections', 'highlight_groups'],
-          paths: ['sections', 'highlight_groups'],
-          soleHint: 'Fix CT source presentation only. Keep existing section text where possible; add the terminal source table(s) to the source section or source highlight group.',
+          repairFields: ['sections', 'highlight_groups', 'notes'],
+          paths: ['sections', 'highlight_groups', 'notes'],
+          soleHint: 'Fix CT node coverage only. Keep existing section text where possible; add each named node to a section, a highlight group, or notes[].',
         });
       }
 
