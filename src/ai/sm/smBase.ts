@@ -2900,6 +2900,13 @@ export class NavigationEngine implements IHopStateMachine {
     const outSet = new Set(this.graph.outNeighbors(focusId));
     const ids = Array.from(new Set([...inSet, ...outSet]));
     const hasSchemaFilter = this.sessionAllowedSchemas.size > 0;
+    const edgeVerb = new Map<string, string>();
+    for (const e of this.model.edges) {
+      if (e.source !== focusId && e.target !== focusId) continue;
+      const other = e.source === focusId ? e.target : e.source;
+      const verb = edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '');
+      if (verb !== 'read' || !edgeVerb.has(other)) edgeVerb.set(other, verb);
+    }
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const boundary = this.visited.has(nid) ? 'cycle' : 'none';
@@ -2910,7 +2917,7 @@ export class NavigationEngine implements IHopStateMachine {
       const neighbor: HopNeighbor = {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: inSet.has(nid) ? 'upstream' : 'downstream',
-        edge_type: 'read', boundary, ...(cols?.length ? { cols } : {}),
+        edge_type: edgeVerb.get(nid) ?? 'read', boundary, ...(cols?.length ? { cols } : {}),
       };
 
       const d = this.depthFromOrigin.get(nid);
