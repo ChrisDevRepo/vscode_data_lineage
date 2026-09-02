@@ -66,7 +66,7 @@ export const PathFinderBar = memo(function PathFinderBar({
   });
 
   const mergedDropdownRef = useCallback((node: HTMLDivElement | null) => {
-    (dropdownRef).current = node;
+    dropdownRef.current = node;
     refs.setFloating(node);
   }, [dropdownRef, refs]);
 

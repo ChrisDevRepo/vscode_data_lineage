@@ -26,11 +26,8 @@ const marked = new Marked({ gfm: true, breaks: false })
     },
   });
 
-// KaTeX positions glyphs with inline styles and exposes the source through `data-latex`.
-const SANITIZE_CONFIG = {
-  ADD_ATTR: ['data-latex'],
-  ALLOW_DATA_ATTR: true,
-};
+// KaTeX exposes each expression's source through `data-latex`; `style` is in DOMPurify's default allowlist.
+const SANITIZE_CONFIG = { ADD_ATTR: ['data-latex'] };
 
 /**
  * Renders an engine-assembled AI description to sanitized HTML.
@@ -44,5 +41,5 @@ const SANITIZE_CONFIG = {
  * @returns Sanitized HTML ready for insertion into the overlay.
  */
 export function renderAiMarkdown(description: string): string {
-  return DOMPurify.sanitize(marked.parse(description) as string, SANITIZE_CONFIG);
+  return DOMPurify.sanitize(marked.parse(description, { async: false }), SANITIZE_CONFIG);
 }

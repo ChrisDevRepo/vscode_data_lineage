@@ -115,6 +115,7 @@ function ColumnTraceRowLine({
   return (
     <div
       style={style}
+      role="listitem"
       tabIndex={0}
       aria-label={ariaLabel}
       onMouseEnter={() => onColumnHover(nodeId, row.name)}
@@ -218,7 +219,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         )}
       </div>
 
-      <div style={{ position: 'relative', height: rowsBlockHeight, flexShrink: 0 }}>
+      <div role={rowsVisible ? 'list' : undefined} style={{ position: 'relative', height: rowsBlockHeight, flexShrink: 0 }}>
         {rowsVisible ? (
           view.rows.map((row) => (
             <ColumnTraceRowLine

@@ -85,6 +85,24 @@ const NOTES_ZOOM_OUT = 0.45;
 /** Zoom above which AI notes are shown once they are hidden. */
 const NOTES_ZOOM_IN = 0.55;
 
+/** Font size of the transformation glyph on a column-view edge. */
+const COLUMN_EDGE_LABEL_FONT_SIZE = 15;
+
+/** Font weight of the transformation glyph on a column-view edge. */
+const COLUMN_EDGE_LABEL_FONT_WEIGHT = 700;
+
+/** Arrow-head width and height, in px, of a column-view edge. */
+const COLUMN_EDGE_MARKER_SIZE = 14;
+
+/** Stroke width of a column-view edge lit by hover or selection. */
+const COLUMN_EDGE_LIT_STROKE_WIDTH = 1.6;
+
+/** Stroke width of a column-view edge outside the lit set. */
+const COLUMN_EDGE_DIM_STROKE_WIDTH = 1;
+
+/** Opacity of a column-view edge outside the lit set. */
+const COLUMN_EDGE_DIM_OPACITY = 0.25;
+
 /**
  * Max time (ms) to wait for a pending zoom target to appear in flowNodes before
  * giving up and showing a warning.
@@ -896,7 +914,6 @@ export function GraphCanvas({
     []
   );
 
-  /** Hide AI notes when zoomed out below threshold for readability. */
   /**
    * Shows or hides AI notes as the canvas crosses the legibility zoom.
    *
@@ -1191,11 +1208,11 @@ export function GraphCanvas({
           targetHandle: edge.targetHandle,
           ...(edge.state === 'transformation' ? { label: '⚙' } : {}),
           labelShowBg: false,
-          labelStyle: { fill: 'var(--ln-ai-bu)', fontSize: 15, fontWeight: 700 },
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+          labelStyle: { fill: 'var(--ln-ai-bu)', fontSize: COLUMN_EDGE_LABEL_FONT_SIZE, fontWeight: COLUMN_EDGE_LABEL_FONT_WEIGHT },
+          markerEnd: { type: MarkerType.ArrowClosed, width: COLUMN_EDGE_MARKER_SIZE, height: COLUMN_EDGE_MARKER_SIZE },
           style: {
-            strokeWidth: lit ? 1.6 : 1,
-            opacity: lit ? 1 : 0.25,
+            strokeWidth: lit ? COLUMN_EDGE_LIT_STROKE_WIDTH : COLUMN_EDGE_DIM_STROKE_WIDTH,
+            opacity: lit ? 1 : COLUMN_EDGE_DIM_OPACITY,
           },
         };
       });
