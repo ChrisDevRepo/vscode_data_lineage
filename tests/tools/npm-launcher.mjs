@@ -1,5 +1,6 @@
 // Resolve npm-family CLI entry points and spawn them through Node so tooling has identical
 // argument semantics on Windows and POSIX without invoking platform launcher shims.
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -47,4 +48,32 @@ export function npmCommand(tool, args) {
   const cli = resolveNpmCli(tool);
   if (cli) return { cmd: nodeBin, args: [cli, ...args], viaShim: false };
   return { cmd: tool, args: [...args], viaShim: true };
+}
+
+/** Memoized result of {@link pythonCommand} — probing spawns a process, so repeat callers must not each pay for it. */
+let cachedPythonBin;
+
+/**
+ * Resolves a Python 3 interpreter on PATH by name, without assuming `python3` is what a given
+ * machine exposes.
+ *
+ * @returns {string | null} `'python3'` or `'python'`, whichever answers `--version` first, or
+ *   `null` when neither is on PATH.
+ *
+ * @remarks
+ * Probed once per process and cached: a step that needs this every run should not re-spawn a
+ * probe process per call. Callers treat `null` as a reason to skip their step, not to fail it —
+ * an interpreter missing from PATH says nothing about whether the step's own check would pass.
+ */
+export function pythonCommand() {
+  if (cachedPythonBin !== undefined) return cachedPythonBin;
+  for (const candidate of ['python3', 'python']) {
+    const probe = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
+    if (!probe.error && probe.status === 0) {
+      cachedPythonBin = candidate;
+      return cachedPythonBin;
+    }
+  }
+  cachedPythonBin = null;
+  return cachedPythonBin;
 }
