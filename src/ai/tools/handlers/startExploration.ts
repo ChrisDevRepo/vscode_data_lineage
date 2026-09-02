@@ -211,11 +211,10 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const engineLog = toEngineLog(s.logger);
       // Proposal preview uses an unpublished engine with isolated memory. It is discarded after
       // computing the scope summary; approval is the sole site that creates active engine state.
-      // `classification` is intentionally left unset on this preview instance: it only reaches
-      // getScopeSummary(), never a hop dispatch (the getHopContext() fall-through below is
-      // unreachable for this path — phase/refine guards route here first), so
-      // shouldPreserveTechContext() never runs against it. Its unset default (preserve tech
-      // context) is the conservative choice, so an unreachable read would still be safe.
+      // `classification` is assigned once resolved below so the approval card's "Reporting on"
+      // line can read it through getScopeSummary(); it never reaches a hop dispatch here (the
+      // getHopContext() fall-through is unreachable for this path — phase/refine guards route
+      // here first).
       const engine = new NavigationEngine(m, g, engineLog, { activeFilter }, sess.columnStore);
 
       engine.sessionId = sess.id;
@@ -300,6 +299,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (!classification) {
         return s.logAndReturn('start_exploration', { error: 'missing_field', hint: 'classification is required for the exploration proposal.' }, loggedInput);
       }
+      engine.classification = classification;
       // Native approval Markdown is the review surface, so every in-scope object must be visible.
       const summary = engine.getScopeSummary(AI_MAX_SCOPE_NODE_IDS);
       const nextProposal = {
@@ -320,7 +320,10 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         return s.logAndReturn('start_exploration', { error: 'stale_turn', hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
-      s.logger.debug(`[AI] [Proposal] revision=${sess.pendingExploration!.revision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
+      // Captured once, before the discovery-memo round-trip below: the card, the memo attachment
+      // and the gate all name the revision that was reviewed, whatever a later refine does.
+      const proposalRevision = sess.pendingExploration!.revision;
+      s.logger.debug(`[AI] [Proposal] revision=${proposalRevision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
 
       // Discovery is content-blind: always gate before any analysis runs.
       // Refine path: re-emit the gate with the new tree so the loop continues.
@@ -338,7 +341,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
 
         const classLabel = CLASSIFICATION_LABEL[classification] + (isCt ? ' (Column Trace)' : '');
-        const baseDetail = `${renderScopeSummaryMd(summary, sess.pendingExploration!.revision)}\n\n_Analysis: ${classLabel}_`;
+        const baseDetail = `${renderScopeSummaryMd(summary, proposalRevision)}\n\n_Analysis: ${classLabel}_`;
         // Composed once per shown revision, never recomposed at approval — the same cached string
         // later rides verbatim into `NavigationEngine.setDiscoverySummary`. Missing discovery
         // context or a degraded compose just omits the memo; it never blocks the approval card.
@@ -354,7 +357,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
             engine,
           );
           if (discoverySummary) {
-            const attached = sess.attachDiscoverySummary(sess.pendingExploration!.revision, discoverySummary, s.turnEpoch(sess));
+            const attached = sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess));
             if (attached.kind !== 'accepted') discoverySummary = undefined;
           }
         }
@@ -371,7 +374,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           classes,
           nodeIds: [],
           detail,
-          proposalRevision: sess.pendingExploration!.revision,
+          proposalRevision,
         });
         const hint = isRefining
           ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
