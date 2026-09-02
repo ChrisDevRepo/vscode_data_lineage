@@ -11,6 +11,7 @@ import type { RenderStateSnapshot, ScreenStateExtras } from '../../bridge/debugD
 import { TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { escapePromptText } from '../support/text';
 import { checkScopeBudget, estimateTokens } from '../support/tokenBudget';
 
 /** Maximum node ids listed per screen-fact list before the remainder is reported as a count. */
@@ -387,7 +388,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
  * phrase names the surfaces present, never their contents, which stay behind the tool call.
  *
  * @param uiState - Latest `filter-changed` ui-state buffer, unvalidated.
- * @returns The phrase, or `null` when no trace, analysis, or bookmark is applied.
+ * @returns The phrase, entity-escaped for its prompt slot, or `null` when no trace, analysis, or bookmark is applied.
  */
 export function describeScreen(uiState: unknown): string | null {
   const { ui, extras } = screenStateParts(uiState);
@@ -413,5 +414,5 @@ export function describeScreen(uiState: unknown): string | null {
       ? `the AI bookmark "${name}" (what its run found about each object, the pruning decisions, and the open questions are stored)`
       : `the bookmark "${name}"`);
   }
-  return parts.length > 0 ? parts.join('; ') : null;
+  return parts.length > 0 ? escapePromptText(parts.join('; ')) : null;
 }
