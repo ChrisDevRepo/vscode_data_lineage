@@ -5,51 +5,11 @@ import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { Tooltip } from './ui/Tooltip';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { CloseIcon } from './ui/CloseIcon';
-import type { ObjectType } from '../engine/types';
+import type { CustomNodeData, TraceNeighborOption } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
-
-/** One selectable direct neighbor for interactive trace add/prune controls. */
-export type TraceNeighborOption = {
-  /** Stable node ID passed back to trace edit handlers. */
-  id: string;
-  /** Display name shown in the neighbor picker. */
-  label: string;
-  /** Schema displayed with the neighbor label. */
-  schema: string;
-  /** Object kind used for compact type badges in the picker. */
-  objectType: ObjectType;
-};
 
 /** User action supported by the interactive trace node controls. */
 type TraceNeighborAction = 'add' | 'prune';
-
-/** Per-node callbacks and candidate lists for interactive trace editing. */
-export type TraceNodeControls = {
-  /** Controls for upstream direct-neighbor trace edits. */
-  in: TraceSideControls;
-  /** Controls for downstream direct-neighbor trace edits. */
-  out: TraceSideControls;
-  /** Adds the selected direct neighbor to the current trace scope. */
-  onAdd: (nodeId: string) => void;
-  /** Removes the selected node from the current trace scope when safe. */
-  onPrune: (nodeId: string) => void;
-};
-
-/** Add/prune candidates and disabled-copy for one lineage side of a node. */
-export type TraceSideControls = {
-  /** Direct neighbors that can be added on this side. */
-  add: TraceNeighborOption[];
-  /** Visible trace nodes that can be pruned on this side. */
-  prune: TraceNeighborOption[];
-  /** Reason add controls are disabled, or an empty string when enabled. */
-  addDisabledReason: string;
-  /** Reason prune controls are disabled, or an empty string when enabled. */
-  pruneDisabledReason: string;
-  /** Total direct neighbors on this side (drives hide-vs-disable for add). */
-  neighborCount: number;
-  /** Direct neighbors on this side already in the trace (drives hide-vs-disable for prune). */
-  visibleNeighborCount: number;
-};
 
 type TraceNeighborPicker = {
   action: TraceNeighborAction;
@@ -161,47 +121,6 @@ function TraceNeighborPickerToolbar({
   );
 }
 
-/**
- * The business data associated with a single node in the React Flow canvas.
- */
-export type CustomNodeData = {
-  /** Display label rendered inside the node. */
-  label: string;
-  /** Schema name used for grouping, color selection, and tooltips. */
-  schema: string;
-  /** Fully qualified object name used by detail and debug surfaces. */
-  fullName: string;
-  /** Object kind that drives icon, color, and tooltip behavior. */
-  objectType: ObjectType;
-  /** Count of upstream dependencies shown in node metadata. */
-  inDegree: number;
-  /** Count of downstream dependents shown in node metadata. */
-  outDegree: number;
-  /** Whether the node is de-emphasized in the current scoped view. */
-  dimmed?: boolean;
-  /** Highlight state applied by search, trace, or AI presentation. */
-  highlighted?: boolean | 'yellow';
-  /** External reference subtype for file, database, or external-table nodes. */
-  externalType?: 'et' | 'file' | 'db';
-  /** File or URL target displayed for file-based external references. */
-  externalUrl?: string;
-  /** Database name displayed for cross-database external references. */
-  externalDatabase?: string;
-  /** Resolved schema color supplied by the parent graph projection. */
-  schemaColor?: string;
-  /** AI-authored badge rendered above the node. */
-  aiBadge?: { text: string };
-  /** AI-authored note rendered below the node. */
-  aiNote?: { text: string };
-  /** AI-authored highlight styling applied to the node border and glow. */
-  aiHighlight?: { color: string; glow: string; shadow: string };
-  /** Whether the scoped-view remove control is shown. */
-  showRemoveButton?: boolean;
-  /** Removes the node from the active allowlist-backed view. */
-  onRemoveFromView?: (nodeId: string) => void;
-  /** Interactive trace controls for adding or pruning direct neighbors. */
-  traceControls?: TraceNodeControls;
-};
 
 function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
