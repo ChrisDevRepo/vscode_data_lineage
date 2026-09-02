@@ -11,6 +11,7 @@
  * These tests pin the CONTRACT, never a captured answer.
  */
 import { renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRenderer';
+import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
@@ -142,5 +143,59 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     });
     expect('error' in result, 'an unknown filter id must reject rather than silently no-op').toBe(true);
     expect((result as { unresolved_excludeNodeIds?: string[] }).unresolved_excludeNodeIds?.includes('nowhere') === true, 'the rejection names the id that could not be resolved').toBe(true);
+  });
+
+  // ── A6: the discovery memo shown at the gate is the memo the engine runs ─────────
+  // The memo is composed once, at proposal time, and cached on the reviewed proposal.
+  // Approval reads that cached text and hands it to the engine verbatim; a memo composed
+  // again at approval would put text in front of the model that the user never reviewed.
+  const EMPTY_FILTER = {
+    schemas: [], types: [], hideIsolated: false, focusSchemas: [],
+    showExternalRefs: false, externalRefTypes: [],
+  };
+
+  /** Stores one reviewable proposal on `session` and returns its revision. */
+  function storeProposal(session: AiSession, epoch: number, engine: NavigationEngine): number {
+    session.storePendingExploration({
+      init: { question: 'trace downstream', origin: 'n0', analysisMode: 'bb', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } },
+      classification: 'business',
+      activeFilter: EMPTY_FILTER,
+      summary: engine.getScopeSummary(),
+    }, epoch);
+    return session.pendingExploration!.revision;
+  }
+
+  it('A6: the memo attached at proposal reaches the engine as the same text at approval', () => {
+    const session = new AiSession();
+    const epoch = session.beginTurn();
+    const engine = newEngine();
+    engine.init({ origin: 'n0', question: 'trace downstream', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+    const revision = storeProposal(session, epoch, engine);
+
+    const memo = 'The user asked which reports depend on n0; n0 feeds a two-level chain.';
+    session.attachDiscoverySummary(revision, memo, epoch);
+    // Read before activation, exactly as the approval path does — activation clears the proposal.
+    const reviewed = session.pendingExploration!.discoverySummary;
+    expect(reviewed === memo, 'the attached memo is the reviewed proposal text, not a copy').toBe(true);
+
+    const outcome = session.activatePendingExploration(revision, epoch, () => engine);
+    expect(outcome.kind === 'accepted', `approval accepts the reviewed revision (got ${outcome.kind})`).toBe(true);
+    expect(session.pendingExploration === null, 'activation consumes the proposal, so the memo must be read before it').toBe(true);
+    engine.setDiscoverySummary(reviewed!);
+    expect(engine.getDiscoverySummary() === memo, 'the engine carries the reviewed memo verbatim').toBe(true);
+  });
+
+  it('A6b: a memo composed against a superseded revision never replaces the reviewed one', () => {
+    const session = new AiSession();
+    const epoch = session.beginTurn();
+    const engine = newEngine();
+    engine.init({ origin: 'n0', question: 'trace downstream', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+    const first = storeProposal(session, epoch, engine);
+    session.attachDiscoverySummary(first, 'memo for the first revision', epoch);
+
+    const second = storeProposal(session, epoch, engine);
+    expect(second !== first, 'a refine round produces a new revision').toBe(true);
+    session.attachDiscoverySummary(first, 'a late compose for the revision the user already left', epoch);
+    expect(session.pendingExploration!.discoverySummary === undefined, 'the superseded compose is dropped rather than shown as the reviewed memo').toBe(true);
   });
 });

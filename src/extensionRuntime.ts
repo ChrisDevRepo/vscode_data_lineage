@@ -149,8 +149,9 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     // Retain contributed language-model tools for external VS Code compatibility.
     // Their invocations route through the same canonical strict registry builder;
     // the @lineage runtime dispatches its graph calls directly.
+    const runStoreLogger = Logger.create(outputChannel, 'AI');
     const aiToolHost = {
-      getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId),
+      getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
     };
     context.subscriptions.push(
       ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),

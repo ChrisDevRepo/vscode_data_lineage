@@ -168,6 +168,19 @@ function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn): DiscoveryTranscriptT
 export class AiSession {
   /** Unique session identifier for log correlation and telemetry. */
   public id: string;
+  /**
+   * Identifier of the exploration approved in this chat, or `null` before the first approval.
+   *
+   * @remarks
+   * A presented run is what a bookmark recalls, and a chat can hold several: two explorations
+   * sharing the chat session id made a bookmark saved from the first resolve against the second.
+   * Minted at {@link activatePendingExploration} — the sole publisher of an engine, so exactly one
+   * id exists per approved run — and cleared by {@link resetExploration}. A presentation with no
+   * approved exploration behind it (a discovery-turn render) falls back to {@link id}.
+   */
+  public explorationRunId: string | null = null;
+  /** Count of explorations approved in this chat; the suffix that makes each run id unique. */
+  private explorationCounter = 0;
   /** Orchestrates short-term narrative and long-term technical memory. */
   public readonly memory: AiMemoryManager;
 
@@ -494,6 +507,7 @@ export class AiSession {
   public resetExploration(): void {
     this.memory.reset();
     this.stateMachine = null;
+    this.explorationRunId = null;
     this.pendingExploration = null;
     this.resultGraph = null;
     this.discoveryScopeArtifact = null;
@@ -799,6 +813,9 @@ export class AiSession {
       const classification = ClassificationSchema.parse(proposal.classification);
       built.publishMemoryTo(this.memory);
       this.stateMachine = built;
+      // Minted with the engine, so the run a presentation stamps is the run that produced it.
+      this.explorationCounter += 1;
+      this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
       this.classification = classification;
       this.pendingExploration = null;
       this.enterExploring(token);

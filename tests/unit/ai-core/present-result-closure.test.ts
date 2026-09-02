@@ -11,6 +11,7 @@ import {
   validatePresentResult,
 } from '../../../src/ai/tools/presentResult';
 import { PresentResultModelSchema, PresentResultRepairPatchSchema } from '../../../src/ai/tools/toolSchemas';
+import { AiSession } from '../../../src/ai/session/session';
 
 
 describe('Present Result Closure', () => {
@@ -333,5 +334,15 @@ describe('Present Result Closure', () => {
   it('a false structural flag wins even when the error text looks like the old repairable-allowlist pattern', () => {
     const result = { success: false as const, errors: ['highlight_groups node_ids must be explained by sections'], hint: 'x', repairable: false, repairFields: [] };
     expect(!isRepairablePresentResultFailure(result), 'a false structural flag wins even when the error text looks like the old repairable-allowlist pattern').toBe(true);
+  });
+
+  // A presentation that never went through the approval gate — a discovery-turn render — has
+  // no exploration to belong to. It still has to carry an id, so the bookmark it is saved from
+  // resolves to something; the chat session id is that fallback.
+  it('a presentation with no approved exploration still carries an id', () => {
+    const session = new AiSession();
+    expect(session.explorationRunId, 'no exploration has been approved in this chat').toBeNull();
+    expect((session.explorationRunId ?? session.id).length > 0, 'the presentation falls back to the chat session id').toBe(true);
+    expect(session.explorationRunId ?? session.id, 'the fallback is the chat session id itself').toBe(session.id);
   });
 });

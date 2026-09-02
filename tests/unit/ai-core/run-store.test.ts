@@ -8,36 +8,44 @@ import {
   writeStoredRun,
   UNKNOWN_DDL_HASH,
 } from '../../../src/ai/session/runStore';
+import { AiSession } from '../../../src/ai/session/session';
+import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { PresentationArtifact } from '../../../src/ai/session/types';
 import type { SmState } from '../../../src/ai/sm/smTypes';
+import type { LineageNode } from '../../../src/engine/types';
 import { ProjectReadSchema, ProjectSchema, type FilterProfile } from '../../../src/engine/shared/bridgeContract';
+import { makeGraph } from '../helpers/testUtils';
+import { makeModel, makeNode } from '../sm/helpers/fixtures';
 
 const DDL: Record<string, string> = {
   '[ai].[a]': 'CREATE VIEW [ai].[a] AS SELECT 1;',
   '[ai].[b]': 'CREATE VIEW [ai].[b] AS SELECT 2;',
 };
 
+// A real engine checkpoint, not a hand-shaped stand-in: the record is read back through the same
+// navigation-snapshot contract the engine restores from, so a fictional snapshot would prove the
+// wrong thing about what survives a read.
+const SNAPSHOT_NODES: LineageNode[] = [
+  makeNode({ id: '[ai].[a]', schema: 'ai', name: 'a', type: 'view' }),
+  makeNode({ id: '[ai].[b]', schema: 'ai', name: 'b', type: 'view' }),
+  makeNode({ id: '[ai].[c]', schema: 'ai', name: 'c', type: 'view' }),
+];
+const SNAPSHOT_EDGES: Array<[string, string]> = [['[ai].[b]', '[ai].[a]'], ['[ai].[c]', '[ai].[b]']];
+
+/** Builds one real `engine.toJSON()` checkpoint over the three-view fixture chain. */
+function engineCheckpoint(): SmState {
+  const engine = new NavigationEngine(
+    makeModel(SNAPSHOT_NODES, SNAPSHOT_EDGES, ['ai']),
+    makeGraph(SNAPSHOT_NODES, SNAPSHOT_EDGES),
+    () => {},
+    {},
+  );
+  engine.init({ origin: '[ai].[a]', question: 'q', direction: 'upstream', depthIntent: { kind: 'full_frontier' } });
+  return JSON.parse(JSON.stringify(engine.toJSON())) as SmState;
+}
+
 function checkpoint(overrides: Partial<SmState> = {}): SmState {
-  return {
-    snapshotVersion: 1,
-    columnAspect: null,
-    status: 'complete',
-    hopCount: 1,
-    scopeSize: 3,
-    scopeNodeIds: ['[ai].[a]', '[ai].[b]', '[ai].[c]'],
-    visited: [],
-    removedSet: [],
-    nodeStates: [],
-    agendaSize: 0,
-    agenda: [],
-    currentFocusNodeId: null,
-    memory: { userQuestion: 'q', detailSlots: {}, slotCount: 0, missionBrief: '', scopeNotes: [], verdictCounts: { analyze: 0, passthrough: 0, prune: 0 }, recentRejections: [] },
-    engineInternals: {
-      initSnapshot: { question: 'q', origin: '[ai].[a]', analysisMode: 'bb', direction: 'upstream', depthIntent: { kind: 'default_start' } },
-      pendingLeads: [],
-    },
-    ...overrides,
-  } as unknown as SmState;
+  return { ...engineCheckpoint(), ...overrides } as SmState;
 }
 
 function artifact(overrides: Partial<PresentationArtifact> = {}): PresentationArtifact {
@@ -187,7 +195,9 @@ describe('run-store writes', () => {
     const store = fakeMemento();
     const run = buildStoredRun(profile(), artifact(), getDdl)!;
     await writeStoredRun(store, 'bm-1', run);
-    expect(readStoredRun(store, 'bm-1')).toBe(run);
+    // Value equality, not identity: the read validates the stored record rather than handing back
+    // whatever object the store holds.
+    expect(readStoredRun(store, 'bm-1')).toEqual(run);
   });
 
   it('returns undefined for a bookmark id with no record', () => {
@@ -217,6 +227,115 @@ describe('run-store writes', () => {
     await writeStoredRun(store, 'bm-1', run);
     await clearStoredRun(store, 'bm-1');
     expect(readStoredRun(store, 'bm-1')).toBeUndefined();
+  });
+
+  it('ignores a record whose snapshot is not a navigation checkpoint, and says so once at debug', async () => {
+    const store = fakeMemento();
+    const run = buildStoredRun(profile(), artifact(), getDdl)!;
+    await store.update(aiRunStorageKey('bm-1'), { ...run, snapshot: { nonsense: true } });
+    const debug: string[] = [];
+    expect(readStoredRun(store, 'bm-1', { debug: (line: string) => debug.push(line) })).toBeUndefined();
+    expect(debug.length).toBe(1);
+    expect(debug[0]).toContain('bm-1');
+  });
+
+  it('keeps a record carrying an unknown top-level key from a newer build', async () => {
+    const store = fakeMemento();
+    const run = buildStoredRun(profile(), artifact(), getDdl)!;
+    await store.update(aiRunStorageKey('bm-1'), { ...run, unknownFutureField: { nested: true } });
+    expect(readStoredRun(store, 'bm-1')?.runId).toBe('run-7');
+  });
+
+  it('keeps a record whose origin or ddlHashes are the wrong shape, without them', async () => {
+    const store = fakeMemento();
+    const run = buildStoredRun(profile(), artifact(), getDdl)!;
+    await store.update(aiRunStorageKey('bm-1'), { ...run, origin: 42, ddlHashes: 'not-a-map' });
+    const read = readStoredRun(store, 'bm-1');
+    expect(read?.runId).toBe('run-7');
+    expect(read?.origin).toBeNull();
+    expect(read?.ddlHashes).toEqual({});
+  });
+
+  it('round-trips a real engine checkpoint unchanged', async () => {
+    const store = fakeMemento();
+    const nodes: LineageNode[] = [
+      makeNode({ id: '[ai].[a]', schema: 'ai', name: 'a', type: 'view' }),
+      makeNode({ id: '[ai].[b]', schema: 'ai', name: 'b', type: 'view' }),
+    ];
+    const edges: Array<[string, string]> = [['[ai].[b]', '[ai].[a]']];
+    const engine = new NavigationEngine(
+      makeModel(nodes, edges, ['ai']),
+      makeGraph(nodes, edges),
+      () => {},
+      {},
+    );
+    engine.init({ origin: '[ai].[a]', question: 'trace', direction: 'upstream', depthIntent: { kind: 'explicit', levels: 1 } });
+    const snapshot = JSON.parse(JSON.stringify(engine.toJSON()));
+    await store.update(aiRunStorageKey('bm-1'), {
+      schemaVersion: 1, runId: 'run-7', savedAt: new Date().toISOString(),
+      origin: '[ai].[a]', ddlHashes: {}, snapshot,
+    });
+    expect(readStoredRun(store, 'bm-1')?.snapshot).toEqual(snapshot);
+  });
+});
+
+describe('exploration run id', () => {
+  const nodes: LineageNode[] = [
+    makeNode({ id: '[ai].[a]', schema: 'ai', name: 'a', type: 'view' }),
+    makeNode({ id: '[ai].[b]', schema: 'ai', name: 'b', type: 'view' }),
+  ];
+  const edges: Array<[string, string]> = [['[ai].[b]', '[ai].[a]']];
+  const model = makeModel(nodes, edges, ['ai']);
+
+  const EMPTY_FILTER = {
+    schemas: [], types: [], hideIsolated: false, focusSchemas: [],
+    showExternalRefs: false, externalRefTypes: [],
+  };
+
+  /** Approves one exploration on `session` exactly as the gate does, and returns its run id. */
+  function approve(session: AiSession): string {
+    const engine = new NavigationEngine(model, makeGraph(nodes, edges), () => {}, {});
+    engine.init({ origin: '[ai].[a]', question: 'trace', direction: 'upstream', depthIntent: { kind: 'explicit', levels: 1 } });
+    const epoch = session.beginTurn();
+    session.storePendingExploration({
+      init: { question: 'trace', origin: '[ai].[a]', analysisMode: 'bb', direction: 'upstream', depthIntent: { kind: 'explicit', levels: 1 } },
+      classification: 'business',
+      activeFilter: EMPTY_FILTER,
+      summary: engine.getScopeSummary(),
+    }, epoch);
+    const outcome = session.activatePendingExploration(session.pendingExploration!.revision, epoch, () => engine);
+    expect(outcome.kind).toBe('accepted');
+    return session.explorationRunId ?? session.id;
+  }
+
+  it('mints a fresh id per approved exploration, prefixed with the chat session id', () => {
+    const session = new AiSession();
+    const first = approve(session);
+    const second = approve(session);
+    expect(first).not.toBe(second);
+    expect(first.startsWith(session.id)).toBe(true);
+    expect(second.startsWith(session.id)).toBe(true);
+  });
+
+  it('carries no run id before an approval and drops it again on reset', () => {
+    const session = new AiSession();
+    expect(session.explorationRunId).toBeNull();
+    approve(session);
+    expect(session.explorationRunId).not.toBeNull();
+    session.resetExploration();
+    expect(session.explorationRunId).toBeNull();
+  });
+
+  it('files a bookmark against the run that produced it, not the next run in the same chat', () => {
+    const session = new AiSession();
+    const firstRunId = approve(session);
+    const firstProfile = profile({ aiMetadata: { ...profile().aiMetadata!, runId: firstRunId } });
+    const secondRunId = approve(session);
+    const secondArtifact = artifact({ runId: secondRunId, aiMetadata: { ...artifact().aiMetadata, runId: secondRunId } });
+
+    expect(buildStoredRun(firstProfile, secondArtifact, getDdl)).toBeNull();
+    const secondProfile = profile({ aiMetadata: { ...profile().aiMetadata!, runId: secondRunId } });
+    expect(buildStoredRun(secondProfile, secondArtifact, getDdl)?.runId).toBe(secondRunId);
   });
 });
 
