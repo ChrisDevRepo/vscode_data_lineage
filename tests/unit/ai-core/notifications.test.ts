@@ -69,6 +69,34 @@ describe('notifications', () => {
     expect(notificationMocks.showWarningMessage).toHaveBeenCalledWith('Using built-in defaults.');
   });
 
+  it('caps the toast text and hands the logger the untruncated message', async () => {
+    const { notifyError, notifyInfo, notifyWarning } = await import('../../../src/utils/notifications');
+    const channel = makeChannel();
+    const logger = Logger.create(channel as any, 'Bridge');
+    // Longer than the 400-character toast ceiling, so the cut is observable in the toast and the
+    // absence of a cut is observable in the log line beside it.
+    const message = 'x'.repeat(1_000);
+
+    const shownError = vi.fn();
+    const shownWarning = vi.fn();
+    const shownInfo = vi.fn();
+    notifyError(logger, 'Long failure', message, undefined, undefined, shownError);
+    notifyWarning(logger, 'Long warning', message, undefined, shownWarning);
+    notifyInfo(logger, 'Long notice', message, undefined, shownInfo);
+
+    for (const shown of [shownError, shownWarning, shownInfo]) {
+      const text = String(shown.mock.calls[0]?.[0]);
+      expect(text.startsWith('x'.repeat(400)), 'the toast keeps the leading 400 characters').toBe(true);
+      expect(text, 'and no more of them').not.toContain('x'.repeat(401));
+      expect(text, 'the cut is marked rather than silent').toContain('\u2026');
+    }
+
+    // The untruncated message always reaches the log line that accompanies the toast.
+    expect(String(channel.error.mock.calls[0]?.[0])).toContain(message);
+    expect(String(channel.warn.mock.calls[0]?.[0])).toContain(message);
+    expect(String(channel.info.mock.calls[0]?.[0])).toContain(message);
+  });
+
   it('keeps notification delivery safe and bounded for cyclic and bigint context', async () => {
     const { notifyWarning } = await import('../../../src/utils/notifications');
     const channel = makeChannel();

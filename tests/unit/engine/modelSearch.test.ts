@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  compileSearchRegex,
   regexRejectHint,
-  safeRegex,
   searchBodyScripts,
   searchCatalog,
   searchColumns,
@@ -73,9 +73,13 @@ const nodes: SearchableNode[] = [
 ];
 
 describe('model search', () => {
-  it('compiles case-insensitive regexes and rejects invalid patterns', () => {
-    expect(safeRegex('order')?.test('OrderHeader')).toBe(true);
-    expect(safeRegex('[invalid(')).toBeNull();
+  it('compiles case-insensitive regexes and names the reason it rejects an invalid one', () => {
+    const valid = compileSearchRegex('order');
+    expect(valid.ok && valid.regex.test('OrderHeader')).toBe(true);
+
+    const invalid = compileSearchRegex('[invalid(');
+    expect(invalid.ok).toBe(false);
+    expect(invalid.ok === false && invalid.reason).toBe('syntax');
   });
 
   it('searches and ranks catalog names case-insensitively', () => {
@@ -154,55 +158,62 @@ describe('model search', () => {
 });
 
 describe('regexRejectHint', () => {
+  /** Compiles `pattern`, asserts it was refused, and returns the hint derived from that refusal. */
+  function hintFor(pattern: string): string {
+    const compiled = compileSearchRegex(pattern);
+    if (compiled.ok) throw new Error(`expected ${pattern} to be rejected`);
+    return regexRejectHint(pattern, compiled);
+  }
+
   it('names the flags option instead of blaming nested quantifiers for an inline flag', () => {
-    const hint = regexRejectHint('(?i)order');
+    const hint = hintFor('(?i)order');
     expect(hint).toContain('inline flag');
     expect(hint).toContain('already case-insensitive');
     expect(hint).not.toContain('nested quantifiers');
   });
 
   it('flags a Python-style named group with its JavaScript spelling', () => {
-    const hint = regexRejectHint('(?P<name>foo)');
+    const hint = hintFor('(?P<name>foo)');
     expect(hint).toContain('(?<name>...)');
   });
 
   it('flags an inline comment group as unsupported', () => {
-    expect(regexRejectHint('(?#comment)foo')).toContain('comment group');
+    expect(hintFor('(?#comment)foo')).toContain('comment group');
   });
 
   it('names the missing closing paren for an unbalanced open group', () => {
-    expect(regexRejectHint('foo(bar')).toContain('closing ")"');
+    expect(hintFor('foo(bar')).toContain('closing ")"');
   });
 
   it('names the extra closing paren for an unmatched close', () => {
-    expect(regexRejectHint('foo)bar')).toContain('extra ")"');
+    expect(hintFor('foo)bar')).toContain('extra ")"');
   });
 
   it('names the missing closing bracket for an unterminated character class', () => {
-    expect(regexRejectHint('foo[bar')).toContain('closing "]"');
+    expect(hintFor('foo[bar')).toContain('closing "]"');
   });
 
   it('names the dangling quantifier for a lone repeat operator', () => {
-    expect(regexRejectHint('foo**')).toContain('quantifier');
+    expect(hintFor('foo**')).toContain('quantifier');
   });
 
   it('names the out-of-order character range', () => {
-    expect(regexRejectHint('foo[z-a]')).toContain('lower bound comes first');
+    expect(hintFor('foo[z-a]')).toContain('lower bound comes first');
   });
 
   it('names the duplicate named group', () => {
-    expect(regexRejectHint('(?<n>a)(?<n>b)')).toContain('duplicate');
+    expect(hintFor('(?<n>a)(?<n>b)')).toContain('duplicate');
   });
 
   it('names the out-of-order quantifier bounds', () => {
-    expect(regexRejectHint('a{2,1}')).toContain('minimum comes first');
+    expect(hintFor('a{2,1}')).toContain('minimum comes first');
   });
 
   it('names the trailing backslash', () => {
-    expect(regexRejectHint('foo\\')).toContain('trailing "\\"');
+    expect(hintFor('foo\\')).toContain('trailing "\\"');
   });
 
-  it('falls back to a generic simplify hint for a pattern that already compiles', () => {
-    expect(regexRejectHint('order')).toBe('Simplify the pattern.');
+  it('names catastrophic backtracking for a pattern refused by the ReDoS guard', () => {
+    expect(regexRejectHint('(a+)+$', { ok: false, reason: 'redos' })).toContain('nested quantifiers');
   });
 });

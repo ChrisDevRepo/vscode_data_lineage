@@ -22,10 +22,10 @@ import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
 import { useVsCode } from '../contexts/VsCodeContext';
 
-import { CustomNode, type CustomNodeData, type TraceNeighborOption, type TraceNodeControls, type TraceSideControls } from './CustomNode';
+import { CustomNode } from './CustomNode';
 import { Spinner } from './ui/Spinner';
 import { SchemaNode } from './SchemaNode';
-import type { SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot } from '../engine/types';
+import type { ColumnTraceNodeData, CustomNodeData, SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot, TraceNeighborOption, TraceNodeControls, TraceSideControls } from '../engine/types';
 import { Legend } from './Legend';
 import { deriveLegendSchemas, deriveLegendColorMap } from './legendDerivation';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -44,7 +44,7 @@ import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseMode
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
-import { ColumnTraceNode, type ColumnTraceNodeData } from './ColumnTraceNode';
+import { ColumnTraceNode } from './ColumnTraceNode';
 import {
   buildColumnTraceView,
   columnRowKey,
@@ -531,17 +531,44 @@ export function GraphCanvas({
   const nodesInitialized = useNodesInitialized();
   const vscodeApi = useVsCode();
 
-  /**
-   * Object-view nodes to read while the column view is on stage; `null` in the object view.
-   *
-   * @remarks
-   * Assigned during render once the column-view state exists, because the callbacks that read it are
-   * declared above that state. See {@link objectNodes} for why the override is needed.
-   */
-  const columnViewObjectNodesRef = useRef<FlowNode[] | null>(null);
+  // Local state preserves drag positions across highlight changes. Declared above every callback
+  // that reads it, so the column view is a plain read rather than a value written during render.
+  const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
+  const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
+  const [columnView, setColumnView] = useState(false);
 
-  /** Object-view edges to read while the column view is on stage; `null` in the object view. See {@link columnViewObjectNodesRef} for why this is a ref rather than a direct read of `localEdges`. */
-  const columnViewEdgesRef = useRef<FlowEdge[] | null>(null);
+  // AI metadata comes from the active AI profile or the transient AI preview, whichever is on stage.
+  const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
+
+  /** Column-level rendering of the active trace; null when the run recorded no column findings. */
+  const columnTraceView = useMemo(() => {
+    const relations = activeAiMetadata?.columnAspect?.edges;
+    if (!relations?.length) return null;
+    const objects = new Map<string, ColumnTraceViewObject>();
+    for (const node of flowNodes) {
+      if (node.type === 'schemaNode') continue;
+      const data = node.data as CustomNodeData;
+      objects.set(node.id.toLowerCase(), {
+        id: node.id,
+        label: data.label,
+        schema: data.schema,
+        objectType: data.objectType,
+      });
+    }
+    const verdicts = activeAiMetadata?.nodeVerdicts?.length
+      ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
+      : undefined;
+    return buildColumnTraceView({
+      relations,
+      objects,
+      verdicts,
+      config,
+      layoutDirection: activeAiMetadata?.layoutDirection,
+    });
+  }, [activeAiMetadata, config, flowNodes]);
+
+  /** Whether the column view — not the object view — is the rendering currently on stage. */
+  const columnViewActive = columnView && !!columnTraceView;
 
   /**
    * Node positions in object space, for the callbacks that persist or export them.
@@ -550,10 +577,10 @@ export function GraphCanvas({
    * React Flow's `getNodes()` returns whatever is mounted, so it yields column-trace nodes while the
    * column view is active — the same ids in a different coordinate space, which a bookmark would
    * persist as object positions and a draw.io export would emit as objects. Bookmarks and exports
-   * are object-view artifacts, so they fall back to `localNodes`, the positions that
+   * are object-view artifacts, so they read `localNodes` instead, the positions that
    * `onColumnNodesChange` deliberately leaves untouched. The object view is unaffected.
    */
-  const objectNodes = useCallback(() => columnViewObjectNodesRef.current ?? getNodes(), [getNodes]);
+  const objectNodes = useCallback(() => (columnViewActive ? localNodes : getNodes()), [columnViewActive, localNodes, getNodes]);
 
   // Pending actions after overview schema expansion (zoom to the revealed object)
   const pendingZoomRef = useRef<string | null>(null);
@@ -778,7 +805,7 @@ export function GraphCanvas({
     const clusterNodes: FlowNode<SchemaNodeData>[] = [];
     const exportNodes = objectNodes();
     // Column view renders column-to-column trace edges; export always uses the object-level graph.
-    const exportEdges = columnViewEdgesRef.current ?? getEdges();
+    const exportEdges = columnViewActive ? localEdges : getEdges();
     for (const n of exportNodes) {
       if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
       else exportObjectNodes.push(n as FlowNode<CustomNodeData>);
@@ -794,7 +821,7 @@ export function GraphCanvas({
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [objectNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
   // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   useEffect(() => {
@@ -845,11 +872,7 @@ export function GraphCanvas({
     return () => cancelAnimationFrame(raf);
   }, [clearPendingZoomTimer, flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
-  // Local state preserves drag positions across highlight changes
-  const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
-  const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
   const [notesVisible, setNotesVisible] = useState(true);
-  const [columnView, setColumnView] = useState(false);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
   const [columnPositions, setColumnPositions] = useState<Record<string, { x: number; y: number }>>({});
 
@@ -958,9 +981,7 @@ export function GraphCanvas({
 
   const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
 
-  // Build AI highlight + badge lookups from active AI profile OR transient AI preview
-  const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
-
+  // AI highlight + badge lookups read from the active AI profile or the transient AI preview.
   const aiHighlightMap = useMemo((): Map<string, { color: string; glow: string; shadow: string }> => {
     const m = new Map<string, { color: string; glow: string; shadow: string }>();
     const groups = activeAiMetadata?.highlightGroups;
@@ -989,36 +1010,6 @@ export function GraphCanvas({
     for (const n of notes) m.set(n.nodeId, { text: n.text });
     return m;
   }, [activeAiMetadata]);
-
-  /** Column-level rendering of the active trace; null when the run recorded no column findings. */
-  const columnTraceView = useMemo(() => {
-    const relations = activeAiMetadata?.columnAspect?.edges;
-    if (!relations?.length) return null;
-    const objects = new Map<string, ColumnTraceViewObject>();
-    for (const node of flowNodes) {
-      if (node.type === 'schemaNode') continue;
-      const data = node.data as CustomNodeData;
-      objects.set(node.id.toLowerCase(), {
-        id: node.id,
-        label: data.label,
-        schema: data.schema,
-        objectType: data.objectType,
-      });
-    }
-    const verdicts = activeAiMetadata?.nodeVerdicts?.length
-      ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
-      : undefined;
-    return buildColumnTraceView({
-      relations,
-      objects,
-      verdicts,
-      layoutDirection: activeAiMetadata?.layoutDirection,
-    });
-  }, [activeAiMetadata, flowNodes]);
-
-  const columnViewActive = columnView && !!columnTraceView;
-  columnViewObjectNodesRef.current = columnViewActive ? localNodes : null;
-  columnViewEdgesRef.current = columnViewActive ? localEdges : null;
 
   /**
    * Node-and-column keys reachable from the hovered row in either direction.
@@ -1447,7 +1438,7 @@ export function GraphCanvas({
       )}
 
       <ErrorBoundary
-        resetKey={graphErrorResetKey}
+        resetKey={`${graphErrorResetKey ?? ''}|col:${columnViewActive}`}
         context={graphErrorContext}
         onError={() => {
           // Detail + the VS Code error toast are already emitted by ErrorBoundary.componentDidCatch
