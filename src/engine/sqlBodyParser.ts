@@ -187,7 +187,7 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
   // `extractExternalRefs` scans with `exec` and never advances `lastIndex`, so it spins forever;
   // `collectMatchesWith` spins until its iteration cap; a preprocessing `replace` silently rewrites
   // only the first occurrence and under-cleans the body. One check covers all three.
-  if (!(r.flags).includes('g')) {
+  if (!r.flags.includes('g')) {
     return { valid: false, name, error: `${name}: flags '${r.flags}' must include 'g' — a non-global pattern hangs or silently under-matches` };
   }
 
@@ -416,6 +416,17 @@ function removeBlockComments(sql: string): string {
       while (i < sql.length) {
         if (sql[i] !== '"') { i++; continue; }
         if (sql[i + 1] === '"') { i += 2; continue; } // "" is an escaped quote, not the end
+        i++; break;
+      }
+      continue;
+    }
+    // A bracketed identifier is opaque the same way, and it is the common case: `[Bob's Table]`
+    // must not open a string literal, and `[my/*table]` must not open a comment.
+    if (depth === 0 && sql[i] === '[') {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] !== ']') { i++; continue; }
+        if (sql[i + 1] === ']') { i += 2; continue; } // ]] is an escaped bracket, not the end
         i++; break;
       }
       continue;
