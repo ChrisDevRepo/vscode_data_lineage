@@ -4,6 +4,7 @@ import {
   StartExplorationProviderInputSchema,
   StartExplorationRefineProviderInputSchema,
 } from '../../../src/ai/tools/toolSchemas';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { EntryDetectionSchema } from '../../../src/ai/agent/state';
 import { resolveDepthIntent } from '../../../src/ai/sm/smTypes';
 import {
@@ -259,6 +260,22 @@ describe("start-exploration-schema tests", () => {
 
   const invalidMode = StartExplorationInputSchema.safeParse({ origin: '[s].[t]', analysisMode: 'wrong', classification: 'business' });
   it("invalid mode maps to invalid_enum", () => { expect(!invalidMode.success && buildStartExplorationReject(invalidMode.error, { origin: '[s].[t]', analysisMode: 'wrong', classification: 'business' }).error === 'invalid_enum', 'invalid mode maps to invalid_enum').toBe(true); });
+
+  // A3: one owner for the answer-angle rule. Every branch that carries `classification` projects
+  // the same describe string, so a model never sees two versions of how to pick the value, and
+  // data quality — which the AI cannot inspect — never appears as a selector.
+  const classificationDescriptions = [
+    StartExplorationInputSchema,
+    StartExplorationFreshProviderInputSchema,
+  ].map(schema => {
+    const projected = toModelJsonSchema(schema) as { properties?: Record<string, { description?: string }> };
+    return projected.properties?.classification?.description ?? '';
+  });
+  it("both classification fields advertise one describe string", () => { expect(new Set(classificationDescriptions).size === 1, 'both classification fields advertise one describe string').toBe(true); });
+
+  it("the classification describe states the selection rule", () => { expect(/business.*unless.*technical lens/is.test(classificationDescriptions[0] ?? ''), 'the classification describe states the selection rule').toBe(true); });
+
+  it("the classification describe names no data-quality selector", () => { expect(!(classificationDescriptions[0] ?? '').includes('data-quality'), 'the classification describe names no data-quality selector').toBe(true); });
 
   const missingClassification = StartExplorationInputSchema.safeParse({ origin: '[s].[t]', analysisMode: 'bb' });
   it("omitted required classification maps to missing_field", () => { expect(!missingClassification.success && buildStartExplorationReject(missingClassification.error, { origin: '[s].[t]', analysisMode: 'bb' }).error === 'missing_field', 'omitted required classification maps to missing_field').toBe(true); });
