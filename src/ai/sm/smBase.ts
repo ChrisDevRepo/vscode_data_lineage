@@ -1621,9 +1621,7 @@ export class NavigationEngine implements IHopStateMachine {
           createdHop: 0,
         });
     this.enqueueHop(originNode.id, params.question, 0, 3, { columns: initialActiveColumns, existingTaskId: rootTask.id });
-    if (this.mode.kind !== 'ct' || (initialActiveColumns?.length ?? 0) > 0) {
-      this.seedAgenda(originNode.id, this._direction, initialActiveColumns, rootTask.id);
-    }
+    this.seedAgenda(originNode.id, this._direction, initialActiveColumns, rootTask.id);
     this._status = 'initialized';
 
     return {
