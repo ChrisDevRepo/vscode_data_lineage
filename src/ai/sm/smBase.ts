@@ -2143,12 +2143,6 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (routeRequests.length > 0) {
       for (const req of routeRequests) {
-        if (this.mode.kind === 'ct' && this.tracer?.activeColumns.length === 0) {
-          const nid = resolveModelNodeId(req.nodeId, this.nodeMap) ?? req.nodeId;
-          routeOutcomes.push({ nodeId: nid, accepted: false, reason: 'no_active_columns' });
-          continue;
-        }
-
         const nid = resolveModelNodeId(req.nodeId, this.nodeMap);
         const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nid || !nNode) continue; // Recorded as a nonfatal unresolved notice above.

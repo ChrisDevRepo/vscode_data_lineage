@@ -348,3 +348,237 @@ describe('BB control — the same topology loses nothing today', () => {
     });
   }
 });
+
+/**
+ * A CT walk whose column spine ends at a bodied node.
+ *
+ * `[ct].[vwfilterarm]` declares none of the traced columns, so the engine dispatches it with an
+ * empty active-column set (`getHopContext`: "empty sets still dispatch to the AI"). Its own
+ * upstream `[ct].[vwfilterdeep]` is in scope, unvisited and unqueued — a required neighbour by
+ * `requiredNeighborIds`, and the only way to reach it is a route request from that focus.
+ */
+const ZERO_COLUMN_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
+  ['[ct].[vwzerotop]', V, ['Amount']],
+  ['[ct].[valuesrc]', T, ['Amount']],
+  ['[ct].[vwfilterarm]', V, ['Flag']],
+  ['[ct].[vwfilterdeep]', V, ['Flag']],
+];
+const ZERO_COLUMN_EDGES: ReadonlyArray<readonly [string, string]> = [
+  ['[ct].[valuesrc]', '[ct].[vwzerotop]'],
+  ['[ct].[vwfilterarm]', '[ct].[vwzerotop]'],
+  ['[ct].[vwfilterdeep]', '[ct].[vwfilterarm]'],
+];
+const ZERO_COLUMN_ORIGIN = '[ct].[vwzerotop]';
+const ZERO_COLUMN_FOCUS = '[ct].[vwfilterarm]';
+const ZERO_COLUMN_REQUIRED = '[ct].[vwfilterdeep]';
+
+const ZERO_COLUMN_CASE: RetentionCase = {
+  id: 'zero-active-column focus',
+  origin: ZERO_COLUMN_ORIGIN,
+  tracedColumn: 'Amount',
+  nodes: ZERO_COLUMN_NODES,
+  edges: ZERO_COLUMN_EDGES,
+  reachRequired: [],
+  flow: {},
+  measuredLost: [],
+};
+
+interface RouteOutcome { nodeId: string; accepted: boolean; deferred?: boolean; reason?: string }
+interface SubmitOk { ok?: true; error?: string; route_outcomes?: RouteOutcome[] }
+
+/** Starts a CT trace of `Amount` at the origin and commits the one value-carrying hop. */
+function startZeroColumnTrace(excludeNodeIds?: string[]): NavigationEngine {
+  const { model, graph } = buildWorld(ZERO_COLUMN_CASE);
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const init = engine.init({
+    origin: ZERO_COLUMN_ORIGIN,
+    question: 'trace Amount',
+    direction: 'upstream',
+    analysisMode: 'ct',
+    targetColumns: ['Amount'],
+    depthIntent: { kind: 'explicit', levels: 6 },
+    ...(excludeNodeIds ? { excludeNodeIds } : {}),
+  });
+  expect('ok' in init, 'CT init succeeds').toBe(true);
+
+  const originCtx = engine.getHopContext() as { focus_node?: { id: string } };
+  expect(originCtx.focus_node?.id).toBe(ZERO_COLUMN_ORIGIN);
+  const committed = engine.submitFindings({
+    focus_node_id: ZERO_COLUMN_ORIGIN,
+    sections: [{ angle: 'business' as const, text: 'origin carries Amount' }],
+    summary: 'origin',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[valuesrc]', col: 'Amount' }] }],
+  }) as SubmitOk;
+  expect(committed.error, 'the origin hop commits').toBeUndefined();
+  return engine;
+}
+
+/** Dispatches the next hop and asserts it is the focus whose column spine has ended. */
+function dispatchZeroColumnFocus(engine: NavigationEngine): void {
+  const ctx = engine.getHopContext() as {
+    focus_node?: { id: string };
+    working_memory?: { column_aspect?: { active_columns?: string[] } };
+  };
+  expect(ctx.focus_node?.id, 'the seeded filter arm is dispatched').toBe(ZERO_COLUMN_FOCUS);
+  expect(
+    ctx.working_memory?.column_aspect?.active_columns,
+    'the filter arm declares none of the traced columns, so the hop carries no active column',
+  ).toEqual([]);
+}
+
+describe('CT zero-active-column focus — routes are evaluated, not blanket-refused', () => {
+  it('accepts a route request for a required neighbour when the column spine has ended', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    const required = engine.requiredNeighborIds(ZERO_COLUMN_FOCUS);
+    expect(required, 'the engine requires an account for the deeper arm').toContain(ZERO_COLUMN_REQUIRED);
+
+    const outcome = engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+    }) as SubmitOk;
+
+    expect(outcome.error, 'the zero-column hop commits').toBeUndefined();
+    const routed = (outcome.route_outcomes ?? []).find(o => o.nodeId === ZERO_COLUMN_REQUIRED);
+    expect(routed, 'the route request is reported').toBeDefined();
+    expect(routed?.accepted, `route to ${ZERO_COLUMN_REQUIRED} is accepted, not refused`).toBe(true);
+
+    const next = engine.getHopContext() as { focus_node?: { id: string } };
+    expect(next.focus_node?.id, 'the routed neighbour is dispatched for analysis').toBe(ZERO_COLUMN_REQUIRED);
+  });
+
+  it('never demands and refuses the same neighbour in one hop', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    const required = engine.requiredNeighborIds(ZERO_COLUMN_FOCUS);
+    expect(required.length, 'the invariant is exercised against a non-empty required set').toBeGreaterThan(0);
+
+    const outcome = engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: required.map(id => ({ nodeId: id, question: `what does ${id} contribute to the admitted rows?` })),
+    }) as SubmitOk;
+
+    expect(outcome.error, 'the hop commits').toBeUndefined();
+    // The deadlock the D1 guard would otherwise hit: a neighbour the engine demands an account for
+    // and then refuses to let the model reach. The refused set must never intersect the required set.
+    const refused = (outcome.route_outcomes ?? []).filter(o => !o.accepted && !o.deferred).map(o => o.nodeId);
+    expect(refused.filter(id => required.includes(id)), 'no required neighbour is refused').toEqual([]);
+  });
+
+  it('gives the routed neighbour a detail slot instead of rendering it bare', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+    });
+    const deepCtx = engine.getHopContext() as { focus_node?: { id: string } };
+    expect(deepCtx.focus_node?.id).toBe(ZERO_COLUMN_REQUIRED);
+    engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_REQUIRED,
+      sections: [{ angle: 'business' as const, text: 'deep arm is the suppression source' }],
+      summary: 'deep arm',
+      verdict: 'analyze',
+      column_flow: [],
+    });
+
+    const result = engine.getResult();
+    expect(
+      result.detail_slots.map(slot => slot.nodeId),
+      'the routed neighbour is analyzed, not left as a bare kept node',
+    ).toContain(ZERO_COLUMN_REQUIRED);
+  });
+
+  it('records an unresolved route as a notice and still accepts the valid one in the same hop', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    const outcome = engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: [
+        { nodeId: '[ct].[nosuchobject]', question: 'does this exist?' },
+        { nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' },
+      ],
+    }) as SubmitOk;
+
+    expect(outcome.error, 'a malformed route target never fails the hop').toBeUndefined();
+    const outcomes = outcome.route_outcomes ?? [];
+    expect(outcomes.find(o => o.nodeId === '[ct].[nosuchobject]')?.reason).toBe('unresolved');
+    expect(outcomes.find(o => o.nodeId === ZERO_COLUMN_REQUIRED)?.accepted).toBe(true);
+  });
+
+  it('still refuses an excluded route target, and never counts it as required', () => {
+    const engine = startZeroColumnTrace([ZERO_COLUMN_REQUIRED]);
+    dispatchZeroColumnFocus(engine);
+    const required = engine.requiredNeighborIds(ZERO_COLUMN_FOCUS);
+    expect(required, 'a user-excluded node is never demanded').not.toContain(ZERO_COLUMN_REQUIRED);
+
+    const outcome = engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+    }) as SubmitOk;
+
+    expect(outcome.error, 'the hop commits').toBeUndefined();
+    expect((outcome.route_outcomes ?? []).find(o => o.nodeId === ZERO_COLUMN_REQUIRED)?.reason).toBe('excluded');
+  });
+
+  it('keeps the routed neighbour in the answer when the walk is abandoned before it is analyzed', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+    });
+
+    // No further hop is driven — the routed neighbour is queued and unvisited.
+    const rendered = new Set(engine.getResult().fullNodes.map(n => n.id));
+    expect(rendered.has(ZERO_COLUMN_REQUIRED), 'an abandoned walk keeps its queued, unpruned nodes').toBe(true);
+  });
+});
+
+describe('CT origin seeding — the origin\'s neighbours are always seeded', () => {
+  it('seeds the origin\'s directional neighbours on a CT init', () => {
+    const engine = startZeroColumnTrace();
+    // `[ct].[vwfilterarm]` is on no column_flow edge and was never routed, so the only path onto
+    // the agenda is the init-time seed. Deleting the seed makes this dispatch the completion.
+    dispatchZeroColumnFocus(engine);
+  });
+
+  it('rejects a CT start whose columns resolve empty, so seeding never sees an empty column set', () => {
+    const { model, graph } = buildWorld(ZERO_COLUMN_CASE);
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const init = engine.init({
+      origin: ZERO_COLUMN_ORIGIN,
+      question: 'trace a column the origin does not declare',
+      direction: 'upstream',
+      analysisMode: 'ct',
+      targetColumns: ['NotAColumnOfTheOrigin'],
+      depthIntent: { kind: 'explicit', levels: 6 },
+    }) as { error?: string };
+    expect(init.error, 'CT never starts with an empty resolved column set').toBe('unknown_columns');
+  });
+});
