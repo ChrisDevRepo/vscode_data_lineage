@@ -10,7 +10,7 @@ This project prioritizes stability, logical accuracy, and high-performance SQL p
 ## 2. Development Setup
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) 22 or newer.
+- [Node.js](https://nodejs.org/) 20 or newer (`engines.node` in `package.json`).
 - [VS Code](https://code.visualstudio.com/) at a version allowed by
   `engines.vscode` in `package.json`.
 - A VS Code Language Model Chat provider, such as GitHub Copilot or a compatible

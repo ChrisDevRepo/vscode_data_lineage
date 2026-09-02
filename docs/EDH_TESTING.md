@@ -62,18 +62,31 @@ npm run gate
 The maintained steps live in
 [`tests/tools/gate.mjs`](../tests/tools/gate.mjs). They cover production and
 test type-checking, the generated-tool-manifest drift check
-(`scripts/generate-tool-manifest.mjs --check`), the AI template schema-version
-gate (`tests/tools/assert-template-schema-version.mjs`), the honest-test-label
-check (`tests/tools/assert-honest-test-labels.mjs`), the core-case-completeness
-check (`tests/tools/assert-core-cases-complete.mjs`), the unit-project coverage
+(`scripts/generate-tool-manifest.mjs --check`), the output-template
+schema-version gate (`tests/tools/assert-template-schema-version.mjs`), the
+honest-test-label check (`tests/tools/assert-honest-test-labels.mjs`, which
+scans both the `npmRun(...)` and the inline `{ name: '...' }` step-label
+forms), the core-case-completeness check
+(`tests/tools/assert-core-cases-complete.mjs`), the unit-project coverage
 check that makes the two unit steps add up to the whole suite
-(`tests/tools/assert-unit-projects-cover-all.mjs`), the core unit project — run
-under v8 coverage with per-file floors on `sqlBodyParser.ts`, `graphAnalysis.ts`,
+(`tests/tools/assert-unit-projects-cover-all.mjs`), the layer-direction guard
+(`tests/tools/assert-layer-direction.mjs`) that keeps `src/engine/**` from
+importing `src/components/**`, the core unit project — run under v8 coverage
+with per-file floors on `sqlBodyParser.ts`, `graphAnalysis.ts`,
 `graphBuilder.ts`, `shared/sqlRegex.ts`, and `shared/nodeIdResolution.ts` — and
 the agent-runtime unit project, both bundles plus the integration-test compile,
 package-content safety, and the no-LangSmith boundary. The gate reports every
 configured step instead of stopping after the first failure. It does not launch
 VS Code Electron or contact a model provider.
+
+Three steps are internal-only — the process-guard, loop-continuity, and mock
+improvement-cycle checks under `.claude/hooks/`, never tracked in this
+repository. In a public clone they print as `SKIP` rows naming the reason (the
+script is absent, or no Python interpreter is on `PATH`) rather than vanishing
+from the summary, and the closing tally counts skipped steps apart from the
+green/total ratio. The interpreter for any Python step is resolved by probing
+`python3` then `python` on `PATH`, the same way the gate resolves `node`/`npm`,
+rather than assuming `python3` is the name a given machine exposes.
 
 ## Unit tests
 

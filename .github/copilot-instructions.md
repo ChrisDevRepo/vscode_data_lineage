@@ -107,7 +107,9 @@ Depth follows that rule and splits on who chose it. A level count the model
 reports as stated by the user (`depthIntent.kind` of `explicit` or `asymmetric`)
 is a **hard border**: the engine refuses admission past it, per direction, and
 records the frontier through the same `deferQuestion` path a schema breach uses.
-A depth the model inferred (`default_start`) stays a **soft seed** the model may
+A node reachable on both sides of the origin is judged against each side's own
+ceiling — admitted when either side's distance fits, refused only when neither
+does. A depth the model inferred (`default_start`) stays a **soft seed** the model may
 grow, exactly as before. Which of the two applies is the model's semantic call,
 carried as Zod-validated `depth` — the host never parses the user's text for it —
 and the engine, never the prompt, enforces the result.
@@ -230,12 +232,12 @@ source and tests are the implementation baseline.
 
 `npm run gate` is the deterministic pre-merge check; `CONTRIBUTING.md` and the
 `package.json` scripts list the command set. Beyond type-checking, builds, and the
-unit suites it enforces seven derived contracts: the
-`contributes.languageModelTools` manifest drift check, the AI template
+unit suites it enforces eight derived contracts: the
+`contributes.languageModelTools` manifest drift check, the output template
 schema-version gate, the honest-test-label scan, the core-case-completeness
 check, the unit-project coverage check that makes the two unit steps add up to
-the whole suite, the packaged-VSIX contents check, and the `assert-no-langsmith`
-bundle check.
+the whole suite, the `src/engine` → `src/components` layer-direction guard, the
+packaged-VSIX contents check, and the `assert-no-langsmith` bundle check.
 
 `npm run test:edh` runs the extended VS Code Electron lanes outside the gate,
 against a scripted provider registered through the real `vscode.lm` API — it
@@ -285,9 +287,10 @@ enabled, may contain prompts, customer data, tool payloads, and provider
 responses — they stay in ignored storage and are reviewed before sharing, and
 credentials and authorization headers are never recorded.
 
-Dynamic prompt slots — hop context, tool observations, the user question —
-escape `<`/`>` and carry an untrusted-data banner; `src/ai/agent/toolAttempt.ts`
-and `stagePrompts.ts` hold the established idiom for a new slot.
+Dynamic prompt slots — hop context, tool observations, the user question, the
+host-computed on-screen phrase — escape `<`/`>` through one shared helper and
+carry an untrusted-data banner; `src/ai/agent/toolAttempt.ts` and
+`stagePrompts.ts` hold the established idiom for a new slot.
 
 Third-party prompt sources contribute concepts, not prose. Copying licensed
 prompt or template text near-verbatim requires a tracked third-party-notices
