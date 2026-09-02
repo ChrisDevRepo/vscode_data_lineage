@@ -194,6 +194,8 @@ const EngineInternalsSchema = z.object({
   totalNodes: NonNegativeInt,
   userSchemas: z.array(z.string()),
   sessionAllowedSchemas: z.array(z.string()),
+  // Absent in a checkpoint written before follow-up consent became id-level; restores as none.
+  sessionAllowedNodeIds: z.array(NonEmptyString).optional(),
   excludedTypes: z.array(NonEmptyString),
   excludedSchemas: z.array(NonEmptyString),
   excludedNodeIds: z.array(NonEmptyString),
@@ -219,7 +221,7 @@ const EngineInternalsSchema = z.object({
 }).strict().transform(({ qualityGuards: _legacyQualityGuards, ...internals }) => internals);
 
 /** Current fail-closed NavigationEngine persistence contract. */
-const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
+export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   snapshotVersion: z.literal(1),
   columnAspect: ColumnAspectSchema.nullable(),
   status: z.enum(['created', 'initialized', 'exploring', 'awaiting_findings', 'complete', 'error']),
