@@ -28,6 +28,33 @@ import {
 } from './schemaProjection';
 import { notifyUser } from '../utils/notify';
 
+/**
+ * Receives a diagnostic line raised while a graph is built or laid out.
+ *
+ * @param level - Severity, in the host log vocabulary.
+ * @param text - Ready-to-log line, already carrying its `[Category]` prefix.
+ */
+export type GraphLogSink = (level: 'info' | 'debug' | 'warn' | 'error', text: string) => void;
+
+/**
+ * Where this module's diagnostics go. Defaults to a no-op so the engine stays usable outside the
+ * webview — a host process, a test — without reaching for `window`.
+ */
+let logSink: GraphLogSink = () => {};
+
+/**
+ * Installs the sink this module logs through.
+ *
+ * @remarks
+ * Called once from the webview entry point, which owns the bridge to the host. Until then the
+ * default sink discards, which is what a non-webview caller gets today.
+ *
+ * @param sink - Receiver for every diagnostic this module raises.
+ */
+export function setGraphLogSink(sink: GraphLogSink): void {
+  logSink = sink;
+}
+
 /** Width of a standard graph node in pixels. */
 export const NODE_WIDTH = 220;
 /** Height of a standard graph node in pixels. */
@@ -149,11 +176,11 @@ export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   for (const node of model.nodes) {
     if (!node.id) {
-      window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}` });
+      logSink('warn', `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}`);
       continue;
     }
     if (graph.hasNode(node.id)) {
-      window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Duplicate node ID skipped: ${node.id}` });
+      logSink('warn', `[Graph] Duplicate node ID skipped: ${node.id}`);
       continue;
     }
     graph.addNode(node.id, { ...node });
@@ -305,9 +332,9 @@ function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<st
   return positions;
 }
 
-/** Emits a `[Trace] <msg>` log line through the webview→host bridge at `warn` level. */
+/** Emits a `[Trace] <msg>` log line through {@link setGraphLogSink} at `warn` level. */
 function logTraceWarn(msg: string): void {
-  window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Trace] ${msg}` });
+  logSink('warn', `[Trace] ${msg}`);
 }
 
 /** Trace modes that trigger synthesis of out-of-filter nodes and edges into the visible set. */
@@ -576,7 +603,7 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
   } catch (e) {
     // Dagre coordinate assignment crashes on disconnected graphs with longest-path ranker.
     // Return empty positions; toFlowResult falls back to {x:0,y:0} per-node.
-    if (typeof window !== 'undefined') window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}` });
+    logSink('warn', `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}`);
     return new Map();
   }
 
@@ -748,7 +775,7 @@ export function buildSchemaGraph(
   } catch (e) {
     // Disconnected schema singletons can trigger the same longest-path crash as regular nodes.
     // Fall through: g.node() returns undefined per node → positions fallback to {x:0,y:0}.
-    window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}` });
+    logSink('warn', `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const nodes: FlowNode<SchemaNodeData>[] = schemaIds.map((schema) => {

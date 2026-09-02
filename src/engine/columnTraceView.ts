@@ -11,7 +11,7 @@
 
 import { dagreLayout } from './graphBuilder';
 import { normalizeColName } from '../utils/sql';
-import { DEFAULT_CONFIG } from './types';
+import type { ExtensionConfig } from './types';
 
 /**
  * Whether the value arriving at a relation's target is the value that left its source.
@@ -139,7 +139,16 @@ export interface ColumnTraceViewInput {
    * `unknown`, which renders no glyph.
    */
   verdicts?: Map<string, 'analyze' | 'passthrough' | 'prune'>;
-  /** Layout direction requested by the view; defaults to `LR`. */
+  /**
+   * Live extension configuration, supplying the layout separations and the default direction.
+   *
+   * @remarks
+   * Required rather than defaulted: the column view is a second rendering of a scope the object
+   * view already lays out, so a default here would silently render the two views under different
+   * settings.
+   */
+  config: ExtensionConfig;
+  /** Layout direction requested by the view; defaults to the configured direction. */
   layoutDirection?: 'LR' | 'TB';
 }
 
@@ -522,8 +531,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   const positions = dagreLayout({
     nodeIds: nodes.map(n => n.id),
     edges: edges.filter(e => e.source !== e.target).map(e => ({ source: e.source, target: e.target })),
-    config: DEFAULT_CONFIG,
-    direction: input.layoutDirection ?? 'LR',
+    config: input.config,
+    direction: input.layoutDirection ?? input.config.layout.direction,
     sizeOf: id => boxes.get(id) ?? { width: COLUMN_NODE_WIDTH, height: 0 },
   });
   for (const node of nodes) {

@@ -1,4 +1,6 @@
 
+import type { ColumnLineState, ColumnTraceViewNode } from './columnTraceView';
+
 /**
  * Canonical list of supported lineage object kinds. Single source of truth — the
  * {@link ObjectType} union is derived from it, and the bridge contract's
@@ -691,6 +693,116 @@ export interface SchemaNodeData extends Record<string, unknown> {
   /** Right-click-only selection flag controlling the attached schema toolbar. */
   toolbarActive?: boolean;
 }
+
+/** One selectable direct neighbor for interactive trace add/prune controls. */
+export type TraceNeighborOption = {
+  /** Stable node ID passed back to trace edit handlers. */
+  id: string;
+  /** Display name shown in the neighbor picker. */
+  label: string;
+  /** Schema displayed with the neighbor label. */
+  schema: string;
+  /** Object kind used for compact type badges in the picker. */
+  objectType: ObjectType;
+};
+
+/** Add/prune candidates and disabled-copy for one lineage side of a node. */
+export type TraceSideControls = {
+  /** Direct neighbors that can be added on this side. */
+  add: TraceNeighborOption[];
+  /** Visible trace nodes that can be pruned on this side. */
+  prune: TraceNeighborOption[];
+  /** Reason add controls are disabled, or an empty string when enabled. */
+  addDisabledReason: string;
+  /** Reason prune controls are disabled, or an empty string when enabled. */
+  pruneDisabledReason: string;
+  /** Total direct neighbors on this side (drives hide-vs-disable for add). */
+  neighborCount: number;
+  /** Direct neighbors on this side already in the trace (drives hide-vs-disable for prune). */
+  visibleNeighborCount: number;
+};
+
+/** Per-node callbacks and candidate lists for interactive trace editing. */
+export type TraceNodeControls = {
+  /** Controls for upstream direct-neighbor trace edits. */
+  in: TraceSideControls;
+  /** Controls for downstream direct-neighbor trace edits. */
+  out: TraceSideControls;
+  /** Adds the selected direct neighbor to the current trace scope. */
+  onAdd: (nodeId: string) => void;
+  /** Removes the selected node from the current trace scope when safe. */
+  onPrune: (nodeId: string) => void;
+};
+
+/**
+ * The business data associated with a single node in the React Flow canvas.
+ */
+export type CustomNodeData = {
+  /** Display label rendered inside the node. */
+  label: string;
+  /** Schema name used for grouping, color selection, and tooltips. */
+  schema: string;
+  /** Fully qualified object name used by detail and debug surfaces. */
+  fullName: string;
+  /** Object kind that drives icon, color, and tooltip behavior. */
+  objectType: ObjectType;
+  /** Count of upstream dependencies shown in node metadata. */
+  inDegree: number;
+  /** Count of downstream dependents shown in node metadata. */
+  outDegree: number;
+  /** Whether the node is de-emphasized in the current scoped view. */
+  dimmed?: boolean;
+  /** Highlight state applied by search, trace, or AI presentation. */
+  highlighted?: boolean | 'yellow';
+  /** External reference subtype for file, database, or external-table nodes. */
+  externalType?: 'et' | 'file' | 'db';
+  /** File or URL target displayed for file-based external references. */
+  externalUrl?: string;
+  /** Database name displayed for cross-database external references. */
+  externalDatabase?: string;
+  /** Resolved schema color supplied by the parent graph projection. */
+  schemaColor?: string;
+  /** AI-authored badge rendered above the node. */
+  aiBadge?: { text: string };
+  /** AI-authored note rendered below the node. */
+  aiNote?: { text: string };
+  /** AI-authored highlight styling applied to the node border and glow. */
+  aiHighlight?: { color: string; glow: string; shadow: string };
+  /** Whether the scoped-view remove control is shown. */
+  showRemoveButton?: boolean;
+  /** Removes the node from the active allowlist-backed view. */
+  onRemoveFromView?: (nodeId: string) => void;
+  /** Interactive trace controls for adding or pruning direct neighbors. */
+  traceControls?: TraceNodeControls;
+};
+
+/**
+ * The business data associated with a single column-trace node in the React Flow canvas.
+ */
+export type ColumnTraceNodeData = {
+  /** Positioned view node computed by {@link import('./columnTraceView').buildColumnTraceView}. */
+  view: ColumnTraceViewNode;
+  /** Whether the row list renders; false collapses the node to a single summary line. */
+  rowsVisible?: boolean;
+  /**
+   * Per-row line state for the state dot, keyed by row name.
+   *
+   * @remarks
+   * A row absent from this map renders an unstated dot — the map is populated by the caller from
+   * edges touching this row, never computed here.
+   */
+  rowLineStates?: Partial<Record<string, ColumnLineState>>;
+  /** Highlight state applied by node selection, matching {@link CustomNodeData.highlighted}. */
+  highlighted?: boolean | 'yellow';
+  /** Whether the node is de-emphasized because a different node is selected. */
+  dimmed?: boolean;
+  /** AI-authored highlight styling applied to the node border and glow. */
+  aiHighlight?: { color: string; glow: string; shadow: string };
+  /** AI-authored badge rendered above the node. */
+  aiBadge?: { text: string };
+  /** AI-authored note rendered below the node. */
+  aiNote?: { text: string };
+};
 
 /**
  * Durable graph filter state applied to the current model.

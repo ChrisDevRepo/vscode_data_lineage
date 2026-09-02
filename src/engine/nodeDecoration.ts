@@ -1,8 +1,6 @@
 import type { Node as FlowNode } from '@xyflow/react';
-import type { CustomNodeData, TraceNodeControls } from '../components/CustomNode';
-import type { ColumnTraceNodeData } from '../components/ColumnTraceNode';
 import type { ColumnTraceViewNode } from './columnTraceView';
-import type { GraphMode, TraceState } from './types';
+import type { ColumnTraceNodeData, CustomNodeData, GraphMode, TraceNodeControls, TraceState } from './types';
 
 /**
  * Per-node display state that depends on the current selection, trace, and AI overlay rather than
@@ -80,16 +78,33 @@ function pruneStaleEntries<K, V>(cache: Map<K, V>, present: ReadonlySet<K>): voi
   }
 }
 
-function decorationKey(node: FlowNode, inputs: NodeDecorationInputs): readonly unknown[] {
-  if (node.type === 'schemaNode') {
-    const schemaView = inputs.graphMode === 'overview';
-    return [
-      schemaView ? inputs.onExpandSchema : undefined,
-      schemaView ? inputs.onMakeSchemaCenter : undefined,
-    ];
-  }
-  const d = computeNodeDecoration(node, inputs);
-  return [d.highlighted, d.dimmed, d.removable, d.onRemoveFromView, d.traceControls, d.aiHighlight, d.aiBadge, d.aiNote];
+/** Selection, trace, and AI state derived for one non-schema node. */
+interface NodeDecoration {
+  /** Highlight state: `true` for the trace origin, `'yellow'` for the clicked node, else the node's own. */
+  highlighted: boolean | 'yellow' | undefined;
+  /** Whether the node is de-emphasised because another node is focused. */
+  dimmed: boolean;
+  /** Whether the scoped-view remove control is shown. */
+  removable: boolean;
+  /** Remove-from-view callback, attached only while the control is shown. */
+  onRemoveFromView: ((nodeId: string) => void) | undefined;
+  /** Interactive trace controls, populated for the highlighted node only. */
+  traceControls: TraceNodeControls | undefined;
+  /** AI-authored highlight styling for this node. */
+  aiHighlight: { color: string; glow: string; shadow: string } | undefined;
+  /** AI-authored badge for this node. */
+  aiBadge: { text: string } | undefined;
+  /** AI-authored note for this node, dropped while notes are hidden. */
+  aiNote: { text: string } | undefined;
+}
+
+/** Schema-cluster callbacks, which are attached only while Schema View is on stage. */
+function schemaCallbacks(inputs: NodeDecorationInputs): { onExpandSchema?: (schemaName: string) => void; onMakeSchemaCenter?: (schemaName: string) => void } {
+  const schemaView = inputs.graphMode === 'overview';
+  return {
+    onExpandSchema: schemaView ? inputs.onExpandSchema : undefined,
+    onMakeSchemaCenter: schemaView ? inputs.onMakeSchemaCenter : undefined,
+  };
 }
 
 /**
@@ -120,11 +135,10 @@ function isTraceOriginNode(nodeId: string, inputs: NodeDecorationInputs): boolea
  * Selection, trace, and AI decoration for one non-schema node.
  *
  * @remarks
- * Shared by {@link decorationKey} and {@link decorateOne} so the two cannot drift apart — the key
- * must capture exactly what the decorated result depends on, or the cache would reuse a stale
- * decoration for a node whose inputs changed.
+ * Computed once per node per pass; the retention key and the emitted `data` are both derived from
+ * this one result, so the key cannot describe a decoration other than the one that was applied.
  */
-function computeNodeDecoration(node: FlowNode, inputs: NodeDecorationInputs) {
+function computeNodeDecoration(node: FlowNode, inputs: NodeDecorationInputs): NodeDecoration {
   const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(node.id, inputs.highlightedNodeId, inputs.level1Neighbors);
   const isTraceOrigin = isTraceOriginNode(node.id, inputs);
   const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
@@ -140,20 +154,37 @@ function computeNodeDecoration(node: FlowNode, inputs: NodeDecorationInputs) {
   };
 }
 
-function decorateOne(node: FlowNode, inputs: NodeDecorationInputs): FlowNode {
-  if (node.type === 'schemaNode') {
-    const schemaView = inputs.graphMode === 'overview';
-    return {
-      ...node,
-      data: {
-        ...node.data,
-        onExpandSchema: schemaView ? inputs.onExpandSchema : undefined,
-        onMakeSchemaCenter: schemaView ? inputs.onMakeSchemaCenter : undefined,
-      },
-    };
+/**
+ * Returns the retained result for `node` when `key` matches the one it was built with, and
+ * otherwise the freshly built node, recording it against the new key.
+ *
+ * @remarks
+ * The two reuse paths are what keeps `React.memo` alive: an unchanged node object is handed back
+ * untouched, and a node object replaced by a position-only change carries the previous `data`
+ * across so even the dragged node's renderer skips.
+ */
+function reuseOrBuild(
+  node: FlowNode,
+  key: readonly unknown[],
+  cache: NodeDecorationCache,
+  build: () => FlowNode,
+): FlowNode {
+  const cached = cache.get(node.id);
+  if (cached && sameKey(cached.key, key)) {
+    if (cached.source === node) return cached.result;
+    if (cached.source.data === node.data) {
+      const moved = { ...node, data: cached.result.data };
+      cache.set(node.id, { source: node, key, result: moved });
+      return moved;
+    }
   }
+  const result = build();
+  cache.set(node.id, { source: node, key, result });
+  return result;
+}
 
-  const d = computeNodeDecoration(node, inputs);
+/** Applies an already-computed decoration to its node. */
+function applyDecoration(node: FlowNode, d: NodeDecoration): FlowNode {
   return {
     ...node,
     data: {
@@ -196,21 +227,24 @@ export function decorateFlowNodes(
   const present = new Set<string>();
   const decorated = nodes.map((node) => {
     present.add(node.id);
-    const key = decorationKey(node, inputs);
-    const cached = cache.get(node.id);
-    if (cached && sameKey(cached.key, key)) {
-      if (cached.source === node) return cached.result;
-      // The node object is new but its decoration is not — a drag frame, which changes position and
-      // nothing else. Carry the previous `data` across so even the dragged node keeps its memo.
-      if (cached.source.data === node.data) {
-        const moved = { ...node, data: cached.result.data };
-        cache.set(node.id, { source: node, key, result: moved });
-        return moved;
-      }
+    // A schema cluster carries callbacks rather than a decoration. Every other node is decorated
+    // exactly once per pass, and both its retention key and its emitted `data` read that one result.
+    if (node.type === 'schemaNode') {
+      const callbacks = schemaCallbacks(inputs);
+      return reuseOrBuild(
+        node,
+        [callbacks.onExpandSchema, callbacks.onMakeSchemaCenter],
+        cache,
+        () => ({ ...node, data: { ...node.data, ...callbacks } }),
+      );
     }
-    const result = decorateOne(node, inputs);
-    cache.set(node.id, { source: node, key, result });
-    return result;
+    const decoration = computeNodeDecoration(node, inputs);
+    return reuseOrBuild(
+      node,
+      [decoration.highlighted, decoration.dimmed, decoration.removable, decoration.onRemoveFromView, decoration.traceControls, decoration.aiHighlight, decoration.aiBadge, decoration.aiNote],
+      cache,
+      () => applyDecoration(node, decoration),
+    );
   });
   pruneStaleEntries(cache, present);
   return decorated;

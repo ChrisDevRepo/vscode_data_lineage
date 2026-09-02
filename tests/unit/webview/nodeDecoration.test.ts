@@ -8,8 +8,8 @@
  * renderers — dragging one node re-rendered all of them, at 1000 nodes, every frame.
  *
  * The counting assertions below are the lock: a position-only change must leave every other node's
- * `data` reference untouched. `buildGraphologyGraph` posts through `window.vscode`, so this runs
- * under jsdom for the same reason graphologyGraph-guards.test.ts does.
+ * `data` reference untouched. The React Flow helpers used here expect a DOM, so this runs under
+ * jsdom.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -23,7 +23,7 @@ import {
   type NodeDecorationInputs,
 } from '../../../src/engine/nodeDecoration';
 import type { ColumnTraceViewNode } from '../../../src/engine/columnTraceView';
-import type { ColumnTraceNodeData } from '../../../src/components/ColumnTraceNode';
+import type { ColumnTraceNodeData, CustomNodeData, SchemaNodeData, TraceNodeControls } from '../../../src/engine/types';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { buildLargeModel } from './largeGraphFixture';
 
@@ -171,6 +171,267 @@ describe('decorateFlowNodes — decoration correctness', () => {
  * flicker, and the blank minimap all came from. Declared dimensions close the same loop from the
  * other side: without them a node is never "initialized" and the minimap skips it.
  */
+/**
+ * Lane for the decoration itself.
+ *
+ * The eight nodes below cover every axis {@link decorateFlowNodes} reads — plain, click-highlighted,
+ * level-1 neighbour, dimmed, trace origin, AI overlay, removable-with-trace-controls, and a schema
+ * cluster — so the snapshot below pins the emitted `data` for the whole matrix. It is the guard that
+ * the decoration itself is unchanged by how often it is computed.
+ */
+describe('decorateFlowNodes — emitted data matrix', () => {
+  const HIGHLIGHTED = 'n1';
+  const NEIGHBOUR = 'n2';
+  const TRACE_ORIGIN = 'n4';
+  const OVERLAID = 'n5';
+  const CONTROLLED = 'n6';
+
+  function objectNode(id: string): FlowNode {
+    return {
+      id,
+      type: 'lineageNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: id,
+        schema: 'dbo',
+        fullName: `dbo.${id}`,
+        objectType: 'table',
+        inDegree: 1,
+        outDegree: 2,
+      } satisfies CustomNodeData,
+    };
+  }
+
+  function matrixNodes(): FlowNode[] {
+    const objects = ['n0', HIGHLIGHTED, NEIGHBOUR, 'n3', TRACE_ORIGIN, OVERLAID, CONTROLLED].map(objectNode);
+    const cluster: FlowNode = {
+      id: '__schema__dbo',
+      type: 'schemaNode',
+      position: { x: 0, y: 0 },
+      data: {
+        schemaName: 'dbo',
+        objectCount: 7,
+        typeBreakdown: { table: 7 },
+        color: '#123456',
+      } satisfies SchemaNodeData,
+    };
+    return [...objects, cluster];
+  }
+
+  const traceControls: TraceNodeControls = {
+    in: { add: [], prune: [], addDisabledReason: '', pruneDisabledReason: '', neighborCount: 0, visibleNeighborCount: 0 },
+    out: { add: [], prune: [], addDisabledReason: '', pruneDisabledReason: '', neighborCount: 0, visibleNeighborCount: 0 },
+    onAdd: () => {},
+    onPrune: () => {},
+  };
+  const onRemoveFromView = (): void => {};
+  const onExpandSchema = (): void => {};
+  const onMakeSchemaCenter = (): void => {};
+
+  function matrixInputs(): NodeDecorationInputs {
+    return baseInputs({
+      graphMode: 'overview',
+      highlightedNodeId: HIGHLIGHTED,
+      level1Neighbors: new Set([NEIGHBOUR]),
+      traceMode: 'applied',
+      traceSelectedNodeId: TRACE_ORIGIN,
+      isBookmarkMode: true,
+      canRemoveNodeFromScopedView: true,
+      onRemoveFromView,
+      traceControlsByNode: new Map([[CONTROLLED, traceControls]]),
+      aiHighlightMap: new Map([[OVERLAID, { color: '#f00', glow: '#f00', shadow: '0 0 2px #f00' }]]),
+      aiBadgeMap: new Map([[OVERLAID, { text: 'origin' }]]),
+      aiNoteMap: new Map([[OVERLAID, { text: 'note' }]]),
+      onExpandSchema,
+      onMakeSchemaCenter,
+    });
+  }
+
+  /** The serialisable half of a decorated node's `data`; callbacks are asserted by identity. */
+  function plainData(node: FlowNode): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(node.data).filter(([, value]) => typeof value !== 'function'),
+    );
+  }
+
+  it('emits the same data for every axis of the matrix', () => {
+    const decorated = decorateFlowNodes(matrixNodes(), matrixInputs(), createNodeDecorationCache());
+    expect(decorated.map(plainData)).toMatchInlineSnapshot(`
+      [
+        {
+          "aiBadge": undefined,
+          "aiHighlight": undefined,
+          "aiNote": undefined,
+          "dimmed": true,
+          "fullName": "dbo.n0",
+          "highlighted": undefined,
+          "inDegree": 1,
+          "label": "n0",
+          "objectType": "table",
+          "outDegree": 2,
+          "schema": "dbo",
+          "showRemoveButton": true,
+          "traceControls": undefined,
+        },
+        {
+          "aiBadge": undefined,
+          "aiHighlight": undefined,
+          "aiNote": undefined,
+          "dimmed": false,
+          "fullName": "dbo.n1",
+          "highlighted": "yellow",
+          "inDegree": 1,
+          "label": "n1",
+          "objectType": "table",
+          "outDegree": 2,
+          "schema": "dbo",
+          "showRemoveButton": true,
+          "traceControls": undefined,
+        },
+        {
+          "aiBadge": undefined,
+          "aiHighlight": undefined,
+          "aiNote": undefined,
+          "dimmed": false,
+          "fullName": "dbo.n2",
+          "highlighted": undefined,
+          "inDegree": 1,
+          "label": "n2",
+          "objectType": "table",
+          "outDegree": 2,
+          "schema": "dbo",
+          "showRemoveButton": true,
+          "traceControls": undefined,
+        },
+        {
+          "aiBadge": undefined,
+          "aiHighlight": undefined,
+          "aiNote": undefined,
+          "dimmed": true,
+          "fullName": "dbo.n3",
+          "highlighted": undefined,
+          "inDegree": 1,
+          "label": "n3",
+          "objectType": "table",
+          "outDegree": 2,
+          "schema": "dbo",
+          "showRemoveButton": true,
+          "traceControls": undefined,
+        },
+        {
+          "aiBadge": undefined,
+          "aiHighlight": undefined,
+          "aiNote": undefined,
+          "dimmed": false,
+          "fullName": "dbo.n4",
+          "highlighted": true,
+          "inDegree": 1,
+          "label": "n4",
+          "objectType": "table",
+          "outDegree": 2,
+          "schema": "dbo",
+          "showRemoveButton": true,
+          "traceControls": undefined,
+        },
+        {
+          "aiBadge": {
+            "text": "origin",
+          },
+          "aiHighlight": {
+            "color": "#f00",
+            "glow": "#f00",
+            "shadow": "0 0 2px #f00",
+          },
+          "aiNote": {
+            "text": "note",
+          },
+          "dimmed": true,
+          "fullName": "dbo.n5",
+          "highlighted": undefined,
+          "inDegree": 1,
+          "label": "n5",
+          "objectType": "table",
+          "outDegree": 2,
+          "schema": "dbo",
+          "showRemoveButton": true,
+          "traceControls": undefined,
+        },
+        {
+          "aiBadge": undefined,
+          "aiHighlight": undefined,
+          "aiNote": undefined,
+          "dimmed": true,
+          "fullName": "dbo.n6",
+          "highlighted": undefined,
+          "inDegree": 1,
+          "label": "n6",
+          "objectType": "table",
+          "outDegree": 2,
+          "schema": "dbo",
+          "showRemoveButton": true,
+          "traceControls": {
+            "in": {
+              "add": [],
+              "addDisabledReason": "",
+              "neighborCount": 0,
+              "prune": [],
+              "pruneDisabledReason": "",
+              "visibleNeighborCount": 0,
+            },
+            "onAdd": [Function],
+            "onPrune": [Function],
+            "out": {
+              "add": [],
+              "addDisabledReason": "",
+              "neighborCount": 0,
+              "prune": [],
+              "pruneDisabledReason": "",
+              "visibleNeighborCount": 0,
+            },
+          },
+        },
+        {
+          "color": "#123456",
+          "objectCount": 7,
+          "schemaName": "dbo",
+          "typeBreakdown": {
+            "table": 7,
+          },
+        },
+      ]
+    `);
+  });
+
+  it('returns the identical nodes on a second pass over unchanged inputs', () => {
+    const nodes = matrixNodes();
+    const cache = createNodeDecorationCache();
+    const inputs = matrixInputs();
+    const first = decorateFlowNodes(nodes, inputs, cache);
+    const second = decorateFlowNodes(nodes, inputs, cache);
+
+    expect(second.every((node, i) => node === first[i])).toBe(true);
+  });
+
+  it('keeps every data reference across a drag frame, the moved node included', () => {
+    const nodes = matrixNodes();
+    const cache = createNodeDecorationCache();
+    const inputs = matrixInputs();
+    const before = decorateFlowNodes(nodes, inputs, cache);
+    const after = decorateFlowNodes(dragOne(nodes, 3), inputs, cache);
+
+    expect(after.filter((node, i) => node.data !== before[i].data)).toHaveLength(0);
+    expect(after.filter((node, i) => node !== before[i]).map(n => n.id)).toEqual([nodes[3].id]);
+  });
+
+  it('carries the callbacks through by identity', () => {
+    const decorated = decorateFlowNodes(matrixNodes(), matrixInputs(), createNodeDecorationCache());
+    expect(decorated[0].data.onRemoveFromView).toBe(onRemoveFromView);
+    expect(decorated[6].data.traceControls).toBe(traceControls);
+    expect(decorated[7].data.onExpandSchema).toBe(onExpandSchema);
+    expect(decorated[7].data.onMakeSchemaCenter).toBe(onMakeSchemaCenter);
+  });
+});
+
 describe('projectColumnNodes', () => {
   function views(count: number): ColumnTraceViewNode[] {
     return Array.from({ length: count }, (_, i) => ({

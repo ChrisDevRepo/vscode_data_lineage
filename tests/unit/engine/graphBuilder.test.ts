@@ -14,10 +14,11 @@
 import { readFileSync } from 'fs';
 import Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
-import { beforeAll, describe, expect, it } from 'vitest';
+import dagre from '@dagrejs/dagre';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
-import { buildGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
-import type { DatabaseModel } from '../../../src/engine/types';
+import { buildGraph, dagreLayout, setGraphLogSink, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
+import { DEFAULT_CONFIG, type DatabaseModel } from '../../../src/engine/types';
 import { loadAdventureWorksModel, testPath } from '../helpers/testUtils';
 
 function directedGraph(
@@ -232,5 +233,41 @@ describe('traceNodeWithLevels — Synapse dacpac', () => {
     }
 
     expect(traceNodeWithLevels(graph, origin!.id, 2, 2).nodeIds).toEqual(reference);
+  });
+});
+
+describe('dagreLayout — layout failure', () => {
+  function layoutThrowing(nodeIds: string[]): Map<string, { x: number; y: number }> {
+    const spy = vi.spyOn(dagre, 'layout').mockImplementation(() => {
+      throw new Error('rank assignment failed');
+    });
+    try {
+      return dagreLayout({
+        nodeIds,
+        edges: [{ source: nodeIds[0], target: nodeIds[1] }],
+        config: DEFAULT_CONFIG,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it('returns an empty map and warns the installed sink, naming the error', () => {
+    const lines: Array<{ level: string; text: string }> = [];
+    setGraphLogSink((level, text) => lines.push({ level, text }));
+    try {
+      expect(layoutThrowing(['sink.a', 'sink.b']).size).toBe(0);
+    } finally {
+      setGraphLogSink(() => {});
+    }
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].level).toBe('warn');
+    expect(lines[0].text).toContain('[Graph] Dagre layout failed');
+    expect(lines[0].text).toContain('rank assignment failed');
+  });
+
+  it('swallows the failure when no sink is installed', () => {
+    expect(() => layoutThrowing(['default.a', 'default.b'])).not.toThrow();
   });
 });
