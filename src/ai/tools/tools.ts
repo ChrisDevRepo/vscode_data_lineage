@@ -41,6 +41,11 @@ const SNIPPET_CONTEXT_LINES = 2;
 /** Hard cap on `search_columns` results — prevents unbounded enumeration on wide schemas. */
 const COLUMN_SEARCH_LIMIT = 50;
 
+/** Builds an id→type lookup for {@link edgeApiType}'s `sourceNodeType` argument. */
+function buildNodeTypeById(model: DatabaseModel): Map<string, string> {
+  return new Map(model.nodes.map(n => [n.id, n.type]));
+}
+
 /**
  * Builds a lookup map for edges between nodes.
  *
@@ -48,7 +53,7 @@ const COLUMN_SEARCH_LIMIT = 50;
  * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge type.
  */
 export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
-  const nodeTypeById = new Map(model.nodes.map(n => [n.id, n.type]));
+  const nodeTypeById = buildNodeTypeById(model);
   const m = new Map<string, string>();
   for (const e of model.edges) {
     m.set(`${e.source}→${e.target}`, edgeApiType(e.type, nodeTypeById.get(e.source) ?? ''));
@@ -229,7 +234,7 @@ export function getContext(
     }
     return base;
   });
-  const nodeTypeById = new Map(model.nodes.map(n => [n.id, n.type]));
+  const nodeTypeById = buildNodeTypeById(model);
   const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type, nodeTypeById.get(e.source) ?? '')]);
   const catalogChars = JSON.stringify(catalog).length + JSON.stringify(edges).length;
 

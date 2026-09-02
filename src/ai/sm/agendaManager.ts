@@ -29,6 +29,12 @@ export interface AgendaEntry {
   lineageQuestions?: string[];
 }
 
+/** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
+function mergeUnique(existing: string[] | undefined, incoming: string[]): string[] {
+  const merged = new Set(existing ?? []);
+  for (const value of incoming) merged.add(value);
+  return Array.from(merged);
+}
 
 /**
  * Manages the NavigationEngine's agenda queue.
@@ -72,14 +78,10 @@ export class AgendaManager {
         if (!existing.taskIds.includes(taskId)) existing.taskIds.push(taskId);
       }
       if (entry.activeColumns) {
-        const cols = new Set(existing.activeColumns ?? []);
-        for (const c of entry.activeColumns) cols.add(c);
-        existing.activeColumns = Array.from(cols);
+        existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns);
       }
       if (entry.lineageQuestions) {
-        const questions = new Set(existing.lineageQuestions ?? []);
-        for (const q of entry.lineageQuestions) questions.add(q);
-        existing.lineageQuestions = Array.from(questions);
+        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions);
       }
       existing.priority = Math.max(existing.priority, entry.priority);
       existing.depth = Math.min(existing.depth, entry.depth);

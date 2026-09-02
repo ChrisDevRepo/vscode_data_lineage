@@ -76,6 +76,33 @@ function notePresentResultFailure(sess: AiSession, token: number, data: object):
   sess.recordPresentResultFailure(token, trunc(sanitizeForLog(reason), 240));
 }
 
+// Every node the column edges reference needs a verdict, hop nodes included — a hop that is not
+// itself an answer node still decides whether its lines read as a transformation. Compared
+// case-insensitively: node ids reach these two lists from different sources.
+function buildColumnAspectNodeVerdicts(
+  nodeIds: readonly string[],
+  columnAspect: NonNullable<ResultGraph['columnAspect']>,
+  nodeStates: ResultGraph['node_states'],
+) {
+  const referenced = new Set(nodeIds.map(id => id.toLowerCase()));
+  for (const e of columnAspect.edges) referenced.add(e.hop_node.toLowerCase());
+  return (nodeStates ?? [])
+    .filter(ns => referenced.has(ns.nodeId.toLowerCase()))
+    .map(ns => ({ nodeId: ns.nodeId, verdict: ns.action }));
+}
+
+// The engine checkpoint rides the artifact so a bookmark saved from this view can recall the run;
+// captured here so the single guarded commit below is the only write of the artifact.
+function captureCheckpoint(sess: AiSession, logger: ToolServices['logger']): PresentationArtifact['checkpoint'] {
+  if (!sess.stateMachine) return undefined;
+  try {
+    return sess.stateMachine.toJSON();
+  } catch (error) {
+    logger.debug(`presentResult checkpoint capture skipped: ${error instanceof Error ? error.name : 'Error'}`);
+    return undefined;
+  }
+}
+
 /**
  * Builds and persists the final lineage presentation for the active turn.
  *
@@ -409,28 +436,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               toCol:    e.to_col,
             })),
           },
-          // Every node the column edges reference needs a verdict, hop nodes included — a hop that
-          // is not itself an answer node still decides whether its lines read as a transformation.
-          // Compared case-insensitively: node ids reach these two lists from different sources.
-          nodeVerdicts: (() => {
-            const referenced = new Set(validation.node_ids.map(id => id.toLowerCase()));
-            for (const e of resultGraph.columnAspect.edges) referenced.add(e.hop_node.toLowerCase());
-            return (resultGraph.node_states ?? [])
-              .filter(ns => referenced.has(ns.nodeId.toLowerCase()))
-              .map(ns => ({ nodeId: ns.nodeId, verdict: ns.action }));
-          })(),
+          nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states),
         } : {}),
       };
-      // The engine checkpoint rides the artifact so a bookmark saved from this view can recall the
-      // run; captured here so the single guarded commit below is the only write of the artifact.
-      let checkpoint: PresentationArtifact['checkpoint'];
-      if (sess.stateMachine) {
-        try {
-          checkpoint = sess.stateMachine.toJSON();
-        } catch (error) {
-          s.logger.debug(`presentResult checkpoint capture skipped: ${error instanceof Error ? error.name : 'Error'}`);
-        }
-      }
+      const checkpoint = captureCheckpoint(sess, s.logger);
       const artifact: PresentationArtifact = {
         name: validation.name,
         nodeIds: [...validation.node_ids],

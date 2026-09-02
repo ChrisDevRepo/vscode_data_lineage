@@ -68,6 +68,12 @@ function asStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
+/** Reads the ui-state buffer down to its `screenState` extras section, both defensively typed. */
+function screenStateParts(uiState: unknown): { ui: Record<string, unknown> | null; extras: Record<string, unknown> | null } {
+  const ui = asRecord(uiState);
+  return { ui, extras: asRecord(ui?.screenState) };
+}
+
 function capIds(ids: readonly string[]): string[] {
   if (ids.length <= ID_CAP) return [...ids];
   return [...ids.slice(0, ID_CAP), `…and ${ids.length - ID_CAP} more`];
@@ -216,8 +222,7 @@ export function presentScreenState(input: ScreenStateInput): {
   screen: Record<string, unknown>;
   _token_estimate: { chars: number; estimated_tokens: number };
 } {
-  const ui = asRecord(input.uiState);
-  const extras = asRecord(ui?.screenState);
+  const { ui, extras } = screenStateParts(input.uiState);
   const renderState = asRecord(input.renderState);
   const screen = {
     trace: presentTrace(
@@ -258,7 +263,7 @@ function optionalNumber(value: unknown): number | undefined {
 }
 
 function resolveAppliedRun(input: RunRecallInput): StoredAiRun | undefined {
-  const entry = asRecord(asRecord(asRecord(input.uiState)?.screenState)?.bookmark);
+  const entry = asRecord(screenStateParts(input.uiState).extras?.bookmark);
   const id = asString(entry?.id);
   if (!entry || id === null || asString(entry.source) !== 'ai') return undefined;
   const run = input.getStoredRun?.(id);
@@ -385,8 +390,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
  * @returns The phrase, or `null` when no trace, analysis, or bookmark is applied.
  */
 export function describeScreen(uiState: unknown): string | null {
-  const ui = asRecord(uiState);
-  const extras = asRecord(ui?.screenState);
+  const { ui, extras } = screenStateParts(uiState);
   const parts: string[] = [];
   const trace = asRecord(ui?.trace);
   const mode = asString(trace?.mode);
