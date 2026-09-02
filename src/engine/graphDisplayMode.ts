@@ -73,7 +73,7 @@ export function deriveGraphDisplayMode({
   scopedModeActive = false,
   scopedRenderedCount,
 }: GraphDisplayModeInput): GraphDisplayState {
-  const baseRenderedCount =
+  const renderedCount =
     graphMode === 'overview'
       ? (expandedSchemaCount > 0
           ? (expandedSchemaViewRenderedCount ?? filteredCount)
@@ -86,10 +86,9 @@ export function deriveGraphDisplayMode({
     if (scopedRenderedCount !== undefined && scopedRenderedCount > config.renderLimit) {
       return { mode: 'renderLimit', renderedCount: scopedRenderedCount };
     }
-    return { mode: 'scoped', renderedCount: scopedRenderedCount ?? baseRenderedCount };
+    return { mode: 'scoped', renderedCount: scopedRenderedCount ?? renderedCount };
   }
 
-  const renderedCount = baseRenderedCount;
   if (renderedCount > config.renderLimit) return { mode: 'renderLimit', renderedCount };
   if (graphMode === 'overview') {
     return { mode: expandedSchemaCount > 0 ? 'schemaExpanded' : 'schemaOverview', renderedCount };

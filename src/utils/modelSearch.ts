@@ -32,6 +32,19 @@ interface DdlMatch {
 const REDOS_BUDGET_MS = 5;
 
 /**
+ * Runs `regex` against a bounded sample and reports whether it exceeded the ReDoS guard budget.
+ *
+ * @remarks
+ * Uses `performance.now()` (sub-ms precision) instead of `Date.now()` (1ms / 15ms on Windows).
+ */
+function exceedsRedosBudget(regex: RegExp): boolean {
+  const sample = 'a'.repeat(200);
+  const start = performance.now();
+  regex.test(sample);
+  return performance.now() - start > REDOS_BUDGET_MS;
+}
+
+/**
  * Compiles a search pattern into a safe, case-insensitive Regular Expression.
  *
  * @param pattern - The raw regex string to compile.
@@ -42,12 +55,8 @@ const REDOS_BUDGET_MS = 5;
 export function safeRegex(pattern: string): RegExp | null {
   try {
     const r = new RegExp(pattern, 'i');
-    // Heuristic ReDoS guard: reject patterns that take >5ms on a 200-char string.
-    // Uses performance.now() (sub-ms precision) instead of Date.now() (1ms / 15ms on Windows).
-    const sample = 'a'.repeat(200);
-    const start = performance.now();
-    r.test(sample);
-    if (performance.now() - start > REDOS_BUDGET_MS) return null;
+    // Heuristic ReDoS guard: reject patterns that take too long on a 200-char string.
+    if (exceedsRedosBudget(r)) return null;
     return r;
   } catch {
     return null;
@@ -117,10 +126,7 @@ export function regexRejectHint(pattern: string): string {
   }
 
   // Compiled successfully — safeRegex must have rejected it for running over the ReDoS budget.
-  const sample = 'a'.repeat(200);
-  const start = performance.now();
-  compiled.test(sample);
-  if (performance.now() - start > REDOS_BUDGET_MS) {
+  if (exceedsRedosBudget(compiled)) {
     return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") that can backtrack catastrophically.';
   }
   return 'Simplify the pattern.';

@@ -306,6 +306,15 @@ export function createMessageHandlers(
     applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
   }
 
+  /** Clears a filter view's stored AI run record, logging rather than throwing on failure. */
+  async function clearStoredRunLogged(profileId: string): Promise<void> {
+    try {
+      await clearStoredRun(context.globalState, profileId);
+    } catch (err) {
+      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   async function getDetailConfig() {
     const cfg = host.getConfiguration();
     const sess = getSession();
@@ -588,11 +597,7 @@ export function createMessageHandlers(
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
       for (const profileId of profileIds) {
-        try {
-          await clearStoredRun(context.globalState, profileId);
-        } catch (err) {
-          host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        await clearStoredRunLogged(profileId);
       }
     },
     'load-demo': async () => {
@@ -691,8 +696,9 @@ export function createMessageHandlers(
     'render-state': (msg) => {
       const sess = getSession();
       const state = getUiDiagnostics(sess);
-      state.renderState = msg.renderState ?? null;
-      sess.renderState = msg.renderState ?? null;
+      const renderState = msg.renderState ?? null;
+      state.renderState = renderState;
+      sess.renderState = renderState;
       state.lastUiSyncAt = Date.now();
     },
     'db-connect': () => {
@@ -745,11 +751,7 @@ export function createMessageHandlers(
       const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
-      try {
-        await clearStoredRun(context.globalState, msg.profileId);
-      } catch (err) {
-        host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${msg.profileId}: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      await clearStoredRunLogged(msg.profileId);
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
