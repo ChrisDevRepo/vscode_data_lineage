@@ -533,7 +533,7 @@ export const GetNeighborColumnsInputSchema = z.object({
 // ──────────────────────────────────────────────────────────────────────────────
 
 /** Maximum object ids one `lineage_get_screen_state` recall may name. */
-export const SCREEN_STATE_MAX_IDS = 20;
+const SCREEN_STATE_MAX_IDS = 20;
 
 /** `lineage_get_context` takes no input. */
 export const GetContextInputSchema = z.object({}).strict();

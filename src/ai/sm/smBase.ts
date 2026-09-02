@@ -196,6 +196,18 @@ const DEFERRAL_BOUNDARY_LABEL: Readonly<Record<DeferredQuestion['reason'], strin
   schema_and_depth: 'schema and depth',
 };
 
+/** Copies an agenda entry so a snapshot and the live agenda never share an array. */
+function cloneAgendaEntry(entry: AgendaEntry): AgendaEntry {
+  return {
+    taskIds: [...entry.taskIds],
+    nodeId: entry.nodeId,
+    priority: entry.priority,
+    depth: entry.depth,
+    ...(entry.activeColumns ? { activeColumns: entry.activeColumns } : {}),
+    ...(entry.lineageQuestions ? { lineageQuestions: entry.lineageQuestions } : {}),
+  };
+}
+
 /**
  * Unified Navigation Engine — The core state machine for all exploration modes.
  *
@@ -1593,13 +1605,12 @@ export class NavigationEngine implements IHopStateMachine {
    * because nothing on the supplement path ever widened the allowlist and the target came straight
    * back as `out_of_allowlist`.
    *
-   * Consent-scoped, not global: the schema is read from each requested node, so the border grows
-   * exactly enough to reach what was named and no further. Extension is monotonic, so repeated
-   * follow-ups can only widen.
+   * Schema-scoped, not global: the schema is read from each requested node and the whole schema
+   * joins the allowlist, so a named node also admits its schema siblings. Extension is monotonic,
+   * so repeated follow-ups can only widen.
    *
-   * The depth axis needs no counterpart: `'supplement'` deliberately omits the depth test
-   * ({@link BorderPurpose}), so an approved target is admitted at any depth and each node beyond it
-   * defers as its own lead — one explicit approval per node, which is the intended granularity.
+   * {@link checkBorder} carries no depth axis for any purpose, so an approved target is admitted at
+   * any depth and each node beyond it defers as its own lead — one explicit approval per node.
    *
    * Exclusion sets are untouched — those are the user's own removals and stay a hard wall in
    * {@link checkBorder}.
@@ -3023,14 +3034,7 @@ export class NavigationEngine implements IHopStateMachine {
       removedSet: Array.from(this.removedSet),
       nodeStates: Array.from(this.nodeStates.values()),
       agendaSize: this._agenda.length,
-      agenda: this._agenda.entries.map(a => ({
-        taskIds: [...a.taskIds],
-        nodeId: a.nodeId,
-        priority: a.priority,
-        depth: a.depth,
-        ...(a.activeColumns ? { activeColumns: a.activeColumns } : {}),
-        ...(a.lineageQuestions ? { lineageQuestions: a.lineageQuestions } : {}),
-      })),
+      agenda: this._agenda.entries.map(cloneAgendaEntry),
       currentFocusNodeId: this.currentFocusNodeId,
       memory: this.memory.toJSON(),
       engineInternals: this.serializeInternals(),
@@ -3154,16 +3158,7 @@ export class NavigationEngine implements IHopStateMachine {
     engine.removedSet = new Set(snapshot.removedSet);
     engine.nodeStates = new Map(snapshot.nodeStates.map(s => [s.nodeId, s]));
     engine.currentFocusNodeId = snapshot.currentFocusNodeId;
-    snapshot.agenda.forEach(a => {
-      engine._agenda.push({
-        taskIds: [...a.taskIds],
-        nodeId: a.nodeId,
-        priority: a.priority,
-        depth: a.depth,
-        ...(a.activeColumns ? { activeColumns: a.activeColumns } : {}),
-        ...(a.lineageQuestions ? { lineageQuestions: a.lineageQuestions } : {}),
-      });
-    });
+    for (const entry of snapshot.agenda) engine._agenda.push(cloneAgendaEntry(entry));
 
     // ── Private working-state projection ──
     engine.originNodeId = internals.originNodeId;

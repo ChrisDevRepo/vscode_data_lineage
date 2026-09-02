@@ -318,7 +318,7 @@ const AIViewMetadataSchema = z.object({
   layoutDirection: z.enum(['LR', 'TB']).optional(),
   /** Column trace edges. Each edge carries the analyzing hop node plus source/destination so every result node can show column flow data. Only present during CT sessions. */
   columnAspect: ColumnAspectSchema.optional(),
-  /** Per-node CT verdict, so the webview can symbol column lines without an AI-contract change. Only present during CT sessions. */
+  /** Per-node CT verdict, so the webview can mark column lines without an AI-contract change. Only present during CT sessions. */
   nodeVerdicts: z.array(NodeVerdictSchema).optional(),
 }).strict();
 

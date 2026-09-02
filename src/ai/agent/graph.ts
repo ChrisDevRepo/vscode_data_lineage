@@ -1702,6 +1702,3 @@ export function shouldSalvageActiveStop(
 ): boolean {
   return submittedHops > 0 && reason !== 'output_limit';
 }
-
-// Discovery-summary composition ({@link composeDiscoverySummaryText}) now runs at proposal-build
-// time in `startExploration.ts`, not here — see `src/ai/support/discoverySummary.ts`.

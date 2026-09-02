@@ -409,7 +409,7 @@ export class AiMemoryManager {
     const m = new AiMemoryManager();
     m.userQuestion = snapshot.userQuestion;
     m.missionBrief = snapshot.missionBrief;
-    m.scopeNotes = [...(snapshot.scopeNotes ?? [])];
+    m.scopeNotes = [...snapshot.scopeNotes];
     m.verdictCounts = { ...snapshot.verdictCounts };
     m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
     // Object key order preserves insertion order for the non-integer node-id keys used here.
@@ -430,7 +430,7 @@ export class AiMemoryManager {
     this.detailSlots = restored.detailSlots;
     this.userQuestion = restored.userQuestion;
     this.missionBrief = restored.missionBrief;
-    this.scopeNotes = [...(restored.scopeNotes ?? [])];
+    this.scopeNotes = [...restored.scopeNotes];
     this.verdictCounts = restored.verdictCounts;
     this.recentRejections = restored.recentRejections;
   }
