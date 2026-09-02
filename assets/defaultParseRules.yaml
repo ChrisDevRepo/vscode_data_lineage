@@ -18,7 +18,7 @@ rules:
     enabled: true
     priority: 1
     category: preprocessing
-    pattern: "\\[[^\\]]+\\]|\"[^\"]*\"|'(?:''|[^'])*'|--[^\\r\\n]*"
+    pattern: "\\[(?:[^\\]]|\\]\\])+\\]|\"[^\"]*\"|'(?:''|[^'])*'|--[^\\r\\n]*"
     flags: g
     description: "SQL cleansing — documents built-in TypeScript pipeline (not configurable via YAML; see PARSE_RULES.md)"
 
@@ -27,7 +27,7 @@ rules:
     enabled: true
     priority: 5
     category: source
-    pattern: "\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: FROM/JOIN sources
 
@@ -35,7 +35,7 @@ rules:
     enabled: true
     priority: 7
     category: source
-    pattern: "\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: CROSS/OUTER APPLY sources
 
@@ -43,7 +43,7 @@ rules:
     enabled: true
     priority: 9
     category: source
-    pattern: "\\bMERGE\\b[^;]{0,5000}?\\bUSING\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bMERGE\\b[^;]{0,5000}?\\bUSING\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: MERGE ... USING source table
 
@@ -51,7 +51,7 @@ rules:
     enabled: true
     priority: 10
     category: source
-    pattern: "(?<![\\w.\\]])(?<!\\bCREATE\\s+TABLE\\s+)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)+(?:\\[[^\\]]+\\]|\\w+))\\s*\\("
+    pattern: "(?<![\\w.\\]])(?<!\\bCREATE\\s+TABLE\\s+)((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)+(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))\\s*\\("
     flags: gi
     description: "Inline scalar UDF calls (schema.func()) — a CREATE TABLE header is not a call"
 
@@ -60,7 +60,7 @@ rules:
     enabled: true
     priority: 6
     category: target
-    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: INSERT/UPDATE/MERGE targets (DELETE excluded — removes rows, contributes no column data)
 
@@ -68,7 +68,7 @@ rules:
     enabled: true
     priority: 13
     category: target
-    pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s[^;]{0,500}?\\bAS\\s+SELECT"
+    pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))\\s[^;]{0,500}?\\bAS\\s+SELECT"
     flags: gi
     description: CREATE TABLE AS SELECT target (Synapse/Fabric) — the WITH distribution clause is mandatory there
 
@@ -76,7 +76,7 @@ rules:
     enabled: true
     priority: 14
     category: target
-    pattern: "\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s+FROM"
+    pattern: "\\bINTO\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))\\s+FROM"
     flags: gi
     description: SELECT INTO target
 
@@ -84,7 +84,7 @@ rules:
     enabled: true
     priority: 15
     category: target
-    pattern: "\\bCOPY\\s+INTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bCOPY\\s+INTO\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: "COPY INTO target (Fabric/Synapse)"
 
@@ -92,7 +92,7 @@ rules:
     enabled: true
     priority: 16
     category: target
-    pattern: "\\bBULK\\s+INSERT\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bBULK\\s+INSERT\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: "BULK INSERT target (SQL Server)"
 
@@ -100,7 +100,7 @@ rules:
     enabled: true
     priority: 17
     category: target
-    pattern: "\\bUPDATE\\s+(?!\\[?\\w+\\]?\\s*\\.)\\[?\\w+\\]?\\s+SET\\b(?:(?!\\bFROM\\b|\\bSELECT\\b)[^;]){0,3000}?\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bUPDATE\\s+(?!\\[?\\w+\\]?\\s*\\.)\\[?\\w+\\]?\\s+SET\\b(?:(?!\\bFROM\\b|\\bSELECT\\b)[^;]){0,3000}?\\bFROM\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: "UPDATE alias SET ... FROM schema.table (alias case)"
 
@@ -108,7 +108,7 @@ rules:
     enabled: true
     priority: 18
     category: target
-    pattern: "\\bOUTPUT\\b[^;]{0,500}?\\bINTO\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bOUTPUT\\b[^;]{0,500}?\\bINTO\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: "OUTPUT ... INTO schema.table"
 
@@ -116,7 +116,7 @@ rules:
     enabled: true
     priority: 19
     category: target
-    pattern: "\\bCREATE\\s+EXTERNAL\\s+TABLE\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))\\s[^;]{0,2000}?\\bAS\\s+SELECT"
+    pattern: "\\bCREATE\\s+EXTERNAL\\s+TABLE\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))\\s[^;]{0,2000}?\\bAS\\s+SELECT"
     flags: gi
     description: "CREATE EXTERNAL TABLE AS SELECT target (Synapse/Fabric)"
 
@@ -125,7 +125,7 @@ rules:
     enabled: true
     priority: 8
     category: exec
-    pattern: "\\bEXEC(?:UTE)?\\s+(?!AS\\s+)(?:@\\w+\\s*=\\s*)?((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bEXEC(?:UTE)?\\s+(?!AS\\s+)(?:@\\w+\\s*=\\s*)?((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|\\w+))"
     flags: gi
     description: "EXEC/EXECUTE procedure calls"
 

@@ -27,6 +27,7 @@
 - Graph traversal corrections: the longest dependency chain no longer stops where it meets a circular dependency, and a large graph-pattern report no longer overruns a chat turn.
 - The longest-chain graph analysis now picks the longest real chain even when a shorter branch runs through a circular dependency.
 - A commented-out object after a bracketed name containing an apostrophe no longer appears as a dependency.
+- A bracketed name containing a doubled `]]` escape is captured as one identifier instead of being cut at the first `]`.
 - The column-level Detail view now lays out with the same settings as object lineage.
 - A follow-up naming an object brings in only that object, not its whole schema.
 - A bookmark recalls the AI run it was saved from, even after a later exploration in the same chat.

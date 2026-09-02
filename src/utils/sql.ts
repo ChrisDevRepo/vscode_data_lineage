@@ -23,15 +23,28 @@ export function schemaKey(name: string): string {
 
 
 /**
- * Removes SQL-standard delimiters (brackets `[]` and double-quotes `""`) from an identifier.
+ * Matches one delimited identifier — `[bracketed]` (with `]]` as an escaped `]`) or `"quoted"` —
+ * or a single stray delimiter left over from an unbalanced name.
+ */
+const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"[^"]*"|[\[\]"]/g;
+
+/**
+ * Removes SQL-standard delimiters (brackets `[]` and double-quotes `""`) from an identifier and
+ * unescapes the doubled `]` T-SQL uses for a literal one.
  *
- * Example: `[dbo].[Table]` becomes `dbo.Table`.
+ * Example: `[dbo].[Table]` becomes `dbo.Table`; `[dbo].[a]]b]` becomes `dbo.a]b`.
+ *
+ * @remarks
+ * The single owner of identifier-text normalization: an escaped `]` survives here as one literal
+ * character, so a name containing `]` round-trips instead of losing the character.
  *
  * @param name - The delimited SQL identifier.
  * @returns The raw, unquoted identifier name.
  */
 export function stripBrackets(name: string): string {
-  return name.replace(/[\[\]"]/g, '');
+  return name.replace(DELIMITED_PART, part =>
+    part.length > 1 ? part.slice(1, -1).replace(/\]\]/g, ']') : ''
+  );
 }
 
 /**
@@ -55,11 +68,13 @@ export function normalizeColName(name: string): string {
  *
  * This function correctly handles dots contained within bracketed `[]` or
  * double-quoted `""` identifiers, ensuring they are not treated as part separators.
+ * A doubled `]` is T-SQL's escape for a literal one and does not close the name.
  *
  * @example
  * ```typescript
  * splitSqlName("[schema].[obj.with.dot]") // returns ["[schema]", "[obj.with.dot]"]
  * splitSqlName("db.schema.obj")           // returns ["db", "schema", "obj"]
+ * splitSqlName("[dbo].[a]].b]")           // returns ["[dbo]", "[a]].b]"]
  * ```
  *
  * @param name - The fully qualified SQL name to split.
@@ -70,9 +85,13 @@ export function splitSqlName(name: string): string[] {
   let current = '';
   let inBracket = false;
   let inQuote = false;
-  for (const ch of name) {
+  for (let i = 0; i < name.length; i++) {
+    const ch = name[i];
     if (ch === '[' && !inQuote) { inBracket = true; current += ch; }
-    else if (ch === ']' && inBracket) { inBracket = false; current += ch; }
+    else if (ch === ']' && inBracket) {
+      if (name[i + 1] === ']') { current += ']]'; i++; continue; }
+      inBracket = false; current += ch;
+    }
     else if (ch === '"' && !inBracket) { inQuote = !inQuote; current += ch; }
     else if (ch === '.' && !inBracket && !inQuote) {
       if (current) { parts.push(current); current = ''; }
