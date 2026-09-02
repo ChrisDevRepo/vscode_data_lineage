@@ -1066,7 +1066,7 @@ export function App() {
       if (msg.type === 'detail-closed') {
         setIsDetailOpen(false);
       } else if (msg.type === 'projects-list') {
-        const updatedProjects: Project[] = (msg.projects ?? []);
+        const updatedProjects: Project[] = msg.projects ?? [];
         setProjects(updatedProjects);
         setLastOpenedId(msg.lastOpenedId ?? null);
         if (msg.lastWizardView) setLastWizardView(msg.lastWizardView as 'main' | 'projects');
@@ -1437,14 +1437,15 @@ export function App() {
   });
 
   if (displayMode === 'renderLimit') {
+    const countText = `${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()})`;
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center p-8 max-w-md" style={{ color: 'var(--ln-fg)' }}>
           <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
           <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)' }}>
             {isTraceActive || aiPreview
-              ? `This view selects ${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()}). Reduce the trace depth, narrow the path, or adjust the render limit in settings.`
-              : `The current filter selects ${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()}). Select schema or type filters to reduce scope, or adjust the render limit in settings.`}
+              ? `This view selects ${countText}. Reduce the trace depth, narrow the path, or adjust the render limit in settings.`
+              : `The current filter selects ${countText}. Select schema or type filters to reduce scope, or adjust the render limit in settings.`}
           </div>
         </div>
       </div>

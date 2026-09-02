@@ -20,7 +20,6 @@ interface BookmarkBannerProps {
   onToggleColumnView?: (columnView: boolean) => void;
 }
 
-
 /**
  * Human-readable labels for the different sources of bookmarked views.
  */

@@ -1013,14 +1013,14 @@ export function GraphCanvas({
   const hoveredColumnPath = useMemo((): Set<string> | null => {
     if (!hoveredColumn || !columnTraceView) return null;
     const seen = new Set<string>([columnRowKey(hoveredColumn.nodeId, hoveredColumn.column)]);
-    const queue = [...seen];
-    while (queue.length > 0) {
-      const current = queue.pop()!;
+    const stack = [...seen];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
       for (const edge of columnTraceView.edges) {
         const from = columnRowKey(edge.source, edge.sourceColumn);
         const to = columnRowKey(edge.target, edge.targetColumn);
-        if (current === from && !seen.has(to)) { seen.add(to); queue.push(to); }
-        else if (current === to && !seen.has(from)) { seen.add(from); queue.push(from); }
+        if (current === from && !seen.has(to)) { seen.add(to); stack.push(to); }
+        else if (current === to && !seen.has(from)) { seen.add(from); stack.push(from); }
       }
     }
     return seen;

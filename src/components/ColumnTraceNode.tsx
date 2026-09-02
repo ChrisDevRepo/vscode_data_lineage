@@ -157,6 +157,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const icon = TYPE_COLORS[view.objectType as ObjectType]?.icon ?? '▪';
   const typeLabel = SHORT_TYPE_LABELS[view.objectType as ObjectType] ?? view.objectType;
   const schemaColor = getSchemaColor(view.schema);
+  const nodeTitle = `${view.schema}.${view.label}`;
 
   const summaryLine = view.isTransformNode
     ? `${view.rows.length} traced ports`
@@ -206,7 +207,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       >
         <span className="text-[11px]" aria-hidden="true" style={{ color: 'var(--ln-fg-muted)', lineHeight: 1 }}>{icon}</span>
         <span className="text-[10px]" style={{ color: 'var(--ln-fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
-          {view.schema}.{view.label}
+          {nodeTitle}
         </span>
         {view.isTransformNode ? (
           <span className="text-[8px]" style={{ color: 'var(--ln-ai-or)', fontWeight: 700, letterSpacing: '0.03em', flexShrink: 0 }}>
@@ -224,7 +225,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
               key={row.name}
               row={row}
               nodeId={id}
-              nodeTitle={`${view.schema}.${view.label}`}
+              nodeTitle={nodeTitle}
               isTransformNode={view.isTransformNode}
               lineState={data.rowLineStates?.[row.name]}
               focused={focusedRow === row.name}
