@@ -30,16 +30,21 @@ debug*.txt
 Thumbs.db
 
 # AI assistant files — NEVER commit to this public repo.
-# Local agent context, prompts, credentials, and internal instructions. Patterns match
-# in any directory; the bare names cover dotted variants and future siblings.
-AGENTS.md
+# Local agent context, prompts, credentials, and internal instructions. Patterns match in any
+# directory. A glob never matches a leading dot, so every name carries its dotted twin.
+AGENTS*
+.AGENTS*
 CLAUDE*
+.CLAUDE*
 .claude/
 GEMINI*
+.GEMINI*
 .gemini/
 GLM*
+.GLM*
 .glm-skills/
 CODEX*
+.CODEX*
 codex.md
 .codex/
 .cursor/
