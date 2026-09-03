@@ -297,12 +297,18 @@ technical_capture:
        CASE conditions, COALESCE fallbacks, computed-column formulas, the
        window-function partition clause. Snippet only, not the full
        INSERT/SELECT statement.
-    2. Loading pattern (procedures only) — one coarse value: `reload`
-       (TRUNCATE + INSERT), `append` (INSERT-only), `upsert` (MERGE or
-       UPDATE + conditional INSERT), `historization` (versioned history),
-       `purge` (DELETE-only), `orchestration` (EXECs other SPs, no data
-       mutation). Coarse only — sub-variants (SCD1/SCD2/CDC) belong in
-       prose if relevant. Omit when the focus is a view, UDF, or table.
+    2. Loading pattern (procedures only) — decide from the statement that
+       clears the target table, quotable verbatim from `bb_ddl`: `reload`
+       only when a `TRUNCATE` or an unfiltered `DELETE` against the
+       target is present; `append` when the target is only ever inserted
+       into (temp-table `#…` writes and audit/log writes do not count);
+       `upsert` (MERGE or UPDATE + conditional INSERT); `historization`
+       (versioned history); `purge` (DELETE-only, no INSERT to the
+       target); `orchestration` (EXECs other SPs, no mutation). No
+       quotable clearing or inserting statement decides the shape — use
+       `not established from the available SQL`. Coarse only —
+       sub-variants (SCD1/SCD2/CDC) belong in prose if relevant. Omit
+       when the focus is a view, UDF, or table.
     3. Computed columns — the formula as a `$$ … $$` block alongside its
        snippet.
     4. Relationship role labels — "reads lookup from `DimProduct`",
@@ -541,11 +547,17 @@ general:
 
 loading_pattern:
   stages: [synthesis]
-  instruction: >
-    Technical-angle closing addition. When all bodied procedures in scope
-    share a single load shape, name it once — in `closing` if a closing is
-    requested, otherwise in the section that covers the load — because the
-    pattern is one statement about the whole pipeline, not per section.
+  instruction: |
+    Technical-angle closing addition, gated by a hard precondition: write
+    the closing sentence only when every bodied procedure analyzed in
+    this scope was assigned the same load shape by the `technical_capture`
+    decision rule, and that shape is not `not established from the available
+    SQL`. Otherwise emit nothing for this slot — do not enumerate mixed
+    shapes and do not average them into one sentence.
+
+    When the precondition holds, name the shared shape once — in `closing`
+    if a closing is requested, otherwise in the section that covers the load
+    — because it is one statement about the whole pipeline, not per section.
     Recognized shapes (coarse — no SCD1/SCD2/CDC sub-variants):
 
     - `reload`        TRUNCATE + INSERT / full refresh
@@ -555,8 +567,8 @@ loading_pattern:
     - `purge`         DELETE-only / retention
     - `orchestration` EXECs other SPs, no data mutation on the target
 
-    Skip when shapes differ across procedures, when the analysis spans
-    non-bodied origins only, or when classification is `business`.
+    Skip entirely when the analysis spans non-bodied origins only, or
+    when classification is `business`.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
     INSERT — each run rebuilds `FactTableA` from scratch with no
