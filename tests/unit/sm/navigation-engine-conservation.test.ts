@@ -339,4 +339,35 @@ describe("Navigation Engine — node conservation", () => {
   expect(!engine.toJSON().removedSet.includes('a'), 'the already-analyzed node is not removed').toBe(true);
 });
 
+  it("a self-prune that orphans an unrouted downstream node records and logs the orphan.", () => {
+  // Chain origin→a→b→c. b self-prunes itself while c was never noted or queued — the don't-orphan
+  // guard (committedConnectedIds = noted ∪ agenda) does not see c, so the prune is legal and c
+  // simply falls out of bfsReachable in getResult. Nothing in the sink-trim path names it since
+  // it was never a scope-resident write sink candidate — this is the reachability-orphan case.
+  const logLines: string[] = [];
+  const engine = new NavigationEngine(model, graph, (level, msg) => { logLines.push(`${level}:${msg}`); }, {});
+  engine.init({ origin: 'origin', question: 'self-prune orphan record', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 5 } });
+
+  const focus1 = engine.getHopContext();
+  expect('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first focus is origin').toBe(true);
+  engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'o' }], summary: 'o', verdict: 'analyze', route_requests: [{ nodeId: 'a', question: '?' }] });
+
+  const focus2 = engine.getHopContext();
+  expect('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second focus is a').toBe(true);
+  engine.submitFindings({ focus_node_id: 'a', sections: [{ angle: 'business' as const, text: 'a' }], summary: 'a', verdict: 'analyze', route_requests: [{ nodeId: 'b', question: '?' }] });
+
+  const focus3 = engine.getHopContext();
+  expect('focus_node' in focus3 && focus3.focus_node?.id === 'b', 'third focus is b').toBe(true);
+  const result = engine.submitFindings({ focus_node_id: 'b', sections: [{ angle: 'business' as const, text: 'b' }], summary: 'b', verdict: 'prune' }) as any;
+  expect('ok' in result, 'the self-prune of b commits — c is neither noted nor queued, so no orphan guard fires').toBe(true);
+
+  const smResult = engine.getResult();
+  const rendered = new Set(smResult.fullNodes.map((n) => n.id));
+  expect(rendered.has('c'), 'c is absent from the render (orphaned by b\'s self-prune)').toBe(false);
+
+  const state = engine.toJSON();
+  expect(state.renderDroppedNodeIds?.includes('c'), 'c is recorded in renderDroppedNodeIds, not silently dropped').toBe(true);
+  expect(logLines.some((l) => l.includes('[Disposition]') && l.includes('c')), 'a [Disposition] log line names the orphaned c').toBe(true);
+});
+
 });

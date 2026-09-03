@@ -3117,6 +3117,17 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Disposition] getResult drops ${undispositioned.size} undispositioned sink node(s) — ${trunc(Array.from(undispositioned).join(', '), 200)} (in scope, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
     }
 
+    // A prune can orphan a scope node the don't-orphan guard does not protect (never analyzed, never
+    // queued): it leaves the render through the reachability bound above, with no prune of its own and
+    // no detail slot, so neither the sink line nor the conservation delta below names it. The render
+    // owns its disposition — record and log it here, once.
+    const orphaned = Array.from(this.scopeNodeIds).filter(
+      id => !finalNodeIds.has(id) && !this.removedSet.has(id) && !undispositioned.has(id));
+    if (orphaned.length > 0) {
+      for (const id of orphaned) this.renderDroppedIds.add(id);
+      this.log('debug', `[Disposition] getResult drops ${orphaned.length} scope node(s) unreachable from origin under removedSet — ${trunc(orphaned.join(', '), 200)} (orphaned by a prune; never dispositioned themselves)`);
+    }
+
     // Conservation backstop: the render set is recomputed by reachability, which can disagree with
     // the disposition ledger. Under the invariants (prune never orphans a committed node) this delta
     // is empty; if it is not, an analyzed node's detail slot is about to be dropped from the render —
