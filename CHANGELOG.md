@@ -25,6 +25,14 @@
 - A column trace no longer hands a procedure a column the source table does not have, so bidirectional traces starting at a view now complete.
 - SQL parsing corrections: objects are no longer dropped after a wildcard storage path, and a few spurious dependency edges no longer appear.
 - Graph traversal corrections: the longest dependency chain no longer stops where it meets a circular dependency, and a large graph-pattern report no longer overruns a chat turn.
+- The longest-chain graph analysis now picks the longest real chain even when a shorter branch runs through a circular dependency.
+- A commented-out object after a bracketed name containing an apostrophe no longer appears as a dependency.
+- The column-level Detail view now lays out with the same settings as object lineage.
+- A follow-up naming an object brings in only that object, not its whole schema.
+- A bookmark recalls the AI run it was saved from, even after a later exploration in the same chat.
+- A damaged saved AI run record is ignored instead of read as valid.
+- AI DDL search now names the actual reason a search pattern was rejected instead of one generic hint.
+- The column-level Detail view recovers cleanly from a rendering error when you switch back to it.
 
 ## [1.1.0] - 2026-08-20
 

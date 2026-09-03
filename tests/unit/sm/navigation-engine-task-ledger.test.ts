@@ -136,13 +136,13 @@ describe("Navigation Engine Task Ledger", () => {
   expect(restored.status === 'complete', 'unknown lead rejection leaves engine state unchanged').toBe(true);
 
   // The lead target `x` is in the out-of-allowlist `external` schema. The follow-up pill click is the
-  // user consent that widens the border: mirror followUpNode by extending the allowlist for the
-  // clicked lead's schema BEFORE supplementing, so the border check passes for exactly this lead.
-  const approvedSchemas = restored.resolveLeadSchemas([leadId]);
-  expect(approvedSchemas.join(','), 'resolveLeadSchemas derives the lead target schema').toBe('external');
-  for (const schema of approvedSchemas) restored.extendAllowedSchemas(schema);
+  // user consent that opens the border: mirror followUpNode by admitting the clicked lead's target
+  // id BEFORE supplementing, so the border check passes for exactly this node and nothing else.
+  const approvedLead = restored.pendingLeads.find(lead => lead.id === leadId)!;
+  const admitted = restored.admitSupplementTargets([approvedLead.nodeId]);
+  expect(admitted.join(','), 'admission names the lead target itself, never its schema').toBe('x');
   const scheduled = restored.supplementAgenda([], [leadId]);
-  expect('ok' in scheduled && scheduled.agendaed === 1, 'valid lead schedules a supplement hop after pill-approved schema extension').toBe(true);
+  expect('ok' in scheduled && scheduled.agendaed === 1, 'valid lead schedules a supplement hop after pill-approved admission').toBe(true);
   const leadHop = restored.getHopContext() as any;
   expect(restored.getCurrentTasks().some(task => task.question === 'Trace x to the end of the external branch.'), 'supplement preserves the original lead question').toBe(true);
   restored.submitFindings({

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
@@ -207,6 +208,47 @@ describe("Submit Findings Handler", () => {
       hint: 'Retry lineage_submit_findings with the exact current-hop focus_node.id: `origin`.',
     }));
   expect(JSON.stringify(engine.toJSON()), 'unknown focus commits zero engine state through the real handler path').toBe(before);
+});
+
+  // Per-hop progress echo. The chat status trail is composed from the accepted payload's
+  // `summary` and `verdict`, so both halves are pinned: the handler accepts each shape the
+  // echo has to render, and the composition rule that reads them.
+  it.each([
+    { label: 'an analyze commit with a summary', summary: 'Not on the path.', verdict: 'analyze' as const },
+    { label: 'a prune commit, which the echo marks', summary: 'Not on the path.', verdict: 'prune' as const },
+    { label: 'an empty summary, which the echo skips', summary: '', verdict: 'prune' as const },
+  ])('the handler accepts $label', ({ summary, verdict }) => {
+  const { engine, services, result } = setup();
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Origin dispatches both paths.' }],
+    summary: 'Origin dispatches both paths.',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+  expect((result() as { error?: string }).error === undefined, 'the origin hop commits').toBe(true);
+
+  const focus = (engine.getHopContext() as { focus_node?: { id: string } }).focus_node;
+  expect(focus?.id !== undefined, 'a second hop is dispatched to submit against').toBe(true);
+  executeSubmitFindings({
+    focus_node_id: focus!.id,
+    sections: [{ angle: 'business', text: 'Nothing relevant here.' }],
+    summary,
+    verdict,
+  }, services);
+  // Length is never a rejection axis, so an empty summary commits and the echo is what skips it.
+  expect((result() as { error?: string }).error === undefined, `the shape reaches the echo (got ${JSON.stringify(result())})`).toBe(true);
+});
+
+  // The echo itself lives in the agent graph's active-hop node, which has no public test seam
+  // (it runs only inside a full provider turn). Its three rules are pinned at the source that
+  // owns them so a silent rewrite of the trail fails here.
+  it("the per-hop echo marks a prune, ticks every other verdict, and skips an empty summary", () => {
+  const source = readFileSync(new URL('../../../src/ai/agent/graph.ts', import.meta.url), 'utf8');
+  const echo = source.slice(source.indexOf('const verdictMark'));
+  expect(source.includes("committedFinding.value && committedFinding.value.summary.trim()"), 'an empty summary produces no echo').toBe(true);
+  expect(echo.includes("=== 'prune' ? '⛔ pruned' : '✓'"), 'a prune is marked, every other verdict is ticked').toBe(true);
+  expect(echo.includes('${verdictMark} Hop ${hop}: ${focusLabel}'), 'the echo names the hop number and the node just finished').toBe(true);
 });
 
 });

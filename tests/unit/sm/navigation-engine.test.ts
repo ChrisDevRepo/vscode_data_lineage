@@ -446,4 +446,27 @@ describe("NavigationEngine Robustness", () => {
   expect(/CLUSTERED/i.test(unsetDdl), 'unset classification (wiring gap) preserves conservatively rather than minify').toBe(true);
 });
 
+  // The neighbour list is where the model reads what a procedure does to its neighbours.
+  // `LineageEdge.type` records provenance, not direction, so the verb has to come from the
+  // edge's source node type: a procedure's out-edge is a write, an in-edge from a table is
+  // a read. Reporting both as reads inverts the direction of the stated impact.
+  it("a procedure's out-edge is presented as a write and its in-edge as a read", () => {
+  const verbNodes: LineageNode[] = [
+    makeNode({ id: 'sp', schema: 'dbo', name: 'sp', type: 'procedure' }),
+    makeNode({ id: 'written', schema: 'dbo', name: 'written', type: 'table' }),
+    makeNode({ id: 'read_from', schema: 'dbo', name: 'read_from', type: 'table' }),
+  ];
+  const verbEdges: Array<[string, string]> = [['sp', 'written'], ['read_from', 'sp']];
+  const verbModel: DatabaseModel = makeModel(verbNodes, verbEdges, ['dbo']);
+  const engine = new NavigationEngine(verbModel, makeGraph(verbNodes, verbEdges), () => {}, {});
+  engine.init({ origin: 'sp', question: 'what does sp touch', direction: 'bidirectional', depthIntent: { kind: 'explicit', levels: 1 } });
+  const hop = engine.getHopContext();
+  const byId = new Map((hop.neighbors ?? []).map(n => [n.id, n]));
+
+  expect(byId.get('written')?.edge_type === 'write', `the procedure's out-edge to a table is a write (got ${byId.get('written')?.edge_type})`).toBe(true);
+  expect(byId.get('written')?.edge_direction === 'downstream', 'the written table is downstream of the procedure').toBe(true);
+  expect(byId.get('read_from')?.edge_type === 'read', `a table feeding the procedure is a read (got ${byId.get('read_from')?.edge_type})`).toBe(true);
+  expect(byId.get('read_from')?.edge_direction === 'upstream', 'the source table is upstream of the procedure').toBe(true);
+});
+
 });

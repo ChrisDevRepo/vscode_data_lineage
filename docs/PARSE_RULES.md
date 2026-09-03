@@ -13,8 +13,13 @@ SQL-body dependencies are extracted by a multi-pass regex engine driven by metad
 
 The parser neutralises non-code text, applies YAML rules in priority order,
 normalises captures, and resolves ordinary references against the loaded
-catalog before creating graph edges. File and URL rules can inspect raw SQL
-because their values live in string literals. See
+catalog before creating graph edges. Block-comment removal treats a bracketed
+identifier as opaque the same way it already treats a quoted string: an
+apostrophe or a `/*` inside `[Bob's Table]` cannot open a string literal or a
+comment, and a doubled `]]` inside the brackets reads as an escaped `]`, not
+the end of the name — so a commented-out object placed after such a name is
+still removed and does not surface as a dependency. File and URL rules can
+inspect raw SQL because their values live in string literals. See
 [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts) for the current
 preprocessing implementation.
 
@@ -68,7 +73,7 @@ construct is rare on the supported platforms. Scoped by platform where that matt
 | `OPENDATASOURCE(...)...` | nothing is captured, including the four-part table name | SQL Server, Azure SQL only |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | neither table is captured | partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list followed by `UNION`, `OPTION`, `PIVOT` or `TABLESAMPLE`, or containing a table variable | the whole list fails to normalise, so tables after the first are lost | legacy bodies on any platform |
-| `]]` inside a delimited identifier (`[My]]Table]`) | the identifier is truncated at the first `]` | any platform; Microsoft documents the escape as an oddity |
+| `]]` inside a delimited identifier (`[My]]Table]`) | the name-capture pass truncates the identifier at the first `]`, so the resolved reference is wrong even though comment/string neutralization reads the same name correctly | any platform; Microsoft documents the escape as an oddity |
 
 `CONTAINSTABLE`, `WITH XMLNAMESPACES`, and `CROSS APPLY x.Doc.nodes(...)` were checked and are
 handled correctly — the base table is captured and no phantom reference is produced.

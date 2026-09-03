@@ -216,57 +216,72 @@ describe("Bipartite Agenda Rule", () => {
   expect(progress.total >= progress.current + progress.open, `live denominator includes queued work — got total=${progress.total}, current=${progress.current}, open=${progress.open}`).toBe(true);
 });
 
-  it("bodied contraction target beyond the initial BFS seed, retaining the route task's intent.", () => {
+  // One CT world for both halves of the contraction contract. The traced column reaches the origin
+  // through a chain of carriers, so a single authored route contracts across all of them to the
+  // writer behind. `default_start` seeds three levels, leaving the writer (four levels up) outside
+  // the seed — the only shape that reaches the contraction-admission branch, since an unbounded
+  // seed would already contain it.
+  const CARRIER_COLUMN = { name: 'OrderQty', type: 'int', nullable: 'NOT NULL', extra: '' };
   const n6: LineageNode[] = [
     makeNode({ id: 'writer6', schema: 'dbo', name: 'writer6', type: 'procedure' }),
     makeNode({ id: 'excludednodewriter6', schema: 'dbo', name: 'excludednodewriter6', type: 'procedure' }),
     makeNode({ id: 'excludedschemawriter6', schema: 'audit', name: 'excludedschemawriter6', type: 'procedure' }),
     makeNode({ id: 'excludedtypewriter6', schema: 'dbo', name: 'excludedtypewriter6', type: 'function' }),
-    makeNode({ id: 'carrier6', schema: 'dbo', name: 'carrier6', type: 'table', columns: [{ name: 'OrderQty', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    makeNode({ id: 'carrier6', schema: 'dbo', name: 'carrier6', type: 'table', columns: [CARRIER_COLUMN] }),
+    makeNode({ id: 'carrier6b', schema: 'dbo', name: 'carrier6b', type: 'table', columns: [CARRIER_COLUMN] }),
+    makeNode({ id: 'carrier6c', schema: 'dbo', name: 'carrier6c', type: 'table', columns: [CARRIER_COLUMN] }),
     makeNode({ id: 'origin6', schema: 'dbo', name: 'origin6', type: 'view', columns: [{ name: 'ResultQty', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
     makeNode({ id: 'downstream6', schema: 'dbo', name: 'downstream6', type: 'view' }),
     makeNode({ id: 'unrelatedcarrier6', schema: 'dbo', name: 'unrelatedcarrier6', type: 'table' }),
     makeNode({ id: 'unrelatedwriter6', schema: 'dbo', name: 'unrelatedwriter6', type: 'procedure' }),
   ];
   const e6: Array<[string, string]> = [
-    ['writer6', 'carrier6'],
-    ['excludednodewriter6', 'carrier6'],
-    ['excludedschemawriter6', 'carrier6'],
-    ['excludedtypewriter6', 'carrier6'],
+    ['writer6', 'carrier6c'],
+    ['excludednodewriter6', 'carrier6c'],
+    ['excludedschemawriter6', 'carrier6c'],
+    ['excludedtypewriter6', 'carrier6c'],
+    ['carrier6c', 'carrier6b'],
+    ['carrier6b', 'carrier6'],
     ['carrier6', 'origin6'],
     ['carrier6', 'downstream6'],
     ['unrelatedwriter6', 'unrelatedcarrier6'],
   ];
   const model6: DatabaseModel = makeModel(n6, e6, ['dbo', 'audit']);
-  const engine = new NavigationEngine(model6, makeGraph(n6, e6), () => {}, {});
-  const init = engine.init({
-    origin: 'origin6',
-    question: 'trace ResultQty to its raw source',
-    analysisMode: 'ct',
-    targetColumns: ['ResultQty'],
-    direction: 'upstream',
-    depthIntent: { kind: 'explicit', levels: 1 },
-    excludeNodeIds: ['excludednodewriter6'],
-    excludeSchemas: ['audit'],
-    excludeTypes: ['function'],
-  });
-  expect('ok' in init, 'CT contraction setup initializes').toBe(true);
-  expect(!engine.toJSON().scopeNodeIds.includes('writer6'), 'writer starts beyond the initial BFS seed').toBe(true);
-
-  const hop = engine.getHopContext();
-  expect(hop.focus_node?.id === 'origin6', 'CT contraction setup focuses the origin').toBe(true);
-  const bodiedScopeSizeBeforeAdmission = engine.bodiedScopeSize;
   const ROUTE_QUESTION = 'Trace the authored OrderQty route through carrier6.';
-  const submitted = engine.submitFindings({
-    focus_node_id: 'origin6',
-    sections: [{ angle: 'technical', text: 'ResultQty is sourced from carrier6.OrderQty.' }],
-    summary: 'ResultQty continues through carrier6.',
-    verdict: 'analyze',
-    column_flow: [{ out_col: 'ResultQty', upstream_columns: [{ node: 'carrier6', col: 'OrderQty' }] }],
-    route_requests: [{ nodeId: 'carrier6', question: ROUTE_QUESTION }],
-  });
-  expect('ok' in submitted, 'accepted CT carrier route commits').toBe(true);
 
+  /** Initializes the CT world at the given depth and commits the one authored carrier route. */
+  function driveCtContraction(depthIntent: { kind: 'default_start' } | { kind: 'explicit'; levels: number }): NavigationEngine {
+    const engine = new NavigationEngine(model6, makeGraph(n6, e6), () => {}, {});
+    const init = engine.init({
+      origin: 'origin6',
+      question: 'trace ResultQty to its raw source',
+      analysisMode: 'ct',
+      targetColumns: ['ResultQty'],
+      direction: 'upstream',
+      depthIntent,
+      excludeNodeIds: ['excludednodewriter6'],
+      excludeSchemas: ['audit'],
+      excludeTypes: ['function'],
+    });
+    expect('ok' in init, 'CT contraction setup initializes').toBe(true);
+    expect(!engine.toJSON().scopeNodeIds.includes('writer6'), 'writer starts beyond the initial BFS seed').toBe(true);
+
+    const hop = engine.getHopContext();
+    expect(hop.focus_node?.id === 'origin6', 'CT contraction setup focuses the origin').toBe(true);
+    const submitted = engine.submitFindings({
+      focus_node_id: 'origin6',
+      sections: [{ angle: 'technical', text: 'ResultQty is sourced from carrier6.OrderQty.' }],
+      summary: 'ResultQty continues through carrier6.',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'ResultQty', upstream_columns: [{ node: 'carrier6', col: 'OrderQty' }] }],
+      route_requests: [{ nodeId: 'carrier6', question: ROUTE_QUESTION }],
+    });
+    expect('ok' in submitted, 'accepted CT carrier route commits').toBe(true);
+    return engine;
+  }
+
+  it("bodied contraction target beyond the initial BFS seed, retaining the route task's intent.", () => {
+  const engine = driveCtContraction({ kind: 'default_start' });
   const state = engine.toJSON();
   const writerEntry = state.agenda.find(entry => entry.nodeId === 'writer6');
   const tasks = new Map(state.engineInternals.investigationTasks.map(task => [task.id, task]));
@@ -279,7 +294,19 @@ describe("Bipartite Agenda Rule", () => {
   expect(!state.scopeNodeIds.includes('excludedtypewriter6'), 'type-excluded writer remains excluded').toBe(true);
   expect(!state.scopeNodeIds.includes('downstream6'), 'opposite-direction sibling is not admitted').toBe(true);
   expect(!state.scopeNodeIds.includes('unrelatedwriter6'), 'unrelated writer sibling is not admitted').toBe(true);
-  expect(engine.bodiedScopeSize === bodiedScopeSizeBeforeAdmission + 1, `bodiedScopeSize grows by exactly 1 for the single CT-admitted bodied writer — got ${engine.bodiedScopeSize}, expected ${bodiedScopeSizeBeforeAdmission + 1}`).toBe(true);
+});
+
+  // A carrier chain is not a way around a border the user stated: the admission that runs freely
+  // under an assistant-chosen depth stops at a stated one, and the chain stops with it. (The lead
+  // a refused bodied contraction records is pinned in depth-border-contract.test.ts, where the
+  // carrier itself sits at the border rather than past it.)
+  it("a contraction past a user-stated depth admits nothing beyond the border.", () => {
+  const engine = driveCtContraction({ kind: 'explicit', levels: 1 });
+  const state = engine.toJSON();
+  expect(!state.scopeNodeIds.includes('writer6'), 'the writer beyond the stated border is not admitted').toBe(true);
+  expect(!state.agenda.some(entry => entry.nodeId === 'writer6'), 'nothing beyond the border is queued').toBe(true);
+  expect(!state.scopeNodeIds.includes('carrier6b'), 'the carrier past the border is not admitted either').toBe(true);
+  expect(state.scopeNodeIds.includes('carrier6'), 'the carrier at the border stays in scope').toBe(true);
 });
 
 });

@@ -210,7 +210,11 @@ restores session memory on any failure, so no partially-approved plan goes live.
 one predicate, `checkBorder`, is consulted at every admission purpose the engine has — seed
 BFS, routing, supplement, column-trace contraction, display — with the sole scope-add write
 site behind it. Approved exclusions, passthroughs, schema and type filters, and a hard depth
-border are therefore the same fact everywhere the engine looks.
+border are therefore the same fact everywhere the engine looks. The allowlist half of that
+border has two grants: a schema the user filtered on, or a single object a follow-up named —
+naming an object admits that object, never its schema siblings. A column-trace contraction is
+held to the same depth border as every other admission: one that lands past a stated ceiling
+defers as a lead instead of being admitted silently through the carrier that reached it.
 
 One class of instruction cannot be bound this way. An instruction that maps to no filter
 field is carried as `scopeNotes` to the gate and into every hop, but it is prose addressed to
@@ -251,7 +255,8 @@ objects; only schema, depth, or budget boundaries are presented as deferred
 follow-up work.
 
 Completed follow-ups can update presentation, supplement the existing
-exploration with explicit nodes, begin a fresh exploration, or answer directly.
+exploration with explicit nodes — naming an object admits that object, never
+its whole schema — begin a fresh exploration, or answer directly.
 Supplements retain the existing archive and return through the active loop.
 Fresh exploration follows the consent path and establishes new state.
 

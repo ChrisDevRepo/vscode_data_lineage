@@ -207,17 +207,11 @@ describe("Supplement Agenda", () => {
   expect(!inScopeBefore, 'ext1 was never in scope to begin with').toBe(true);
 });
 
-  it("Test 9: resolveLeadSchemas derives the target schema from the resolved node (not string parsing).", () => {
-  const { engine, leadId } = makeCompletedExtEngine();
-  const schemas = engine.resolveLeadSchemas([leadId]);
-  expect(schemas.length === 1 && schemas[0] === 'ext', 'resolveLeadSchemas returns the lead target node schema').toBe(true);
-  expect(engine.resolveLeadSchemas(['no_such_lead']).length === 0, 'unknown lead ids resolve to no schema').toBe(true);
-});
-
-  it("succeeds and the hop total increments (mirrors followUpNode's extend-then-supplement ordering).", () => {
+  it("succeeds and the hop total increments (mirrors followUpNode's admit-then-supplement ordering).", () => {
   const { engine, leadId } = makeCompletedExtEngine();
   const totalBefore = engine.hopProgress.total;
-  for (const schema of engine.resolveLeadSchemas([leadId])) engine.extendAllowedSchemas(schema);
+  const lead = engine.pendingLeads.find(l => l.id === leadId)!;
+  expect(engine.admitSupplementTargets([lead.nodeId]).length === 1, 'the clicked lead target is admitted by id').toBe(true);
   const res = engine.supplementAgenda([], [leadId]) as any;
   expect('ok' in res && res.ok === true, 'supplement succeeds after pill-approved allowlist extension').toBe(true);
   expect(res.agendaed === 1, 'the approved ext1 lead is agendaed').toBe(true);
@@ -342,6 +336,47 @@ describe("Supplement Agenda", () => {
   expect(res.skipped === 1, 'the sibling is still refused (got ' + JSON.stringify(res) + ')').toBe(true);
   expect(res.agendaed === 0, 'the sibling is not agendaed').toBe(true);
   expect(res.skippedDetails[0]?.reason === 'out_of_allowlist', 'the ext schema was never admitted').toBe(true);
+});
+
+  // Consent is per node: naming one follow-up target admits that target, never its schema
+  // siblings. A sibling the user never named stays behind the border and remains a lead the
+  // user can approve on its own.
+  it('admitSupplementTargets admits the named ids only, never their schema siblings.', () => {
+  const siblingNodes: LineageNode[] = [
+    makeNode({ id: 'o',    schema: 'dbo', name: 'o',    type: 'view' }),
+    makeNode({ id: 'mid',  schema: 'dbo', name: 'mid',  type: 'view' }),
+    makeNode({ id: 'ext1', schema: 'ext', name: 'ext1', type: 'view' }),
+    makeNode({ id: 'ext2', schema: 'ext', name: 'ext2', type: 'view' }),
+  ];
+  const siblingEdges: Array<[string, string]> = [['o', 'mid'], ['mid', 'ext1'], ['mid', 'ext2']];
+  // A supplement flips the engine out of 'complete', so naming one target and then probing the
+  // sibling takes two engines — the same with/without pattern the consent case above uses.
+  function completedSiblingEngine(): NavigationEngine {
+    const engine = new NavigationEngine(
+      makeModel(siblingNodes, siblingEdges, ['dbo', 'ext']),
+      makeGraph(siblingNodes, siblingEdges),
+      () => {},
+      { activeFilter: { schemas: ['dbo'] } as any },
+    );
+    engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
+    driveEngine(engine, { routes: { o: ['mid'], mid: ['ext1', 'ext2'] }, limit: 20 });
+    expect(engine.status === 'complete', 'sibling engine completes').toBe(true);
+    expect(engine.pendingLeads.some(l => l.nodeId.toLowerCase() === 'ext2'), 'the unnamed sibling is already a pending schema-boundary lead').toBe(true);
+    return engine;
+  }
+
+  const named = completedSiblingEngine();
+  const admitted = named.admitSupplementTargets(['ext1']);
+  expect(admitted.join(','), 'admission reports exactly the ids it opened').toBe('ext1');
+  const namedRes = named.supplementAgenda(['ext1']) as any;
+  expect(namedRes.agendaed === 1, `the named target is admitted (got ${JSON.stringify(namedRes)})`).toBe(true);
+
+  const siblingEngine = completedSiblingEngine();
+  siblingEngine.admitSupplementTargets(['ext1']);
+  const sibling = siblingEngine.supplementAgenda(['ext2']) as any;
+  expect(sibling.skipped === 1, `the sibling the user never named stays outside the border (got ${JSON.stringify(sibling)})`).toBe(true);
+  expect(sibling.skippedDetails[0]?.reason === 'out_of_allowlist', 'the sibling is refused on the allowlist axis').toBe(true);
+  expect(siblingEngine.pendingLeads.some(l => l.nodeId.toLowerCase() === 'ext2'), 'the sibling remains a lead the user can approve on its own').toBe(true);
 });
 
 });

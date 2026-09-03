@@ -8,7 +8,10 @@
  * older record as absent rather than as an error.
  */
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
+import { NavigationSnapshotSchema } from '../sm/navigationSnapshotSchema';
 import type { SmState } from '../sm/smTypes';
+import type { Logger } from '../../utils/log';
 import type { FilterProfile } from '../../engine/shared/bridgeContract';
 import type { PresentationArtifact } from './types';
 
@@ -58,21 +61,49 @@ export type RunStoreReader = {
 };
 
 /**
+ * Read contract for one persisted run record.
+ *
+ * @remarks
+ * Tolerant where the record can degrade and strict where it cannot. A top-level key from a newer
+ * build is carried through rather than treated as corruption; an unreadable `origin` or
+ * `ddlHashes` costs only the staleness annotation, so each falls back to its empty value instead
+ * of dropping a whole run's memory. The snapshot is the one field a consumer walks structurally,
+ * so it is validated by the same schema the engine restores from — a damaged checkpoint answers
+ * "no run memory" rather than reaching the presenter as a half-shaped object.
+ */
+const StoredAiRunSchema = z.object({
+  schemaVersion: z.literal(1),
+  runId: z.string().min(1),
+  savedAt: z.string(),
+  origin: z.string().nullable().catch(null),
+  ddlHashes: z.record(z.string(), z.string()).catch(() => ({})),
+  snapshot: NavigationSnapshotSchema,
+}).passthrough();
+
+/**
  * Reads the run record filed under one bookmark key.
  *
  * @remarks
- * Fail-closed on the contract version: a record of any other `schemaVersion` reads as absent, so a
- * consumer never meets a shape it does not know.
+ * Fail-closed on the contract: a record of another `schemaVersion`, or one whose snapshot is not a
+ * navigation checkpoint, reads as absent, so a consumer never meets a shape it does not know.
  *
  * @param store - The global-state reader.
  * @param bookmarkId - Identifier of the bookmark whose record is read.
- * @returns The stored run, or `undefined` when none is persisted or its version is not current.
+ * @param log - Optional logger; a rejected record is reported once at debug.
+ * @returns The stored run, or `undefined` when none is persisted or the record fails validation.
  */
-export function readStoredRun(store: RunStoreReader, bookmarkId: string): StoredAiRun | undefined {
+export function readStoredRun(
+  store: RunStoreReader,
+  bookmarkId: string,
+  log?: Pick<Logger, 'debug'>,
+): StoredAiRun | undefined {
   const record = store.get<unknown>(aiRunStorageKey(bookmarkId));
-  return typeof record === 'object' && record !== null && (record as { schemaVersion?: unknown }).schemaVersion === 1
-    ? (record as StoredAiRun)
-    : undefined;
+  if (record === undefined || record === null) return undefined;
+  const parsed = StoredAiRunSchema.safeParse(record);
+  if (parsed.success) return parsed.data;
+  const paths = Array.from(new Set(parsed.error.issues.map(issue => issue.path.join('.') || '(root)'))).slice(0, 3);
+  log?.debug(`[RunStore] discarded unreadable run record bookmark=${bookmarkId} paths=${paths.join(',')}`);
+  return undefined;
 }
 
 /**

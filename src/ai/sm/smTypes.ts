@@ -630,6 +630,8 @@ export interface PendingLead {
 export interface ApprovedBorder {
   /** Lower-cased schemas in scope. */
   schemas: string[];
+  /** Individual node ids the user named in a follow-up; omitted when none has been admitted. */
+  node_ids?: string[];
   /** Effective depth ceiling including mode headroom and any session extensions, or null when no depth budget is set. */
   depth_cap: number | null;
 }
@@ -779,6 +781,8 @@ export interface EngineInternalsSnapshot {
   userSchemas: string[];
   /** Session-scoped schema allowlist (grows via mid-session confirmations). */
   sessionAllowedSchemas: string[];
+  /** Node ids the user named in a follow-up; absent in a checkpoint written before id-level consent. */
+  sessionAllowedNodeIds?: string[];
   /** Object types the user excluded at init. */
   excludedTypes: string[];
   /** Schemas the user excluded at init. */

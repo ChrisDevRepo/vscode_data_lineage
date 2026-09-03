@@ -308,8 +308,19 @@ export class NavigationEngine implements IHopStateMachine {
    * question binds; an omitted depth does not.
    */
   protected depthEnforcement: 'strict' | 'soft' | 'silent' = 'silent';
-  /** Memoised directed distance/side from the origin; cleared whenever the BFS seed is recomputed. */
-  private directedDepthCache = new Map<string, { depth: number; side: 'upstream' | 'downstream' } | null>();
+  /**
+   * Directed distance from the origin to every reachable node, per side; cleared whenever the BFS
+   * seed is recomputed and refilled on the next depth read ({@link ensureDirectedDepths}).
+   *
+   * @remarks
+   * Both sides are kept because a border can be asymmetric: a node reachable upstream and
+   * downstream is judged against each side's own ceiling, and collapsing it to one number would
+   * pick the ceiling the user did not set for that path. A side is absent when no directed path
+   * reaches the node on it.
+   */
+  private directedDepths = new Map<string, { upstream?: number; downstream?: number }>();
+  /** Whether {@link directedDepths} holds the current seed's walk; false until the next fill. */
+  private directedDepthsFilled = false;
   /** History of explicit AI expansions beyond the initial BFS seed. */
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
@@ -326,6 +337,15 @@ export class NavigationEngine implements IHopStateMachine {
   protected userSchemas: Set<string> = new Set();
   /** Session-scoped schema allowlist. Starts as a copy of {@link userSchemas}; grows via {@link extendAllowedSchemas}. */
   protected sessionAllowedSchemas: Set<string> = new Set();
+  /**
+   * Node ids (lower-cased) the user named in a follow-up, admitted one by one.
+   *
+   * @remarks
+   * The narrow half of the allowlist axis: naming an object admits that object, never its schema
+   * siblings. Grows only through {@link admitSupplementTargets}; read by {@link checkBorder}
+   * alongside {@link sessionAllowedSchemas}.
+   */
+  protected sessionAllowedNodeIds: Set<string> = new Set();
   /** Object types the user asked to exclude (e.g. ['view','function']); pruned from scope at init. */
   protected excludedTypes: Set<string> = new Set();
   /** Schemas (lower-cased) the user asked to exclude; pruned from scope at init. */
@@ -917,20 +937,48 @@ export class NavigationEngine implements IHopStateMachine {
   private directedDepthFromOrigin(targetId: string): { depth: number; side: 'upstream' | 'downstream' } | null {
     if (!this.originNodeId) return null;
     if (targetId === this.originNodeId) return { depth: 0, side: 'downstream' };
-    const cached = this.directedDepthCache.get(targetId);
-    if (cached !== undefined) return cached;
+    const sides = this.directedDepthsFor(targetId);
+    if (!sides) return null;
+    const { upstream, downstream } = sides;
+    if (upstream !== undefined && (downstream === undefined || upstream <= downstream)) {
+      return { depth: upstream, side: 'upstream' };
+    }
+    return downstream !== undefined ? { depth: downstream, side: 'downstream' } : null;
+  }
 
-    let best: { depth: number; side: 'upstream' | 'downstream' } | null = null;
+  /**
+   * Per-side directed distances from the origin to `targetId`, or `undefined` when unreachable.
+   *
+   * @param targetId - Node to measure.
+   * @returns The resolved sides, or `undefined` when no directed path reaches the node.
+   */
+  private directedDepthsFor(targetId: string): { upstream?: number; downstream?: number } | undefined {
+    if (!this.originNodeId) return undefined;
+    this.ensureDirectedDepths();
+    return this.directedDepths.get(targetId);
+  }
+
+  /**
+   * Fills {@link directedDepths} with one walk per side, unless the current seed already filled it.
+   *
+   * @remarks
+   * Two traversals answer every node's distance, so the cost of enforcing a border is fixed per
+   * scope seed rather than paid per candidate. A callback returning `true` in `bfsFromNode` prunes
+   * that node's neighbours and does not abort the walk, so a per-candidate search was always a
+   * whole traversal per side. The first depth recorded for a node is its shortest on that side —
+   * breadth-first order guarantees it.
+   */
+  private ensureDirectedDepths(): void {
+    if (this.directedDepthsFilled || !this.originNodeId) return;
+    this.directedDepthsFilled = true;
     for (const [mode, side] of [['inbound', 'upstream'], ['outbound', 'downstream']] as const) {
-      let found: number | null = null;
       bfsFromNode(this.graph, this.originNodeId, (key, _attr, depth) => {
-        if (key === targetId) { found = depth; return true; }
+        const entry = this.directedDepths.get(key);
+        if (!entry) this.directedDepths.set(key, { [side]: depth });
+        else if (entry[side] === undefined) entry[side] = depth;
         return false;
       }, { mode });
-      if (found !== null && (best === null || found < best.depth)) best = { depth: found, side };
     }
-    this.directedDepthCache.set(targetId, best);
-    return best;
   }
 
   /**
@@ -940,21 +988,32 @@ export class NavigationEngine implements IHopStateMachine {
    * Only ever true under `'strict'` enforcement — i.e. only when the AI reported that the user
    * stated a level count. An omitted depth leaves the seed growable exactly as before.
    *
+   * A node is inside the border when **either** side's distance fits that side's own ceiling: under
+   * `{upstream:1, downstream:5}` a node three levels up and four levels down is a node the user
+   * asked for on the downstream path, and judging it on the upstream ceiling refuses work that was
+   * requested. Only when no side fits is it a breach, reported at the smallest resolved distance —
+   * the nearest way in, and the number the deferred lead and the border log quote.
+   *
    * @param targetId - Candidate node.
    * @param fallbackDepth - Hop-relative depth to judge by when no directed path resolves.
    * @returns The breaching depth when the border is crossed, otherwise `null`.
    */
   private depthBorderBreach(targetId: string, fallbackDepth: number | undefined): number | null {
     if (this.depthEnforcement !== 'strict') return null;
-    const directed = this.directedDepthFromOrigin(targetId);
-    const depth = directed?.depth ?? fallbackDepth;
-    if (depth === undefined) return null;
+    const sides = this.directedDepthsFor(targetId);
+    const resolved: number[] = [];
+    for (const side of ['upstream', 'downstream'] as const) {
+      const depth = sides?.[side];
+      if (depth === undefined) continue;
+      if (depth <= this.depthLimits[side]) return null;
+      resolved.push(depth);
+    }
+    if (resolved.length > 0) return Math.min(...resolved);
+    if (fallbackDepth === undefined) return null;
     // Without a resolved side the node is judged against the tighter of the two ceilings: a border
     // the user fixed must not be crossed by a node whose side we could not establish.
-    const limit = directed
-      ? this.depthLimits[directed.side]
-      : Math.min(this.depthLimits.upstream, this.depthLimits.downstream);
-    return depth > limit ? depth : null;
+    const limit = Math.min(this.depthLimits.upstream, this.depthLimits.downstream);
+    return fallbackDepth > limit ? fallbackDepth : null;
   }
 
   /** True when a route target is reachable from the origin within the approved traversal direction. */
@@ -987,6 +1046,10 @@ export class NavigationEngine implements IHopStateMachine {
    * the route path's first-failure semantics. Purely a read over locked session state — never
    * interprets intent. All identifiers are compared case-folded.
    *
+   * The allowlist axis has two grants and one test: a schema the user filtered on
+   * ({@link sessionAllowedSchemas}) or a single node the user named in a follow-up
+   * ({@link sessionAllowedNodeIds}). Either admits the node; neither admits its siblings.
+   *
    * @param nodeId - Canonical node id (any case; folded internally).
    * @param node - The resolved node, supplying `type` and `schema`.
    * @param purpose - Which write path is asking, fixing the participating axes.
@@ -1004,36 +1067,13 @@ export class NavigationEngine implements IHopStateMachine {
       if (this.excludedNodeIds.has(nodeId.toLowerCase())) return { kind: 'excluded' };
     }
     if (checkDirection && !this.isReachableInApprovedDirection(nodeId)) return { kind: 'out_of_direction' };
-    if (checkAllowlist && this.sessionAllowedSchemas.size > 0 && !this.sessionAllowedSchemas.has(node.schema.toLowerCase())) {
+    if (checkAllowlist
+      && this.sessionAllowedSchemas.size > 0
+      && !this.sessionAllowedSchemas.has(node.schema.toLowerCase())
+      && !this.sessionAllowedNodeIds.has(nodeId.toLowerCase())) {
       return { kind: 'out_of_allowlist' };
     }
     return { kind: 'in_border' };
-  }
-
-  /**
-   * Resolves the distinct target-node schemas of the given pending leads.
-   *
-   * @remarks
-   * Derived from the resolved graph node (never string-parsed), so the follow-up pill can pre-extend
-   * the schema allowlist for exactly the leads the user clicked. Unknown/absent leads are skipped.
-   *
-   * @param leadIds - Pending-lead ids selected by the host follow-up control.
-   * @returns Distinct schemas (original casing) of the leads' target nodes, in first-seen order.
-   */
-  public resolveLeadSchemas(leadIds: readonly string[]): string[] {
-    const seen = new Set<string>();
-    const schemas: string[] = [];
-    for (const leadId of leadIds) {
-      const lead = this.taskLedger.pendingLeads.find(item => item.id === leadId && item.status === 'pending');
-      if (!lead) continue;
-      const node = this.nodeMap.get(lead.nodeId) ?? this.nodeMap.get(lead.nodeId.toLowerCase());
-      if (!node) continue;
-      const key = node.schema.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      schemas.push(node.schema);
-    }
-    return schemas;
   }
 
   /** Gets the size of the active exploration scope. */
@@ -1595,18 +1635,18 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Admits the named follow-up targets through the schema allowlist.
+   * Admits the named follow-up targets through the allowlist, one id at a time.
    *
    * @remarks
    * The consent step the host runs *before* {@link supplementAgenda}, which stays a side-effect-free
-   * reject — the same extend-then-supplement ordering the approve-gate path uses when it calls
-   * {@link extendAllowedSchemas} for each approved `schema:` class. Naming a node in a follow-up is
-   * the user consent that reaches it; without this step a `schema_boundary` lead was a dead end,
-   * because nothing on the supplement path ever widened the allowlist and the target came straight
-   * back as `out_of_allowlist`.
+   * reject — the same extend-then-supplement ordering the approve-gate path uses. Naming a node in a
+   * follow-up is the user consent that reaches it; without this step a `schema_boundary` lead was a
+   * dead end, because nothing on the supplement path ever widened the allowlist and the target came
+   * straight back as `out_of_allowlist`.
    *
-   * Schema-scoped, not global: the schema is read from each requested node and the whole schema
-   * joins the allowlist, so a named node also admits its schema siblings. Extension is monotonic,
+   * Id-scoped, never schema-scoped: "also look at object X" is consent for X. Admitting X's whole
+   * schema would open every sibling in it on the model's say-so, and a sibling that used to ride
+   * along now defers as its own lead — visible, and approvable on its own. Admission is monotonic,
    * so repeated follow-ups can only widen.
    *
    * {@link checkBorder} carries no depth axis for any purpose, so an approved target is admitted at
@@ -1616,13 +1656,19 @@ export class NavigationEngine implements IHopStateMachine {
    * {@link checkBorder}.
    *
    * @param nodeIds - Follow-up targets, canonical or free-cased; unresolvable ids are ignored.
+   * @returns The canonical ids actually admitted, so the reply can name them.
    */
-  public admitSupplementTargets(nodeIds: readonly string[]): void {
+  public admitSupplementTargets(nodeIds: readonly string[]): string[] {
+    const admitted: string[] = [];
     for (const raw of nodeIds) {
       const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
       const node = id ? this.nodeMap.get(id) : undefined;
-      if (node && !this.excludedNodeIds.has(node.id.toLowerCase())) this.extendAllowedSchemas(node.schema);
+      if (!node || this.excludedNodeIds.has(node.id.toLowerCase())) continue;
+      this.sessionAllowedNodeIds.add(node.id.toLowerCase());
+      admitted.push(node.id);
     }
+    if (admitted.length > 0) this.log('info', `[Border] supplement admit ids=[${admitted.join(',')}]`);
+    return admitted;
   }
 
   /**
@@ -1865,6 +1911,9 @@ export class NavigationEngine implements IHopStateMachine {
 
     workingMemory.approved_border = {
       schemas: Array.from(this.sessionAllowedSchemas).sort(),
+      // Named-node consent is the other half of the allowlist axis; without it here the border the
+      // model reads would still refuse an object the user has already asked for by name.
+      ...(this.sessionAllowedNodeIds.size > 0 ? { node_ids: Array.from(this.sessionAllowedNodeIds).sort() } : {}),
       depth_cap: this.computeDepthCap(),
     };
     workingMemory.deferred_count = this.deferredQuestions.length;
@@ -2504,7 +2553,8 @@ export class NavigationEngine implements IHopStateMachine {
   ): Set<string> {
     const seen = new Set<string>();
     this.depthFromOrigin.clear();
-    this.directedDepthCache.clear();
+    this.directedDepths.clear();
+    this.directedDepthsFilled = false;
 
     const limit = (side: 'upstream' | 'downstream'): number => {
       switch (depthIntent.kind) {
@@ -2748,6 +2798,19 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[Disposition] enqueue drop ${targetId} — out-of-scope target (priority=${priority}, not deferred) via focus=${this.currentFocusNodeId ?? this.originNodeId ?? '(none)'}`);
         return;
       }
+      // A carrier is not a way around the stated border: the node behind it is judged on the same
+      // axis the route path uses, and a breach becomes a lead rather than a silent admission.
+      const contractionBreach = this.depthBorderBreach(targetId, depth);
+      if (contractionBreach !== null) {
+        const via = this.currentFocusNodeId ?? this.originNodeId;
+        this.log(
+          'debug',
+          `[Depth] CT contraction deferred hop=${this.hopCount} id=${targetId} ← ${via ?? '(none)'} `
+          + `depth=${contractionBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`,
+        );
+        if (via) this.recordContractedLead(targetId, via, question);
+        return;
+      }
       const admittedDepth = this.directedDepthFromOrigin(targetId)?.depth ?? depth;
       this.scopeNodeIds.add(targetId);
       // Bodied by construction (canAdmitCtContraction asserts SCRIPT_TYPES) — mirror supplementAgenda
@@ -2940,7 +3003,12 @@ export class NavigationEngine implements IHopStateMachine {
       if (d !== undefined) neighbor.depth_from_origin = d;
       neighbor.in_budget = this.scopeNodeIds.has(nid);
 
-      if (hasSchemaFilter) neighbor.in_approved_scope = this.sessionAllowedSchemas.has(n.schema.toLowerCase());
+      // Both allowlist grants, so the flag agrees with the border test below: a node the user named
+      // in a follow-up is inside the approved scope even though its schema is not.
+      if (hasSchemaFilter) {
+        neighbor.in_approved_scope = this.sessionAllowedSchemas.has(n.schema.toLowerCase())
+          || this.sessionAllowedNodeIds.has(nid.toLowerCase());
+      }
 
       // Display annotation: `display` tests type-exclusion + allowlist only (no direction / node /
       // schema exclusion). A type-hidden neighbor forces the scope flag false; either block arms the
@@ -3084,6 +3152,7 @@ export class NavigationEngine implements IHopStateMachine {
       totalNodes: this._totalNodes,
       userSchemas: Array.from(this.userSchemas),
       sessionAllowedSchemas: Array.from(this.sessionAllowedSchemas),
+      sessionAllowedNodeIds: Array.from(this.sessionAllowedNodeIds),
       excludedTypes: Array.from(this.excludedTypes),
       excludedSchemas: Array.from(this.excludedSchemas),
       excludedNodeIds: Array.from(this.excludedNodeIds),
@@ -3185,6 +3254,7 @@ export class NavigationEngine implements IHopStateMachine {
     engine._totalNodes = internals.totalNodes;
     engine.userSchemas = new Set(internals.userSchemas);
     engine.sessionAllowedSchemas = new Set(internals.sessionAllowedSchemas);
+    engine.sessionAllowedNodeIds = new Set(internals.sessionAllowedNodeIds ?? []);
     engine.excludedTypes = new Set(internals.excludedTypes);
     engine.excludedSchemas = new Set(internals.excludedSchemas);
     engine.excludedNodeIds = new Set(internals.excludedNodeIds);

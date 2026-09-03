@@ -237,4 +237,129 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
     expect(!analyzed.has('d2'), "an 'all' on one side must not disable the other side's cap "
       + '(today the finite-pair filter drops the budget to null entirely)').toBe(true);
   });
+
+  // ── T17: a two-sided node is judged against the side that admits it ──────────────
+  // T sits 3 edges upstream of the origin and 4 edges downstream of it. Under
+  // {upstream:1, downstream:5} exactly one side fits, so the node belongs inside the
+  // border the user stated. Keeping only the smaller side judges it on the upstream
+  // ceiling it was never asked to satisfy.
+  //   T → p2 → p1 → origin   (upstream distance 3)
+  //   origin → q1 → q2 → q3 → T   (downstream distance 4)
+  const twoSidedNodes: LineageNode[] = ['origin', 'p1', 'p2', 'T', 'q1', 'q2', 'q3'].map(id =>
+    makeNode({ id, schema: 'dbo', name: id, type: 'view' }),
+  );
+  const twoSidedEdges: Array<[string, string]> = [
+    ['T', 'p2'], ['p2', 'p1'], ['p1', 'origin'],
+    ['origin', 'q1'], ['q1', 'q2'], ['q2', 'q3'], ['q3', 'T'],
+  ];
+  const twoSidedModel: DatabaseModel = makeModel(twoSidedNodes, twoSidedEdges, ['dbo']);
+  const twoSidedGraph = makeGraph(twoSidedNodes, twoSidedEdges);
+  const twoSidedRoutes: Record<string, string[]> = {
+    origin: ['p1', 'q1'], p1: ['p2'], p2: ['T'], q1: ['q2'], q2: ['q3'], q3: ['T'], T: [],
+  };
+
+  it('T17: a node that fits one side of an asymmetric border is admitted on that side', () => {
+    const engine = new NavigationEngine(twoSidedModel, twoSidedGraph, () => {}, {});
+    engine.init({
+      origin: 'origin', question: 'trace', direction: 'bidirectional',
+      depthIntent: { kind: 'asymmetric', upstream: 1, downstream: 5 },
+    });
+    driveRoutes(engine, twoSidedRoutes);
+    const analyzed = analyzedIds(engine);
+    expect(analyzed.has('t'), 'T is 4 downstream levels out against a downstream ceiling of 5, so it is inside the stated border').toBe(true);
+    expect(!deferredIds(engine).includes('t'), 'a node admitted on its own side is not also recorded as a deferral').toBe(true);
+  });
+
+  // ── T18: CT contraction through a carrier obeys the same border ──────────────────
+  // vwsrc → stg → vworders, tracing Amount upstream with a stated ceiling of 1. The
+  // carrier `stg` sits at the border; the bodied node behind it is one level past it.
+  const ctNodes: LineageNode[] = [
+    makeNode({ id: '[ct].[vworders]', schema: 'ct', name: 'vworders', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: '[ct].[stg]', schema: 'ct', name: 'stg', type: 'table', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: '[ct].[vwsrc]', schema: 'ct', name: 'vwsrc', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+  ];
+  const ctEdges: Array<[string, string]> = [['[ct].[vwsrc]', '[ct].[stg]'], ['[ct].[stg]', '[ct].[vworders]']];
+  const ctModel: DatabaseModel = makeModel(ctNodes, ctEdges, ['ct']);
+  const ctGraph = makeGraph(ctNodes, ctEdges);
+
+  /** Drives the CT chain, forwarding Amount to the single upstream supplier at each focus. */
+  function driveCtChain(engine: NavigationEngine): string[] {
+    const supplier: Record<string, string | undefined> = {
+      '[ct].[vworders]': '[ct].[stg]',
+      '[ct].[vwsrc]': undefined,
+    };
+    const dispatched: string[] = [];
+    for (let hop = 0; hop < 10; hop++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      const focusId = ctx.focus_node.id;
+      dispatched.push(focusId);
+      const upstream = supplier[focusId];
+      engine.submitFindings({
+        focus_node_id: focusId,
+        sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
+        summary: focusId,
+        verdict: 'analyze',
+        column_flow: upstream
+          ? [{ out_col: 'Amount', upstream_columns: [{ node: upstream, col: 'Amount' }] }]
+          : [],
+      });
+    }
+    return dispatched;
+  }
+
+  it('T18: a CT contraction past the stated border is deferred as a contracted lead', () => {
+    const engine = new NavigationEngine(ctModel, ctGraph, () => {}, {});
+    const init = engine.init({
+      origin: '[ct].[vworders]', question: 'trace Amount', direction: 'upstream',
+      analysisMode: 'ct', targetColumns: ['Amount'],
+      depthIntent: { kind: 'explicit', levels: 1 },
+    });
+    expect('ok' in init, 'CT init succeeds').toBe(true);
+    const dispatched = driveCtChain(engine);
+    expect(!dispatched.includes('[ct].[vwsrc]'), 'the node behind the carrier is one level past the stated ceiling and must not be analysed').toBe(true);
+    expect(!engine.toJSON().scopeNodeIds.includes('[ct].[vwsrc]'), 'a refused contraction never joins the scope').toBe(true);
+    const lead = engine.pendingLeads.find(l => l.nodeId === '[ct].[vwsrc]');
+    expect(lead?.reason === 'contracted_scope', `the refused contraction surfaces as a contracted lead (got ${lead?.reason})`).toBe(true);
+  });
+
+  // ── T19: depth measurement costs a fixed number of traversals per scope seed ─────
+  // `bfsFromNode` calls `graph.getNodeAttributes` exactly once per traversal it starts
+  // (graphology-traversal/bfs.js seeds its queue from that one read), so counting that
+  // call counts traversals. A callback returning `true` prunes one branch only — it
+  // never aborts the walk — so a per-target measurement is a full walk every time.
+  const hubNodes: LineageNode[] = ['n0', 'n1', 'h', 'l1', 'l2', 'l3', 'l4'].map(id =>
+    makeNode({ id, schema: 'dbo', name: id, type: 'view' }),
+  );
+  const hubEdges: Array<[string, string]> = [
+    ['n0', 'n1'], ['n1', 'h'], ['h', 'l1'], ['h', 'l2'], ['h', 'l3'], ['h', 'l4'],
+  ];
+  const hubModel: DatabaseModel = makeModel(hubNodes, hubEdges, ['dbo']);
+
+  /** Runs a seed-depth-2 walk that routes `leaves` nodes past the border, and counts traversals. */
+  function traversalsForLeafCount(leaves: number): number {
+    const graph = makeGraph(hubNodes, hubEdges);
+    let traversals = 0;
+    const readAttributes = graph.getNodeAttributes.bind(graph);
+    graph.getNodeAttributes = ((node: string) => {
+      traversals++;
+      return readAttributes(node);
+    }) as typeof graph.getNodeAttributes;
+    const engine = new NavigationEngine(hubModel, graph, () => {}, {});
+    engine.init({
+      origin: 'n0', question: 'trace', direction: 'downstream',
+      depthIntent: { kind: 'explicit', levels: 2 },
+    });
+    driveRoutes(engine, {
+      n0: ['n1'], n1: ['h'], h: ['l1', 'l2', 'l3', 'l4'].slice(0, leaves),
+    });
+    return traversals;
+  }
+
+  it('T19: the traversal count does not grow with the number of nodes measured', () => {
+    const two = traversalsForLeafCount(2);
+    const four = traversalsForLeafCount(4);
+    expect(four === two, `measuring four out-of-seed nodes must cost the same as measuring two — got ${two} and ${four}`).toBe(true);
+    expect(two === 3, `one capped seed walk plus one two-sided depth fill is three traversals, got ${two}`).toBe(true);
+  });
 });

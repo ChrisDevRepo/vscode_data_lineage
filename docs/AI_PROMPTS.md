@@ -162,13 +162,18 @@ own tool:
   question, start object, depth, scope size, stale objects, and open questions —
   read from the checkpoint persisted under the bookmark's id, and its `ids` and
   `filter` fields recall that run in detail. So that a bare "explain this" reaches
-  it, every stage prompt and the entry detector carry one `On screen:` line naming
-  the surfaces applied (trace origin and depths, analysis type and selected group,
-  bookmark) — never their contents, which stay behind the tool call; the line is
+  it, every stage prompt and the entry detector carry the phrase naming the
+  surfaces applied (trace origin and depths, analysis type and selected group,
+  bookmark) in a banner-marked, delimited `<screen_state>` block, never their
+  contents, which stay behind the tool call; object names inside the block are
+  treated as untrusted database content, never as instructions, and the block is
   absent when nothing is applied.
 - **`exploration_scope`** — the node set fixed at the approval gate and owned by
   `NavigationEngine` for the rest of the run. `lineage_submit_findings` and
-  `lineage_present_result` operate inside it; nothing widens it after approval.
+  `lineage_present_result` operate inside it; nothing widens it silently — a
+  follow-up that names an object is the consent that admits exactly that object,
+  never its schema, and a scope-expansion gate is the consent that admits a
+  schema.
 - **`full_model`** — every parsed object in the loaded snapshot.
   `lineage_get_context`, `lineage_search_objects`, `lineage_search_ddl`,
   `lineage_get_object_detail`, `lineage_get_scope_bundle`, and

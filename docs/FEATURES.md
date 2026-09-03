@@ -94,7 +94,10 @@ since is reported as stale and the assistant confirms it against the current def
 answering.
 
 The record lives with the bookmark: deleting the bookmark deletes it, and a bookmark saved by an
-earlier build simply has no run to recall.
+earlier build simply has no run to recall. Each exploration approved in a chat keeps its own run, so
+a bookmark recalls the exploration it was saved from even after the same chat goes on to approve
+another; a damaged run record is treated the same as none and the recall falls back to repeating the
+work instead of answering from bad data.
 
 ---
 
@@ -264,8 +267,10 @@ The thread therefore runs source → transform → target rather than past the t
 labels stay on the endpoints: a target column fed by two sources still reads `incoming (2)`, one
 column feeding several still reads `outgoing (2)`, whichever object combined or split it. Selecting a
 node highlights and dims exactly as it does in Objects view, and any AI badge or note attached to a
-node carries over unchanged. Switching to Detail fits the new layout to the window, and switching back
-returns to the object view where you left it.
+node carries over unchanged. Detail view lays out with the same graph-layout settings — direction and
+spacing — as the object view, then fits the result to the window; switching back returns to the
+object view where you left it. If Detail view hits a rendering error, switching back to Objects
+clears it rather than leaving the graph stuck on the crash.
 
 This is a rendering of the AI-generated column analysis — the same best-effort finding described
 under **Tips** below, shown on the graph instead of only in the write-up. Verify it against the
@@ -317,6 +322,8 @@ The approval gate labels which of the two applies before you approve.
 Objects just past a stated border are not discarded: they are reported after
 synthesis as follow-up leads, alongside mission-relevant routes outside the
 schema border, and can be revisited through the related-objects follow-up.
+Naming an object in a follow-up brings in that object, not the rest of its
+schema; a sibling in the same schema surfaces as its own separate lead.
 Direction, exclusions, and the approved schema border remain mechanically
 enforced throughout.
 
