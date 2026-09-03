@@ -278,6 +278,16 @@ body.vscode-reduce-motion *::after {
   transition: none !important;
 }
 
+/* The same rule for the OS preference, which VS Code does not mirror into the class above: a user
+   who asked the system for reduced motion gets it whether or not `workbench.reduceMotion` is set. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
+}
+
 /* #endregion */
 
 /* #region Tooltips */

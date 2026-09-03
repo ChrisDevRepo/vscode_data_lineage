@@ -8,47 +8,13 @@ import {
   COLUMN_NODE_BORDER_WIDTH,
   COLUMN_ROW_HEIGHT,
   type ColumnTraceRow,
-  type ColumnTraceViewNode,
   type ColumnLineState,
 } from '../engine/columnTraceView';
 import { useColumnHover } from '../contexts/ColumnHoverContext';
 import { TYPE_COLORS, SHORT_TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
 import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
-import type { ObjectType } from '../engine/types';
-
-/**
- * The business data associated with a single column-trace node in the React Flow canvas.
- */
-export type ColumnTraceNodeData = {
-  /** Positioned view node computed by {@link import('../engine/columnTraceView').buildColumnTraceView}. */
-  view: ColumnTraceViewNode;
-  /** Whether the row list renders; false collapses the node to a single summary line. */
-  rowsVisible?: boolean;
-  /**
-   * Per-row line state for the state dot, keyed by row name.
-   *
-   * @remarks
-   * A row absent from this map renders an unstated dot — the map is populated by the caller from
-   * edges touching this row, never computed here.
-   */
-  rowLineStates?: Partial<Record<string, ColumnLineState>>;
-  /** Highlight state applied by node selection, matching {@link CustomNodeData.highlighted}. */
-  highlighted?: boolean | 'yellow';
-  /** Whether the node is de-emphasized because a different node is selected. */
-  dimmed?: boolean;
-  /** AI-authored highlight styling applied to the node border and glow. */
-  aiHighlight?: { color: string; glow: string; shadow: string };
-  /** AI-authored badge rendered above the node. */
-  aiBadge?: { text: string };
-  /** AI-authored note rendered below the node. */
-  aiNote?: { text: string };
-};
-
-function reducedMotionActive(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
+import type { ColumnTraceNodeData, ObjectType } from '../engine/types';
 
 function lineStateColor(state: ColumnLineState | undefined): string {
   if (state === 'transformation') return 'var(--ln-ai-bu)';
@@ -64,6 +30,16 @@ function shapeLabel(row: ColumnTraceRow): string | null {
   return row.shape;
 }
 
+/**
+ * Row hover/focus transition.
+ *
+ * @remarks
+ * Not conditioned on the reduced-motion preference here: `index.css` drops every transition under
+ * both VS Code's `workbench.reduceMotion` class and the OS `prefers-reduced-motion` query, so a
+ * second check in the render path could only disagree with the rule that actually applies.
+ */
+const ROW_TRANSITION = 'background-color 120ms ease, opacity 120ms ease';
+
 function rowCenter(index: number): number {
   return COLUMN_NODE_HEADER_HEIGHT + index * COLUMN_ROW_HEIGHT + COLUMN_ROW_HEIGHT / 2;
 }
@@ -75,7 +51,6 @@ function ColumnTraceRowLine({
   isTransformNode,
   lineState,
   focused,
-  transition,
   onFocusStart,
   onFocusEnd,
 }: {
@@ -85,7 +60,6 @@ function ColumnTraceRowLine({
   isTransformNode: boolean;
   lineState: ColumnLineState | undefined;
   focused: boolean;
-  transition: string;
   onFocusStart: () => void;
   onFocusEnd: () => void;
 }) {
@@ -105,7 +79,7 @@ function ColumnTraceRowLine({
     // Focus only — a pointer user already has the hover background and weight to go by, and
     // painting the focus indicator on hover would also let a mouse move clear a keyboard position.
     boxShadow: focused ? 'inset 0 0 0 2px var(--ln-focus-border)' : undefined,
-    transition,
+    transition: ROW_TRANSITION,
   };
 
   // Both glyphs are aria-hidden, so the row's own label is the only thing announced; it names the
@@ -153,7 +127,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const { view } = data;
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const rowsVisible = data.rowsVisible !== false;
-  const transition = reducedMotionActive() ? 'none' : 'background-color 120ms ease, opacity 120ms ease';
 
   const icon = TYPE_COLORS[view.objectType as ObjectType]?.icon ?? '▪';
   const typeLabel = SHORT_TYPE_LABELS[view.objectType as ObjectType] ?? view.objectType;
@@ -230,7 +203,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
               isTransformNode={view.isTransformNode}
               lineState={data.rowLineStates?.[row.name]}
               focused={focusedRow === row.name}
-              transition={transition}
               onFocusStart={() => setFocusedRow(row.name)}
               onFocusEnd={() => setFocusedRow(null)}
             />
