@@ -42,15 +42,25 @@ function callbackSource(name: string): string {
 }
 
 describe('GraphCanvas — bookmarks and exports read object-space positions', () => {
-  it('resolves object nodes from the column-view capture, falling back to the mounted nodes', () => {
+  it('resolves object nodes from the hoisted column-view state, falling back to the mounted nodes', () => {
     expect(source).toContain(
-      'const objectNodes = useCallback(() => columnViewObjectNodesRef.current ?? getNodes(), [getNodes]);',
+      'const objectNodes = useCallback(() => (columnViewActive ? localNodes : getNodes()), [columnViewActive, localNodes, getNodes]);',
     );
   });
 
-  it('captures object-space nodes only while the column view is active', () => {
+  it('derives the column-view flag from state rather than writing a ref during render', () => {
+    expect(source).toContain('const columnViewActive = columnView && !!columnTraceView;');
+    expect(source, 'the object-node ref is gone').not.toContain('columnViewObjectNodesRef');
+    expect(source, 'the object-edge ref is gone').not.toContain('columnViewEdgesRef');
+    expect(
+      callbackSource('handleExportDrawio'),
+      'the export reads object-level edges while the column view is on stage',
+    ).toContain('const exportEdges = columnViewActive ? localEdges : getEdges();');
+  });
+
+  it('clears the graph error boundary when the view mode changes', () => {
     expect(source).toContain(
-      'columnViewObjectNodesRef.current = columnViewActive ? localNodes : null;',
+      'resetKey={`${graphErrorResetKey ?? \'\'}|col:${columnViewActive}`}',
     );
   });
 

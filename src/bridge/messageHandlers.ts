@@ -65,7 +65,38 @@ export type WebviewMessageHandlers = {
  * `pending` holds the connection negotiation currently in flight, so concurrent stats requests
  * join it rather than each opening their own connection.
  */
-type StatsConnState = { uri: string | undefined; pending: Promise<string | undefined> | null };
+export type StatsConnState = { uri: string | undefined; pending: Promise<string | undefined> | null };
+
+/**
+ * Resolves the connection uri table profiling runs against, negotiating at most one connection.
+ *
+ * @remarks
+ * A request arriving while a negotiation is in flight joins it instead of opening a second
+ * connection — and instead of putting a second connection prompt in front of the user. The
+ * in-flight promise is cleared however it settles, so a cancelled or failed negotiation leaves the
+ * state ready for the next request rather than latched onto a dead promise.
+ *
+ * @param state - Panel-lived connection state, mutated in place.
+ * @param negotiate - Opens or prompts for a connection and yields its uri, or `undefined` when the
+ *   user cancelled.
+ * @returns The connection uri, or `undefined` when the negotiation yielded none.
+ */
+export async function resolveStatsConnectionUri(
+  state: StatsConnState,
+  negotiate: () => Promise<string | undefined>,
+): Promise<string | undefined> {
+  if (state.uri) return state.uri;
+  state.pending ??= negotiate();
+  let negotiated: string | undefined;
+  try {
+    negotiated = await state.pending;
+  } finally {
+    state.pending = null;
+  }
+  if (!negotiated) return undefined;
+  state.uri ??= negotiated;
+  return state.uri;
+}
 
 declare const __BUILD_TIMESTAMP__: string;
 
@@ -1110,26 +1141,14 @@ async function handleTableStatsRequestHost(
 
   logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
   try {
-    if (!statsConnState.uri) {
-      // A concurrent request joins the negotiation already in flight instead of starting a
-      // second one; only the winner's uri is stored, and both callers use it.
-      statsConnState.pending ??= (async () => {
-        const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
-        return result?.connectionUri;
-      })();
-      let negotiated: string | undefined;
-      try {
-        negotiated = await statsConnState.pending;
-      } finally {
-        statsConnState.pending = null;
-      }
-      if (!negotiated) {
-        void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
-        return;
-      }
-      statsConnState.uri ??= negotiated;
+    const connectionUri = await resolveStatsConnectionUri(statsConnState, async () => {
+      const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
+      return result?.connectionUri;
+    });
+    if (!connectionUri) {
+      void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
+      return;
     }
-    const connectionUri = statsConnState.uri;
     const serverInfo = await getServerInfo(connectionUri);
     const engineEdition = serverInfo.engineEditionId;
 

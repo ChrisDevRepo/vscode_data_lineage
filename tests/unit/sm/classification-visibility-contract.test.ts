@@ -4,19 +4,31 @@
  *
  * `filterSectionsForClassification` drops, at commit, every section whose angle the locked
  * classification did not request, and `buildSectionsShape` narrows the per-hop capture to a single
- * angle before that. A wrong value therefore deletes work rather than reshaping it. Two surfaces
- * have to carry the field for that to be correctable: the sm-entry directive, where the model
- * chooses the value, and the approval gate, the last point a human can change it. These tests
- * forbid either surface going silent.
+ * angle before that. A wrong value therefore deletes work rather than reshaping it. Three surfaces
+ * have to carry the field for that to be correctable: the sm-entry directive, which names it as a
+ * required argument; the field schema, which owns how the value is chosen; and the approval gate,
+ * the last point a human can change it. These tests forbid any of them going silent, and drive the
+ * handler so the value on the card is the value the tool payload carried.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRenderer';
 import { buildSmEntrySystemPrompt } from '../../../src/ai/prompting/hostPrompts';
+import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
+import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
+import { StartExplorationFreshProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
 import type { ClassificationValue } from '../../../src/ai/session/classification';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
+
+// The handler reads `dataLineageViz.ai.maxRounds` for the scope-budget check; the shared stub
+// carries no `workspace`, so the configured default is what this test exercises.
+vi.mock('vscode', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  workspace: { getConfiguration: () => ({ get: <T>(_key: string, fallback: T): T => fallback }) },
+}));
 
 const nodes: LineageNode[] = [
   makeNode({ id: 'origin', schema: 'ai', name: 'vwDiscountCalc', type: 'view' }),
@@ -65,24 +77,90 @@ describe('classification is visible where it is chosen and where it is approved'
   });
 });
 
-describe('the sm-entry directive carries the selection rule', () => {
+describe('the sm-entry directive names the field and the schema owns the rule', () => {
   const prompt = buildSmEntrySystemPrompt(
     { dbPlatform: 'SQL Server', filterSchemas: [], totalSchemaCount: 1, visibleNodes: 2, totalNodes: 2 },
     ['Discount'],
   );
+  const projected = toModelJsonSchema(StartExplorationFreshProviderInputSchema) as {
+    properties?: Record<string, { description?: string }>;
+  };
+  const classificationDescription = projected.properties?.classification?.description ?? '';
 
-  it('names the field', () => {
-    expect(prompt).toContain('classification');
+  it('names the field as a required argument of the call', () => {
+    expect(prompt).toContain('`classification` (business, technical, or both)');
   });
 
-  it('states how to choose, not only the enum', () => {
-    // The rule lives in the discovery-stage prompt while one validator serves both stages. Naming
-    // the field here without its rule is the asymmetry that let a column-trace request classify
-    // "technical" and lose every business caveat the hops had already captured.
-    expect(prompt).toMatch(/business.*unless.*technical lens/is);
+  it('leaves the selection rule to the field schema every adapter advertises', () => {
+    // A3: one owner. The prompt states call ordering; how to pick the value travels with the
+    // argument, so the rule reaches every provider surface rather than the entry stage alone.
+    expect(prompt).not.toMatch(/business.*unless.*technical lens/is);
+    expect(classificationDescription).toMatch(/business.*unless.*technical lens/is);
   });
 
-  it('states that a wrong value discards captured analysis', () => {
-    expect(prompt).toMatch(/dropped at commit|silently discards/i);
+  it('states the consequence where the user can still correct it', () => {
+    // The consequence belongs to the approval gate, the last point a human changes the value —
+    // not to the model that already made the choice.
+    expect(reportingLine('technical')).toContain('dropped');
+  });
+});
+
+describe('classification travels from the tool payload to the approval card', () => {
+  /**
+   * Drives `start_exploration` the way a model does — one tool payload through the handler — and
+   * returns the approval card the gate emits. Nothing here assigns `engine.classification`: the
+   * point is that the payload alone puts the value on the card.
+   */
+  async function gateDetail(classification: ClassificationValue): Promise<string> {
+    let returned: Record<string, unknown> = {};
+    const session: Record<string, unknown> = {
+      id: 'sess-t8',
+      stateMachine: null,
+      pendingExploration: null,
+      phase: { kind: 'idle' },
+      currentRoundId: 1,
+      startExplorationRoundId: null,
+      currentTurnPrompt: 'trace the Discount column',
+      pendingUserNotice: new Set<string>(),
+      storePendingExploration(proposal: Record<string, unknown>) {
+        session.pendingExploration = { ...proposal, revision: 1 };
+        return { kind: 'accepted' };
+      },
+    };
+    const services = {
+      getSession: () => session,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      turnEpoch: () => 1,
+      requireModel: () => model,
+      requireGraph: () => graph,
+      buildActiveFilter: () => ({}),
+      logAndReturn: (_tool: string, data: Record<string, unknown>) => {
+        returned = data;
+        return JSON.stringify(data);
+      },
+      toolError: (_tool: string, error: unknown) => { throw error; },
+    } as unknown as ToolServices;
+
+    await executeStartExploration({
+      origin: 'origin',
+      analysisMode: 'bb',
+      direction: 'upstream',
+      question: 'trace the Discount column',
+      mission_brief: 'Establish how the Discount column reaches vwDiscountCalc.',
+      classification,
+    }, services);
+
+    expect(returned.error, JSON.stringify(returned)).toBe('action_required');
+    return String(returned.detail ?? '');
+  }
+
+  it('renders the "Reporting on" line from the classification the payload carried', async () => {
+    // The contract above is proved on a hand-set field; this drives the production path, so a
+    // handler that stopped forwarding the payload value would fail here and nowhere else.
+    expect(await gateDetail('technical')).toContain('- **Reporting on:** technical mechanics (business findings are dropped)');
+  });
+
+  it('follows the payload rather than a default', async () => {
+    expect(await gateDetail('both')).toContain('- **Reporting on:** business logic and technical mechanics');
   });
 });

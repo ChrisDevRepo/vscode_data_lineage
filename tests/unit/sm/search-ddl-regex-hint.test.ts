@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { searchDdl } from '../../../src/ai/tools/tools';
-import { regexRejectHint } from '../../../src/utils/modelSearch';
+import { compileSearchRegex, regexRejectHint } from '../../../src/utils/modelSearch';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 
 function makeModel(): DatabaseModel {
@@ -58,9 +58,11 @@ describe('search-ddl-regex-hint', () => {
     // seconds to minutes of wall time on a 200-char sample (there is no "just barely over 5ms"
     // case, only "fast" or "explodes"), so it is not re-triggered here at the tool boundary.
     const pattern = 'foo(bar';
+    const rejection = compileSearchRegex(pattern);
+    if (rejection.ok) throw new Error(`expected ${pattern} to be rejected`);
     const res = searchDdl(model, pattern) as Record<string, unknown>;
     expect(res.error).toBe('invalid_regex');
-    expect(res.hint).toBe(regexRejectHint(pattern));
+    expect(res.hint).toBe(regexRejectHint(pattern, rejection));
     expect(res.hint).toContain('closing ")"');
   });
 

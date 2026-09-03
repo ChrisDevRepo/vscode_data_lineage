@@ -20,7 +20,7 @@ import { pluralize } from '../support/text';
  */
 const CLASSIFICATION_LABELS: Record<ClassificationValue, string> = {
   business: 'business logic (technical-only findings are dropped)',
-  technical: 'technical mechanics (business findings, incl. data-quality caveats, are dropped)',
+  technical: 'technical mechanics (business findings are dropped)',
   both: 'business logic and technical mechanics',
 };
 

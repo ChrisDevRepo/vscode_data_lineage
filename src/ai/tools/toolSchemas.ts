@@ -35,6 +35,13 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
     + 'every hop, so record an instruction here rather than dropping it when it maps to no filter.',
   );
 
+const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
+  .describe(
+    'Required answer angle, following what the user asked for: use "business" unless the user named a '
+    + 'technical lens (performance, indexes, execution plan, query shape, load pattern); use "technical" when '
+    + 'that lens is the whole request; use "both" when the request spans both.',
+  );
+
 const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(AI_MAX_SCOPE_NODE_IDS).describe(
   'Resolved object IDs that require new per-node analysis in the completed exploration; use present_result add_node_ids for presentation-only additions.',
 );
@@ -117,9 +124,7 @@ export const StartExplorationInputSchema = z.object({
   mission_brief: MissionBriefValueSchema.optional(),
   // Keep decision guidance on the field schema so every adapter advertising this Zod contract
   // gives the model the same classification semantics.
-  classification: z.enum(['business', 'technical', 'both']).optional().describe(
-    'Required answer angle. Use technical only for explicit implementation, performance, or data-quality asks; use both only when explicitly requested; otherwise use business.',
-  ),
+  classification: ClassificationValueSchema.optional(),
   /**
    * Post-synthesis supplement: extend the existing archive with explicit nodes. Runs through the SM hop loop; slots merge into the existing
    * `AiMemoryManager`. No `origin` needed — the existing exploration is the origin.
@@ -193,9 +198,6 @@ const StartExcludeNodeIdsSchema = z.array(z.string()).optional().describe('Resol
 const StartPassNodeIdsSchema = z.array(z.string()).optional().describe('Resolved object IDs to keep as topology-only passthrough nodes without analyzing them.');
 const StartScopeNotesSchema = ScopeNotesValueSchema.optional();
 const StartMissionBriefSchema = MissionBriefValueSchema.optional();
-const StartClassificationSchema = z.enum(['business', 'technical', 'both']).describe(
-  'Required answer angle. Use technical only for explicit implementation, performance, or data-quality asks; use both only when explicitly requested; otherwise use business.',
-);
 const EmptyBbTargetColumnsSchema = coercedStringArray(ColumnIdentifierSchema, { max: 0 }).optional().describe(
   'BB provider compatibility artifact only: omit targetColumns; an emitted empty array is normalized with a debug reason before strict domain validation.',
 );
@@ -211,7 +213,7 @@ const StartPatchFields = {
   passNodeIds: StartPassNodeIdsSchema,
   scopeNotes: StartScopeNotesSchema,
   mission_brief: StartMissionBriefSchema,
-  classification: StartClassificationSchema.optional(),
+  classification: ClassificationValueSchema.optional(),
 };
 
 /** Fresh BB proposal branch. It cannot encode refine or supplement fields. */
@@ -221,7 +223,7 @@ const StartFreshBbProviderSchema = z.object({
   analysisMode: z.literal('bb').describe(
     'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
   ),
-  classification: StartClassificationSchema,
+  classification: ClassificationValueSchema,
   targetColumns: EmptyBbTargetColumnsSchema,
 }).strict().superRefine(refineAsymmetricDepthDirection);
 
@@ -232,7 +234,7 @@ const StartFreshCtProviderSchema = z.object({
   analysisMode: z.literal('ct').describe(
     'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
   ),
-  classification: StartClassificationSchema,
+  classification: ClassificationValueSchema,
   targetColumns: NamedCtTargetColumnsSchema,
 }).strict().superRefine(refineAsymmetricDepthDirection);
 
@@ -277,7 +279,7 @@ export const StartExplorationFreshProviderInputSchema = z.object({
   analysisMode: z.enum(['bb', 'ct']).describe(
     'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
   ),
-  classification: StartClassificationSchema,
+  classification: ClassificationValueSchema,
   targetColumns: coercedStringArray(ColumnIdentifierSchema).optional().describe(
     'CT only: user-named columns to trace. BB forbids this property.',
   ),

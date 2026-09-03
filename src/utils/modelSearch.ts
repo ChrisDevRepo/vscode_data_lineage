@@ -28,7 +28,7 @@ interface DdlMatch {
   snippet: string;
 }
 
-/** Heuristic ReDoS guard budget, in milliseconds, shared by `safeRegex` and `regexRejectHint`. */
+/** Heuristic ReDoS guard budget, in milliseconds, applied by {@link compileSearchRegex}. */
 const REDOS_BUDGET_MS = 5;
 
 /**
@@ -45,47 +45,56 @@ function exceedsRedosBudget(regex: RegExp): boolean {
 }
 
 /**
- * Compiles a search pattern into a safe, case-insensitive Regular Expression.
+ * Outcome of compiling a search pattern: the regex, or the reason it was refused.
+ *
+ * @remarks
+ * The reason travels with the rejection so the hint is derived from the measurement that actually
+ * happened. A `redos` verdict is a wall-clock heuristic, and re-running it can disagree with itself.
+ */
+export type SearchRegexResult =
+  /** The pattern compiled and stayed inside the ReDoS budget. */
+  | { ok: true; regex: RegExp }
+  /** The pattern is not valid JavaScript regex syntax; `error` is what V8 raised. */
+  | { ok: false; reason: 'syntax'; error: SyntaxError }
+  /** The pattern compiled but exceeded the ReDoS budget on the bounded sample. */
+  | { ok: false; reason: 'redos' };
+
+/**
+ * Compiles a search pattern into a safe, case-insensitive regular expression.
  *
  * @param pattern - The raw regex string to compile.
- * @returns A compiled `RegExp` object, or `null` if the pattern is invalid or risky.
+ * @returns The compiled regex, or the rejection reason {@link regexRejectHint} turns into advice.
  *
- * @remarks Rejects patterns that fail to execute against a bounded sample within 5 ms.
+ * @remarks Rejects patterns that fail to execute against a bounded sample within the guard budget.
  */
-export function safeRegex(pattern: string): RegExp | null {
+export function compileSearchRegex(pattern: string): SearchRegexResult {
+  let regex: RegExp;
   try {
-    const r = new RegExp(pattern, 'i');
-    // Heuristic ReDoS guard: reject patterns that take too long on a 200-char string.
-    if (exceedsRedosBudget(r)) return null;
-    return r;
-  } catch {
-    return null;
+    regex = new RegExp(pattern, 'i');
+  } catch (err) {
+    return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
   }
+  // Heuristic ReDoS guard: reject patterns that take too long on a 200-char string.
+  if (exceedsRedosBudget(regex)) return { ok: false, reason: 'redos' };
+  return { ok: true, regex };
 }
 
 /**
- * Explains why `safeRegex` rejected a pattern and names the edit that fixes it.
+ * Names the edit that fixes a pattern {@link compileSearchRegex} refused.
  *
- * @param pattern - The raw regex string that `safeRegex` rejected.
- * @returns A hint describing the concrete repair, derived from the actual
- *   `SyntaxError` V8 raises for `pattern` (or from the ReDoS guard, when the
- *   pattern compiles but ran over budget).
+ * @param pattern - The raw regex string that was refused.
+ * @param rejection - The refusal, carrying the reason and — for a syntax failure — V8's `SyntaxError`.
+ * @returns A hint describing the concrete repair.
  *
  * @remarks
- * `safeRegex` collapses two distinct rejection reasons — a compile failure and
- * a pattern that compiled but timed out against the ReDoS sample — into a
- * single `null`. This re-derives which one actually happened by recompiling
- * `pattern` and inspecting the real `SyntaxError`, instead of assuming one
- * fixed cause for every rejection. `searchCatalog`'s regex mode (and its
- * callers) always add the `i` flag, so patterns never need — and JavaScript
- * regular expressions never support — an inline case-insensitivity flag.
+ * The repair is read off the rejection rather than re-derived, so the advice always describes the
+ * measurement that rejected the pattern. `searchCatalog`'s regex mode (and its callers) always add
+ * the `i` flag, so patterns never need — and JavaScript regular expressions never support — an
+ * inline case-insensitivity flag.
  */
-export function regexRejectHint(pattern: string): string {
-  let compiled: RegExp;
-  try {
-    compiled = new RegExp(pattern, 'i');
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexResult, { ok: false }>): string {
+  if (rejection.reason === 'syntax') {
+    const message = rejection.error.message;
     if (/\(\?P</.test(pattern) && message.includes('Invalid group')) {
       return 'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.';
     }
@@ -125,11 +134,7 @@ export function regexRejectHint(pattern: string): string {
     return `Fix the pattern: ${message.replace(/^Invalid regular expression: .*?: /, '')}.`;
   }
 
-  // Compiled successfully — safeRegex must have rejected it for running over the ReDoS budget.
-  if (exceedsRedosBudget(compiled)) {
-    return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") that can backtrack catastrophically.';
-  }
-  return 'Simplify the pattern.';
+  return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") that can backtrack catastrophically.';
 }
 
 /**
@@ -163,8 +168,9 @@ export function searchCatalog(
 
   // Regex mode: match against name or schema.name
   if (mode === 'regex') {
-    const re = safeRegex(query);
-    if (!re) return [];
+    const compiled = compileSearchRegex(query);
+    if (!compiled.ok) return [];
+    const re = compiled.regex;
     return filtered
       .filter(n => re.test(n.name) || re.test(`${n.schema}.${n.name}`))
       .slice(0, limit);
