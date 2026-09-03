@@ -319,7 +319,7 @@ function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line
  * directs a minimal edit, it does not promise server-side reuse.
  */
 export const INVALID_TOOL_INPUT_REPAIR_HINT
-  = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged.';
+  = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
 
 /**
  * Standing repair instruction for a provider call naming a tool outside this phase's catalog. The

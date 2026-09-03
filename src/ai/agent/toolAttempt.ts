@@ -62,7 +62,7 @@ const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /** Hint paired with a `duplicate_read` rejection: the answer material is already in the observations. */
-const DUPLICATE_READ_HINT = 'Use that result to answer the user, or call the tool with different input.';
+const DUPLICATE_READ_HINT = 'You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.';
 
 /** Reports whether a rejection code counts against {@link MAX_TOOL_SEMANTIC_FAILURES}. */
 function isChargeableRejection(code: string): boolean {
@@ -702,7 +702,7 @@ function renderHeldDraftRepairBlock(sections: unknown, notes: unknown, highlight
   const escaped = escapeDelimitedJson({ sections, notes, highlight_groups: highlightGroups });
   return [
     `<${HELD_DRAFT_REPAIR_TAG}>`,
-    'This is your own currently held draft for this repair turn, not new database content. It shows exactly the sections, notes, and highlight_groups already on file — send only the authorized corrected fields; a resent field replaces its whole list, so anything unchanged does not need to be resent.',
+    'This is your own currently held draft for this repair turn, not new database content. It shows exactly the sections, notes, and highlight_groups already on file — send only the authorized corrected fields; a resent list replaces the whole list, so repeat its unflagged elements exactly as they appear here.',
     escaped,
     `</${HELD_DRAFT_REPAIR_TAG}>`,
   ].join('\n');
@@ -910,18 +910,25 @@ function rejectionFromInvalid(
   call: Extract<GeneratedToolCall, { valid: false }>,
   registry: IToolRegistry<string>,
 ): ToolOutcomeData {
+  const issuePaths = call.issuePaths ?? [];
+  // A prevalidation reject is the one repair turn with no held draft behind it, so the same bounded
+  // structural projection the dispatcher path uses ({@link correctionFragments}) is what stands
+  // between the model and a blind full-envelope rewrite. Never the raw payload: only flagged
+  // structural entries, byte-bounded, prose and result fields excluded.
+  const fragments = correctionFragments(call.input, issuePaths);
   return {
     status: 'rejected',
     code: call.code,
     message: capRejectionText(call.reason),
     correction: {
-      // Schema-invalid calls carry the standing repair instruction: the rejected call is replayed
-      // without arguments, so without an explicit directive the model regenerates blind instead of
+      // Schema-invalid calls carry the standing repair instruction: only the bounded fragments above
+      // are replayed, so without an explicit directive the model regenerates blind instead of
       // editing the one offending field.
       ...(call.code === 'invalid_tool_input' ? { hint: INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
       ...(call.code === 'unknown_tool' ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
-      ...(call.issuePaths && call.issuePaths.length > 0 ? { issuePaths: [...call.issuePaths] } : {}),
+      ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
+      ...(fragments.length > 0 ? { fragments } : {}),
     },
     // The valid tool-name set is the fact a hallucinated tool name needs; kept as data alongside the
     // fixed hint sentence rather than folded into it, so the sentence never grows with the catalog.
@@ -931,6 +938,36 @@ function rejectionFromInvalid(
   };
 }
 
+/**
+ * Issue-path roots whose resend replaces the entire list — `lineage_present_result`'s answer body.
+ *
+ * @remarks
+ * A `submit_findings` root (`column_flow`, `route_requests`, `prune_neighbors`) is a bag of
+ * independent records: replaying the flagged entry alone is a complete correction. A present_result
+ * list is not — the model rewrites the whole list on a resend, so a replay that shows only the
+ * flagged element leaves it reconstructing the unflagged ones from memory, which is exactly how a
+ * repair turn drops captured formulas and risks from an already-correct section.
+ */
+const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set(['sections', 'notes', 'highlight_groups']);
+
+/**
+ * Byte-bounds one whole-list element with the truncate-then-collapse policy
+ * {@link renderHeldDraftRepairContext} already applies to a held section: cap the element's `text`
+ * body to whatever {@link MAX_CORRECTION_FRAGMENT_BYTES} leaves after its other fields, then fall
+ * back to the shared size-only stub when even the truncated element does not fit. An element
+ * without a `text` body is bounded exactly as a `submit_findings` entry is.
+ */
+function boundListElementFragment(element: unknown): unknown {
+  let overheadBytes = MAX_CORRECTION_FRAGMENT_BYTES;
+  try {
+    overheadBytes = Buffer.byteLength(JSON.stringify(truncateHeldDraftSection(element, 0)) ?? '');
+  } catch {
+    // An unserializable element collapses to the stub below, exactly as it would unbounded.
+  }
+  const textBudget = Math.max(0, MAX_CORRECTION_FRAGMENT_BYTES - overheadBytes);
+  return boundStructuredValue(truncateHeldDraftSection(element, textBudget), MAX_CORRECTION_FRAGMENT_BYTES);
+}
+
 /** Selects only correction-relevant structural array entries; prose and result sections are excluded. */
 function correctionFragments(input: unknown, issuePaths: readonly string[]): ToolCorrectionFragment[] {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
@@ -938,17 +975,27 @@ function correctionFragments(input: unknown, issuePaths: readonly string[]): Too
   const fragments: ToolCorrectionFragment[] = [];
   const seen = new Set<string>();
   for (const issuePath of issuePaths) {
-    const match = /^(column_flow|route_requests|prune_neighbors)\.(\d+)(?:\.|$)/.exec(issuePath);
+    const match = /^(column_flow|route_requests|prune_neighbors|sections|notes|highlight_groups)\.(\d+)(?:\.|$)/.exec(issuePath);
     if (!match) continue;
     const root = match[1];
     const index = Number(match[2]);
     const values = record[root];
     if (!Array.isArray(values) || !Number.isSafeInteger(index) || index < 0 || index >= values.length) continue;
-    const path = `${root}.${index}`;
-    if (seen.has(path)) continue;
-    seen.add(path);
-    fragments.push({ path, value: boundStructuredValue(values[index], MAX_CORRECTION_FRAGMENT_BYTES) });
-    if (fragments.length >= MAX_CORRECTION_FRAGMENTS) break;
+    if (seen.has(`${root}.${index}`)) continue;
+    const wholeList = WHOLE_LIST_CORRECTION_ROOTS.has(root);
+    const positions = wholeList ? values.map((_element, position) => position) : [index];
+    // A whole-list root is replayed complete or not at all: its resend replaces the list, so a
+    // partial replay would read back as a deletion of the elements the budget left out.
+    if (fragments.length + positions.length > MAX_CORRECTION_FRAGMENTS) continue;
+    for (const position of positions) {
+      seen.add(`${root}.${position}`);
+      fragments.push({
+        path: `${root}.${position}`,
+        value: wholeList
+          ? boundListElementFragment(values[position])
+          : boundStructuredValue(values[position], MAX_CORRECTION_FRAGMENT_BYTES),
+      });
+    }
   }
   return fragments;
 }

@@ -147,7 +147,7 @@ describe('executeToolGenerationAttempt — mixed valid/invalid tool batch', () =
       reason: 'column_flow.0.to_col: Required',
       // Schema-invalid calls carry the standing repair directive: the rejected call is replayed
       // without arguments, so the model must be told to edit-and-resend rather than regenerate.
-      hint: 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged.',
+      hint: 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.',
       issuePaths: ['column_flow.0.to_col'],
       // Only a fingerprint of the rejected input survives — enough to bound unproductive resends
       // across attempts, never the payload itself.
@@ -737,14 +737,16 @@ describe('executeToolAttempt — bounded rejection replay', () => {
   async function replayAfterRejection(options: {
     input: unknown;
     envelope: string;
+    toolName?: string;
     presentResultRepairDraftHeld?: boolean;
     presentResultRepairDraftContext?: () => { sections?: unknown; notes?: unknown; highlight_groups?: unknown } | null;
   }): Promise<{ replayed: readonly BaseMessage[]; state: ToolPhaseAttemptState; first: ToolAttemptResult }> {
-    const { registry } = scriptedRegistry([{ name: 'lineage_submit_findings', result: options.envelope }]);
+    const toolName = options.toolName ?? 'lineage_submit_findings';
+    const { registry } = scriptedRegistry([{ name: toolName, result: options.envelope }]);
     const plan = conversePlan(registry);
 
     const firstPort = new ScriptedModelPort([{
-      toolCalls: [validCall('call-1', 'lineage_submit_findings', options.input)],
+      toolCalls: [validCall('call-1', toolName, options.input)],
     }]);
     const first = await executeToolAttempt(firstPort, plan);
     const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
@@ -772,6 +774,32 @@ describe('executeToolAttempt — bounded rejection replay', () => {
 
   function replayedToolResult(messages: readonly BaseMessage[]): Record<string, unknown> {
     return JSON.parse(String(messages[messages.length - 1].content)) as Record<string, unknown>;
+  }
+
+  /**
+   * Runs one schema-invalid (pre-dispatch) rejection, then the follow-up attempt that replays it —
+   * the port-level path, where no held draft exists and the replayed args are the model's only view
+   * of what it sent.
+   */
+  async function replayAfterInvalidCall(options: {
+    toolName: string;
+    input: unknown;
+    reason: string;
+    issuePaths: readonly string[];
+  }): Promise<{ replayed: readonly BaseMessage[]; first: ToolAttemptResult }> {
+    const { registry } = scriptedRegistry([{ name: options.toolName, result: '{"ok":true}' }]);
+    const plan = conversePlan(registry);
+
+    const firstPort = new ScriptedModelPort([{
+      toolCalls: [invalidCall('call-1', options.toolName, 'invalid_tool_input', options.reason, options.issuePaths, options.input)],
+    }]);
+    const first = await executeToolAttempt(firstPort, plan);
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
+
+    const secondPort = new ScriptedModelPort([{ text: 'Acknowledged.' }]);
+    await executeToolAttempt(secondPort, plan, { priorState: state });
+
+    return { replayed: secondPort.requests[0].messages, first };
   }
 
   it('replays only the flagged correction fragment, never the original payload', async () => {
@@ -874,6 +902,62 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(wire).not.toContain('OVERSIZED-');
     expect(wire).not.toContain('DROP-4');
     expect(wire).not.toContain('DROP-5');
+  });
+
+  it('replays every present_result section when only one is flagged, so an unflagged section is never rewritten', async () => {
+    const { replayed, first } = await replayAfterRejection({
+      toolName: 'lineage_present_result',
+      input: {
+        sections: [
+          { label: 'Formula', text: 'SECTION-0-TEXT', node_ids: ['[dbo].[Orders]'] },
+          { label: 'Risk', text: 'SECTION-1-TEXT', node_ids: ['[dbo].[Ghost]'] },
+        ],
+        narrative: RAW_PROSE_MARKER,
+      },
+      envelope: rejectionEnvelope({
+        reason: 'sections entry 1 names an unknown node id.',
+        detail: [{ path: 'sections.1.node_ids', expected: 'known node id' }],
+      }),
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['sections.1.node_ids']);
+    const args = replayedToolArgs(replayed);
+    // A resent list replaces the whole list, so the error-free section rides along verbatim; two
+    // entries stay inside MAX_CORRECTION_FRAGMENTS.
+    expect(Object.keys(args)).toEqual(['sections']);
+    expect(args.sections).toEqual([
+      { label: 'Formula', text: 'SECTION-0-TEXT', node_ids: ['[dbo].[Orders]'] },
+      { label: 'Risk', text: 'SECTION-1-TEXT', node_ids: ['[dbo].[Ghost]'] },
+    ]);
+    expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
+  });
+
+  it('replays every section of a schema-invalid present_result call instead of empty arguments', async () => {
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input: {
+        sections: [
+          { label: 'Overview', text: 'INVALID-SECTION-0', notes: ['nested-note'] },
+          { label: 'Formula', text: 'INVALID-SECTION-1' },
+          { label: 'Risk', text: 'INVALID-SECTION-2' },
+        ],
+        narrative: RAW_PROSE_MARKER,
+      },
+      reason: 'sections.0: Unrecognized key: "notes"',
+      issuePaths: ['sections.0.notes'],
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['sections.0.notes']);
+    const args = replayedToolArgs(replayed);
+    expect(Object.keys(args)).toEqual(['sections']);
+    expect(args.sections).toEqual([
+      { label: 'Overview', text: 'INVALID-SECTION-0', notes: ['nested-note'] },
+      { label: 'Formula', text: 'INVALID-SECTION-1' },
+      { label: 'Risk', text: 'INVALID-SECTION-2' },
+    ]);
+    // The standing repair sentence must also bind the unflagged elements of a resent list.
+    expect(String(first.rejections[0].hint)).toContain('repeating the unflagged elements exactly as first sent');
+    expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
   });
 
   it('renders the held present_result repair draft as its own labeled message before the correction', async () => {
