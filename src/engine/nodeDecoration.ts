@@ -73,6 +73,13 @@ function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
   return true;
 }
 
+/** Drops cache entries for ids no longer present in the current render pass. */
+function pruneStaleEntries<K, V>(cache: Map<K, V>, present: ReadonlySet<K>): void {
+  for (const id of [...cache.keys()]) {
+    if (!present.has(id)) cache.delete(id);
+  }
+}
+
 function decorationKey(node: FlowNode, inputs: NodeDecorationInputs): readonly unknown[] {
   if (node.type === 'schemaNode') {
     const schemaView = inputs.graphMode === 'overview';
@@ -81,19 +88,8 @@ function decorationKey(node: FlowNode, inputs: NodeDecorationInputs): readonly u
       schemaView ? inputs.onMakeSchemaCenter : undefined,
     ];
   }
-  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(node.id, inputs.highlightedNodeId, inputs.level1Neighbors);
-  const isTraceOrigin = isTraceOriginNode(node.id, inputs);
-  const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
-  return [
-    isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
-    baseDimmed && !isTraceOrigin,
-    removable,
-    removable ? inputs.onRemoveFromView : undefined,
-    inputs.traceControlsByNode.get(node.id),
-    inputs.aiHighlightMap.get(node.id),
-    inputs.aiBadgeMap.get(node.id),
-    inputs.notesVisible ? inputs.aiNoteMap.get(node.id) : undefined,
-  ];
+  const d = computeNodeDecoration(node, inputs);
+  return [d.highlighted, d.dimmed, d.removable, d.onRemoveFromView, d.traceControls, d.aiHighlight, d.aiBadge, d.aiNote];
 }
 
 /**
@@ -120,6 +116,30 @@ function isTraceOriginNode(nodeId: string, inputs: NodeDecorationInputs): boolea
   );
 }
 
+/**
+ * Selection, trace, and AI decoration for one non-schema node.
+ *
+ * @remarks
+ * Shared by {@link decorationKey} and {@link decorateOne} so the two cannot drift apart — the key
+ * must capture exactly what the decorated result depends on, or the cache would reuse a stale
+ * decoration for a node whose inputs changed.
+ */
+function computeNodeDecoration(node: FlowNode, inputs: NodeDecorationInputs) {
+  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(node.id, inputs.highlightedNodeId, inputs.level1Neighbors);
+  const isTraceOrigin = isTraceOriginNode(node.id, inputs);
+  const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
+  return {
+    highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
+    dimmed: baseDimmed && !isTraceOrigin,
+    removable,
+    onRemoveFromView: removable ? inputs.onRemoveFromView : undefined,
+    traceControls: inputs.traceControlsByNode.get(node.id),
+    aiHighlight: inputs.aiHighlightMap.get(node.id),
+    aiBadge: inputs.aiBadgeMap.get(node.id),
+    aiNote: inputs.notesVisible ? inputs.aiNoteMap.get(node.id) : undefined,
+  };
+}
+
 function decorateOne(node: FlowNode, inputs: NodeDecorationInputs): FlowNode {
   if (node.type === 'schemaNode') {
     const schemaView = inputs.graphMode === 'overview';
@@ -133,22 +153,19 @@ function decorateOne(node: FlowNode, inputs: NodeDecorationInputs): FlowNode {
     };
   }
 
-  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(node.id, inputs.highlightedNodeId, inputs.level1Neighbors);
-  const isTraceOrigin = isTraceOriginNode(node.id, inputs);
-  const shouldBeDimmed = baseDimmed && !isTraceOrigin;
-  const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
+  const d = computeNodeDecoration(node, inputs);
   return {
     ...node,
     data: {
       ...node.data,
-      highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
-      dimmed: !!shouldBeDimmed,
-      showRemoveButton: removable,
-      onRemoveFromView: removable ? inputs.onRemoveFromView : undefined,
-      traceControls: inputs.traceControlsByNode.get(node.id),
-      aiHighlight: inputs.aiHighlightMap.get(node.id),
-      aiBadge: inputs.aiBadgeMap.get(node.id),
-      aiNote: inputs.notesVisible ? inputs.aiNoteMap.get(node.id) : undefined,
+      highlighted: d.highlighted,
+      dimmed: d.dimmed,
+      showRemoveButton: d.removable,
+      onRemoveFromView: d.onRemoveFromView,
+      traceControls: d.traceControls,
+      aiHighlight: d.aiHighlight,
+      aiBadge: d.aiBadge,
+      aiNote: d.aiNote,
     },
   };
 }
@@ -195,9 +212,7 @@ export function decorateFlowNodes(
     cache.set(node.id, { source: node, key, result });
     return result;
   });
-  for (const id of [...cache.keys()]) {
-    if (!present.has(id)) cache.delete(id);
-  }
+  pruneStaleEntries(cache, present);
   return decorated;
 }
 
@@ -269,8 +284,6 @@ export function projectColumnNodes(
     cache.set(view.id, { data, x: position.x, y: position.y, result });
     return result;
   });
-  for (const id of [...cache.keys()]) {
-    if (!present.has(id)) cache.delete(id);
-  }
+  pruneStaleEntries(cache, present);
   return projected;
 }
