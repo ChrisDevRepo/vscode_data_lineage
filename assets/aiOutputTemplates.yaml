@@ -227,7 +227,11 @@ business_capture:
     3. For EVERY computed or derived expression in the DDL (arithmetic,
        CASE result, COALESCE fallback, aggregation), write the formula as
        a `$$ … $$` block and explain the business meaning of its terms
-       briefly.
+       briefly. A `$$ … $$` block must preserve the DDL expression term
+       for term: left side the declared target (column or variable),
+       right side its declared expression, with no operator added,
+       dropped, or reordered — when a faithful rendering is not possible,
+       quote the SQL instead.
     4. Capture both **upstream assumptions** and **downstream effects** when
        evidenced in current DDL context.
     5. Express status-enum lifecycles as numbered transitions

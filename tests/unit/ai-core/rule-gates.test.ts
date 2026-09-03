@@ -402,3 +402,23 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
     expect(scope).toMatch(/captured ⚠️ on such a branch is that one line, never a deletion/i);
   });
 });
+
+// local-mlx T5/T6: the exact DDL expression was present at the hop and re-rendered into a
+// `$$ … $$` block with corrupted terms (DATEADD operands swapped). `business_capture` bound
+// fidelity only to "Quoted SQL witnesses" — the formula bullet ordered every derived expression
+// rendered as LaTeX with no term-for-term fidelity clause. This pins that the gap is closed.
+describe('business_capture — a $$ … $$ block preserves the DDL expression term for term', () => {
+  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
+  const businessCapture = asset.slice(asset.indexOf('\nbusiness_capture:'), asset.indexOf('\ntechnical_capture:'));
+
+  it('states the fidelity rule on the MATHEMATICS bullet that orders $$ … $$ rendering', () => {
+    const mathBullet = businessCapture.replace(/\s+/g, ' ');
+
+    expect(mathBullet).toMatch(/write the formula as a `\$\$ … \$\$` block/i);
+    expect(mathBullet).toMatch(
+      /a `\$\$ … \$\$` block must preserve the ddl expression term for term/i,
+    );
+    expect(mathBullet).toMatch(/no operator added, dropped, or reordered/i);
+    expect(mathBullet).toMatch(/when a faithful rendering is not possible, quote the sql instead/i);
+  });
+});
