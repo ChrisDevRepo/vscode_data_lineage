@@ -269,7 +269,7 @@ export function buildPresentationDetailContract(
     ]
     : [
       '- Preserve captured decision triggers and predicates, thresholds, fallback order, lifecycle/status transitions, audit-trail meaning, and downstream business impact. Keep exact node IDs, parameter names, and formulas intact through every compression — drop whole items that do not help answer <original_question>, never fields within a kept item.',
-      '- Every ⚠️ risk or caveat and every `$$` formula captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body or note. A risk or formula that was worth capturing during exploration is answer evidence; losing it during assembly is a dropped item, not a compression.',
+      '- Every ⚠️ risk or caveat, every `$$` formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body or note, verbatim for the predicate. A risk, formula, or predicate that was worth capturing during exploration is answer evidence; losing or paraphrasing it during assembly is a dropped item, not a compression.',
       '- Regroup for question-first clarity and graph linking. Compress repeated phrasing while retaining each grounded evidence class.',
       '- Adapt depth to node complexity and mission relevance. Brief text fits trivial logic; complex procedures retain their full rule and flow detail.',
       '- Inside section bodies use bold labels for sub-structure, never `#`/`##`/`###` headings, because the engine owns the document title, the numbered section headings, and the object link headers.',

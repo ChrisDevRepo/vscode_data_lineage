@@ -175,8 +175,10 @@ business_capture:
 
     ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Use only
     rules, formulas, thresholds, and relationships present in DDL. If a
-    construct is absent from DDL, treat it as out of scope. Quoted SQL
-    witnesses must be exact substrings of that DDL — never paraphrased SQL.
+    construct is absent from the DDL text, treat it as out of scope — a
+    commented-out or documented-but-inactive branch is present, not absent,
+    and is reported as inactive. Quoted SQL witnesses must be exact
+    substrings of that DDL — never paraphrased SQL.
     When the DDL proves the mechanism but not the intent, prevalence, or
     runtime impact, state `not established from the available SQL` — never
     fill a gap with a plausible inference.
@@ -224,7 +226,12 @@ business_capture:
        at INSERT") and the decision objective ("why this rule exists").
     2. Walk through business rules in plain language first. Name what
        changes for the business when each rule fires.
-    3. For EVERY computed or derived expression in the DDL (arithmetic,
+    3. When the DDL declares a mode, status, or strategy switch — a
+       parameter with an allowed-value list, a CASE ladder, or an IF
+       branch set — name every declared value and what each one does. A
+       value whose implementation is commented out or absent is reported
+       as declared but not active, never omitted.
+    4. For EVERY computed or derived expression in the DDL (arithmetic,
        CASE result, COALESCE fallback, aggregation), write the formula as
        a `$$ … $$` block and explain the business meaning of its terms
        briefly. A `$$ … $$` block must preserve the DDL expression term
@@ -232,17 +239,17 @@ business_capture:
        right side its declared expression, with no operator added,
        dropped, or reordered — when a faithful rendering is not possible,
        quote the SQL instead.
-    4. Capture both **upstream assumptions** and **downstream effects** when
+    5. Capture both **upstream assumptions** and **downstream effects** when
        evidenced in current DDL context.
-    5. Express status-enum lifecycles as numbered transitions
+    6. Express status-enum lifecycles as numbered transitions
        ("1. New → 2. Approved → 3. Shipped"). Capture the business
        state change, not the SQL UPDATE that effects it.
-    6. Add ⚠️ only when the issue is significant and decision-impacting.
+    7. Add ⚠️ only when the issue is significant and decision-impacting.
        If no material issue exists, omit risk callouts.
-    7. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
+    8. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
        this view makes queryable and its business meaning — not how the
        SELECT is structured.
-    8. Wrap column and object names in `\`backticks\`` only when used.
+    9. Wrap column and object names in `\`backticks\`` only when used.
     </body_recipe>
   example: |
     `spCalcA` computes `NetAmountA` at the final INSERT into
