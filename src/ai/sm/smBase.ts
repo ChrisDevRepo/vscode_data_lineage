@@ -2900,6 +2900,13 @@ export class NavigationEngine implements IHopStateMachine {
     const outSet = new Set(this.graph.outNeighbors(focusId));
     const ids = Array.from(new Set([...inSet, ...outSet]));
     const hasSchemaFilter = this.sessionAllowedSchemas.size > 0;
+    const edgeVerb = new Map<string, string>();
+    for (const e of this.model.edges) {
+      if (e.source !== focusId && e.target !== focusId) continue;
+      const other = e.source === focusId ? e.target : e.source;
+      const verb = edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '');
+      if (verb !== 'read' || !edgeVerb.has(other)) edgeVerb.set(other, verb);
+    }
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const boundary = this.visited.has(nid) ? 'cycle' : 'none';
@@ -2910,7 +2917,7 @@ export class NavigationEngine implements IHopStateMachine {
       const neighbor: HopNeighbor = {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: inSet.has(nid) ? 'upstream' : 'downstream',
-        edge_type: 'read', boundary, ...(cols?.length ? { cols } : {}),
+        edge_type: edgeVerb.get(nid) ?? 'read', boundary, ...(cols?.length ? { cols } : {}),
       };
 
       const d = this.depthFromOrigin.get(nid);
@@ -2941,18 +2948,11 @@ export class NavigationEngine implements IHopStateMachine {
   public getResult(): SmResult {
     const mem = this.memory.getResult();
 
-    // CT result scope is exactly the nodes that participate in the traced column flow.
-    let scopeForBfs = this.scopeNodeIds;
-    if (this.mode.kind === 'ct' && this.tracer) {
-      const ctNodes = new Set<string>([this.originNodeId!]);
-      for (const e of this.tracer.edges) {
-        ctNodes.add(e.hop_node);
-        ctNodes.add(e.from_node);
-        ctNodes.add(e.to_node);
-      }
-      scopeForBfs = ctNodes;
-    }
-    const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, scopeForBfs);
+    // Result scope is the approved BFS scope in both modes. CT once rebuilt it from the tracer's
+    // value-edge set, which deleted every dependency that carried no value into the traced column —
+    // a filter, a grain setter, a sibling-column feed — after the AI had analyzed it and without a
+    // prune. The tracer's edges drive emphasis and flow-role grouping; they never bound the answer.
+    const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
     const finalNodeIds = new Set<string>(reachableNodeIds);
     finalNodeIds.add(this.originNodeId!);
 
@@ -2968,7 +2968,7 @@ export class NavigationEngine implements IHopStateMachine {
     const finalEdges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
       if (finalNodeIds.has(e.source) && finalNodeIds.has(e.target)) {
-        finalEdges.push([e.source, e.target, edgeApiType(e.type)]);
+        finalEdges.push([e.source, e.target, edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '')]);
       }
     }
 

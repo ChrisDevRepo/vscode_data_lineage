@@ -100,7 +100,7 @@ rules:
     enabled: true
     priority: 17
     category: target
-    pattern: "\\bUPDATE\\s+(?!\\[?\\w+\\]?\\s*\\.)\\[?\\w+\\]?\\s+SET\\b[^;]{0,3000}?\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
+    pattern: "\\bUPDATE\\s+(?!\\[?\\w+\\]?\\s*\\.)\\[?\\w+\\]?\\s+SET\\b(?:(?!\\bFROM\\b|\\bSELECT\\b)[^;]){0,3000}?\\bFROM\\s+((?:(?:\\[[^\\]]+\\]|\\w+)\\.)*(?:\\[[^\\]]+\\]|\\w+))"
     flags: gi
     description: "UPDATE alias SET ... FROM schema.table (alias case)"
 

@@ -281,7 +281,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const newSet = new Set(resolvedNodeIds);
         resolvedEdges = model.edges
           .filter(e => newSet.has(e.source) && newSet.has(e.target))
-          .map(e => [e.source, e.target, edgeApiType(e.type)] as [string, string, string]);
+          .map(e => [e.source, e.target, edgeApiType(e.type, modelNodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
       }
 
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {

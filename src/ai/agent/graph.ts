@@ -1075,6 +1075,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const priorAttempt = attemptStateFor(state, 'active');
     const inputMessages = [...state.messages, hopMessage];
 
+    // The classification filter is the one drop in the prompt chain that is otherwise unrecorded:
+    // an excluded capture key means the model was never asked for that angle at all, which is
+    // indistinguishable downstream from having been asked and found nothing.
+    logClassificationGating(deps, 'active', classification, [
+      ...systemInstruction.classificationGatedKeys,
+      ...hopInstruction.classificationGatedKeys,
+    ]);
+
     const activeStage = { kind: 'active', mode: activeModeOf(isCtMode) } as const;
     const res = await withLmStage(activeStage, () => runToolAttempt(compileInstructionPlan({
       kind: 'converse',
@@ -1252,6 +1260,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const synthesisInstruction = buildSynthesisInstruction(sess, getCtx(state));
     const priorAttempt = attemptStateFor(state, 'synthesis');
     const messages = [modelUserMessage(envelopeJson)];
+    logClassificationGating(deps, 'synthesis', classification, synthesisInstruction.classificationGatedKeys);
+
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'synthesis', {
       stage: { kind: 'synthesis' },
       // Read on every provider step: a repairable rejection in step N makes only step N+1 expose
@@ -1440,6 +1450,33 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     ]);
 
   return graph.compile(deps.checkpointer ? { checkpointer: deps.checkpointer } : undefined);
+}
+
+/**
+ * Records the capture keys the locked classification excluded from one stage's prompt.
+ *
+ * @remarks
+ * Every other filter in the prompt chain announces itself — a stage or slot-count drop is inferable
+ * from the shipped keys, and an off-angle section dropped at commit is logged by the submit handler.
+ * Classification gating is the exception: the excluded key never reaches the model, so a run that
+ * was never asked for the business angle is indistinguishable from one that was asked and found
+ * nothing. Silent on the common path — nothing is logged when nothing was gated.
+ *
+ * @param deps - Graph dependencies carrying the optional logger.
+ * @param stage - Stage whose prompt was rendered.
+ * @param classification - Locked classification that produced the gating.
+ * @param gatedKeys - Keys excluded by that classification.
+ */
+function logClassificationGating(
+  deps: AgentGraphDeps,
+  stage: string,
+  classification: string,
+  gatedKeys: readonly string[],
+): void {
+  if (gatedKeys.length === 0) return;
+  deps.logger?.debug(
+    `[AI] [Prompt] classification gated capture key(s) — stage=${stage} classification=${sanitizeForLog(classification)} keys=${sanitizeForLog(gatedKeys.join(', '))}`,
+  );
 }
 
 function routeAfterDetectEntry(state: AgentStateType): string {

@@ -240,7 +240,11 @@ preview is a separate discovery path and does not grant SM mutation authority.
 - CT accepts the same focus verdicts, requires `column_flow`, and rejects the
   BB-only neighbor-pruning field. Each active tracked column must be continued
   or marked terminal; an empty flow is valid only when the focus carries no
-  active tracked-column interaction.
+  active tracked-column interaction. CT is BB plus column tracking: the engine
+  verifies every declared column against the loaded model and returns the repair
+  with any rejection, so an unsupported reference is corrected on the next
+  attempt instead of reaching the answer. `column_flow` records provenance and
+  never narrows what the answer retains.
 
 The locked answer classification determines which section angles are required.
 Validation requires the locked angles to be present; off-classification

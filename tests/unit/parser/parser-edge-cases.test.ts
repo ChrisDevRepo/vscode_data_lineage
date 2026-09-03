@@ -1106,6 +1106,41 @@ describe('UPDATE alias target does not cross a statement boundary', () => {
   ]);
 });
 
+describe('UPDATE alias target does not skip past its own FROM', () => {
+  table([
+    {
+      name: 'a temp-table target does not hand the target role to a subquery read',
+      // The alias rule captures `schema.object`, which no `#temp` name can satisfy. The skip
+      // between SET and FROM is tempered against FROM and SELECT so the rule is offered only
+      // its own statement's FROM: `#RawBatch` fails the capture and the rule yields nothing,
+      // rather than running on to the read inside NOT EXISTS and naming it the target.
+      sql: [
+        'UPDATE rb',
+        "SET rb.ValidationMessage = COALESCE(rb.ValidationMessage + '; ', '') + 'Unknown region'",
+        'FROM #RawBatch rb',
+        'WHERE NOT EXISTS (',
+        '    SELECT 1 FROM [ai].[ActiveRegions] ar',
+        '    WHERE ar.RegionCode = rb.RegionCode AND ar.IsActive = 1',
+        ');',
+      ].join('\n'),
+      // The `'; '` literal is load-bearing: the cleansing pass removes the string, and with it
+      // the only semicolon standing between SET and the subquery FROM. A skip bounded by `;`
+      // alone is already unbounded here by the time the rule runs.
+      exactSources: ['ai.ActiveRegions'],
+      noTargets: ['activeregions'],
+    },
+    {
+      name: 'a temp-table target yields no target at all rather than a wrong one',
+      // `#Staging` is the real target and cannot be captured, so the correct result is silence.
+      // A skip able to reach the second FROM would report `dbo.Reference` — a table this
+      // statement only reads — as the written object.
+      sql: 'UPDATE stg SET stg.Flag = 1 FROM #Staging stg WHERE stg.id IN (SELECT id FROM [dbo].[Reference])',
+      exactSources: ['dbo.Reference'],
+      noTargets: ['reference'],
+    },
+  ]);
+});
+
 describe('CREATE TABLE is not a function call', () => {
   table([
     {

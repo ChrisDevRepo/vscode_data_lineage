@@ -268,6 +268,76 @@ function computeFlowRoleGroups(
 }
 
 /**
+ * Buckets every traced node by its DIRECTED relation to the origin.
+ *
+ * @remarks
+ * The `## Column Trace Chain` list is emitted in hop order, and hop order is not direction order: a
+ * sibling reader discovered at hop 5 sits between two genuinely upstream hops, so direction is left
+ * to be inferred from position and is inferred wrong. These buckets state it instead.
+ *
+ * `sideBranch` is the bucket that matters — a node that reads a traced node but lies on no path to
+ * or from the origin. It is neither upstream nor downstream, and describing it as upstream inverts
+ * a real edge.
+ *
+ * @param originNodeId - The queried origin.
+ * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
+ */
+function computeDirectionGroups(
+  originNodeId: string,
+  edges: ReadonlyArray<{ from: string; to: string }>,
+): { upstream: string[]; downstream: string[]; sideBranch: string[] } {
+  const forward = new Map<string, string[]>();
+  const backward = new Map<string, string[]>();
+  const reached = new Set<string>([originNodeId]);
+  for (const e of edges) {
+    reached.add(e.from);
+    reached.add(e.to);
+    (forward.get(e.from) ?? forward.set(e.from, []).get(e.from)!).push(e.to);
+    (backward.get(e.to) ?? backward.set(e.to, []).get(e.to)!).push(e.from);
+  }
+  const walk = (adjacency: Map<string, string[]>): Set<string> => {
+    const seen = new Set<string>();
+    const stack = [originNodeId];
+    while (stack.length > 0) {
+      for (const next of adjacency.get(stack.pop()!) ?? []) {
+        if (!seen.has(next)) { seen.add(next); stack.push(next); }
+      }
+    }
+    seen.delete(originNodeId);
+    return seen;
+  };
+  const downstream = walk(forward);
+  const upstream = walk(backward);
+  const sideBranch = [...reached]
+    .filter(n => n !== originNodeId && !upstream.has(n) && !downstream.has(n));
+  return { upstream: [...upstream].sort(), downstream: [...downstream].sort(), sideBranch: sideBranch.sort() };
+}
+
+/**
+ * Renders the shared edge-direction lines from computed {@link computeDirectionGroups} buckets.
+ *
+ * @remarks
+ * The single direction statement BB and CT synthesis both use, so the two modes state direction
+ * identically — same rule as {@link computeFlowRoleGroups}, no per-mode clone.
+ *
+ * @param originNodeId - The queried origin the buckets are relative to.
+ * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
+ */
+function buildDirectionLines(
+  originNodeId: string,
+  edges: ReadonlyArray<{ from: string; to: string }>,
+): string[] {
+  const direction = computeDirectionGroups(originNodeId, edges);
+  return [
+    `Edge direction relative to ${originNodeId} — engine-computed and authoritative. Any list above is in HOP order, which is NOT direction order; never infer direction from a node's position in it:`,
+    `- upstream (data flows INTO the origin): ${direction.upstream.join(', ') || '(none)'}`,
+    `- downstream (data flows OUT of the origin): ${direction.downstream.join(', ') || '(none)'}`,
+    `- side branches — these READ a traced node and lie on NO path to or from the origin: ${direction.sideBranch.join(', ') || '(none)'}`,
+    '- Never describe a side branch as upstream, as a source, or as feeding the origin; it consumes the same data the origin consumes.',
+  ];
+}
+
+/**
  * Renders the shared `highlight_groups` guidance lines from computed {@link FlowRoleGroups}.
  *
  * @remarks
@@ -292,10 +362,13 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups): string[] {
  * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
  */
 export function buildBbSynthesisBlock(originNodeId: string, edges: ReadonlyArray<[string, string, string]>): string {
-  const groups = computeFlowRoleGroups(originNodeId, edges.map(([from, to]) => ({ from, to })));
+  const flowEdges = edges.map(([from, to]) => ({ from, to }));
+  const groups = computeFlowRoleGroups(originNodeId, flowEdges);
   return [
     '## Flow-Role Highlights',
     ...buildFlowRoleHighlightLines(groups),
+    '',
+    ...buildDirectionLines(originNodeId, flowEdges),
   ].join('\n');
 }
 
@@ -323,6 +396,15 @@ export function buildCtSynthesisBlock(
   for (const e of edges) {
     lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})`);
   }
+  lines.push('');
+  // Direction is read off the NODE edges, not the column edges: a column chain that routes a hop
+  // through a writer proc records the proc only as a `to`, so origin-relative reachability breaks
+  // there and real upstream sources render as side branches. The node edges carry the proc's write,
+  // and using them is also what makes BB and CT state direction identically.
+  const directionEdges = nodeEdges.length > 0
+    ? nodeEdges.map(([from, to]) => ({ from, to }))
+    : edges.map(e => ({ from: e.from_node, to: e.to_node }));
+  lines.push(...buildDirectionLines(originNodeId, directionEdges));
   if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
     lines.push('');
     lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
@@ -418,9 +500,10 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * Facts only: writers/readers are derived purely from {@link SmResult.edges} (`written by` = the
  * `from` ends of edges INTO the node; `read by` = the `to` ends of edges FROM it); type is read
  * from {@link SmResult.fullNodes}, action from `node_states`. The base set is `fullNodes`, which
- * `getResult` already restricts to reachable, non-pruned nodes and — in CT — to the column-flow
- * scope, so pruned nodes never appear here (belt-and-suspenders: an explicit `prune` action is
- * also filtered). Deterministic: nodes and neighbor lists sort by id, ids lowercased.
+ * `getResult` already restricts to reachable, non-pruned nodes in both modes, so pruned nodes never
+ * appear here (belt-and-suspenders: an explicit `prune` action is also filtered). A CT dependency
+ * that carries no value into the traced column is kept and unslotted, so it surfaces here and earns
+ * its caption. Deterministic: nodes and neighbor lists sort by id, ids lowercased.
  *
  * @param result - Completed SM result: `fullNodes` the rendered kept set, `detail_slots` the
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
@@ -463,7 +546,8 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
  * rendered flow-role block — the only place the model is told which nodes are terminal sources;
  * those are not reconstructable from the raw archive fields. The block is the CT column chain when
  * column edges exist, else the BB node-edge flow-role buckets — both via the shared
- * {@link computeFlowRoleGroups}. Off-trace nodes (no edges) are excluded by the scope filter. The
+ * {@link computeFlowRoleGroups}. A kept node with no column edge is absent from the flow-role
+ * buckets by construction, so it is never offered as a terminal-source candidate. The
  * reminder then also carries the {@link buildPassthroughFlowFacts} digest — grounded writer/reader
  * facts for kept nodes with no detail slot, which otherwise have no semantic content to document.
  */

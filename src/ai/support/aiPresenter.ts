@@ -23,16 +23,23 @@ export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
   ) as Partial<T>;
 }
 
-const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', write: 'write', exec: 'exec', read: 'read' };
+const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', exec: 'exec', read: 'read' };
 const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
 /**
  * Standardizes internal edge types into an AI-consumable API nomenclature.
  *
+ * @remarks
+ * `LineageEdge.type` records provenance (`body` vs `exec`), never direction — the engine
+ * orders a `body` edge's endpoints by write-vs-read but discards the verb. Only a procedure
+ * ever emits an outbound `body` edge for a mutation; every other `body` source is a read.
+ *
  * @param type - The raw edge type from the graph engine.
+ * @param sourceNodeType - The `ObjectType` of the edge's source node.
  * @returns A simplified string representing the data flow direction (e.g., 'read', 'write', 'exec').
  */
-export function edgeApiType(type: string): string {
+export function edgeApiType(type: string, sourceNodeType: string): string {
+  if (type === 'body' && sourceNodeType === 'procedure') return 'write';
   return EDGE_TYPE_MAP[type] ?? 'read';
 }
 

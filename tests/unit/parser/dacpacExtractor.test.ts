@@ -39,7 +39,7 @@ async function testExtraction() {
   // A count floor, not a smoke check: `> 0` still passes if a parse rule regresses and the
   // real-world edge set collapses. The exact per-procedure edges are pinned in
   // testNamedProcedureEdges below; this guards the model as a whole.
-  expect(model.edges.length, 'Edge count fell below the AdventureWorks floor').toBeGreaterThanOrEqual(170);
+  expect(model.edges.length, 'Edge count fell below the AdventureWorks floor').toBeGreaterThanOrEqual(169);
 
   // All 4 object types present
   for (const type of ['table', 'view', 'procedure', 'function'] as const) {

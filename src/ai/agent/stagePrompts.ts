@@ -84,6 +84,20 @@ function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, re
   );
 }
 
+/**
+ * The template keys a render dropped because the locked classification did not request them.
+ *
+ * @remarks
+ * The drop is deterministic and by design, but it is the one filter in the chain that leaves no
+ * trace of its own: `gatedOut` is computed for diagnostics and has no consumer, so a run in which
+ * `business_capture` — sole owner of the decision-impacting data-quality capture instruction — was
+ * never issued reads identically to one in which the model was asked and found nothing. Lifted onto
+ * the builder result so the graph can log it.
+ */
+function classificationGatedKeys(result: StagePromptResult): string[] {
+  return result.gatedOut.filter(entry => entry.reason === 'classification').map(entry => entry.key);
+}
+
 /** Assembles a phase system prompt: the grounded stage base followed by the ordered non-empty blocks. */
 function assemblePhaseSystem(stage: AgentStage, ctx: StagePromptContext, blocks: ReadonlyArray<string | null | undefined>): string {
   return [buildHostStageSystemPrompt(stage, ctx), ...blocks].filter(Boolean).join('\n');
@@ -97,6 +111,8 @@ export interface StageSystemInstruction {
   readonly templateKeys: readonly string[];
   /** Memory/context blocks this builder assembled non-empty into {@link system}. */
   readonly memorySections: readonly string[];
+  /** YAML keys the locked classification excluded from this render; empty when nothing was gated. */
+  readonly classificationGatedKeys: readonly string[];
 }
 
 /**
@@ -108,7 +124,12 @@ export interface StageSystemInstruction {
  */
 export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptContext): StageSystemInstruction {
   const stage = resolveStage(sess, 'discover');
-  return { system: assemblePhaseSystem('discover', ctx, [stage.prompt]), templateKeys: stage.shippedKeys, memorySections: [] };
+  return {
+    system: assemblePhaseSystem('discover', ctx, [stage.prompt]),
+    templateKeys: stage.shippedKeys,
+    memorySections: [],
+    classificationGatedKeys: classificationGatedKeys(stage),
+  };
 }
 
 /**
@@ -136,6 +157,7 @@ export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext,
     system: assemblePhaseSystem('active', ctx, [smProtocol, stageBlock.prompt, ...stableContext.blocks]),
     templateKeys: stageBlock.shippedKeys,
     memorySections: stableContext.memorySections,
+    classificationGatedKeys: classificationGatedKeys(stageBlock),
   };
 }
 
@@ -183,6 +205,8 @@ export interface ActiveHopInstruction {
   readonly templateKeys: readonly string[];
   /** Memory/context blocks this builder assembled non-empty into {@link message}. */
   readonly memorySections: readonly string[];
+  /** YAML capture keys the locked classification excluded from this hop; empty when nothing was gated. */
+  readonly classificationGatedKeys: readonly string[];
 }
 
 /**
@@ -232,6 +256,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     message: [currentTask, accountFor, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
     templateKeys: captureRecipe.shippedKeys,
     memorySections,
+    classificationGatedKeys: classificationGatedKeys(captureRecipe),
   };
 }
 
@@ -260,5 +285,6 @@ export function buildSynthesisInstruction(sess: AiSession, ctx: StagePromptConte
     system: assemblePhaseSystem('synthesis', ctx, [stage.prompt, ...stableContext.blocks]),
     templateKeys: stage.shippedKeys,
     memorySections: stableContext.memorySections,
+    classificationGatedKeys: classificationGatedKeys(stage),
   };
 }
