@@ -3026,11 +3026,18 @@ export class NavigationEngine implements IHopStateMachine {
    * Selects the render-set members no hop dispositioned that the render reaches only as a write sink.
    *
    * @remarks
-   * Scope admits a node; only a hop dispositions one. A node with no {@link nodeStates} entry, no
-   * investigation task and no column-aspect edge was never analyzed, routed, contracted through or
-   * pruned — it is in the render because BFS reachability walked into it, nothing more. Such a node
-   * that also supplies nothing the render keeps (every edge joining it to the render set points
-   * into it: written to, or EXEC'd) is a side-effect sink, not answer evidence. Peeling is
+   * Scope admits a node; only a hop dispositions one. A node with no investigation task, no
+   * column-aspect edge endpoint, and either no {@link nodeStates} entry or a bare
+   * `submitted_passthrough` one, was never analyzed, routed, contracted through or pruned — it is in
+   * the render because BFS reachability walked into it, nothing more. `submitted_passthrough` is the
+   * hop's own word for "this focus transforms nothing on the traced path"; when the tracer also
+   * never placed the node at either end of a column edge — only as the `hop_node` that performed
+   * another pair's flow — the hop asserted no carriage, so its entry is not evidence of any, and
+   * neither is the investigation task that same hop resolved. Every other reason
+   * (`submitted_analyze`, a contraction's `non_bodied_passthrough`, a user filter) exempts the node
+   * outright, as does a task still open — routed or queued and never reached is not a verdict. Such
+   * a node that also supplies nothing the render keeps (every edge joining it to the render set
+   * points into it: written to, or EXEC'd) is a side-effect sink, not answer evidence. Peeling is
    * iterative, so a sink chain — a logging proc whose only reader is its own log table — goes as a
    * unit. An undispositioned node that *supplies* a rendered node stays: at this layer a filter
    * join and a sibling-column feed are the same shape, and the value-carrying one is required
@@ -3044,8 +3051,14 @@ export class NavigationEngine implements IHopStateMachine {
     const candidates: string[] = [];
     for (const id of reachable) {
       if (id === this.originNodeId) continue;
-      if (this.nodeStates.has(id)) continue;
-      if (this.taskLedger.investigationTasks.some(task => task.nodeId === id)) continue;
+      const state = this.nodeStates.get(id);
+      const passthrough = state?.reason === 'submitted_passthrough';
+      if (state !== undefined && !passthrough) continue;
+      // A task the passthrough hop itself resolved says the node was looked at, which the verdict
+      // already says; an unresolved one means routed or queued and never reached, which no verdict
+      // covers, so it still exempts.
+      if (this.taskLedger.investigationTasks.some(task =>
+        task.nodeId === id && !(passthrough && task.status === 'resolved'))) continue;
       if (this.tracer?.edges.some(edge => edge.from_node === id || edge.to_node === id)) continue;
       candidates.push(id);
     }
@@ -3107,8 +3120,10 @@ export class NavigationEngine implements IHopStateMachine {
     // Conservation backstop: the render set is recomputed by reachability, which can disagree with
     // the disposition ledger. Under the invariants (prune never orphans a committed node) this delta
     // is empty; if it is not, an analyzed node's detail slot is about to be dropped from the render —
-    // log it (never a silent filter) so the loss is visible instead of vanishing.
-    const droppedSlots = mem.detail_slots.filter(slot => !finalNodeIds.has(slot.nodeId));
+    // log it (never a silent filter) so the loss is visible instead of vanishing. The sink trim above
+    // names its own drops in its own line; they are not counted here a second time as a conservation
+    // failure they are not.
+    const droppedSlots = mem.detail_slots.filter(slot => !finalNodeIds.has(slot.nodeId) && !undispositioned.has(slot.nodeId));
     if (droppedSlots.length > 0) {
       this.log('debug', `[Disposition] getResult drops ${droppedSlots.length} analyzed detail slot(s) unreachable from origin under removedSet/scope — ${trunc(droppedSlots.map(s => s.nodeId).join(', '), 200)} (conservation delta; expected empty)`);
     }

@@ -767,3 +767,102 @@ describe('CT snapshot provenance — the render records the drop it made', () =>
     expect(engine.toJSON().renderDroppedNodeIds, 'no drop, no record').toBeUndefined();
   });
 });
+
+/**
+ * A submitted passthrough is not evidence the render needs the node.
+ *
+ * Measured shape (T8, `[ai].[sparchiveoldorders]`): a hop dispatched the archive proc, the model
+ * returned `verdict=passthrough` — its own assertion that the focus transforms nothing on the
+ * traced path — and the node stayed in the render on the strength of that entry alone, with its
+ * one render-internal outgoing edge pointing at its own log writer. C12 is the counter-case: the
+ * same verdict at a focus the tracer did place on a column edge keeps the node.
+ */
+const PASSTHROUGH_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
+  ['[ct].[vwsrc]', V, ['Amount']],
+  ['[ct].[src]', T, ['Amount']],
+  ['[ct].[sparchive]', P, ['Amount']],
+  ['[ct].[splog]', P, ['Msg']],
+];
+const PASSTHROUGH_EDGES: ReadonlyArray<readonly [string, string]> = [
+  ['[ct].[src]', '[ct].[vwsrc]'],
+  ['[ct].[vwsrc]', '[ct].[sparchive]'],
+  ['[ct].[sparchive]', '[ct].[splog]'],
+];
+const ARCHIVE = '[ct].[sparchive]';
+const ARCHIVE_LOG = '[ct].[splog]';
+
+const PASSTHROUGH_CASE: RetentionCase = {
+  id: 'submitted passthrough',
+  origin: '[ct].[vwsrc]',
+  tracedColumn: 'Amount',
+  nodes: PASSTHROUGH_NODES,
+  edges: PASSTHROUGH_EDGES,
+  reachRequired: [],
+  flow: { '[ct].[vwsrc]': [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[src]', col: 'Amount' }] }] },
+  measuredLost: [],
+};
+
+/** Runs the walk, submitting `archiveFlow` under a passthrough verdict at the archive proc. */
+function drivePassthroughWalk(archiveFlow: FlowEntry[]): SmResult {
+  const { model, graph } = buildWorld(PASSTHROUGH_CASE);
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const init = engine.init({
+    origin: PASSTHROUGH_CASE.origin,
+    question: 'trace Amount to its sources and its consumers',
+    direction: 'bidirectional',
+    analysisMode: 'ct',
+    targetColumns: ['Amount'],
+    depthIntent: { kind: 'explicit', levels: 3 },
+  });
+  expect('ok' in init, 'CT init succeeds').toBe(true);
+
+  for (let hop = 0; hop < 25; hop++) {
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    if (ctx.done || !ctx.focus_node) return engine.getResult();
+    const focusId = ctx.focus_node.id;
+    const isArchive = focusId === ARCHIVE;
+    const outcome = engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
+      summary: `${focusId}`,
+      verdict: isArchive ? 'passthrough' as const : 'analyze' as const,
+      column_flow: isArchive ? archiveFlow : (PASSTHROUGH_CASE.flow[focusId] ?? []),
+    }) as SubmitOk;
+    expect(outcome.error, `the hop at ${focusId} commits`).toBeUndefined();
+  }
+  throw new Error('passthrough walk did not terminate within 25 hops');
+}
+
+describe('CT render bound — a submitted passthrough is a verdict, not evidence', () => {
+  it('C11 — drops a passthrough proc whose only render edge is its log writer', () => {
+    // The flow names a node outside the fixture, so the tracer places the focus on no column edge:
+    // the hop asserted it carries nothing and left nothing behind that says otherwise.
+    const result = drivePassthroughWalk([
+      { out_col: 'Amount', upstream_columns: [{ node: '[ct].[notinthismodel]', col: 'Amount' }] },
+    ]);
+    const rendered = new Set(result.fullNodes.map(n => n.id));
+
+    expect(
+      result.node_states.find(state => state.nodeId === ARCHIVE)?.reason,
+      'the premise: the archive proc was dispatched and returned a passthrough',
+    ).toBe('submitted_passthrough');
+    expect(
+      [ARCHIVE, ARCHIVE_LOG].filter(id => rendered.has(id)),
+      'a passthrough focus carrying no column edge and supplying only its log writer is not answer evidence',
+    ).toEqual([]);
+    expect(rendered.has('[ct].[src]'), 'the value supplier stays').toBe(true);
+  });
+
+  it('C12 — keeps a passthrough focus the tracer placed on a column edge', () => {
+    const result = drivePassthroughWalk([
+      { out_col: 'Amount', upstream_columns: [{ node: '[ct].[vwsrc]', col: 'Amount' }] },
+    ]);
+    const rendered = new Set(result.fullNodes.map(n => n.id));
+
+    expect(
+      result.node_states.find(state => state.nodeId === ARCHIVE)?.reason,
+      'the same verdict as C11',
+    ).toBe('submitted_passthrough');
+    expect(rendered.has(ARCHIVE), 'a column-edge endpoint survives the trim whatever its verdict').toBe(true);
+  });
+});
