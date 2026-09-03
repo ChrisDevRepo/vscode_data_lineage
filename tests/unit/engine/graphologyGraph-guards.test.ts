@@ -1,17 +1,13 @@
-// @vitest-environment jsdom
 /**
  * Covers the four defensive guards in `buildGraphologyGraph` (src/engine/graphBuilder.ts):
  * an empty-id node is skipped and warned, a duplicate node id is skipped and warned, an edge
  * whose source or target is not a graph node is dropped without a warning, and a duplicate
- * source→target edge is added only once. None of the four had a test before this file — the
- * warn branches post through `window.vscode`, which the `environment: 'node'` engine lane
- * (where these guards otherwise live, tests/unit/engine/graphBuilder.test.ts) cannot exercise
- * because `window` is undefined there. Lives under webview/ for the same reason
- * applyTraceToFlow.test.ts does.
+ * source→target edge is added only once. The two warn branches are read through the module's log
+ * sink, which is the engine's only diagnostic route.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
-import { buildGraphologyGraph } from '../../../src/engine/graphBuilder';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { buildGraphologyGraph, setGraphLogSink } from '../../../src/engine/graphBuilder';
 import type { DatabaseModel, LineageEdge, LineageNode } from '../../../src/engine/types';
 
 function node(overrides: Partial<LineageNode> = {}): LineageNode {
@@ -29,18 +25,18 @@ function modelOf(nodes: LineageNode[], edges: LineageEdge[]): DatabaseModel {
   return { nodes, edges, schemas: [], catalog: {}, neighborIndex: {} } as unknown as DatabaseModel;
 }
 
-type PostedMessage = Record<string, unknown>;
+type LoggedLine = { level: string; text: string };
 
 describe('buildGraphologyGraph — defensive guards', () => {
-  let posted: PostedMessage[];
+  let logged: LoggedLine[];
 
   beforeEach(() => {
-    posted = [];
-    window.vscode = {
-      postMessage: (message) => { posted.push(message); },
-      getState: () => undefined,
-      setState: () => {},
-    };
+    logged = [];
+    setGraphLogSink((level, text) => { logged.push({ level, text }); });
+  });
+
+  afterEach(() => {
+    setGraphLogSink(() => {});
   });
 
   it('skips a node with an empty id and warns with its schema.name', () => {
@@ -49,8 +45,8 @@ describe('buildGraphologyGraph — defensive guards', () => {
     const graph = buildGraphologyGraph(model);
 
     expect(graph.order).toBe(0);
-    expect(posted).toEqual([
-      { type: 'log', level: 'warn', text: '[Graph] Skipping node with empty ID: dbo.Ghost' },
+    expect(logged).toEqual([
+      { level: 'warn', text: '[Graph] Skipping node with empty ID: dbo.Ghost' },
     ]);
   });
 
@@ -67,8 +63,8 @@ describe('buildGraphologyGraph — defensive guards', () => {
 
     expect(graph.order).toBe(1);
     expect(graph.getNodeAttribute('[dbo].[table1]', 'name')).toBe('Table1');
-    expect(posted).toEqual([
-      { type: 'log', level: 'warn', text: '[Graph] Duplicate node ID skipped: [dbo].[table1]' },
+    expect(logged).toEqual([
+      { level: 'warn', text: '[Graph] Duplicate node ID skipped: [dbo].[table1]' },
     ]);
   });
 
@@ -81,7 +77,7 @@ describe('buildGraphologyGraph — defensive guards', () => {
     const graph = buildGraphologyGraph(model);
 
     expect(graph.size).toBe(0);
-    expect(posted).toEqual([]);
+    expect(logged).toEqual([]);
   });
 
   it('drops an edge whose target is not a node in the graph, without warning', () => {
@@ -93,7 +89,7 @@ describe('buildGraphologyGraph — defensive guards', () => {
     const graph = buildGraphologyGraph(model);
 
     expect(graph.size).toBe(0);
-    expect(posted).toEqual([]);
+    expect(logged).toEqual([]);
   });
 
   it('adds a duplicate source→target edge only once, keeping the first edge attrs', () => {
@@ -112,6 +108,6 @@ describe('buildGraphologyGraph — defensive guards', () => {
 
     expect(graph.size).toBe(1);
     expect(graph.getEdgeAttribute('[dbo].[table1]→[dbo].[table2]', 'type')).toBe('body');
-    expect(posted).toEqual([]);
+    expect(logged).toEqual([]);
   });
 });

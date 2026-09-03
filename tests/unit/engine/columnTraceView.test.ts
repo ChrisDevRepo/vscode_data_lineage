@@ -18,7 +18,9 @@ import {
   type ColumnTraceViewEdge,
   type ColumnTraceViewInput,
   type ColumnTraceViewObject,
+  COLUMN_NODE_WIDTH,
 } from '../../../src/engine/columnTraceView';
+import { DEFAULT_CONFIG, type ExtensionConfig } from '../../../src/engine/types';
 
 function mkObj(id: string, objectType = 'table', label?: string): ColumnTraceViewObject {
   return { id, label: label ?? id, schema: 'dbo', objectType };
@@ -58,11 +60,13 @@ describe('columnTraceView', () => {
       relations: endpointShape,
       objects,
       verdicts: new Map([['dbo.t', 'analyze']]),
+      config: DEFAULT_CONFIG,
     });
     const viaNodeView = buildColumnTraceView({
       relations: viaNodeShape,
       objects,
       verdicts: new Map([['dbo.p', 'analyze']]),
+      config: DEFAULT_CONFIG,
     });
 
     // Neither shape invents a node for a hop that isn't a real endpoint.
@@ -88,7 +92,7 @@ describe('columnTraceView', () => {
       { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'Amount', toNode: 'dbo.p', toCol: 'Amount' },
     ];
 
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const procNode = findNode(view, 'dbo.p');
 
     expect(procNode.isTransformNode).toBe(true);
@@ -104,7 +108,7 @@ describe('columnTraceView', () => {
       { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' },
     ];
 
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const row = findRow(view, 'dbo.t', 'Amount');
     expect(row.shape).toBe('renamed');
   });
@@ -116,7 +120,7 @@ describe('columnTraceView', () => {
       { hopNode: 'dbo.t', fromNode: 'dbo.s2', fromCol: 'A', toNode: 'dbo.t', toCol: 'X' },
     ];
 
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const row = findRow(view, 'dbo.t', 'X');
     expect(row.shape).toBe('incoming');
     expect(row.contributors).toBe(2);
@@ -129,7 +133,7 @@ describe('columnTraceView', () => {
       { hopNode: 'dbo.s', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t2', toCol: 'Y' },
     ];
 
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const row = findRow(view, 'dbo.s', 'A');
     expect(row.shape).toBe('outgoing');
     expect(row.contributors).toBe(2);
@@ -141,7 +145,7 @@ describe('columnTraceView', () => {
       { hopNode: 'dbo.s', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t', toCol: 'A' },
     ];
 
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const row = findRow(view, 'dbo.s', 'A');
     expect(row.shape).toBe('terminal');
   });
@@ -172,7 +176,7 @@ describe('columnTraceView', () => {
       { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'Apple', toNode: 'dbo.t', toCol: 'Apple' },
     ];
 
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const node = findNode(view, 'dbo.t');
     expect(node.rows.map((r) => r.name)).toEqual(['Zebra', 'Apple']);
   });
@@ -186,7 +190,7 @@ describe('columnTraceView', () => {
   });
 
   it('yields an empty view for an empty relation list without throwing', () => {
-    const input: ColumnTraceViewInput = { relations: [], objects: new Map() };
+    const input: ColumnTraceViewInput = { relations: [], objects: new Map(), config: DEFAULT_CONFIG };
     expect(() => buildColumnTraceView(input)).not.toThrow();
     const view = buildColumnTraceView(input);
     expect(view.nodes).toEqual([]);
@@ -200,7 +204,7 @@ describe('columnTraceView', () => {
       { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'B', toNode: 'dbo.t', toCol: 'B' },
     ];
 
-    const node = findNode(buildColumnTraceView({ relations, objects }), 'dbo.t');
+    const node = findNode(buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }), 'dbo.t');
     expect(node.rows).toHaveLength(2);
     expect(node.height).toBe(
       COLUMN_NODE_HEADER_HEIGHT + 2 * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
@@ -226,7 +230,7 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
   ];
 
   it('draws each relation as two legs through the hop rather than past it', () => {
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const legs = view.edges.map((e) => `${e.source}.${e.sourceColumn}->${e.target}.${e.targetColumn}`);
 
     expect(legs).toContain('dbo.s1.Qty->dbo.p.Qty');
@@ -237,19 +241,19 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
   });
 
   it('gives the hop an inbound edge, which is what puts it mid-chain', () => {
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     expect(view.edges.some((e) => e.target === 'dbo.p')).toBe(true);
   });
 
   it('draws the shared outbound leg once', () => {
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const outbound = view.edges.filter((e) => e.source === 'dbo.p' && e.target === 'dbo.t');
     expect(outbound).toHaveLength(1);
     expect(new Set(view.edges.map((e) => e.id)).size).toBe(view.edges.length);
   });
 
   it('keeps the target incoming shape on the original endpoints, not on the legs', () => {
-    const view = buildColumnTraceView({ relations, objects });
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const row = findRow(view, 'dbo.t', 'Total');
     expect(row.shape).toBe('incoming');
     expect(row.contributors).toBe(2);
@@ -259,6 +263,7 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     const view = buildColumnTraceView({
       relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' }],
       objects,
+      config: DEFAULT_CONFIG,
     });
     expect(findRow(view, 'dbo.t', 'Amount').shape).toBe('renamed');
   });
@@ -267,12 +272,14 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     const renaming = buildColumnTraceView({
       relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' }],
       objects,
+      config: DEFAULT_CONFIG,
     });
     expect(findNode(renaming, 'dbo.p').rows.map((r) => r.name)).toEqual(['Amt', 'Amount']);
 
     const unchanged = buildColumnTraceView({
       relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amount', toNode: 'dbo.t', toCol: 'Amount' }],
       objects,
+      config: DEFAULT_CONFIG,
     });
     expect(findNode(unchanged, 'dbo.p').rows.map((r) => r.name)).toEqual(['Amount']);
   });
@@ -282,6 +289,7 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     const view = buildColumnTraceView({
       relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Qty' }],
       objects: withoutProc,
+      config: DEFAULT_CONFIG,
     });
     expect(view.nodes.map((n) => n.id).sort()).toEqual(['dbo.s1', 'dbo.t']);
     expect(view.edges).toHaveLength(1);
@@ -364,5 +372,52 @@ describe('resolveRowLineStates', () => {
 
   it('returns an empty map for no edges', () => {
     expect(resolveRowLineStates([]).size).toBe(0);
+  });
+});
+
+describe('columnTraceView layout settings', () => {
+  /** Horizontal distance between the two ranks of a two-node left-to-right view. */
+  function rankGap(view: ReturnType<typeof buildColumnTraceView>): number {
+    return findNode(view, 'dbo.t').position.x - findNode(view, 'dbo.s').position.x;
+  }
+
+  const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
+  const relations: ColumnTraceRelation[] = [
+    { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'Amount', toNode: 'dbo.t', toCol: 'Amount' },
+  ];
+
+  it('spaces ranks by the caller rank separation, not by a built-in default', () => {
+    const wide: ExtensionConfig = {
+      ...DEFAULT_CONFIG,
+      layout: { ...DEFAULT_CONFIG.layout, rankSeparation: DEFAULT_CONFIG.layout.rankSeparation + 200 },
+    };
+    const defaultGap = rankGap(buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }));
+    const wideGap = rankGap(buildColumnTraceView({ relations, objects, config: wide }));
+
+    expect(defaultGap).toBe(COLUMN_NODE_WIDTH + DEFAULT_CONFIG.layout.rankSeparation);
+    expect(wideGap).toBe(COLUMN_NODE_WIDTH + wide.layout.rankSeparation);
+  });
+
+  it('takes the layout direction from the configuration when the view requests none', () => {
+    const topDown: ExtensionConfig = {
+      ...DEFAULT_CONFIG,
+      layout: { ...DEFAULT_CONFIG.layout, direction: 'TB' },
+    };
+    const view = buildColumnTraceView({ relations, objects, config: topDown });
+    const source = findNode(view, 'dbo.s');
+    const target = findNode(view, 'dbo.t');
+
+    expect(target.position.y).toBeGreaterThan(source.position.y);
+    expect(target.position.x).toBe(source.position.x);
+  });
+
+  it('lets an explicit view direction override the configured one', () => {
+    const topDown: ExtensionConfig = {
+      ...DEFAULT_CONFIG,
+      layout: { ...DEFAULT_CONFIG.layout, direction: 'TB' },
+    };
+    const view = buildColumnTraceView({ relations, objects, config: topDown, layoutDirection: 'LR' });
+
+    expect(rankGap(view)).toBe(COLUMN_NODE_WIDTH + topDown.layout.rankSeparation);
   });
 });

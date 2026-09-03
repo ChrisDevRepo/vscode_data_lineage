@@ -104,7 +104,11 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     import('./components/App'),
     import('./contexts/VsCodeContext'),
     import('./components/ErrorBoundary'),
-  ]).then(([{ App }, { VsCodeProvider }, { ErrorBoundary }]) => {
+    import('./engine/graphBuilder'),
+  ]).then(([{ App }, { VsCodeProvider }, { ErrorBoundary }, { setGraphLogSink }]) => {
+    // The engine has no bridge of its own and the detail webview builds no graphs, so this is the
+    // one place the sink is installed — here, before the first render can build one.
+    setGraphLogSink((level, text) => window.vscode?.postMessage({ type: 'log', level, text }));
 
     createRoot(root).render(
       <ErrorBoundary
