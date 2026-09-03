@@ -6,6 +6,7 @@
 // both launch outside this process (Electron / a live provider) and are
 // internal-only.
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nodeBin, npmCommand } from './npm-launcher.mjs';
@@ -50,6 +51,15 @@ const STEPS = [
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'AI template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'honest test labels', cmd: nodeBin, args: ['tests/tools/assert-honest-test-labels.mjs'] },
+  // The process guards live in .claude/, which is internal-only and never tracked here, so this
+  // step is present for a working copy that has them and absent from a public clone. It skips
+  // rather than fails when the suite is not on disk — a public clone has nothing to check.
+  ...(existsSync('.claude/hooks/test_guard.py')
+    ? [{ name: 'process guards', cmd: 'python3', args: ['.claude/hooks/test_guard.py'] }]
+    : []),
+  ...(existsSync('.claude/hooks/test_continuity.py')
+    ? [{ name: 'loop continuity', cmd: 'python3', args: ['.claude/hooks/test_continuity.py'] }]
+    : []),
   // Structural, so it runs with the other seconds-long checks rather than with the suites. Line
   // coverage cannot answer this: a rule matched by no fixture still reads as covered.
   { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },

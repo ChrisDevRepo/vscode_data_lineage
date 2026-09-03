@@ -1046,6 +1046,32 @@ function safeLogIdentifier(value: string, fallback: string): string {
   return safeIdentifier(value, { extraChars: '.:-', replacement: '_', maxLength: 100, fallback });
 }
 
+/**
+ * Writes the `[Reject]` log line for a rejection no tool dispatch stands behind.
+ *
+ * @remarks
+ * Dispatched rejections are logged by the registry's own result path; a rejection raised here
+ * reaches the trace through {@link SyntheticRejectionTrace} and would otherwise be counted by the
+ * trace and by no log line, leaving the two sources disagreeing on the run's rejection count.
+ */
+function logSyntheticRejection(
+  input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase'>,
+  source: string,
+  call: ToolOutcomeIdentity,
+  code: string,
+  reason: string,
+): void {
+  input.debugLog?.(
+    `[Reject] source=${source}`
+    + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
+    + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
+    + ` callId=${safeCallId(call.callId)}`
+    + ` code=${safeLogIdentifier(code, 'unknown')}`
+    + ` reason=${sanitizeForLog(reason)}`
+    + ' issuePaths=none',
+  );
+}
+
 /** Renders provider validation paths without exposing any rejected payload values. */
 function rejectionPathsForLog(paths: readonly string[] | undefined): string {
   if (!paths || paths.length === 0) return 'none';
@@ -1300,6 +1326,8 @@ export async function executeToolGenerationAttempt(
         message: 'This sibling was not executed because an earlier call in the same provider batch closed the phase. Do not retry it.',
         correction: { closedByCallId: closedBy.callId, closedByTool: closedBy.toolName },
       }, calls, observations, rejections, input.traceSyntheticRejection);
+      logSyntheticRejection(input, 'batch_phase_closed', call, 'phase_closed',
+        `closed by ${closedBy.toolName} callId ${closedBy.callId}`);
       continue;
     }
     if (budgetClosedByCallId) {
@@ -1309,6 +1337,8 @@ export async function executeToolGenerationAttempt(
         message: 'This sibling was not executed because the logical phase reached its semantic-failure budget.',
         correction: { closedByCallId: budgetClosedByCallId },
       }, calls, observations, rejections, input.traceSyntheticRejection);
+      logSyntheticRejection(input, 'batch_budget_closed', call, 'attempt_budget_exhausted',
+        `budget closed by callId ${budgetClosedByCallId}`);
       continue;
     }
     if (!call.valid) {
@@ -1383,7 +1413,8 @@ export async function executeToolGenerationAttempt(
           correction: { hint: DUPLICATE_READ_HINT },
           detail: { acceptedCallId: reused.callId },
         }, calls, observations, rejections, input.traceSyntheticRejection);
-        input.debugLog?.(`[AI] tool-result-duplicate phase=${safeLogIdentifier(input.phase, 'unknown')} tool=${safeLogIdentifier(call.toolName, 'unknown')} callId=${safeCallId(call.callId)}`);
+        logSyntheticRejection(input, 'duplicate_read', call, REJECTION_CODES.duplicateRead,
+          `repeats accepted callId ${reused.callId}`);
         continue;
       }
       recordToolOutcome(call, {

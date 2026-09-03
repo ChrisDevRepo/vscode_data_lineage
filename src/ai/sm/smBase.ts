@@ -274,6 +274,14 @@ export class NavigationEngine implements IHopStateMachine {
   /** The configurable depth budget. */
   protected depthBudget: number | null = null;
   /**
+   * Both sides unbounded — the default depth ceiling. Never mutated in place (only ever
+   * reassigned wholesale), so instances may safely share this one frozen object.
+   */
+  private static readonly UNBOUNDED_DEPTH_LIMITS: { upstream: number; downstream: number } = Object.freeze({
+    upstream: Number.POSITIVE_INFINITY,
+    downstream: Number.POSITIVE_INFINITY,
+  });
+  /**
    * Per-side depth ceilings from the approved intent; `Infinity` where that side is unbounded.
    *
    * @remarks
@@ -281,10 +289,7 @@ export class NavigationEngine implements IHopStateMachine {
    * collapsing `{upstream: 2, downstream: 1}` to its maximum enforces 2 on both sides, admitting
    * a node the user capped out. Only consulted when {@link depthEnforcement} is `'strict'`.
    */
-  protected depthLimits: { upstream: number; downstream: number } = {
-    upstream: Number.POSITIVE_INFINITY,
-    downstream: Number.POSITIVE_INFINITY,
-  };
+  protected depthLimits: { upstream: number; downstream: number } = NavigationEngine.UNBOUNDED_DEPTH_LIMITS;
   /**
    * Whether the approved depth is a hard border (`'strict'`) or an initial seed the model may grow
    * (`'silent'`). Set from the AI's own `depthIntent`: a level count the AI copied from the user's
@@ -1420,7 +1425,7 @@ export class NavigationEngine implements IHopStateMachine {
       case 'full_frontier':
         this.depthBudget = null;
         this.depthEnforcement = 'silent';
-        this.depthLimits = { upstream: Number.POSITIVE_INFINITY, downstream: Number.POSITIVE_INFINITY };
+        this.depthLimits = NavigationEngine.UNBOUNDED_DEPTH_LIMITS;
         seedDepth = Number.POSITIVE_INFINITY;
         depthLabel = 'all';
         break;
@@ -1449,7 +1454,7 @@ export class NavigationEngine implements IHopStateMachine {
       case 'default_start':
         this.depthBudget = DEFAULT_SM_START_DEPTH;
         this.depthEnforcement = 'silent';
-        this.depthLimits = { upstream: Number.POSITIVE_INFINITY, downstream: Number.POSITIVE_INFINITY };
+        this.depthLimits = NavigationEngine.UNBOUNDED_DEPTH_LIMITS;
         seedDepth = DEFAULT_SM_START_DEPTH;
         depthLabel = `default:${DEFAULT_SM_START_DEPTH}`;
         this.log('debug', `[Depth] default applied levels=${DEFAULT_SM_START_DEPTH} reason=ai_and_user_omitted_depth`);
