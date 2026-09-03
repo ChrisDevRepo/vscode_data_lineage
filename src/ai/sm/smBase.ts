@@ -260,6 +260,12 @@ export class NavigationEngine implements IHopStateMachine {
   protected removedSet = new Set<string>();
   /** Focus nodes the AI pruned via `verdict=prune` in CT mode. Surfaced as `ctPrunedNodeIds`. */
   protected ctPrunedFocusIds = new Set<string>();
+  /**
+   * Nodes the last {@link getResult} removed from the render as undispositioned sinks. Surfaced as
+   * `renderDroppedNodeIds`: the render records its own disposition instead of leaving a reader to
+   * infer the drop from scope minus the rendered set.
+   */
+  protected renderDroppedIds = new Set<string>();
   /** Engine-owned lifecycle state for nodes; detail slots are content storage only. */
   protected nodeStates = new Map<string, SmNodeState>();
   /** List representing the current navigation agenda. */
@@ -3090,6 +3096,9 @@ export class NavigationEngine implements IHopStateMachine {
     // Reachability alone once carried scope-resident write sinks into the answer, where the
     // synthesis prompt then section-linked them. Drop the sinks no hop dispositioned.
     const undispositioned = this.undispositionedSinkIds(finalNodeIds);
+    // Recorded before the log line and on every call, so a snapshot taken after this one describes
+    // this render and not an earlier one.
+    this.renderDroppedIds = new Set(undispositioned);
     if (undispositioned.size > 0) {
       for (const id of undispositioned) finalNodeIds.delete(id);
       this.log('debug', `[Disposition] getResult drops ${undispositioned.size} undispositioned sink node(s) — ${trunc(Array.from(undispositioned).join(', '), 200)} (in scope, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
@@ -3161,6 +3170,8 @@ export class NavigationEngine implements IHopStateMachine {
       currentFocusNodeId: this.currentFocusNodeId,
       memory: this.memory.toJSON(),
       engineInternals: this.serializeInternals(),
+      // Mode-independent: the sink trim bounds the render in BB and CT alike.
+      ...(this.renderDroppedIds.size > 0 ? { renderDroppedNodeIds: Array.from(this.renderDroppedIds) } : {}),
       ...(this.mode.kind === 'ct' && this.tracer ? {
         // The in-flight hop's own questions (set from its AgendaEntry at dispatch), not a fresh
         // recompute against `currentFocusNodeId` — that would describe the just-committed hop,
@@ -3332,6 +3343,9 @@ export class NavigationEngine implements IHopStateMachine {
     // session re-dispatches focus nodes the AI already pruned and drops the pending sub-questions.
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
+    // Absent on a checkpoint written before the field existed, and on one whose last render dropped
+    // nothing — both mean "no recorded drop".
+    engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);
 
     return engine;
   }

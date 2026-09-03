@@ -888,6 +888,12 @@ export interface SmState {
    * Present only when `columnAspect` is non-null.
    */
   ctPrunedNodeIds?: string[];
+  /**
+   * Node IDs the last `getResult` removed from the render as undispositioned write sinks.
+   * Present only when that call dropped something; a drop is a recorded disposition, not a gap
+   * between this snapshot's scope and the rendered node set for a reader to infer.
+   */
+  renderDroppedNodeIds?: string[];
 }
 
 /**

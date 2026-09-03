@@ -643,7 +643,11 @@ const SINK_CASE: RetentionCase = {
 };
 
 /** Runs the measured T8 walk: every bodied node the column spine reaches, and nothing else. */
-function driveSinkWalk(routeFromConsumer?: string): SmResult {
+function driveSinkWalk(routeFromConsumer?: string): {
+  engine: NavigationEngine;
+  model: DatabaseModel;
+  graph: ReturnType<typeof makeGraph>;
+} {
   const { model, graph } = buildWorld(SINK_CASE);
   const engine = new NavigationEngine(model, graph, () => {}, {});
   const init = engine.init({
@@ -658,7 +662,7 @@ function driveSinkWalk(routeFromConsumer?: string): SmResult {
 
   for (let hop = 0; hop < 25; hop++) {
     const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
-    if (ctx.done || !ctx.focus_node) return engine.getResult();
+    if (ctx.done || !ctx.focus_node) return { engine, model, graph };
     const focusId = ctx.focus_node.id;
     const columnFlow = SINK_CASE.flow[focusId];
     expect(columnFlow, `the case scripts a column_flow for dispatched focus ${focusId}`).toBeDefined();
@@ -676,9 +680,14 @@ function driveSinkWalk(routeFromConsumer?: string): SmResult {
   throw new Error('sink walk did not terminate within 25 hops');
 }
 
+/** The render the measured T8 walk produces. */
+function sinkWalkResult(routeFromConsumer?: string): SmResult {
+  return driveSinkWalk(routeFromConsumer).engine.getResult();
+}
+
 describe('CT render bound — scope admits, only a hop dispositions', () => {
   it('drops the write sinks no hop ever dispositioned, chain and all', () => {
-    const rendered = new Set(driveSinkWalk().fullNodes.map(n => n.id));
+    const rendered = new Set(sinkWalkResult().fullNodes.map(n => n.id));
     // `splogaudit` supplies only `auditlog`, so the pair peels as a unit.
     const sinks = ['[ct].[errorlog]', '[ct].[splogaudit]', '[ct].[auditlog]'];
     expect(
@@ -688,7 +697,7 @@ describe('CT render bound — scope admits, only a hop dispositions', () => {
   });
 
   it('keeps an undispositioned supplier — a filter join and a sibling-column feed are one shape here', () => {
-    const rendered = new Set(driveSinkWalk().fullNodes.map(n => n.id));
+    const rendered = new Set(sinkWalkResult().fullNodes.map(n => n.id));
     // `dimcalendar` bounds the load window and supplies no `Discount`; `[ct].[prices]` in C8 has the
     // identical structure and is required. The engine cannot separate them, so both stay in the
     // render and the synthesis prompt keeps an undispositioned node out of the section links.
@@ -696,7 +705,7 @@ describe('CT render bound — scope admits, only a hop dispositions', () => {
   });
 
   it('keeps the dispositioned join-key leaf and every column-flow participant', () => {
-    const result = driveSinkWalk();
+    const result = sinkWalkResult();
     const rendered = new Set(result.fullNodes.map(n => n.id));
     // `customermaster` supplies no value to `Discount` and appears in no column edge; the origin
     // hop contracted through it, and that disposition is what keeps it in the answer.
@@ -714,8 +723,47 @@ describe('CT render bound — scope admits, only a hop dispositions', () => {
   it('keeps an undispositioned node that carries the only path to a kept one', () => {
     // `auditlog` is routed, so it is dispositioned and stays; `splogaudit` is still undispositioned
     // but it is the only path to `auditlog` — a passthrough, not a leaf.
-    const rendered = new Set(driveSinkWalk('[ct].[auditlog]').fullNodes.map(n => n.id));
+    const rendered = new Set(sinkWalkResult('[ct].[auditlog]').fullNodes.map(n => n.id));
     expect(rendered.has('[ct].[auditlog]'), 'the routed sink is dispositioned and kept').toBe(true);
     expect(rendered.has('[ct].[splogaudit]'), 'the only path to a kept node survives the leaf trim').toBe(true);
+  });
+});
+
+describe('CT snapshot provenance — the render records the drop it made', () => {
+  it('names the dropped ids in the snapshot and carries them through a round trip', () => {
+    const { engine, model, graph } = driveSinkWalk();
+    const rendered = new Set(engine.getResult().fullNodes.map(n => n.id));
+    const snapshot = engine.toJSON();
+    const dropped = snapshot.renderDroppedNodeIds ?? [];
+
+    // The same three the trim removes above; the snapshot states them instead of leaving a reader
+    // to infer them from scope minus the rendered set.
+    expect([...dropped].sort(), 'the snapshot names every sink the render dropped').toEqual(
+      ['[ct].[auditlog]', '[ct].[errorlog]', '[ct].[splogaudit]'],
+    );
+    expect(dropped.filter(id => rendered.has(id)), 'a recorded drop is absent from the render').toEqual([]);
+    expect(dropped.filter(id => !snapshot.scopeNodeIds.includes(id)), 'a dropped node was in scope').toEqual([]);
+
+    const restored = NavigationEngine.fromJSON(JSON.parse(JSON.stringify(snapshot)), model, graph, () => {});
+    expect(restored.toJSON().renderDroppedNodeIds, 'the record survives the checkpoint boundary').toEqual(dropped);
+  });
+
+  it('omits the field when the render dropped nothing', () => {
+    // C2: every dependency supplies the traced value, so the trim has no candidate.
+    const testCase = CASES.find(c => c.id.startsWith('C2'))!;
+    const { model, graph } = buildWorld(testCase);
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    engine.init({
+      origin: testCase.origin,
+      question: `trace ${testCase.tracedColumn}`,
+      direction: 'upstream',
+      analysisMode: 'ct',
+      targetColumns: [testCase.tracedColumn],
+      depthIntent: { kind: 'explicit', levels: 6 },
+    });
+    driveCt(engine, testCase);
+    engine.getResult();
+
+    expect(engine.toJSON().renderDroppedNodeIds, 'no drop, no record').toBeUndefined();
   });
 });

@@ -238,6 +238,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   engineInternals: EngineInternalsSchema,
   lineageQuestionsLastHop: z.array(NonEmptyString).optional(),
   ctPrunedNodeIds: z.array(NonEmptyString).optional(),
+  renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict().superRefine((snapshot, ctx) => {
   const issue = (message: string, path: Array<string | number>) => ctx.addIssue({ code: 'custom', message, path });
   const unique = (values: ReadonlyArray<string>, path: Array<string | number>) => {
@@ -250,6 +251,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   unique(snapshot.scopeNodeIds, ['scopeNodeIds']);
   unique(snapshot.visited, ['visited']);
   unique(snapshot.removedSet, ['removedSet']);
+  unique(snapshot.renderDroppedNodeIds ?? [], ['renderDroppedNodeIds']);
   unique(snapshot.nodeStates.map(state => state.nodeId), ['nodeStates']);
   unique(snapshot.engineInternals.investigationTasks.map(task => task.id), ['engineInternals', 'investigationTasks']);
   unique(snapshot.engineInternals.pendingLeads.map(lead => lead.id), ['engineInternals', 'pendingLeads']);
