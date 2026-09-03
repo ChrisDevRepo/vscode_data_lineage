@@ -302,11 +302,10 @@ export interface RouteOutcome {
    * - `schema_and_depth` — route target breaches both the schema allowlist and the stated depth border.
    * - `depth_contracted_beyond_budget` — route target was a non-bodied node (table) whose bipartite contraction reached bodied neighbours that fell outside the active BFS scope, so no hop was enqueued. The route is structurally valid but produced no new agenda item.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
-   * - `no_active_columns` — CT hop has no active column spine, so route requests are ignored and the hop can complete as zero-trace.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction.
    * - `excluded` — route target exists but is outside the user's approved exclude filters.
    */
-  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'no_active_columns' | 'out_of_direction' | 'excluded';
+  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded';
 }
 
 /**

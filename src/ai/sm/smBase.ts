@@ -1621,9 +1621,7 @@ export class NavigationEngine implements IHopStateMachine {
           createdHop: 0,
         });
     this.enqueueHop(originNode.id, params.question, 0, 3, { columns: initialActiveColumns, existingTaskId: rootTask.id });
-    if (this.mode.kind !== 'ct' || (initialActiveColumns?.length ?? 0) > 0) {
-      this.seedAgenda(originNode.id, this._direction, initialActiveColumns, rootTask.id);
-    }
+    this.seedAgenda(originNode.id, this._direction, initialActiveColumns, rootTask.id);
     this._status = 'initialized';
 
     return {
@@ -2145,12 +2143,6 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (routeRequests.length > 0) {
       for (const req of routeRequests) {
-        if (this.mode.kind === 'ct' && this.tracer?.activeColumns.length === 0) {
-          const nid = resolveModelNodeId(req.nodeId, this.nodeMap) ?? req.nodeId;
-          routeOutcomes.push({ nodeId: nid, accepted: false, reason: 'no_active_columns' });
-          continue;
-        }
-
         const nid = resolveModelNodeId(req.nodeId, this.nodeMap);
         const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nid || !nNode) continue; // Recorded as a nonfatal unresolved notice above.

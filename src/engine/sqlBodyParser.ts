@@ -14,7 +14,7 @@
  * @packageDocumentation
  */
 
-import { splitSqlName } from '../utils/sql';
+import { splitSqlName, stripBrackets } from '../utils/sql';
 import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
 import {
   QUALIFIED_NAME, ANY_IDENT, KEYWORDS_RE,
@@ -588,7 +588,7 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>): void {
  * @returns A normalized `[schema].[object]` string or `null` if invalid.
  */
 function normalizeCaptured(raw: string): string | null {
-  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const parts = splitSqlName(raw).map(p => stripBrackets(p));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
   if (parts.length < 2) return null;
@@ -610,7 +610,7 @@ function normalizeCaptured(raw: string): string | null {
  * @returns A normalized `db.schema.object` string or `null` if invalid.
  */
 function normalizeCrossDb(raw: string): string | null {
-  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const parts = splitSqlName(raw).map(p => stripBrackets(p));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
   if (parts.length < 3) return null;

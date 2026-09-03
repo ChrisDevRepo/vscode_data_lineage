@@ -1233,7 +1233,24 @@ describe('a bracketed identifier is not a string literal', () => {
       targets: ['Dim'],
       noSources: ['GhostTable'],
     },
+    {
+      name: 'a plain bracketed name is captured unchanged',
+      sql: 'SELECT * FROM [dbo].[Table]',
+      exactSources: ['dbo.Table'],
+    },
   ]);
+
+  // The table helpers compare on names with every bracket removed, which erases the very
+  // character under test. These two assert the captured name verbatim instead.
+  it('an escaped bracket in a source name is captured, not the fragment before it', () => {
+    const result = parseSqlBody('SELECT * FROM [dbo].[a]]b]');
+    expect(result.sources).toContain('[dbo].[a]b]');
+  });
+
+  it('an escaped bracket in a target name is captured, not the fragment before it', () => {
+    const result = parseSqlBody('INSERT INTO [dbo].[x]]y] SELECT 1');
+    expect(result.targets).toContain('[dbo].[x]y]');
+  });
 });
 
 describe('CTAS carries its distribution clause', () => {

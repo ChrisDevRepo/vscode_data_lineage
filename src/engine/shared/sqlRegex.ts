@@ -16,12 +16,14 @@
  *
  * @remarks
  * SQL Server uses square brackets to escape identifiers that contain spaces
- * or are reserved keywords.
+ * or are reserved keywords. A literal `]` inside the name is written `]]`, so
+ * `[a]]b]` is the single identifier `a]b`; ending the name at the first `]`
+ * truncates it and leaves the rest of the statement misread.
  *
  * @constant
  * @readonly
  */
-const BRACKET_IDENT = /\[[^\]]+\]/;
+const BRACKET_IDENT = /\[(?:[^\]]|\]\])+\]/;
 
 /**
  * Matches a plain word identifier (no brackets), consisting only of word characters.
@@ -95,7 +97,8 @@ export const KEYWORDS_RE = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})\\b$`, '
  * @remarks
  * This regex is the core of the pre-processing pipeline. It identifies
  * structures that should be ignored or normalized before extraction rules run:
- * 1. Brackets: preserved (YAML rules need them for structure)
+ * 1. Brackets: preserved (YAML rules need them for structure), composed from
+ *    {@link BRACKET_IDENT} so the `]]` escape is honoured here too
  * 2. Double-quoted strings: identified for bracket conversion
  * 3. Single-quoted strings: identified for neutralization
  * 4. Comments: identified for removal
@@ -103,7 +106,9 @@ export const KEYWORDS_RE = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})\\b$`, '
  * @constant
  * @readonly
  */
-export const PASS1_CLEANSE_RE = /\[[^\]]+\]|"[^"]*"|'(?:''|[^'])*'|--[^\r\n]*/g;
+export const PASS1_CLEANSE_RE = new RegExp(
+  `${BRACKET_IDENT.source}|"[^"]*"|'(?:''|[^'])*'|--[^\\r\\n]*`, 'g'
+);
 
 /**
  * ANSI-92 Comma Join pattern fragments.
