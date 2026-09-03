@@ -32,8 +32,68 @@ type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closin
  */
 export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
 
-/** Offender-list rendering for unknown-node-id rejections; see {@link quoteIds}. */
-const renderUnknownNodeIds = (ids: readonly string[]): string => quoteIds(ids, 3);
+/** Offenders named inline in a node-id rejection; the complete list rides in `detail`. */
+const NODE_ID_OFFENDERS_SHOWN = 3;
+
+/** Accepted result-graph ids named inline in a node-id rejection; the complete set rides in `detail`. */
+const NODE_ID_ACCEPTED_SHOWN = 5;
+
+/**
+ * The state the engine already records for a node id the current result graph cannot link.
+ *
+ * @remarks
+ * The id check runs over the whole loaded model before this contract sees it (the dispatcher
+ * normalizes every `node_ids` entry with `resolveModelNodeId`), so exactly one member of this union
+ * is a hallucination and the rest are real objects the render does not carry. A real object rejected
+ * as "unknown" tells the model to invent a replacement instead of moving the fact into prose, which
+ * is what ran the T8S synthesis into the semantic-failure breaker. The classification itself belongs
+ * to the caller — only the session holds the engine snapshot — so it arrives as
+ * {@link PresentNodeIdStateLookup}.
+ */
+export type PresentNodeIdState =
+  | 'not_in_model'
+  | 'pruned'
+  | 'render_dropped'
+  | 'in_scope_undispositioned'
+  | 'out_of_scope';
+
+/**
+ * Wording per {@link PresentNodeIdState}, in the vocabulary the engine already rejects with
+ * (`ROUTE_REJECTION_DIRECTIVE`, the `getResult` disposition lines) — no second dialect for the same
+ * facts.
+ */
+export const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> = {
+  not_in_model: 'not in the loaded model',
+  pruned: 'already pruned on an earlier hop',
+  render_dropped: 'in scope, dropped from the render',
+  in_scope_undispositioned: 'in scope but never dispositioned',
+  out_of_scope: 'outside the approved exploration scope',
+};
+
+/**
+ * Classifies one unlinkable node id against the engine state the session holds.
+ *
+ * @remarks
+ * Invoked only for ids the result graph rejects, so a passing call pays nothing for it. A caller
+ * that holds no engine state omits it and every offender is reported as `not_in_model` — the
+ * pre-existing behaviour.
+ */
+export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
+
+/**
+ * The route back for a real id the render does not carry, per stage — only what the tool accepts.
+ *
+ * @remarks
+ * `notes[].node_id` is deliberately absent: it is validated against the same result-graph set, so
+ * offering it would send the model into an identical rejection. `add_node_ids` is accepted in
+ * Completed Phase only (the dispatcher forbids it during a preview or a synthesis render), so every
+ * other stage is left with prose.
+ */
+const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
+  completed: 'A real id outside the result graph can be brought into the view with add_node_ids; otherwise state it in sections[].text.',
+  synthesis: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
+  visual_preview: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
+};
 
 /**
  * Builds the unknown-node-id repair hint for the calling stage.
@@ -136,8 +196,18 @@ export type PresentResultError = {
    * model has to guess which of N captions or sections failed. `rejectionIssuePaths` already mines
    * this exact shape out of any tool's `detail`, so emitting it here reaches both the model's
    * correction envelope and the diagnostic trace without a second channel.
+   *
+   * A node-id entry additionally carries every offending id at that path with its recorded state,
+   * and the first such entry carries the uncapped accepted set — the message states both, capped, so
+   * they survive the rejection replay; `detail` is where the full lists live.
    */
-  detail?: ReadonlyArray<{ readonly path: string }>;
+  detail?: ReadonlyArray<{
+    readonly path: string;
+    /** Offending ids at this path, each with its {@link PRESENT_NODE_ID_STATE_TEXT} wording. */
+    readonly unlinkable_node_ids?: ReadonlyArray<{ readonly node_id: string; readonly state: string }>;
+    /** The complete current result-graph id set, stated once per rejection. */
+    readonly accepted_node_ids?: readonly string[];
+  }>;
 };
 
 /**
@@ -542,6 +612,9 @@ export function findBareNonPrunedNodes(
  *   caller-possible — see {@link presentNodeIdHint}. Defaults to `'completed'`, the only stage whose
  *   tool policy includes `lineage_search_objects`, so existing callers that do not pass a stage keep
  *   today's hint wording unchanged.
+ * @param nodeIdState - Classifies an id the result graph cannot link against the engine state the
+ *   caller holds — see {@link PresentNodeIdStateLookup}. Omitted, every offender is reported as
+ *   `not_in_model`, which is the only classification a caller without engine state can make.
  * @returns A successful request object or a structured error with correction hints.
  */
 export function validatePresentResult(
@@ -552,6 +625,7 @@ export function validatePresentResult(
   isAmendment = false,
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
+  nodeIdState?: PresentNodeIdStateLookup,
 ): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
   // Structural classification — the failed field AND repairability are set once per addError call
@@ -564,17 +638,24 @@ export function validatePresentResult(
   // Offending entry paths, collected at the same call sites for the same reason the field list is:
   // a rejection that names a rule but not the offender costs a repair round to locate.
   const issuePaths = new Set<string>();
+  // Offending node ids per path — the same reason the paths are collected, one level finer, so
+  // `detail` states which id failed where instead of leaving the model to intersect two lists.
+  const pathUnlinkableIds = new Map<string, readonly string[]>();
   const addError = (
     field: PresentResultFailedField,
     message: string,
     authorizedFields: readonly PresentResultRepairField[] = [],
     paths: readonly string[] = [],
+    unlinkableIdsAtPath: readonly string[] = [],
   ): void => {
     errors.push(message);
     failedFields.add(field);
     if (authorizedFields.length === 0) allRepairable = false;
     for (const f of authorizedFields) repairFields.add(f);
-    for (const path of paths) issuePaths.add(path);
+    for (const path of paths) {
+      issuePaths.add(path);
+      if (unlinkableIdsAtPath.length > 0) pathUnlinkableIds.set(path, unlinkableIdsAtPath);
+    }
   };
   // Set only at the unexplained-highlight addError call below — drives a bespoke hint override
   // instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
@@ -611,6 +692,54 @@ export function validatePresentResult(
   const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
   const sectionLinkedNodeIds = new Set<string>();
 
+  // The node-id contract, computed once for the whole call.
+  //
+  // Every `node_ids` entry was already normalized against the whole loaded model by the dispatcher,
+  // so an id the result graph rejects is either a hallucination or a real object in a state the
+  // engine records — and calling the second one "unknown" tells the model to invent a replacement
+  // instead of moving the fact into prose. The census is call-level, not per-site, because the model
+  // sees only the first reason line: the replay caps it and drops `detail`, so an offender named
+  // solely in the third message never reaches it (T8S resubmitted one id three times while two more
+  // classes stayed unnamed).
+  const resolvedSet = new Set(resolvedNodeIds);
+  const nodeIdStateCache = new Map<string, PresentNodeIdState>();
+  const stateOf = (nodeId: string): PresentNodeIdState => {
+    let state = nodeIdStateCache.get(nodeId);
+    if (state === undefined) {
+      state = nodeIdState?.(nodeId) ?? 'not_in_model';
+      nodeIdStateCache.set(nodeId, state);
+    }
+    return state;
+  };
+  const unlinkableNodeIds = [...new Set([
+    ...(input.sections ?? []).flatMap(section => section.node_ids ?? []),
+    ...(input.notes ?? []).map(note => note.node_id),
+    ...(input.highlight_groups ?? []).flatMap(group => group.node_ids ?? []),
+  ].filter(id => !resolvedSet.has(id)))];
+  // A call whose every offender is unresolvable keeps the wording it always had; one real offender
+  // is enough to stop describing the whole set as unknown.
+  const allHallucinated = unlinkableNodeIds.every(id => stateOf(id) === 'not_in_model');
+  const nodeIdNoun = allHallucinated
+    ? 'contains unknown IDs'
+    : 'names IDs the result graph cannot link';
+  const renderNodeIdStates = (ids: readonly string[]): string =>
+    ids.slice(0, NODE_ID_OFFENDERS_SHOWN)
+      .map(id => `\`${id}\` — ${PRESENT_NODE_ID_STATE_TEXT[stateOf(id)]}`)
+      .join('; ')
+    + (ids.length > NODE_ID_OFFENDERS_SHOWN ? ' ...' : '');
+  /**
+   * Offenders elsewhere in the call, the accepted set, and the route back — appended to each site,
+   * in that order: the rejection replay hard-slices this string, so the least recoverable fact (which
+   * id failed and why) is stated before the ones the completion envelope also carries.
+   */
+  const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
+    const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
+    return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
+      + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds, NODE_ID_ACCEPTED_SHOWN)}.`
+      + (allHallucinated ? '' : ` ${PRESENT_REAL_ID_ROUTE[stage]}`)
+      + ` ${presentNodeIdHint(stage)}`;
+  };
+
   // Either AI submitted sections[] (which the engine assembles into a description before
   // validation) OR an engine-assembled description is supplied. Without one, there's no body.
   if (!hasSections && !hasAssembled) {
@@ -623,7 +752,6 @@ export function validatePresentResult(
 
   // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
   if (hasSections) {
-    const resolvedSet = new Set(resolvedNodeIds);
     const labels = new Set<string>();
     const nodeToSectionLabel = new Map<string, string>();
     for (const [sectionIndex, sec] of input.sections.entries()) {
@@ -643,7 +771,7 @@ export function validatePresentResult(
         if (unknownIds.length > 0) {
           // Scoped repair: an unknown node_ids entry taints only this section's linking, never the
           // section text or any other section/note/highlight content the model already got right.
-          addError('sections', `Section "${sec.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, ['sections'], [`sections.${sectionIndex}`]);
+          addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
         }
         for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
           sectionLinkedNodeIds.add(nodeId);
@@ -663,14 +791,13 @@ export function validatePresentResult(
 
   const noteNodeIds = new Set<string>();
   if (input.notes?.length) {
-    const resolvedSet = new Set(resolvedNodeIds);
     for (const [noteIndex, note] of input.notes.entries()) {
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
         // Scoped repair: an unknown note node_id taints only the notes[] collection, never
         // sections or highlight_groups the model already got right.
-        addError('notes', `notes[].node_id contains unknown ID: ${renderUnknownNodeIds([note.node_id])} — ${presentNodeIdHint(stage)}`, ['notes'], [`notes.${noteIndex}`]);
+        addError('notes', `notes[].node_id ${nodeIdNoun}: ${renderNodeIdStates([note.node_id])}.${nodeIdRejectionTail([note.node_id])}`, ['notes'], [`notes.${noteIndex}`], [note.node_id]);
       }
       if (typeof note.text !== 'string' || note.text.trim().length === 0) {
         addError('notes', `Note for "${note.node_id}" is missing text`);
@@ -689,7 +816,6 @@ export function validatePresentResult(
     if (input.highlight_groups.length > PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX) {
       addError('highlight_groups', `highlight_groups exceeds maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`, ['highlight_groups']);
     }
-    const resolvedSet = new Set(resolvedNodeIds);
     for (const [groupIndex, g] of input.highlight_groups.entries()) {
       if (!g.label) addError('highlight_groups', 'Group label is required');
       if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
@@ -697,7 +823,7 @@ export function validatePresentResult(
       if (unknownIds.length > 0) {
         // Scoped repair: an unknown highlight node_ids entry taints only highlight_groups, never
         // the sections/notes content the model already got right.
-        addError('highlight_groups', `highlight_groups "${g.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`]);
+        addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
       }
       for (const nodeId of g.node_ids ?? []) {
         if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
@@ -716,6 +842,25 @@ export function validatePresentResult(
       ['sections', 'notes', 'highlight_groups'],
     );
   }
+
+  // Offending paths, plus — where the offence was a node id — that path's ids with their recorded
+  // state and, once per rejection, the uncapped accepted set. The message states capped versions of
+  // both because `detail` is dropped from the rejection replay; this is the full record for the
+  // first delivery and the diagnostic trace.
+  const buildRejectionDetail = (): PresentResultError['detail'] => {
+    let acceptedStated = false;
+    return [...issuePaths].map(path => {
+      const ids = pathUnlinkableIds.get(path);
+      if (!ids) return { path };
+      const entry = {
+        path,
+        unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })),
+        ...(acceptedStated ? {} : { accepted_node_ids: [...resolvedNodeIds] }),
+      };
+      acceptedStated = true;
+      return entry;
+    });
+  };
 
   if (errors.length > 0) {
     // The failed-field list was attached structurally at each addError site above.
@@ -746,7 +891,7 @@ export function validatePresentResult(
       hint,
       repairable: allRepairable,
       repairFields: [...repairFields],
-      ...(issuePaths.size > 0 ? { detail: [...issuePaths].map(path => ({ path })) } : {}),
+      ...(issuePaths.size > 0 ? { detail: buildRejectionDetail() } : {}),
     };
   }
 

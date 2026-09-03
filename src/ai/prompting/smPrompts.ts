@@ -197,6 +197,7 @@ function buildSynthesisReminder(question: string): string {
     `- User question: "${question}"`,
     '- `sections[]` is REQUIRED — create final graph/detail links from the full result. Use `detail_slots[]` for analyzed-node detail, `node_states[]` for lifecycle facts, and the "Column Trace Chain" block for CT provenance. Write `text` for every section.',
     '- `notes[]` — decoration follows documentation: link only nodes worth a badge in `sections[].node_ids[]`, and give each linked node one grounded caption. A highlighted node must be explained by a section link or a note; nodes left out of both preview surfaces stay bare.',
+    '- `result.scope.node_ids` is the complete set of ids this render accepts: `sections[].node_ids[]`, `notes[].node_id` and `highlight_groups[].node_ids[]` may name only these. Any other object the evidence names — a source past the depth border, a carrier the render dropped — is stated in `sections[].text` as prose, never in a node_ids field.',
     '- `highlight_groups[]` is REQUIRED — include at least one selective group using the Lineage palette. For zero-trace or single-node results, use a `target` group on the origin/result node.',
     '- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; hop `badge_label` values are helper hints only. Keep business/technical split only when it improves clarity.',
     '- Every linked node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.',
@@ -344,12 +345,21 @@ function buildDirectionLines(
  * Enumerates only mechanical facts (target, terminal-source candidates) — transform is
  * deliberately NOT enumerated: models transcribe enumerated lists verbatim, which defeats the
  * question-relative importance judgment the highlights template assigns to the AI.
+ *
+ * Candidates are bounded by the presented set: `highlight_groups[].node_ids` rejects anything the
+ * render does not carry, and the synthesis prompt makes linking a named terminal source mandatory,
+ * so naming a border-cut source here orders a call `present_result` refuses (T8S, `vwRawOrders`).
+ *
+ * @param groups - Mechanically computed flow-role buckets.
+ * @param presented - Ids the render carries; a bucket member outside it is dropped from the line.
+ *   `null` from a caller that holds no render set, which then bounds nothing.
  */
-function buildFlowRoleHighlightLines(groups: FlowRoleGroups): string[] {
+function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string> | null): string[] {
+  const linkable = (ids: readonly string[]): string[] => presented ? ids.filter(id => presented.has(id)) : [...ids];
   return [
     'Engine-computed graph facts for highlight_groups (mechanical candidates only — final coloring is your question-relative judgment per the highlights template):',
-    `- highlight_groups.target — the queried origin node: ${groups.target.join(', ')}`,
-    `- highlight_groups.source candidates — terminal data-origin nodes the trace reached (base feeds never written to within the trace); color the ones whose DATA feeds the answer, leave filter-only lookups bare: ${groups.source.join(', ') || '(none)'}`,
+    `- highlight_groups.target — the queried origin node: ${linkable(groups.target).join(', ')}`,
+    `- highlight_groups.source candidates — terminal data-origin nodes the trace reached (base feeds never written to within the trace); color the ones whose DATA feeds the answer, leave filter-only lookups bare: ${linkable(groups.source).join(', ') || '(none)'}`,
     "- highlight_groups.transform — not enumerated: choose the important transformations yourself — nodes that CREATE or CHANGE the answer's values (formula, condition, classification, status transition). Carry-through nodes (renames, SELECT * bridges, movement procs, plain storage tables, row filters) stay uncolored — they are still rendered, and are captioned in notes[].",
   ];
 }
@@ -360,13 +370,19 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups): string[] {
  *
  * @param originNodeId - The queried origin (the `target` node).
  * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
+ * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates; omitted by
+ *   a caller that holds no render set, which then bounds nothing.
  */
-export function buildBbSynthesisBlock(originNodeId: string, edges: ReadonlyArray<[string, string, string]>): string {
+export function buildBbSynthesisBlock(
+  originNodeId: string,
+  edges: ReadonlyArray<[string, string, string]>,
+  presentedNodeIds: ReadonlySet<string> | null = null,
+): string {
   const flowEdges = edges.map(([from, to]) => ({ from, to }));
   const groups = computeFlowRoleGroups(originNodeId, flowEdges);
   return [
     '## Flow-Role Highlights',
-    ...buildFlowRoleHighlightLines(groups),
+    ...buildFlowRoleHighlightLines(groups, presentedNodeIds),
     '',
     ...buildDirectionLines(originNodeId, flowEdges),
   ].join('\n');
@@ -379,6 +395,10 @@ export function buildBbSynthesisBlock(originNodeId: string, edges: ReadonlyArray
  * @param edges - Validated column-flow edges accumulated by the engine.
  * @param ctPrunedNodeIds - CT focus nodes that were explicitly pruned as off-trace.
  * @param nodeEdges - Node-level flow edges used to distinguish written intermediates from base feeds.
+ * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates;
+ *   omitted by a caller that holds no render set, which then bounds nothing. The recorded edge list
+ *   itself is never bounded — the trace is the evidence, and an endpoint outside the render is
+ *   stated in prose.
  * @returns Markdown instructions/evidence for the final `lineage_present_result` turn.
  */
 export function buildCtSynthesisBlock(
@@ -386,6 +406,7 @@ export function buildCtSynthesisBlock(
   edges: ColumnEdge[],
   ctPrunedNodeIds?: string[],
   nodeEdges: ReadonlyArray<[string, string, string]> = [],
+  presentedNodeIds: ReadonlySet<string> | null = null,
 ): string {
   const lines = ['## Column Trace Chain'];
   if (edges.length === 0) {
@@ -432,7 +453,7 @@ export function buildCtSynthesisBlock(
   lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
   lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link nodes needed for the answer, including passthrough tables when they are source/target/bridge nodes in the column chain.');
   lines.push('- Keep passthrough or tangential nodes compact unless they carry, persist, or terminate the traced column.');
-  lines.push(...buildFlowRoleHighlightLines(groups));
+  lines.push(...buildFlowRoleHighlightLines(groups, presentedNodeIds));
   lines.push('  — terminal source = the deepest data origin in this trace; can be a table without a detail slot');
   return lines.join('\n');
 }
@@ -570,7 +591,7 @@ interface SmCompletionEnvelope {
   readonly result: {
     readonly status: SmResult['status'];
     readonly originNodeId: string;
-    readonly scope: { readonly nodes: number; readonly edges: number };
+    readonly scope: { readonly nodes: number; readonly edges: number; readonly node_ids: readonly string[] };
     readonly suggested_sections: SmResult['suggested_sections'];
     readonly node_states: SmResult['node_states'];
     readonly detail_slots: SmResult['detail_slots'];
@@ -592,7 +613,7 @@ const SmCompletionEnvelopeSchema = z.object({
   result: z.object({
     status: z.literal('complete'),
     originNodeId: z.string(),
-    scope: z.object({ nodes: z.number(), edges: z.number() }).strict(),
+    scope: z.object({ nodes: z.number(), edges: z.number(), node_ids: z.array(z.string()) }).strict(),
     suggested_sections: z.array(z.object({ label: z.string(), node_ids: z.array(z.string()) }).passthrough()).optional(),
     node_states: z.array(z.object({ nodeId: z.string(), action: z.string() }).passthrough()),
     detail_slots: z.array(z.object({
@@ -613,6 +634,12 @@ const SmCompletionEnvelopeSchema = z.object({
  * it carries the terminal-source facts CT synthesis depends on. Off-trace nodes are excluded upstream
  * by the CT scope filter; `ctPrunedNodeIds` lists focus nodes pruned via `verdict=prune` in CT.
  *
+ * `result.fullNodes` is the render bound and therefore the id set `present_result` accepts, so it is
+ * stated as `scope.node_ids` and every naming surface is filtered to it: `node_states[]` and the
+ * enumerated highlight candidates. Before that, synthesis saw the valid set only as a count while
+ * three other surfaces named ids the validator rejects, and the prompt made linking one of them
+ * mandatory — the T8S breaker.
+ *
  * @param result - The completed `engine.getResult()` archive (full `detail_slots` across all hops).
  * @param userQuestion - The verbatim mission question anchoring the synthesis reminder.
  * @param deferred - BFS-skipped questions, surfaced once at the end if material.
@@ -622,10 +649,16 @@ export function buildSmCompletionEnvelope(
   userQuestion: string,
   deferred: ReadonlyArray<DeferredQuestion>,
 ): SmCompletionEnvelope {
+  // The render bound is the single source of node identity at synthesis: `present_result` accepts
+  // exactly these ids, so every surface of this envelope that NAMES a node names one of them. An id
+  // the render dropped or the depth border cut reaches the model through the recorded evidence
+  // (the column chain, the detail slots) and belongs in prose, never in a `node_ids` field.
+  const presentedNodeIds = result.fullNodes.map(node => node.id);
+  const presented = new Set(presentedNodeIds);
   const flowBlock = result.columnAspect && result.columnAspect.edges.length > 0
-    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.ctPrunedNodeIds, result.edges)
+    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.ctPrunedNodeIds, result.edges, presented)
     : result.edges.length > 0
-      ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges)
+      ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
       : '';
   const passthroughFacts = buildPassthroughFlowFacts(result);
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
@@ -635,9 +668,9 @@ export function buildSmCompletionEnvelope(
     result: {
       status: result.status,
       originNodeId: result.originNodeId,
-      scope: { nodes: result.fullNodes.length, edges: result.edges.length },
+      scope: { nodes: presentedNodeIds.length, edges: result.edges.length, node_ids: presentedNodeIds },
       suggested_sections: result.suggested_sections,
-      node_states: result.node_states,
+      node_states: result.node_states.filter(state => presented.has(state.nodeId)),
       detail_slots: result.detail_slots,
     },
     deferred_questions: deferred,

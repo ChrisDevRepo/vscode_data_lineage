@@ -866,3 +866,110 @@ describe('CT render bound — a submitted passthrough is a verdict, not evidence
     expect(rendered.has(ARCHIVE), 'a column-edge endpoint survives the trim whatever its verdict').toBe(true);
   });
 });
+
+/**
+ * A carrier proc is a column edge's `hop_node`, never its endpoint.
+ *
+ * Measured shape (T8S @ 37875e19, `[ai].[spbuildsalesreport]`): the question asked for the traced
+ * column's direct consumers, the hop dispatched the consumer proc, the model returned
+ * `verdict=passthrough`, and the proc's own `writes_to` target sat outside the depth border — so its
+ * only render-internal outgoing edges were absent and the sink trim deleted the one node that
+ * answered the question. A procedure appears in `ColumnAspect.edges` only as `hop_node`
+ * (`from_node`/`to_node` carry the columns it moved between), so the endpoint exemption structurally
+ * cannot reach it.
+ */
+const CARRIER_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
+  ['[ct].[vwcarriersrc]', V, ['Amount']],
+  ['[ct].[carrierbase]', T, ['Amount']],
+  ['[ct].[spcarrier]', P, ['Amount']],
+  ['[ct].[carrierreport]', T, ['Amount']],
+];
+const CARRIER_EDGES: ReadonlyArray<readonly [string, string]> = [
+  ['[ct].[carrierbase]', '[ct].[vwcarriersrc]'],
+  ['[ct].[vwcarriersrc]', '[ct].[spcarrier]'],
+  ['[ct].[spcarrier]', '[ct].[carrierreport]'],
+];
+const CARRIER = '[ct].[spcarrier]';
+
+const CARRIER_CASE: RetentionCase = {
+  id: 'column-edge carrier',
+  origin: '[ct].[vwcarriersrc]',
+  tracedColumn: 'Amount',
+  nodes: CARRIER_NODES,
+  edges: CARRIER_EDGES,
+  reachRequired: [],
+  flow: { '[ct].[vwcarriersrc]': [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[carrierbase]', col: 'Amount' }] }] },
+  measuredLost: [],
+};
+
+/**
+ * Runs the walk at a one-level border, so the carrier proc's write target stays outside the render
+ * and the proc is left with no render-internal outgoing edge — the measured T8S shape.
+ */
+function driveCarrierWalk(carrierFlow: FlowEntry[]): SmResult {
+  const { model, graph } = buildWorld(CARRIER_CASE);
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const init = engine.init({
+    origin: CARRIER_CASE.origin,
+    question: 'trace Amount to its sources and list its direct consumers',
+    direction: 'bidirectional',
+    analysisMode: 'ct',
+    targetColumns: ['Amount'],
+    depthIntent: { kind: 'explicit', levels: 1 },
+  });
+  expect('ok' in init, 'CT init succeeds').toBe(true);
+
+  for (let hop = 0; hop < 25; hop++) {
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    if (ctx.done || !ctx.focus_node) return engine.getResult();
+    const focusId = ctx.focus_node.id;
+    const isCarrier = focusId === CARRIER;
+    const outcome = engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
+      summary: `${focusId}`,
+      verdict: isCarrier ? 'passthrough' as const : 'analyze' as const,
+      column_flow: isCarrier ? carrierFlow : (CARRIER_CASE.flow[focusId] ?? []),
+    }) as SubmitOk;
+    expect(outcome.error, `the hop at ${focusId} commits`).toBeUndefined();
+  }
+  throw new Error('carrier walk did not terminate within 25 hops');
+}
+
+describe('CT render bound — the hop_node of a column edge carried the column', () => {
+  it('C13 — keeps a passthrough write sink the tracer recorded as a column edge hop_node', () => {
+    const result = driveCarrierWalk([{
+      out_col: 'Amount',
+      upstream_columns: [{ node: '[ct].[vwcarriersrc]', col: 'Amount' }],
+      writes_to: { node: '[ct].[carrierreport]', col: 'Amount' },
+    }]);
+    const rendered = new Set(result.fullNodes.map(n => n.id));
+
+    expect(
+      result.node_states.find(state => state.nodeId === CARRIER)?.reason,
+      'the premise: the consumer proc was dispatched and returned a passthrough',
+    ).toBe('submitted_passthrough');
+    expect(
+      result.columnAspect?.edges.some(edge => edge.hop_node === CARRIER
+        && edge.from_node !== CARRIER && edge.to_node !== CARRIER),
+      'the premise: the proc is the edge hop_node and neither endpoint',
+    ).toBe(true);
+    expect(rendered.has(CARRIER), 'the carrier of the traced column into its consumer stays').toBe(true);
+  });
+
+  it('C14 — still drops the same passthrough write sink when it carried no column', () => {
+    // Same shape as C11: the flow names a node outside the fixture, so the tracer records no edge
+    // and the hop leaves nothing behind that says the proc carried the traced column.
+    const result = driveCarrierWalk([
+      { out_col: 'Amount', upstream_columns: [{ node: '[ct].[notinthismodel]', col: 'Amount' }] },
+    ]);
+    const rendered = new Set(result.fullNodes.map(n => n.id));
+
+    expect(
+      result.columnAspect?.edges.some(edge => edge.hop_node === CARRIER),
+      'the premise: the hop recorded no column edge at all',
+    ).toBe(false);
+    expect(rendered.has(CARRIER), 'a passthrough sink that carried nothing is not answer evidence').toBe(false);
+    expect(rendered.has('[ct].[carrierbase]'), 'the value supplier stays either way').toBe(true);
+  });
+});

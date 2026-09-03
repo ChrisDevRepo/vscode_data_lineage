@@ -20,6 +20,8 @@ import {
   type PresentResultViolation,
   type PresentResultInput,
   type PresentResultStage,
+  type PresentNodeIdState,
+  type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
 import {
   PresentResultBoundarySchema,
@@ -35,6 +37,7 @@ import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/
 import { postToWebview } from '../../../bridge/host';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
+import type { SmState } from '../../sm/smTypes';
 
 // Required set mirrors buildPassthroughFlowFacts' qualifying filter (kept, minus slotted, minus
 // pruned) narrowed to the traced column chain, not to edge-terminal sources: a staging table that is
@@ -403,7 +406,22 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         : sess.phase.kind === 'completed'
         ? 'completed'
         : 'synthesis';
-      const validation = validatePresentResult(presentInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage);
+      // A real object is never rejected as "unknown". The ids above were resolved against the WHOLE
+      // loaded model; when the result graph still cannot link one, the engine already records why —
+      // pruned, dropped by the render bound, in scope with no verdict, or outside the approved
+      // scope. Read lazily from the snapshot the engine already serializes, so a clean call pays
+      // nothing and no second projection of the same state exists.
+      let smSnapshot: SmState | null | undefined;
+      const nodeIdState: PresentNodeIdStateLookup = (nodeId): PresentNodeIdState => {
+        if (!modelNodeMap.has(nodeId)) return 'not_in_model';
+        if (smSnapshot === undefined) smSnapshot = sess.stateMachine?.toJSON() ?? null;
+        if (!smSnapshot) return 'out_of_scope';
+        if (smSnapshot.removedSet.includes(nodeId) || (smSnapshot.ctPrunedNodeIds ?? []).includes(nodeId)) return 'pruned';
+        if ((smSnapshot.renderDroppedNodeIds ?? []).includes(nodeId)) return 'render_dropped';
+        if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
+        return 'out_of_scope';
+      };
+      const validation = validatePresentResult(presentInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage, nodeIdState);
 
       if (!validation.success) {
         if (isRepairablePresentResultFailure(validation)) {

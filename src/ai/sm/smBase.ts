@@ -3031,9 +3031,13 @@ export class NavigationEngine implements IHopStateMachine {
    * `submitted_passthrough` one, was never analyzed, routed, contracted through or pruned — it is in
    * the render because BFS reachability walked into it, nothing more. `submitted_passthrough` is the
    * hop's own word for "this focus transforms nothing on the traced path"; when the tracer also
-   * never placed the node at either end of a column edge — only as the `hop_node` that performed
-   * another pair's flow — the hop asserted no carriage, so its entry is not evidence of any, and
-   * neither is the investigation task that same hop resolved. Every other reason
+   * placed the node on no column edge at all, the hop asserted no carriage, so its entry is not
+   * evidence of any, and neither is the investigation task that same hop resolved. A recorded edge
+   * exempts the node at any of its three positions: a procedure moves a column between two other
+   * nodes and is therefore only ever the `hop_node`, never an endpoint, so reading endpoints alone
+   * deleted the carrier proc a column trace exists to name (T8S, `[ai].[spbuildsalesreport]` — the
+   * question's own direct consumer, dropped because its write target lay past the depth border).
+   * Every other reason
    * (`submitted_analyze`, a contraction's `non_bodied_passthrough`, a user filter) exempts the node
    * outright, as does a task still open — routed or queued and never reached is not a verdict. Such
    * a node that also supplies nothing the render keeps (every edge joining it to the render set
@@ -3059,7 +3063,8 @@ export class NavigationEngine implements IHopStateMachine {
       // covers, so it still exempts.
       if (this.taskLedger.investigationTasks.some(task =>
         task.nodeId === id && !(passthrough && task.status === 'resolved'))) continue;
-      if (this.tracer?.edges.some(edge => edge.from_node === id || edge.to_node === id)) continue;
+      if (this.tracer?.edges.some(edge =>
+        edge.from_node === id || edge.to_node === id || edge.hop_node === id)) continue;
       candidates.push(id);
     }
     if (candidates.length === 0) return new Set();
