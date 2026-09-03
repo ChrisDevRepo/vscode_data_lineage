@@ -11,7 +11,7 @@ import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray, coercedStringObject } from '../support/inputNormalization';
+import { coercedBoolean, coercedStringArray, coercedStringObject, nullAsAbsent } from '../support/inputNormalization';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -409,10 +409,10 @@ const ColumnRefSchema = z.object({
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe('Tracked output column on the current focus node.'),
-  writes_to: z.object({
+  writes_to: nullAsAbsent(z.object({
     node: z.string().describe('Canonical downstream node ID.'),
     col: z.string().describe('Downstream column receiving this value.'),
-  }).strict().optional().describe('Optional downstream write destination observed in the current node.'),
+  }).strict().optional()).describe('Optional downstream write destination observed in the current node.'),
   upstream_columns: z.array(ColumnRefSchema).describe('Real upstream columns that contribute to out_col; use [] only when none exists.'),
 }).strict();
 

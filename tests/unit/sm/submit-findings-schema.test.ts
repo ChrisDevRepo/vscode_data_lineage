@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   SubmitFindingsBbInputSchema,
   SubmitFindingsCtInputSchema,
@@ -250,6 +251,72 @@ describe("Submit Findings Schema", () => {
     add_node_ids: ['[dbo].[extra]'],
   });
   expect(completedEdit.success, 'completed schema still accepts add_node_ids for follow-up edits').toBe(true);
+});
+
+  it("CT column_flow.writes_to: null is accepted as absence (local-mlx T8S breaker repro)", () => {
+  // Reproduces the local-mlx T8S stop: the model emitted `writes_to: null` twice, both rejected
+  // as `expected object, received null`, and the run died on the semantic-failure breaker. The
+  // engine readers (columnTracer.ts, smBase.ts) already treat writes_to?.node/.col as absent for
+  // both null and undefined, so the schema must accept null as absence rather than reject it.
+  const parsed = SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', writes_to: null, upstream_columns: [] }],
+  });
+  expect(parsed.success, 'CT column_flow.writes_to: null is accepted as absence').toBe(true);
+  if (parsed.success) {
+    expect(parsed.data.column_flow?.[0]?.writes_to, 'null writes_to normalizes to undefined (absent), not stored as null').toBe(undefined);
+  }
+});
+
+  it("CT column_flow.writes_to: \"null\" (string-encoded) is also accepted as absence", () => {
+  const parsed = SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', writes_to: 'null', upstream_columns: [] }],
+  });
+  expect(parsed.success, 'string-encoded "null" writes_to is accepted as absence').toBe(true);
+  if (parsed.success) {
+    expect(parsed.data.column_flow?.[0]?.writes_to, 'string-encoded "null" writes_to normalizes to undefined').toBe(undefined);
+  }
+});
+
+  it("CT column_flow.writes_to: a genuine object still validates its shape", () => {
+  const bad = SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', writes_to: { node: '[dbo].[t]' }, upstream_columns: [] }],
+  });
+  expect(!bad.success, 'a malformed writes_to object (missing col) still rejects — null-passthrough is not a strictness bypass').toBe(true);
+
+  const good = SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', writes_to: { node: '[dbo].[t]', col: 'amount' }, upstream_columns: [] }],
+  });
+  expect(good.success, 'a genuine well-formed writes_to object still validates').toBe(true);
+});
+
+  it("writes_to's model-facing JSON schema is unchanged by the null-as-absence preprocess", () => {
+  // nullAsAbsent is z.preprocess, transparent to z.toJSONSchema (io: 'input') like its
+  // coercedString* siblings — the model never sees a `null` branch it might start emitting on
+  // purpose. Assert the property renders as a plain optional object, with no `null` anywhere in
+  // its schema shape.
+  const jsonSchema = z.toJSONSchema(SubmitFindingsCtInputSchema, { io: 'input', unrepresentable: 'throw' }) as {
+    properties?: { column_flow?: { items?: { properties?: { writes_to?: unknown } } } };
+  };
+  const writesToSchema = jsonSchema.properties?.column_flow?.items?.properties?.writes_to;
+  expect(writesToSchema, 'writes_to renders in the model-facing schema').toBeDefined();
+  expect(JSON.stringify(writesToSchema).includes('null'), 'writes_to schema carries no null type/branch — the preprocess is fully transparent').toBe(false);
+  expect((writesToSchema as { type?: string })?.type, 'writes_to remains a plain object schema').toBe('object');
 });
 
   it("empty badge_label rejects", () => {

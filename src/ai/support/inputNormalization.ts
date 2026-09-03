@@ -101,6 +101,32 @@ export function coercedStringNull<T extends z.ZodType>(schema: T) {
 }
 
 /**
+ * Preprocess that treats a genuine JSON `null` (or its string-encoded literal `"null"`) as
+ * property absence before an optional schema parses.
+ *
+ * @remarks
+ * Sibling of {@link coercedStringNull} for an `.optional()` (non-nullable) field the engine
+ * already treats as absence-equivalent — observed 2026-09, local-mlx T8S:
+ * `column_flow.0.writes_to: null` was rejected twice as `expected object, received null` and the
+ * run died on the semantic-failure breaker (`writes_to` is a `.strict()` object schema with
+ * `.optional()`, never `.nullable()`). The two engine readers of this field
+ * (`src/ai/sm/columnTracer.ts`, `src/ai/sm/smBase.ts`) already read `entry.writes_to?.node` /
+ * `?.col` with optional chaining, so `null` and `undefined` already mean the same thing
+ * ("no redirect") to every consumer — only the schema was stricter than its readers. Encoding-only
+ * normalization per the middleware contract: only a genuine `null` or the exact string `"null"` is
+ * mapped to `undefined`; every other value (including a genuine object) passes through untouched
+ * so the wrapped schema's own rejection surfaces normally. Transparent to `z.toJSONSchema`
+ * (`io: 'input'`), so the model-facing tool schema is unchanged.
+ *
+ * @param schema - Optional schema to wrap; typically a `.strict()` object schema carrying its own
+ * `.optional()`.
+ * @returns The preprocess-wrapped schema; output type is identical to `schema`.
+ */
+export function nullAsAbsent<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value) => (value === null || value === 'null' ? undefined : value), schema);
+}
+
+/**
  * Attempts to decode a JSON-string-encoded object (e.g. `"{\"upstream\": 1}"`) back into the
  * object.
  *

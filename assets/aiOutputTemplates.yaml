@@ -464,6 +464,7 @@ column_trace_capture:
     - writes_to: set when the focus node is a PROCEDURE that writes to a table.
       Must be an OBJECT: { node: "[schema].[TargetTable]", col: "ColumnName" }.
       NOT a string. out_col = the column name being written; upstream_columns = upstream inputs.
+      When the focus does not write to a table, omit writes_to entirely — do not send null.
 
     ## Common patterns
     - Rename (upstream col name ≠ out_col): same data, different name — note the rename in sections[].text.
