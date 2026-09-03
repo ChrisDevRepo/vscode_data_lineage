@@ -12,13 +12,6 @@
 // different: it must say what it does.
 import { readFileSync } from 'node:fs';
 
-/**
- * Scripts permitted to carry the AI vocabulary, because they call a live provider. Empty: the
- * live-provider harness moved internal-only 2026-08-21 and carries no public npm script. Keep this
- * mechanism for the day a public one exists again.
- */
-const LIVE_PROVIDER_SCRIPTS = new Set([]);
-
 /** Words that make a reader expect inference. Matched case-insensitively on whole words. */
 const AI_VOCABULARY = /(^|[^a-z])(ai|llm|model|copilot|gpt)([^a-z]|$)/i;
 
@@ -46,12 +39,10 @@ for (const name of Object.keys(pkg.scripts ?? {})) {
       + 'actually drives, e.g. test:edh.',
     );
   }
-  if (LIVE_PROVIDER_SCRIPTS.has(name)) continue;
   if (AI_VOCABULARY.test(name)) {
     problems.push(
       `npm script "${name}" is named for AI but calls no model. Name it for what it exercises `
-      + '(e.g. test:runtime, test:bare-environment), or add it to LIVE_PROVIDER_SCRIPTS if it '
-      + 'genuinely calls a live provider.',
+      + '(e.g. test:runtime, test:bare-environment). No public script calls a live provider.',
     );
   }
 }

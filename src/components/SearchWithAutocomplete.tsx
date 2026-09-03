@@ -96,7 +96,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
 
   // Merge dropdownRef (outside-click detection) with floating ref (portal positioning)
   const mergedDropdownRef = useCallback((node: HTMLDivElement | null) => {
-    (dropdownRef).current = node;
+    dropdownRef.current = node;
     refs.setFloating(node);
   }, [dropdownRef, refs]);
 

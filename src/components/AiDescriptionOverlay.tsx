@@ -42,7 +42,14 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     if (!href?.startsWith(FOCUS_NODE_HREF_PREFIX) || !onFocusNode) {
       return null;
     }
-    const nodeId = decodeURIComponent(href.slice(FOCUS_NODE_HREF_PREFIX.length));
+    const encoded = href.slice(FOCUS_NODE_HREF_PREFIX.length);
+    let nodeId = encoded;
+    try {
+      nodeId = decodeURIComponent(encoded);
+    } catch (err) {
+      // A malformed escape in an assembled link must not trip the graph error boundary.
+      window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[AI] focus link decode failed: ${encoded} (${err instanceof Error ? err.message : String(err)})` });
+    }
     return () => onFocusNode(nodeId);
   }
 

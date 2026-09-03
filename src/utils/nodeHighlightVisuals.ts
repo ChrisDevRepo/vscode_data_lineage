@@ -4,9 +4,13 @@ export interface NodeHighlightStyle {
   isHighlighted: boolean;
   /** Border/left-accent color to substitute for the node's normal border/schema color. */
   highlightColor: string;
+  /** Glow ring: yellow click, AI color, blue selection, or the plain (dimmed) card shadow. */
   boxShadow: string;
+  /** Fade applied when another node is selected and this one is outside its neighbourhood. */
   opacity: number;
+  /** Scale lift that makes a highlighted card stand off its neighbours. */
   transform: string;
+  /** Stacking order raised for a highlighted card so its glow is not clipped by siblings. */
   zIndex: number;
 }
 

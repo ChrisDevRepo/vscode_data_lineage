@@ -21,7 +21,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const UNIT_ROOT = path.join(repoRoot, 'tests', 'unit');
 
 /** The scripts the gate runs as its unit steps. Keep in step with `STEPS` in gate.mjs. */
-const GATE_UNIT_SCRIPTS = ['test:core', 'test:runtime'];
+const GATE_UNIT_SCRIPTS = ['coverage:core', 'test:runtime'];
 
 /** Repo-relative POSIX path, so package.json arguments and disk paths compare as strings. */
 const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');

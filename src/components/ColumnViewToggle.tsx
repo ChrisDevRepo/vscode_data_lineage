@@ -12,7 +12,7 @@ interface ColumnViewToggleProps {
 export const ColumnViewToggle = memo(function ColumnViewToggle({ active, onToggle }: ColumnViewToggleProps) {
   return (
     <Tooltip content={'Objects shows dependencies between objects.\nDetail shows the column-level findings of this analysis.'} placement="bottom" multiline>
-      <div className="flex items-center gap-0.5" role="group" aria-label="Preview detail level">
+      <div className="flex items-center gap-0.5" role="group" aria-label="View detail level">
         <button
           onClick={() => onToggle(false)}
           aria-pressed={!active}

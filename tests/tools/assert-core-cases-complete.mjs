@@ -80,7 +80,7 @@ for (const rule of rules) {
 
   let pattern;
   try {
-    pattern = new RegExp(rule.pattern, rule.flags.replace('g', ''));
+    pattern = new RegExp(rule.pattern, (rule.flags ?? '').replace('g', ''));
   } catch (error) {
     problems.push(`parse rule "${rule.name}" has an uncompilable pattern: ${error.message}`);
     continue;
@@ -100,7 +100,7 @@ function testSources() {
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) return walk(full);
-    return /\.test\.ts$|\.ts$/.test(entry.name) ? [readFileSync(full, 'utf8')] : [];
+    return /\.test\.ts$/.test(entry.name) ? [readFileSync(full, 'utf8')] : [];
   });
   return walk('tests/unit').join('\n');
 }
