@@ -145,6 +145,7 @@ describe('preprocessing — bracketed identifiers', () => {
     { name: 'a bracketed name containing a dash', sql: 'SELECT * FROM [dbo].[my-table]', exactSources: ['dbo.my-table'] },
     { name: 'a bracketed name containing a space', sql: 'SELECT * FROM [dbo].[my table]', exactSources: ['dbo.my table'] },
     { name: 'a bracketed name containing --', sql: 'SELECT * FROM [dbo].[my--table]', exactSources: ['dbo.my--table'] },
+    { name: 'a bracketed name containing /*', sql: 'SELECT * FROM [dbo].[my/*table]', exactSources: ['dbo.my/*table'] },
   ]);
 });
 
@@ -1209,6 +1210,28 @@ describe('a double-quoted identifier is not a comment', () => {
       targets: ['Dim'],
       exactSources: ['stg.Customer'],
       exec: ['usp_Audit'],
+    },
+  ]);
+});
+
+describe('a bracketed identifier is not a string literal', () => {
+  table([
+    {
+      name: 'a block comment after a bracketed name containing an apostrophe is still removed',
+      // `[…]` delimits an identifier, so the apostrophe in it is an ordinary character. Reading it
+      // as the start of a string literal makes everything up to the next apostrophe opaque — here
+      // the whole rest of the body — and the commented-out object survives into extraction.
+      sql: "SELECT * FROM [dbo].[Bob's Table] /* FROM dbo.GhostTable */",
+      exactSources: ["dbo.Bob's Table"],
+      noSources: ['GhostTable'],
+    },
+    {
+      name: 'a doubled bracket inside a bracketed name does not swallow the statement after it',
+      // `]]` is T-SQL's escape for a literal `]`, so `[a]]b]` is the single identifier `a]b`.
+      // Ending the name at the first `]` leaves the rest of the body misread.
+      sql: 'SELECT * FROM [dbo].[a]]b] /* FROM dbo.GhostTable */; INSERT INTO dbo.Dim SELECT 1;',
+      targets: ['Dim'],
+      noSources: ['GhostTable'],
     },
   ]);
 });

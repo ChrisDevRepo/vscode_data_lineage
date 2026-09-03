@@ -161,14 +161,6 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
 }
 
 /**
- * Calculates the longest non-cyclic dependency chains in the graph.
- *
- * @param graph - The graph instance.
- * @param minNodes - Minimum nodes required in a chain to be reported.
- * @param maxChains - Maximum number of chains to return.
- * @returns Result object containing the discovered dependency chains.
- */
-/**
  * Default number of dependency chains {@link analyzeLongestPath} reports.
  *
  * @remarks
@@ -193,6 +185,12 @@ interface Condensation {
   successors: Map<number, Map<number, [string, string]>>;
   /** Component in-degree in the condensation. */
   inDegree: number[];
+  /**
+   * Nodes at which a chain can arrive in each component: the head of every realised incoming edge,
+   * or the first member when the component is a root. These are the only entry points the DP has to
+   * consider, so its state count is `|condensation edges| + |roots|`.
+   */
+  entriesOf: string[][];
 }
 
 /** Condenses each strongly connected component of `graph` to a single vertex. */
@@ -205,6 +203,7 @@ function condense(graph: Graph): Condensation {
 
   const successors = new Map<number, Map<number, [string, string]>>();
   const inDegree = new Array<number>(components.length).fill(0);
+  const heads = components.map(() => new Set<string>());
   graph.forEachEdge((_edge, _attrs, source, target) => {
     const from = componentOf.get(source)!;
     const to = componentOf.get(target)!;
@@ -216,10 +215,14 @@ function condense(graph: Graph): Condensation {
     }
     if (edges.has(to)) return;
     edges.set(to, [source, target]);
+    heads[to].add(target);
     inDegree[to]++;
   });
 
-  return { components, successors, inDegree };
+  const entriesOf = components.map((members, index) =>
+    inDegree[index] === 0 ? [members[0]] : [...heads[index]]);
+
+  return { components, successors, inDegree, entriesOf };
 }
 
 /**
@@ -236,24 +239,30 @@ function walkComponent(graph: Graph, members: readonly string[], entry: string, 
 }
 
 /**
- * Walks one component from `entry` to whichever member sits farthest from it.
+ * Walks one component from `entry`: how far every member sits from it, and the walk to the farthest.
  *
  * @remarks
  * One forward BFS from `entry` measures every member's shortest-path length, then one bidirectional
  * search reconstructs the winning walk — linear in the component instead of one search per member.
- * BFS distances to members are measured inside the component however far the search ranges: a path
- * from `entry` to a member cannot leave it (see {@link walkComponent}). Selection keeps the previous
- * tie-break — the first member, in `members` order, whose distance strictly exceeds the best so far.
- * An `entry` with no path to any other member stays the whole tail.
+ * The BFS stays among the members without losing a distance: a shortest path from `entry` to a
+ * member cannot leave the component (see {@link walkComponent}). Tail selection is the first member,
+ * in `members` order, whose distance strictly exceeds the best so far. An `entry` with no path to
+ * any other member stays the whole tail.
+ *
+ * @param graph - The graph instance.
+ * @param members - Node ids of the component.
+ * @param entry - Member the walk starts at.
+ * @returns `dist` — hop count from `entry` to each member; `tail` — the walk to the farthest member.
  */
-function walkComponentTail(graph: Graph, members: readonly string[], entry: string): string[] {
-  if (members.length === 1) return [entry];
+function walkFromEntry(graph: Graph, members: readonly string[], entry: string): { dist: Map<string, number>; tail: string[] } {
+  if (members.length === 1) return { dist: new Map([[entry, 0]]), tail: [entry] };
+  const memberIds = new Set(members);
   const dist = new Map<string, number>([[entry, 0]]);
   const queue = [entry];
   for (let i = 0; i < queue.length; i++) {
     const node = queue[i]!;
     graph.forEachOutNeighbor(node, (neighbor) => {
-      if (dist.has(neighbor)) return;
+      if (!memberIds.has(neighbor) || dist.has(neighbor)) return;
       dist.set(neighbor, dist.get(node)! + 1);
       queue.push(neighbor);
     });
@@ -268,39 +277,106 @@ function walkComponentTail(graph: Graph, members: readonly string[], entry: stri
       exit = member;
     }
   }
-  if (exit === entry) return [entry];
-  return bidirectional(graph, entry, exit) ?? [entry];
+  return { dist, tail: walkComponent(graph, members, entry, exit) };
 }
 
-/** Expands a component chain rooted at `root` back into an ordered list of real node ids. */
-function expandChain(graph: Graph, condensation: Condensation, nextOf: readonly number[], root: number): string[] {
-  const { components, successors } = condensation;
-  const chain: string[] = [];
-  let current = root;
-  let entry = components[current][0];
+/** One `(component, realized entry node)` state of the chain DP. */
+interface ChainState {
+  /** Component the chain is in. */
+  component: number;
+  /** Member the chain arrives at. */
+  entry: string;
+}
 
-  for (;;) {
-    const next = nextOf[current];
-    if (next === -1) {
-      chain.push(...walkComponentTail(graph, components[current], entry));
-      return chain;
+/** The best chain reachable from one {@link ChainState}, valued in real node counts. */
+interface ChainValue {
+  /** Real objects on the chain from this state to its far end, this component's own included. */
+  nodes: number;
+  /** Node ids this component contributes, in chain order. */
+  segment: string[];
+  /** Where the chain continues, or `null` when it ends inside this component. */
+  next: ChainState | null;
+}
+
+/**
+ * Solves the longest chain from every `(component, entry)` state, in real node counts.
+ *
+ * @remarks
+ * Scoring a successor as one hop per component undercounts a branch that runs through a multi-node
+ * strongly connected component by every member it crosses, so a shorter chain of singletons can win.
+ * This DP values a state as `max(|tail|, max over successors (hops(entry→exit) + 1 + value(next)))`
+ * — real objects on both arms — and is exact because the condensation is acyclic and every state's
+ * successors are resolved before it, in reverse Kahn order. Intra-component travel is the shortest
+ * path on both arms (`walkFromEntry`'s BFS and {@link walkComponent}), so the value a state is
+ * ranked by and the segment it expands to always agree.
+ *
+ * @param graph - The graph instance.
+ * @param condensation - Condensed view of `graph`.
+ * @param order - Kahn ordering of the condensation.
+ * @returns Solved chain per component, keyed by entry node.
+ */
+function solveChains(graph: Graph, condensation: Condensation, order: readonly number[]): Map<number, Map<string, ChainValue>> {
+  const { components, successors, entriesOf } = condensation;
+  const best = new Map<number, Map<string, ChainValue>>();
+
+  for (let i = order.length - 1; i >= 0; i--) {
+    const component = order[i];
+    const members = components[component];
+    const byEntry = new Map<string, ChainValue>();
+    for (const entry of entriesOf[component]) {
+      const { dist, tail } = walkFromEntry(graph, members, entry);
+      let nodes = tail.length;
+      let exit: string | null = null;
+      let next: ChainState | null = null;
+      for (const [to, [edgeTail, edgeHead]] of successors.get(component) ?? []) {
+        const candidate = dist.get(edgeTail)! + 1 + best.get(to)!.get(edgeHead)!.nodes;
+        if (candidate > nodes) {
+          nodes = candidate;
+          exit = edgeTail;
+          next = { component: to, entry: edgeHead };
+        }
+      }
+      byEntry.set(entry, {
+        nodes,
+        segment: exit === null ? tail : walkComponent(graph, members, entry, exit),
+        next,
+      });
     }
-    const [exit, head] = successors.get(current)!.get(next)!;
-    chain.push(...walkComponent(graph, components[current], entry, exit));
-    entry = head;
-    current = next;
+    best.set(component, byEntry);
   }
+
+  return best;
 }
 
+/** Expands the chain a state won into an ordered list of real node ids. */
+function expandChain(best: Map<number, Map<string, ChainValue>>, root: ChainState): string[] {
+  const chain: string[] = [];
+  let state: ChainState | null = root;
+  while (state !== null) {
+    const value: ChainValue = best.get(state.component)!.get(state.entry)!;
+    chain.push(...value.segment);
+    state = value.next;
+  }
+  return chain;
+}
+
+/**
+ * Calculates the longest non-cyclic dependency chains in the graph.
+ *
+ * @param graph - The graph instance.
+ * @param minNodes - Minimum nodes required in a chain to be reported.
+ * @param maxChains - Maximum number of chains to return.
+ * @returns Result object containing the discovered dependency chains.
+ */
 export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number = DEFAULT_MAX_CHAINS): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }
 
   const condensation = condense(graph);
-  const { components, successors, inDegree } = condensation;
+  const { components, successors, inDegree, entriesOf } = condensation;
 
-  // Kahn ordering of the condensation, then the depth DP in reverse. Both are iterative, so a chain
+  // Kahn ordering of the condensation, then the chain DP in reverse. Both are iterative, so a chain
   // spanning thousands of objects cannot exhaust the call stack.
   const remaining = [...inDegree];
   const order: number[] = [];
@@ -311,26 +387,9 @@ export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number
     }
   }
 
-  const depth = new Array<number>(components.length).fill(0);
-  const nextOf = new Array<number>(components.length).fill(-1);
-  for (let i = order.length - 1; i >= 0; i--) {
-    const from = order[i];
-    for (const to of successors.get(from)?.keys() ?? []) {
-      if (depth[to] + 1 > depth[from]) {
-        depth[from] = depth[to] + 1;
-        nextOf[from] = to;
-      }
-    }
-  }
-
+  const best = solveChains(graph, condensation, order);
   const roots = order.filter((component) => inDegree[component] === 0);
-
-  // Component-hop depth only ranks roots correctly when every component is a singleton; a root
-  // whose path crosses a multi-node strongly-connected component gets the same "+1" as one that
-  // crosses only singletons, so ranking (and capping) by that count can drop a genuinely longer
-  // real-node chain. Expand every root's chain first and rank by the real node count instead —
-  // the number of roots is bounded by the graph's entry points, not by maxChains.
-  const expandedChains = roots.map((root) => expandChain(graph, condensation, nextOf, root));
+  const expandedChains = roots.map((root) => expandChain(best, { component: root, entry: entriesOf[root][0] }));
   expandedChains.sort((a, b) => b.length - a.length);
 
   const chains: Array<{ nodeIds: string[]; length: number }> = [];

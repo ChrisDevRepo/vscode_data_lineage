@@ -13,8 +13,7 @@
 import { z } from 'zod';
 import type { ModelPort } from '../model/modelPort';
 import { modelUserMessage } from '../model/modelPort';
-import { compileInstructionPlan, executeInstructionPlan } from '../agent/instructionPlan';
-import { explorationFacts } from '../agent/graph';
+import { compileInstructionPlan, executeInstructionPlan, explorationFacts } from '../agent/instructionPlan';
 import { buildDiscoverySummaryComposePrompt } from '../prompting/prompts';
 import type { NavigationEngine } from '../sm/smBase';
 import type { ClassificationValue } from '../session/classification';

@@ -260,6 +260,62 @@ describe('analyzeLongestPath', () => {
     expect(group.nodeIds).toEqual(['R2a', 'C1', 'C2', 'C3', 'C4', 'C5', 'R2b']);
     expect(group.meta?.depth).toBe(6);
   });
+
+  // One root, two branches. The cycle branch condenses to a single component, so scoring a branch
+  // by component hops values it at 1 and loses to the 3-hop singleton branch — while the real
+  // object count is 5 against 3. Ranking must happen in real nodes, inside the branch choice and
+  // not only across roots.
+  const singleRootBranches = () => makeGraph(
+    [
+      { id: 'R' },
+      { id: 'C1' }, { id: 'C2' }, { id: 'C3' }, { id: 'C4' }, { id: 'C5' },
+      { id: 'S1' }, { id: 'S2' }, { id: 'S3' },
+    ],
+    [
+      ['R', 'C1'], ['C1', 'C2'], ['C2', 'C3'], ['C3', 'C4'], ['C4', 'C5'], ['C5', 'C1'],
+      ['R', 'S1'], ['S1', 'S2'], ['S2', 'S3'],
+    ],
+  );
+
+  it('takes the branch with more real objects when one of them runs through a cycle', () => {
+    const group = analyzeLongestPath(singleRootBranches(), 2).groups[0];
+    expect(group.nodeIds).toEqual(['R', 'C1', 'C2', 'C3', 'C4', 'C5']);
+    expect(group.meta?.depth).toBe(5);
+  });
+
+  // The chain enters the cycle at K1 and can leave it immediately for the sink Z. Walking the
+  // component to K5 reaches five objects; leaving reaches two. Stopping inside a component must
+  // therefore stay a candidate against every successor.
+  const tailBeatsSuccessor = () => makeGraph(
+    [
+      { id: 'R' },
+      { id: 'K1' }, { id: 'K2' }, { id: 'K3' }, { id: 'K4' }, { id: 'K5' },
+      { id: 'Z' },
+    ],
+    [
+      ['R', 'K1'], ['K1', 'K2'], ['K2', 'K3'], ['K3', 'K4'], ['K4', 'K5'], ['K5', 'K1'],
+      ['K1', 'Z'],
+    ],
+  );
+
+  it('keeps a long in-component tail rather than leaving for a one-node successor', () => {
+    const group = analyzeLongestPath(tailBeatsSuccessor(), 2).groups[0];
+    expect(group.nodeIds).toEqual(['R', 'K1', 'K2', 'K3', 'K4', 'K5']);
+    expect(group.meta?.depth).toBe(5);
+  });
+
+  // T4: a chain whose far end is a multi-node cycle. Every member of the cycle is a real object on
+  // the chain and counts toward its depth.
+  const endsInCycle = () => makeGraph(
+    [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'E' }],
+    [['A', 'B'], ['B', 'C'], ['C', 'D'], ['D', 'E'], ['E', 'C']],
+  );
+
+  it('includes every member of a terminal 3-cycle and counts them in the depth', () => {
+    const group = analyzeLongestPath(endsInCycle(), 2).groups[0];
+    expect(group.nodeIds).toEqual(['A', 'B', 'C', 'D', 'E']);
+    expect(group.meta?.depth).toBe(4);
+  });
 });
 
 // ─── analyzeCycles ───────────────────────────────────────────────────────────

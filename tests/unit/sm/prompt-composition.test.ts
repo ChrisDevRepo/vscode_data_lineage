@@ -70,9 +70,12 @@ describe('prompt composition', () => {
     expect(detector).toContain('approval-gated hop-by-hop exploration');
     expect(detector).toContain("Return 'discovery' for everything else");
     // 'discovery' is the reversible default; naming a column alone must never force column_trace.
-    expect(detector).toContain("Return 'column_trace' ONLY when the user explicitly asks to trace, follow, or walk");
-    expect(detector).toContain("default to 'discovery' whenever in doubt");
-    expect(detector).toContain('user can switch to a column trace at the approval step');
+    // The qualifying wording (what must be true before column_trace fires, and the fallback
+    // default) is pinned in internal-tests/unit/prompts/prompt-wording.test.ts (W8) — kept public
+    // here only as the structural claim that the column_trace and discovery-default blocks exist.
+    expect(detector).toContain("Return 'column_trace'");
+    expect(detector).toContain("default to 'discovery'");
+    expect(detector).toContain('switch to a column trace');
     expect(detector).not.toContain('even one described as a calculation or metric');
   });
 
@@ -88,13 +91,17 @@ describe('prompt composition', () => {
     expect(refine).toContain('targetColumns: (unchanged)');
     expect(refine).toContain('only the fields changed');
     expect(refine).toContain('Omitted proposal fields are preserved mechanically');
-    expect(refine).toContain('Use `lineage_search_objects` only when the requested edit needs resolution');
-    expect(refine).toContain('Do not search for or re-resolve the unchanged origin');
+    // Full wording (the "only when…" qualifier and the "do not re-resolve" instruction) is pinned
+    // in internal-tests/unit/prompts/prompt-wording.test.ts (W8); these anchors keep the public
+    // claim that the search-tool-gating and origin-preservation blocks are present.
+    expect(refine).toContain('Use `lineage_search_objects`');
+    expect(refine).toContain('Do not search for or re-resolve');
     expect(refine).not.toContain('/trace');
 
     const system = buildGateRefineSystemPrompt(context);
     expect(system).toContain('## Refine the pending exploration');
-    expect(system).toContain('Use `lineage_search_objects` only when the requested edit needs resolution');
+    // Same block, second owner — see the wording pin note above.
+    expect(system).toContain('Use `lineage_search_objects`');
     expect(system).not.toContain('This is a fresh exploration');
     expect(system).not.toContain('Resolve the origin object');
   });
@@ -178,7 +185,10 @@ describe('prompt composition', () => {
     expect(synthesis).toContain('never `#`/`##`/`###` headings');
     expect(buildPhasePrompt('completed')).toContain('never `#`/`##`/`###` headings');
     expect(preview).not.toContain('never `#`/`##`/`###` headings');
-    expect(preview).toContain('Depth is already fixed by the supplied answer');
+    // Full sentence pinned in internal-tests/unit/prompts/prompt-wording.test.ts (W8); this anchor
+    // keeps the public claim that preview states a depth-is-fixed block (the licensing triple
+    // above already proves synthesis/preview differ on the depth-choice rule itself).
+    expect(preview).toContain('Depth is already fixed');
     // "lower-relevance" named no yardstick; relevance to the original question is checkable.
     expect(synthesis).toContain('do not help answer');
     expect(synthesis).not.toContain('lower-relevance');
@@ -356,7 +366,9 @@ describe('prompt composition', () => {
     expect(bb).toContain('BB is node-first');
     expect(bb).toContain('prune_neighbors');
     expect(bb).toContain('Resolve every ID in `<required_neighbors>` through `route_requests`');
-    expect(bb).toContain('Retain it when it is already inside the approved exploration scope');
+    // Full sentence pinned in internal-tests/unit/prompts/prompt-wording.test.ts (W8); this anchor
+    // keeps the public claim that the in-scope retention block is present.
+    expect(bb).toContain('inside the approved exploration scope');
     expect(bb).toContain('outside the approved exploration scope');
     expect(bb).not.toContain('each adjacent neighbor is EITHER routed OR pruned');
     expect(bb).not.toContain('calendar table joined only to filter');

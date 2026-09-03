@@ -60,8 +60,11 @@ for (const [, label] of laneConfig.matchAll(/label:\s*'([^']+)'/g)) {
 }
 
 // The gate's own step labels: the summary those produce is the single most-quoted artifact here.
+// Matches both forms a step label takes in gate.mjs — `npmRun('name', ...)` and the inline
+// `{ name: 'name', ... }` object literal most steps use — so a label typed directly into the
+// object form is checked exactly like one passed through npmRun.
 const gateSource = readFileSync('tests/tools/gate.mjs', 'utf8');
-for (const [, label] of gateSource.matchAll(/npmRun\('([^']+)'/g)) {
+for (const [, label] of gateSource.matchAll(/(?:npmRun\(|name: )'([^']+)'/g)) {
   if (AI_VOCABULARY.test(label)) {
     problems.push(`Gate step label "${label}" is named for AI, but no gate step calls a model.`);
   }

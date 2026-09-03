@@ -18,6 +18,7 @@ import type {
 } from '../model/modelPort';
 import type { ModelMessage } from '../model/modelPort';
 import type { z } from 'zod';
+import type { ClassificationValue } from '../session/classification';
 import type { TurnEventSink } from '../runtime/turnEventSink';
 import {
   filterRegistry,
@@ -69,6 +70,35 @@ export type InstructionPlanFacts =
   | (InstructionFactsShared & { readonly analysisMode: 'ct'; readonly targetColumns: readonly [string, ...string[]] })
   /** Mode-agnostic calls (entry detection, discovery, compose) — no mode, no targets. */
   | (InstructionFactsShared & { readonly analysisMode?: undefined; readonly targetColumns?: never });
+
+/** Provenance shared by both BB and CT members of an exploration-scoped facts value. */
+interface ExplorationFactsShared {
+  readonly classification?: ClassificationValue;
+  readonly templateKeys?: readonly string[];
+  readonly memorySections?: readonly string[];
+}
+
+/**
+ * Builds the mode-correct {@link InstructionPlanFacts} union member for an exploration-scoped call,
+ * so no call site restates the `analysisMode === 'ct' ? {…targetColumns} : {…}` branch.
+ *
+ * @param analysisMode - Approved mode for this call (from the engine or the gate decision).
+ * @param targetColumns - Locked CT targets; required non-empty when `analysisMode` is `ct`, ignored for BB.
+ * @param shared - Classification / YAML / memory provenance common to both modes.
+ * @returns The discriminated facts member the compiler type-checks against the stage.
+ */
+export function explorationFacts(
+  analysisMode: 'bb' | 'ct',
+  targetColumns: readonly string[] | undefined,
+  shared: ExplorationFactsShared,
+): InstructionPlanFacts {
+  if (analysisMode === 'ct') {
+    // CT locks its targets at engine init; a missing set here is engine-state drift, not model input.
+    if (!targetColumns?.length) throw new Error('InstructionPlan: CT requires at least one target column.');
+    return { analysisMode: 'ct', targetColumns: targetColumns as readonly [string, ...string[]], ...shared };
+  }
+  return { analysisMode: 'bb', ...shared };
+}
 
 /** Couples a structured schema with the stable identity emitted to traces. */
 export interface StructuredContract<T> {

@@ -9,6 +9,9 @@
 - A depth stated in a question is a hard limit per direction; objects past it become follow-up leads.
 - Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.
 
+### Removed
+- Saved views no longer restore the camera position they were captured at; a restored view fits the graph instead.
+
 ### Fixed
 - Upgraded the graph rendering library and corrected large-graph rendering: dragging stays responsive, and a trace past the render limit reports it instead of drawing an oversized view.
 - Formulas in AI descriptions render as mathematics, inline and as blocks.

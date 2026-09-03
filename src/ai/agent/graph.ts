@@ -58,10 +58,10 @@ import { StructuredOutputError } from '../providers/structuredOutput';
 import {
   compileInstructionPlan,
   executeInstructionPlan,
+  explorationFacts,
   type ConversePlanDraft,
   type ConverseInstructionPlan,
   type InstructionPhase,
-  type InstructionPlanFacts,
 } from './instructionPlan';
 import {
   executeToolAttempt,
@@ -126,35 +126,6 @@ const HOLD_GATE_NOTICE =
 
 /** Absolute floor for {@link turnRecursionLimit} so short-`maxRounds` turns keep generous headroom. */
 const RECURSION_LIMIT_FLOOR = 50;
-
-/** Provenance shared by both BB and CT members of an exploration-scoped facts value. */
-interface ExplorationFactsShared {
-  readonly classification?: ClassificationValue;
-  readonly templateKeys?: readonly string[];
-  readonly memorySections?: readonly string[];
-}
-
-/**
- * Builds the mode-correct {@link InstructionPlanFacts} union member for an exploration-scoped call,
- * so no call site restates the `analysisMode === 'ct' ? {…targetColumns} : {…}` branch.
- *
- * @param analysisMode - Approved mode for this call (from the engine or the gate decision).
- * @param targetColumns - Locked CT targets; required non-empty when `analysisMode` is `ct`, ignored for BB.
- * @param shared - Classification / YAML / memory provenance common to both modes.
- * @returns The discriminated facts member the compiler type-checks against the stage.
- */
-export function explorationFacts(
-  analysisMode: 'bb' | 'ct',
-  targetColumns: readonly string[] | undefined,
-  shared: ExplorationFactsShared,
-): InstructionPlanFacts {
-  if (analysisMode === 'ct') {
-    // CT locks its targets at engine init; a missing set here is engine-state drift, not model input.
-    if (!targetColumns?.length) throw new Error('InstructionPlan: CT requires at least one target column.');
-    return { analysisMode: 'ct', targetColumns: targetColumns as readonly [string, ...string[]], ...shared };
-  }
-  return { analysisMode: 'bb', ...shared };
-}
 
 /**
  * LangGraph `recursionLimit` for one turn, derived from the graph shape and the provider-call cap so
