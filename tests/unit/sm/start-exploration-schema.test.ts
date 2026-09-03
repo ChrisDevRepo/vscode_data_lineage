@@ -71,22 +71,41 @@ describe("start-exploration-schema tests", () => {
 
   it("entry detection rejects unknown fields", () => { expect(!EntryDetectionSchema.safeParse({ entry: 'discovery', targetColumns: null, intentText: 'trace this' }).success, 'entry detection rejects unknown fields').toBe(true); });
 
+  // Class: a provider emitting a JSON number quoted as a string. Symmetric depth now normalizes
+  // the encoding exactly as the asymmetric sibling already did — observed 2026-09-03 (T4, T8S,
+  // local-mlx), where `depth: "1"`/`"2"` was rejected three times and stopped the turn at
+  // `sm_entry` while `{upstream:"1"}` was accepted. Value semantics are unchanged: only a
+  // canonical unsigned integer literal is unwrapped, and the bounds still decide.
   const dvNum = StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: '2' });
-  it("string \"2\" rejected rather than silently coerced", () => { expect(!dvNum.success, 'string "2" rejected rather than silently coerced').toBe(true); });
+  it("string \"2\" normalizes to the number 2", () => { expect(dvNum.success && dvNum.data.depth === 2, 'string "2" normalizes to the number 2').toBe(true); });
 
-  it('quoted depth reject prose names the string-vs-number defect (port-level reject)', () => {
-    // Class: a provider emitting a JSON number quoted as a string. The strict reject is by design;
-    // the port-level reason must still name the defect (expected number, received string) plus the
-    // echoed sent value, or the model regenerates the identical call blind — it never sees a
+  const dvOneQuoted = StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: '1' });
+  it("string \"1\" normalizes to the number 1", () => { expect(dvOneQuoted.success && dvOneQuoted.data.depth === 1, 'string "1" normalizes to the number 1').toBe(true); });
+
+  const dvZeroQuoted = StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: '0' });
+  it("string \"0\" is still rejected — the bound decides, not the encoding", () => { expect(!dvZeroQuoted.success, 'string "0" is still rejected — the bound decides, not the encoding').toBe(true); });
+
+  for (const notADepth of ['1.5', '-1', '', ' 2', '02', 'two'] as const) {
+    it(`non-integer depth string ${JSON.stringify(notADepth)} is still rejected`, () => { expect(!StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: notADepth }).success, `non-integer depth string ${JSON.stringify(notADepth)} is still rejected`).toBe(true); });
+  }
+
+  for (const notADepth of [true, false] as const) {
+    it(`boolean depth ${String(notADepth)} is still rejected (not z.coerce.number)`, () => { expect(!StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: notADepth as never }).success, `boolean depth ${String(notADepth)} is still rejected (not z.coerce.number)`).toBe(true); });
+  }
+
+  it('an unnormalizable depth reject prose still names the string-vs-number defect (port-level reject)', () => {
+    // The reject prose stays the lever for every encoding normalization does NOT cover: the
+    // port-level reason must name the defect (expected number, received string) plus the echoed
+    // sent value, or the model regenerates the identical call blind — it never sees a
     // variant-level expected type in the bare field listing.
-    const quoted = { origin: 'a', analysisMode: 'bb', classification: 'business', depth: '1' };
+    const quoted = { origin: 'a', analysisMode: 'bb', classification: 'business', depth: '1.5' };
     const parsed = StartExplorationInputSchema.safeParse(quoted);
-    expect(!parsed.success, 'quoted depth still rejected').toBe(true);
+    expect(!parsed.success, 'unnormalizable quoted depth still rejected').toBe(true);
     if (parsed.success) return;
     const { reason } = rejectionFromZodError(parsed.error, { code: 'invalid_tool_input', input: quoted });
     expect(reason.includes('depth: input matched no variant'), 'reason keeps the union verdict with the depth path').toBe(true);
     expect(reason.includes('expected number, received string'), 'reason names the string-vs-number defect').toBe(true);
-    expect(reason.includes('sent: "1"'), 'reason echoes the sent value').toBe(true);
+    expect(reason.includes('sent: "1.5"'), 'reason echoes the sent value').toBe(true);
   });
 
   const dvAll = StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: 'all' });

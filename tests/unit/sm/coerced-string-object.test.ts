@@ -63,9 +63,20 @@ describe('coerced-string-object tests', () => {
     expect(parsed.success && parsed.data.depth).toBe('all');
   });
 
-  it('string-encoded JSON scalar is NOT unwrapped (strict number branch stays pinned)', () => {
+  it('a quoted JSON scalar is NOT unwrapped by the object-only allowlist (still rejected)', () => {
+    // '"2"' parses to the JS string "2" (quotes as content), which is neither a JSON object nor
+    // a canonical bare integer literal, so it passes through both preprocess layers untouched.
     expect(StartExplorationInputSchema.safeParse(freshBb('"2"')).success).toBe(false);
-    expect(StartExplorationInputSchema.safeParse(freshBb('2')).success).toBe(false);
+  });
+
+  it('a bare numeric string now normalizes on the depth branch itself (engine/shared, not this allowlist)', () => {
+    // '2' is not a JSON object, so coercedStringObject passes it through unchanged; it is
+    // ExplorationDepthLimitSchema's own numericStringDepth preprocess (explorationDepthContract.ts)
+    // that unwraps a canonical bare integer literal — one normalization policy for both depth
+    // encodings, fixing the local-mlx T4/T8S stop where `depth: "1"`/`"2"` was rejected three
+    // times while the asymmetric object form accepted the identical encoding.
+    const parsed = StartExplorationInputSchema.safeParse(freshBb('2'));
+    expect(parsed.success && parsed.data.depth).toBe(2);
   });
 
   it('non-JSON string remains rejected', () => {
