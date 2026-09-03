@@ -570,6 +570,51 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
 
 
 /**
+ * Enumerates the `$$ … $$` blocks the hops captured, each keyed by the node whose detail slot holds
+ * it, in the same self-check shape {@link buildPassthroughFlowFacts} uses for kept node ids.
+ *
+ * @remarks
+ * The carry rule already exists in prose ("never fields within a kept item",
+ * `buildPresentationDetailContract`), but every OTHER mandatory-carry class at synthesis is
+ * enumerated as a checklist — kept node ids, undispositioned ids, the column chain, terminal-source
+ * candidates — while formulas reach the model only inside slot prose it must re-scan. Measured
+ * consequence at the same hop: node coverage is honoured (T7 @ 739076f1 captioned all 26 ids and
+ * repaired the one the validator named) while formula carry ran 2/11 there, 4/15 at 37875e19 and
+ * 7/13 at the frozen baseline — the same instruction, the same model, the same effort setting.
+ *
+ * Enumeration only: this states evidence the engine already holds, sorted by capture order and
+ * de-duplicated per node so the block is byte-stable across runs. Which blocks belong in the answer
+ * stays the model's judgement — nothing here rejects, rewrites or compares a payload.
+ *
+ * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
+ * @returns A markdown checklist, or an empty string when no hop captured a formula.
+ */
+export function buildCapturedFormulaFacts(result: SmResult): string {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const slot of result.detail_slots) {
+    const nodeId = slot.nodeId.toLowerCase();
+    for (const section of slot.sections) {
+      for (const match of section.text.matchAll(/\$\$([\s\S]*?)\$\$/g)) {
+        // Whitespace-collapsed so a block written across lines and the same block written inline
+        // are one entry, not two — the de-duplication key and the rendered line share this form.
+        const formula = match[1].split(/\s+/).filter(Boolean).join(' ');
+        if (formula.length === 0) continue;
+        const key = `${nodeId} ${formula}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        lines.push(`- ${nodeId} — $$ ${formula} $$`);
+      }
+    }
+  }
+  if (lines.length === 0) return '';
+  return [
+    'Captured formulas (hop evidence). Self-check before calling `lineage_present_result`: every block listed below must appear in the `sections[].text` of the section that links its node — dropping a node from the answer drops its formulas with it, but a node you keep and link keeps its formulas too. A block whose node is linked and whose formula is missing is a dropped field inside a kept item, not a compression:',
+    ...lines,
+  ].join('\n');
+}
+
+/**
  * The tool-result envelope delivered to synthesis when SM exploration completes — "the last tool
  * result" the synthesis system prompt reads.
  *
@@ -662,6 +707,8 @@ export function buildSmCompletionEnvelope(
       : '';
   const passthroughFacts = buildPassthroughFlowFacts(result);
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
+  const formulaFacts = buildCapturedFormulaFacts(result);
+  const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
   const envelope: SmCompletionEnvelope = {
     ok: true,
     done: true,
@@ -674,7 +721,7 @@ export function buildSmCompletionEnvelope(
       detail_slots: result.detail_slots,
     },
     deferred_questions: deferred,
-    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock,
+    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock,
   };
   // Hard-fail on shape drift: surface an upstream bug loudly, not as silently-degraded model input.
   SmCompletionEnvelopeSchema.parse(envelope);
