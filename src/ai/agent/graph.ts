@@ -402,11 +402,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // repair-turn present_result prevalidation reject can be exempted from the semantic breaker.
     presentResultRepairDraftHeld: deps.getSession().presentResultRepairDraft.hasRepairableDraft(),
     // Live resolver (read fresh at each retry, never copied into frame/context state): surfaces the
-    // held draft's own sections/highlight_groups back to a repair-turn model so it can send a scoped
-    // patch instead of blindly re-authoring the full envelope from memory.
+    // held draft's own sections/notes/highlight_groups back to a repair-turn model so it can send a
+    // scoped patch instead of blindly re-authoring the full envelope from memory.
     presentResultRepairDraftContext: () => {
       const held = deps.getSession().presentResultRepairDraft.get();
-      return held ? { sections: held.sections, highlight_groups: held.highlight_groups } : null;
+      return held ? { sections: held.sections, notes: held.notes, highlight_groups: held.highlight_groups } : null;
     },
   });
 

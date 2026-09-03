@@ -691,17 +691,18 @@ function renderObservationsContext(state: ToolPhaseAttemptState): ModelMessage[]
 /** Structural shape of what {@link renderHeldDraftRepairContext} renders — never the full presentation envelope. */
 interface HeldDraftRepairContent {
   readonly sections?: unknown;
+  readonly notes?: unknown;
   readonly highlight_groups?: unknown;
 }
 
 const HELD_DRAFT_REPAIR_TAG = 'held_draft_repair_state';
 
-/** Serializes and escapes the held-draft repair block for one candidate `sections`/`highlight_groups` pair. */
-function renderHeldDraftRepairBlock(sections: unknown, highlightGroups: unknown): string {
-  const escaped = escapeDelimitedJson({ sections, highlight_groups: highlightGroups });
+/** Serializes and escapes the held-draft repair block for one candidate `sections`/`notes`/`highlight_groups` triple. */
+function renderHeldDraftRepairBlock(sections: unknown, notes: unknown, highlightGroups: unknown): string {
+  const escaped = escapeDelimitedJson({ sections, notes, highlight_groups: highlightGroups });
   return [
     `<${HELD_DRAFT_REPAIR_TAG}>`,
-    'This is your own currently held draft for this repair turn, not new database content. It shows exactly the sections and highlight_groups already on file — send only the authorized corrected fields; anything unchanged does not need to be resent.',
+    'This is your own currently held draft for this repair turn, not new database content. It shows exactly the sections, notes, and highlight_groups already on file — send only the authorized corrected fields; a resent field replaces its whole list, so anything unchanged does not need to be resent.',
     escaped,
     `</${HELD_DRAFT_REPAIR_TAG}>`,
   ].join('\n');
@@ -734,19 +735,20 @@ function renderHeldDraftRepairContext(
 ): ModelMessage[] {
   if (!heldDraft) return [];
   let sections = heldDraft.sections;
+  const notes = heldDraft.notes;
   const highlightGroups = heldDraft.highlight_groups;
-  let rendered = renderHeldDraftRepairBlock(sections, highlightGroups);
+  let rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
   const overBudget = (): boolean => Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES;
 
   if (overBudget() && Array.isArray(sections) && sections.length > 0) {
     const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / sections.length);
     sections = sections.map((section) => truncateHeldDraftSection(section, fairShare));
-    rendered = renderHeldDraftRepairBlock(sections, highlightGroups);
+    rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
   }
 
   if (overBudget() && Array.isArray(sections) && sections.length > 0) {
     sections = { collapsed: true, count: sections.length };
-    rendered = renderHeldDraftRepairBlock(sections, highlightGroups);
+    rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
   }
 
   return [modelUserMessage(rendered)];

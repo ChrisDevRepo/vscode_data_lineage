@@ -738,7 +738,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     input: unknown;
     envelope: string;
     presentResultRepairDraftHeld?: boolean;
-    presentResultRepairDraftContext?: () => { sections?: unknown; highlight_groups?: unknown } | null;
+    presentResultRepairDraftContext?: () => { sections?: unknown; notes?: unknown; highlight_groups?: unknown } | null;
   }): Promise<{ replayed: readonly BaseMessage[]; state: ToolPhaseAttemptState; first: ToolAttemptResult }> {
     const { registry } = scriptedRegistry([{ name: 'lineage_submit_findings', result: options.envelope }]);
     const plan = conversePlan(registry);
@@ -892,6 +892,27 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(heldDraft).toContain('held_draft_repair_state');
     expect(heldDraft).toContain('HELD-DRAFT-SECTION-TEXT');
     expect(heldDraft).toContain('This is your own currently held draft for this repair turn');
+  });
+
+  it('surfaces the held notes and names all three held fields in the banner', async () => {
+    const { replayed } = await replayAfterRejection({
+      input: { column_flow: [{ from_col: 'A', to_col: 'B' }] },
+      envelope: rejectionEnvelope({ reason: 'Flow entry 0 is incomplete.', detail: [{ path: 'column_flow.0' }] }),
+      presentResultRepairDraftContext: () => ({
+        sections: [{ label: 'Source', text: 'HELD-DRAFT-SECTION-TEXT' }],
+        notes: [{ node_id: '[dbo].[Orders]', text: 'HELD-DRAFT-NOTE-TEXT' }],
+        highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['[dbo].[Orders]'] }],
+      }),
+    });
+
+    expect(replayed).toHaveLength(4);
+    const heldDraft = String(replayed[1].content);
+    // The rendered block must expose the held notes verbatim, including the node_id they attach to
+    // — otherwise a repair-turn model cannot see the note it is asked to patch.
+    expect(heldDraft).toContain('HELD-DRAFT-NOTE-TEXT');
+    expect(heldDraft).toContain('[dbo].[Orders]');
+    // The banner must name all three held fields, not just the two the model can currently see.
+    expect(heldDraft).toContain('sections, notes, and highlight_groups');
   });
 
   it('omits the held-draft message entirely when no repairable draft is on hold', async () => {
