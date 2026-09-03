@@ -3017,6 +3017,61 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Selects the render-set members no hop dispositioned that the render reaches only as a write sink.
+   *
+   * @remarks
+   * Scope admits a node; only a hop dispositions one. A node with no {@link nodeStates} entry, no
+   * investigation task and no column-aspect edge was never analyzed, routed, contracted through or
+   * pruned — it is in the render because BFS reachability walked into it, nothing more. Such a node
+   * that also supplies nothing the render keeps (every edge joining it to the render set points
+   * into it: written to, or EXEC'd) is a side-effect sink, not answer evidence. Peeling is
+   * iterative, so a sink chain — a logging proc whose only reader is its own log table — goes as a
+   * unit. An undispositioned node that *supplies* a rendered node stays: at this layer a filter
+   * join and a sibling-column feed are the same shape, and the value-carrying one is required
+   * (`ct-retention-differential` C8). A candidate carrying the only path to a kept node is a
+   * passthrough, not a sink, and is restored.
+   *
+   * @param reachable - The reachability-bounded render set to classify.
+   * @returns Ids to drop from the render; empty when every reachable node is accounted for.
+   */
+  private undispositionedSinkIds(reachable: ReadonlySet<string>): Set<string> {
+    const candidates: string[] = [];
+    for (const id of reachable) {
+      if (id === this.originNodeId) continue;
+      if (this.nodeStates.has(id)) continue;
+      if (this.taskLedger.investigationTasks.some(task => task.nodeId === id)) continue;
+      if (this.tracer?.edges.some(edge => edge.from_node === id || edge.to_node === id)) continue;
+      candidates.push(id);
+    }
+    if (candidates.length === 0) return new Set();
+
+    const render = new Set(reachable);
+    const sinks = new Set<string>();
+    for (let peeled = true; peeled;) {
+      peeled = false;
+      for (const id of candidates) {
+        if (sinks.has(id)) continue;
+        if (this.model.edges.some(e => e.source === id && render.has(e.target))) continue;
+        sinks.add(id);
+        render.delete(id);
+        peeled = true;
+      }
+    }
+
+    // Each pass restores at least one candidate, so the sink count bounds the loop.
+    let stranded: string[] = [];
+    for (let pass = sinks.size; pass >= 0; pass--) {
+      const kept = bfsReachable(this.graph, this.originNodeId!, new Set([...this.removedSet, ...sinks]), undefined, this.scopeNodeIds);
+      stranded = Array.from(reachable).filter(id => !sinks.has(id) && !kept.has(id));
+      if (stranded.length === 0) return sinks;
+      for (const id of stranded) for (const nid of this.graph.neighbors(id)) sinks.delete(nid);
+    }
+    // Unreachable while the restore above converges; conservation outranks the trim either way.
+    this.log('debug', `[Disposition] sink trim abandoned — ${stranded.length} node(s) still stranded (${trunc(stranded.join(', '), 200)})`);
+    return new Set();
+  }
+
+  /**
    * Packages exploration records into the final presentation topology.
    *
    * @returns Detailed analysis metrics matching the outcome format.
@@ -3031,6 +3086,14 @@ export class NavigationEngine implements IHopStateMachine {
     const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
     const finalNodeIds = new Set<string>(reachableNodeIds);
     finalNodeIds.add(this.originNodeId!);
+
+    // Reachability alone once carried scope-resident write sinks into the answer, where the
+    // synthesis prompt then section-linked them. Drop the sinks no hop dispositioned.
+    const undispositioned = this.undispositionedSinkIds(finalNodeIds);
+    if (undispositioned.size > 0) {
+      for (const id of undispositioned) finalNodeIds.delete(id);
+      this.log('debug', `[Disposition] getResult drops ${undispositioned.size} undispositioned sink node(s) — ${trunc(Array.from(undispositioned).join(', '), 200)} (in scope, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
+    }
 
     // Conservation backstop: the render set is recomputed by reachability, which can disagree with
     // the disposition ledger. Under the invariants (prune never orphans a committed node) this delta

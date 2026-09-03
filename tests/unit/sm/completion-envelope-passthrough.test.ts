@@ -119,4 +119,31 @@ describe("Completion Envelope — Passthrough Flow Facts", () => {
   expect(lines[1].includes('read by (none)'), '(e) empty reader list renders (none)').toBe(true);
 });
 
+  it("(f) kept node with no node_states entry → listed under the notes-only heading.", () => {
+  // Scope reachability alone put it in the render; section-linking it states it as answer evidence.
+  const NOTES_ONLY = 'In scope but never dispositioned';
+  const result = makeResult({
+    fullNodes: [
+      { id: '[dbo].[dimcalendar]', s: 'dbo', n: 'dimcalendar', t: 'table' },
+      { id: '[dbo].[stagea]', s: 'dbo', n: 'stagea', t: 'table' },
+    ],
+    edges: [
+      ['[dbo].[dimcalendar]', '[dbo].[sploada]', 'SELECT'],
+      ['[dbo].[stagea]', '[dbo].[vwb]', 'SELECT'],
+    ],
+    node_states: [
+      { nodeId: '[dbo].[stagea]', action: 'passthrough', source: 'ai', reason: 'submitted_passthrough' },
+    ],
+  });
+  const lines = buildPassthroughFlowFacts(result).split('\n');
+  const headingIndex = lines.findIndex(l => l.startsWith(NOTES_ONLY));
+  expect(headingIndex > 0, '(f) the notes-only heading is emitted').toBe(true);
+  expect(lines[headingIndex].includes('`notes[]` alone'), '(f) the heading names notes as the only surface').toBe(true);
+  expect(
+    lines.slice(headingIndex + 1).every(l => l.startsWith('- [dbo].[dimcalendar]')),
+    '(f) only the undispositioned node sits under the heading',
+  ).toBe(true);
+  expect(lines[1].startsWith('- [dbo].[stagea]'), '(f) the dispositioned node keeps its place above it').toBe(true);
+});
+
 });

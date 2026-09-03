@@ -12,6 +12,7 @@
  * submitted at each bodied focus.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import type { SmResult } from '../../../src/ai/sm/smTypes';
 import { bfsReachable } from '../../../src/engine/graphGuards';
 import type { DatabaseModel, LineageNode, ObjectType } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
@@ -19,7 +20,7 @@ import { makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 
 interface ColumnRef { node: string; col: string }
-interface FlowEntry { out_col: string; upstream_columns: ColumnRef[] }
+interface FlowEntry { out_col: string; upstream_columns: ColumnRef[]; writes_to?: ColumnRef }
 
 interface RetentionCase {
   /** Case id as recorded in CR section 6. */
@@ -580,5 +581,141 @@ describe('CT origin seeding — the origin\'s neighbours are always seeded', () 
       depthIntent: { kind: 'explicit', levels: 6 },
     }) as { error?: string };
     expect(init.error, 'CT never starts with an empty resolved column set').toBe('unknown_columns');
+  });
+});
+
+/**
+ * Scope-resident sinks and filter leaves no hop dispositioned.
+ *
+ * Measured shape (T8, `[ai].[vwDiscountCalc]` / `Discount`, bidirectional): scope admitted 21
+ * nodes and exactly four of them carried no `nodeStates` entry, no investigation task and no
+ * column edge — `dimcalendar` (read by the loader, never for `Discount`), `errorlog` and
+ * `auditlog` (write sinks), `splogaudit` (EXEC-only, and the only path to `auditlog`). Scope
+ * admits a node; only a hop dispositions one, so these four are reachability artifacts, not
+ * answer evidence. `customermaster` has the same "carries no traced value" shape but was
+ * contracted through at hop 1 — dispositioned, therefore kept.
+ */
+const SINK_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
+  ['[ct].[vwdiscountcalc]', V, ['Discount']],
+  ['[ct].[salesstaging]', T, ['OrderAmount']],
+  ['[ct].[customermaster]', T, ['CustomerTier']],
+  ['[ct].[sploadsalesstaging]', P, ['OrderAmount']],
+  ['[ct].[dimcalendar]', T, ['DateKey']],
+  ['[ct].[spbuildsalesreport]', P, ['Discount']],
+  ['[ct].[factsalesreport]', T, ['Discount']],
+  ['[ct].[errorlog]', T, ['Message']],
+  ['[ct].[splogaudit]', P, ['Note']],
+  ['[ct].[auditlog]', T, ['Note']],
+];
+const SINK_EDGES: ReadonlyArray<readonly [string, string]> = [
+  ['[ct].[salesstaging]', '[ct].[vwdiscountcalc]'],
+  ['[ct].[customermaster]', '[ct].[vwdiscountcalc]'],
+  ['[ct].[sploadsalesstaging]', '[ct].[salesstaging]'],
+  ['[ct].[dimcalendar]', '[ct].[sploadsalesstaging]'],
+  ['[ct].[vwdiscountcalc]', '[ct].[spbuildsalesreport]'],
+  ['[ct].[spbuildsalesreport]', '[ct].[factsalesreport]'],
+  ['[ct].[spbuildsalesreport]', '[ct].[errorlog]'],
+  ['[ct].[spbuildsalesreport]', '[ct].[splogaudit]'],
+  ['[ct].[splogaudit]', '[ct].[auditlog]'],
+];
+
+const SINK_CASE: RetentionCase = {
+  id: 'undispositioned sinks',
+  origin: '[ct].[vwdiscountcalc]',
+  tracedColumn: 'Discount',
+  nodes: SINK_NODES,
+  edges: SINK_EDGES,
+  reachRequired: [],
+  flow: {
+    // `Discount` comes from SalesStaging.OrderAmount; CustomerMaster supplies only the join key,
+    // so the model never names it — the acda2ff9 shape.
+    '[ct].[vwdiscountcalc]': [{ out_col: 'Discount', upstream_columns: [{ node: '[ct].[salesstaging]', col: 'OrderAmount' }] }],
+    '[ct].[spbuildsalesreport]': [{
+      out_col: 'Discount',
+      upstream_columns: [{ node: '[ct].[vwdiscountcalc]', col: 'Discount' }],
+      writes_to: { node: '[ct].[factsalesreport]', col: 'Discount' },
+    }],
+    // The loader joins DimCalendar to bound the load window and writes ErrorLog on failure; neither
+    // carries a value into the traced column, so its flow names neither.
+    '[ct].[sploadsalesstaging]': [],
+  },
+  measuredLost: [],
+};
+
+/** Runs the measured T8 walk: every bodied node the column spine reaches, and nothing else. */
+function driveSinkWalk(routeFromConsumer?: string): SmResult {
+  const { model, graph } = buildWorld(SINK_CASE);
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const init = engine.init({
+    origin: SINK_CASE.origin,
+    question: 'trace Discount to its sources and its consumers',
+    direction: 'bidirectional',
+    analysisMode: 'ct',
+    targetColumns: ['Discount'],
+    depthIntent: { kind: 'explicit', levels: 3 },
+  });
+  expect('ok' in init, 'CT init succeeds').toBe(true);
+
+  for (let hop = 0; hop < 25; hop++) {
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    if (ctx.done || !ctx.focus_node) return engine.getResult();
+    const focusId = ctx.focus_node.id;
+    const columnFlow = SINK_CASE.flow[focusId];
+    expect(columnFlow, `the case scripts a column_flow for dispatched focus ${focusId}`).toBeDefined();
+    engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
+      summary: `${focusId}`,
+      verdict: 'analyze',
+      column_flow: columnFlow,
+      ...(routeFromConsumer && focusId === '[ct].[spbuildsalesreport]'
+        ? { route_requests: [{ nodeId: routeFromConsumer, question: 'what does this record?' }] }
+        : {}),
+    });
+  }
+  throw new Error('sink walk did not terminate within 25 hops');
+}
+
+describe('CT render bound — scope admits, only a hop dispositions', () => {
+  it('drops the write sinks no hop ever dispositioned, chain and all', () => {
+    const rendered = new Set(driveSinkWalk().fullNodes.map(n => n.id));
+    // `splogaudit` supplies only `auditlog`, so the pair peels as a unit.
+    const sinks = ['[ct].[errorlog]', '[ct].[splogaudit]', '[ct].[auditlog]'];
+    expect(
+      sinks.filter(id => rendered.has(id)),
+      'a scope-resident node with no state, no task and no column edge, supplying nothing the render keeps, is not answer evidence',
+    ).toEqual([]);
+  });
+
+  it('keeps an undispositioned supplier — a filter join and a sibling-column feed are one shape here', () => {
+    const rendered = new Set(driveSinkWalk().fullNodes.map(n => n.id));
+    // `dimcalendar` bounds the load window and supplies no `Discount`; `[ct].[prices]` in C8 has the
+    // identical structure and is required. The engine cannot separate them, so both stay in the
+    // render and the synthesis prompt keeps an undispositioned node out of the section links.
+    expect(rendered.has('[ct].[dimcalendar]'), 'a supplier of a rendered node survives the sink trim').toBe(true);
+  });
+
+  it('keeps the dispositioned join-key leaf and every column-flow participant', () => {
+    const result = driveSinkWalk();
+    const rendered = new Set(result.fullNodes.map(n => n.id));
+    // `customermaster` supplies no value to `Discount` and appears in no column edge; the origin
+    // hop contracted through it, and that disposition is what keeps it in the answer.
+    const required = [
+      '[ct].[vwdiscountcalc]', '[ct].[salesstaging]', '[ct].[customermaster]',
+      '[ct].[sploadsalesstaging]', '[ct].[spbuildsalesreport]', '[ct].[factsalesreport]',
+    ];
+    expect(required.filter(id => !rendered.has(id)), 'no dispositioned node is dropped').toEqual([]);
+    expect(
+      result.detail_slots.filter(slot => !rendered.has(slot.nodeId)).map(slot => slot.nodeId),
+      'no analyzed detail slot is dropped from the render',
+    ).toEqual([]);
+  });
+
+  it('keeps an undispositioned node that carries the only path to a kept one', () => {
+    // `auditlog` is routed, so it is dispositioned and stays; `splogaudit` is still undispositioned
+    // but it is the only path to `auditlog` — a passthrough, not a leaf.
+    const rendered = new Set(driveSinkWalk('[ct].[auditlog]').fullNodes.map(n => n.id));
+    expect(rendered.has('[ct].[auditlog]'), 'the routed sink is dispositioned and kept').toBe(true);
+    expect(rendered.has('[ct].[splogaudit]'), 'the only path to a kept node survives the leaf trim').toBe(true);
   });
 });

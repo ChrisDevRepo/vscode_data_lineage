@@ -505,6 +505,11 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * that carries no value into the traced column is kept and unslotted, so it surfaces here and earns
  * its caption. Deterministic: nodes and neighbor lists sort by id, ids lowercased.
  *
+ * A qualifying node with no `node_states` entry was never dispositioned — scope reachability alone
+ * put it in the render — so it lists under its own heading with `notes[]` as the only surface.
+ * Section-linking one states it as answer evidence, which is what carried a calendar join and a
+ * logging chain into a T8 discount answer.
+ *
  * @param result - Completed SM result: `fullNodes` the rendered kept set, `detail_slots` the
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
  * @returns A markdown bullet list of writer/reader facts, or an empty string when every kept node is slotted.
@@ -522,15 +527,23 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
     .sort((a, b) => a.id.localeCompare(b.id));
   if (qualifying.length === 0) return '';
 
-  const lines = qualifying.map(n => {
+  const renderLine = (n: { id: string; type: string }): string => {
     const descriptor = [n.type, actionById.get(n.id)].filter(Boolean).join(', ');
     const prefix = descriptor ? ` — ${descriptor}` : '';
     return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id))}`;
-  });
+  };
+  const dispositioned = qualifying.filter(n => actionById.has(n.id));
+  const undispositioned = qualifying.filter(n => !actionById.has(n.id));
 
   return [
     'Kept passthrough nodes (engine flow facts). Self-check before calling `lineage_present_result`: every id listed below must appear in `sections[].node_ids`, `highlight_groups[].node_ids`, or `notes[].node_id` — an uncovered kept node is the same class of gap as an unaccounted column, and the only way to drop one from the view is a prune verdict. A value-carrying store, staging table, or bridge that has no detail slot still earns one grounded, uncolored `notes[].node_id` caption built from its writer/reader facts:',
-    ...lines,
+    ...dispositioned.map(renderLine),
+    ...(undispositioned.length > 0
+      ? [
+        'In scope but never dispositioned — no hop analyzed, routed to, contracted through or pruned these. Account for each with one grounded `notes[].node_id` caption from its writer/reader facts, and use `notes[]` alone: an id no hop examined is context, not evidence for an answer section or a highlight group:',
+        ...undispositioned.map(renderLine),
+      ]
+      : []),
   ].join('\n');
 }
 
