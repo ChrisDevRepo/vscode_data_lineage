@@ -180,12 +180,10 @@ function groupBytes(group: readonly ModelMessage[]): number {
   return group.reduce((total, message) => {
     const content = message.content;
     const contentBytes = utf8Bytes(typeof content === 'string' ? content : JSON.stringify(content) ?? '');
-    const calls = (message as { tool_calls?: readonly { args?: unknown }[] }).tool_calls;
-    // A truthiness check, not `Array.isArray`: the built-in guard narrows to `any[]`, which
-    // discards the element type and lets `any` leak into this byte arithmetic.
-    const callBytes = calls
-      ? calls.reduce((sum, call) => sum + utf8Bytes(JSON.stringify(call.args) ?? ''), 0)
-      : 0;
+    const rawCalls: unknown = (message as { tool_calls?: unknown }).tool_calls;
+    // Provider-shaped data: a truthy non-array `tool_calls` counts as nothing rather than throwing.
+    const calls: readonly { args?: unknown }[] = Array.isArray(rawCalls) ? rawCalls : [];
+    const callBytes = calls.reduce((sum, call) => sum + utf8Bytes(JSON.stringify(call.args) ?? ''), 0);
     return total + contentBytes + callBytes;
   }, 0);
 }
