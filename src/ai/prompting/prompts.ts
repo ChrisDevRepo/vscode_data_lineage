@@ -9,6 +9,7 @@
  */
 
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { escapePromptText } from '../support/text';
 import type { InvestigationTask } from '../sm/smTypes';
 
 /**
@@ -597,10 +598,7 @@ export function buildDiscoverySummaryBlock(summary: string | null): string {
  */
 export function buildOriginalQuestionBlock(question: string | null): string {
   if (!question || question.trim().length === 0) return '';
-  const escaped = question.trim()
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  const escaped = escapePromptText(question.trim());
   return [
     '## Original Question',
     '<original_question>',
@@ -663,19 +661,15 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
 export function buildMissionBriefBlock(brief: string, question: string, scopeNotes: readonly string[] = []): string {
   const missionText = brief || question;
   if (!missionText && scopeNotes.length === 0) return '';
-  const escape = (value: string): string => value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
   const lines = ['## Mission Context'];
   if (missionText) {
-    lines.push('<mission_brief>', escape(missionText), '</mission_brief>');
+    lines.push('<mission_brief>', escapePromptText(missionText), '</mission_brief>');
   }
   if (scopeNotes.length > 0) {
     lines.push(
       '<user_constraints>',
       'Stated by the user and approved for this run. Apply them on every hop.',
-      ...scopeNotes.map(note => `- ${escape(note)}`),
+      ...scopeNotes.map(note => `- ${escapePromptText(note)}`),
       '</user_constraints>',
     );
   }

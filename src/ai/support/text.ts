@@ -32,6 +32,23 @@ export interface ProviderErrorDiagnostic extends ProviderErrorCauseDiagnostic {
  * @param max - Inclusive character budget; defaults to 60.
  * @returns `text` unchanged when within budget, else its first `max - 1` chars + `…`.
  */
+/**
+ * Escapes text for a dynamic prompt slot so it cannot open or close a prompt delimiter.
+ *
+ * @remarks
+ * Every value that reaches a system prompt from outside the prompt builder — the user question,
+ * mission brief, screen phrase — passes through here before interpolation.
+ *
+ * @param value - Untrusted text.
+ * @returns The text with `&`, `<` and `>` entity-escaped.
+ */
+export function escapePromptText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export function trunc(text: string, max = 60): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
