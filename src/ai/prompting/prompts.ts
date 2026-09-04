@@ -736,11 +736,22 @@ export function buildCurrentTaskBlock(
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
     lines.push(`  <${tag}>${task.question.trim()}</${tag}>`);
   }
-  if (columnTraceColumns && columnTraceColumns.length > 0) {
+  // Presence, not length: an empty array is the CT engine stating that this node declares none of
+  // the traced columns, and that is the hop the block matters most on. Omitting it there left the
+  // submit contract asking for `column_flow` with nothing on screen explaining what to put in it.
+  if (columnTraceColumns) {
     lines.push(
       `  <column_trace>`,
-      `    Active columns: [${columnTraceColumns.join(', ')}]`,
-      `    Hop-specific focus: account for these columns in column_flow using the CT system/capture contract.`,
+      ...(columnTraceColumns.length > 0
+        ? [
+            `    Active columns: [${columnTraceColumns.join(', ')}]`,
+            `    Hop-specific focus: account for these columns in column_flow using the CT system/capture contract.`,
+          ]
+        : [
+            `    Active columns: none — this node declares none of the traced columns.`,
+            `    It is on the lineage path for what it does to the rows, not for a value it supplies.`,
+            `    Hop-specific focus: submit column_flow: [] and describe in sections[].text what this node does to the row set — joins, filters, predicates, set operations — then route upstream as usual. The node is kept in the answer.`,
+          ]),
       `    To inspect upstream column schemas before declaring upstream_columns, call lineage_get_neighbor_columns for current-hop neighbors.`,
       `  </column_trace>`,
     );

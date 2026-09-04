@@ -35,9 +35,13 @@ import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, Diagno
 import { estimateTokens } from '../support/tokenBudget';
 import { ColumnTracer } from "./columnTracer";
 import { AgendaManager, type AgendaEntry } from './agendaManager';
-import { TaskLedger } from './taskLedger';
-import { INavigationStrategy, BbStrategy, CtStrategy } from './strategies';
+import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
+import { BbStrategy, CtStrategy } from './strategies';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
+
+/** Shared stateless hop-validation strategies; see `src/ai/sm/strategies.ts`. */
+const BB_STRATEGY = new BbStrategy();
+const CT_STRATEGY = new CtStrategy();
 
 /**
  * Extends the base working memory with topological map data.
@@ -272,8 +276,9 @@ export class NavigationEngine implements IHopStateMachine {
   protected _agenda = new AgendaManager();
   /** Structured source of truth for questions and follow-up leads. */
   private readonly taskLedger = new TaskLedger();
-  protected get strategy(): INavigationStrategy {
-    return this.mode.kind === 'ct' ? new CtStrategy() : new BbStrategy();
+  /** Mode-specific hop validation; stateless, so one instance of each is shared by every engine. */
+  protected get strategy(): BbStrategy {
+    return this.mode.kind === 'ct' ? CT_STRATEGY : BB_STRATEGY;
   }
   /** Identifier of the node currently in focus. */
   protected currentFocusNodeId: string | null = null;
@@ -598,28 +603,43 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
+  /**
+   * Applies the mode's task shape to one set of common task fields.
+   *
+   * @remarks
+   * The single home for the CT/BB task fork. Every task the engine creates differs between the two
+   * modes in exactly this way and no other: a CT task is a `column_lineage` carrying the columns the
+   * hop tracks, a BB task is the plain kind with no column state. The column set falls back to the
+   * frozen target set so the CT agenda invariant in `NavigationSnapshotSchema` stays satisfiable at
+   * {@link toJSON}, and is copied rather than shared so a per-hop edit cannot rewrite it.
+   *
+   * @param common - Task fields that do not depend on the mode.
+   * @param bbKind - The task kind used when the session is not column-tracing.
+   * @param preferredColumns - Columns this task tracks; the target set is used when empty.
+   * @returns The ledger input for the active mode.
+   * @throws When column tracing is active but no column can be attributed to the task.
+   */
+  private taskInputFor(
+    common: Omit<InvestigationTaskInput, 'kind' | 'activeColumns'>,
+    bbKind: 'root' | 'analytical',
+    preferredColumns: readonly string[] | undefined,
+  ): InvestigationTaskInput {
+    if (this.mode.kind !== 'ct') return { ...common, kind: bbKind };
+    const columns = preferredColumns?.length ? preferredColumns : this.tracer?.targetColumns;
+    if (!columns?.length) throw new Error('CT tasks require at least one active column');
+    return { ...common, kind: 'column_lineage', activeColumns: [...columns] as [string, ...string[]] };
+  }
+
   /** Creates a structurally mode-valid deferred task without changing agenda state. */
   private ensureDeferredTask(nodeId: string, question: string, createdHop: number): InvestigationTask {
-    const common = {
-      source: 'model' as const,
+    return this.taskLedger.ensureTask(this.taskInputFor({
+      source: 'model',
       question,
       nodeId,
       parentTaskId: this.currentFocusTaskIds[0],
-      status: 'deferred' as const,
+      status: 'deferred',
       createdHop,
-    };
-    if (this.mode.kind === 'ct') {
-      const columns = this.tracer?.activeColumns.length
-        ? this.tracer.activeColumns
-        : this.tracer?.targetColumns;
-      if (!columns?.length) throw new Error('CT deferred tasks require at least one active column');
-      return this.taskLedger.ensureTask({
-        ...common,
-        kind: 'column_lineage',
-        activeColumns: [...columns] as [string, ...string[]],
-      });
-    }
-    return this.taskLedger.ensureTask({ ...common, kind: 'analytical' });
+    }, 'analytical', this.tracer?.activeColumns));
   }
 
   /** Completes executable tasks and resolves any scheduled follow-up leads they own. */
@@ -1610,22 +1630,12 @@ export class NavigationEngine implements IHopStateMachine {
     // Bipartite agenda rule: `enqueueHop` is the only code path that writes to the agenda.
     // It pushes bodied nodes directly and contracts body-less nodes through to their bodied
     // neighbors in the current exploration direction. Invariant holds by construction.
-    const rootTask = this.mode.kind === 'ct'
-      ? this.taskLedger.ensureTask({
-          kind: 'column_lineage',
-          source: 'mission',
-          question: params.question,
-          nodeId: originNode.id,
-          activeColumns: initialActiveColumns as [string, ...string[]],
-          createdHop: 0,
-        })
-      : this.taskLedger.ensureTask({
-          kind: 'root',
-          source: 'mission',
-          question: params.question,
-          nodeId: originNode.id,
-          createdHop: 0,
-        });
+    const rootTask = this.taskLedger.ensureTask(this.taskInputFor({
+      source: 'mission',
+      question: params.question,
+      nodeId: originNode.id,
+      createdHop: 0,
+    }, 'root', initialActiveColumns));
     this.enqueueHop(originNode.id, params.question, 0, 3, { columns: initialActiveColumns, existingTaskId: rootTask.id });
     this.seedAgenda(originNode.id, this._direction, initialActiveColumns, rootTask.id);
     this._status = 'initialized';
@@ -1847,11 +1857,20 @@ export class NavigationEngine implements IHopStateMachine {
 
       // CT: recover active columns from accumulated edges; empty sets still dispatch to the AI.
       if (this.mode.kind === 'ct' && this.tracer) {
-        candidate.activeColumns = this.tracer.determineActiveColumnsForCandidate(
+        const spineBound = this.tracer.determineActiveColumnsForCandidate(
           candidate.nodeId,
           candidate.activeColumns ?? [],
         );
-        candidate.activeColumns = this.resolveActiveColumnsForNode(candidate.nodeId, candidate.activeColumns) ?? [];
+        const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
+        // The spine carries a column under the spelling of the node that named it, and a
+        // non-bodied carrier in between is never analysed, so neither can say what the upstream
+        // node calls the same value. When the bind empties the set, re-test the traced targets
+        // against this node's own declared columns before concluding it carries none: a node
+        // declaring a traced column is asked about it by name, and one declaring none of them
+        // still dispatches empty and is analysed for what it does to the row set instead.
+        candidate.activeColumns = bound.length > 0
+          ? bound
+          : this.resolveActiveColumnsForNode(candidate.nodeId, this.tracer.targetColumns) ?? [];
       }
 
       entry = candidate;
@@ -2678,16 +2697,6 @@ export class NavigationEngine implements IHopStateMachine {
     const questions = entry.taskIds
       .map(taskId => this.taskLedger.getTask(taskId)?.question)
       .filter((question): question is string => Boolean(question));
-    if (this.mode.kind === 'ct' && (carried?.length ?? 0) === 0) {
-      this.log('debug', `[Disposition] pass-node ${entry.nodeId} declares none of the carried columns — contraction stops here`);
-      // The pass node itself is already marked `passthrough` by the dispatcher; what is lost here is
-      // everything behind it. Record the lead so the shortened trace carries its own explanation.
-      const via = this.currentFocusNodeId ?? this.originNodeId ?? undefined;
-      if (via) {
-        this.recordContractedLead(entry.nodeId, via, questions[0] ?? `Continue through ${entry.nodeId}`);
-      }
-      return;
-    }
     for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
       for (const question of questions.length ? questions : [`Continue through ${entry.nodeId}`]) {
         this.enqueueHop(nid, question, entry.depth + 1, entry.priority, { columns: carried });
@@ -2843,11 +2852,13 @@ export class NavigationEngine implements IHopStateMachine {
       return;
     }
 
-    // Empty set === no columns: normalize an explicit `[]` to omitted so a caller passing an empty
-    // array in BB mode is not misread as "carries active columns" by the guard below.
-    const filtered = columns?.filter(Boolean);
-    const activeColumns = filtered && filtered.length ? filtered : undefined;
-    if (this.mode.kind === 'bb' && activeColumns !== undefined) {
+    // Omitted and empty are different facts and are kept apart here: omitted means the caller has
+    // no column opinion, `[]` means the engine determined that none of the traced columns resolve
+    // on this node. Collapsing the two would let the target set be re-padded onto a node that
+    // declares none of it. `agendaColumnsFor` owns the mode projection, including BB's rule that
+    // an agenda entry carries no column state at all.
+    const activeColumns = columns?.filter(Boolean);
+    if (this.mode.kind === 'bb' && activeColumns?.length) {
       throw new Error('BB agenda tasks must not carry active columns');
     }
     if (SCRIPT_TYPES.has(node.type)) {
@@ -2888,24 +2899,12 @@ export class NavigationEngine implements IHopStateMachine {
     // against `targetId` itself — bound it to what this carrier actually declares before it can
     // reach a bodied neighbour. `agendaColumnsFor` runs first so an omitted `columns` is resolved
     // to the tracer's target set before the bound, not left to escape the bound as `undefined`.
+    // The bind annotates; it never gates. An empty result means this carrier declares none of the
+    // traced columns, which is a fact about columns and not a reason to stop walking — the node
+    // behind it re-derives its own set at dispatch (see the column-spine bind in `runHop`).
     const ctCarried = this.mode.kind === 'ct'
       ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(columns)) ?? []
       : undefined;
-    if (ctCarried && ctCarried.length === 0) {
-      // Carrier declares none of the forwarded columns: stop the contraction here instead of
-      // dispatching a bodied neighbour with a column it cannot carry.
-      this.log('debug', `[Disposition] enqueue drop ${targetId} — carrier declares none of the forwarded columns, contraction stops here`);
-      const via = this.currentFocusNodeId ?? this.originNodeId ?? undefined;
-      this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
-        columns: ctCarried,
-        viaNodeId: via,
-        atHop: this.hopCount,
-      });
-      // The trace ends short here. Without a lead the truncation is invisible — the user sees a
-      // chain that simply stops, with no record of which carrier broke it or why.
-      if (via) this.recordContractedLead(targetId, via, question);
-      return;
-    }
     const carried = ctCarried ?? columns;
     this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
       columns: carried,
@@ -2941,8 +2940,8 @@ export class NavigationEngine implements IHopStateMachine {
    * rewrite the frozen target set that the snapshot invariant compares against.
    */
   private agendaColumnsFor(activeColumns: string[] | undefined): string[] | undefined {
-    if (this.mode.kind !== 'ct') return activeColumns;
-    if (activeColumns?.length) return activeColumns;
+    if (this.mode.kind !== 'ct') return activeColumns?.length ? activeColumns : undefined;
+    if (activeColumns !== undefined) return activeColumns;
     const fallback = this.tracer?.targetColumns;
     return fallback ? [...fallback] : undefined;
   }
@@ -2958,27 +2957,13 @@ export class NavigationEngine implements IHopStateMachine {
   ): InvestigationTask {
     const existing = existingTaskId ? this.taskLedger.getTask(existingTaskId) : undefined;
     if (existing) return existing;
-    if (this.mode.kind === 'ct') {
-      const columns = activeColumns?.length ? activeColumns : this.tracer?.targetColumns;
-      if (!columns?.length) throw new Error('CT agenda tasks require at least one active column');
-      return this.taskLedger.ensureTask({
-        kind: 'column_lineage',
-        source: priority === 2 ? 'model' : 'engine',
-        question,
-        nodeId,
-        parentTaskId,
-        activeColumns: columns as [string, ...string[]],
-        createdHop: this.hopCount,
-      });
-    }
-    return this.taskLedger.ensureTask({
-      kind: 'analytical',
+    return this.taskLedger.ensureTask(this.taskInputFor({
       source: priority === 2 ? 'model' : 'engine',
       question,
       nodeId,
       parentTaskId,
       createdHop: this.hopCount,
-    });
+    }, 'analytical', activeColumns));
   }
 
   /**

@@ -1,6 +1,6 @@
 import type { InvestigationTask, PendingLead } from './smTypes';
 
-type InvestigationTaskInput = {
+export type InvestigationTaskInput = {
   source: InvestigationTask['source'];
   question: string;
   nodeId?: string;

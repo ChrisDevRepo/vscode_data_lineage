@@ -423,8 +423,9 @@ column_trace_capture:
     Account for EVERY active tracked column — each gets one explicit decision:
       → Continue it:  a column_flow entry mapping it to its upstream source column(s) + route upstream.
       → It ends here: a column_flow entry with upstream_columns: [] (terminal — produced here, no upstream real column).
-    If this node carries NONE of the tracked columns, submit column_flow: [] — it is off-trace and
-    the engine excludes it from the result.
+    If this node carries NONE of the tracked columns, submit column_flow: [] — its column chain is
+    empty and the node is KEPT in the result for what it does to the rows. Put that in
+    sections[].text: joins, filters, predicates, set operations. Route its neighbours as usual.
 
     A tracked column you leave out of column_flow is rejected as column_chain_incomplete —
     account for it (continue / terminal). column_flow is engine-validated:
@@ -449,8 +450,8 @@ column_trace_capture:
     ]
     verdict: "analyze"
 
-    ## Example — this node is off-trace (carries none of the tracked columns)
-    column_flow: []    ← the engine excludes this node from the result
+    ## Example — no tracked column passes through this node
+    column_flow: []    ← the node and its analysis are kept; only the column chain stops here
 
     ## Verdict — choose based on how the node interacts with tracked columns
     - `analyze`: the node transforms or is the terminal source of a target column.
@@ -461,8 +462,8 @@ column_trace_capture:
     - `passthrough`: column flows through unchanged; the upstream writer is not yet visited.
       Fill column_flow naming the upstream column, then add route_requests to visit it.
       The edge is recorded here; full attribution resolves at the routed node.
-    - Off-trace: if the node carries none of the tracked columns, submit
-      column_flow: [] — the engine excludes it from the trace.
+    - No tracked column here: submit column_flow: [] and use sections[].text for what this node
+      decides about the surviving rows. It is retained; only its column chain is empty.
 
     ## Non-bodied table focus (TABLE written by a procedure)
     When the focus node is a TABLE (no DDL — only schema metadata), the procedure that

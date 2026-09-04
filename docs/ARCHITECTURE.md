@@ -344,6 +344,15 @@ only by reading the view; that reading is part of the trace, not a side branch.
 Withholding such a neighbor from CT would ask the model to describe a column's
 provenance while hiding what decides which rows survive.
 
+Column state annotates a hop; it never gates one. For the same question, origin,
+direction and depth the two modes walk the same node set, so a node reachable in
+BB is reachable in CT whether or not it carries a traced column. A non-bodied
+carrier declaring none of the traced columns is walked through, not stopped at:
+it is recorded as carrying none, and the node behind it re-derives its own column
+set against its own declared columns when it is dispatched. A node that genuinely
+carries none of them is dispatched with an empty set, is told so, and answers with
+`column_flow: []` plus what it does to the row set — it stays in the answer.
+
 CT rejects BB-only neighbor pruning; focus pruning still uses the topology-safe
 engine path. Any other behavioural difference between the two modes is a defect
 in CT, not a design choice.

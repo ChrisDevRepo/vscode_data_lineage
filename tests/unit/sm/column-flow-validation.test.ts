@@ -609,10 +609,14 @@ describe("Column Flow Validation", () => {
   try { engine.toJSON(); } catch { threwUndefined = true; }
   expect(threwUndefined, 'Defect B: CT agenda entry with activeColumns=undefined still rejects at toJSON()').toBe(true);
 
+  // The empty projection is legal and is asserted here as the counterpart to the case above: a CT
+  // agenda entry must CARRY its projection, and "none of the traced columns resolve on this node"
+  // is a resolved projection, not a missing one. Overturned deliberately — the earlier `.min(1)`
+  // forced the engine to re-pad the frozen target set onto a node declaring none of it.
   if (downEntry) downEntry.activeColumns = [];
   let threwEmpty = false;
   try { engine.toJSON(); } catch { threwEmpty = true; }
-  expect(threwEmpty, 'Defect B: CT agenda entry with activeColumns=[] still rejects at toJSON() (NonEmptyStrings.min(1))').toBe(true);
+  expect(threwEmpty, 'CT agenda entry with activeColumns=[] serializes: an empty projection is a determined answer, not a missing one').toBe(false);
 
   expect(logs.some(m => m.includes('[Checkpoint] serialize rejected') && m.includes('agenda') && m.includes('activeColumns')), 'Defect B: toJSON() rejection logs the issuePaths diagnostic (not just the generic InvalidEngineCheckpointError message)').toBe(true);
 });
@@ -822,9 +826,11 @@ describe("J23 — CT active columns through contracted tables (red reproductions
 
   /**
    * Contract: the `enqueueHop` non-bodied contraction bound ({@link NavigationEngine.resolveActiveColumnsForNode})
-   * stops a seed-time or route-admission contraction at any carrier that does not declare the
+   * BINDS a seed-time or route-admission contraction at any carrier that does not declare the
    * routed column, so neither `writer_proc` nor `reader_proc` inherits `Discount` en route to
-   * their own `OrderAmount` agenda entry.
+   * their own `OrderAmount` agenda entry — and it binds only. The walk continues past the carrier
+   * with an empty projection, so the node behind it is reached in CT exactly as it is in BB, and
+   * merges its real column when the route arrives.
    */
   it("RC2: the origin-resolved target column no longer leaks through the carrier's SEED-time contraction (writer_proc, pure-inbound chain) — symmetric with its later route-admission (reader_proc, contraction-extension)", () => {
     // Stage 1 — immediately after init()+one getHopContext() (origin_view dispatched), BEFORE any
@@ -839,10 +845,12 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     const seedSnap = engine.toJSON() as { agenda: Array<{ nodeId: string; activeColumns?: string[] }> };
     const seedWriter = seedSnap.agenda.find((e) => e.nodeId === 'writer_proc');
     const seedReader = seedSnap.agenda.find((e) => e.nodeId === 'reader_proc');
-    // GREEN: writer_proc is on the pure-inbound BFS chain, but the carrier-bounded contraction at
-    // staging (which never declares 'Discount') stops before recursing to any bodied neighbour —
-    // no seed-time entry, the same outcome as reader_proc below, not a leaked one.
-    expect(seedWriter === undefined, `J23 RC2 stage 1: writer_proc has no seed-time agenda entry (found: ${JSON.stringify(seedWriter)}) — the carrier-bounded contraction at 'staging' stops before it, since 'staging' never declares 'Discount'`).toBe(true);
+    // GREEN: writer_proc is on the pure-inbound BFS chain, so the contraction at staging reaches it
+    // exactly as a BB walk would. staging never declares 'Discount', so the bound empties the
+    // projection rather than forwarding it — the entry exists and carries [], not ['Discount'].
+    // Nothing leaked and nothing was lost: both halves are asserted here as one pair.
+    expect(seedWriter !== undefined, `J23 RC2 stage 1: writer_proc HAS a seed-time agenda entry — the contraction at 'staging' binds the projection, it does not stop the walk`).toBe(true);
+    expect((seedWriter?.activeColumns ?? ['MISSING']).join(','), `J23 RC2 stage 1: writer_proc's seed-time projection is empty, not the leaked seed target — 'staging' never declares 'Discount' (found: ${JSON.stringify(seedWriter)})`).toBe('');
     // GREEN (documentary): reader_proc sits on a mixed in-then-out path relative to
     // origin_view, so computeBfsScope's inbound/outbound split never reaches it — it has no
     // seed-time entry to leak into at all, confirmed here rather than assumed.

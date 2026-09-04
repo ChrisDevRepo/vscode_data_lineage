@@ -36,6 +36,8 @@ interface RetentionCase {
   readonly flow: Readonly<Record<string, FlowEntry[]>>;
   /** Required nodes the measured CT run lost and the BB run kept (CR section 6). */
   readonly measuredLost: readonly string[];
+  /** Active column set the hop at this node must be dispatched with, asserted at dequeue. */
+  readonly expectActiveColumns?: Readonly<Record<string, readonly string[]>>;
 }
 
 const V = 'view' as const, T = 'table' as const, P = 'procedure' as const, F = 'function' as const;
@@ -231,12 +233,11 @@ const CASES: readonly RetentionCase[] = [
   },
   {
     // `[ct].[stgorders]` is the non-bodied carrier between the origin and the rest of the chain,
-    // and it declares none of the traced column. The seed contraction drops it outright — the log
-    // reads `enqueue drop [ct].[stgorders] — carrier declares none of the forwarded columns,
-    // contraction stops here` — and only the model's own column_flow re-routes through it, so
-    // everything behind the carrier reaches the answer by a second path rather than the first. This
-    // case pins that recovery: BB forwards through the same carrier unconditionally, and CT must
-    // end with the same node set however it got there.
+    // and it declares none of the traced column. The carrier's bind empties the projection; the
+    // walk continues through it exactly as BB's does, so `[ct].[vworderfeed]` is reached on the
+    // first path and re-derives its own `NetAmount` at dispatch. This case carries the acceptance
+    // pair for that: the node is handed the real column it declares, and the rejection hint fires
+    // only for a column that genuinely is not on the node.
     id: 'C15 — a carrier that declares none of the traced columns must still be traversed',
     origin: '[ct].[vwordertotals]', tracedColumn: 'NetAmount',
     nodes: [
@@ -253,14 +254,13 @@ const CASES: readonly RetentionCase[] = [
     reachRequired: ['[ct].[stgorders]', '[ct].[vworderfeed]', '[ct].[orders]'],
     flow: {
       '[ct].[vwordertotals]': [{ out_col: 'NetAmount', upstream_columns: [{ node: '[ct].[stgorders]', col: 'RawAmount' }] }],
-      // `[]` is what the engine demands here today, and it is the reason this case is a retention
-      // guard and not the fix: the carrier forwards its own `RawAmount`, so `[ct].[vworderfeed]`
-      // is dispatched with an EMPTY active-column set even though it declares `NetAmount`, the
-      // traced column. A flow naming `NetAmount` is refused as `out_col_not_on_node` — a real
-      // column on the right node rejected as untracked. Open, recorded under P1-13; the fix and its
-      // red test land together in the first AI-surface cycle B11 allows.
-      '[ct].[vworderfeed]': [],
+      // Both halves of the acceptance pair are asserted on this node: it is handed the real column
+      // it declares (see `expectActiveColumns`), and a flow naming that column commits instead of
+      // being refused as `out_col_not_on_node`. The carrier's own empty projection annotates the
+      // carrier; it no longer decides what the node behind it is allowed to carry.
+      '[ct].[vworderfeed]': [{ out_col: 'NetAmount', upstream_columns: [{ node: '[ct].[orders]', col: 'OrderAmount' }] }],
     },
+    expectActiveColumns: { '[ct].[vworderfeed]': ['NetAmount'] },
     measuredLost: [],
   },
 ];
@@ -286,6 +286,13 @@ function driveCt(engine: NavigationEngine, testCase: RetentionCase): void {
     const focusId = ctx.focus_node.id;
     const columnFlow = testCase.flow[focusId];
     expect(columnFlow, `${testCase.id}: the case scripts a column_flow for dispatched focus ${focusId}`).toBeDefined();
+    const expected = testCase.expectActiveColumns?.[focusId];
+    if (expected) {
+      expect(
+        [...(engine.columnAspect?.active_columns ?? [])].sort().join(','),
+        `${testCase.id}: ${focusId} is dispatched with the columns it declares, not an empty set`,
+      ).toBe([...expected].sort().join(','));
+    }
     const outcome = engine.submitFindings({
       focus_node_id: focusId,
       sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
@@ -672,6 +679,10 @@ const SINK_CASE: RetentionCase = {
     // The loader joins DimCalendar to bound the load window and writes ErrorLog on failure; neither
     // carries a value into the traced column, so its flow names neither.
     '[ct].[sploadsalesstaging]': [],
+    // Reached only in the routed variant below: routing to `auditlog` contracts through it to its
+    // bodied writer, exactly as a BB walk would. The writer carries `Note`, none of the traced
+    // `Discount`, so its flow is empty — the node is analysed for what it does, not skipped.
+    '[ct].[splogaudit]': [],
   },
   measuredLost: [],
 };

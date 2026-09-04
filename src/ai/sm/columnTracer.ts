@@ -66,7 +66,8 @@ export class ColumnTracer {
    * The structural completeness guard for the column chain: every active
    * column must be resolved — continued (an entry with upstream real columns) or produced here
    * (an entry with `upstream_columns: []`). A node producing none of the tracked columns
-   * submits `column_flow:[]` and is excluded as off-trace (it never prunes itself).
+   * submits `column_flow:[]` and is retained: only its column chain is empty, and it is kept in
+   * the answer for what it does to the row set (it never prunes itself).
    * An entry's `out_col` is how the AI accounts for that column, so
    * the result is the pure set-difference `active_columns − {out_col}`. A non-empty
    * result means the chain was left incomplete; the engine rejects and the worker
@@ -196,10 +197,10 @@ export class ColumnTracer {
     for (let entryIndex = 0; entryIndex < columnFlow.length; entryIndex++) {
       const entry = columnFlow[entryIndex];
       if (!activeNorm.includes(normalizeColName(entry.out_col))) {
-        const availableColumns = this.aspect.active_columns.length > 0
-          ? [...this.aspect.active_columns]
-          : Array.from(validFocusCols).sort();
-        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: availableColumns });
+        // `available_columns` names the tracked set and nothing else. Falling back to the node's
+        // own DDL columns listed the rejected value itself as a valid one, so the envelope
+        // contradicted its own reason and no rewrite of it could succeed.
+        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns] });
         continue;
       }
 

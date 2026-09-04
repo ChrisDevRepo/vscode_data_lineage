@@ -172,7 +172,10 @@ const AgendaEntrySchema = z.object({
   nodeId: NonEmptyString,
   priority: NonNegativeInt,
   depth: NonNegativeInt,
-  activeColumns: NonEmptyStrings.optional(),
+  // Aligned with `ColumnAspectSchema.active_columns`, which already permits an empty set: a CT
+  // agenda entry records what the engine resolved on that node, and "none of them" is a resolved
+  // answer. The CT refinement below still requires the projection to be present.
+  activeColumns: z.array(NonEmptyString).optional(),
   lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
 
