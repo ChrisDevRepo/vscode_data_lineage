@@ -264,8 +264,13 @@ export class NavigationEngine implements IHopStateMachine {
   public classification?: ClassificationValue;
   /** The operational status of the state machine. */
   protected _status: SmStatus = 'created';
-  /** Active exploration mode and, for CT, the live column aspect state exposed to prompt builders. */
-  public mode: EngineAspectMode = { kind: 'bb' };
+  /**
+   * Name of the active mode, read only by the label and prompt-argument sites that report which
+   * mode this is. No behaviour is gated on it — {@link tracer} is the predicate every branch reads,
+   * and the two are written together at every assignment site, so they always agree.
+   */
+  protected mode: EngineAspectMode = { kind: 'bb' };
+  /** The column aspect CT adds to the BB spine, `null` in BB. Its presence *is* CT mode. */
   protected tracer: ColumnTracer | null = null;
   /** ID of the initial or root node for navigation. */
   protected originNodeId: string | null = null;
@@ -633,8 +638,8 @@ export class NavigationEngine implements IHopStateMachine {
     bbKind: 'root' | 'analytical',
     preferredColumns: readonly string[] | undefined,
   ): InvestigationTaskInput {
-    if (this.mode.kind !== 'ct') return { ...common, kind: bbKind };
-    const columns = preferredColumns?.length ? preferredColumns : this.tracer?.targetColumns;
+    if (!this.tracer) return { ...common, kind: bbKind };
+    const columns = preferredColumns?.length ? preferredColumns : this.tracer.targetColumns;
     if (!columns?.length) throw new Error('CT tasks require at least one active column');
     return { ...common, kind: 'column_lineage', activeColumns: [...columns] as [string, ...string[]] };
   }
@@ -756,7 +761,7 @@ export class NavigationEngine implements IHopStateMachine {
       tally: { ...this.memory.getVerdictCounts(), prune: this.hopProgress.pruned },
       scopeExpansions: this.budgetExpansions.length,
       allowedSchemaCount: this.sessionAllowedSchemas.size,
-      ...(this.mode.kind === 'ct' && this.tracer ? {
+      ...(this.tracer ? {
         columnEdgeCount: this.tracer.edges.length,
         activeColumnCount: this.tracer.activeColumns.length,
         columnFlowEntries: this.lastHopColumnFlowEntries,
@@ -1216,7 +1221,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Explicit analysis mode captured at {@link init}. */
   public get currentAnalysisMode(): 'bb' | 'ct' {
-    return this.initSnapshot?.analysisMode ?? (this.mode.kind === 'ct' ? 'ct' : 'bb');
+    return this.initSnapshot?.analysisMode ?? this.mode.kind;
   }
 
   /**
@@ -1276,7 +1281,7 @@ export class NavigationEngine implements IHopStateMachine {
       depthIntent: this.currentDepthIntent,
       direction: this._direction,
       analysisMode: this.currentAnalysisMode,
-      columnAspectActive: this.mode.kind === 'ct',
+      columnAspectActive: this.tracer !== null,
       targetColumns: this.tracer?.targetColumns,
       estimatedDdlChars,
       estimatedDdlTokens: estimateTokens(estimatedDdlChars),
@@ -1921,7 +1926,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
 
       // CT: recover active columns from accumulated edges; empty sets still dispatch to the AI.
-      if (this.mode.kind === 'ct' && this.tracer) {
+      if (this.tracer) {
         const spineBound = this.tracer.determineActiveColumnsForCandidate(
           candidate.nodeId,
           candidate.activeColumns ?? [],
@@ -1958,7 +1963,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.currentFocusQuestion = this.taskLedger.getTask(entry.taskIds[0])?.question ?? null;
 
     // Synchronize the Column Aspect to only show columns relevant to this specific path
-    if (this.mode.kind === 'ct' && this.tracer) {
+    if (this.tracer) {
       this.tracer.setActiveColumns(entry.activeColumns || []);
     }
     // Read continuation questions from THIS entry, not a global cache last written by whichever
@@ -2020,7 +2025,7 @@ export class NavigationEngine implements IHopStateMachine {
       depth_cap: this.computeDepthCap(),
     };
     workingMemory.deferred_count = this.deferredQuestions.length;
-    if (this.mode.kind === 'ct' && this.tracer) {
+    if (this.tracer) {
       workingMemory.column_aspect = this.tracer.state;
     }
 
@@ -2109,7 +2114,7 @@ export class NavigationEngine implements IHopStateMachine {
    * @remarks
    * Pruning is AI-decided in both modes (1.4b): a `verdict=prune` submission executes through
    * the topology-safe don't-orphan path with reason `submitted_prune`; CT focus prunes are also
-   * surfaced as `ctPrunedNodeIds`. Strict mode schemas reject BB-only `prune_neighbors` in CT.
+   * surfaced as `ctPrunedNodeIds`. `prune_neighbors` is the same key on both forms.
    * Column continuity is enforced after the strict CT boundary requires `column_flow`.
    *
    * Route/column validation classifies failures into a structural {@link InvalidRouteKind}.
@@ -2153,7 +2158,7 @@ export class NavigationEngine implements IHopStateMachine {
     // entry per declared column, so a hint naming passthrough alone spends a generation only to
     // land on `column_chain_incomplete` (P1-40).
     let declaredActiveColumns: readonly string[] = [];
-    if (this.mode.kind === 'ct' && this.tracer) {
+    if (this.tracer) {
       const declaredNorm = new Set(
         (getNodeColumns(focusId, this.nodeMap, this.store ?? undefined) ?? []).map(c => normalizeColName(c.name)),
       );
@@ -2185,7 +2190,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.lastRoutedDeferred = 0;
       this.lastHopColumnFlowEntries = 0;
       this._pendingLineageQuestions = [];
-      if (this.mode.kind === 'ct') this.ctPrunedFocusIds.add(focusId);
+      if (this.tracer) this.ctPrunedFocusIds.add(focusId);
       this.removedSet.add(focusId);
       this.visited.add(focusId);
       this.markNodeState(
@@ -2236,14 +2241,14 @@ export class NavigationEngine implements IHopStateMachine {
       reason: SmNodeStateReason;
       meta: { columns?: string[]; viaNodeId?: string; atHop?: number };
     }> = [];
-    const stagedColumnFlowEntries = this.mode.kind === 'ct'
+    const stagedColumnFlowEntries = this.tracer
       ? finding.column_flow?.length ?? 0
       : 0;
     const routeColumnsByNode = new Map<string, Set<string>>();
     const routeQuestionsByNode = new Map<string, string>();
     const routeRequests = [...(finding.route_requests ?? [])];
 
-    if (this.mode.kind === 'ct' && finding.column_flow) {
+    if (this.tracer && finding.column_flow) {
       for (const entry of finding.column_flow) {
         for (const ref of entry.upstream_columns) {
           const nid = resolveModelNodeId(ref.node, this.nodeMap) ?? ref.node.toLowerCase();
@@ -2340,7 +2345,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
     // Column Aspect validation + completeness is delegated to ColumnTracer and pure set-difference checks.
-    if (this.mode.kind === 'ct' && this.tracer) {
+    if (this.tracer) {
       const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log);
       if (valResult.error) {
         return valResult.error;
@@ -2410,7 +2415,7 @@ export class NavigationEngine implements IHopStateMachine {
       stagedSummaryChars = finding.summary?.length ?? 0;
 
       // Mark non-bodied to/from nodes as pass-through without re-staging column edges.
-      if (this.mode.kind === 'ct' && this.tracer && finding.column_flow) {
+      if (this.tracer && finding.column_flow) {
         for (const entry of finding.column_flow) {
           const toNode = entry.writes_to?.node ? (resolveModelNodeId(entry.writes_to.node, this.nodeMap) ?? entry.writes_to.node.toLowerCase()) : focusId;
           const toCol  = entry.writes_to?.col  ?? entry.out_col;
@@ -2492,7 +2497,7 @@ export class NavigationEngine implements IHopStateMachine {
     // terminal entry there asks the model to assert a column origin that does not exist, which is
     // the fabrication class these guards exist to stop; the chain simply ends here and the node is
     // retained for what it does to the row set.
-    if (this.mode.kind === 'ct' && this.tracer) {
+    if (this.tracer) {
       const submittedFlow = finding.column_flow ?? [];
       // `declaredActiveColumns` (hoisted above the prune branch) decides both halves: whether the
       // empty-flow declaration is checkably false, and — when the hop is rejected for any reason —
@@ -2610,7 +2615,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.lastHopSummaryChars = stagedSummaryChars;
       this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
 
-      if ((this.mode.kind === 'ct' && this.tracer) && stagedColumnEdges.length > 0) {
+      if (this.tracer && stagedColumnEdges.length > 0) {
         this.tracer.edges.push(...stagedColumnEdges);
         // Group continuation questions NOW (focusId + hopCount still match these edges) by the
         // upstream node that must answer each; the route loop below hands each group to that
@@ -2835,12 +2840,12 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private contractThroughPassNode(entry: AgendaEntry): void {
     // Bound carried columns to this pass node's on-trace spine before propagation.
-    const spineBound = (this.mode.kind === 'ct' && this.tracer)
+    const spineBound = this.tracer
       ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [])
       : entry.activeColumns;
     // Spine-empty candidates fall back to the requested set verbatim (determineActiveColumnsForCandidate
     // above) — bound that result to the pass node's own declared columns too, same predicate as enqueueHop.
-    const carried = this.mode.kind === 'ct' ? (this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []) : spineBound;
+    const carried = this.tracer ? (this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []) : spineBound;
     const questions = entry.taskIds
       .map(taskId => this.taskLedger.getTask(taskId)?.question)
       .filter((question): question is string => Boolean(question));
@@ -3005,7 +3010,7 @@ export class NavigationEngine implements IHopStateMachine {
     // declares none of it. `agendaColumnsFor` owns the mode projection, including BB's rule that
     // an agenda entry carries no column state at all.
     const activeColumns = columns?.filter(Boolean);
-    if (this.mode.kind === 'bb' && activeColumns?.length) {
+    if (!this.tracer && activeColumns?.length) {
       throw new Error('BB agenda tasks must not carry active columns');
     }
     if (SCRIPT_TYPES.has(node.type)) {
@@ -3049,7 +3054,7 @@ export class NavigationEngine implements IHopStateMachine {
     // The bind annotates; it never gates. An empty result means this carrier declares none of the
     // traced columns, which is a fact about columns and not a reason to stop walking — the node
     // behind it re-derives its own set at dispatch (see the column-spine bind in `runHop`).
-    const ctCarried = this.mode.kind === 'ct'
+    const ctCarried = this.tracer
       ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(columns)) ?? []
       : undefined;
     const carried = ctCarried ?? columns;
@@ -3087,9 +3092,9 @@ export class NavigationEngine implements IHopStateMachine {
    * rewrite the frozen target set that the snapshot invariant compares against.
    */
   private agendaColumnsFor(activeColumns: string[] | undefined): string[] | undefined {
-    if (this.mode.kind !== 'ct') return activeColumns?.length ? activeColumns : undefined;
+    if (!this.tracer) return activeColumns?.length ? activeColumns : undefined;
     if (activeColumns !== undefined) return activeColumns;
-    const fallback = this.tracer?.targetColumns;
+    const fallback = this.tracer.targetColumns;
     return fallback ? [...fallback] : undefined;
   }
 
@@ -3325,7 +3330,7 @@ export class NavigationEngine implements IHopStateMachine {
       node_states: Array.from(this.nodeStates.values()),
       columnAspect: this.tracer?.state ?? null,
       // CT focus nodes the AI pruned (verdict=prune -> no column flow).
-      ...(this.mode.kind === 'ct' && this.tracer ? { ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds) } : {}),
+      ...(this.tracer ? { ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds) } : {}),
     };
   }
 
@@ -3352,7 +3357,7 @@ export class NavigationEngine implements IHopStateMachine {
       engineInternals: this.serializeInternals(),
       // Mode-independent: the sink trim bounds the render in BB and CT alike.
       ...(this.renderDroppedIds.size > 0 ? { renderDroppedNodeIds: Array.from(this.renderDroppedIds) } : {}),
-      ...(this.mode.kind === 'ct' && this.tracer ? {
+      ...(this.tracer ? {
         // The in-flight hop's own questions (set from its AgendaEntry at dispatch), not a fresh
         // recompute against `currentFocusNodeId` — that would describe the just-committed hop,
         // not the one a mid-hop resume needs to keep showing.
@@ -3463,9 +3468,9 @@ export class NavigationEngine implements IHopStateMachine {
     // ── Top-level lifecycle / scope / agenda state ──
     engine._status = snapshot.status;
     if (snapshot.columnAspect) {
-        engine.tracer = new ColumnTracer(snapshot.columnAspect.target_columns, snapshot.columnAspect);
-        engine.mode = { kind: 'ct' };
-      }
+      engine.tracer = new ColumnTracer(snapshot.columnAspect.target_columns, snapshot.columnAspect);
+      engine.mode = { kind: 'ct' };
+    }
     engine.taskLedger.restore(internals.investigationTasks, internals.pendingLeads);
     engine.hopCount = snapshot.hopCount;
     engine.scopeNodeIds = new Set(snapshot.scopeNodeIds);

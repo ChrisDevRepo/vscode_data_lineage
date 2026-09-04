@@ -247,7 +247,7 @@ export interface HopFinding {
    */
   route_requests?: RouteRequest[];
   /**
-   * BB-only requests to omit nodes outside the approved exploration scope. Unknown, already
+   * Requests to omit nodes outside the approved exploration scope, carried by both modes. Unknown, already
    * processed, and non-required in-scope targets are retained with a visible notice; required
    * in-scope targets remain subject to the missing-route guard. An out-of-scope target may be
    * accepted when topology-safe. Origin, same-submit route conflicts, and orphaning prunes are fatal.

@@ -150,7 +150,7 @@ describe("Submit Findings Schema", () => {
   expect(parsed.success, 'CT accepts upstream_columns in column_flow with plain route_requests').toBe(true);
 });
 
-  it("In a BB session the model must never be shown the `column_flow` box; in CT never `prune_neighbors`.", () => {
+  it("Each session is shown exactly one strict form: the BB form without `column_flow`, the CT form with it.", () => {
   expect(submitFindingsSchemaForMode('bb') === SubmitFindingsBbInputSchema, 'selector returns the single strict BB schema').toBe(true);
   expect(submitFindingsSchemaForMode('ct') === SubmitFindingsCtInputSchema, 'selector returns the single strict CT schema').toBe(true);
 });

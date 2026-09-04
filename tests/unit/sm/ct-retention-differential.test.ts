@@ -1297,22 +1297,18 @@ function driveHopPruneWalk(mode: 'bb' | 'ct'): SmResult {
 }
 
 describe('hop-level prune — the in-scope neighbour decision, both modes', () => {
-  it('executes in CT: d is pruned at hop b, the hop commits, d never renders', () => {
-    const result = driveHopPruneWalk('ct');
-    const rendered = new Set(result.fullNodes.map(n => n.id));
-    expect(rendered.has('[ct].[tbld]'), 'the hop-level prune removed d from the answer').toBe(false);
-    expect(rendered.has('[ct].[tblc]'), 'the BB-style routed neighbour stays').toBe(true);
-    expect(rendered.has('[ct].[vwe]'), 'the CT-tracked routed neighbour stays').toBe(true);
-    expect(rendered.has('[ct].[vwf]'), 'the contraction through the routed table reaches f').toBe(true);
-  });
-
-  it('executes in BB: the same decision, the same graph', () => {
-    const result = driveHopPruneWalk('bb');
-    const rendered = new Set(result.fullNodes.map(n => n.id));
-    expect(rendered.has('[ct].[tbld]'), 'the BB walk drops d identically').toBe(false);
-    expect(rendered.has('[ct].[tblc]'), 'and keeps the routed neighbours identically').toBe(true);
-    expect(rendered.has('[ct].[vwf]'), 'the table contraction is shared machinery').toBe(true);
-  });
+  // One body, one expectation set: the same per-hop decision renders the same graph in either mode,
+  // so a mode-dependent render trim fails here rather than passing a mode-specific arm.
+  for (const mode of ['ct', 'bb'] as const) {
+    it(`executes in ${mode.toUpperCase()}: d is pruned at hop b, the hop commits, d never renders`, () => {
+      const result = driveHopPruneWalk(mode);
+      const rendered = new Set(result.fullNodes.map(n => n.id));
+      expect(rendered.has('[ct].[tbld]'), `${mode}: the hop-level prune removed d from the answer`).toBe(false);
+      expect(rendered.has('[ct].[tblc]'), `${mode}: the routed table neighbour stays`).toBe(true);
+      expect(rendered.has('[ct].[vwe]'), `${mode}: the routed proc neighbour stays`).toBe(true);
+      expect(rendered.has('[ct].[vwf]'), `${mode}: the contraction through the routed table reaches f`).toBe(true);
+    });
+  }
 
   it('a queued neighbour is not pulled by prune_neighbors — it keeps its own focus verdict', () => {
     const nodes = HOP_PRUNE_NODES.map(([id, type, columns]) => makeNode({

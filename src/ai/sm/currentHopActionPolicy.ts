@@ -16,7 +16,7 @@ export interface CurrentHopActionPolicyInput {
   originId: string;
   /** Explicit route_requests targets. */
   routeTargets: CurrentHopActionTarget[];
-  /** BB prune_neighbors targets. */
+  /** Explicit prune_neighbors targets. */
   pruneTargets: CurrentHopActionTarget[];
   /** Nodes admitted to the approved exploration scope. */
   scopeNodeIds: ReadonlySet<string>;

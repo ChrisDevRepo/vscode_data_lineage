@@ -618,7 +618,7 @@ export function buildCapturedFormulaFacts(result: SmResult): string {
         // are one entry, not two — the de-duplication key and the rendered line share this form.
         const formula = match[1].split(/\s+/).filter(Boolean).join(' ');
         if (formula.length === 0) continue;
-        const key = `${nodeId} ${formula}`;
+        const key = `${nodeId}\u0000${formula}`;
         if (seen.has(key)) continue;
         seen.add(key);
         lines.push(`- ${nodeId} — $$ ${formula} $$`);
