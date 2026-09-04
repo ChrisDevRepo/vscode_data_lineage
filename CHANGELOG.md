@@ -10,6 +10,7 @@
 - Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.
 - The longest-chain report lists up to 25 chains, deepest first, instead of reusing the graph node limit as a chain count.
 - A trace narrowed to part of the model is held to the same render limit as any other view, and reports when it exceeds it rather than drawing an oversized view. Adjust the ceiling with `dataLineageViz.renderLimit`.
+- A one-direction trace (upstream only, or downstream only) now draws every edge between the objects it includes; an edge that pointed against the trace direction between two traced objects was previously hidden.
 
 ### Removed
 - Saved views no longer restore the camera position they were captured at; a restored view fits the graph instead.
