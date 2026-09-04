@@ -267,10 +267,17 @@ describe("Navigation Engine — node conservation", () => {
     verdict: 'analyze',
     prune_neighbors: ['b'],
   }) as any;
-  expect('error' in rej && rej.error === 'missing_required_route', 'required in-scope b must be routed').toBe(true);
+  // Amended from the pre-D-020 pin (the orphaning prune died as missing_required_route before
+  // don't-orphan could speak): the hop-level prune is now expressible, so the don't-orphan guard
+  // is what refuses it. The refused prune also leaves the required id unaccounted, so the
+  // rejection mixes both facts — the generic code with the orphan reason carried in hint and
+  // detail, which is the repair-sufficient form.
+  expect('error' in rej && rej.error === 'route_validation_failed', 'the orphaning hop-level prune is rejected').toBe(true);
+  expect(/orphan/i.test(rej.hint ?? ''), 'hint names the orphan refusal, not only a routing mandate').toBe(true);
+  expect(/orphan/i.test(JSON.stringify(rej.detail ?? [])), 'detail attributes the refusal to the orphaned committed node').toBe(true);
   const state = engine.toJSON();
-  expect(!state.removedSet.includes('b'), 'the rejected prune leaves b unremoved').toBe(true);
-  expect(JSON.stringify(state.memory.detailSlots.a) === detailBefore, 'required-neighbor rejection does not replace committed detail').toBe(true);
+  expect(!state.removedSet.includes('b'), 'the refused prune leaves b unremoved').toBe(true);
+  expect(JSON.stringify(state.memory.detailSlots.a) === detailBefore, 'the refused prune does not replace committed detail').toBe(true);
 });
 
   it("A genuinely out-of-scope neighbor retains the prior topology-safe prune behavior.", () => {

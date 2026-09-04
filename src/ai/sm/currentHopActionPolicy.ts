@@ -28,6 +28,8 @@ export interface CurrentHopActionPolicyInput {
   removedIds: ReadonlySet<string>;
   /** Nodes whose authored detail is already committed. */
   notedIds: ReadonlySet<string>;
+  /** Nodes already queued for a hop of their own. */
+  agendaIds: ReadonlySet<string>;
 }
 
 /** Pure action classification consumed atomically by NavigationEngine. */
@@ -36,7 +38,8 @@ export interface CurrentHopActionPolicyResult {
   fatalErrors: InvalidRoute[];
   /** Nonfatal refused/unknown actions recorded for the next hop. */
   notices: InvalidRoute[];
-  /** Out-of-scope prune targets eligible for topology validation. */
+  /** Out-of-scope prune targets, and in-scope ones not already visited, queued, noted, or
+   * removed — all eligible for topology (don't-orphan) validation. */
   acceptedPruneIds: string[];
 }
 
@@ -95,16 +98,20 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       continue;
     }
     if (input.scopeNodeIds.has(id)) {
-      // The required-neighbor guard owns the fatal missing-route result. Other in-scope work is
-      // protected with a notice so an already-queued seed cannot manufacture a repair loop.
-      if (!input.requiredNeighborIds.has(id)) {
+      // The hop-level prune decision (D-020): an in-scope neighbour the model has decided is off
+      // the answer path is pruned at the hop, like any out-of-scope one. Queued work is the one
+      // protection — a prune may not pull a neighbour that already owns a pending hop; the
+      // don't-orphan topology check governs every accepted prune after this.
+      if (input.agendaIds.has(id)) {
         notices.push({
           kind: 'prune_noop_in_scope',
           id,
           path: target.path,
-          reason: `\`${id}\` is inside the approved exploration scope and cannot be pruned via prune_neighbors.`,
+          reason: `\`${id}\` is already queued for a hop of its own; prune_neighbors does not pull queued work.`,
         });
+        continue;
       }
+      acceptedPruneIds.push(id);
       continue;
     }
     acceptedPruneIds.push(id);

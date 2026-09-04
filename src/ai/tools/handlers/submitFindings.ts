@@ -73,12 +73,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         : SubmitFindingsBbInputSchema.safeParse(normalizedInput);
       if (!parsed.success) {
         const isCtMode = !!engine.columnAspect;
-        if (isCtMode && normalizedInput.prune_neighbors !== undefined) {
-          return s.logAndReturn('submit_findings', {
-            error: 'bb_field_forbidden_in_ct',
-            hint: 'CT mode forbids `prune_neighbors`. Submit `column_flow` with real `upstream_columns`, or `column_flow: []` when this node carries none of the active columns.',
-          }, normalizedInput);
-        }
         // Surface specific field paths so the model can correct the right field on retry.
         const seen = new Set<string>();
         const fieldErrors: string[] = [];

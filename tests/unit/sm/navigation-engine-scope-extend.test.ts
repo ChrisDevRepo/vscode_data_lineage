@@ -99,13 +99,16 @@ describe("Scope Extension + Hold-and-Amend", () => {
   expect(engine.heldFindingFocus === null, 'hold cleared after a committed submit').toBe(true);
 });
 
-  it("Test 3b: an approved required neighbor remains retain-protected and must be routed.", () => {
+  it("Test 3b: a required neighbor is satisfied by a route OR a topology-safe hop-level prune (D-020).", () => {
   const engine = new NavigationEngine(fanModel, fanGraph, () => {}, {});
   engine.init({ origin: 'p', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   advanceToM(engine);
 
   // Account for both required neighbors of m: route `a`, prune the (topology-safe) `b`.
-  const rejected = engine.submitFindings({
+  // Amended from the pre-D-020 pin (pruning a required neighbor was missing routing): the
+  // hop-level prune of an in-scope neighbour is the decision the same-graph contract requires
+  // both modes to express, and the don't-orphan guard — not a routing mandate — governs it.
+  const committed = engine.submitFindings({
     focus_node_id: 'm',
     sections: [{ angle: 'business' as const, text: 'analysis for m' }],
     summary: 'm summary',
@@ -113,15 +116,16 @@ describe("Scope Extension + Hold-and-Amend", () => {
     route_requests: [{ nodeId: 'a', question: 'trace a' }],
     prune_neighbors: ['b'],
   }) as any;
-  expect('error' in rejected && rejected.error === 'missing_required_route', 'pruning a required neighbor is rejected as missing routing').toBe(true);
-  expect(engine.heldFindingFocus === 'm', 'incompleteness-only rejection holds authored prose').toBe(true);
+  expect(!('error' in committed), 'routing a and pruning b accounts for both required neighbors — the hop commits').toBe(true);
+  expect(engine.heldFindingFocus === null, 'a complete account holds nothing').toBe(true);
   const state = engine.toJSON();
-  expect(!state.removedSet.includes('b'), 'required b is not removed').toBe(true);
+  expect(state.removedSet.includes('b'), 'the executed hop-level prune removed b').toBe(true);
   const resultIds = new Set(engine.getResult().detail_slots.map(s => s.nodeId));
-  expect(!resultIds.has('m'), 'rejected required-neighbor prune commits no m detail').toBe(true);
+  expect(resultIds.has('m'), 'the committed hop stores the m detail').toBe(true);
+  expect(!resultIds.has('b'), 'b never renders').toBe(true);
 });
 
-  it("Test 3c: a non-required in-scope prune is refused with a notice, without rejecting the hop.", () => {
+  it("Test 3c: an untouched in-scope prune target executes; only queued work is protected (D-020).", () => {
   const engine = new NavigationEngine(chainModel, chainGraph, () => {}, {});
   engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
 
@@ -138,10 +142,13 @@ describe("Scope Extension + Hold-and-Amend", () => {
     route_requests: [{ nodeId: 'n1', question: 'trace n1' }],
     prune_neighbors: ['n2'],
   });
-  expect('ok' in result, 'non-required in-scope prune does not create a repair loop').toBe(true);
+  // Amended from the pre-D-020 pin (the in-scope prune was a refused notice): an in-scope
+  // prune target the walk has not yet touched is exactly the hop-level prune decision, so it
+  // executes subject to don't-orphan; the protected notice survives only for queued work.
+  expect('ok' in result, 'the in-scope prune commits — no repair loop either way').toBe(true);
   const after = engine.toJSON();
-  expect(!after.removedSet.includes('n2'), 'the protected in-scope n2 is not removed').toBe(true);
-  expect(after.memory.recentRejections.some((r) => r.nodeId === 'n2'), 'the refused prune is visible as a notice').toBe(true);
+  expect(after.removedSet.includes('n2'), 'the executed hop-level prune removed n2').toBe(true);
+  expect(!after.memory.recentRejections.some((r) => r.nodeId === 'n2'), 'an executed prune is no refusal notice').toBe(true);
 });
 
   it("Test 3d: an out-of-scope prune retains the prior topology-safe behavior.", () => {
@@ -222,10 +229,15 @@ describe("Scope Extension + Hold-and-Amend", () => {
     verdict: 'analyze',
     prune_neighbors: ['rb'],
   }) as any;
-  expect('error' in rej && rej.error === 'missing_required_route', 'required rb must be routed rather than pruned').toBe(true);
+  // Amended from the pre-D-020 pin (the orphaning prune died as missing_required_route): the
+  // hop-level prune is now expressible, so the don't-orphan guard is what refuses it. The refused
+  // prune also leaves the required id unaccounted, so the rejection mixes both facts — the
+  // generic code with the orphan reason carried in hint and detail (repair-sufficient form).
+  expect('error' in rej && rej.error === 'route_validation_failed', 'the orphaning hop-level prune is rejected').toBe(true);
+  expect(/orphan/i.test(rej.hint ?? ''), 'hint names the orphan refusal, not only a routing mandate').toBe(true);
+  expect(/orphan/i.test(JSON.stringify(rej.detail ?? [])), 'detail attributes the refusal to the orphaned committed rc').toBe(true);
   expect(!engine.toJSON().removedSet.includes('rb'), 'rb is not removed by the refused prune').toBe(true);
-  expect(/route_requests/i.test(rej.hint ?? ''), 'hint restores the established required-route correction').toBe(true);
-  expect(JSON.stringify(engine.toJSON().memory.detailSlots.ra) === detailBefore, 'required-neighbor rejection does not replace authored detail').toBe(true);
+  expect(JSON.stringify(engine.toJSON().memory.detailSlots.ra) === detailBefore, 'the refused prune does not replace authored detail').toBe(true);
 });
 
   it("guard clears it — the prune commits.", () => {
@@ -261,10 +273,13 @@ describe("Scope Extension + Hold-and-Amend", () => {
     verdict: 'analyze',
     prune_neighbors: ['tbl'],
   }) as any;
-  expect(!('error' in ok), 'refusing a non-required in-scope prune does not reject the hop').toBe(true);
+  // Amended from the pre-D-020 pin (the in-scope prune of tbl was a refused notice): the
+  // target is untouched in-scope work, so the hop-level prune executes once the don't-orphan
+  // guard clears it — h stays reachable through its direct h→v edge without tbl.
+  expect(!('error' in ok), 'the in-scope prune commits once don\u2019t-orphan clears it').toBe(true);
   const after = engine.toJSON();
-  expect(!after.removedSet.includes('tbl'), 'approved in-scope tbl remains retained').toBe(true);
-  expect(after.memory.recentRejections.some((r) => r.nodeId === 'tbl'), 'refused in-scope prune is visible as a notice').toBe(true);
+  expect(after.removedSet.includes('tbl'), 'the executed hop-level prune removed tbl').toBe(true);
+  expect(!after.memory.recentRejections.some((r) => r.nodeId === 'tbl'), 'an executed prune is no refusal notice').toBe(true);
 });
 
   it("Test 4: a complete full resend is deliberate re-authoring; held prose does not overwrite it.", () => {

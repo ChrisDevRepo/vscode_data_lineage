@@ -35,7 +35,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_contributor_col:
     'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
   missing_required_route:
-    'Account for each required neighbor listed in detail by adding it to `route_requests`. Required neighbors are approved in-scope continuation nodes, so do not place them in `prune_neighbors`. Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.',
+    'Account for each required neighbor listed in detail — add it to `route_requests` to walk it, or keep it in `prune_neighbors` only when the prune was refused for a reason you can fix (it must not orphan committed work and must not target queued work). Omitting a required ID is never an option. Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.',
   self_loop_column:
     'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (see detail for the offending node.col). Keep the rest of column_flow, sections, and summary as submitted.',
   prune_absent:
@@ -47,7 +47,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_analyzed:
     'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
   prune_noop_in_scope:
-    'This node belongs to the approved exploration scope and is retained. Remove it from prune_neighbors.',
+    'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_origin_forbidden:
     'The origin node anchors the lineage and cannot be pruned. Remove it from prune_neighbors.',
   prune_would_orphan:
@@ -97,7 +97,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitRes
   const missingRouteHint = missingRouteErrors.length > 0
     ? [
         invalidlyPruned.length > 0
-          ? `Required neighbors submitted in prune_neighbors: [${invalidlyPruned.join(', ')}]. Remove these ids from prune_neighbors and add them to route_requests.`
+          ? `Required neighbors submitted in prune_neighbors were refused: [${invalidlyPruned.join(', ')}]. The node is either already queued for its own hop or pruning it would orphan committed work — add these ids to route_requests, or prune them only once that no longer holds.`
           : '',
         missingRoutes.length > 0
           ? `Required neighbors not accounted for: [${missingRoutes.join(', ')}]. Add these ids to route_requests.`

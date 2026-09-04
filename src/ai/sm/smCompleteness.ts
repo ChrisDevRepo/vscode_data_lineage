@@ -8,8 +8,8 @@
  * the same normalizer `ColumnTracer.validateColumnFlow` accepts a submitted `out_col` under, so a
  * value one guard admits can never be reported unaccounted by the other. No content judgment —
  * identifiers only. BB neighbor completeness is a separate, unrelated
- * mechanism (`requiredNeighborIds` → `BbStrategy.runRequiredNodesGuard` →
- * `missing_required_route`) and does not use this module.
+ * mechanism (`requiredNeighborIds` → the unconditional completeness guard in
+ * `submitFindings` → `missing_required_route`) and does not use this module.
  */
 
 import { normalizeColName } from '../../utils/sql';

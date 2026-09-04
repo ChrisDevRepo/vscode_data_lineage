@@ -471,13 +471,13 @@ const HopFindingBaseSchema = z.object({
  *
  * @remarks
  * The node's self-status is `analyze` (carries lineage), `passthrough` (kept, not a key transform), or `prune` (entirely irrelevant focus node — orphan-guarded removal).
- * `prune_neighbors` removes topology-safe neighbors outside the approved scope; in-scope neighbors remain protected.
+ * `prune_neighbors` removes topology-safe neighbors the evidence proves are off the answer path — out of scope, or in scope with nothing the answer needs; queued, visited, and removed targets are protected no-ops and every executed prune is don't-orphan-guarded.
  * BB does not carry CT-only `column_flow`.
  */
 export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('bb'),
   prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(
-    'Current-hop neighbor IDs to drop from a BB session because current evidence proves they are out of scope.',
+    'Current-hop neighbor IDs to drop from a BB session because current evidence proves they are off the answer path — out of the approved scope, or in scope with nothing the answer needs.',
   ),
 }).strict();
 
@@ -490,10 +490,15 @@ export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
  * checks each active tracked column is accounted for. `column_flow: []` is valid only when the node
  * has no tracked column interaction. A non-empty entry with `upstream_columns: []` means the node
  * carries/produces the active column but there is no upstream real column to route.
+ * `prune_neighbors` is the same key BB carries: same decision space, same topology-safe
+ * handling — CT is BB plus column tracking, so every BB field is present on the CT form.
  */
 export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('ct'),
   column_flow: ColumnFlowSchema,
+  prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(
+    'Current-hop neighbor IDs to drop from the session because current evidence proves they are off the answer path. Same contract as BB: a required neighbor is routed or pruned with evidence; queued work is protected and every executed prune is orphan-guarded.',
+  ),
 }).strict();
 
 /**
@@ -502,7 +507,7 @@ export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
  *
  * @remarks
  * BB returns {@link SubmitFindingsBbInputSchema} (no `column_flow`); CT returns
- * {@link SubmitFindingsCtInputSchema} (no `prune_neighbors`, `column_flow` required). The host path
+ * {@link SubmitFindingsCtInputSchema} (`column_flow` required; `prune_neighbors` shared with BB). The host path
  * uses this at the last seam before the model sees the tool set so the model cannot fill a field
  * invalid for the locked mode — the contract is the form's shape, not prompt prose. The static
  * catalog and `package.json` manifest keep the permissive union (drift guard + single-tool Copilot

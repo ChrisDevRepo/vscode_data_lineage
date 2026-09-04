@@ -222,13 +222,14 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     engine.columnAspect?.active_columns,
     engine.pendingLineageQuestions,
   );
-  // BB only (mode-pure): render the exact set the required-nodes guard will enforce, next to the
-  // data it governs — CT routing is column-driven and its guard is a no-op.
-  const required = engine.columnAspect ? [] : engine.requiredNeighborIds(focusId);
+  // Both modes: render the exact set the required-nodes guard will enforce, next to the data it
+  // governs. Neighbor visibility is identical in BB and CT — a neighbor carrying none of the traced
+  // columns still decides which rows survive, so CT is shown and held to the same checklist.
+  const required = engine.requiredNeighborIds(focusId);
   const accountFor = required.length > 0
     ? [
         '<required_neighbors>',
-        'Approved in-scope continuation neighbors for this hop:',
+        'Approved in-scope continuation neighbors for this hop — resolve every ID with one explicit decision (`route_requests` to walk it, or `prune_neighbors` with evidence it is off the answer path):',
         required.join(', '),
         '</required_neighbors>',
       ].join('\n')

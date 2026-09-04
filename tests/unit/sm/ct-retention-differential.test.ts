@@ -18,6 +18,9 @@ import type { DatabaseModel, LineageNode, ObjectType } from '../../../src/engine
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
+import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
+import { EMPTY_AI_TEMPLATES } from '../../../src/ai/session/types';
+import type { AiSession } from '../../../src/ai/session/session';
 
 interface ColumnRef { node: string; col: string }
 interface FlowEntry { out_col: string; upstream_columns: ColumnRef[]; writes_to?: ColumnRef }
@@ -278,7 +281,16 @@ function buildWorld(testCase: RetentionCase): { model: DatabaseModel; graph: Ret
   return { model: makeModel(nodes, edgePairs, schemaNames), graph: makeGraph(nodes, edgePairs) };
 }
 
-/** Drives a CT walk, submitting the case's scripted column_flow at each dispatched focus. */
+/**
+ * Drives a CT walk, submitting the case's scripted column_flow at each dispatched focus and routing
+ * every neighbour the engine requires an account for.
+ *
+ * @remarks
+ * The required set is the same one `<required_neighbors>` renders to the model, in CT exactly as in
+ * BB ({@link driveBb} reads it identically). A neighbour carrying none of the traced columns appears
+ * on that list and is routed here, because whether it filters the row set is answerable only by
+ * reading it.
+ */
 function driveCt(engine: NavigationEngine, testCase: RetentionCase): void {
   for (let hop = 0; hop < 25; hop++) {
     const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
@@ -299,6 +311,10 @@ function driveCt(engine: NavigationEngine, testCase: RetentionCase): void {
       summary: `${focusId} carries ${testCase.tracedColumn}`,
       verdict: 'analyze',
       column_flow: columnFlow,
+      route_requests: engine.requiredNeighborIds(focusId).map(id => ({
+        nodeId: id,
+        question: `What does ${id} decide about the rows ${focusId} admits?`,
+      })),
     });
     expect('error' in outcome, `${testCase.id}: the scripted hop at ${focusId} is accepted, not rejected`).toBe(false);
   }
@@ -676,6 +692,10 @@ const SINK_CASE: RetentionCase = {
       upstream_columns: [{ node: '[ct].[vwdiscountcalc]', col: 'Discount' }],
       writes_to: { node: '[ct].[factsalesreport]', col: 'Discount' },
     }],
+    // D1 convergence routes every in-scope directional neighbour, but the bipartite agenda rule
+    // dispatches only bodied focuses: the table neighbours (`salesstaging`, `customermaster`,
+    // `dimcalendar`, `factsalesreport`, `errorlog`) are routed and contracted to their bodied
+    // writers, so they appear in no flow here — the walk never focuses them.
     // The loader joins DimCalendar to bound the load window and writes ErrorLog on failure; neither
     // carries a value into the traced column, so its flow names neither.
     '[ct].[sploadsalesstaging]': [],
@@ -709,17 +729,40 @@ function driveSinkWalk(routeFromConsumer?: string): {
     const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
     if (ctx.done || !ctx.focus_node) return { engine, model, graph };
     const focusId = ctx.focus_node.id;
+    // D-008: logging sinks are off the answer path for a column question, so the walk prunes them
+    // at their own focus once dispatched — the same decision BB makes, now in CT too. In the routed
+    // variant splogaudit is the contracted-through focus of the consumer route, so it is analysed
+    // from its scripted flow instead of pruned.
+    const pruneAtFocus = new Set(
+      routeFromConsumer ? ['[ct].[errorlog]'] : ['[ct].[errorlog]', '[ct].[splogaudit]'],
+    );
+    if (pruneAtFocus.has(focusId)) {
+      engine.submitFindings({
+        focus_node_id: focusId,
+        sections: [{ angle: 'business' as const, text: `logging sink, off the traced column's answer path` }],
+        summary: `${focusId} is a logging sink`,
+        verdict: 'prune',
+      });
+      continue;
+    }
     const columnFlow = SINK_CASE.flow[focusId];
     expect(columnFlow, `the case scripts a column_flow for dispatched focus ${focusId}`).toBeDefined();
+    // CT is held to the same neighbour accounting as BB: every id the guard demands an account
+    // for is routed, plus the consumer the variant under test adds on top.
+    const routes = engine.requiredNeighborIds(focusId).map(id => ({
+      nodeId: id,
+      question: `What does ${id} decide about the rows ${focusId} admits?`,
+    }));
+    if (routeFromConsumer && focusId === '[ct].[spbuildsalesreport]') {
+      routes.push({ nodeId: routeFromConsumer, question: 'what does this record?' });
+    }
     engine.submitFindings({
       focus_node_id: focusId,
       sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
       summary: `${focusId}`,
       verdict: 'analyze',
       column_flow: columnFlow,
-      ...(routeFromConsumer && focusId === '[ct].[spbuildsalesreport]'
-        ? { route_requests: [{ nodeId: routeFromConsumer, question: 'what does this record?' }] }
-        : {}),
+      route_requests: routes,
     });
   }
   throw new Error('sink walk did not terminate within 25 hops');
@@ -731,14 +774,17 @@ function sinkWalkResult(routeFromConsumer?: string): SmResult {
 }
 
 describe('CT render bound — scope admits, only a hop dispositions', () => {
-  it('drops the write sinks no hop ever dispositioned, chain and all', () => {
+  it('drops the logging sinks the walk can disposition — routed-and-deferred sinks stay, as in BB', () => {
     const rendered = new Set(sinkWalkResult().fullNodes.map(n => n.id));
-    // `splogaudit` supplies only `auditlog`, so the pair peels as a unit.
-    const sinks = ['[ct].[errorlog]', '[ct].[splogaudit]', '[ct].[auditlog]'];
-    expect(
-      sinks.filter(id => rendered.has(id)),
-      'a scope-resident node with no state, no task and no column edge, supplying nothing the render keeps, is not answer evidence',
-    ).toEqual([]);
+    // D1 convergence: the guard demands every in-scope directional neighbour, so `errorlog` is
+    // routed (accepted, contracted to no unvisited bodied neighbour, deferred as a lead) and stays
+    // in the render exactly as a BB walk on this topology renders it. What still drops:
+    // `splogaudit`, dispatched and verdict-pruned (D-008 — a logging sink is off the answer path),
+    // and `auditlog`, which no hop ever dispositioned. The old pin (all three sinks dropped) was
+    // CT-specific: CT's guard used to be a no-op, so `errorlog` was never routed at all.
+    expect(rendered.has('[ct].[splogaudit]'), 'the dispatched logging proc is pruned at its focus and dropped').toBe(false);
+    expect(rendered.has('[ct].[auditlog]'), 'the sink no hop dispositioned is trim-dropped with its pruned supplier').toBe(false);
+    expect(rendered.has('[ct].[errorlog]'), 'a guard-demanded sink is routed and renders, the same graph BB produces here').toBe(true);
   });
 
   it('keeps an undispositioned supplier — a filter join and a sibling-column feed are one shape here', () => {
@@ -781,10 +827,14 @@ describe('CT snapshot provenance — the render records the drop it made', () =>
     const snapshot = engine.toJSON();
     const dropped = snapshot.renderDroppedNodeIds ?? [];
 
-    // The same three the trim removes above; the snapshot states them instead of leaving a reader
-    // to infer them from scope minus the rendered set.
+    // D1 convergence: `auditlog` is the one sink the render itself drops (no hop dispositioned
+    // it). `splogaudit` left via an explicit verdict prune (removedSet, not a render drop), and
+    // `errorlog` was guard-demanded, routed, and deferred as a contracted lead — it renders, as in
+    // BB. The old pin named all three because CT's guard used to demand nothing, so all three sat
+    // undispositioned; the snapshot now names exactly the render's own drops instead of leaving a
+    // reader to infer them from scope minus the rendered set.
     expect([...dropped].sort(), 'the snapshot names every sink the render dropped').toEqual(
-      ['[ct].[auditlog]', '[ct].[errorlog]', '[ct].[splogaudit]'],
+      ['[ct].[auditlog]'],
     );
     expect(dropped.filter(id => rendered.has(id)), 'a recorded drop is absent from the render').toEqual([]);
     expect(dropped.filter(id => !snapshot.scopeNodeIds.includes(id)), 'a dropped node was in scope').toEqual([]);
@@ -865,6 +915,18 @@ function drivePassthroughWalk(archiveFlow: FlowEntry[]): SmResult {
     const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
     if (ctx.done || !ctx.focus_node) return engine.getResult();
     const focusId = ctx.focus_node.id;
+    if (focusId === ARCHIVE_LOG) {
+      // D1 convergence: the log writer is guard-demanded, so the walk routes it; once dispatched it
+      // is off the traced column's answer path (D-008) and prunes at its own focus, as in BB.
+      const prune = engine.submitFindings({
+        focus_node_id: focusId,
+        sections: [{ angle: 'business' as const, text: `log writer, off the traced column's answer path` }],
+        summary: `${focusId} is a log writer`,
+        verdict: 'prune',
+      }) as SubmitOk;
+      expect(prune.error, `the hop at ${focusId} commits`).toBeUndefined();
+      continue;
+    }
     const isArchive = focusId === ARCHIVE;
     const outcome = engine.submitFindings({
       focus_node_id: focusId,
@@ -872,6 +934,10 @@ function drivePassthroughWalk(archiveFlow: FlowEntry[]): SmResult {
       summary: `${focusId}`,
       verdict: isArchive ? 'passthrough' as const : 'analyze' as const,
       column_flow: isArchive ? archiveFlow : (PASSTHROUGH_CASE.flow[focusId] ?? []),
+      route_requests: engine.requiredNeighborIds(focusId).map(id => ({
+        nodeId: id,
+        question: `What does ${id} decide about the rows ${focusId} admits?`,
+      })),
     }) as SubmitOk;
     expect(outcome.error, `the hop at ${focusId} commits`).toBeUndefined();
   }
@@ -1067,4 +1133,433 @@ describe('CT and BB render the same graph for the same question', () => {
       ).toEqual({ missingFromCt: [], addedByCt: [] });
     });
   }
+});
+
+/**
+ * Neighbour accounting is one behaviour shared by BB and CT, so CT renders the same
+ * `<required_neighbors>` checklist and the same engine guard enforces it.
+ *
+ * Before the convergence, `CtStrategy.runRequiredNodesGuard` was an empty method body and
+ * `buildActiveHopInstruction` bracketed the block out of CT: the checklist was neither shown nor
+ * enforced, and an unaccounted required neighbour passed silently.
+ */
+function ctPromptSession(): AiSession {
+  return {
+    outputTemplates: EMPTY_AI_TEMPLATES,
+    classification: 'business',
+    memory: { slotCount: 0, getShortTermMemory: () => [], getRecentRejections: () => [] },
+  } as unknown as AiSession;
+}
+
+describe('CT neighbour accounting — the same checklist BB gets, shown and enforced', () => {
+  it('renders <required_neighbors> in CT for a focus that has required neighbours', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    const required = engine.requiredNeighborIds(ZERO_COLUMN_FOCUS);
+    expect(required, 'the engine requires an account for the deeper arm').toContain(ZERO_COLUMN_REQUIRED);
+
+    const hop = buildActiveHopInstruction(ctPromptSession(), engine, ZERO_COLUMN_FOCUS);
+    expect(hop.message.includes('<required_neighbors>'), 'CT ships the required-neighbour block').toBe(true);
+    expect(hop.message.includes(ZERO_COLUMN_REQUIRED), 'the block names the id the guard will demand').toBe(true);
+    expect(hop.memorySections, 'the block is reported in the hop provenance').toContain('required_neighbors');
+    // Single source: what the model is shown is exactly what the engine enforces.
+    for (const id of required) {
+      expect(hop.message.includes(id), `${id} is demanded by the guard, so it must be rendered`).toBe(true);
+    }
+  });
+
+  it('presents a neighbour carrying none of the traced columns, and routes it', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    const ctx = engine.peekHopContext() as { neighbors?: Array<{ id: string }> } | null;
+    expect(
+      (ctx?.neighbors ?? []).map(n => n.id),
+      'the zero-column neighbour is presented in CT exactly as BB presents it',
+    ).toContain(ZERO_COLUMN_REQUIRED);
+    const block = /<required_neighbors>([\s\S]*?)<\/required_neighbors>/
+      .exec(buildActiveHopInstruction(ctPromptSession(), engine, ZERO_COLUMN_FOCUS).message)?.[1] ?? '';
+    expect(
+      block.includes(ZERO_COLUMN_REQUIRED),
+      'and it is inside the rendered checklist, not withheld for carrying no traced column',
+    ).toBe(true);
+
+    const outcome = engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+    }) as SubmitOk;
+    expect(outcome.error, 'routing the zero-column neighbour commits the hop').toBeUndefined();
+  });
+
+  it('rejects a CT hop that leaves a required neighbour unaccounted', () => {
+    const engine = startZeroColumnTrace();
+    dispatchZeroColumnFocus(engine);
+    const outcome = engine.submitFindings({
+      focus_node_id: ZERO_COLUMN_FOCUS,
+      sections: [{ angle: 'business' as const, text: 'filter arm restricts the set' }],
+      summary: 'filter arm',
+      verdict: 'analyze',
+      column_flow: [],
+    }) as SubmitOk & { detail?: Array<{ id: string }> };
+
+    // Silently accepted before the convergence: CT's strategy implemented the guard as an empty
+    // method body. The neighbour decision runs in both modes, and the column overlay is what CT
+    // adds on top of the shared BB accounting.
+    expect(outcome.error, 'the unaccounted required neighbour rejects in CT, as it does in BB').toBe('missing_required_route');
+    expect((outcome.detail ?? []).map(d => d.id), 'the rejection names the unaccounted neighbour').toContain(ZERO_COLUMN_REQUIRED);
+  });
+});
+
+/**
+ * The hop-level prune proofs — the `a → b → (c, d, e)`, `c → f` shape, as the PM drew it: `b`'s
+ * neighbours `c`, `d`, `e` are all inside the origin-rooted scope, so the guard demands an
+ * account for each at hop `b` in BOTH modes. At hop `b` the model decides per neighbour: `c` is
+ * routed BB-style (a table — the route contracts through to `f`), `e` is routed with the CT
+ * column overlay (it carries the traced Amount onward), and `d` — in scope, guard-demanded, and
+ * provably off the answer path — is PRUNED at the hop. The converged contract: the prune
+ * executes (don't-orphan-guarded), the hop commits, and `d` never renders. Both modes, identical
+ * behaviour, identical render.
+ *
+ * The amount chain is real and checkable end to end — the origin produces it, `b` carries it
+ * from `a`, `e` from `b`, `f` from `c` — so every CT column_flow names a column its named
+ * upstream really declares (nothing the P1-12 rejection would refuse), and no hop needs the
+ * passthrough escape: every focus either carries or produces the traced column.
+ *
+ * Red reproductions (written before the fix): in-scope prune targets were protected no-ops, so the
+ * required-neighbour guard rejected the hop with `missing_required_route` and `d` could never be
+ * dropped — the one decision the shared BB/CT contract could not express.
+ */
+const HOP_PRUNE_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
+  ['[ct].[vwa]', V, ['Amount']],
+  ['[ct].[vwb]', P, ['Amount']],
+  ['[ct].[tblc]', T, ['Amount']],
+  ['[ct].[tbld]', T, ['Message']],
+  ['[ct].[vwe]', P, ['Amount']],
+  ['[ct].[vwf]', P, ['Amount']],
+];
+const HOP_PRUNE_EDGES: Array<[string, string]> = [
+  ['[ct].[vwa]', '[ct].[vwb]'],
+  ['[ct].[vwb]', '[ct].[tblc]'],
+  ['[ct].[vwb]', '[ct].[tbld]'],
+  ['[ct].[vwb]', '[ct].[vwe]'],
+  ['[ct].[tblc]', '[ct].[vwf]'],
+];
+
+function driveHopPruneWalk(mode: 'bb' | 'ct'): SmResult {
+  const nodes = HOP_PRUNE_NODES.map(([id, type, columns]) => makeNode({
+    id, schema: 'ct', name: id.replace(/^\[ct\]\.\[|\]$/g, ''), type,
+    columns: columns.map(c => ({ name: c, type: 'int', nullable: 'NULL', extra: '' })),
+  }));
+  const engine = new NavigationEngine(makeModel(nodes, HOP_PRUNE_EDGES, ['ct']), makeGraph(nodes, HOP_PRUNE_EDGES), () => {}, {});
+  const init = engine.init({
+    origin: '[ct].[vwa]',
+    question: 'trace Amount',
+    direction: 'bidirectional',
+    ...(mode === 'ct' ? { analysisMode: mode, targetColumns: ['Amount'] } : {}),
+    depthIntent: { kind: 'explicit', levels: 4 },
+  });
+  expect('ok' in init, `${mode}: init succeeds`).toBe(true);
+  for (let hop = 0; hop < 25; hop++) {
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    if (ctx.done || !ctx.focus_node) return engine.getResult();
+    const focusId = ctx.focus_node.id;
+    const routes = engine.requiredNeighborIds(focusId)
+      .filter(id => id !== '[ct].[tbld]')
+      .map(id => ({ nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?` }));
+    const prunes = engine.requiredNeighborIds(focusId).includes('[ct].[tbld]') ? ['[ct].[tbld]'] : [];
+    // The identical per-hop decision in both modes: every guard-demanded neighbour is routed
+    // except `d`, which is pruned at the hop that owns it. CT adds only the column account —
+    // the origin produces the traced Amount, `b` carries it from `a`, `e` from `b`, `f` from `c`.
+    // Same verdicts, same routes, same prune in both modes.
+    const amountChainUpstream: Record<string, { node: string; col: string }[]> = {
+      '[ct].[vwa]': [],
+      '[ct].[vwb]': [{ node: '[ct].[vwa]', col: 'Amount' }],
+      '[ct].[vwe]': [{ node: '[ct].[vwb]', col: 'Amount' }],
+      '[ct].[vwf]': [{ node: '[ct].[tblc]', col: 'Amount' }],
+    };
+    const outcome = engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
+      summary: `${focusId}`,
+      verdict: 'analyze',
+      ...(mode === 'ct' && amountChainUpstream[focusId] !== undefined
+        ? { column_flow: [{ out_col: 'Amount', upstream_columns: amountChainUpstream[focusId] }] }
+        : {}),
+      route_requests: routes,
+      prune_neighbors: prunes,
+    }) as SubmitOk & { error?: string };
+    expect(outcome.error, `${mode}: the hop at ${focusId} commits`).toBeUndefined();
+  }
+  throw new Error(`${mode}: walk did not terminate within 25 hops`);
+}
+
+describe('hop-level prune — the in-scope neighbour decision, both modes', () => {
+  it('executes in CT: d is pruned at hop b, the hop commits, d never renders', () => {
+    const result = driveHopPruneWalk('ct');
+    const rendered = new Set(result.fullNodes.map(n => n.id));
+    expect(rendered.has('[ct].[tbld]'), 'the hop-level prune removed d from the answer').toBe(false);
+    expect(rendered.has('[ct].[tblc]'), 'the BB-style routed neighbour stays').toBe(true);
+    expect(rendered.has('[ct].[vwe]'), 'the CT-tracked routed neighbour stays').toBe(true);
+    expect(rendered.has('[ct].[vwf]'), 'the contraction through the routed table reaches f').toBe(true);
+  });
+
+  it('executes in BB: the same decision, the same graph', () => {
+    const result = driveHopPruneWalk('bb');
+    const rendered = new Set(result.fullNodes.map(n => n.id));
+    expect(rendered.has('[ct].[tbld]'), 'the BB walk drops d identically').toBe(false);
+    expect(rendered.has('[ct].[tblc]'), 'and keeps the routed neighbours identically').toBe(true);
+    expect(rendered.has('[ct].[vwf]'), 'the table contraction is shared machinery').toBe(true);
+  });
+
+  it('a queued neighbour is not pulled by prune_neighbors — it keeps its own focus verdict', () => {
+    const nodes = HOP_PRUNE_NODES.map(([id, type, columns]) => makeNode({
+      id, schema: 'ct', name: id.replace(/^\[ct\]\.\[|\]$/g, ''), type,
+      columns: columns.map(c => ({ name: c, type: 'int', nullable: 'NULL', extra: '' })),
+    }));
+    const engine = new NavigationEngine(makeModel(nodes, HOP_PRUNE_EDGES, ['ct']), makeGraph(nodes, HOP_PRUNE_EDGES), () => {}, {});
+    engine.init({
+      origin: '[ct].[vwa]', question: 'trace Amount', direction: 'bidirectional',
+      analysisMode: 'ct', targetColumns: ['Amount'], depthIntent: { kind: 'explicit', levels: 4 },
+    });
+    engine.getHopContext();
+    // Queue e from the origin hop, then try to prune it at hop b: queued work keeps its hop.
+    const origin = engine.submitFindings({
+      focus_node_id: '[ct].[vwa]',
+      sections: [{ angle: 'business' as const, text: 'a' }],
+      summary: 'a', verdict: 'analyze',
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[tblc]', col: 'Amount' }] }],
+      route_requests: [
+        { nodeId: '[ct].[vwb]', question: 'b transforms the amount' },
+        { nodeId: '[ct].[vwe]', question: 'e filters the rows' },
+      ],
+    }) as SubmitOk;
+    expect(origin.error, 'the origin hop commits').toBeUndefined();
+    engine.getHopContext();
+    const atB = engine.submitFindings({
+      focus_node_id: engine.currentFocus!,
+      sections: [{ angle: 'business' as const, text: 'b' }],
+      summary: 'b', verdict: 'passthrough',
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[tblc]', col: 'Amount' }] }],
+      route_requests: [
+        { nodeId: '[ct].[tblc]', question: 'c supplies the amount' },
+        { nodeId: '[ct].[tbld]', question: 'd is a logging sink' },
+      ],
+      prune_neighbors: ['[ct].[vwe]'],
+    }) as SubmitOk;
+    expect(atB.error, 'the prune of a queued neighbour is a notice, not a rejection').toBeUndefined();
+    const snapshot = engine.toJSON() as { agenda: Array<{ nodeId: string }> };
+    expect(snapshot.agenda.some(e => e.nodeId === '[ct].[vwe]'), 'the queued hop stays queued').toBe(true);
+  });
+
+  it('don\'t-orphan still guards the hop-level prune — a neighbour carrying the only path to committed work refuses', () => {
+    const nodes: LineageNode[] = [
+      makeNode({ id: '[ct].[vwa2]', schema: 'ct', name: 'vwa2', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+      makeNode({ id: '[ct].[vwb2]', schema: 'ct', name: 'vwb2', type: 'procedure', columns: [] }),
+      makeNode({ id: '[ct].[tbld2]', schema: 'ct', name: 'tbld2', type: 'table', columns: [{ name: 'Message', type: 'int', nullable: 'NULL', extra: '' }] }),
+      makeNode({ id: '[ct].[vwx2]', schema: 'ct', name: 'vwx2', type: 'view', columns: [] }),
+    ];
+    const edges: Array<[string, string]> = [
+      ['[ct].[vwa2]', '[ct].[vwb2]'],
+      ['[ct].[vwb2]', '[ct].[tbld2]'],
+      ['[ct].[tbld2]', '[ct].[vwx2]'],
+    ];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['ct']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({
+      origin: '[ct].[vwa2]', question: 'trace Amount', direction: 'bidirectional',
+      analysisMode: 'ct', targetColumns: ['Amount'], depthIntent: { kind: 'explicit', levels: 4 },
+    });
+    engine.getHopContext();
+    const origin = engine.submitFindings({
+      focus_node_id: '[ct].[vwa2]',
+      sections: [{ angle: 'business' as const, text: 'a' }],
+      summary: 'a', verdict: 'analyze',
+      column_flow: [{ out_col: 'Amount', upstream_columns: [] }],
+      route_requests: [
+        { nodeId: '[ct].[vwb2]', question: 'b transforms the amount' },
+        { nodeId: '[ct].[vwx2]', question: 'x is committed beyond the pruned table' },
+      ],
+    }) as SubmitOk;
+    expect(origin.error, 'the origin hop commits and queues x through the d-table path').toBeUndefined();
+    engine.getHopContext();
+    // x is queued (committed) and its ONLY path runs through tbld2: pruning tbld2 at hop b must
+    // refuse with the orphan reason, not execute and not strand x.
+    const atB = engine.submitFindings({
+      focus_node_id: '[ct].[vwb2]',
+      sections: [{ angle: 'business' as const, text: 'b' }],
+      summary: 'b', verdict: 'analyze',
+      column_flow: [],
+      route_requests: [],
+      prune_neighbors: ['[ct].[tbld2]'],
+    }) as { error?: string; hint?: string; detail?: Array<{ id: string; reason?: string }> };
+    expect(atB.error, 'the orphaning prune rejects').toBeTruthy();
+    expect(
+      JSON.stringify(atB),
+      'the rejection attributes the prune as an orphan of committed work',
+    ).toMatch(/orphan/i);
+  });
+
+  it('cycles: a visited cycle member is never re-demanded — the walk terminates', () => {
+    // Walk bounding (visited/queued/removed sets, BFS scope) is shared engine machinery — the CT
+    // column overlay plays no part in cycle termination, so the pin runs in BB where the submit
+    // carries no column accounting to keep the cycle proof pure.
+    const nodes: LineageNode[] = [
+      makeNode({ id: '[ct].[cyc1]', schema: 'ct', name: 'cyc1', type: 'view', columns: [] }),
+      makeNode({ id: '[ct].[cyc2]', schema: 'ct', name: 'cyc2', type: 'procedure', columns: [] }),
+      makeNode({ id: '[ct].[cyc3]', schema: 'ct', name: 'cyc3', type: 'procedure', columns: [] }),
+    ];
+    const edges: Array<[string, string]> = [
+      ['[ct].[cyc1]', '[ct].[cyc2]'],
+      ['[ct].[cyc2]', '[ct].[cyc3]'],
+      ['[ct].[cyc3]', '[ct].[cyc1]'],
+    ];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['ct']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({
+      origin: '[ct].[cyc1]', question: 'trace the cycle', direction: 'bidirectional',
+      depthIntent: { kind: 'explicit', levels: 4 },
+    });
+    let hops = 0;
+    for (; hops < 25; hops++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      const focusId = ctx.focus_node.id;
+      const outcome = engine.submitFindings({
+        focus_node_id: focusId,
+        sections: [{ angle: 'business' as const, text: 'capture' }],
+        summary: focusId, verdict: 'analyze',
+        route_requests: engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: 'q' })),
+      }) as SubmitOk;
+      expect(outcome.error, `the hop at ${focusId} in the cycle commits`).toBeUndefined();
+    }
+    expect(hops, 'the cycle terminates within the visited/queued bounds').toBeLessThan(25);
+  });
+});
+
+describe('beyond-scope contraction — a routed table reaches its bodied writer in both modes', () => {
+  /**
+   * The table row of the decision space: a route to a table is accepted (the guard is satisfied)
+   * and then contracts through to its unvisited bodied writers. The bodied writer can lie outside
+   * the origin-rooted seed scope — the model read the table off the focus's own dependencies, so
+   * the route is the approved growth, and the contraction is the walk's continuation of that
+   * route, not a second ask. Pre-fix this admission was CT-only: BB silently dropped the writer
+   * ("enqueue drop — out-of-scope target") while CT admitted it — a walk-machinery divergence the
+   * same-graph contract forbids. Both modes must admit, enqueue, and render it identically.
+   *
+   * Topology: `a` (origin) → `b`; `g` (table) feeds `b`; `w` (procedure) writes `g`. The seed scope
+   * from `a` is {a, b} — `g` and `w` are beyond it. At hop `b` the model routes `g`; the
+   * contraction must reach `w` in both modes.
+   */
+  for (const mode of ['bb', 'ct'] as const) {
+    it(`${mode.toUpperCase()}: routing the off-scope table at hop b contracts through to its writer`, () => {
+      const nodes: LineageNode[] = [
+        makeNode({ id: '[ct].[vwa3]', schema: 'ct', name: 'vwa3', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+        makeNode({ id: '[ct].[vwb3]', schema: 'ct', name: 'vwb3', type: 'procedure', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+        makeNode({ id: '[ct].[tblg3]', schema: 'ct', name: 'tblg3', type: 'table', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+        makeNode({ id: '[ct].[vwg3]', schema: 'ct', name: 'vwg3', type: 'procedure', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+      ];
+      const edges: Array<[string, string]> = [
+        ['[ct].[vwa3]', '[ct].[vwb3]'],
+        ['[ct].[tblg3]', '[ct].[vwb3]'],
+        ['[ct].[vwg3]', '[ct].[tblg3]'],
+      ];
+      const engine = new NavigationEngine(makeModel(nodes, edges, ['ct']), makeGraph(nodes, edges), () => {}, {});
+      engine.init({
+        origin: '[ct].[vwa3]', question: 'trace Amount', direction: 'bidirectional',
+        ...(mode === 'ct' ? { analysisMode: mode, targetColumns: ['Amount'] } : {}),
+        depthIntent: { kind: 'explicit', levels: 4 },
+      });
+      const flows: Record<string, FlowEntry[]> = {
+        '[ct].[vwa3]': [{ out_col: 'Amount', upstream_columns: [] }],
+        '[ct].[vwb3]': [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[tblg3]', col: 'Amount' }] }],
+        '[ct].[vwg3]': [{ out_col: 'Amount', upstream_columns: [] }],
+      };
+      for (let hop = 0; hop < 25; hop++) {
+        const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+        if (ctx.done || !ctx.focus_node) break;
+        const focusId = ctx.focus_node.id;
+        const routes = engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `q ${id}` }));
+        // The BB-style arm: `g` is beyond the seed scope, so the guard does not demand it — the
+        // model reads it off the focus's own dependencies and routes it (legal in both modes).
+        if (focusId === '[ct].[vwb3]' && !routes.some(r => r.nodeId === '[ct].[tblg3]')) {
+          routes.push({ nodeId: '[ct].[tblg3]', question: 'g supplies the amount b joins' });
+        }
+        const outcome = engine.submitFindings({
+          focus_node_id: focusId,
+          sections: [{ angle: 'business' as const, text: `capture ${focusId}` }],
+          summary: focusId,
+          verdict: 'analyze',
+          ...(mode === 'ct' && flows[focusId] ? { column_flow: flows[focusId] } : {}),
+          route_requests: routes,
+        }) as SubmitOk;
+        expect(outcome.error, `${mode}: the hop at ${focusId} commits`).toBeUndefined();
+      }
+      const result = engine.getResult();
+      const rendered = new Set(result.fullNodes.map(n => n.id));
+      expect(rendered.has('[ct].[tblg3]'), `${mode}: the routed table renders`).toBe(true);
+      expect(rendered.has('[ct].[vwg3]'), `${mode}: the contraction through the routed table reaches its writer`).toBe(true);
+    });
+  }
+});
+
+describe('route-border demand — the guard demands only what the router admits (G3)', () => {
+  /**
+   * The no-unmeetable-demand invariant of the decision space: the completeness guard may demand
+   * an account only for neighbours the router would actually admit. A schema the user filtered on
+   * keeps out-of-allowlist neighbours in the seed scope (the seed deliberately skips the allowlist
+   * so they become `schema:` gate classes) but the route border refuses them — a route to one is
+   * deferred as a lead, never accepted — so demanding it is a demand the model cannot meet: the
+   * hop could never commit. `requiredNeighborIds` must therefore filter on the route border, the
+   * exact filter the router applies (P1-7's piece; validated shape on record in `0852aadb`).
+   *
+   * Red pre-fix: the guard demanded the out-of-allowlist neighbour and rejected the hop with
+   * `missing_required_route` however the model accounted for it.
+   */
+  const borderNodes: LineageNode[] = [
+    makeNode({ id: '[ai].[vwbase]', schema: 'ai', name: 'vwbase', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: '[ct].[tblforeign]', schema: 'ct', name: 'tblforeign', type: 'table', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: '[ai].[tblhome]', schema: 'ai', name: 'tblhome', type: 'table', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+  ];
+  const borderEdges: Array<[string, string]> = [
+    ['[ct].[tblforeign]', '[ai].[vwbase]'],
+    ['[ai].[tblhome]', '[ai].[vwbase]'],
+  ];
+
+  it('an out-of-allowlist neighbour in scope is never demanded — routing it defers, the hop commits', () => {
+    const engine = new NavigationEngine(
+      makeModel(borderNodes, borderEdges, ['ai', 'ct']),
+      makeGraph(borderNodes, borderEdges),
+      () => {},
+      { activeFilter: { schemas: ['ai'] } },
+    );
+    engine.init({
+      origin: '[ai].[vwbase]', question: 'trace Amount', direction: 'bidirectional',
+      depthIntent: { kind: 'explicit', levels: 3 },
+    });
+    engine.getHopContext();
+    const required = new Set(engine.requiredNeighborIds('[ai].[vwbase]'));
+    // In the seed scope (the seed deliberately keeps out-of-allowlist nodes so they become gate
+    // classes) but past the route border — so never demanded.
+    expect(engine.scopeSize > 1, 'the invariant is exercised against a grown scope').toBe(true);
+    expect(required.has('[ct].[tblforeign]'), 'the out-of-allowlist neighbour is not guard-demanded').toBe(false);
+    // The in-allowlist neighbour keeps its demand — the filter is the border, not the scope.
+    expect(required.has('[ai].[tblhome]'), 'the in-allowlist neighbour stays demanded').toBe(true);
+
+    // The model still routes the foreign neighbour (it is the honest answer path); the router
+    // defers it as a `schema:` lead and the hop commits — no unmeetable demand anywhere.
+    const outcome = engine.submitFindings({
+      focus_node_id: '[ai].[vwbase]',
+      sections: [{ angle: 'business' as const, text: 'base' }],
+      summary: 'base', verdict: 'analyze',
+      route_requests: [
+        { nodeId: '[ct].[tblforeign]', question: 'the foreign source of the amount' },
+        { nodeId: '[ai].[tblhome]', question: 'the home source of the amount' },
+      ],
+    }) as SubmitOk & { route_outcomes?: Array<{ nodeId: string; accepted: boolean; deferred?: boolean; reason?: string }> };
+    expect(outcome.error, 'the hop commits — the deferred lead satisfies nothing the guard demands').toBeUndefined();
+    const foreign = (outcome.route_outcomes ?? []).find(o => o.nodeId === '[ct].[tblforeign]');
+    expect(foreign?.accepted, 'the out-of-allowlist route is not admitted').toBe(false);
+    expect(foreign?.deferred, 'it is deferred as a schema lead the user can approve').toBe(true);
+  });
 });

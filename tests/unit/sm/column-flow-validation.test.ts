@@ -39,6 +39,10 @@ describe("Column Flow Validation", () => {
     engine.getHopContext();
     return engine;
   }
+  // D1 convergence: CT is held to BB's neighbour accounting, so scripted submits route every
+  // required neighbour the guard demands — exactly what `<required_neighbors>` renders to a model.
+  const requiredRoutes = (engine: NavigationEngine, focusId = 'origin') =>
+    engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: 'what does this contribute?' }));
   function durableCtSnapshot(engine: NavigationEngine): string {
     const state = JSON.parse(JSON.stringify(engine.toJSON())) as {
       memory: { recentRejections: unknown[] };
@@ -59,6 +63,7 @@ describe("Column Flow Validation", () => {
     summary: 'x',
     verdict: 'passthrough',
     column_flow: [],
+    route_requests: requiredRoutes(engine),
   });
   expect('error' in result && result.error === 'column_chain_incomplete', 'CT: empty column_flow with active columns → column_chain_incomplete (no self-prune)').toBe(true);
 });
@@ -133,6 +138,7 @@ describe("Column Flow Validation", () => {
     summary: 'interaction',
     verdict: 'analyze',
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 't_raw', col: 'raw_amount' }] }],
+    route_requests: requiredRoutes(engine),
   });
   expect('ok' in result, 'CT: absent upstream node is nonfatal').toBe(true);
   expect(engine.columnAspect?.edges.length ?? -1, 'CT: absent upstream stages zero column edges').toBe(0);
@@ -147,6 +153,7 @@ describe("Column Flow Validation", () => {
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [{ out_col: 'wrong_col', upstream_columns: [] }],
+    route_requests: requiredRoutes(engine),
   });
   expect('error' in result && result.error === 'out_col_not_on_node', 'out_col not active → out_col_not_on_node').toBe(true);
   if ('error' in result) {
@@ -170,6 +177,7 @@ describe("Column Flow Validation", () => {
       out_col: 'amount',
       upstream_columns: [{ node: 'nonexistent_table', col: 'any_col' }],
     }],
+    route_requests: requiredRoutes(engine),
   });
   expect('ok' in result, 'absent upstream node does not consume the retry budget').toBe(true);
   const edges = engine.columnAspect?.edges ?? [];
@@ -529,6 +537,7 @@ describe("Column Flow Validation", () => {
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'origin', col: 'amount' }] }],
+    route_requests: requiredRoutes(engine),
   });
   expect('error' in result && result.error === 'column_self_loop', 'engine: self-loop column_flow rejected as column_self_loop').toBe(true);
   if ('error' in result) {
@@ -860,6 +869,11 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     return engine;
   }
 
+  // D1 convergence: CT is held to BB's neighbour accounting, so every scripted submit routes
+  // the required set the guard demands — the same list `<required_neighbors>` renders to a model.
+  const j23RequiredRoutes = (engine: NavigationEngine, focusId: string) =>
+    engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?` }));
+
   /** Terminal submission covering every column the engine reports active at the current focus. */
   function j23TerminalSubmit(engine: NavigationEngine, focusId: string) {
     const cols = engine.columnAspect?.active_columns ?? [];
@@ -869,6 +883,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: cols.map((c) => ({ out_col: c, upstream_columns: [] })),
+      route_requests: j23RequiredRoutes(engine, focusId),
     });
   }
 
@@ -925,15 +940,17 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     expect(seedReader === undefined, `J23 RC2 stage 1 (documented, green): reader_proc has no seed-time agenda entry (found: ${JSON.stringify(seedReader)}) — it is outside the initial bidirectional BFS scope until routed`).toBe(true);
 
     // Stage 2 — commit origin_view's column_flow naming staging.OrderAmount as the sole real
-    // upstream contributor to Discount (route_requests omitted: routeQuestionsByNode auto-adds
-    // staging from the upstream_columns reference, which contracts through to both writer_proc and
-    // reader_proc, both newly admitted).
+    // upstream contributor to Discount. `staging` itself is auto-added from the upstream_columns
+    // reference (routeQuestionsByNode), which contracts through to both writer_proc and
+    // reader_proc, both newly admitted. D1 convergence: the remaining required neighbours
+    // (`rules`, `consumer_proc`) are routed explicitly, as the guard now demands in CT too.
     const commit = engine.submitFindings({
       focus_node_id: 'origin_view',
       sections: [{ angle: 'business' as const, text: 'Discount is computed from staging.OrderAmount' }],
       summary: 'ok',
       verdict: 'analyze',
       column_flow: [{ out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] }],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
     });
     expect(!('error' in commit), `J23 RC2 stage 2: origin_view commit accepted (${'error' in commit ? commit.error : ''})`).toBe(true);
 
@@ -953,6 +970,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'reader_proc'),
     });
     expect(!('error' in readerResult), `J23 RC2 stage 3 (GREEN control): reader_proc submitting only its legitimate OrderAmount contribution is accepted, not rejected — actual: ${'error' in readerResult ? `${readerResult.error}: ${readerResult.hint ?? ''}` : 'ok'}`).toBe(true);
   });
@@ -990,6 +1008,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
         { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
         { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
       ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
     });
     expect(!('error' in originCommit), `J23 RC4: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`).toBe(true);
     j23DispatchUntil(engine, 'writer_proc');
@@ -1001,6 +1020,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
     });
     expect('error' in result && result.error === 'column_chain_incomplete', 'J23 RC4: OrderDate left unaccounted at writer_proc → column_chain_incomplete (genuine premise)').toBe(true);
 
@@ -1014,6 +1034,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: [],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
     });
     expect('ok' in again && again.ok, "J23 RC4: resubmitting verdict:'passthrough', column_flow:[] at writer_proc commits — the hint's literal suggested escape resolves the hop").toBe(true);
   });
@@ -1042,6 +1063,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
         { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
         { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
       ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
     });
     // Branch one: every active column accounted for.
     expect(logs.some(m => m.includes('[Admit] guard=ct_completeness') && m.includes('reason=all_accounted') && m.includes('focus=origin_view')),
@@ -1055,6 +1077,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: [],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
     });
     expect(!('error' in declared), 'J23 RC4e: the declaration commits').toBe(true);
     // Branch two: the P1-36 escape. This is the line that made 120cba46 attributable at all.
@@ -1089,6 +1112,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
         { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
         { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
       ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
     });
     expect(!('error' in originCommit), `J23 RC4c: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`).toBe(true);
     j23DispatchUntil(engine, 'writer_proc');
@@ -1100,6 +1124,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: [],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
     });
     expect(!('error' in declared), `J23 RC4c: the declaration commits (${'error' in declared ? declared.error : ''})`).toBe(true);
 
@@ -1116,6 +1141,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
         { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
         { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
       ],
+      route_requests: j23RequiredRoutes(engine2, 'origin_view'),
     });
     j23DispatchUntil(engine2, 'writer_proc');
     const analyzed = engine2.submitFindings({
@@ -1124,6 +1150,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'analyze',
       column_flow: [],
+      route_requests: j23RequiredRoutes(engine2, 'writer_proc'),
     });
     expect('error' in analyzed && analyzed.error === 'column_chain_incomplete', "J23 RC4c: verdict:'analyze' with an empty column_flow still owes an account — the escape is the passthrough declaration, not the empty array").toBe(true);
   });
@@ -1145,6 +1172,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'analyze',
       column_flow: [{ out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] }],
+      route_requests: j23RequiredRoutes(declaring, 'origin_view'),
     });
     expect('error' in declared && declared.error === 'column_chain_incomplete', 'J23 RC4d: BaseAmt left unaccounted at origin_view → column_chain_incomplete').toBe(true);
     const declaredHint = ('error' in declared && declared.hint) || '';
@@ -1169,6 +1197,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
         { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
         { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
       ],
+      route_requests: j23RequiredRoutes(silent, 'origin_view'),
     })), 'J23 RC4d: origin_view commit accepted').toBe(true);
     j23DispatchUntil(silent, 'writer_proc');
     const undeclared = silent.submitFindings({
@@ -1177,6 +1206,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(silent, 'writer_proc'),
     });
     expect('error' in undeclared && undeclared.error === 'column_chain_incomplete', 'J23 RC4d: OrderDate left unaccounted at writer_proc → column_chain_incomplete').toBe(true);
     const undeclaredHint = ('error' in undeclared && undeclared.hint) || '';
@@ -1205,6 +1235,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
         { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
         { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
       ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
     });
     expect(!('error' in originCommit), `J23 RC4b: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`).toBe(true);
     j23DispatchUntil(engine, 'writer_proc');
@@ -1216,6 +1247,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       summary: 'writer_proc summary',
       verdict: 'passthrough',
       column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
     });
     expect('error' in result && result.error === 'column_chain_incomplete', 'J23 RC4b: OrderDate left unaccounted at writer_proc → column_chain_incomplete').toBe(true);
     if (!('error' in result)) throw new Error('J23 RC4b: unreachable — rejection asserted above');
@@ -1240,7 +1272,9 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     expect(retry.sections.length === 1 && retry.sections[0].text === authoredText, 'J23 RC4b: held sections are restored byte-identical on the empty-sections retry').toBe(true);
     expect(retry.summary === 'writer_proc summary', 'J23 RC4b: held summary is restored byte-identical').toBe(true);
 
-    const committed = engine.submitFindings(retry);
+    // D1 convergence: the guard runs in CT too, so the amended resubmit carries the same required
+    // routing the original submission did.
+    const committed = engine.submitFindings({ ...retry, route_requests: j23RequiredRoutes(engine, 'writer_proc') });
     expect('ok' in committed && committed.ok, 'J23 RC4b: the amended hop commits').toBe(true);
     expect(engine.heldFindingFocus === null, 'J23 RC4b: the hold clears once the amendment commits').toBe(true);
   });

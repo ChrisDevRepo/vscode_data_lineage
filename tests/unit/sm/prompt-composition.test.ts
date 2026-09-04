@@ -436,7 +436,12 @@ describe('prompt composition', () => {
     expect(bb).toContain('Neighbor Decision Contract (Current Hop Only)');
     expect(bb).toContain('BB is node-first');
     expect(bb).toContain('prune_neighbors');
-    expect(bb).toContain('Resolve every ID in `<required_neighbors>` through `route_requests`');
+    // D-020: a required ID always gets one explicit decision — routed, or pruned with evidence.
+    // (Amended from the pre-D-020 wording, which demanded routing only; the hop-level prune of an
+    // in-scope neighbour is the decision the same-graph contract requires both modes to express —
+    // proven in ct-retention-differential 'hop-level prune'.)
+    const resolution = 'Resolve every ID in `<required_neighbors>` with one explicit decision';
+    expect(bb).toContain(resolution);
     // Full sentence pinned in internal-tests/unit/prompts/prompt-wording.test.ts (W8); this anchor
     // keeps the public claim that the in-scope retention block is present.
     expect(bb).toContain('inside the approved exploration scope');
@@ -446,7 +451,22 @@ describe('prompt composition', () => {
     expect(bb).not.toContain('column_flow');
     expect(ct).toContain('CT is column-first');
     expect(ct).toContain('column_flow');
-    expect(ct).not.toContain('Resolve every ID in `<required_neighbors>` through `route_requests`');
+    // D1/D-020 convergence: the required-neighbour resolution line AND the whole mode-neutral
+    // decision core are shared fragments both hop contracts compose — CT is shown
+    // `<required_neighbors>`, held to the same accounting, and given the same route/retain/prune
+    // bullets as BB, so the instruction is mode-shared, not BB-only (the checklist render and the
+    // executed prune are pinned in ct-retention-differential). The rest of the contracts stays
+    // mode-specific: BB frames node-first, CT frames column-first and adds only column rules.
+    expect(ct).toContain(resolution);
+    for (const line of [
+      'Route it when mission-relevant, using a concrete verification question',
+      'Retain it when it is already inside the approved exploration scope',
+      'Add it to `prune_neighbors` when current evidence proves it is off the answer path',
+      'submit each neighbor in at most one action array',
+    ]) {
+      expect(bb).toContain(line);
+      expect(ct).toContain(line);
+    }
     expect(ct).not.toContain('prune non-relevant neighbors via `prune_neighbors`');
   });
 

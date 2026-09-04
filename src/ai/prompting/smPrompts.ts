@@ -30,6 +30,38 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 const ANALYTICAL_ROUTE_QUESTION =
   '- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (rules, transformations, thresholds, guards, lifecycle, and material data-quality risks) to produce the traced value — not only which columns or sources feed it. This analytical question persists hop-to-hop and drives the depth of the next hop\'s capture.';
 
+/**
+ * One resolution rule for `<required_neighbors>`, composed by both hop decision contracts so the
+ * rendered checklist can never drift from the guard the moment either wording changed. CT is BB
+ * plus column tracking — a neighbor that carries none of the traced columns still restricts the row
+ * set, and reading it is part of the trace, so CT resolves the same list. Mode-pure by construction:
+ * D-020 — a required ID always gets one explicit decision this hop, a route or an evidence-backed
+ * prune; omitting it is never an option, and both modes share the same wording.
+ */
+const REQUIRED_NEIGHBOR_RESOLUTION =
+  '- Resolve every ID in `<required_neighbors>` with one explicit decision this hop: list it in `route_requests` to walk it, or in `prune_neighbors` when current evidence proves it is off the answer path. Omitting a required ID is never an option.';
+
+/**
+ * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (D-020: same
+ * instruction, same pruning, same auto-add in BB and CT — each contract adds only its own framing
+ * line, its verdict wording, and its mode additions). Route, retain, or prune are the three
+ * decisions; the engine enforces the same accounting in both modes.
+ */
+const NEIGHBOR_DECISION_CORE = [
+  'Use mission/task metadata as source of truth; treat history prose as context only.',
+  '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
+  '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.',
+  REQUIRED_NEIGHBOR_RESOLUTION,
+  '- Retain-by-omission applies only to neighbors that are not in `<required_neighbors>`; a required ID always gets an explicit decision.',
+  '- For each other current-hop neighbor:',
+  '  - Route it when mission-relevant, using a concrete verification question. The engine defers routes outside the approved schema/depth scope.',
+  '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays; if later scheduled as focus, use its focus verdict.',
+  '  - Add it to `prune_neighbors` when current evidence proves it is off the answer path — outside the approved exploration scope, or inside it with nothing the answer needs. An executed prune must never orphan committed work; the engine refuses such a prune.',
+  '- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.',
+  '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
+  ANALYTICAL_ROUTE_QUESTION,
+] as const;
+
 
 /**
  * Re-anchor suffix appended when a passthrough-inherited sub-question lands on a bodied focus.
@@ -104,33 +136,19 @@ const BLOCK = {
   hopDecisionContract: [
     '## Neighbor Decision Contract (Current Hop Only)',
     'BB is node-first: decide the focus node and each current-hop neighbor from the current task and current evidence.',
-    'Use mission/task metadata as source of truth; treat history prose as context only.',
-    '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
-    '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.',
     '- Emit explicit `verdict` for the focus node every hop.',
-    '- Resolve every ID in `<required_neighbors>` through `route_requests` — list each required ID explicitly; the retain-by-omission option below applies only to other neighbors.',
-    '- For each other current-hop neighbor:',
-    '  - Route it when mission-relevant, using a concrete verification question. The engine defers routes outside the approved schema/depth scope.',
-    '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays; if later scheduled as focus, use its focus verdict.',
-    '  - Add it to `prune_neighbors` only when it is outside the approved exploration scope and current evidence proves it is off the answer path.',
-    '- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.',
-    '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
-    ANALYTICAL_ROUTE_QUESTION,
+    ...NEIGHBOR_DECISION_CORE,
     '- Derive neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
     '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone.',
     '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
   ].join('\n'),
   hopDecisionContractCt: [
     '## Neighbor Decision Contract (Current Hop Only)',
-    'CT is column-first: declare only real upstream columns needed to continue the active column chain.',
-    'Use mission/task metadata as source of truth; treat history prose as context only.',
-    '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
-    '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route from current-hop evidence.',
+    'CT is column-first: declare only real upstream columns needed to continue the active column chain — the neighbor decisions below are BB\'s, shared verbatim.',
     '- Emit explicit `verdict` for the focus node every hop (`analyze`, `passthrough`, or `prune` if the node is off the answer path).',
+    ...NEIGHBOR_DECISION_CORE,
     '- Put only real upstream table/view/procedure node+column refs in `column_flow[].upstream_columns`; the engine carries those columns to the next hop.',
-    '- For neighbors in CT, the engine already carries the column A→B continuation; add `route_requests` to carry the analytical question forward when the node applies logic worth capturing.',
-    '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
-    ANALYTICAL_ROUTE_QUESTION,
+    '- In CT, `column_flow[].upstream_columns` already opens the route for a named contributor; add `route_requests` to carry the analytical question when the node applies logic worth capturing.',
     '- The engine already supplies the column A→B continuation (`<lineage_questions>`); keep `column_flow[].upstream_columns` precise and structural, and answer the analytical question in your capture narration (`sections[].text`) — never invent columns to satisfy it.',
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
     '- Derive column origins purely from the provided DDL whenever possible (e.g., explicit SELECT columns).',

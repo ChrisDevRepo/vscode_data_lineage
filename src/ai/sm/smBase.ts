@@ -36,12 +36,7 @@ import { estimateTokens } from '../support/tokenBudget';
 import { ColumnTracer } from "./columnTracer";
 import { AgendaManager, type AgendaEntry } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
-import { BbStrategy, CtStrategy } from './strategies';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
-
-/** Shared stateless hop-validation strategies; see `src/ai/sm/strategies.ts`. */
-const BB_STRATEGY = new BbStrategy();
-const CT_STRATEGY = new CtStrategy();
 
 /**
  * Extends the base working memory with topological map data.
@@ -172,14 +167,14 @@ export interface IHopStateMachine {
  * every call site consults an identical, self-documenting axis profile.
  *
  * @remarks
- * - `route` / `ct_contraction` — full border: exclusion sets + direction + allowlist.
+ * - `route` / `contraction` — full border: exclusion sets + direction + allowlist.
  * - `supplement` — exclusion sets + allowlist (the follow-up pill click is the user consent
  *   that pre-extends the allowlist; direction is not re-tested for an already-surfaced lead).
  * - `seed_bfs` — exclusion sets ONLY; the allowlist is deliberately skipped so out-of-allowlist
  *   reachables survive the seed and become `schema:` gate classes the user can approve.
  * - `display` — allowlist + type exclusions only (neighbor-list annotation, not a hard gate).
  */
-type BorderPurpose = 'route' | 'ct_contraction' | 'supplement' | 'seed_bfs' | 'display';
+type BorderPurpose = 'route' | 'contraction' | 'supplement' | 'seed_bfs' | 'display';
 
 /**
  * First failing border axis for a candidate node, or `in_border` when it clears every
@@ -276,10 +271,6 @@ export class NavigationEngine implements IHopStateMachine {
   protected _agenda = new AgendaManager();
   /** Structured source of truth for questions and follow-up leads. */
   private readonly taskLedger = new TaskLedger();
-  /** Mode-specific hop validation; stateless, so one instance of each is shared by every engine. */
-  protected get strategy(): BbStrategy {
-    return this.mode.kind === 'ct' ? CT_STRATEGY : BB_STRATEGY;
-  }
   /** Identifier of the node currently in focus. */
   protected currentFocusNodeId: string | null = null;
   /** Active task-ledger question captured at dequeue so it can label the detail slot. */
@@ -1083,7 +1074,7 @@ export class NavigationEngine implements IHopStateMachine {
   private checkBorder(nodeId: string, node: LineageNode, purpose: BorderPurpose): BorderVerdict {
     // Only the display annotation ignores schema/node exclusions (it flags type-hidden neighbors only).
     const excludeAllSets = purpose !== 'display';
-    const checkDirection = purpose === 'route' || purpose === 'ct_contraction';
+    const checkDirection = purpose === 'route' || purpose === 'contraction';
     // seed_bfs deliberately omits the allowlist so out-of-allowlist reachables become gate classes.
     const checkAllowlist = purpose !== 'seed_bfs';
 
@@ -1996,15 +1987,16 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * In-scope, unvisited, un-queued directional neighbors of `focusId` — the exact set the BB
-   * required-nodes guard demands an account for on the next submit.
+   * In-scope, unvisited, un-queued directional neighbors of `focusId` — the exact set the
+   * required-nodes guard demands an account for on the next submit, in both modes.
    *
    * @remarks Single source for that set: the guard callback and the per-hop envelope render
    * ({@link buildActiveHopInstruction}) both read it, so the rendered checklist can never drift
-   * from what the engine enforces. CT ignores it (column_flow drives CT routing).
+   * from what the engine enforces. CT is BB plus column tracking — the guard runs unconditionally
+   * there too; CT's column_flow auto-add counts as routing for the same accounting.
    *
    * @param focusId - Current focus node id.
-   * @returns Directional neighbor ids that must be routed or accounted for before BB can advance.
+   * @returns Directional neighbor ids that must be routed or accounted for before the walk advances.
    */
   public requiredNeighborIds(focusId: string): string[] {
     return Array.from(this.directionalNeighbors(focusId, this._direction))
@@ -2218,6 +2210,7 @@ export class NavigationEngine implements IHopStateMachine {
       visitedIds: this.visited,
       removedIds: this.removedSet,
       notedIds: new Set(this.memory.notedNodeIds),
+      agendaIds: new Set(this._agenda.entries.map(entry => entry.nodeId)),
     });
     invalidRoutes.push(...actionPolicy.fatalErrors);
 
@@ -2384,15 +2377,24 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // BB completeness guard: every in-scope directional neighbor must be routed before advance.
-    this.strategy.runRequiredNodesGuard(
-      focusId,
-      finding,
-      acceptedNids,
-      prunedNeighborNids,
-      invalidRoutes,
-      requiredNodeIds
-    );
+    // Completeness guard, both modes: every in-scope directional neighbor must be routed or pruned
+    // before advance. CT is BB plus column tracking — neighbor accounting is the shared behaviour,
+    // so it runs unconditionally (D-020: in both modes a required neighbor is satisfied by a route
+    // OR by a prune that passed the don't-orphan check; `prune_neighbors` may carry in-scope
+    // neighbors off the answer path, not only out-of-scope ones).
+    for (const reqId of requiredNodeIds) {
+      if (acceptedNids.has(reqId) || prunedNeighborNids.has(reqId)) continue;
+      const invalidlyPruned = (finding.prune_neighbors ?? []).some(id => id.toLowerCase() === reqId);
+      invalidRoutes.push({
+        kind: 'missing_required_route',
+        id: reqId,
+        invalidlyPruned,
+        reason: invalidlyPruned
+          ? `Required neighbor was submitted in prune_neighbors from focus ${focusId}, but that prune was refused: ${reqId}. Route it, or prune it only if it does not orphan committed work.`
+          : `Required neighbor was not accounted for from focus ${focusId}: ${reqId}`,
+        available_routes: requiredNodeIds,
+      });
+    }
 
     // Content errors (real node, wrong column) are correctable → hard-reject with a mode-pure,
     // per-kind hint built from the locked classification's reachable kinds. Every content kind
@@ -2593,7 +2595,7 @@ export class NavigationEngine implements IHopStateMachine {
           columns: routeColumns ? [...routeColumns] : undefined,
           lineageQuestions: lineageQuestionsByNode?.get(nid),
           freshScopeExpansion: isFreshExpansion,
-          admitCtContractedBodiedTarget: this.mode.kind === 'ct' && !targetIsBodied,
+          admitContractedBodiedTarget: !targetIsBodied,
         });
         const added = this._agenda.length - agendaSizeBefore;
         this.lastRoutedNew += Math.max(0, added);
@@ -2871,10 +2873,11 @@ export class NavigationEngine implements IHopStateMachine {
       /** Parent task assigned when a new task is created. */
       readonly parentTaskId?: string;
       /**
-       * Whether this call is the bodied leaf of an accepted CT route through a non-bodied carrier
-       * and may therefore extend the initial seed after filter checks.
+       * Whether this call is the bodied leaf of an accepted route through a non-bodied carrier
+       * (a routed table contracts to its bodied writers) and may therefore extend the initial
+       * seed after filter checks. Shared walk machinery — BB and CT behave alike.
        */
-      readonly admitCtContractedBodiedTarget?: boolean;
+      readonly admitContractedBodiedTarget?: boolean;
     } = {},
   ): void {
     const {
@@ -2885,18 +2888,17 @@ export class NavigationEngine implements IHopStateMachine {
       reactivated = false,
       existingTaskId,
       parentTaskId,
-      admitCtContractedBodiedTarget = false,
+      admitContractedBodiedTarget = false,
     } = opts;
     if (!this.scopeNodeIds.has(targetId) && priority !== 3) {
       const contractedTarget = this.nodeMap.get(targetId);
-      const canAdmitCtContraction = admitCtContractedBodiedTarget
-        && this.mode.kind === 'ct'
+      const canAdmitContraction = admitContractedBodiedTarget
         && !!contractedTarget
         && SCRIPT_TYPES.has(contractedTarget.type)
         && !this.visited.has(targetId)
         && !this.removedSet.has(targetId)
-        && this.checkBorder(targetId, contractedTarget, 'ct_contraction').kind === 'in_border';
-      if (!canAdmitCtContraction) {
+        && this.checkBorder(targetId, contractedTarget, 'contraction').kind === 'in_border';
+      if (!canAdmitContraction) {
         this.log('debug', `[Disposition] enqueue drop ${targetId} — out-of-scope target (priority=${priority}, not deferred) via focus=${this.currentFocusNodeId ?? this.originNodeId ?? '(none)'}`);
         return;
       }
@@ -2907,7 +2909,7 @@ export class NavigationEngine implements IHopStateMachine {
         const via = this.currentFocusNodeId ?? this.originNodeId;
         this.log(
           'debug',
-          `[Depth] CT contraction deferred hop=${this.hopCount} id=${targetId} ← ${via ?? '(none)'} `
+          `[Depth] contraction deferred hop=${this.hopCount} id=${targetId} ← ${via ?? '(none)'} `
           + `depth=${contractionBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`,
         );
         if (via) this.recordContractedLead(targetId, via, question);
@@ -2915,12 +2917,12 @@ export class NavigationEngine implements IHopStateMachine {
       }
       const admittedDepth = this.directedDepthFromOrigin(targetId)?.depth ?? depth;
       this.scopeNodeIds.add(targetId);
-      // Bodied by construction (canAdmitCtContraction asserts SCRIPT_TYPES) — mirror supplementAgenda
+      // Bodied by construction (canAdmitContraction asserts SCRIPT_TYPES) — mirror supplementAgenda
       // so the bodied denominator stays source-measured, not stale on this admission path.
       this.bodiedScopeSize++;
       this.depthFromOrigin.set(targetId, admittedDepth);
       this.budgetExpansions.push({ nodeId: targetId, depth: admittedDepth, atHop: this.hopCount });
-      this.log('debug', `[Depth] CT contraction add beyond initial scope id=${targetId} depth=${admittedDepth} hop=${this.hopCount}`);
+      this.log('debug', `[Depth] contraction add beyond initial scope id=${targetId} depth=${admittedDepth} hop=${this.hopCount}`);
     }
     if (this.visited.has(targetId) || this.removedSet.has(targetId)) {
       this.log('debug', `[Disposition] enqueue skip ${targetId} — already ${this.removedSet.has(targetId) ? 'removed' : 'visited'}`);
@@ -3000,7 +3002,7 @@ export class NavigationEngine implements IHopStateMachine {
         ? buildPassthroughReAnchor(targetId, nid, this.mode.kind)
         : '';
       const forwarded = `${question}${reAnchor}`;
-      this.enqueueHop(nid, forwarded, depth + 1, priority, { columns: carried, lineageQuestions, visitedRefs, parentTaskId, admitCtContractedBodiedTarget });
+      this.enqueueHop(nid, forwarded, depth + 1, priority, { columns: carried, lineageQuestions, visitedRefs, parentTaskId, admitContractedBodiedTarget });
     }
   }
 

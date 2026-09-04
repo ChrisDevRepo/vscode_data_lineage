@@ -59,7 +59,7 @@ const ExplorationDepthLimitSchema = z.union([numericStringDepth(z.number().int()
  * One side of an asymmetric depth pair. Unlike {@link ExplorationDepthLimitSchema}, 0 is a
  * valid side value here — it PERMANENTLY disables that direction for the rest of the session
  * (no starting seed, and every later route/contraction admission in that direction is rejected
- * at {@link BorderPurpose} `'route'`/`'ct_contraction'` — see `isReachableInApprovedDirection` in
+ * at {@link BorderPurpose} `'route'`/`'contraction'` — see `isReachableInApprovedDirection` in
  * `smBase.ts`), the mechanism for a lopsided proposal (e.g. `{upstream: 2, downstream: 0}`).
  * Omitted/`null` is a distinct "unstated" signal — it resolves to the reviewed default of 3,
  * independently per side, exactly like the top-level {@link ExplorationDepthSelectionSchema}.

@@ -136,17 +136,23 @@ describe("Submit Findings Handler", () => {
   expect((result() as { error?: string }).error, 'BB preserves the established CT-field rejection envelope').toBe('bb_field_unknown');
 });
 
-  it("CT preserves the established BB-field rejection envelope", () => {
+  it("CT accepts prune_neighbors — same decision space as BB (D1 convergence)", () => {
   const { services, result } = setupCt();
   executeSubmitFindings({
     focus_node_id: 'origin',
-    sections: [{ angle: 'business', text: 'Wrong mode field.' }],
-    summary: 'Wrong mode field.',
+    sections: [{ angle: 'business', text: 'Neighbor prune is a shared BB field.' }],
+    summary: 'Neighbor prune is a shared BB field.',
     verdict: 'analyze',
     column_flow: [],
     prune_neighbors: ['base_table'],
   }, services);
-  expect((result() as { error?: string }).error, 'CT preserves the established BB-field rejection envelope').toBe('bb_field_forbidden_in_ct');
+  const outcome = result() as { error?: string };
+  // Overturned pin: `bb_field_forbidden_in_ct` was the old divergence — CT's strict form lacked the
+  // BB `prune_neighbors` key entirely. CT is BB plus column tracking, so the CT form carries the
+  // same field and the handler no longer rejects it. What the engine does with a given target
+  // (in-scope protection, required-neighbour routing) is the shared currentHopActionPolicy,
+  // pinned in the sm engine suites — the handler only proves the form accepts the key.
+  expect(outcome.error, 'CT no longer rejects prune_neighbors as a foreign field').not.toBe('bb_field_forbidden_in_ct');
 });
 
   it("handler delegates completed-status authority to NavigationEngine", () => {
