@@ -463,7 +463,8 @@ const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
  *
  * @remarks
  * Promotion fires only when `parts` carries no real tool-call part already, its concatenated text
- * contains a fenced JSON block, that block parses, and the parsed object validates against one of
+ * either contains a fenced JSON block or is itself one JSON value, that text parses, and the parsed
+ * object validates against one of
  * `definitions`' own input schemas — the same {@link ModelToolDefinition.inputSchema} the native
  * path validates against, so nothing here relaxes what a tool accepts. Any failure at any step
  * returns `parts` unchanged **by reference**, so a caller can test `resolvedParts !== parts` and a
@@ -483,11 +484,13 @@ function promoteProseToolCall(
     .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
     .join('');
+  // The fence is one spelling of the miss, not the miss itself: the recorded shape is far more
+  // often the payload as the entire message body with no fence at all. Falling back to the trimmed
+  // body widens only what is *read*; what is accepted stays the tool's own schema below.
   const match = FENCED_JSON_BLOCK.exec(text);
-  if (!match) return parts;
   let candidate: unknown;
   try {
-    candidate = JSON.parse(match[1]);
+    candidate = JSON.parse(match ? match[1] : text.trim());
   } catch {
     return parts;
   }
