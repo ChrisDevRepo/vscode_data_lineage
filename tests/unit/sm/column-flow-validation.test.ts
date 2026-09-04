@@ -472,6 +472,82 @@ describe("Column Flow Validation", () => {
   expect(unknown.stagedEdges.length, 'WS2 unknown writes_to.node: no edge staged').toBe(0);
 });
 
+  it("a zero-column neighbour still accepts the claimed contributor column, logging it as unverifiable", () => {
+  // Procedures/scalar functions legitimately declare no columns, so a non-procedure neighbour with
+  // an empty declared-columns list can't be checked against a real list either. The guard must
+  // still accept the claimed column (no rejection, no change to staged edges) and — since this is
+  // the only place such a contributor is invisible to verification — record it at debug level via
+  // the optional `log` callback rather than accepting it silently.
+  const ctModel: DatabaseModel = makeModel([], [], ['dbo']);
+  const tracer = new ColumnTracer(['TotalRevenue']);
+  const nodeMap = new Map<string, any>([
+    ['vwtarget', { id: 'vwtarget', type: 'view', columns: [{ name: 'TotalRevenue' }] }],
+    // zero-column, non-procedure neighbour: no `columns` key at all.
+    ['zerocolsrc', { id: 'zerocolsrc', type: 'table' }],
+  ]);
+  const finding = {
+    verdict: 'analyze' as const, summary: 's', sections: [],
+    column_flow: [{
+      out_col: 'TotalRevenue',
+      upstream_columns: [{ node: 'zerocolsrc', col: 'AnyClaimedColumn' }],
+    }],
+  };
+  const logCalls: Array<[string, string]> = [];
+  const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
+
+  const res = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null, log);
+  expect(res.invalidRoutes.length, 'zero-column neighbour: no rejection').toBe(0);
+  expect(res.stagedEdges.length, 'zero-column neighbour: contributor edge still staged').toBe(1);
+  expect(res.stagedEdges[0]?.from_node, 'zero-column neighbour: staged edge names the neighbour').toBe('zerocolsrc');
+  expect(res.stagedEdges[0]?.from_col, 'zero-column neighbour: claimed column carried through unverified').toBe('AnyClaimedColumn');
+
+  const debugCall = logCalls.find(([level]) => level === 'debug');
+  expect(!!debugCall, 'unverifiable contributor is logged at debug level').toBe(true);
+  expect(debugCall?.[1].includes('zerocolsrc'), 'log names the neighbour node').toBe(true);
+  expect(debugCall?.[1].includes('AnyClaimedColumn'), 'log names the claimed column').toBe(true);
+
+  // Omitting `log` entirely must not throw or change behavior.
+  const resNoLog = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null);
+  expect(resNoLog.stagedEdges.length, 'no-log call: contributor still accepted').toBe(1);
+});
+
+  it("engine wiring: NavigationEngine forwards its own logger into validateColumnFlow, so the zero-column unverifiable notice reaches the host log, not just an inline tracer call", () => {
+  // The tracer-level test above pins validateColumnFlow's own behavior when a `log` callback is
+  // handed to it directly. This pins the wiring one layer up: smBase's sole call site passes
+  // `this.log` through, so the notice actually surfaces on the running engine's logger and not just
+  // when a test constructs a bare ColumnTracer by hand.
+  const zcNodes: LineageNode[] = [
+    makeNode({ id: 'ctorigin2', schema: 'dbo', name: 'ctorigin2', type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    // zero-column, non-procedure upstream neighbour: no `columns` key at all.
+    makeNode({ id: 'zerocolsrc', schema: 'dbo', name: 'zerocolsrc', type: 'table' }),
+  ];
+  const zcEdges: Array<[string, string]> = [['zerocolsrc', 'ctorigin2']];
+  const zcModel: DatabaseModel = makeModel(zcNodes, zcEdges, ['dbo']);
+  const zcGraph = makeGraph(zcNodes, zcEdges);
+
+  const logCalls: Array<[string, string]> = [];
+  const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
+
+  const engine = new NavigationEngine(zcModel, zcGraph, log, {});
+  const init = engine.init({ origin: 'ctorigin2', question: 'trace amount upstream', direction: 'upstream', targetColumns: ['amount'] });
+  expect('ok' in init, 'engine wiring: CT session initializes').toBe(true);
+  engine.getHopContext();
+  const result = engine.submitFindings({
+    focus_node_id: 'ctorigin2',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'zerocolsrc', col: 'AnyClaimedColumn' }] }],
+    route_requests: engine.requiredNeighborIds('ctorigin2').map(id => ({ nodeId: id, question: `what does ${id} contribute?` })),
+  });
+  expect(!('error' in result), `engine wiring: zero-column contributor is accepted through the full submit path, not rejected (${'error' in result ? result.error : ''})`).toBe(true);
+
+  const debugCall = logCalls.find(([, msg]) => msg.includes('unverifiable'));
+  expect(!!debugCall, 'engine wiring: the unverifiable-contributor line reaches the engine\'s own logger').toBe(true);
+  expect(debugCall?.[1].includes('zerocolsrc'), 'engine wiring: emitted line names the neighbour').toBe(true);
+  expect(debugCall?.[1].includes('AnyClaimedColumn'), 'engine wiring: emitted line names the claimed column').toBe(true);
+});
+
   it("from-node+col) is a content error (`self_loop_column`), never a valid rename/passthrough edge.", () => {
   // validateColumnFlow() only ever reads model.neighborIndex (and only for 'procedure'-typed
   // upstream contributors, none of which appear in this test), so an empty makeModel() is a
