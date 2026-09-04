@@ -1012,6 +1012,62 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     expect('error' in analyzed && analyzed.error === 'column_chain_incomplete', "J23 RC4c: verdict:'analyze' with an empty column_flow still owes an account — the escape is the passthrough declaration, not the empty array").toBe(true);
   });
 
+  it("RC4d: the incomplete-chain hint offers the passthrough escape only where the engine will accept it", () => {
+    // P1-37, the named residual of P1-36. The escape `verdict:'passthrough'` with `column_flow:[]`
+    // is refused where the focus declares one of the active columns, so at those focuses the hint
+    // must stop naming it — a rejection that prescribes a repair the engine rejects spends another
+    // generation and teaches nothing. Two focuses, one fixture, opposite halves of the branch.
+
+    // Declares them: origin_view carries both Discount and BaseAmt. Submitting only Discount leaves
+    // BaseAmt unaccounted, and the escape is not available here.
+    const declaring = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    expect('ok' in declaring.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] }), 'J23 RC4d: CT session initializes at origin_view').toBe(true);
+    declaring.getHopContext();
+    const declared = declaring.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount derives from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] }],
+    });
+    expect('error' in declared && declared.error === 'column_chain_incomplete', 'J23 RC4d: BaseAmt left unaccounted at origin_view → column_chain_incomplete').toBe(true);
+    const declaredHint = ('error' in declared && declared.hint) || '';
+    expect(/or return verdict:'passthrough' with column_flow:\[\]/.test(declaredHint), "J23 RC4d: origin_view declares the active columns, so the hint no longer offers verdict:'passthrough' with column_flow:[] as a repair — the engine would refuse it").toBe(false);
+    expect(/is not available here/.test(declaredHint), 'J23 RC4d: the hint says so outright rather than staying silent, so the model does not re-derive the refusal by spending a generation on it').toBe(true);
+    expect(/BaseAmt/.test(declaredHint) && /origin_view declares \[/.test(declaredHint), 'J23 RC4d: the hint names the unaccounted column and the columns the focus itself declares').toBe(true);
+    expect(/Add a column_flow entry for each/.test(declaredHint), 'J23 RC4d: the one open repair is still stated as a verb-led order').toBe(true);
+    const declaredDetail = ('error' in declared && declared.detail) as { declared_here?: string[] } | undefined;
+    expect((declaredDetail?.declared_here ?? []).map(c => c.toLowerCase()).sort().join(','), 'J23 RC4d: detail.declared_here carries the contradicting columns, so the repair is machine-readable too').toBe(['baseamt', 'discount'].sort().join(','));
+
+    // Declares none: writer_proc is a procedure with no column metadata, so the escape is open and
+    // the hint must keep offering it — the wording P1-36 made true (RC4 proves it commits).
+    const silent = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    expect('ok' in silent.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] }), 'J23 RC4d: second session initializes at origin_view').toBe(true);
+    silent.getHopContext();
+    expect(!('error' in silent.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+    })), 'J23 RC4d: origin_view commit accepted').toBe(true);
+    j23DispatchUntil(silent, 'writer_proc');
+    const undeclared = silent.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc produces staging.OrderAmount' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+    });
+    expect('error' in undeclared && undeclared.error === 'column_chain_incomplete', 'J23 RC4d: OrderDate left unaccounted at writer_proc → column_chain_incomplete').toBe(true);
+    const undeclaredHint = ('error' in undeclared && undeclared.hint) || '';
+    expect(/verdict:'passthrough' with column_flow:\[\]/.test(undeclaredHint), 'J23 RC4d: writer_proc declares none of them, so the hint still offers the escape it will honour').toBe(true);
+    expect(/declares \[/.test(undeclaredHint), 'J23 RC4d: nothing is declared here, so the hint states no contradiction').toBe(false);
+  });
+
   /**
    * The rejection itself is an executable repair: `detail.unaccounted` and `detail.available_columns`
    * alone are enough to rebuild a committing column_flow, `heldFindingFocus` pins the hold to the

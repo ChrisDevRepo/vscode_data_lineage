@@ -39,19 +39,34 @@ export function computeUnaccounted(required: readonly string[], accounted: Itera
  * `available` is the valid set of active columns the AI may choose from, surfaced under
  * `available_columns` in `detail`.
  *
+ * Two repairs exist, and only one of them is always open. A focus that declares none of the active
+ * columns may end the chain with `verdict:'passthrough'` and `column_flow:[]`; a focus that
+ * declares one of them may not, because there the claim is checkably false and the engine refuses
+ * it. `contradicted` carries the active columns the focus declares, so the hint offers the escape
+ * only where it will be accepted — a rejection that names a repair the engine rejects costs another
+ * generation and teaches the model nothing.
+ *
  * @param focusId - Canonical focus whose active columns were incomplete.
  * @param unaccounted - Active columns missing from the submitted flow.
  * @param available - Valid active columns exposed for correction.
+ * @param contradicted - Active columns the focus itself declares; empty when it declares none.
  * @returns The narrow held-content retry envelope.
  */
 export function buildIncompleteRejection(
   focusId: string,
   unaccounted: string[],
   available: string[],
+  contradicted: readonly string[] = [],
 ): SubmitResult {
+  const held = `Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`;
+  const repair = contradicted.length > 0
+    ? `Add a column_flow entry for each. ${focusId} declares [${contradicted.join(', ')}], so it carries the column and verdict:'passthrough' with column_flow:[] is not available here.`
+    : `Add a column_flow entry for each, or return verdict:'passthrough' with column_flow:[].`;
   return {
     error: 'column_chain_incomplete',
-    hint: `Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. Add a column_flow entry for each, or return verdict:'passthrough' with column_flow:[]. Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`,
-    detail: { unaccounted, available_columns: available },
+    hint: `Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. ${repair} ${held}`,
+    detail: contradicted.length > 0
+      ? { unaccounted, available_columns: available, declared_here: [...contradicted] }
+      : { unaccounted, available_columns: available },
   };
 }

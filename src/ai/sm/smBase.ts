@@ -2387,22 +2387,23 @@ export class NavigationEngine implements IHopStateMachine {
     // retained for what it does to the row set.
     if (this.mode.kind === 'ct' && this.tracer) {
       const submittedFlow = finding.column_flow ?? [];
-      let declaresNoTrackedColumns = finding.verdict === 'passthrough' && submittedFlow.length === 0;
+      // The active columns the focus itself declares. One value decides both halves: whether the
+      // empty-flow declaration is checkably false, and — when the hop is rejected for any reason —
+      // whether the hint may still offer that escape (P1-37).
+      const declared = getNodeColumns(focusId, this.nodeMap, this.store ?? undefined) ?? [];
+      const declaredNorm = new Set(declared.map(c => normalizeColName(c.name)));
+      const contradicted = this.tracer.activeColumns.filter(c => declaredNorm.has(normalizeColName(c)));
+      const declaresNoTrackedColumns =
+        finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
       if (declaresNoTrackedColumns) {
-        const declared = getNodeColumns(focusId, this.nodeMap, this.store ?? undefined) ?? [];
-        const declaredNorm = new Set(declared.map(c => normalizeColName(c.name)));
-        const contradicted = this.tracer.activeColumns.filter(c => declaredNorm.has(normalizeColName(c)));
-        declaresNoTrackedColumns = contradicted.length === 0;
-        if (declaresNoTrackedColumns) {
-          this.log('debug', `[CT] ${focusId} declares none of the active columns [${this.tracer.activeColumns.join(', ')}] — column chain ends here`);
-        }
+        this.log('debug', `[CT] ${focusId} declares none of the active columns [${this.tracer.activeColumns.join(', ')}] — column chain ends here`);
       }
       const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow);
       if (unaccounted.length > 0) {
         this.lastRoutedRejected = unaccounted.length;
         this.memory.recordRejection(focusId, `column_chain_incomplete: ${unaccounted.join(', ')}`, this.hopCount);
         this.heldFindingDraft.hold(structuredClone(finding));
-        return buildIncompleteRejection(focusId, unaccounted, [...this.tracer.activeColumns]);
+        return buildIncompleteRejection(focusId, unaccounted, [...this.tracer.activeColumns], contradicted);
       }
     }
 
