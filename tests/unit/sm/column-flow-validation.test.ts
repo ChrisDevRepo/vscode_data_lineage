@@ -936,8 +936,10 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     });
     expect('error' in result && result.error === 'column_chain_incomplete', 'J23 RC4: OrderDate left unaccounted at writer_proc → column_chain_incomplete (genuine premise)').toBe(true);
 
-    // Loop proof (NOT red — documents the resulting stall, not a fixed contract): resubmitting the
-    // hint's own literal suggestion returns the identical rejection.
+    // The stall this used to pin is closed. The overturned contract, restated: resubmitting
+    // `verdict:'passthrough'` with `column_flow:[]` returned `column_chain_incomplete` again, so the
+    // hint's own literal escape did not resolve the hop and the model had no way out. It now
+    // commits — the declaration is the account (P1-36).
     const again = engine.submitFindings({
       focus_node_id: 'writer_proc',
       sections: [],
@@ -945,7 +947,69 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       verdict: 'passthrough',
       column_flow: [],
     });
-    expect('error' in again && again.error === 'column_chain_incomplete', "J23 RC4 (loop proof, passes today): resubmitting verdict:'passthrough', column_flow:[] at writer_proc returns column_chain_incomplete again — the hint's literal suggested escape does not resolve the hop").toBe(true);
+    expect('ok' in again && again.ok, "J23 RC4: resubmitting verdict:'passthrough', column_flow:[] at writer_proc commits — the hint's literal suggested escape resolves the hop").toBe(true);
+  });
+
+  it("RC4c: a focus declaring none of the active columns commits with verdict:'passthrough' and column_flow:[] — the escape the hint offers, on a node the engine cannot check", () => {
+    // The live shape (wave-2320d530-local-mlx/run-T8, P1-36): the traced column is bound to a
+    // procedure that never carried it. A procedure declares no columns, so
+    // `resolveActiveColumnsForNode` passes every requested column through (smBase.ts:893) — absence
+    // of metadata is not evidence of absence — and the completeness guard then demanded a chain the
+    // node never had. The model cannot invent a terminal entry for a column that is not there
+    // without fabricating a column origin, which is the hallucination class the CT guards exist to
+    // stop; in the live run it declined three times, tripped the semantic-failures breaker and the
+    // answer was salvaged from four hops. The engine cannot check the claim, so it accepts and logs.
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    expect('ok' in init, 'J23 RC4c: CT session initializes at origin_view').toBe(true);
+    const hop = engine.getHopContext() as { done?: boolean };
+    expect(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC4c: first dispatched hop is origin_view').toBe(true);
+    const originCommit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+    });
+    expect(!('error' in originCommit), `J23 RC4c: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`).toBe(true);
+    j23DispatchUntil(engine, 'writer_proc');
+    expect((engine.columnAspect?.active_columns ?? []).length > 0, 'J23 RC4c: writer_proc dispatches with a non-empty active set — the premise the guard fired on').toBe(true);
+
+    const declared = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc carries none of the traced columns; it writes the row set' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [],
+    });
+    expect(!('error' in declared), `J23 RC4c: the declaration commits (${'error' in declared ? declared.error : ''})`).toBe(true);
+
+    // The guard is not disarmed: an `analyze` verdict still owes an account for every active column.
+    const engine2 = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    engine2.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    engine2.getHopContext();
+    engine2.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+    });
+    j23DispatchUntil(engine2, 'writer_proc');
+    const analyzed = engine2.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc analysed' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [],
+    });
+    expect('error' in analyzed && analyzed.error === 'column_chain_incomplete', "J23 RC4c: verdict:'analyze' with an empty column_flow still owes an account — the escape is the passthrough declaration, not the empty array").toBe(true);
   });
 
   /**

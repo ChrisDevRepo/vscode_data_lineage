@@ -2369,8 +2369,35 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     // CT completeness guard: every active tracked column must be continued or marked terminal.
+    // `verdict:'passthrough'` with an empty `column_flow` is the one exception, and only where the
+    // engine cannot disprove it. It is an account, not a gap: the focus states it carries none of
+    // the active columns onward, which is the escape `buildIncompleteRejection`'s hint offers and
+    // `ColumnTracer.unaccountedActiveColumns` documents.
+    //
+    // Checkable, so still rejected: the focus declares one of the active columns. The origin is
+    // always this case (`init` refuses `unknown_columns` unless the traced columns resolve on it),
+    // and a declared column contradicts the claim outright.
+    //
+    // Not checkable, so accepted with a log: the focus declares none of them, or declares no
+    // columns at all. A procedure exposes no column metadata, so `resolveActiveColumnsForNode`
+    // passes every requested column through — absence of metadata is not absence of the column —
+    // and a node the trace never touched still dispatches carrying the full active set. Demanding a
+    // terminal entry there asks the model to assert a column origin that does not exist, which is
+    // the fabrication class these guards exist to stop; the chain simply ends here and the node is
+    // retained for what it does to the row set.
     if (this.mode.kind === 'ct' && this.tracer) {
-      const unaccounted = this.tracer.unaccountedActiveColumns(finding.column_flow ?? []);
+      const submittedFlow = finding.column_flow ?? [];
+      let declaresNoTrackedColumns = finding.verdict === 'passthrough' && submittedFlow.length === 0;
+      if (declaresNoTrackedColumns) {
+        const declared = getNodeColumns(focusId, this.nodeMap, this.store ?? undefined) ?? [];
+        const declaredNorm = new Set(declared.map(c => normalizeColName(c.name)));
+        const contradicted = this.tracer.activeColumns.filter(c => declaredNorm.has(normalizeColName(c)));
+        declaresNoTrackedColumns = contradicted.length === 0;
+        if (declaresNoTrackedColumns) {
+          this.log('debug', `[CT] ${focusId} declares none of the active columns [${this.tracer.activeColumns.join(', ')}] — column chain ends here`);
+        }
+      }
+      const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow);
       if (unaccounted.length > 0) {
         this.lastRoutedRejected = unaccounted.length;
         this.memory.recordRejection(focusId, `column_chain_incomplete: ${unaccounted.join(', ')}`, this.hopCount);
