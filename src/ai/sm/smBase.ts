@@ -2416,9 +2416,19 @@ export class NavigationEngine implements IHopStateMachine {
         this.lastRoutedRejected = scopeAddNids.size;
         this.memory.recordRejection(focusId, `over_active_scope_budget: +${scopeAddNids.size} routes would exceed the exploration budget`, this.hopCount);
         this.heldFindingDraft.hold(structuredClone(finding));
+        // Every repair below must apply to the shape that produced the rejection. Choosing a
+        // subset presumes a set: with one staged route the model judges it essential, keeps it,
+        // and resubmits byte-identical until the breaker — three times in
+        // wave-739076f1-local-mlx/run-T8 (P1-22). Dropping the route is the repair that always
+        // exists, so it is named in both branches and is the only one named where it is the only
+        // one left.
+        const staged = scopeAddNids.size;
+        const budgets = `(nodes ${admission.counts.nodes}/${admission.limits.node_cap}, est. tokens ${admission.counts.tokens}/${admission.limits.token_budget})`;
         return {
           error: 'over_active_scope_budget',
-          hint: `Committing ${scopeAddNids.size} new routes would exceed the exploration budget (nodes ${admission.counts.nodes}/${admission.limits.node_cap}, est. tokens ${admission.counts.tokens}/${admission.limits.token_budget}). Your analysis is held: resend submit_findings keeping only the routes essential to the question — prune or defer the rest, or mark remaining branches terminal so the engine can close and synthesize.`,
+          hint: staged === 1
+            ? `Committing 1 new route would exceed the exploration budget ${budgets}. It is the only route staged, so no smaller set of routes exists. Your analysis is held: resend submit_findings with route_requests:[] — the hop closes on what it already has and the engine synthesizes. Say what this route would have added in sections[].text if it matters to the answer.`
+            : `Committing ${staged} new routes would exceed the exploration budget ${budgets}. Your analysis is held: resend submit_findings keeping only the routes essential to the question — prune or defer the rest, mark remaining branches terminal, or send route_requests:[] to close the hop on what it already has so the engine can synthesize.`,
           detail: {
             staged_routes: scopeAddNids.size,
             projected_nodes: admission.counts.nodes,
