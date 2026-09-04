@@ -2000,7 +2000,16 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public requiredNeighborIds(focusId: string): string[] {
     return Array.from(this.directionalNeighbors(focusId, this._direction))
-      .filter(nid => this.scopeNodeIds.has(nid) && !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid));
+      .filter(nid => this.scopeNodeIds.has(nid) && !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
+      // No unmeetable demand: the guard may demand an account only for a neighbour the router
+      // would admit. The seed scope deliberately keeps out-of-allowlist reachables so they become
+      // `schema:` gate classes, but a route to one is deferred as a lead, never accepted - so
+      // demanding it is a demand the model cannot meet and the hop could never commit. The border
+      // is the filter, not the scope, and it is the router's own filter (`'route'`).
+      .filter(nid => {
+        const node = this.nodeMap.get(nid);
+        return node === undefined || this.checkBorder(nid, node, 'route').kind === 'in_border';
+      });
   }
 
   /**

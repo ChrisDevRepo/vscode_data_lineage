@@ -1531,7 +1531,7 @@ describe('route-border demand — the guard demands only what the router admits 
       makeModel(borderNodes, borderEdges, ['ai', 'ct']),
       makeGraph(borderNodes, borderEdges),
       () => {},
-      { activeFilter: { schemas: ['ai'] } },
+      { activeFilter: { schemas: ['ai'] } as any },
     );
     engine.init({
       origin: '[ai].[vwbase]', question: 'trace Amount', direction: 'bidirectional',
