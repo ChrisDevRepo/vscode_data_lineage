@@ -229,6 +229,40 @@ const CASES: readonly RetentionCase[] = [
     },
     measuredLost: [],
   },
+  {
+    // `[ct].[stgorders]` is the non-bodied carrier between the origin and the rest of the chain,
+    // and it declares none of the traced column. The seed contraction drops it outright — the log
+    // reads `enqueue drop [ct].[stgorders] — carrier declares none of the forwarded columns,
+    // contraction stops here` — and only the model's own column_flow re-routes through it, so
+    // everything behind the carrier reaches the answer by a second path rather than the first. This
+    // case pins that recovery: BB forwards through the same carrier unconditionally, and CT must
+    // end with the same node set however it got there.
+    id: 'C15 — a carrier that declares none of the traced columns must still be traversed',
+    origin: '[ct].[vwordertotals]', tracedColumn: 'NetAmount',
+    nodes: [
+      ['[ct].[vwordertotals]', V, ['NetAmount']],
+      ['[ct].[stgorders]', T, ['RawAmount']],
+      ['[ct].[vworderfeed]', V, ['NetAmount']],
+      ['[ct].[orders]', T, ['OrderAmount']],
+    ],
+    edges: [
+      ['[ct].[stgorders]', '[ct].[vwordertotals]'],
+      ['[ct].[vworderfeed]', '[ct].[stgorders]'],
+      ['[ct].[orders]', '[ct].[vworderfeed]'],
+    ],
+    reachRequired: ['[ct].[stgorders]', '[ct].[vworderfeed]', '[ct].[orders]'],
+    flow: {
+      '[ct].[vwordertotals]': [{ out_col: 'NetAmount', upstream_columns: [{ node: '[ct].[stgorders]', col: 'RawAmount' }] }],
+      // `[]` is what the engine demands here today, and it is the reason this case is a retention
+      // guard and not the fix: the carrier forwards its own `RawAmount`, so `[ct].[vworderfeed]`
+      // is dispatched with an EMPTY active-column set even though it declares `NetAmount`, the
+      // traced column. A flow naming `NetAmount` is refused as `out_col_not_on_node` — a real
+      // column on the right node rejected as untracked. Open, recorded under P1-13; the fix and its
+      // red test land together in the first AI-surface cycle B11 allows.
+      '[ct].[vworderfeed]': [],
+    },
+    measuredLost: [],
+  },
 ];
 
 function buildWorld(testCase: RetentionCase): { model: DatabaseModel; graph: ReturnType<typeof makeGraph> } {
