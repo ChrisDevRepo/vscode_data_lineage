@@ -2209,7 +2209,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
     // Column Aspect validation + completeness is delegated to ColumnTracer and pure set-difference checks.
     if (this.mode.kind === 'ct' && this.tracer) {
-      const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null);
+      const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log);
       if (valResult.error) {
         return valResult.error;
       }

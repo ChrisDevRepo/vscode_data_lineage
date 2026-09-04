@@ -167,6 +167,8 @@ export class ColumnTracer {
    * @param nodeMap - Map of all available lineage nodes.
    * @param model - The underlying database model.
    * @param store - Optional column store for checking declared column lists.
+   * @param log - Optional logger; a neighbour with zero declared columns cannot be verified, so
+   * the acceptance is logged at `debug` instead of passing silently.
    * @returns Validation result containing any error, invalid routes, or successfully staged edges.
    */
   validateColumnFlow(
@@ -174,7 +176,8 @@ export class ColumnTracer {
     finding: HopFinding,
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
-    store: ColumnStore | null
+    store: ColumnStore | null,
+    log?: (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
@@ -245,7 +248,9 @@ export class ColumnTracer {
           }
         } else {
           const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
-          if (validNeighborCols.size > 0 && !validNeighborCols.has(normalizeColName(cont.col))) {
+          if (validNeighborCols.size === 0) {
+            log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — neighbour declares no columns, accepting unverified`);
+          } else if (!validNeighborCols.has(normalizeColName(cont.col))) {
             invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });
             continue;
           }

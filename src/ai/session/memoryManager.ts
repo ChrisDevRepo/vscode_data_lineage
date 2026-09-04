@@ -268,7 +268,7 @@ export class AiMemoryManager {
    *
    * @remarks
    * Sections are stored verbatim — uniform downstream shape simplifies eval
-   * extraction and synthesis lift.
+   * extraction and the synthesis prompt's carry instruction.
    */
   public storeDetail(
     node: LineageNode,

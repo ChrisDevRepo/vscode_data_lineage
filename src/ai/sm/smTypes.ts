@@ -224,16 +224,16 @@ export interface HopFinding {
    * Captured sections — one per fired `*_capture` YAML template. The locked
    * classification defines required angles; off-classification sections are
    * dropped deterministically at the tool handler boundary before storage.
-   * Each stored section is lifted verbatim by synthesis as a peer entry in
-   * `present_result.sections[]`. Mechanically validated and filtered against
-   * the locked session classification at the tool handler boundary
+   * Each stored section is material the synthesis prompt instructs the model to carry
+   * into a peer entry of `present_result.sections[]`. Mechanically validated and filtered
+   * against the locked session classification at the tool handler boundary
    * (`interaction/rules/submitFindingsRules`: `validateSectionsAgainstClassification`
    * + `filterSectionsForClassification`).
    *
    * @remarks
    * Each entry is one fired `*_capture` template's output. The split lets
-   * prompts and synthesis treat each angle independently and lifts verbatim
-   * into a peer entry of `present_result.sections[]` at synthesis.
+   * prompts and synthesis treat each angle independently; the synthesis prompt
+   * instructs carrying each into a peer entry of `present_result.sections[]`.
    */
   sections: CapturedSection[];
   /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
