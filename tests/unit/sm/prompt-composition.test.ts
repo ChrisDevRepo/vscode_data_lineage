@@ -31,6 +31,7 @@ import { buildWorkerHopMessage } from '../../../src/ai/agent/stagePrompts';
 import { getAllowedLmToolNames } from '../../../src/ai/tools/toolPolicy';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import {
+  PresentResultModelSchema,
   StartExplorationFreshProviderInputSchema,
   StartExplorationInputSchema,
 } from '../../../src/ai/tools/toolSchemas';
@@ -574,5 +575,13 @@ describe('prompt composition', () => {
     expect(getAllowedLmToolNames({ kind: 'synthesis' }).has('lineage_get_object_detail')).toBe(false);
     expect(getAllowedLmToolNames({ kind: 'completed' }).has('lineage_get_object_detail')).toBe(true);
     expect(getAllowedLmToolNames({ kind: 'active', mode: 'sm_bb' }).has('lineage_start_exploration')).toBe(false);
+  });
+
+  it('never licenses leaving a kept node bare', () => {
+    const projected = toModelJsonSchema(PresentResultModelSchema) as { properties?: Record<string, { description?: string }> };
+    const notesDescription = projected.properties?.notes?.description ?? '';
+
+    expect(notesDescription).not.toContain('stay bare');
+    expect(notesDescription).toMatch(/engine lists with no detail slot earns a note/);
   });
 });
