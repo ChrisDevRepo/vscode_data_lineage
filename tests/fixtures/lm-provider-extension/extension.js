@@ -634,12 +634,13 @@ function activate(context) {
         hopSeq += 1;
         const callId = `${caseId}-hop-${hopSeq}`;
         const isCt = cfg.mode === 'ct';
-        // BB required-route accounting: the full 'all'-depth scope is precomputed at
-        // start_exploration, but BbStrategy.runRequiredNodesGuard (src/ai/sm/strategies.ts) still
-        // requires each hop to explicitly account for its own in-scope, not-yet-queued directional
-        // neighbors via route_requests (or prune_neighbors) — pre-seeding the scope does not queue
-        // it. Route every in-budget upstream neighbor forward; the engine dedupes an already-queued
-        // one, so over-routing is harmless.
+        // Required-route accounting, both modes: the full 'all'-depth scope is precomputed at
+        // start_exploration, but the engine's required-nodes guard (NavigationEngine.submitFindings,
+        // src/ai/sm/smBase.ts) still requires each hop to explicitly account for its own in-scope,
+        // not-yet-queued directional neighbors via route_requests (or prune_neighbors) —
+        // pre-seeding the scope does not queue it. CT is BB plus column tracking and is held to the
+        // same checklist. Route every in-budget upstream neighbor forward; the engine dedupes an
+        // already-queued one, so over-routing is harmless.
         const inBudgetUpstreamNeighbors = (hop && Array.isArray(hop.neighbors) ? hop.neighbors : [])
           .filter((n) => n && n.edge_direction === 'upstream' && n.in_budget && n.boundary !== 'cycle'
             && typeof n.id === 'string');
@@ -652,9 +653,8 @@ function activate(context) {
           sections: [{ angle: 'business', text: `Scripted ${caseId} analysis of ${focusId}.` }],
           summary: `${focusId} passes data through unchanged.`,
           verdict: 'analyze',
-          ...(isCt
-            ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) }
-            : (routeRequests.length > 0 ? { route_requests: routeRequests } : {})),
+          ...(isCt ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) } : {}),
+          ...(routeRequests.length > 0 ? { route_requests: routeRequests } : {}),
         };
         progress.report(new vscode.LanguageModelToolCallPart(callId, 'lineage_submit_findings', input));
         return;
