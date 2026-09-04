@@ -1,7 +1,7 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
-import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
+import { driveEngine, makeActiveFilter, makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 
 describe("Supplement Agenda", () => {
@@ -183,7 +183,7 @@ describe("Supplement Agenda", () => {
     driveEngine(engine, { succ: { o: 'mid', mid: 'ext1' }, limit: 20 });
   }
   function makeCompletedExtEngine(): { engine: NavigationEngine; leadId: string } {
-    const engine = new NavigationEngine(extModel, extGraph, () => {}, { activeFilter: { schemas: ['dbo'] } as any });
+    const engine = new NavigationEngine(extModel, extGraph, () => {}, { activeFilter: makeActiveFilter({ schemas: ['dbo'] }) });
     engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
     drainExt(engine);
     expect(engine.status === 'complete', 'ext engine completes').toBe(true);
@@ -222,7 +222,7 @@ describe("Supplement Agenda", () => {
 
   it("(exclusion is checked before the allowlist; excluded wins).", () => {
   const engine = new NavigationEngine(extModel, extGraph, () => {}, {
-    activeFilter: { schemas: ['dbo'] } as any,
+    activeFilter: makeActiveFilter({ schemas: ['dbo'] }),
   });
   engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 }, excludeNodeIds: ['mid'] });
   drainExt(engine);
@@ -268,7 +268,7 @@ describe("Supplement Agenda", () => {
     makeModel(bothNodes, bothEdges, ['dbo', 'ext']),
     makeGraph(bothNodes, bothEdges),
     () => {},
-    { activeFilter: { schemas: ['dbo'] } as any },
+    { activeFilter: makeActiveFilter({ schemas: ['dbo'] }) },
   );
   engine.init({ origin: 'b0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   const succ: Record<string, string | undefined> = { b0: 'b1', b1: 'b2', b2: 'bx' };
@@ -300,7 +300,7 @@ describe("Supplement Agenda", () => {
 
   it("admitSupplementTargets never overrides an exclusion, and ignores unresolvable ids.", () => {
   const engine = new NavigationEngine(extModel, extGraph, () => {}, {
-    activeFilter: { schemas: ['dbo'] } as any,
+    activeFilter: makeActiveFilter({ schemas: ['dbo'] }),
   });
   engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 }, excludeNodeIds: ['mid'] });
   drainExt(engine);
@@ -325,7 +325,7 @@ describe("Supplement Agenda", () => {
     makeModel(siblingNodes, siblingEdges, ['dbo', 'ext']),
     makeGraph(siblingNodes, siblingEdges),
     () => {},
-    { activeFilter: { schemas: ['dbo'] } as any },
+    { activeFilter: makeActiveFilter({ schemas: ['dbo'] }) },
   );
   engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 }, excludeNodeIds: ['ext1'] });
   drainExt(engine);
@@ -356,7 +356,7 @@ describe("Supplement Agenda", () => {
       makeModel(siblingNodes, siblingEdges, ['dbo', 'ext']),
       makeGraph(siblingNodes, siblingEdges),
       () => {},
-      { activeFilter: { schemas: ['dbo'] } as any },
+      { activeFilter: makeActiveFilter({ schemas: ['dbo'] }) },
     );
     engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
     driveEngine(engine, { routes: { o: ['mid'], mid: ['ext1', 'ext2'] }, limit: 20 });
@@ -397,7 +397,7 @@ describe("Supplement Agenda", () => {
     makeModel(farNodes, farEdges, ['dbo', 'ext']),
     makeGraph(farNodes, farEdges),
     () => {},
-    { activeFilter: { schemas: ['dbo'] } as any },
+    { activeFilter: makeActiveFilter({ schemas: ['dbo'] }) },
   );
   engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
   driveEngine(engine, { succ: { o: 'mid', mid: 'ext1' }, limit: 20 });

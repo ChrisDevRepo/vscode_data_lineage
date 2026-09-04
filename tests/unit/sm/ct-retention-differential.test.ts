@@ -16,7 +16,7 @@ import type { SmResult } from '../../../src/ai/sm/smTypes';
 import { bfsReachable } from '../../../src/engine/graphGuards';
 import type { DatabaseModel, LineageNode, ObjectType } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { makeActiveFilter, makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
 import { EMPTY_AI_TEMPLATES } from '../../../src/ai/session/types';
@@ -1510,8 +1510,9 @@ describe('route-border demand — the guard demands only what the router admits 
    * keeps out-of-allowlist neighbours in the seed scope (the seed deliberately skips the allowlist
    * so they become `schema:` gate classes) but the route border refuses them — a route to one is
    * deferred as a lead, never accepted — so demanding it is a demand the model cannot meet: the
-   * hop could never commit. `requiredNeighborIds` must therefore filter on the route border, the
-   * exact filter the router applies (P1-7's piece; validated shape on record in `0852aadb`).
+   * hop could never commit. `requiredNeighborIds` must therefore filter on the router's own
+   * admission test (`admitsRoute`), of which this is the border axis; the depth axis is the case
+   * below (P1-7's piece; validated shape on record in `0852aadb`).
    *
    * Red pre-fix: the guard demanded the out-of-allowlist neighbour and rejected the hop with
    * `missing_required_route` however the model accounted for it.
@@ -1531,7 +1532,7 @@ describe('route-border demand — the guard demands only what the router admits 
       makeModel(borderNodes, borderEdges, ['ai', 'ct']),
       makeGraph(borderNodes, borderEdges),
       () => {},
-      { activeFilter: { schemas: ['ai'] } as any },
+      { activeFilter: makeActiveFilter({ schemas: ['ai'] }) },
     );
     engine.init({
       origin: '[ai].[vwbase]', question: 'trace Amount', direction: 'bidirectional',
@@ -1561,5 +1562,72 @@ describe('route-border demand — the guard demands only what the router admits 
     const foreign = (outcome.route_outcomes ?? []).find(o => o.nodeId === '[ct].[tblforeign]');
     expect(foreign?.accepted, 'the out-of-allowlist route is not admitted').toBe(false);
     expect(foreign?.deferred, 'it is deferred as a schema lead the user can approve').toBe(true);
+  });
+
+  /**
+   * The same invariant on the **depth** axis. Route admission is border AND depth: `checkBorder`
+   * carries no depth axis for any purpose, so a neighbour inside the schema allowlist but past a
+   * level count the user stated clears the border and is still deferred as a lead, never accepted.
+   * Filtering the demand on the border alone therefore left the unmeetable demand standing on the
+   * axis it did not cover — `admitsRoute` states both axes once and both sites read it.
+   *
+   * The state is reached through a resumed checkpoint because every in-session scope-growth path
+   * depth-checks its own admission (route accept, contraction, `supplementAgenda`), while a
+   * snapshot persists `scopeNodeIds` and the depth ceiling independently — so a restored engine is
+   * where a scope member past the ceiling is actually observable, and the ceiling still binds.
+   *
+   * Red pre-fix: the guard demanded the past-the-ceiling neighbour and rejected the hop with
+   * `missing_required_route` however the model accounted for it.
+   */
+  const depthNodes: LineageNode[] = [
+    makeNode({ id: '[ai].[vwlvl0]', schema: 'ai', name: 'vwlvl0', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: '[ai].[vwlvl1]', schema: 'ai', name: 'vwlvl1', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: '[ai].[vwlvl2]', schema: 'ai', name: 'vwlvl2', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+  ];
+  const depthEdges: Array<[string, string]> = [
+    ['[ai].[vwlvl0]', '[ai].[vwlvl1]'],
+    ['[ai].[vwlvl1]', '[ai].[vwlvl2]'],
+  ];
+
+  it('an in-allowlist neighbour past a strict depth ceiling is never demanded — routing it defers, the hop commits', () => {
+    const model = makeModel(depthNodes, depthEdges, ['ai']);
+    const graph = makeGraph(depthNodes, depthEdges);
+    const engine = new NavigationEngine(model, graph, () => {}, { activeFilter: makeActiveFilter({ schemas: ['ai'] }) });
+    engine.init({
+      origin: '[ai].[vwlvl0]', question: 'trace Amount', direction: 'downstream',
+      depthIntent: { kind: 'explicit', levels: 1 },
+    });
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: '[ai].[vwlvl0]',
+      sections: [{ angle: 'business' as const, text: 'level 0' }],
+      summary: 'level 0', verdict: 'analyze',
+      route_requests: [{ nodeId: '[ai].[vwlvl1]', question: 'the level-1 consumer' }],
+    });
+
+    const snapshot = JSON.parse(JSON.stringify(engine.toJSON())) as { scopeNodeIds: string[]; scopeSize: number };
+    snapshot.scopeNodeIds.push('[ai].[vwlvl2]');
+    snapshot.scopeSize = snapshot.scopeNodeIds.length;
+    const resumed = NavigationEngine.fromJSON(snapshot, model, graph, () => {});
+
+    const ctx = resumed.getHopContext() as { focus_node?: { id: string } };
+    expect(ctx.focus_node?.id, 'the resumed hop focuses the level-1 node').toBe('[ai].[vwlvl1]');
+    // In scope, in the allowlist, and past the stated single level — so never demanded.
+    const required = new Set(resumed.requiredNeighborIds('[ai].[vwlvl1]'));
+    expect(required.has('[ai].[vwlvl2]'), 'the past-the-ceiling neighbour is not guard-demanded').toBe(false);
+
+    // The model still routes it (it is the honest answer path); the router defers it as a depth
+    // lead and the hop commits — no unmeetable demand on this axis either.
+    const outcome = resumed.submitFindings({
+      focus_node_id: '[ai].[vwlvl1]',
+      sections: [{ angle: 'business' as const, text: 'level 1' }],
+      summary: 'level 1', verdict: 'analyze',
+      route_requests: [{ nodeId: '[ai].[vwlvl2]', question: 'the level-2 consumer' }],
+    }) as SubmitOk;
+    expect(outcome.error, 'the hop commits — the deferred lead satisfies nothing the guard demands').toBeUndefined();
+    const deep = (outcome.route_outcomes ?? []).find(o => o.nodeId === '[ai].[vwlvl2]');
+    expect(deep?.accepted, 'the past-the-ceiling route is not admitted').toBe(false);
+    expect(deep?.deferred, 'it is deferred as a depth lead the user can take up').toBe(true);
+    expect(deep?.reason, 'the deferral names the depth axis, not the schema axis').toBe('depth');
   });
 });

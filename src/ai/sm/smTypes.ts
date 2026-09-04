@@ -928,7 +928,7 @@ export type InvalidRouteKind = | 'absent_route'
       | 'prune_noop_removed'
       | 'prune_noop_visited'
       | 'prune_noop_analyzed'
-      | 'prune_noop_in_scope'
+      | 'prune_noop_queued'
       | 'prune_origin_forbidden'
       | 'prune_would_orphan'
       | 'prune_route_conflict';

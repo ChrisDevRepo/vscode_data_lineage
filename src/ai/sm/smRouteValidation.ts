@@ -15,7 +15,7 @@ import type { InvalidRouteKind, InvalidRoute, SubmitResult } from './smTypes';
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
   return kind === 'absent_route' || kind === 'absent_contributor'
     || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
-    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_in_scope';
+    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued';
 }
 
 /**
@@ -46,7 +46,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'This node was already analyzed on an earlier hop and is retained; a prune cannot remove committed analysis. Remove it from prune_neighbors.',
   prune_noop_analyzed:
     'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
-  prune_noop_in_scope:
+  prune_noop_queued:
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_origin_forbidden:
     'The origin node anchors the lineage and cannot be pruned. Remove it from prune_neighbors.',
@@ -71,7 +71,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_removed: 'route_validation_failed',
   prune_noop_visited: 'route_validation_failed',
   prune_noop_analyzed: 'route_validation_failed',
-  prune_noop_in_scope: 'route_validation_failed',
+  prune_noop_queued: 'route_validation_failed',
   prune_origin_forbidden: 'prune_origin_forbidden',
   prune_would_orphan: 'prune_would_orphan_noted',
   prune_route_conflict: 'prune_route_conflict',

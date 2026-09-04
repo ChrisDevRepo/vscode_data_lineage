@@ -23,6 +23,7 @@
  *     paths these tests exercise.
  */
 import type { NavigationEngine } from '../../../../src/ai/sm/smBase';
+import type { SerializedFilterState } from '../../../../src/engine/shared/bridgeContract';
 import type {
   DatabaseModel,
   LineageEdge,
@@ -46,6 +47,24 @@ export function makeNode(
  * is tagged `'body'`; see the module doc for why this is behaviorally inert versus a
  * non-member `'SELECT'` literal.
  */
+/**
+ * Build the engine's `activeFilter` config — the GUI filter state the NavigationEngine reads at
+ * construction. Every required field is defaulted to "no filter", so a test names only the axis
+ * it exercises (`makeActiveFilter({ schemas: ['dbo'] })`) and still hands over a complete
+ * {@link SerializedFilterState} rather than an `as any` partial that hides a contract change.
+ */
+export function makeActiveFilter(overrides: Partial<SerializedFilterState> = {}): SerializedFilterState {
+  return {
+    schemas: [],
+    types: [],
+    hideIsolated: false,
+    focusSchemas: [],
+    showExternalRefs: false,
+    externalRefTypes: [],
+    ...overrides,
+  };
+}
+
 export function makeEdges(pairs: ReadonlyArray<readonly [string, string]>): LineageEdge[] {
   return pairs.map(([source, target]) => ({ source, target, type: 'body' }));
 }

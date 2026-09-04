@@ -20,8 +20,6 @@ export interface CurrentHopActionPolicyInput {
   pruneTargets: CurrentHopActionTarget[];
   /** Nodes admitted to the approved exploration scope. */
   scopeNodeIds: ReadonlySet<string>;
-  /** Current-hop directional neighbors still requiring accounting. */
-  requiredNeighborIds: ReadonlySet<string>;
   /** Nodes already processed or removed. */
   visitedIds: ReadonlySet<string>;
   /** Nodes already removed by an earlier accepted prune. */
@@ -104,7 +102,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       // don't-orphan topology check governs every accepted prune after this.
       if (input.agendaIds.has(id)) {
         notices.push({
-          kind: 'prune_noop_in_scope',
+          kind: 'prune_noop_queued',
           id,
           path: target.path,
           reason: `\`${id}\` is already queued for a hop of its own; prune_neighbors does not pull queued work.`,

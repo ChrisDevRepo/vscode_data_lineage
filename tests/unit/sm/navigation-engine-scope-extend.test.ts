@@ -2,7 +2,7 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { SubmitFindingsBbInputSchema } from '../../../src/ai/tools/toolSchemas';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
-import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
+import { driveEngine, makeActiveFilter, makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 
 describe("Scope Extension + Hold-and-Amend", () => {
@@ -26,7 +26,7 @@ describe("Scope Extension + Hold-and-Amend", () => {
   it("Test 1: WITH a schema filter, a route beyond an explicit level count is still stopped by depth.", () => {
   // A schema filter is a separate axis: passing it does not license crossing a depth border the
   // user fixed. n5 (depth 5) is in-filter and still refused at a stated 2 levels.
-  const engine = new NavigationEngine(chainModel, chainGraph, () => {}, { activeFilter: { schemas: ['dbo'] } as any });
+  const engine = new NavigationEngine(chainModel, chainGraph, () => {}, { activeFilter: makeActiveFilter({ schemas: ['dbo'] }) });
   engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   drainChain(engine);
   expect(engine.status === 'complete', 'chain engine completes').toBe(true);

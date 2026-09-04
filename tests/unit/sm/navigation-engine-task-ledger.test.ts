@@ -1,7 +1,7 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { makeActiveFilter, makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 
 describe("Navigation Engine Task Ledger", () => {
@@ -17,7 +17,7 @@ describe("Navigation Engine Task Ledger", () => {
   }
   function newEngine(): NavigationEngine {
     const engine = new NavigationEngine(model, makeGraph(nodes, edges), () => {}, {
-      activeFilter: { schemas: ['dbo'] } as any,
+      activeFilter: makeActiveFilter({ schemas: ['dbo'] }),
     });
     engine.init({ origin: 'p', question: 'trace the business result', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
     return engine;

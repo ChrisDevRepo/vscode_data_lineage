@@ -188,6 +188,24 @@ type BorderVerdict =
   | { kind: 'out_of_direction' }
   | { kind: 'out_of_allowlist' };
 
+/**
+ * The router's whole admission test for one route candidate: the border axis and the depth axis
+ * together. Returned as a record rather than a boolean because the two axes are reported to the
+ * model differently — an out-of-allowlist deferral names the `schema:` gate, a depth deferral
+ * names the level count — so the route path reads the axes it must distinguish while the
+ * completeness guard reads only `admitted`.
+ */
+type RouteAdmission = {
+  /** First failing border axis, or `in_border`. */
+  border: BorderVerdict;
+  /** Breaching depth when a depth ceiling the user fixed is crossed, otherwise `null`. */
+  depthBreach: number | null;
+  /** Depth the candidate was judged at — the number a deferred lead quotes. */
+  candidateDepth: number;
+  /** True only when both axes clear: the router would accept a route to this node now. */
+  admitted: boolean;
+};
+
 /** Prose spelling of a deferral reason, for the user-facing lead text. */
 const DEFERRAL_BOUNDARY_LABEL: Readonly<Record<DeferredQuestion['reason'], string>> = {
   schema: 'schema',
@@ -1091,6 +1109,38 @@ export class NavigationEngine implements IHopStateMachine {
       return { kind: 'out_of_allowlist' };
     }
     return { kind: 'in_border' };
+  }
+
+  /**
+   * Whether the router would admit a route to `nodeId` right now — border **and** depth.
+   *
+   * @remarks
+   * Route admission has two axes and {@link checkBorder} owns only one: it carries no depth axis
+   * for any purpose, so a candidate inside the border but past a depth ceiling the user fixed
+   * clears {@link checkBorder} and is still deferred as a lead rather than accepted. This is the
+   * single statement of both axes, in the route path's own order, so the route path and the
+   * completeness guard ({@link requiredNeighborIds}) cannot drift on one of them — a demand the
+   * router would refuse is a demand no submit can meet.
+   *
+   * @param nodeId - Canonical candidate id.
+   * @param node - The resolved node, supplying `type` and `schema`.
+   * @param focusId - Hop the route is issued from, supplying the hop-relative depth fallback when
+   *   no directed path from the origin resolves.
+   * @returns The composite admission verdict; `admitted` is the predicate itself.
+   */
+  private admitsRoute(nodeId: string, node: LineageNode, focusId: string): RouteAdmission {
+    const border = this.checkBorder(nodeId, node, 'route');
+    let candidateDepth = this.depthFromOrigin.get(nodeId) ?? this.directedDepthFromOrigin(nodeId)?.depth;
+    if (candidateDepth === undefined) {
+      candidateDepth = (this.depthFromOrigin.get(focusId) ?? 0) + 1;
+    }
+    const depthBreach = this.depthBorderBreach(nodeId, candidateDepth);
+    return {
+      border,
+      depthBreach,
+      candidateDepth,
+      admitted: border.kind === 'in_border' && depthBreach === null,
+    };
   }
 
   /** Gets the size of the active exploration scope. */
@@ -2002,13 +2052,24 @@ export class NavigationEngine implements IHopStateMachine {
     return Array.from(this.directionalNeighbors(focusId, this._direction))
       .filter(nid => this.scopeNodeIds.has(nid) && !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
       // No unmeetable demand: the guard may demand an account only for a neighbour the router
-      // would admit. The seed scope deliberately keeps out-of-allowlist reachables so they become
-      // `schema:` gate classes, but a route to one is deferred as a lead, never accepted - so
-      // demanding it is a demand the model cannot meet and the hop could never commit. The border
-      // is the filter, not the scope, and it is the router's own filter (`'route'`).
+      // would admit, and admission is border AND depth — `admitsRoute` states both once, so
+      // this filter is the router's own filter and cannot drift from it.
+      //
+      // A prune would satisfy the demand (see the completeness guard in `submitFindings`), so the
+      // demand is not unanswerable — it is unanswerable *without destroying what the border kept*.
+      // The seed deliberately holds out-of-allowlist reachables so they surface as `schema:` gate
+      // classes the user can approve, and a fixed depth ceiling holds the nodes the user capped
+      // out; a route to either is deferred as a lead the user can take up. Pruning it is the only
+      // other account available, and it removes exactly that gate class or lead. So the demand is
+      // dropped here and the deferral carries the node instead.
+      //
+      // An id absent from `nodeMap` is likewise never demanded: it resolves to nothing, so neither
+      // a route (`absent_route`) nor a prune (`prune_absent`) can account for it and the hop could
+      // never commit. Unreachable in practice — graph keys are a subset of `nodeMap` keys — and
+      // failing closed rather than open is the correct default if it ever were not.
       .filter(nid => {
         const node = this.nodeMap.get(nid);
-        return node === undefined || this.checkBorder(nid, node, 'route').kind === 'in_border';
+        return node !== undefined && this.admitsRoute(nid, node, focusId).admitted;
       });
   }
 
@@ -2215,7 +2276,6 @@ export class NavigationEngine implements IHopStateMachine {
       routeTargets,
       pruneTargets,
       scopeNodeIds: this.scopeNodeIds,
-      requiredNeighborIds: new Set(requiredNodeIds),
       visitedIds: this.visited,
       removedIds: this.removedSet,
       notedIds: new Set(this.memory.notedNodeIds),
@@ -2228,7 +2288,8 @@ export class NavigationEngine implements IHopStateMachine {
         const nid = resolveModelNodeId(req.nodeId, this.nodeMap);
         const nNode = nid ? this.nodeMap.get(nid) : null;
         if (!nid || !nNode) continue; // Recorded as a nonfatal unresolved notice above.
-        const routeBorder = this.checkBorder(nid, nNode, 'route');
+        const admission = this.admitsRoute(nid, nNode, focusId);
+        const routeBorder = admission.border;
         if (routeBorder.kind === 'excluded') {
           routeOutcomes.push({ nodeId: nNode.id, accepted: false, reason: 'excluded' });
           this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=excluded`);
@@ -2242,16 +2303,11 @@ export class NavigationEngine implements IHopStateMachine {
 
         const schemaBlocked = routeBorder.kind === 'out_of_allowlist';
 
-        let candidateDepth = this.depthFromOrigin.get(nid) ?? this.directedDepthFromOrigin(nid)?.depth;
-        if (candidateDepth === undefined) {
-          const focusDepth = this.depthFromOrigin.get(focusId) ?? 0;
-          candidateDepth = focusDepth + 1;
-        }
-
         // An omitted depth leaves the approved depth an initial BFS seed the model may grow. A
         // user-stated level count is a border: the route is still recorded, but as a deferred
         // follow-up rather than an admission — exactly what the active-hop protocol promises.
-        const depthBreach = this.depthBorderBreach(nid, candidateDepth);
+        // Both axes come from `admitsRoute`; only the deferral *reasons* are split here.
+        const { depthBreach, candidateDepth } = admission;
         if (schemaBlocked || depthBreach !== null) {
           const deferReason: 'schema' | 'depth' | 'schema_and_depth' = schemaBlocked
             ? (depthBreach !== null ? 'schema_and_depth' : 'schema')
@@ -3092,17 +3148,19 @@ export class NavigationEngine implements IHopStateMachine {
       if (d !== undefined) neighbor.depth_from_origin = d;
       neighbor.in_budget = this.scopeNodeIds.has(nid);
 
-      // Both allowlist grants, so the flag agrees with the border test below: a node the user named
-      // in a follow-up is inside the approved scope even though its schema is not.
-      if (hasSchemaFilter) {
-        neighbor.in_approved_scope = this.sessionAllowedSchemas.has(n.schema.toLowerCase())
-          || this.sessionAllowedNodeIds.has(nid.toLowerCase());
-      }
-
       // Display annotation: `display` tests type-exclusion + allowlist only (no direction / node /
       // schema exclusion). A type-hidden neighbor forces the scope flag false; either block arms the
       // action-required prompt. `out_of_allowlist` only fires when a schema filter is active.
       const displayBorder = this.checkBorder(nid, n, 'display');
+
+      // One statement of the allowlist axis — the same border read the annotation below uses, so
+      // the flag and the action-required signal cannot disagree. Both allowlist grants count: a
+      // node the user named in a follow-up is inside the approved scope even though its schema
+      // is not.
+      if (hasSchemaFilter) {
+        neighbor.in_approved_scope = displayBorder.kind !== 'out_of_allowlist';
+      }
+
       if (displayBorder.kind === 'excluded') {
         neighbor.in_approved_scope = false;
         neighbor.would_trigger_action_required = true;

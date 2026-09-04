@@ -8,7 +8,6 @@ describe('current-hop action policy', () => {
       routeTargets: [],
       pruneTargets: [{ raw: 'removed', resolved: 'removed', path: 'prune_neighbors.0' }],
       scopeNodeIds: new Set(),
-      requiredNeighborIds: new Set(),
       visitedIds: new Set(),
       removedIds: new Set(['removed']),
       notedIds: new Set(),
@@ -29,7 +28,6 @@ describe('current-hop action policy', () => {
       routeTargets: [],
       pruneTargets: [{ raw: 'in-scope', resolved: 'in-scope', path: 'prune_neighbors.0' }],
       scopeNodeIds: new Set(['in-scope']),
-      requiredNeighborIds: new Set(['in-scope']),
       visitedIds: new Set(),
       removedIds: new Set(),
       notedIds: new Set(),
@@ -50,7 +48,6 @@ describe('current-hop action policy', () => {
       routeTargets: [],
       pruneTargets: [{ raw: 'queued', resolved: 'queued', path: 'prune_neighbors.0' }],
       scopeNodeIds: new Set(['queued']),
-      requiredNeighborIds: new Set(['queued']),
       visitedIds: new Set(),
       removedIds: new Set(),
       notedIds: new Set(),
@@ -62,7 +59,7 @@ describe('current-hop action policy', () => {
     expect(result.acceptedPruneIds).toEqual([]);
     expect(result.fatalErrors).toEqual([]);
     expect(result.notices).toEqual([expect.objectContaining({
-      kind: 'prune_noop_in_scope',
+      kind: 'prune_noop_queued',
       id: 'queued',
       reason: expect.stringContaining('already queued'),
     })]);
