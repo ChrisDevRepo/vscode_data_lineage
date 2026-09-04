@@ -374,8 +374,9 @@ function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
  * Once declared column lists arrive (a later package), that ordinal order must supersede this
  * first-seen order.
  *
- * A relation recorded more than once — the same endpoints and the same hop node — collapses to one
- * edge, so a column re-submitted across hops does not stack overlapping lines on the canvas.
+ * A relation recorded more than once — the same endpoints and the same hop node — is skipped before
+ * any node accumulator is written, so a column re-submitted across hops counts once for the rows a
+ * node derives as well as for the edges drawn on the canvas.
  *
  * A relation analysed by a hop node that is neither endpoint but is itself on the canvas is drawn
  * through that node as two legs, source to hop and hop to target, rather than as one line past it.
@@ -424,12 +425,23 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const targetObj = input.objects.get(relation.toNode.toLowerCase());
     if (!sourceObj || !targetObj) return;
 
+    const sourceKey = sourceObj.id.toLowerCase();
+    const targetKey = targetObj.id.toLowerCase();
+    const hopKey = relation.hopNode.toLowerCase();
+
+    // Ahead of every accumulator write, so a repeat is one fact for the rows a node derives as well
+    // as for the edges drawn. Behind them the collapse held only by luck: `inbound` is a plain
+    // array, and a second push stayed invisible because each of its readers happens to reduce it —
+    // a set of upstream tuples, a `.some()`, a test for zero. Any reader added on a count or an
+    // order would have inherited the duplicate.
+    const identity = [sourceKey, normalizeColName(relation.fromCol), targetKey, normalizeColName(relation.toCol), hopKey].join('->');
+    if (seenRelations.has(identity)) return;
+    seenRelations.add(identity);
+
     const sourceAcc = getAcc(sourceObj);
     const targetAcc = getAcc(targetObj);
     const sourceRowKey = touchRow(sourceAcc, relation.fromCol);
     const targetRowKey = touchRow(targetAcc, relation.toCol);
-    const sourceKey = sourceObj.id.toLowerCase();
-    const targetKey = targetObj.id.toLowerCase();
 
     // The semantic relation stays source-to-target even when the drawing goes through a hop: the
     // target's incoming count and rename signal describe where its value came from, not which node
@@ -442,7 +454,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       toColRaw: relation.toCol,
     });
 
-    const hopKey = relation.hopNode.toLowerCase();
     let viaId: string | undefined;
     if (hopKey !== sourceKey && hopKey !== targetKey) {
       const hopObj = input.objects.get(hopKey);
@@ -471,10 +482,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
         }
       }
     }
-
-    const identity = [sourceKey, normalizeColName(relation.fromCol), targetKey, normalizeColName(relation.toCol), hopKey].join('->');
-    if (seenRelations.has(identity)) return;
-    seenRelations.add(identity);
 
     normalized.push({
       index,
