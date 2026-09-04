@@ -950,6 +950,54 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     expect('ok' in again && again.ok, "J23 RC4: resubmitting verdict:'passthrough', column_flow:[] at writer_proc commits — the hint's literal suggested escape resolves the hop").toBe(true);
   });
 
+  it("RC4e: both CT-completeness admissions emit a parseable [Admit] line — a guard that stops rejecting must still leave a record", () => {
+    // P1-39. The engine logged richly on reject and almost nothing on admit, so a fix whose whole
+    // purpose is to stop producing a rejection was indistinguishable in the artifacts from a code
+    // path never taken. That cost two wrong "branch never exercised" records for 120cba46 before a
+    // hand grep of wave-b8731fc7 disproved them. The line carries the same kv shape as [Reject] so
+    // evidence_review.facts_host_log buckets it without a second parser.
+    const logs: string[] = [];
+    const engine = new NavigationEngine(j23Model, j23Graph, (_level, message) => logs.push(message), {});
+    engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    engine.getHopContext();
+
+    // Init resolves the target columns on the origin — the admit counterpart of `unknown_columns`.
+    expect(logs.some(m => m.includes('[Admit] guard=ct_target_columns') && m.includes('phase=init') && m.includes('active=2')),
+      'J23 RC4e: target-column resolution records what it admitted').toBe(true);
+
+    engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+    });
+    // Branch one: every active column accounted for.
+    expect(logs.some(m => m.includes('[Admit] guard=ct_completeness') && m.includes('reason=all_accounted') && m.includes('focus=origin_view')),
+      'J23 RC4e: a complete chain records that completeness was admitted').toBe(true);
+
+    j23DispatchUntil(engine, 'writer_proc');
+    logs.length = 0;
+    const declared = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc carries none of the traced columns' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [],
+    });
+    expect(!('error' in declared), 'J23 RC4e: the declaration commits').toBe(true);
+    // Branch two: the P1-36 escape. This is the line that made 120cba46 attributable at all.
+    const admit = logs.find(m => m.includes('[Admit] guard=ct_completeness') && m.includes('reason=declares_none'));
+    expect(admit !== undefined, 'J23 RC4e: the chain-ends-here admission is recorded').toBe(true);
+    expect(admit?.includes('focus=writer_proc'), 'J23 RC4e: the admission names the focus it admitted').toBe(true);
+    // One admission is never also an all_accounted admission — the two branches are exclusive.
+    expect(logs.filter(m => m.includes('[Admit] guard=ct_completeness')).length,
+      'J23 RC4e: exactly one completeness admission per hop').toBe(1);
+  });
+
   it("RC4c: a focus declaring none of the active columns commits with verdict:'passthrough' and column_flow:[] — the escape the hint offers, on a node the engine cannot check", () => {
     // The live shape (wave-2320d530-local-mlx/run-T8, P1-36): the traced column is bound to a
     // procedure that never carried it. A procedure declares no columns, so

@@ -134,6 +134,42 @@ describe('NavigationEngine active-phase admission', () => {
     expect(slotIds.has('n3') && !slotIds.has('n4'), 'n3 analyzed with held prose; n4 never entered scope').toBe(true);
   });
 
+  it('an admitted growth records [Admit] with the counts it admitted under (P1-39)', () => {
+    // The reject path recorded the budget it broke; the admit path recorded nothing, so a run that
+    // never grew the scope and a run that grew it comfortably read identically in host.log. The
+    // line carries the same kv shape as [Reject] so evidence_review.facts_host_log buckets it.
+    const fanNodes: LineageNode[] = ['f0', 'f1', 'f2', 'f3', 'f4'].map(id => makeNode({ id, schema: 'dbo', name: id, type: 'view' }));
+    const fanEdges: Array<[string, string]> = [['f0', 'f1'], ['f1', 'f2'], ['f2', 'f3'], ['f3', 'f4']];
+    setExplorationNodeCap(50);
+    const logs: string[] = [];
+    const engine = new NavigationEngine(makeModel(fanNodes, fanEdges, ['dbo']), makeGraph(fanNodes, fanEdges), (_l, m) => logs.push(m), {});
+    engine.init({ origin: 'f0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'default_start' } });
+    for (const [focus, next] of [['f0', 'f1'], ['f1', 'f2'], ['f2', 'f3']] as const) {
+      engine.getHopContext();
+      engine.submitFindings({
+        focus_node_id: focus,
+        sections: [{ angle: 'business' as const, text: `${focus} analysis` }],
+        summary: focus,
+        verdict: 'analyze',
+        route_requests: [{ nodeId: next, question: 'trace' }],
+      });
+    }
+    engine.getHopContext();
+    logs.length = 0;
+    const ok = engine.submitFindings({
+      focus_node_id: 'f3',
+      sections: [{ angle: 'business' as const, text: 'f3 grows the scope by one, well under the cap' }],
+      summary: 'f3',
+      verdict: 'analyze',
+      route_requests: [{ nodeId: 'f4', question: 'grow inside the cap' }],
+    }) as { ok?: boolean };
+    expect(ok.ok === true, 'growth under the cap commits').toBe(true);
+    const admit = logs.find(m => m.includes('[Admit] guard=active_scope_budget'));
+    expect(admit !== undefined, 'P1-39: the admitted growth is recorded, not only the rejected one').toBe(true);
+    expect(admit?.includes('routes=+1'), 'P1-39: the record names how much scope was admitted').toBe(true);
+    expect(/nodes=\d+\/50/.test(admit ?? ''), 'P1-39: the record names the budget it was admitted under').toBe(true);
+  });
+
   it('with more than one staged route the hint keeps the set-choosing repairs and adds the empty-route escape', () => {
     // The other half of the P1-22 branch. A fan-out origin stages two out-of-cap routes at once, so
     // pruning to a subset is genuinely open and stays offered — the fix narrows the wording only

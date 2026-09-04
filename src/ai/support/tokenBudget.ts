@@ -146,15 +146,16 @@ export function setExplorationTokenBudget(value: number): void {
 export function checkActiveScopeAdmission(
   projectedNodes: number,
   projectedDdlChars: number,
-): { ok: true } | { ok: false; reason: 'over_active_scope_budget'; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } } {
+): { ok: true; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } }
+  | { ok: false; reason: 'over_active_scope_budget'; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } } {
   const tokens = estimateTokens(projectedDdlChars);
-  if (!explorationBudget.exceeds(projectedNodes, tokens)) return { ok: true };
-  return {
-    ok: false,
-    reason: 'over_active_scope_budget',
-    counts: { nodes: projectedNodes, tokens },
-    limits: { node_cap: explorationBudget.nodeCap, token_budget: explorationBudget.tokenBudget },
-  };
+  // Both arms carry the same counts and limits. The rejection always recorded the budget it broke
+  // and the admission recorded nothing, so a run that grew the scope comfortably and a run that
+  // never grew it at all read identically in the log (P1-39).
+  const counts = { nodes: projectedNodes, tokens };
+  const limits = { node_cap: explorationBudget.nodeCap, token_budget: explorationBudget.tokenBudget };
+  if (!explorationBudget.exceeds(projectedNodes, tokens)) return { ok: true, counts, limits };
+  return { ok: false, reason: 'over_active_scope_budget', counts, limits };
 }
 
 /**

@@ -1455,6 +1455,7 @@ export class NavigationEngine implements IHopStateMachine {
             : `${originNode.id} exposes no column metadata to trace. Ask the user to clarify or switch analysisMode to "bb".`,
         };
       }
+      this.log('debug', `[Admit] guard=ct_target_columns phase=init focus=${originNode.id} active=${resolved.length} — tracing [${resolved.join(', ')}]`);
       resolvedActiveColumns = resolved;
     }
 
@@ -2396,7 +2397,7 @@ export class NavigationEngine implements IHopStateMachine {
       const declaresNoTrackedColumns =
         finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
       if (declaresNoTrackedColumns) {
-        this.log('debug', `[CT] ${focusId} declares none of the active columns [${this.tracer.activeColumns.join(', ')}] — column chain ends here`);
+        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=declares_none — declares none of the active columns [${this.tracer.activeColumns.join(', ')}], column chain ends here`);
       }
       const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow);
       if (unaccounted.length > 0) {
@@ -2404,6 +2405,9 @@ export class NavigationEngine implements IHopStateMachine {
         this.memory.recordRejection(focusId, `column_chain_incomplete: ${unaccounted.join(', ')}`, this.hopCount);
         this.heldFindingDraft.hold(structuredClone(finding));
         return buildIncompleteRejection(focusId, unaccounted, [...this.tracer.activeColumns], contradicted);
+      }
+      if (!declaresNoTrackedColumns) {
+        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=all_accounted active=${this.tracer.activeColumns.length}`);
       }
     }
 
@@ -2438,6 +2442,7 @@ export class NavigationEngine implements IHopStateMachine {
           },
         };
       }
+      this.log('debug', `[Admit] guard=active_scope_budget phase=active focus=${focusId} routes=+${scopeAddNids.size} nodes=${admission.counts.nodes}/${admission.limits.node_cap} tokens=${admission.counts.tokens}/${admission.limits.token_budget}`);
     }
 
     // Nonfatal notices become durable only after every fatal/completeness guard passes.
