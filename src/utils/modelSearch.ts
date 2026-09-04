@@ -60,17 +60,52 @@ export type SearchRegexResult =
   | { ok: false; reason: 'redos' };
 
 /**
+ * Strips a leading `(?i)` (or `(?ii)`, etc.) inline-flag group whose flags are a subset of `{i}`.
+ *
+ * @param pattern - The raw regex string as received.
+ * @returns The pattern with the redundant group removed, or `null` when there is nothing to strip.
+ *
+ * @remarks
+ * `compileSearchRegex` always adds the `i` flag, so a leading `(?i)` asks for exactly the behavior
+ * already in force — it is a no-op, not a request the engine can honor by any other means, so
+ * stripping it is lossless. Any other flag letter (`(?m)`, `(?s)`, `(?im)`, ...) changes matching
+ * semantics the engine does not otherwise apply, so those groups are left untouched and still fail
+ * to compile. The scoped form `(?i:...)` is a different construct — it is not a simple prefix, and
+ * rewriting it would require re-deriving the subgroup boundary — so it is left untouched too, and
+ * still fails to compile like any other unsupported inline-flag syntax.
+ *
+ * When the group is the entire pattern, stripping it would leave an empty pattern, and an empty
+ * regex matches every string — trading a refused search for a silent match-everything. That case is
+ * left unstripped on purpose, so it still falls through to the normal syntax rejection below.
+ */
+function stripRedundantCaseInsensitiveFlag(pattern: string): string | null {
+  const match = /^\(\?(i+)\)/.exec(pattern);
+  if (!match) return null;
+  const rest = pattern.slice(match[0].length);
+  return rest.length > 0 ? rest : null;
+}
+
+/**
  * Compiles a search pattern into a safe, case-insensitive regular expression.
  *
  * @param pattern - The raw regex string to compile.
+ * @param onNormalize - Optional sink for a debug line when a redundant flag group is stripped.
  * @returns The compiled regex, or the rejection reason {@link regexRejectHint} turns into advice.
  *
- * @remarks Rejects patterns that fail to execute against a bounded sample within the guard budget.
+ * @remarks
+ * Rejects patterns that fail to execute against a bounded sample within the guard budget. A
+ * redundant leading `(?i)` is normalized away before compiling rather than rejected — see
+ * {@link stripRedundantCaseInsensitiveFlag} for what qualifies and why.
  */
-export function compileSearchRegex(pattern: string): SearchRegexResult {
+export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) => void): SearchRegexResult {
+  const stripped = stripRedundantCaseInsensitiveFlag(pattern);
+  const effectivePattern = stripped ?? pattern;
+  if (stripped !== null) {
+    onNormalize?.(`compileSearchRegex: stripped redundant "(?i)" flag group (case-insensitive matching is already the default) — pattern="${pattern}" -> "${stripped}"`);
+  }
   let regex: RegExp;
   try {
-    regex = new RegExp(pattern, 'i');
+    regex = new RegExp(effectivePattern, 'i');
   } catch (err) {
     return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
   }
@@ -90,7 +125,9 @@ export function compileSearchRegex(pattern: string): SearchRegexResult {
  * The repair is read off the rejection rather than re-derived, so the advice always describes the
  * measurement that rejected the pattern. `searchCatalog`'s regex mode (and its callers) always add
  * the `i` flag, so patterns never need — and JavaScript regular expressions never support — an
- * inline case-insensitivity flag.
+ * inline flag group. A redundant `(?i)` never reaches this function: `compileSearchRegex` strips it
+ * before compiling, so what lands here asks for semantics (`(?m)`, `(?im)`, a scoped `(?i:...)`, ...)
+ * the engine does not otherwise apply.
  */
 export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexResult, { ok: false }>): string {
   if (rejection.reason === 'syntax') {
@@ -102,7 +139,7 @@ export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexR
       return 'Remove the "(?#...)" comment group — JavaScript regular expressions do not support inline comments.';
     }
     if (/\(\?[a-zA-Z-]+[):]/.test(pattern) && message.includes('Invalid group')) {
-      return 'Remove the inline flag group (e.g. "(?i)") — matches are already case-insensitive by default, and JavaScript regular expressions do not support inline flags.';
+      return 'Remove the inline flag group (e.g. "(?m)") — matches are already case-insensitive by default, and JavaScript regular expressions do not support inline flags.';
     }
     if (message.includes('Invalid group')) {
       return 'Remove or correct the unsupported "(?...)" group syntax — JavaScript does not recognize it.';

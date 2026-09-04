@@ -82,6 +82,45 @@ describe('model search', () => {
     expect(invalid.ok === false && invalid.reason).toBe('syntax');
   });
 
+  it('strips a redundant leading "(?i)" and compiles the remainder', () => {
+    const result = compileSearchRegex('(?i)raworderimport');
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.regex.test('RawOrderImport')).toBe(true);
+  });
+
+  it('still rejects a flag group that changes semantics beyond case-insensitivity', () => {
+    const multiline = compileSearchRegex('(?m)foo');
+    expect(multiline.ok).toBe(false);
+    expect(multiline.ok === false && multiline.reason).toBe('syntax');
+
+    const mixed = compileSearchRegex('(?im)foo');
+    expect(mixed.ok).toBe(false);
+    expect(mixed.ok === false && mixed.reason).toBe('syntax');
+  });
+
+  it('leaves the scoped "(?i:...)" form untouched — it is a different construct, not a no-op prefix', () => {
+    const scoped = compileSearchRegex('(?i:foo)');
+    expect(scoped.ok).toBe(false);
+    expect(scoped.ok === false && scoped.reason).toBe('syntax');
+  });
+
+  it('does not strip a bare "(?i)" pattern down to an empty, match-everything regex', () => {
+    const bare = compileSearchRegex('(?i)');
+    expect(bare.ok).toBe(false);
+    expect(bare.ok === false && bare.reason).toBe('syntax');
+  });
+
+  it('reports the normalization through the provided sink instead of rewriting silently', () => {
+    const messages: string[] = [];
+    compileSearchRegex('(?i)raworderimport', msg => messages.push(msg));
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain('(?i)');
+
+    const unchanged: string[] = [];
+    compileSearchRegex('order', msg => unchanged.push(msg));
+    expect(unchanged).toHaveLength(0);
+  });
+
   it('searches and ranks catalog names case-insensitively', () => {
     const results = searchCatalog(nodes, 'ORDER');
     expect(results.map(node => node.id)).toEqual([
@@ -166,7 +205,10 @@ describe('regexRejectHint', () => {
   }
 
   it('names the flags option instead of blaming nested quantifiers for an inline flag', () => {
-    const hint = hintFor('(?i)order');
+    // A redundant "(?i)" no longer reaches this hint — compileSearchRegex strips it and compiles
+    // the remainder (covered in the 'model search' describe above). "(?m)" requests semantics the
+    // engine does not otherwise apply, so it still fails to compile and still needs this hint.
+    const hint = hintFor('(?m)order');
     expect(hint).toContain('inline flag');
     expect(hint).toContain('already case-insensitive');
     expect(hint).not.toContain('nested quantifiers');

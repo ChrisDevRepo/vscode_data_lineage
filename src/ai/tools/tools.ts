@@ -778,6 +778,7 @@ export function runAnalysis(
  * @param query - The search string or regex pattern.
  * @param types - Optional filter for scriptable object types.
  * @param store - Optional column store for high-fidelity DDL.
+ * @param onNormalize - Optional sink for a debug line when `query` is rewritten before compiling.
  * @returns A list of matches with snippets and object metadata.
  */
 export function searchDdl(
@@ -785,13 +786,14 @@ export function searchDdl(
   query: string,
   types?: ('view' | 'procedure' | 'function')[],
   store?: import('../../engine/columnStore').ColumnStore,
+  onNormalize?: (msg: string) => void,
 ): object {
   if (query.length > REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   // Reject invalid / catastrophically slow regex
-  const compiled = compileSearchRegex(query);
+  const compiled = compileSearchRegex(query, onNormalize);
   if (!compiled.ok) {
     return { error: 'invalid_regex' as const, hint: regexRejectHint(query, compiled) };
   }

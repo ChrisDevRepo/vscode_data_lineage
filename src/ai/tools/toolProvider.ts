@@ -320,7 +320,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('search_ddl', searchDdl(this.requireModel(), query, types, this.getSession().columnStore), input);
+      return this.logAndReturn('search_ddl', searchDdl(this.requireModel(), query, types, this.getSession().columnStore, msg => this.logger.debug(msg)), input);
     } catch (err) { return this.toolError('search_ddl', err); }
   }
 
