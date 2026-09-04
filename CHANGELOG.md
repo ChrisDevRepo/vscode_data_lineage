@@ -8,9 +8,12 @@
 ### Changed
 - A depth stated in a question is a hard limit per direction; objects past it become follow-up leads.
 - Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.
+- The longest-chain report lists up to 25 chains, deepest first, instead of reusing the graph node limit as a chain count.
+- A trace narrowed to part of the model is held to the same render limit as any other view, and reports when it exceeds it rather than drawing an oversized view. Adjust the ceiling with `dataLineageViz.renderLimit`.
 
 ### Removed
 - Saved views no longer restore the camera position they were captured at; a restored view fits the graph instead.
+- The always-on column-flow tooltip on objects; the column view, which shows the same flows in full, replaces it.
 
 ### Fixed
 - Upgraded the graph rendering library and corrected large-graph rendering: dragging stays responsive, and a trace past the render limit reports it instead of drawing an oversized view.
@@ -29,7 +32,7 @@
 - A commented-out object after a bracketed name containing an apostrophe no longer appears as a dependency.
 - A bracketed name containing a doubled `]]` escape is captured as one identifier instead of being cut at the first `]`.
 - The column-level Detail view now lays out with the same settings as object lineage.
-- A follow-up naming an object brings in only that object, not its whole schema.
+- A follow-up brings in only an object the analysis itself raised as an open question, and only that object rather than its whole schema; an object outside the approved scope that was never raised still needs a scope approval.
 - A bookmark recalls the AI run it was saved from, even after a later exploration in the same chat.
 - A damaged saved AI run record is ignored instead of read as valid.
 - AI DDL search now names the actual reason a search pattern was rejected instead of one generic hint.

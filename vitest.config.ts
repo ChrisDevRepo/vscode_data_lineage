@@ -20,7 +20,9 @@ export default defineConfig({
     // (Chromium, ~1 MB but different growth) and a plain Node process both succeed. Give the
     // layout engine the headroom the product runtime effectively has.
     execArgv: ['--stack-size=8000'],
-    include: ['tests/unit/**/*.test.ts'],
+    // `.tsx` alongside `.ts` for the component tests that mount a webview leaf; the unit tsconfig
+    // already includes `**/*.tsx` and inherits `jsx: react-jsx`. Same lane, not a new one.
+    include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],
     coverage: {
       provider: 'v8',
       // Scoped to the deterministic core — SQL parsing and graph/BFS. A repo-wide number

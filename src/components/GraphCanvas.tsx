@@ -49,6 +49,7 @@ import {
   buildColumnTraceView,
   columnRowKey,
   resolveRowLineStates,
+  COLUMN_EDGE_DIM_OPACITY,
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
@@ -100,8 +101,6 @@ const COLUMN_EDGE_LIT_STROKE_WIDTH = 1.6;
 /** Stroke width of a column-view edge outside the lit set. */
 const COLUMN_EDGE_DIM_STROKE_WIDTH = 1;
 
-/** Opacity of a column-view edge outside the lit set. */
-const COLUMN_EDGE_DIM_OPACITY = 0.25;
 
 /**
  * Max time (ms) to wait for a pending zoom target to appear in flowNodes before
@@ -575,9 +574,13 @@ export function GraphCanvas({
         layoutDirection: activeAiMetadata?.layoutDirection,
       });
     } catch (err) {
+      // A degraded projection is not a failed user action: the object view is still on stage and
+      // nothing the user asked for was lost. It goes to the Output channel, not to a modal — the
+      // `error` channel calls `showErrorMessage`, which would announce a crash that did not happen.
       window.vscode?.postMessage({
-        type: 'error',
-        error: `Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        type: 'log',
+        level: 'warn',
+        text: `[Graph] Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
       });
       return null;
     }
@@ -1028,6 +1031,32 @@ export function GraphCanvas({
   }, [activeAiMetadata]);
 
   /**
+   * Row-key adjacency of the column view's edges, undirected.
+   *
+   * @remarks
+   * Keyed on `columnRowKey` and built once per view rather than per hover. The reachability walk
+   * below used to rescan every column edge for each row it popped, so one pointer move across a
+   * wide table cost a full edge sweep per row crossed — work that is identical every time because
+   * it depends only on the view.
+   */
+  const columnRowAdjacency = useMemo((): Map<string, string[]> => {
+    const adjacency = new Map<string, string[]>();
+    if (!columnTraceView) return adjacency;
+    const link = (from: string, to: string): void => {
+      const neighbors = adjacency.get(from);
+      if (neighbors) neighbors.push(to);
+      else adjacency.set(from, [to]);
+    };
+    for (const edge of columnTraceView.edges) {
+      const from = columnRowKey(edge.source, edge.sourceColumn);
+      const to = columnRowKey(edge.target, edge.targetColumn);
+      link(from, to);
+      link(to, from);
+    }
+    return adjacency;
+  }, [columnTraceView]);
+
+  /**
    * Node-and-column keys reachable from the hovered row in either direction.
    *
    * @remarks
@@ -1040,15 +1069,14 @@ export function GraphCanvas({
     const stack = [...seen];
     while (stack.length > 0) {
       const current = stack.pop()!;
-      for (const edge of columnTraceView.edges) {
-        const from = columnRowKey(edge.source, edge.sourceColumn);
-        const to = columnRowKey(edge.target, edge.targetColumn);
-        if (current === from && !seen.has(to)) { seen.add(to); stack.push(to); }
-        else if (current === to && !seen.has(from)) { seen.add(from); stack.push(from); }
+      for (const next of columnRowAdjacency.get(current) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        stack.push(next);
       }
     }
     return seen;
-  }, [hoveredColumn, columnTraceView]);
+  }, [hoveredColumn, columnTraceView, columnRowAdjacency]);
 
   // Full-model graph backing the shared prune-safety guard; scope is bounded per call.
   const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);

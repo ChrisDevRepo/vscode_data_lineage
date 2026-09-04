@@ -170,6 +170,20 @@ export const COLUMN_ROW_HEIGHT = 22;
  */
 export const COLUMN_NODE_BORDER_WIDTH = 2;
 
+/**
+ * Opacity of a column-view edge outside the hovered path.
+ *
+ * @remarks
+ * One concept — de-emphasis while a column path is lit — governed here for both of its render
+ * targets, because they read as a single visual effect and drifted apart once already. The two
+ * values differ deliberately: an edge is pure decoration and can recede almost to nothing, while a
+ * row carries the column name and has to stay readable, so it dims to
+ * {@link COLUMN_ROW_DIM_OPACITY} instead. Change them together.
+ */
+export const COLUMN_EDGE_DIM_OPACITY = 0.25;
+
+/** Opacity of a column row outside the hovered path; see {@link COLUMN_EDGE_DIM_OPACITY}. */
+export const COLUMN_ROW_DIM_OPACITY = 0.5;
 
 /**
  * Builds a React Flow handle id for a column row.
@@ -212,6 +226,10 @@ export function columnRowKey(nodeId: string, column: string): string {
  * and a `prune` verdict or no verdict at all yields `unknown`. Isolated in its own function so a
  * future per-line label (a more precise, line-level signal than the node-level verdict) can take
  * precedence over this result without touching the verdict lookup itself.
+ *
+ * Exported for its own unit test, not for use elsewhere: no production caller outside this module
+ * imports it, and a per-edge state resolved anywhere but here would be a second governor of the
+ * same glyph. Read the state off the built view instead.
  *
  * @param hopNode - Hop node id from the relation, compared case-insensitively.
  * @param verdicts - Per-node trace verdicts, keyed by lower-cased node id.

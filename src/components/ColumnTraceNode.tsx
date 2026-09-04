@@ -1,4 +1,4 @@
-import { memo, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import {
   columnHandleId,
@@ -7,6 +7,7 @@ import {
   COLUMN_NODE_HEADER_HEIGHT,
   COLUMN_NODE_BORDER_WIDTH,
   COLUMN_ROW_HEIGHT,
+  COLUMN_ROW_DIM_OPACITY,
   type ColumnTraceRow,
   type ColumnLineState,
 } from '../engine/columnTraceView';
@@ -51,6 +52,9 @@ function ColumnTraceRowLine({
   isTransformNode,
   lineState,
   focused,
+  isTabStop,
+  registerRef,
+  onKeyDown,
   onFocusStart,
   onFocusEnd,
 }: {
@@ -60,6 +64,9 @@ function ColumnTraceRowLine({
   isTransformNode: boolean;
   lineState: ColumnLineState | undefined;
   focused: boolean;
+  isTabStop: boolean;
+  registerRef: (name: string, el: HTMLDivElement | null) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLDivElement>, name: string) => void;
   onFocusStart: () => void;
   onFocusEnd: () => void;
 }) {
@@ -74,7 +81,7 @@ function ColumnTraceRowLine({
     alignItems: 'center',
     gap: 6,
     padding: '0 8px',
-    opacity: isDeemphasised ? 0.5 : 1,
+    opacity: isDeemphasised ? COLUMN_ROW_DIM_OPACITY : 1,
     backgroundColor: isHoveredRow ? 'var(--ln-hover-bg)' : 'transparent',
     // Focus only — a pointer user already has the hover background and weight to go by, and
     // painting the focus indicator on hover would also let a mouse move clear a keyboard position.
@@ -88,10 +95,15 @@ function ColumnTraceRowLine({
 
   return (
     <div
+      ref={el => registerRef(row.name, el)}
       style={style}
       role="listitem"
-      tabIndex={0}
+      // Roving tabindex: the node is one tab stop and the arrow keys move within it. Making every
+      // row focusable put one stop per column in the page order, so a forty-column table cost forty
+      // presses to tab past — and a trace holds many such nodes.
+      tabIndex={isTabStop ? 0 : -1}
       aria-label={ariaLabel}
+      onKeyDown={event => onKeyDown(event, row.name)}
       onMouseEnter={() => onColumnHover(nodeId, row.name)}
       onMouseLeave={() => onColumnHover(nodeId, null)}
       onFocus={() => { onFocusStart(); onColumnHover(nodeId, row.name); }}
@@ -127,6 +139,39 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const { view } = data;
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const rowsVisible = data.rowsVisible !== false;
+
+  // Which row currently holds the node's single tab stop. Null until the user moves within the
+  // node, so the first row is the default entry point and a re-render never steals the position.
+  const [activeRow, setActiveRow] = useState<string | null>(null);
+  const rowElements = useRef(new Map<string, HTMLDivElement>());
+  const registerRowRef = useCallback((name: string, el: HTMLDivElement | null) => {
+    if (el) rowElements.current.set(name, el);
+    else rowElements.current.delete(name);
+  }, []);
+
+  const rowNames = view.rows.map(row => row.name);
+  // A row that has since disappeared from the view must not take the tab stop with it.
+  const tabStopRow = activeRow && rowNames.includes(activeRow) ? activeRow : rowNames[0];
+
+  const handleRowKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>, name: string) => {
+    const names = view.rows.map(row => row.name);
+    const from = names.indexOf(name);
+    if (from < 0) return;
+    const to =
+      event.key === 'ArrowDown' ? Math.min(from + 1, names.length - 1)
+      : event.key === 'ArrowUp' ? Math.max(from - 1, 0)
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? names.length - 1
+      : -1;
+    if (to < 0) return;
+    // Claimed before the canvas sees it: React Flow binds the arrow keys to pan the viewport, which
+    // would scroll the graph out from under a keyboard user stepping through a node's columns.
+    event.preventDefault();
+    event.stopPropagation();
+    const target = names[to];
+    setActiveRow(target);
+    rowElements.current.get(target)?.focus();
+  }, [view.rows]);
 
   const icon = TYPE_COLORS[view.objectType as ObjectType]?.icon ?? '▪';
   const typeLabel = SHORT_TYPE_LABELS[view.objectType as ObjectType] ?? view.objectType;
@@ -203,7 +248,10 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
               isTransformNode={view.isTransformNode}
               lineState={data.rowLineStates?.[row.name]}
               focused={focusedRow === row.name}
-              onFocusStart={() => setFocusedRow(row.name)}
+              isTabStop={row.name === tabStopRow}
+              registerRef={registerRowRef}
+              onKeyDown={handleRowKeyDown}
+              onFocusStart={() => { setFocusedRow(row.name); setActiveRow(row.name); }}
               onFocusEnd={() => setFocusedRow(null)}
             />
           ))

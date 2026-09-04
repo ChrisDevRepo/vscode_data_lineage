@@ -6,6 +6,14 @@
  * answer "what did this view come from" without replaying the exploration. The record is written on
  * bookmark save and read back by `lineage_get_screen_state`; every consumer treats a missing or
  * older record as absent rather than as an error.
+ *
+ * One record per saved view, and the view owns its lifetime: `delete-view` clears that view's
+ * record and `delete-project` clears one per profile it takes with it, both in
+ * `src/bridge/messageHandlers.ts`. There is no separate eviction policy and none is wanted — a
+ * count that grows with the bookmarks the user chose to keep is not a leak, and a sweep that
+ * decided on its own which records to drop could take run memory the user still has a view for.
+ * A new route that removes a saved view without going through those two handlers is the one thing
+ * that would orphan a record; that route must clear it too.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
