@@ -1639,35 +1639,48 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Admits the named follow-up targets through the allowlist, one id at a time.
+   * Admits follow-up targets that this run itself deferred, one id at a time.
    *
    * @remarks
    * The consent step the host runs *before* {@link supplementAgenda}, which stays a side-effect-free
-   * reject — the same extend-then-supplement ordering the approve-gate path uses. Naming a node in a
-   * follow-up is the user consent that reaches it; without this step a `schema_boundary` lead was a
-   * dead end, because nothing on the supplement path ever widened the allowlist and the target came
-   * straight back as `out_of_allowlist`.
+   * reject — the same extend-then-supplement ordering the approve-gate path uses. Without it a
+   * `schema_boundary` lead was a dead end: nothing on the supplement path widened the allowlist, so
+   * the target the run had just offered came straight back as `out_of_allowlist`.
    *
-   * Id-scoped, never schema-scoped: "also look at object X" is consent for X. Admitting X's whole
-   * schema would open every sibling in it on the model's say-so, and a sibling that used to ride
-   * along now defers as its own lead — visible, and approvable on its own. Admission is monotonic,
-   * so repeated follow-ups can only widen.
+   * **A pending lead is the whole admissible set.** The caller's ids arrive in a model tool payload,
+   * and the border does not widen on a model's say-so — that is the {@link PendingGate} path, and it
+   * ends at a user click. A lead is different in kind: this engine deferred that exact route, named
+   * it in the answer the user read, and the follow-up is the user taking it up. Anything the model
+   * names that no lead offered stays `out_of_allowlist` in {@link checkBorder}, exactly as before
+   * this step existed — an id invented mid-turn cannot admit itself.
    *
-   * {@link checkBorder} carries no depth axis for any purpose, so an approved target is admitted at
+   * Id-scoped, never schema-scoped: taking up a lead is consent for that object. Admitting its whole
+   * schema would open every sibling on one approval, and a sibling that used to ride along now
+   * defers as its own lead — visible, and approvable on its own. Admission is monotonic, so repeated
+   * follow-ups can only widen.
+   *
+   * {@link checkBorder} carries no depth axis for any purpose, so an admitted target is reached at
    * any depth and each node beyond it defers as its own lead — one explicit approval per node.
    *
    * Exclusion sets are untouched — those are the user's own removals and stay a hard wall in
    * {@link checkBorder}.
    *
-   * @param nodeIds - Follow-up targets, canonical or free-cased; unresolvable ids are ignored.
+   * @param nodeIds - Follow-up targets, canonical or free-cased; ids that are unresolvable, excluded
+   *   or unbacked by a pending lead are ignored.
    * @returns The canonical ids actually admitted, so the reply can name them.
    */
   public admitSupplementTargets(nodeIds: readonly string[]): string[] {
+    const offered = new Set(
+      this.taskLedger.pendingLeads
+        .filter(lead => lead.status === 'pending')
+        .map(lead => lead.nodeId.toLowerCase()),
+    );
     const admitted: string[] = [];
     for (const raw of nodeIds) {
       const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
       const node = id ? this.nodeMap.get(id) : undefined;
       if (!node || this.excludedNodeIds.has(node.id.toLowerCase())) continue;
+      if (!offered.has(node.id.toLowerCase())) continue;
       this.sessionAllowedNodeIds.add(node.id.toLowerCase());
       admitted.push(node.id);
     }
@@ -1687,7 +1700,8 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * Side-effect-free on reject: a target outside the border is reported in `skippedDetails` and
    * nothing is mutated. Widening the border is the caller's step, via
-   * {@link admitSupplementTargets}, so consent stays a host decision.
+   * {@link admitSupplementTargets}, and that step admits only a route this run already deferred as a
+   * pending lead — so a model tool payload never widens the border by naming an id.
    *
    * @param nodeIds - Node ids to append to the agenda or contract through.
    * @param leadIds - Host-selected pending leads; never accepted from a model tool payload.
@@ -1750,8 +1764,9 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
       // A user-excluded or out-of-allowlist node is a hard wall on the supplement write path — the
-      // border only widens through user consent ({@link admitSupplementTargets}, called by the host
-      // before this), never through an AI-initiated supplement re-adding what the user removed.
+      // border only widens for a route this run itself deferred ({@link admitSupplementTargets},
+      // called before this), never through an AI-initiated supplement naming an id no lead offered
+      // or re-adding what the user removed.
       const supNode = this.nodeMap.get(id);
       const supBorder = supNode ? this.checkBorder(id, supNode, 'supplement') : null;
       if (supBorder && supBorder.kind !== 'in_border') {

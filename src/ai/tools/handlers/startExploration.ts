@@ -136,11 +136,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           if (columnTargetReject) return s.logAndReturn('start_exploration', columnTargetReject, loggedInput);
         }
         const supplementIds = data.supplement.nodeIds ?? [];
-        // Admit-then-supplement, the same ordering the approve gate uses: naming a node in a
-        // follow-up is the consent that reaches it. `supplementAgenda` stays a side-effect-free
-        // reject, so without this step a schema-boundary lead was a dead end — the target came
-        // straight back as `out_of_allowlist` with nothing on this path able to admit it. Consent
-        // is per id, so the reply can name exactly what was opened; exclusions stay a hard wall.
+        // Admit-then-supplement, the same ordering the approve gate uses. `supplementAgenda` stays a
+        // side-effect-free reject, so without this step a schema-boundary lead was a dead end — the
+        // target came straight back as `out_of_allowlist` with nothing on this path able to admit
+        // it. `supplementIds` is model-supplied, so the admit step trusts none of it on its own: it
+        // opens only ids this run already deferred as a pending lead and named in the answer the
+        // user read. Anything else the model puts here is still refused on the allowlist axis, and
+        // exclusions stay a hard wall either way.
         const admittedIds = priorEngine.admitSupplementTargets(supplementIds);
         const res = priorEngine.supplementAgenda(supplementIds);
         if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);

@@ -379,4 +379,39 @@ describe("Supplement Agenda", () => {
   expect(siblingEngine.pendingLeads.some(l => l.nodeId.toLowerCase() === 'ext2'), 'the sibling remains a lead the user can approve on its own').toBe(true);
 });
 
+  // The supplement nodeIds arrive in a model tool payload, so the admit step is not a blank cheque:
+  // it opens only a route this run itself deferred and named in the answer. An out-of-allowlist id
+  // the model produces with no lead behind it stays refused, exactly as it was before the admit
+  // step existed — otherwise `out_of_allowlist` would be unreachable on the supplement path.
+  it('admitSupplementTargets refuses an out-of-allowlist id that no pending lead offered.', () => {
+  // 'far' sits in the ext schema but off the traced route, so the run never defers it and it
+  // never becomes a lead — the shape of an id a model invented rather than read off the answer.
+  const farNodes: LineageNode[] = [
+    makeNode({ id: 'o',    schema: 'dbo', name: 'o',    type: 'view' }),
+    makeNode({ id: 'mid',  schema: 'dbo', name: 'mid',  type: 'view' }),
+    makeNode({ id: 'ext1', schema: 'ext', name: 'ext1', type: 'view' }),
+    makeNode({ id: 'far',  schema: 'ext', name: 'far',  type: 'view' }),
+  ];
+  const farEdges: Array<[string, string]> = [['o', 'mid'], ['mid', 'ext1']];
+  const engine = new NavigationEngine(
+    makeModel(farNodes, farEdges, ['dbo', 'ext']),
+    makeGraph(farNodes, farEdges),
+    () => {},
+    { activeFilter: { schemas: ['dbo'] } as any },
+  );
+  engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
+  driveEngine(engine, { succ: { o: 'mid', mid: 'ext1' }, limit: 20 });
+  expect(engine.status === 'complete', 'far-fixture engine completes').toBe(true);
+  expect(engine.pendingLeads.some(l => l.nodeId.toLowerCase() === 'far') === false, "'far' was never deferred, so no lead offers it").toBe(true);
+
+  expect(engine.admitSupplementTargets(['far']).length === 0, 'an id with no lead behind it is not admitted').toBe(true);
+  const res = engine.supplementAgenda(['far']) as any;
+  expect(res.skipped === 1, `the unoffered id is still refused (got ${JSON.stringify(res)})`).toBe(true);
+  expect(res.skippedDetails[0]?.reason === 'out_of_allowlist', 'refused on the allowlist axis, the reason main reported').toBe(true);
+  expect(engine.toJSON().scopeNodeIds.includes('far') === false, 'nothing merged into scope').toBe(true);
+
+  // The lead-backed id in the same payload is unaffected — the refusal is per id, not per call.
+  expect(engine.admitSupplementTargets(['far', 'ext1']).join(','), 'only the offered id is admitted').toBe('ext1');
+});
+
 });
