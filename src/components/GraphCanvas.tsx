@@ -526,7 +526,7 @@ export function GraphCanvas({
   onExpandAllSchemas,
   collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
-  const { fitView, getNode, setCenter, getNodes, getEdges, getViewport, setViewport } = useReactFlow();
+  const { fitView, getNode, setCenter, getNodes, getEdges } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const vscodeApi = useVsCode();
 
@@ -842,6 +842,20 @@ export function GraphCanvas({
     });
   }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
+  /**
+   * The one auto-fit: frames every node on the next frame, at the padding and duration every
+   * caller shares.
+   *
+   * @remarks
+   * Deferred a frame because each caller runs while the nodes it means to frame are still being
+   * measured, and `fitView` on an unmeasured node frames the wrong box.
+   *
+   * @returns The frame id, so an effect can cancel a fit its cleanup outlives.
+   */
+  const fitGraph = useCallback((): number => requestAnimationFrame(() => {
+    void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+  }), [fitView]);
+
   // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   useEffect(() => {
     const previousTrace = traceAtLastGraphChangeRef.current;
@@ -885,14 +899,15 @@ export function GraphCanvas({
       return;
     }
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
-    const raf = requestAnimationFrame(() => {
-      void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
-    });
+    const raf = fitGraph();
     return () => cancelAnimationFrame(raf);
-  }, [clearPendingZoomTimer, flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+  }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   const [notesVisible, setNotesVisible] = useState(true);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
+  // A clicked row pins its thread so the user can read the answer without holding the pointer
+  // still; hover only previews while nothing is pinned.
+  const [pinnedColumn, setPinnedColumn] = useState<{ nodeId: string; column: string } | null>(null);
   const [columnPositions, setColumnPositions] = useState<Record<string, { x: number; y: number }>>({});
 
   // Retains each node's decorated result so a drag — which only ever changes one node's position —
@@ -902,11 +917,9 @@ export function GraphCanvas({
   // Same retention for the column view, where a stale node object also costs a re-measure.
   const columnNodeCache = useRef(createColumnNodeCache());
 
-  // Object-view viewport held while the column view is on stage, restored when it leaves.
-  const objectViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
-
-  // One fit per entry into column mode; a later node measurement must not re-frame the canvas.
-  const columnViewFittedRef = useRef(false);
+  // Which mode the framing on screen belongs to; null until the first render settles. One fit per
+  // switch — a later node measurement must not re-frame the canvas.
+  const fittedForColumnViewRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     if (pendingPositions && Object.keys(pendingPositions).length > 0) {
@@ -1064,8 +1077,9 @@ export function GraphCanvas({
    * its upstream or downstream half.
    */
   const hoveredColumnPath = useMemo((): Set<string> | null => {
-    if (!hoveredColumn || !columnTraceView) return null;
-    const seen = new Set<string>([columnRowKey(hoveredColumn.nodeId, hoveredColumn.column)]);
+    const active = pinnedColumn ?? hoveredColumn;
+    if (!active || !columnTraceView) return null;
+    const seen = new Set<string>([columnRowKey(active.nodeId, active.column)]);
     const stack = [...seen];
     while (stack.length > 0) {
       const current = stack.pop()!;
@@ -1076,7 +1090,7 @@ export function GraphCanvas({
       }
     }
     return seen;
-  }, [hoveredColumn, columnTraceView, columnRowAdjacency]);
+  }, [pinnedColumn, hoveredColumn, columnTraceView, columnRowAdjacency]);
 
   // Full-model graph backing the shared prune-safety guard; scope is bounded per call.
   const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
@@ -1109,41 +1123,37 @@ export function GraphCanvas({
     setHoveredColumn(column === null ? null : { nodeId, column });
   }, []);
 
+  const handleColumnSelect = useCallback((nodeId: string, column: string) => {
+    setPinnedColumn(current => (current?.nodeId === nodeId && current.column === column ? null : { nodeId, column }));
+  }, []);
+
   const columnHover = useMemo((): ColumnHoverState => ({
     hoveredPath: hoveredColumnPath,
     onColumnHover: handleColumnHover,
-  }), [hoveredColumnPath, handleColumnHover]);
+    onColumnSelect: handleColumnSelect,
+    pinnedRow: pinnedColumn ? columnRowKey(pinnedColumn.nodeId, pinnedColumn.column) : null,
+  }), [hoveredColumnPath, handleColumnHover, handleColumnSelect, pinnedColumn]);
 
-  // Leaving column mode drops the hovered thread; otherwise returning to it opens with an arbitrary
-  // thread lit and every other row dimmed. The viewport is kept so the return lands where the user
-  // left the object view.
+  // Leaving column mode drops the active thread, pinned or hovered; otherwise returning to it opens
+  // with an arbitrary thread lit and every other row dimmed.
   const handleToggleColumnView = useCallback((next: boolean) => {
-    if (next) objectViewportRef.current = getViewport();
     setColumnView(next);
     setHoveredColumn(null);
-  }, [getViewport]);
+    setPinnedColumn(null);
+  }, []);
 
-  // The column view lays its nodes out in its own coordinate space, so the object view's viewport
-  // frames nothing in it. Fit once the switched-in nodes are on stage, and restore the object
-  // viewport on the way back rather than fitting a view the user had already positioned.
+  // Each view lays its nodes out in its own coordinate space, so the framing the other one left
+  // behind frames nothing here — either direction of the switch is fitted, once the switched-in
+  // nodes are measured. The first pass only records the mode: the mount fit is the pending-zoom
+  // effect's, and two fits racing on one mount frame the canvas twice.
   useEffect(() => {
-    if (columnViewActive) {
-      if (columnViewFittedRef.current || !nodesInitialized) return;
-      columnViewFittedRef.current = true;
-      const raf = requestAnimationFrame(() => {
-        void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
-      });
-      return () => cancelAnimationFrame(raf);
-    }
-    columnViewFittedRef.current = false;
-    const restore = objectViewportRef.current;
-    if (!restore) return;
-    objectViewportRef.current = null;
-    const raf = requestAnimationFrame(() => {
-      void setViewport(restore, { duration: FIT_VIEW_DURATION });
-    });
+    if (!nodesInitialized || fittedForColumnViewRef.current === columnViewActive) return;
+    const first = fittedForColumnViewRef.current === null;
+    fittedForColumnViewRef.current = columnViewActive;
+    if (first) return;
+    const raf = fitGraph();
     return () => cancelAnimationFrame(raf);
-  }, [columnViewActive, nodesInitialized, fitView, setViewport]);
+  }, [columnViewActive, nodesInitialized, fitGraph]);
 
   // Hand-placed column nodes belong to the relation set that produced the layout, so only a new
   // relation set invalidates them. Keying this on `columnTraceView` would also fire on every

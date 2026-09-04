@@ -61,14 +61,22 @@ function makeData(columns: string[]): ColumnTraceNodeData {
  * exactly the row that reported the hover. The canvas widens that to the connected column path;
  * the node's own contract is only "dim what is not in the thread", which this exercises.
  */
-function HoverHarness({ children }: { children: ReactNode }) {
-  const [hoveredPath, setHoveredPath] = useState<ReadonlySet<string> | null>(null);
+function HoverHarness({ children, seed }: { children: ReactNode; seed?: ReadonlySet<string> }) {
+  const [hoveredPath, setHoveredPath] = useState<ReadonlySet<string> | null>(seed ?? null);
+  const [pinnedRow, setPinnedRow] = useState<string | null>(null);
   return (
     <ColumnHoverProvider
       value={{
         hoveredPath,
-        onColumnHover: (nodeId, column) =>
-          setHoveredPath(column === null ? null : new Set([columnRowKey(nodeId, column)])),
+        onColumnHover: (nodeId, column) => {
+          if (pinnedRow !== null) return;
+          setHoveredPath(column === null ? null : new Set([columnRowKey(nodeId, column)]));
+        },
+        onColumnSelect: (nodeId, column) => {
+          setPinnedRow(columnRowKey(nodeId, column));
+          setHoveredPath(new Set([columnRowKey(nodeId, column)]));
+        },
+        pinnedRow,
       }}
     >
       {children}
@@ -156,6 +164,62 @@ describe('ColumnTraceNode', () => {
     expect(rows()[1].style.opacity, 'the hovered row stays lit').toBe('1');
     expect(rows()[0].style.opacity).toBe(String(COLUMN_ROW_DIM_OPACITY));
     expect(rows()[2].style.opacity).toBe(String(COLUMN_ROW_DIM_OPACITY));
+  });
+
+  it('pins the thread on a click and keeps it lit after the pointer leaves', () => {
+    mountNode(['A', 'B', 'C']);
+    act(() => { rows()[1].dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(rows()[1].style.opacity, 'the clicked row is the thread').toBe('1');
+    expect(rows()[0].style.opacity).toBe(String(COLUMN_ROW_DIM_OPACITY));
+
+    // The gesture the hover-only thread could not serve: reading the answer with the pointer gone.
+    act(() => { rows()[1].dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); });
+    act(() => { rows()[2].dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); });
+    expect(rows()[1].style.opacity, 'the pinned thread survives a later hover').toBe('1');
+    expect(rows()[2].style.opacity).toBe(String(COLUMN_ROW_DIM_OPACITY));
+  });
+
+  it('claims the row click so React Flow does not select the object instead of the column', () => {
+    // React Flow reads a node click from a handler on the node wrapper above this component, so the
+    // ancestor here is a React onClick — the same dispatch path, not a native listener on the host.
+    let reachedWrapper = false;
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <div onClick={() => { reachedWrapper = true; }}>
+            <ColumnTraceNode id="dbo.orders" data={makeData(['A', 'B'])} />
+          </div>
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    act(() => { rows()[0].dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(reachedWrapper, 'the click stops at the row').toBe(false);
+  });
+
+  it('dims the whole card when no row of it is on the active thread', () => {
+    // An object off the thread is context, not answer — it takes the object view's dim rather than
+    // standing at full weight with only its rows faded.
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness seed={new Set([columnRowKey('dbo.other', 'X')])}>
+          <ColumnTraceNode id="dbo.orders" data={makeData(['A', 'B'])} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const card = host.querySelector<HTMLElement>('.ln-node-card')!;
+    expect(card.style.opacity, 'a card with no row on the thread is dimmed').toBe('0.25');
+  });
+
+  it('leaves a card carrying the thread at full strength', () => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness seed={new Set([columnRowKey('dbo.orders', 'B')])}>
+          <ColumnTraceNode id="dbo.orders" data={makeData(['A', 'B'])} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const card = host.querySelector<HTMLElement>('.ln-node-card')!;
+    expect(card.style.opacity, 'one row on the thread keeps the card lit').toBe('1');
   });
 
   it('summarises instead of listing rows when rows are hidden', () => {

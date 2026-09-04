@@ -70,9 +70,11 @@ function ColumnTraceRowLine({
   onFocusStart: () => void;
   onFocusEnd: () => void;
 }) {
-  const { hoveredPath, onColumnHover } = useColumnHover();
-  const isHoveredRow = !!hoveredPath?.has(columnRowKey(nodeId, row.name));
+  const { hoveredPath, onColumnHover, onColumnSelect, pinnedRow } = useColumnHover();
+  const rowKey = columnRowKey(nodeId, row.name);
+  const isHoveredRow = !!hoveredPath?.has(rowKey);
   const isDeemphasised = !!hoveredPath && !isHoveredRow;
+  const isPinnedRow = pinnedRow === rowKey;
   const label = shapeLabel(row);
 
   const style: CSSProperties = {
@@ -85,7 +87,11 @@ function ColumnTraceRowLine({
     backgroundColor: isHoveredRow ? 'var(--ln-hover-bg)' : 'transparent',
     // Focus only — a pointer user already has the hover background and weight to go by, and
     // painting the focus indicator on hover would also let a mouse move clear a keyboard position.
-    boxShadow: focused ? 'inset 0 0 0 2px var(--ln-focus-border)' : undefined,
+    // The pinned row is the exception: it is a standing selection, not a transient position, and it
+    // carries the same yellow the object view gives a clicked node.
+    boxShadow: focused ? 'inset 0 0 0 2px var(--ln-focus-border)'
+      : isPinnedRow ? 'inset 0 0 0 2px var(--ln-highlight-yellow)'
+      : undefined,
     transition: ROW_TRANSITION,
   };
 
@@ -104,8 +110,12 @@ function ColumnTraceRowLine({
       tabIndex={isTabStop ? 0 : -1}
       aria-label={ariaLabel}
       onKeyDown={event => onKeyDown(event, row.name)}
+      // Claimed before the canvas sees it: React Flow would otherwise read the same click as a node
+      // click and select the object, replacing the column thread with the object's neighbourhood.
+      onClick={event => { event.stopPropagation(); onColumnSelect(nodeId, row.name); }}
       onMouseEnter={() => onColumnHover(nodeId, row.name)}
       onMouseLeave={() => onColumnHover(nodeId, null)}
+      aria-current={isPinnedRow ? 'true' : undefined}
       onFocus={() => { onFocusStart(); onColumnHover(nodeId, row.name); }}
       onBlur={() => { onFocusEnd(); onColumnHover(nodeId, null); }}
     >
@@ -139,6 +149,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const { view } = data;
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const rowsVisible = data.rowsVisible !== false;
+  const { hoveredPath: threadPath, pinnedRow } = useColumnHover();
 
   // Which row currently holds the node's single tab stop. Null until the user moves within the
   // node, so the first row is the default entry point and a re-render never steals the position.
@@ -184,9 +195,16 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
+  // A column thread carries the same answer one level down as an object selection does: the objects
+  // it runs through are the answer and the rest is context, so an object off the thread takes the
+  // object view's dim rather than staying at full weight with only its rows faded.
+  const offThread = !!threadPath && !view.rows.some(r => threadPath.has(columnRowKey(id, r.name)));
+  // The card holding the clicked row takes the object view's yellow click-highlight, so a click at
+  // column level reads exactly like a click at object level one level up.
+  const ownsPin = !!pinnedRow && view.rows.some(r => columnRowKey(id, r.name) === pinnedRow);
   // Shared with CustomNode via resolveNodeHighlightStyle, so a node reads the same in both views.
   const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, transform, zIndex } =
-    resolveNodeHighlightStyle(data.highlighted, data.aiHighlight, data.dimmed);
+    resolveNodeHighlightStyle(ownsPin ? 'yellow' : data.highlighted, data.aiHighlight, data.dimmed || offThread);
 
   return (
     <>
