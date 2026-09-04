@@ -81,3 +81,7 @@ tests/fixtures/kill-switch-user-data/*
 !tests/fixtures/kill-switch-user-data/User/
 tests/fixtures/kill-switch-user-data/User/*
 !tests/fixtures/kill-switch-user-data/User/settings.json
+
+# A dacpac at the repo root is an internal model staged for a lane run, never product
+# content; the tracked fixtures live under tests/fixtures/ and assets/ and are unaffected.
+/*.dacpac
