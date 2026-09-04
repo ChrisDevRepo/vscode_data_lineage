@@ -62,7 +62,7 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
     expect(!md.includes('≈'), `a stated depth must not render as an estimate:\n${md}`).toBe(true);
-    expect(md.includes('I will not go past this'), `a stated depth must render as fixed:\n${md}`).toBe(true);
+    expect(md.includes('fixed; the engine will not go past it'), `a stated depth must render as fixed:\n${md}`).toBe(true);
     expect(engine.currentDepthEnforcement === 'strict', 'a stated depth enforces strictly').toBe(true);
     drain(engine);
     expect(analyzed(engine).has('n2'), 'the node at the approved border is still analysed').toBe(true);
@@ -77,7 +77,7 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
     expect(md.includes('≈'), `an inferred depth must render as an estimate:\n${md}`).toBe(true);
-    expect(md.includes('my estimate'), `an inferred depth must say whose it is:\n${md}`).toBe(true);
+    expect(md.includes('engine starting point'), `an inferred depth must render as the engine's starting point:\n${md}`).toBe(true);
     expect(engine.currentDepthEnforcement === 'silent', 'an inferred depth stays growable').toBe(true);
   });
 

@@ -234,7 +234,7 @@ describe("Discovery-phase refinement loop", () => {
 
   // Provenance is carried by placement: a depth the user stated sits under what they asked for and
   // says it binds; a depth the assistant chose sits under its own plan and says it may move.
-  expect(md.includes('my estimate, I may extend it'), 'an assistant-chosen depth says it may move').toBe(true);
+  expect(md.includes('engine starting point, extended if the trace needs it'), 'an assistant-chosen depth is stated as the engine starting point').toBe(true);
   expect(md.includes('Depth: ≈'), 'an assistant-chosen depth is marked approximate').toBe(true);
 
   const bordered = new NavigationEngine(model, graph, () => {}, {});
@@ -242,7 +242,7 @@ describe("Discovery-phase refinement loop", () => {
   const borderedMd = renderScopeSummaryMd(bordered.getScopeSummary(), 2);
   const borderedStated = borderedMd.slice(borderedMd.indexOf('**From your question**'), borderedMd.indexOf('**My plan**'));
   expect(borderedStated.includes('Depth: 2 levels downstream'), 'a stated depth is attributed to the user').toBe(true);
-  expect(borderedStated.includes('I will not go past this'), 'a stated depth is presented as binding').toBe(true);
+  expect(borderedStated.includes('fixed; the engine will not go past it'), 'a stated depth is presented as binding').toBe(true);
   expect(!borderedStated.includes('≈'), 'a stated depth carries no approximation mark').toBe(true);
   expect(borderedMd.includes('revision 2'), 'a re-approval round is stamped with its revision').toBe(true);
 

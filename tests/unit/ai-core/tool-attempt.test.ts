@@ -22,6 +22,7 @@ import {
   type ToolPhaseAttemptState,
 } from '../../../src/ai/agent/toolAttempt';
 import type { ConverseInstructionPlan } from '../../../src/ai/agent/instructionPlan';
+import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFormed';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import type { IToolRegistry } from '../../../src/ai/tools/registry';
@@ -765,15 +766,16 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     return { replayed: secondPort.requests[0].messages, state, first };
   }
 
+  // The replay ends with the exchange-closing continuation note, so the pair sits one further back.
   function replayedToolArgs(messages: readonly BaseMessage[]): Record<string, unknown> {
-    const toolCallMessage = messages[messages.length - 2] as AIMessage;
+    const toolCallMessage = messages[messages.length - 3] as AIMessage;
     const call = toolCallMessage.tool_calls?.[0];
     expect(call).toBeDefined();
     return (call?.args ?? {}) as Record<string, unknown>;
   }
 
   function replayedToolResult(messages: readonly BaseMessage[]): Record<string, unknown> {
-    return JSON.parse(String(messages[messages.length - 1].content)) as Record<string, unknown>;
+    return JSON.parse(String(messages[messages.length - 2].content)) as Record<string, unknown>;
   }
 
   /**
@@ -802,6 +804,24 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     return { replayed: secondPort.requests[0].messages, first };
   }
 
+  it('never ends a retry history on a tool result — the exchange closes with a user-role note', async () => {
+    // Provider contract, not style: Gemini 3 signature-validates every function call in the turn
+    // opened by the newest user text message, and the VS Code LM API cannot carry a thought
+    // signature — so a request ending on the tool result fails the whole turn with an
+    // unrecoverable 400. The trailing user note ends that turn before the provider sees it.
+    const { replayed } = await replayAfterRejection({
+      input: { column_flow: [] },
+      envelope: rejectionEnvelope({ reason: 'Required neighbors not accounted for.', hint: 'Add them to route_requests.' }),
+    });
+
+    const last = replayed[replayed.length - 1];
+    expect(last.getType()).toBe('human');
+    expect(String(last.content)).toContain('Continue the current task');
+    // The correction itself still rides the paired tool result, and the pair stays well formed.
+    expect(replayedToolResult(replayed).code).toBe('validation');
+    expect(() => assertToolPairingWellFormed(replayed)).not.toThrow();
+  });
+
   it('replays only the flagged correction fragment, never the original payload', async () => {
     const { replayed, first } = await replayAfterRejection({
       input: {
@@ -820,8 +840,8 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     });
 
     expect(first.rejections[0].issuePaths).toEqual(['column_flow.1']);
-    // messages: [original user message, assistant tool-call replay, paired tool result]
-    expect(replayed).toHaveLength(3);
+    // messages: [original user message, assistant tool-call replay, paired tool result, continuation note]
+    expect(replayed).toHaveLength(4);
 
     const args = replayedToolArgs(replayed);
     expect(Object.keys(args)).toEqual(['column_flow']);
@@ -970,8 +990,8 @@ describe('executeToolAttempt — bounded rejection replay', () => {
       }),
     });
 
-    // [user prompt, held-draft repair state, assistant tool-call replay, paired tool result]
-    expect(replayed).toHaveLength(4);
+    // [user prompt, held-draft repair state, assistant tool-call replay, paired tool result, continuation note]
+    expect(replayed).toHaveLength(5);
     const heldDraft = String(replayed[1].content);
     expect(heldDraft).toContain('held_draft_repair_state');
     expect(heldDraft).toContain('HELD-DRAFT-SECTION-TEXT');
@@ -989,7 +1009,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
       }),
     });
 
-    expect(replayed).toHaveLength(4);
+    expect(replayed).toHaveLength(5);
     const heldDraft = String(replayed[1].content);
     // The rendered block must expose the held notes verbatim, including the node_id they attach to
     // — otherwise a repair-turn model cannot see the note it is asked to patch.
@@ -1006,7 +1026,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
       presentResultRepairDraftContext: () => null,
     });
 
-    expect(replayed).toHaveLength(3);
+    expect(replayed).toHaveLength(4);
     expect(JSON.stringify(replayed)).not.toContain('held_draft_repair_state');
   });
 });
@@ -1199,9 +1219,9 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(state.semanticFailures).toBe(0);
     expect(state.stopReason).toBeNull();
     const replayed = port.requests[2].messages;
-    const trailing = JSON.parse(String(replayed[replayed.length - 1].content)) as Record<string, unknown>;
-    expect(trailing.code).toBe(REJECTION_CODES.duplicateRead);
-    expect(String(trailing.reason)).toContain('call-1');
+    const resultEnvelope = JSON.parse(String(replayed[replayed.length - 2].content)) as Record<string, unknown>;
+    expect(resultEnvelope.code).toBe(REJECTION_CODES.duplicateRead);
+    expect(String(resultEnvelope.reason)).toContain('call-1');
     expect(replayed.map((message) => String(message.content)).join(' ')).toContain('[ai].[vwpricelist]');
   });
 

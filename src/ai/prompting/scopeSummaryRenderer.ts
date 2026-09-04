@@ -46,9 +46,11 @@ function typeLabel(type: string, count: number): string {
 function depthLine(levels: number | 'all', side: string, binding: boolean): string {
   if (levels === 'all') return `- Depth: all levels ${side} — no depth limit`;
   const value = binding ? plural(levels, 'level') : `≈${plural(levels, 'level')}`;
+  // Pure facts about how the engine treats the depth — never first person. A user-stated depth
+  // binds the run; an assistant-chosen one is only the engine's starting point and may grow.
   const suffix = binding
-    ? ' — I will not go past this'
-    : ' — my estimate, I may extend it if the trace needs it';
+    ? ' — fixed; the engine will not go past it'
+    : ' — engine starting point, extended if the trace needs it';
   return `- Depth: ${value} ${side}${suffix}`;
 }
 

@@ -787,7 +787,8 @@ function boundedCorrectionArgs(fragments: readonly ToolCorrectionFragment[] | un
  * form a valid assistant/tool pair — it falls back to one plain user-role note.
  * @param state - Cumulative typed state for the current logical phase or hop.
  * @returns Zero messages when there is no rejection, one fallback user note for a callId-less
- * rejection, or one assistant tool-call followed immediately by its paired tool result.
+ * rejection, or one assistant tool-call and its paired tool result, closed by one user-role
+ * continuation note (see {@link rejectionContinuationMessage}).
  */
 function renderRejectionExchange(state: ToolPhaseAttemptState): ModelMessage[] {
   if (state.rejections.length === 0) return [];
@@ -812,7 +813,26 @@ function renderRejectionExchange(state: ToolPhaseAttemptState): ModelMessage[] {
       rejection.toolName,
       JSON.stringify(output),
     ),
+    rejectionContinuationMessage(),
   ];
+}
+
+/**
+ * The user-role continuation note closing every replayed rejection exchange.
+ *
+ * @remarks
+ * Provider contract, not prose: a request whose history ends on a tool result keeps the replayed
+ * function call inside the provider's current turn, where Gemini 3 enforces thought-signature echo
+ * on every function call. The VS Code LM API's `LanguageModelToolCallPart` carries no signature
+ * field, so the signature can be neither stored nor re-sent, and the whole turn fails with an
+ * unrecoverable provider 400 ("Function call is missing a thought_signature"). Google's documented
+ * turn boundary is the most recent user text message — this note ends the turn the exchange
+ * belongs to, so the replayed call is no longer signature-validated. Every other provider accepts
+ * user content after a tool result unchanged; the rejection's own correction keeps riding the
+ * paired tool result, and the note only directs the model to act on it.
+ */
+function rejectionContinuationMessage(): ModelMessage {
+  return modelUserMessage('Continue the current task: act on the correction above and resend the corrected tool call.');
 }
 
 /** Serializes and escapes the exact delimited message delivered to the model. */
