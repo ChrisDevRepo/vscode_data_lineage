@@ -1018,3 +1018,53 @@ describe('CT render bound — the hop_node of a column edge carried the column',
     expect(rendered.has('[ct].[carrierbase]'), 'the value supplier stays either way').toBe(true);
   });
 });
+
+/**
+ * CT is BB plus columns, stated as the invariant it actually is: the same question answered in
+ * either mode renders the SAME graph. CT adds column-level detail on the nodes it tracks; it never
+ * adds a node BB would not show and never withholds one BB would.
+ *
+ * The two describes above assert a floor per arm — neither loses a required dependency — which is
+ * strictly weaker: both arms could clear their floor and still disagree on everything outside
+ * `reachRequired`. This asserts the equality itself, so a mode-dependent render trim fails here.
+ */
+describe('CT and BB render the same graph for the same question', () => {
+  for (const testCase of CASES) {
+    it(`${testCase.id}`, () => {
+      const ctWorld = buildWorld(testCase);
+      const ct = new NavigationEngine(ctWorld.model, ctWorld.graph, () => {}, {});
+      expect('ok' in ct.init({
+        origin: testCase.origin,
+        question: `trace ${testCase.tracedColumn}`,
+        direction: 'upstream',
+        analysisMode: 'ct',
+        targetColumns: [testCase.tracedColumn],
+        depthIntent: { kind: 'explicit', levels: 6 },
+      }), `${testCase.id}: CT init succeeds`).toBe(true);
+      driveCt(ct, testCase);
+      const ctSet = new Set(ct.getResult().fullNodes.map(node => node.id));
+
+      // The same question, the same topology, the only difference being the mode.
+      const bbWorld = buildWorld(testCase);
+      const bb = new NavigationEngine(bbWorld.model, bbWorld.graph, () => {}, {});
+      expect('ok' in bb.init({
+        origin: testCase.origin,
+        question: `trace ${testCase.tracedColumn}`,
+        direction: 'upstream',
+        depthIntent: { kind: 'explicit', levels: 6 },
+      }), `${testCase.id}: BB init succeeds`).toBe(true);
+      driveBb(bb);
+      const bbSet = new Set(bb.getResult().fullNodes.map(node => node.id));
+
+      // Reported as two sets so a failure names the whole divergence, and says which way it went:
+      // a node only BB shows is a CT loss, a node only CT shows is a CT invention.
+      expect(
+        {
+          missingFromCt: [...bbSet].filter(id => !ctSet.has(id)).sort(),
+          addedByCt: [...ctSet].filter(id => !bbSet.has(id)).sort(),
+        },
+        `${testCase.id}: CT and BB must render the same graph — CT adds columns, never nodes`,
+      ).toEqual({ missingFromCt: [], addedByCt: [] });
+    });
+  }
+});
