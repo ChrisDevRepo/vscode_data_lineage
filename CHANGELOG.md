@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The approval card's depth line states what the engine will do with the depth (a default start it can extend) instead of what the assistant estimates, so the card carries only facts.
+
+### Fixed
+- Retrying a rejected tool call no longer fails a Gemini 3 turn with a provider 400 over a missing thought signature: the replayed exchange is closed by a user-role continuation note — the provider's documented turn boundary — sent to every provider alike.
+- A `sections` array the model sends JSON-string-encoded is decoded and accepted instead of being rejected.
+- A prose tool call whose payload body is not fenced is read instead of rejected.
+- A redundant leading `(?i)` in a DDL search pattern is normalized away instead of rejected.
+- Rejection hints name the repair the engine will accept: a guard that admits records what it admitted, the budget rejection names a repair that exists when one route is staged, and the incomplete-chain hint offers the passthrough escape only where it is accepted.
+- A column trace whose focus node carries none of the traced columns may end the chain there, and a focus that declares none of the traced columns stays in the answer.
+- A repeated column relation is skipped before the row accumulators run.
+- A follow-up widens the exploration border only for a lead the run itself offered.
+- A contributor column the engine cannot verify is logged instead of accepted silently, and the notes schema no longer licenses a bare kept node the engine requires covered.
+- The column view degrades quietly when a node has no column data, costs one tab stop, and builds hover adjacency once.
+- Dev-only transitive dependencies updated; `npm audit` reports no known vulnerabilities.
+
 ## [1.1.1] - 2026-08-26
 
 ### Added

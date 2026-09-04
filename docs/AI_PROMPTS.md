@@ -72,7 +72,13 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   hop, and rejection history compacts to a bounded ring of one-line entries.
   A rejected tool call is echoed back into history by name and call id only —
   its payload is never resent — and only the newest rejection carries the full
-  repair envelope. Hop context is node-proportional and non-cumulative: a
+  repair envelope. The replayed exchange closes on a user-role continuation
+  note: with history ending on a tool result, the replayed function call stays
+  inside the provider's current turn, where Gemini 3 enforces thought-signature
+  echo on every function call and `LanguageModelToolCallPart` carries no
+  signature to re-send. The note — the documented turn boundary — ends that
+  turn and the signature obligation with it; the correction still rides the
+  paired tool result, and the note only directs the model to act on it. Hop context is node-proportional and non-cumulative: a
   large focus-node DDL raises one hop's message and is gone the next.
 - Synthesis starts from a fresh completion envelope containing the archived
   findings plus engine-owned lifecycle and column-provenance state.

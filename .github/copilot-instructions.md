@@ -57,6 +57,10 @@ Tool calls run through the local strict-Zod dispatcher, not
 two type systems: LangChain `any` is VS Code `Required`, `none` sends no tools,
 and a named choice exposes only that tool. Unsupported choices and missing
 tool-call IDs fail before model dispatch, where the diagnosis is still cheap.
+Lenient intake happens once at the schema edge, not per field: a strict array
+the model sends as a JSON string (`sections`) is decoded and accepted, and a
+prose tool call whose payload body is not fenced is read — a shape the port can
+read is read, and only a shape it cannot is rejected.
 The `package.json` `languageModelTools` manifest is generated from the Zod
 schemas and a drift test guards the pair.
 
@@ -98,6 +102,19 @@ answered with an uncharged `duplicate_read` envelope naming the accepted call �
 a silent replay left the model with no response to act on and it repeated the
 call until the provider-call stop.
 
+A replayed rejection exchange always closes on a user-role continuation note,
+and that is provider contract, not prose. A request whose history ends on a
+tool result keeps the replayed function call inside the provider's current
+turn, and Gemini 3 enforces thought-signature echo on every function call in
+the current turn; `LanguageModelToolCallPart` carries no signature field, so
+the signature can be neither stored nor re-sent and the turn dies on an
+unrecoverable provider 400. The documented turn boundary is the most recent
+user text message — the note ends that turn, so the replayed call is no longer
+signature-validated. Every provider accepts user content after a tool
+result, so the note is unconditional and carries no correction itself: the
+repair keeps riding the paired tool result, and the note only directs the
+model to act on it.
+
 `NavigationEngine` owns BFS scope, agenda, gates, route validation, pruning,
 closure, and termination. Bounding traversal in the engine rather than in the
 prompt is deliberate: a schema, state machine, or code guard holds where a
@@ -118,7 +135,10 @@ That split generalizes past depth. Every scope rule reaching the engine is eithe
 the user stated it — or **soft** — the model chose it as a starting point; the model
 classifies which, as a typed field, and the host never reads the user's sentence to decide.
 The approval card is grouped by that classification, so a limit the user set and one the
-model estimated are never rendered as the same kind of fact, and an estimate carries `≈`.
+model estimated are never rendered as the same kind of fact, and an estimate carries `≈`
+— facts only: the depth line states what the engine will do with the depth (a
+default start the engine can extend), never the assistant's intent, so no
+first person appears on the card.
 Once approved, the plan is what runs: the engine is constructed from the approved `init`
 object itself, and `checkBorder` enforces the result at every admission purpose. The one
 thing the engine cannot bind is an instruction that maps to no filter field — it rides along
