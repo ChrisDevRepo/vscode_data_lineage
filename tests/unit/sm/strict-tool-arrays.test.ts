@@ -2,9 +2,12 @@ import { EntryDetectionSchema } from '../../../src/ai/agent/state';
 import { normalizeStartExplorationInput } from '../../../src/ai/support/inputNormalization';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import {
+  PresentResultModelSchema,
   StartExplorationInputSchema,
   StartExplorationProviderInputSchema,
+  SubmitFindingsBbInputSchema,
 } from '../../../src/ai/tools/toolSchemas';
+import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 
 describe("strict-tool-arrays tests", () => {
@@ -113,4 +116,75 @@ describe("strict-tool-arrays tests", () => {
 
   it("string-encoded \"nullish\" is NOT unwrapped", () => { expect(!EntryDetectionSchema.safeParse({ entry: 'discovery', targetColumns: 'nullish' }).success, 'string-encoded "nullish" is not unwrapped').toBe(true); });
 
+});
+
+// `sections` arriving JSON-string-encoded is the same shape `targetColumns` already absorbs, seen
+// on the local OpenAI-compatible lane: a 5045-char `"[{\"angle\": \"business\", ...}]"` reached
+// submit_findings, was rejected as invalid tool input, and the run ended hollow at 87 answer chars.
+describe("string-encoded sections", () => {
+  const encodedSubmit = SubmitFindingsBbInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: '[{"angle": "business", "text": "Grounded analysis."}]',
+    summary: 'ok',
+    verdict: 'analyze',
+  });
+
+  it("submit_findings accepts string-encoded sections", () => {
+    expect(encodedSubmit.success, 'submit_findings accepts string-encoded sections').toBe(true);
+  });
+
+  it("submit_findings decodes sections to a real array", () => {
+    expect(encodedSubmit.success && encodedSubmit.data.sections[0]?.angle === 'business',
+      'submit_findings decodes sections to a real array').toBe(true);
+  });
+
+  it("a real sections array remains valid", () => {
+    expect(SubmitFindingsBbInputSchema.safeParse({
+      focus_node_id: '[dbo].[vSales]',
+      sections: [{ angle: 'business', text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+    }).success, 'a real sections array remains valid').toBe(true);
+  });
+
+  it("a string that is not encoded JSON is still rejected", () => {
+    expect(!SubmitFindingsBbInputSchema.safeParse({
+      focus_node_id: '[dbo].[vSales]',
+      sections: 'business: the view carries ListPrice through unchanged',
+      summary: 'ok',
+      verdict: 'analyze',
+    }).success, 'a string that is not encoded JSON is still rejected').toBe(true);
+  });
+
+  it("a decoded element that violates the element schema is still rejected", () => {
+    expect(!SubmitFindingsBbInputSchema.safeParse({
+      focus_node_id: '[dbo].[vSales]',
+      sections: '[{"angle": "commercial", "text": "ok"}]',
+      summary: 'ok',
+      verdict: 'analyze',
+    }).success, 'a decoded element that violates the element schema is still rejected').toBe(true);
+  });
+
+  it("present_result accepts string-encoded sections", () => {
+    expect(PresentResultModelSchema.safeParse({
+      name: 'Sales lineage',
+      summary: 'One line.',
+      highlight_groups: [{ label: 'Target', color: 'target', node_ids: ['[dbo].[vSales]'] }],
+      sections: '[{"label": "Upstream Inputs", "text": "Grounded detail."}]',
+    }).success, 'present_result accepts string-encoded sections').toBe(true);
+  });
+
+  it("an uncoerced array schema rejects the same payload — the coercion is what changed it", () => {
+    // Pins the counterfactual a stash would have shown: the string parses only because
+    // `sections` is wrapped; a bare `z.array()` of the same element rejects it outright.
+    const uncoerced = z.array(z.object({ angle: z.enum(['business', 'technical']), text: z.string() }).strict());
+    expect(!uncoerced.safeParse('[{"angle": "business", "text": "Grounded analysis."}]').success,
+      'an uncoerced array schema rejects the same payload').toBe(true);
+  });
+
+  it("the model-facing submit_findings schema bytes are unchanged by the coercion", () => {
+    const rendered = JSON.stringify(toModelJsonSchema(SubmitFindingsBbInputSchema));
+    expect(rendered.includes('"sections"') && !rendered.includes('preprocess'),
+      'the model-facing submit_findings schema bytes are unchanged by the coercion').toBe(true);
+  });
 });

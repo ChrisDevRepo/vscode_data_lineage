@@ -448,7 +448,7 @@ const HopFindingBaseSchema = z.object({
    * One section per fired `*_capture` template. Length 1 (`business` / `technical`
    * classification) or 2 (`both`) — required on every hop (a node always commits its analysis).
    */
-  sections: z.array(CapturedSectionSchema).max(2).describe('One grounded section for each output angle required by the locked classification.'),
+  sections: coercedStringArray(CapturedSectionSchema, { max: 2 }).describe('One grounded section for each output angle required by the locked classification.'),
   summary: z.string().describe(
     'One-line digest a later hop reads in isolation after older turns are wiped. Name what this node does ' +
     'to the traced value — the transform, filter, or pass-through — and which column it hands to which ' +
@@ -658,14 +658,14 @@ export const PresentResultModelSchema = z.object({
   highlight_groups: z.array(HighlightGroupSchema).min(1).describe(
     'REQUIRED for new renders. Provide at least one group. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
-  sections: z.array(z.object({
+  sections: coercedStringArray(z.object({
     // Role only, no character target: a tool-parameter description outranks the system prompt, so
     // a soft "~60 chars" here became the operative ceiling and licensed a full question as a badge.
     // Shape guidance belongs in `buildPresentationDetailContract`; the hard limit is the max() above.
     label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).describe('Section heading and graph badge for every linked node.'),
     node_ids: z.array(NodeIdSchema).optional().describe('A node ID can only appear in ONE section. Do not link a node to multiple sections.'),
     text: z.string().describe('Required detail body for this section label.'),
-  }).strict()).min(1).describe('Required final report sections; each label maps to exactly one text body.'),
+  }).strict(), { min: 1 }).describe('Required final report sections; each label maps to exactly one text body.'),
   notes: z.array(z.object({
     node_id: NodeIdSchema.describe('Node ID receiving this below-node caption.'),
     // Stage-neutral on purpose: synthesis grounds a caption in the archive, preview must copy one
@@ -824,10 +824,10 @@ export const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({
  */
 export const SubmitFindingsModelSchema = z.object({
   focus_node_id: z.string().describe('Exact current focus-node ID supplied by the runtime frame.'),
-  sections: z.array(z.object({
+  sections: coercedStringArray(z.object({
     angle: z.enum(['business', 'technical']).describe('The locked output angle represented by this section.'),
     text: z.string().describe('Grounded analysis for this node under the selected angle.'),
-  }).strict()).max(2).describe('One grounded section for each output angle required by the locked classification.'),
+  }).strict(), { max: 2 }).describe('One grounded section for each output angle required by the locked classification.'),
   summary: z.string().describe('One-line digest retained for later hops after older turns are wiped. Aim for one line; length is never a rejection axis.'),
   // The permissive BB∪CT superset registered with VS Code (see remarks above) uses the BB wording:
   // it is the broader, VS Code-registered surface, and the strict per-mode schema (bb/ct) is what
