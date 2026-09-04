@@ -42,7 +42,7 @@ same list in the app.
 
 When a loaded graph exceeds a configurable node threshold, the extension starts in **Schema View** - replacing individual object nodes with schema cluster nodes that show object counts and type distribution. At or below the threshold it starts in Object View. After that initial load decision, the toolbar **Schema View** toggle button switches between the two views; filters and exclusions do not re-check the threshold or auto-switch the view. `dataLineageViz.renderLimit` remains the only post-load safety gate for rejecting a selected visual surface that would mount too many React Flow nodes.
 
-- Double-clicking a schema cluster expands that schema as object nodes in place.
+- Double-clicking a schema cluster expands that schema as object nodes. By default (`expandOnly`) the clicked schema becomes the only expanded one; set `dataLineageViz.overview.schemaDoubleClickBehavior` to `expand` to add it alongside schemas already expanded.
 - Selecting a schema cluster shows an on-node toolbar to **Expand** it or **Expand Only**. **Expand** keeps other expanded schemas open; **Expand Only** expands this schema and collapses the others.
 - Quick Jump and Detail Search separate results into **Visible**, **In Schema Cluster**, and **Not in Current Filter**. Selecting an object in a schema cluster expands that schema without changing the active schema filter.
 - Multiple schemas can be expanded at a time while the projected rendered node count stays within `dataLineageViz.renderLimit`.
@@ -250,6 +250,8 @@ The default state. The AI uses read-only catalog tools to inspect loaded scope, 
 Triggered by the **Show graph preview** follow-up. The assistant resolves a
 finite scope and opens an **AI Preview** in
 the side panel. The preview is transient; use **Save as Bookmark** to retain it.
+**Data Lineage: Show AI Trace in Graph** (Command Palette) re-opens the session's
+current AI-authored view in the graph panel.
 
 #### Detail view in an AI preview
 

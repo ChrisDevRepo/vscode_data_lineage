@@ -104,7 +104,7 @@ Unqualified names depend on caller default schema and context. Schema-qualified 
 ## Documentation
 
 - [`docs/FEATURES.md`](docs/FEATURES.md) — full feature catalogue, settings, customisation paths.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Map & Router engine, bipartite analysis, memory model.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Map & Router engine, BB and column-trace exploration modes, memory model.
 - [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — fork starting point, repo layout, build / test, prompt-builder hierarchy.
 - [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA contract for live-database ingestion (no black box).
 - [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — generated SQL for table profiling.

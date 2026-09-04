@@ -110,5 +110,9 @@ top-level: Vitest 4 ignores `poolOptions.*.execArgv`.
 ## Bug reports
 
 Run **Data Lineage: Copy Debug Info** and include the relevant section from
-**Output → Data Lineage Viz**. Review and redact project, source, schema, object,
-filter, and model identifiers before sharing. Do not attach customer dacpacs.
+**Output → Data Lineage Viz**. For AI issues, **Data Lineage: Dump AI State Machine**
+writes the current exploration state to a JSON file under the workspace's `tmp/sm-dumps/`
+and opens it (an open workspace folder and an active hop-by-hop exploration are required;
+a bounded graph preview has no state machine to dump — use its AI NDJSON trace instead).
+Review and redact project, source, schema, object, filter, and model identifiers before
+sharing, and apply the same review to the dump. Do not attach customer dacpacs.
