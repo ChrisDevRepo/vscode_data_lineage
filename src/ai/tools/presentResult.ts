@@ -169,7 +169,8 @@ type PresentResultRequest = {
   node_ids: string[];
   summary: string;
   description: string;
-  layout_direction: 'LR' | 'TB';
+  /** Absent when the model omitted it — the view then follows the user's configured direction. */
+  layout_direction?: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
   badges: Array<{ node_id: string; text: string }>;
   notes: Array<{ node_id: string; text: string }>;
@@ -904,7 +905,11 @@ export function validatePresentResult(
     node_ids: resolvedNodeIds,
     summary: input.summary,
     description: assembledDescription!,
-    layout_direction: input.layout_direction ?? 'TB',
+    // No default: an omitted direction must stay omitted so the renderer falls through to
+    // `config.layout.direction`, the same owner the object view reads. Substituting a literal here
+    // made every AI view top-to-bottom against the shipped left-to-right setting, and the column
+    // node's Left/Right handles and Top/Bottom annotation toolbars are laid out for that setting.
+    layout_direction: input.layout_direction,
     highlight_groups: input.highlight_groups ?? [],
     badges: assembledBadges ?? [],
     notes: input.notes ?? [],

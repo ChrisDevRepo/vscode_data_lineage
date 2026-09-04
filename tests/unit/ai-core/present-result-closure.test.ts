@@ -67,6 +67,24 @@ describe('Present Result Closure', () => {
     expect(result.success, 'allows unpreviewed graph nodes without notes or highlight colors').toBe(true);
   });
 
+  it('leaves an omitted layout_direction undefined so the view follows the configured direction', () => {
+    // A substituted literal here reached the column view as an explicit override and rendered every
+    // AI result top-to-bottom against the shipped left-to-right setting. Absent must stay absent.
+    const sections = [{ label: 'Output', node_ids: ['a'], text: 'The output table stores the result.' }];
+    const assembled = orderAndAssemble(sections);
+    const base = {
+      name: 'ok',
+      summary: 'ok',
+      sections,
+      highlight_groups: [{ label: 'Flow', color: 'source' as const, node_ids: ['a'] }],
+    };
+    const omitted = validatePresentResult(base, ['a'], assembled.badges, assembled.description);
+    expect(omitted.success && omitted.layout_direction === undefined, 'an omitted layout_direction stays undefined').toBe(true);
+
+    const explicit = validatePresentResult({ ...base, layout_direction: 'TB' as const }, ['a'], assembled.badges, assembled.description);
+    expect(explicit.success && explicit.layout_direction === 'TB', 'an explicit layout_direction is carried through').toBe(true);
+  });
+
   it('rejects empty section labels', () => {
     const assembled = orderAndAssemble([{ label: '', text: 'Missing label.' }]);
     const result = validatePresentResult({
