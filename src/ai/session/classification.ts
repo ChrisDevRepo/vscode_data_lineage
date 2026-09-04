@@ -9,10 +9,11 @@
  *
  * The AI declares the classification in the `start_exploration` tool call
  * via the REQUIRED `classification` enum parameter. Zod hard-rejects missing
- * or invalid values — there is no engine-side fallback. The AI is instructed
- * (via the tool param description) to weight toward `business` over
- * `technical` when the user's intent is ambiguous; `both` is reserved for
- * explicit "both angles" asks.
+ * or invalid values — there is no engine-side fallback. The tool param
+ * description makes `business` the default rather than a tie-breaker:
+ * `technical` requires the user to have named a technical lens (performance,
+ * indexes, execution plan, query shape, load pattern) as the whole request,
+ * and `both` is for a request that spans both angles.
  */
 
 import { z } from 'zod';
