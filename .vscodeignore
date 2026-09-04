@@ -71,12 +71,12 @@ dist/assets/KaTeX_*.ttf
 # .agents/ the repo's agent skills and MCP config. None of these belong in a VSIX. Keep this
 # list in step with the agent-file block in .gitignore and the forbidden patterns in
 # tests/tools/assert-package-contents.mjs — .gitignore alone excludes nothing from a VSIX.
-GLM.md
-.GLM.md
+GLM*
+.GLM*
 .glm-skills/**
 .agents/**
-CODEX.md
-.CODEX.md
+CODEX*
+.CODEX*
 codex.md
 .codex/**
 .gemini/**
@@ -87,12 +87,12 @@ codex.md
 
 # Misc
 PLAN*.md
-AGENTS.md
-.AGENTS.md
-CLAUDE.md
-.CLAUDE.md
-GEMINI.md
-.GEMINI.md
+AGENTS*
+.AGENTS*
+CLAUDE*
+.CLAUDE*
+GEMINI*
+.GEMINI*
 SECURITY.md
 CODE_OF_CONDUCT.md
 *.vsix

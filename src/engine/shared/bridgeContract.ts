@@ -356,7 +356,7 @@ const FilterProfileSchema = z.object({
   showExpandedSchemaClusters: z.boolean().optional(),
 }).strict();
 
-/** A saved filter profile snapshot: layout, zoom, filter rules, and optional AI metadata. */
+/** A saved filter profile snapshot: layout, filter rules, and optional AI metadata. */
 export type FilterProfile = z.infer<typeof FilterProfileSchema>;
 
 /**

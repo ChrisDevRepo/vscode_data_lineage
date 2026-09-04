@@ -527,6 +527,12 @@ body.vscode-reduce-motion *::after {
   --ln-ai-description-h2-font-size: 18px;
   --ln-ai-description-h3-font-size: 17px;
 }
+/* Wrapper the KaTeX extension emits around every expression; carries the original LaTeX in
+   `data-latex`. Kept inline so an expression flows with the sentence around it. */
+.ln-ai-description-md .vscode-katex-container {
+  display: inline;
+  max-width: 100%;
+}
 .ln-ai-description-md .katex {
   overflow-wrap: normal;
   overflow-x: auto;

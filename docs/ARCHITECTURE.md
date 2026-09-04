@@ -31,6 +31,30 @@ see [`AI_PROMPTS.md`](AI_PROMPTS.md).
   [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)
   before handlers consume them.
 
+Model input crosses three layers, in this order, and nothing behind them guards
+it again:
+
+- **Normalization** — the shared coercion and id-resolution helpers in
+  [`src/ai/support/inputNormalization.ts`](../src/ai/support/inputNormalization.ts)
+  put a tool argument into its declared shape and resolve a model-written object
+  reference against the loaded snapshot.
+- **Schema parse** — the tool's Zod schema is the structural contract; a payload
+  that does not parse never reaches a handler.
+- **Policy rejection** — the small set of phase- and state-dependent checks a
+  schema cannot express ([`src/ai/interaction/`](../src/ai/interaction/)),
+  returned to the model through one shared error envelope whose reason comes from
+  the central registry in
+  [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts), so
+  the emitting check and the instruction that teaches the recovery name the same
+  code.
+
+The layering is the containment strategy. Model nondeterminism — a hallucinated
+id, an invented column, an out-of-contract argument — is absorbed at the boundary
+where it enters, so everything behind it is written as ordinary deterministic
+code: a handler may assume a parsed payload and a resolved id, and does not
+repeat a check the boundary already made. A defensive re-check further in points
+at a defect in the layer that owns the contract, not at a missing guard.
+
 Evaluated and rejected alternatives (2026-08 AI SQL documentation review; do
 not re-open without new evidence):
 

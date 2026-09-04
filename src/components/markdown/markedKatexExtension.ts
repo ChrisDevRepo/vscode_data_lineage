@@ -29,16 +29,16 @@ import type {
  * what keeps prose amounts such as `$20,000 and $30,000` from parsing as math while a genuine
  * `$\rightarrow$` still does.
  */
-export const mathInlineRegExp =
+const mathInlineRegExp =
   /(?<![a-zA-Z0-9])(?<dollars>\${1,2})(?!\.|\(["'])((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\k<dollars>(?![a-zA-Z0-9])/;
 
-export const katexContainerClassName = 'vscode-katex-container';
-export const katexContainerLatexAttributeName = 'data-latex';
+const katexContainerClassName = 'vscode-katex-container';
+const katexContainerLatexAttributeName = 'data-latex';
 
 const inlineRule = new RegExp('^' + mathInlineRegExp.source);
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
-export interface MarkedKatexOptions extends KatexOptions { }
+interface MarkedKatexOptions extends KatexOptions { }
 
 function htmlAttributeEncodeValue(value: string): string {
   return value.replace(/[<>"'&]/g, ch => {
@@ -70,8 +70,9 @@ function createRenderer(
       // Container attribute keeps the original LaTeX retrievable even without the annotation element.
       out = `<span class="${katexContainerClassName}" ${katexContainerLatexAttributeName}="${htmlAttributeEncodeValue(token.text)}">${html}</span>`;
     } catch {
-      // On failure, just use the original text including the wrapping $ or $$.
-      out = token.raw;
+      // On failure, degrade to the original source including the wrapping $ or $$. Text-escaped:
+      // the raw markdown is emitted into an HTML stream, so `<` in `$a < b$` must survive as `<`.
+      out = htmlAttributeEncodeValue(token.raw);
     }
     return out + (isBlock ? '\n' : '');
   };

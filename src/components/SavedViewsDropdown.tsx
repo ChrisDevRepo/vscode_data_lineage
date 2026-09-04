@@ -149,115 +149,115 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                 <div className="w-full h-px my-1.5" style={{ background: 'var(--ln-border)' }} />
                 {/* Scrolls past the viewport rather than clipping the tail of a long bookmark list. */}
                 <div style={{ maxHeight: 'min(60vh, 400px)', overflowY: 'auto', overflowX: 'hidden' }}>
-                {filterProfiles.map((profile) => {
-                  if (confirmDeleteId === profile.id) {
+                  {filterProfiles.map((profile) => {
+                    if (confirmDeleteId === profile.id) {
+                      return (
+                        <div key={profile.id} className="flex items-center gap-1.5 px-2 py-1.5 text-xs">
+                          <span className="flex-1 truncate ln-text-error">
+                            Delete &ldquo;{profile.name}&rdquo;?
+                          </span>
+                          <Button
+                            variant="ghost"
+                            className="h-6 px-1.5 text-xs ln-text-error"
+                            onClick={() => { onDeleteView(profile.id); setConfirmDeleteId(null); }}
+                          >
+                            Delete
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            className="h-6 px-1.5 text-xs"
+                            onClick={() => setConfirmDeleteId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      );
+                    }
+                    const isActive = profile.id === activeViewId;
+                    const isModified = isActive && isViewModified;
                     return (
-                      <div key={profile.id} className="flex items-center gap-1.5 px-2 py-1.5 text-xs">
-                        <span className="flex-1 truncate ln-text-error">
-                          Delete &ldquo;{profile.name}&rdquo;?
+                      <div
+                        key={profile.id}
+                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
+                        role="menuitem"
+                        style={isActive ? { background: 'var(--ln-selection-bg)' } : undefined}
+                      >
+                        {/* Fixed-width icon slot for vertical alignment */}
+                        <span className="w-3 shrink-0 flex items-center justify-center">
+                          {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 ? (
+                            <Tooltip content="Advanced bookmark">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                className="w-3 h-3"
+                                style={{ color: 'var(--ln-analysis-fg)', opacity: 0.8 }}
+                                aria-label="Advanced bookmark"
+                              >
+                                <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
+                              </svg>
+                            </Tooltip>
+                          ) : isModified ? (
+                            <Tooltip content="Modified">
+                              <span
+                                className="block w-2 h-2 rounded-full"
+                                style={{ background: 'var(--ln-warning-fg)' }}
+                              />
+                            </Tooltip>
+                          ) : null}
                         </span>
-                        <Button
-                          variant="ghost"
-                          className="h-6 px-1.5 text-xs ln-text-error"
-                          onClick={() => { onDeleteView(profile.id); setConfirmDeleteId(null); }}
-                        >
-                          Delete
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          className="h-6 px-1.5 text-xs"
-                          onClick={() => setConfirmDeleteId(null)}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    );
-                  }
-                  const isActive = profile.id === activeViewId;
-                  const isModified = isActive && isViewModified;
-                  return (
-                    <div
-                      key={profile.id}
-                      className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
-                      role="menuitem"
-                      style={isActive ? { background: 'var(--ln-selection-bg)' } : undefined}
-                    >
-                      {/* Fixed-width icon slot for vertical alignment */}
-                      <span className="w-3 shrink-0 flex items-center justify-center">
-                        {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 ? (
-                          <Tooltip content="Advanced bookmark">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              viewBox="0 0 24 24"
-                              fill="currentColor"
-                              className="w-3 h-3"
-                              style={{ color: 'var(--ln-analysis-fg)', opacity: 0.8 }}
-                              aria-label="Advanced bookmark"
-                            >
-                              <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
-                            </svg>
-                          </Tooltip>
-                        ) : isModified ? (
-                          <Tooltip content="Modified">
-                            <span
-                              className="block w-2 h-2 rounded-full"
-                              style={{ background: 'var(--ln-warning-fg)' }}
-                            />
-                          </Tooltip>
-                        ) : null}
-                      </span>
-                      <Tooltip content={profile.name} asChild>
-                        <span className="flex-1 text-xs truncate">
-                          {profile.name}
-                        </span>
-                      </Tooltip>
-                      <span className="ml-auto flex gap-1 shrink-0">
-                        {isModified && onUpdateView && (
-                          <Tooltip content={`Update "${profile.name}" with current filters`}>
+                        <Tooltip content={profile.name} asChild>
+                          <span className="flex-1 text-xs truncate">
+                            {profile.name}
+                          </span>
+                        </Tooltip>
+                        <span className="ml-auto flex gap-1 shrink-0">
+                          {isModified && onUpdateView && (
+                            <Tooltip content={`Update "${profile.name}" with current filters`}>
+                              <button
+                                type="button"
+                                className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
+                                style={{
+                                  background: 'var(--ln-warning-fg)',
+                                  color: 'var(--vscode-button-foreground, #fff)',
+                                  lineHeight: '18px',
+                                }}
+                                onClick={() => { onUpdateView(profile.id); }}
+                              >
+                                Update
+                              </button>
+                            </Tooltip>
+                          )}
+                          <Tooltip content={isActive ? `Reapply "${profile.name}"` : `Apply "${profile.name}"`}>
                             <button
                               type="button"
                               className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
                               style={{
-                                background: 'var(--ln-warning-fg)',
-                                color: 'var(--vscode-button-foreground, #fff)',
+                                background: 'var(--ln-button-bg)',
+                                color: 'var(--ln-button-fg)',
                                 lineHeight: '18px',
                               }}
-                              onClick={() => { onUpdateView(profile.id); }}
+                              onClick={() => { onApplyView(profile); close(); }}
                             >
-                              Update
+                              Apply
                             </button>
                           </Tooltip>
-                        )}
-                        <Tooltip content={isActive ? `Reapply "${profile.name}"` : `Apply "${profile.name}"`}>
+                        </span>
+                        <Tooltip content={`Delete "${profile.name}"`}>
                           <button
                             type="button"
-                            className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
-                            style={{
-                              background: 'var(--ln-button-bg)',
-                              color: 'var(--ln-button-fg)',
-                              lineHeight: '18px',
-                            }}
-                            onClick={() => { onApplyView(profile); close(); }}
+                            className="shrink-0 p-0.5 rounded-sm ln-list-item"
+                            onClick={() => setConfirmDeleteId(profile.id)}
+                            aria-label={`Delete ${profile.name}`}
                           >
-                            Apply
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                            </svg>
                           </button>
                         </Tooltip>
-                      </span>
-                      <Tooltip content={`Delete "${profile.name}"`}>
-                        <button
-                          type="button"
-                          className="shrink-0 p-0.5 rounded-sm ln-list-item"
-                          onClick={() => setConfirmDeleteId(profile.id)}
-                          aria-label={`Delete ${profile.name}`}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </Tooltip>
-                    </div>
-                  );
-                })}
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}

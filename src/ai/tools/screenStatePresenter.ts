@@ -11,7 +11,6 @@ import type { RenderStateSnapshot, ScreenStateExtras } from '../../bridge/debugD
 import { TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { escapePromptText } from '../support/text';
 import { checkScopeBudget, estimateTokens } from '../support/tokenBudget';
 
 /** Maximum node ids listed per screen-fact list before the remainder is reported as a count. */
@@ -75,9 +74,33 @@ function screenStateParts(uiState: unknown): { ui: Record<string, unknown> | nul
   return { ui, extras: asRecord(ui?.screenState) };
 }
 
-function capIds(ids: readonly string[]): string[] {
-  if (ids.length <= ID_CAP) return [...ids];
-  return [...ids.slice(0, ID_CAP), `…and ${ids.length - ID_CAP} more`];
+/**
+ * Caps an id list at {@link ID_CAP}, reporting the overflow as a count beside the ids.
+ *
+ * @remarks
+ * The count is a sibling field, never an array element: a model copying ids out of this payload
+ * would otherwise carry a prose sentinel into `present_result`, where it rejects as an unknown id.
+ *
+ * @param ids - The full id list.
+ * @returns The retained ids and how many were dropped (`0` when nothing was capped).
+ */
+function capIds(ids: readonly string[]): { ids: string[]; omitted: number } {
+  if (ids.length <= ID_CAP) return { ids: [...ids], omitted: 0 };
+  return { ids: [...ids.slice(0, ID_CAP)], omitted: ids.length - ID_CAP };
+}
+
+/**
+ * Emits a capped id list as `<key>`, plus `<key>_omitted` only when ids were dropped.
+ *
+ * @param key - The payload field name carrying the ids.
+ * @param ids - The full id list.
+ * @returns A spreadable fragment holding the retained ids and, when capped, the dropped count.
+ */
+function spreadCapped(key: string, ids: readonly string[]): Record<string, unknown> {
+  const capped = capIds(ids);
+  return capped.omitted > 0
+    ? { [key]: capped.ids, [`${key}_omitted`]: capped.omitted }
+    : { [key]: capped.ids };
 }
 
 function asLevel(value: unknown): number | 'all' | null {
@@ -165,8 +188,8 @@ function presentTrace(uiTrace: Record<string, unknown> | null, scope: RenderStat
     downstream: asTraceLevel(uiTrace?.downstreamLevels),
     mode,
     nodes: traced.length,
-    added_by_user: capIds(asStringList(scope?.manualAddedNodeIds)),
-    pruned_by_user: capIds(asStringList(scope?.manualPrunedNodeIds)),
+    ...spreadCapped('added_by_user', asStringList(scope?.manualAddedNodeIds)),
+    ...spreadCapped('pruned_by_user', asStringList(scope?.manualPrunedNodeIds)),
   };
 }
 
@@ -185,7 +208,7 @@ function presentAnalysis(analytics: ScreenStateExtras['analytics']): Record<stri
   return {
     type,
     active_group: asString(asRecord(active)?.label),
-    active_group_node_ids: capIds(activeIds),
+    ...spreadCapped('active_group_node_ids', activeIds),
     // Islands can yield hundreds of groups. `group_count` keeps the cap visible rather than
     // presenting a truncated list as the whole set.
     group_count: rows.length,
@@ -414,5 +437,7 @@ export function describeScreen(uiState: unknown): string | null {
       ? `the AI bookmark "${name}" (what its run found about each object, the pruning decisions, and the open questions are stored)`
       : `the bookmark "${name}"`);
   }
-  return parts.length > 0 ? escapePromptText(parts.join('; ')) : null;
+  // Raw text: the prompt slot builder is the single escape point for every dynamic slot, and
+  // escaping here too would reach the model double-encoded.
+  return parts.length > 0 ? parts.join('; ') : null;
 }

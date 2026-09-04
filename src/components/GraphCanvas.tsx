@@ -540,31 +540,47 @@ export function GraphCanvas({
   // AI metadata comes from the active AI profile or the transient AI preview, whichever is on stage.
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
 
-  /** Column-level rendering of the active trace; null when the run recorded no column findings. */
+  /**
+   * Column-level rendering of the active trace; null when the run recorded no column findings.
+   *
+   * @remarks
+   * Derived in the canvas's own render body, above the `ErrorBoundary` that wraps the React Flow
+   * subtree — so a throw here would escape to the root boundary and reload the whole webview,
+   * taking the sidebar, search and bookmarks with it. The projection degrades to `null` instead:
+   * the object view stays on stage and the column toggle simply does not offer itself.
+   */
   const columnTraceView = useMemo(() => {
     const relations = activeAiMetadata?.columnAspect?.edges;
     if (!relations?.length) return null;
-    const objects = new Map<string, ColumnTraceViewObject>();
-    for (const node of flowNodes) {
-      if (node.type === 'schemaNode') continue;
-      const data = node.data as CustomNodeData;
-      objects.set(node.id.toLowerCase(), {
-        id: node.id,
-        label: data.label,
-        schema: data.schema,
-        objectType: data.objectType,
+    try {
+      const objects = new Map<string, ColumnTraceViewObject>();
+      for (const node of flowNodes) {
+        if (node.type === 'schemaNode') continue;
+        const data = node.data as CustomNodeData;
+        objects.set(node.id.toLowerCase(), {
+          id: node.id,
+          label: data.label,
+          schema: data.schema,
+          objectType: data.objectType,
+        });
+      }
+      const verdicts = activeAiMetadata?.nodeVerdicts?.length
+        ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
+        : undefined;
+      return buildColumnTraceView({
+        relations,
+        objects,
+        verdicts,
+        config,
+        layoutDirection: activeAiMetadata?.layoutDirection,
       });
+    } catch (err) {
+      window.vscode?.postMessage({
+        type: 'error',
+        error: `Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return null;
     }
-    const verdicts = activeAiMetadata?.nodeVerdicts?.length
-      ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
-      : undefined;
-    return buildColumnTraceView({
-      relations,
-      objects,
-      verdicts,
-      config,
-      layoutDirection: activeAiMetadata?.layoutDirection,
-    });
   }, [activeAiMetadata, config, flowNodes]);
 
   /** Whether the column view — not the object view — is the rendering currently on stage. */
@@ -1466,105 +1482,105 @@ export function GraphCanvas({
         ) : (
           <div style={{ width: '100%', height: '100%', position: 'absolute' }}>
             <ColumnHoverProvider value={columnHover}>
-            <ReactFlow
-              nodes={displayNodes}
-              edges={displayEdges}
-              onNodesChange={columnViewActive ? onColumnNodesChange : onNodesChange}
-              onEdgesChange={onEdgesChange}
-              nodeTypes={nodeTypes}
-              onNodeClick={handleNodeClick}
-              onNodeDoubleClick={handleNodeDoubleClick}
-              onNodeContextMenu={(event, node) => {
-                event.preventDefault();
-                if (node.type === 'schemaNode') {
-                  onSchemaNodeSelect?.(node.id);
-                  setLocalNodes((nds) => nds.map((n) => ({
-                    ...n,
-                    selected: n.id === node.id,
-                    data: n.type === 'schemaNode'
-                      ? { ...n.data, toolbarActive: n.id === node.id }
-                      : n.data,
-                  })));
-                }
-                onNodeContextMenu(node, event.clientX, event.clientY);
-              }}
-              fitView
-              fitViewOptions={{ padding: 0.15 }}
-              minZoom={0.1}
-              maxZoom={2}
-              defaultViewport={{ x: 0, y: 0, zoom: 1 }}
-              nodesDraggable={true}
-              nodesConnectable={false}
-              nodesFocusable={true}
-              edgesFocusable={true}
-              elementsSelectable={true}
-              onViewportChange={handleViewportChange}
-              selectNodesOnDrag={false}
-              deleteKeyCode={null}
-              panOnDrag={true}
-              panOnScroll={false}
-              zoomOnScroll={true}
-              zoomOnPinch={true}
-              zoomOnDoubleClick={true}
-              preventScrolling={true}
-              nodeOrigin={[0, 0] as [number, number]}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={16} />
-              <Controls showInteractive={true} position="bottom-left" />
-              {config.layout.minimapEnabled && (
-                <MiniMap
-                  pannable
-                  zoomable
-                  position="bottom-right"
-                  nodeColor={minimapNodeColor}
-                  nodeStrokeColor={minimapNodeStrokeColor}
-                  nodeStrokeWidth={2}
-                  nodeBorderRadius={4}
-                  ariaLabel="Graph minimap"
-                />
-              )}
-              {(isDetailSearchOpen || analysisMode) && (
-                <Panel position="top-left">
-                  {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
-                    <AnalysisSidebar
-                      analysis={analysisMode}
-                      graph={graph}
-                      onSelectGroup={onSelectAnalysisGroup}
-                      onClearGroup={onClearAnalysisGroup}
-                      onClose={onCloseAnalysis}
-                      onSwitchAnalysis={onOpenAnalysis}
-                    />
-                  ) : onToggleDetailSearch ? (
-                      <DetailSearchSidebar
-                        onClose={onToggleDetailSearch}
-                        allNodes={allNodes.map(n => ({
-                          id: n.id,
-                          name: n.name,
-                          schema: n.schema,
-                          type: n.type,
-                          bodyScript: modelNodeMap.get(n.id)?.bodyScript,
-                          columns: modelNodeMap.get(n.id)?.columns,
-                        }))}
-                        visibleNodeIds={visibleNodeIds}
-                        collapsedSchemaNodeIds={collapsedSchemaNodeIds}
-                        onResultClick={(nodeId, searchTerm) => {
-                          if (graphMode === 'overview') {
-                            if (modelNodeMap.has(nodeId)) {
-                            pendingZoomRef.current = nodeId;
-                            pendingClickRef.current = { id: nodeId, searchTerm };
-                            onOpenExpandedSchemaViewForNode?.(nodeId);
-                            return;
+              <ReactFlow
+                nodes={displayNodes}
+                edges={displayEdges}
+                onNodesChange={columnViewActive ? onColumnNodesChange : onNodesChange}
+                onEdgesChange={onEdgesChange}
+                nodeTypes={nodeTypes}
+                onNodeClick={handleNodeClick}
+                onNodeDoubleClick={handleNodeDoubleClick}
+                onNodeContextMenu={(event, node) => {
+                  event.preventDefault();
+                  if (node.type === 'schemaNode') {
+                    onSchemaNodeSelect?.(node.id);
+                    setLocalNodes((nds) => nds.map((n) => ({
+                      ...n,
+                      selected: n.id === node.id,
+                      data: n.type === 'schemaNode'
+                        ? { ...n.data, toolbarActive: n.id === node.id }
+                        : n.data,
+                    })));
+                  }
+                  onNodeContextMenu(node, event.clientX, event.clientY);
+                }}
+                fitView
+                fitViewOptions={{ padding: 0.15 }}
+                minZoom={0.1}
+                maxZoom={2}
+                defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+                nodesDraggable={true}
+                nodesConnectable={false}
+                nodesFocusable={true}
+                edgesFocusable={true}
+                elementsSelectable={true}
+                onViewportChange={handleViewportChange}
+                selectNodesOnDrag={false}
+                deleteKeyCode={null}
+                panOnDrag={true}
+                panOnScroll={false}
+                zoomOnScroll={true}
+                zoomOnPinch={true}
+                zoomOnDoubleClick={true}
+                preventScrolling={true}
+                nodeOrigin={[0, 0] as [number, number]}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background gap={16} />
+                <Controls showInteractive={true} position="bottom-left" />
+                {config.layout.minimapEnabled && (
+                  <MiniMap
+                    pannable
+                    zoomable
+                    position="bottom-right"
+                    nodeColor={minimapNodeColor}
+                    nodeStrokeColor={minimapNodeStrokeColor}
+                    nodeStrokeWidth={2}
+                    nodeBorderRadius={4}
+                    ariaLabel="Graph minimap"
+                  />
+                )}
+                {(isDetailSearchOpen || analysisMode) && (
+                  <Panel position="top-left">
+                    {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
+                      <AnalysisSidebar
+                        analysis={analysisMode}
+                        graph={graph}
+                        onSelectGroup={onSelectAnalysisGroup}
+                        onClearGroup={onClearAnalysisGroup}
+                        onClose={onCloseAnalysis}
+                        onSwitchAnalysis={onOpenAnalysis}
+                      />
+                    ) : onToggleDetailSearch ? (
+                        <DetailSearchSidebar
+                          onClose={onToggleDetailSearch}
+                          allNodes={allNodes.map(n => ({
+                            id: n.id,
+                            name: n.name,
+                            schema: n.schema,
+                            type: n.type,
+                            bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                            columns: modelNodeMap.get(n.id)?.columns,
+                          }))}
+                          visibleNodeIds={visibleNodeIds}
+                          collapsedSchemaNodeIds={collapsedSchemaNodeIds}
+                          onResultClick={(nodeId, searchTerm) => {
+                            if (graphMode === 'overview') {
+                              if (modelNodeMap.has(nodeId)) {
+                              pendingZoomRef.current = nodeId;
+                              pendingClickRef.current = { id: nodeId, searchTerm };
+                              onOpenExpandedSchemaViewForNode?.(nodeId);
+                              return;
+                            }
                           }
-                        }
-                        onNodeClick(nodeId, searchTerm);
-                        zoomToNode(nodeId);
-                      }}
-                    />
-                  ) : null}
-                </Panel>
-              )}
-            </ReactFlow>
+                          onNodeClick(nodeId, searchTerm);
+                          zoomToNode(nodeId);
+                        }}
+                      />
+                    ) : null}
+                  </Panel>
+                )}
+              </ReactFlow>
             </ColumnHoverProvider>
           </div>
         )}

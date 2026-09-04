@@ -26,13 +26,6 @@ export interface ProviderErrorDiagnostic extends ProviderErrorCauseDiagnostic {
 }
 
 /**
- * Truncate `text` to `max` characters with a trailing ellipsis.
- *
- * @param text - The string to shorten (status labels, log previews).
- * @param max - Inclusive character budget; defaults to 60.
- * @returns `text` unchanged when within budget, else its first `max - 1` chars + `…`.
- */
-/**
  * Escapes text for a dynamic prompt slot so it cannot open or close a prompt delimiter.
  *
  * @remarks
@@ -49,6 +42,13 @@ export function escapePromptText(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * Truncate `text` to `max` characters with a trailing ellipsis.
+ *
+ * @param text - The string to shorten (status labels, log previews).
+ * @param max - Inclusive character budget; defaults to 60.
+ * @returns `text` unchanged when within budget, else its first `max - 1` chars + `…`.
+ */
 export function trunc(text: string, max = 60): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
