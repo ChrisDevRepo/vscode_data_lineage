@@ -414,4 +414,52 @@ describe("Supplement Agenda", () => {
   expect(engine.admitSupplementTargets(['far', 'ext1']).join(','), 'only the offered id is admitted').toBe('ext1');
 });
 
+  it("P1-40: supplement_empty names the input the model owns, and the exit for having no node to name", () => {
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  engine.init({ origin: 'sp', question: 'test', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
+  drain(engine, 'initial');
+  expect(engine.status === 'complete', 'engine reaches complete before the empty supplement').toBe(true);
+  const res = engine.supplementAgenda([]);
+  expect('error' in res && res.error === 'supplement_empty', 'an empty supplement rejects').toBe(true);
+  const hint = 'error' in res && typeof res.hint === 'string' ? res.hint : '';
+  expect(hint.includes('supplement.nodeIds'), 'the hint names the field the model actually fills').toBe(true);
+  expect(hint.includes('host-selected'), 'the lead id is named as unavailable, not offered as a repair').toBe(true);
+  expect(hint.includes('do not resend an empty supplement'), 'the hint says what to do with no node to extend').toBe(true);
+  expect(hint !== 'supplementAgenda requires at least one node id or pending lead id.', 'the lead id is no longer offered as an alternative input').toBe(true);
+});
+
+  it("P1-40: supplement_target_pruned reports every pruned id at once and names the empty-list exit", () => {
+  // Prune both leaf views so a two-id supplement has two invalid targets: reporting only the first
+  // charged one rejection per pruned id, and dropping the only target lands on supplement_empty.
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  engine.init({ origin: 'sp', question: 'test', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
+  const prunable = new Set(['viewa', 'viewb']);
+  for (let hop = 0; hop < 20; hop++) {
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    if (ctx.done || !ctx.focus_node) break;
+    const id = ctx.focus_node.id;
+    engine.submitFindings({
+      focus_node_id: id,
+      sections: [{ angle: 'business' as const, text: `analysis for ${id}` }],
+      summary: id,
+      verdict: prunable.has(id) ? 'prune' : 'analyze',
+    });
+  }
+  expect(engine.status === 'complete', 'engine completes with both leaf views pruned').toBe(true);
+
+  const both = engine.supplementAgenda(['viewa', 'viewb']);
+  expect('error' in both && both.error === 'supplement_target_pruned', 'an all-pruned supplement rejects').toBe(true);
+  const bothHint = 'error' in both && typeof both.hint === 'string' ? both.hint : '';
+  expect(bothHint.includes('viewa') && bothHint.includes('viewb'), 'every pruned id is named in one rejection, not just the first').toBe(true);
+  expect(bothHint.includes('leaves nothing to supplement'), 'the hint names what dropping the only targets produces').toBe(true);
+  expect(!bothHint.includes('Drop it from the supplement request'), 'the drop-it-and-resend repair is no longer offered where it empties the list').toBe(true);
+
+  const mixed = engine.supplementAgenda(['viewa', 'viewb', 'viewc']);
+  expect('error' in mixed && mixed.error === 'supplement_target_pruned', 'a mixed supplement still rejects atomically').toBe(true);
+  const mixedHint = 'error' in mixed && typeof mixed.hint === 'string' ? mixed.hint : '';
+  expect(mixedHint.includes('viewa') && mixedHint.includes('viewb'), 'both pruned ids are named where a valid target remains').toBe(true);
+  expect(mixedHint.includes('keeping the other 1 id'), 'the hint names the surviving target count so the resend is not empty').toBe(true);
+  expect(engine.status === 'complete', 'both pruned-target rejections leave engine status unchanged').toBe(true);
+});
+
 });

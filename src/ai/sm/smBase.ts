@@ -1727,7 +1727,14 @@ export class NavigationEngine implements IHopStateMachine {
       };
     }
     if ((!Array.isArray(nodeIds) || nodeIds.length === 0) && (!Array.isArray(leadIds) || leadIds.length === 0)) {
-      return { error: 'supplement_empty', hint: 'supplementAgenda requires at least one node id or pending lead id.' };
+      // Naming the lead id as a repair is unreachable advice: `leadIds` is host-selected (the
+      // follow-up pill), and the only production caller — the `supplement` branch of
+      // start_exploration — passes `nodeIds` alone. The hint names the one input the model can
+      // actually fill, and the exit for having no node to name (P1-40).
+      return {
+        error: 'supplement_empty',
+        hint: 'supplement requires at least one node id in supplement.nodeIds — pending leads are host-selected and cannot be supplied here. Name the ids from the completed exploration you want extended; if no node is left to extend, do not resend an empty supplement — answer from the completed exploration, or start a fresh exploration by providing an origin instead of supplement.',
+      };
     }
 
     const leadEntries = leadIds.map(leadId => {
@@ -1751,15 +1758,31 @@ export class NavigationEngine implements IHopStateMachine {
     // would silently drop it while scheduleLead has already fired, stranding a permanently zombie
     // lead. Validate the whole batch here — before any scheduleLead/scope/visited mutation — so a
     // corrected retry can drop the pruned id (mutations below assume every target is enqueueable).
+    // The whole batch is reported at once: returning on the first pruned id charged one generation
+    // per pruned id, and where the pruned ids are the only targets, "drop it" produces the empty
+    // list that lands straight on `supplement_empty`. Both exits are named here (P1-40).
+    const prunedTargets: string[] = [];
+    let survivingTargets = 0;
     for (const request of requested) {
       const raw = request.nodeId;
       const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
       if (id && this.removedSet.has(id)) {
-        return {
-          error: 'supplement_target_pruned',
-          hint: `Node "${id}" was pruned from the completed exploration and cannot be supplemented. Drop it from the supplement request (start a fresh exploration to re-include it).`,
-        };
+        if (!prunedTargets.includes(id)) prunedTargets.push(id);
+      } else {
+        survivingTargets++;
       }
+    }
+    if (prunedTargets.length > 0) {
+      const subject = prunedTargets.length > 1
+        ? `Nodes [${prunedTargets.join(', ')}] were pruned`
+        : `Node "${prunedTargets[0]}" was pruned`;
+      const repair = survivingTargets > 0
+        ? `Resend the supplement without ${prunedTargets.length > 1 ? 'them' : 'it'}, keeping the other ${survivingTargets} id${survivingTargets > 1 ? 's' : ''} (start a fresh exploration to re-include the pruned one${prunedTargets.length > 1 ? 's' : ''}).`
+        : `${prunedTargets.length > 1 ? 'They are' : 'It is'} the only target${prunedTargets.length > 1 ? 's' : ''} requested, so dropping ${prunedTargets.length > 1 ? 'them' : 'it'} leaves nothing to supplement — do not resend an empty supplement. Answer from the completed exploration, or start a fresh exploration with an origin to re-include ${prunedTargets.length > 1 ? 'them' : 'it'}.`;
+      return {
+        error: 'supplement_target_pruned',
+        hint: `${subject} from the completed exploration and cannot be supplemented. ${repair}`,
+      };
     }
 
     const agendaBefore = this._agenda.length;
@@ -2061,11 +2084,27 @@ export class NavigationEngine implements IHopStateMachine {
     if (focusId !== this.currentFocusNodeId) {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
     }
+    // The active columns the focus itself declares. One value serves both consumers: the CT
+    // completeness guard below, which uses it to decide whether an empty-flow claim is checkably
+    // false, and every hint here that offers `passthrough` as the repair. A passthrough at a focus
+    // carrying a tracked column is refused by that same guard unless it also carries a column_flow
+    // entry per declared column, so a hint naming passthrough alone spends a generation only to
+    // land on `column_chain_incomplete` (P1-40).
+    let declaredActiveColumns: readonly string[] = [];
+    if (this.mode.kind === 'ct' && this.tracer) {
+      const declaredNorm = new Set(
+        (getNodeColumns(focusId, this.nodeMap, this.store ?? undefined) ?? []).map(c => normalizeColName(c.name)),
+      );
+      declaredActiveColumns = this.tracer.activeColumns.filter(c => declaredNorm.has(normalizeColName(c)));
+    }
+    const passthroughColumnClause = declaredActiveColumns.length > 0
+      ? ` ${focusId} declares tracked column${declaredActiveColumns.length > 1 ? 's' : ''} [${declaredActiveColumns.join(', ')}], so that passthrough must carry a column_flow entry for each of them — column_flow:[] is refused here.`
+      : '';
     if (finding.verdict === 'prune') {
       if (focusId === this.originNodeId) {
         return {
           error: 'prune_origin_forbidden',
-          hint: 'The exploration origin is immutable. Submit a complete analyze or passthrough finding for this focus.',
+          hint: `The exploration origin is immutable. Submit a complete analyze or passthrough finding for this focus.${passthroughColumnClause}`,
         };
       }
       const requiredConnectedIds = this.committedConnectedIds();
@@ -2074,7 +2113,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (disconnected) {
         return {
           error: 'prune_would_orphan_noted',
-          hint: `Marking [${focusId}] prune would orphan committed node [${disconnected}] (already analyzed or still queued). Use verdict='passthrough' to keep it without pruning.`
+          hint: `Marking [${focusId}] prune would orphan committed node [${disconnected}] (already analyzed or still queued). Use verdict='passthrough' to keep it without pruning.${passthroughColumnClause}`
         };
       }
 
@@ -2388,12 +2427,10 @@ export class NavigationEngine implements IHopStateMachine {
     // retained for what it does to the row set.
     if (this.mode.kind === 'ct' && this.tracer) {
       const submittedFlow = finding.column_flow ?? [];
-      // The active columns the focus itself declares. One value decides both halves: whether the
+      // `declaredActiveColumns` (hoisted above the prune branch) decides both halves: whether the
       // empty-flow declaration is checkably false, and — when the hop is rejected for any reason —
       // whether the hint may still offer that escape (P1-37).
-      const declared = getNodeColumns(focusId, this.nodeMap, this.store ?? undefined) ?? [];
-      const declaredNorm = new Set(declared.map(c => normalizeColName(c.name)));
-      const contradicted = this.tracer.activeColumns.filter(c => declaredNorm.has(normalizeColName(c)));
+      const contradicted = declaredActiveColumns;
       const declaresNoTrackedColumns =
         finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
       if (declaresNoTrackedColumns) {

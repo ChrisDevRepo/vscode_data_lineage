@@ -298,6 +298,74 @@ describe("Column Flow Validation", () => {
   expect(committed.nodeStates.filter(state => state.nodeId === 'base_table').length, 'corrected CT flow commits one source node state').toBe(1);
 });
 
+  it("P1-40: prune_origin_forbidden names the column_flow its passthrough repair must carry", () => {
+  const engine = ctEngine(['amount']);
+  const rejected = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: 'off the trace' }],
+    summary: 'off the trace',
+    verdict: 'prune',
+  });
+  expect('error' in rejected && rejected.error === 'prune_origin_forbidden', 'pruning the CT origin rejects').toBe(true);
+  const hint = 'error' in rejected && typeof rejected.hint === 'string' ? rejected.hint : '';
+  expect(hint.includes('column_flow entry for each of them'), 'the passthrough repair names the column_flow it must carry').toBe(true);
+  expect(hint.includes('[amount]'), 'the hint names the tracked column the focus declares').toBe(true);
+  expect(hint.includes("column_flow:[] is refused here"), 'the empty-flow escape is closed explicitly').toBe(true);
+  expect(hint.trim() !== 'The exploration origin is immutable. Submit a complete analyze or passthrough finding for this focus.', 'a bare analyze/passthrough is no longer the whole repair').toBe(true);
+});
+
+  it("P1-40: prune_would_orphan_noted names the column_flow its passthrough repair must carry", () => {
+  const col = { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' };
+  const orphanOrigin: LineageNode = makeNode({ id: 'orphan_origin', schema: 'dbo', name: 'orphan_origin', type: 'view', columns: [col] });
+  const orphanMid: LineageNode = makeNode({ id: 'orphan_mid', schema: 'dbo', name: 'orphan_mid', type: 'view', columns: [col] });
+  const orphanLeaf: LineageNode = makeNode({ id: 'orphan_leaf', schema: 'dbo', name: 'orphan_leaf', type: 'view', columns: [col] });
+  const n: LineageNode[] = [orphanOrigin, orphanMid, orphanLeaf];
+  const e: Array<[string, string]> = [['orphan_mid', 'orphan_origin'], ['orphan_leaf', 'orphan_mid']];
+  const engine = new NavigationEngine(makeModel(n, e, ['dbo']), makeGraph(n, e), () => {}, {});
+  engine.init({ origin: 'orphan_origin', question: 'trace amount', direction: 'upstream', targetColumns: ['amount'], depthIntent: { kind: 'explicit', levels: 3 } });
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'orphan_origin',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'orphan_mid', col: 'amount' }] }],
+    route_requests: [{ nodeId: 'orphan_leaf', question: 'trace amount to the leaf' }],
+  });
+  // orphan_leaf is committed and reaches the origin only through orphan_mid, so pruning the mid hop
+  // is refused on topology — and the passthrough it offers instead is itself refused unless it
+  // carries the tracked column orphan_mid declares.
+  let rejected: unknown = null;
+  for (let hop = 0; hop < 6; hop++) {
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    if (ctx.done || !ctx.focus_node) break;
+    const id = ctx.focus_node.id;
+    if (id === 'orphan_mid') {
+      rejected = engine.submitFindings({
+        focus_node_id: id,
+        sections: [{ angle: 'business' as const, text: 'off the trace' }],
+        summary: 'off the trace',
+        verdict: 'prune',
+      });
+      break;
+    }
+    engine.submitFindings({
+      focus_node_id: id,
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'amount', upstream_columns: [] }],
+    });
+  }
+  const result = rejected as { error?: string; hint?: string } | null;
+  expect(result?.error === 'prune_would_orphan_noted', `pruning orphan_mid rejects on topology (got ${JSON.stringify(rejected)})`).toBe(true);
+  const hint = typeof result?.hint === 'string' ? result.hint : '';
+  expect(hint.includes("Use verdict='passthrough' to keep it without pruning."), 'the topology repair is preserved verbatim').toBe(true);
+  expect(hint.includes('column_flow entry for each of them'), 'the passthrough repair names the column_flow it must carry').toBe(true);
+  expect(hint.includes('[amount]'), 'the hint names the tracked column orphan_mid declares').toBe(true);
+  expect(!hint.trim().endsWith("Use verdict='passthrough' to keep it without pruning."), 'passthrough alone is no longer the whole repair').toBe(true);
+});
+
   it("tool set in toolPolicy.", () => {
   expect(activeModeOf(true) === 'sm_ct', 'activeModeOf(hasColumnAspect=true) === sm_ct').toBe(true);
   expect(activeModeOf(false) === 'sm_bb', 'activeModeOf(hasColumnAspect=false) === sm_bb').toBe(true);
