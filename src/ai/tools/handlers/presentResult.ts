@@ -355,8 +355,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       s.logger.debug(`presentResult section[0] preview: ${trunc(presentInput.sections?.[0]?.text ?? '(empty)', 200)}`);
 
-      // Bare-by-choice is a permitted AI decision (prompt contract: nodes left out of both preview
-      // surfaces stay bare) — observe and log, never re-link. Bare nodes still render via resolvedNodeIds.
+      // The notes schema requires a caption for every kept node the engine lists with no detail
+      // slot, so a node unlinked in both badge surfaces is not a licensed "stays bare" outcome —
+      // it may still carry a notes[] entry this check does not inspect. Observe and log only,
+      // never re-link; unlinked nodes still render via resolvedNodeIds.
       const bareNodeIds = findBareNonPrunedNodes(resultGraph, presentInput, resolvedNodeIds);
       if (bareNodeIds.length > 0) {
         s.logger.debug(`[Presentation] ${bareNodeIds.length} non-pruned node(s) left bare by the AI (rendered unlabeled/uncolored) — ${trunc(bareNodeIds.join(', '), 200)}`);

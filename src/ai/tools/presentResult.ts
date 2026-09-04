@@ -541,18 +541,21 @@ export function orderAndAssemble(
 }
 
 /**
- * Reports which non-pruned nodes the AI left bare (linked in neither preview surface) — an
- * observation for the log, never a payload mutation.
+ * Reports which non-pruned nodes the AI left unlinked in both badge-producing surfaces
+ * (`sections[].node_ids` and `highlight_groups[].node_ids`) — an observation for the log,
+ * never a payload mutation.
  *
  * @remarks
- * The prompt contract permits bare nodes: "nodes left out of both preview surfaces stay bare" —
- * they still render in the graph via the engine-owned resolved scope, just without a badge or
- * color. The engine therefore has no authority to re-link them: a tool boundary accepts, rejects
- * with a structural hint, or mechanically normalizes with a log — it never silently rewrites an
- * AI presentation decision (the predecessor of this function injected bare nodes into
- * `sections[].node_ids`, which badge-labeled every non-pruned node in the rendered view).
- * Only `prune` removes a node from the view; bare-by-choice is a permitted verdict-respecting
- * outcome for `analyze`/`passthrough` nodes.
+ * The `notes` schema requires a caption for every kept node the engine lists with no detail slot
+ * (`toolSchemas.ts` notes description; the checklist is rendered by `smPrompts.ts`), so a node this
+ * function flags is not a licensed "stays bare" outcome — it is either covered by a `notes[]` entry
+ * this function does not inspect, or a gap that note-coverage contract was meant to close. Either
+ * way the engine has no authority to re-link it: a tool boundary accepts, rejects with a structural
+ * hint, or mechanically normalizes with a log — it never silently rewrites an AI presentation
+ * decision (the predecessor of this function injected these ids into `sections[].node_ids`, which
+ * badge-labeled every non-pruned node in the rendered view). Only `prune` removes a node from the
+ * view; an unlinked node still renders via `resolvedNodeIds`, just without a badge or highlight
+ * color.
  *
  * @param resultGraph - The engine result carrying the locked `node_states` verdicts.
  * @param input - The (already auto-fixed) present payload. Read-only.
