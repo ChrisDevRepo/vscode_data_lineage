@@ -255,7 +255,9 @@ describe("Submit Findings Handler", () => {
   const echo = source.slice(source.indexOf('const prunedMark'));
   expect(source.includes("committedFinding.value && committedFinding.value.summary.trim()"), 'an empty summary produces no echo').toBe(true);
   expect(echo.includes("=== 'prune' ? '⛔ pruned — ' : ''"), 'a prune is marked; every other verdict adds no glyph the counter already implies').toBe(true);
-  expect(echo.includes('`  ↳ _${prunedMark}'), 'the line is indented under the counter and italicised').toBe(true);
+  // NBSP, not spaces: CommonMark strips 1-3 leading spaces from a paragraph, and the progress
+  // channel renders markdown (MarkdownString.from -> ChatProgressContentPart -> renderer.render).
+  expect(echo.includes('`\\u00a0\\u00a0↳ _${prunedMark}'), 'the line is indented under the counter with NBSP and italicised').toBe(true);
   expect(!echo.includes('Hop ${hop}') && !echo.includes('${focusLabel}'), 'the line never restates the hop number or the focus name the counter already carries').toBe(true);
 });
 
