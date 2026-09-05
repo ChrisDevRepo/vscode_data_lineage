@@ -28,8 +28,11 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * this map with no warning.
  *
  * Capture keys (`business_capture`, `technical_capture`) fire at active phase;
- * render keys fire at synthesis. There are no synthesis-side mirrors of the
- * capture keys — the slot body is the canonical surface.
+ * render keys fire at synthesis. The slot body is the canonical surface, but not
+ * the only one: the `general` render key states its own rule over what capture
+ * produced — every captured ⚠️ callout carried through exactly once, its
+ * significance settled at capture and not re-judged — so callout wording changed
+ * in a capture key is checked against `general` as well.
  *
  * `description` is intentionally absent — it is engine output (built by
  * `orderAndAssemble` in `presentResult.ts` from title + intro + sections[] + closing),
