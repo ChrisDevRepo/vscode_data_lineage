@@ -266,19 +266,17 @@ interface FlowRoleGroups {
  * @param originNodeId - The queried origin (becomes the sole `target`).
  * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
  * @param hopNodes - CT-only focus-node set excluded from the terminal-source set.
- * @param writtenNodes - CT-only nodes with an incoming node-level edge from within the traced chain.
  */
 function computeFlowRoleGroups(
   originNodeId: string,
   edges: ReadonlyArray<{ from: string; to: string }>,
   hopNodes?: ReadonlySet<string>,
-  writtenNodes?: ReadonlySet<string>,
 ): FlowRoleGroups {
   const toNodes = new Set(edges.map(e => e.to));
   const reached = new Set<string>([originNodeId]);
   for (const e of edges) { reached.add(e.from); reached.add(e.to); }
   const source = [...new Set(edges.map(e => e.from))]
-    .filter(n => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n) && !writtenNodes?.has(n));
+    .filter(n => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n));
   const sourceSet = new Set(source);
   const transform = [...reached].filter(n => n !== originNodeId && !sourceSet.has(n));
   return { source, target: [originNodeId], transform };
@@ -446,23 +444,13 @@ export function buildCtSynthesisBlock(
     lines.push('');
     lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
   }
-  const ctNodeIds = new Set<string>([originNodeId]);
-  for (const edge of edges) {
-    ctNodeIds.add(edge.hop_node);
-    ctNodeIds.add(edge.from_node);
-    ctNodeIds.add(edge.to_node);
-  }
-  const writtenCtNodes = new Set(nodeEdges
-    .filter(([from, to]) => ctNodeIds.has(from) && ctNodeIds.has(to))
-    .map(([, to]) => to));
-  // hop_node excludes redirected writer procs; writtenCtNodes excludes their writes_to targets.
-  const groups = computeFlowRoleGroups(
-    originNodeId,
-    edges.map(e => ({ from: e.from_node, to: e.to_node })),
-    new Set(edges.map(e => e.hop_node)),
-    writtenCtNodes,
-  );
+  // Same edge source as the direction lines and as BB: node edges carry every reached node, so a
+  // node with node edges and no column edge keeps its BB bucket. hop_node exclusion repairs the
+  // writes_to artifact of the column projection and applies only when no node edges exist.
+  const groups = computeFlowRoleGroups(originNodeId, directionEdges,
+    nodeEdges.length > 0 ? undefined : new Set(edges.map(e => e.hop_node)));
   lines.push('');
+  lines.push('## Flow-Role Highlights');
   lines.push('Structure present_result using this CT chain:');
   lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link nodes needed for the answer, including passthrough tables when they are source/target/bridge nodes in the column chain.');
   lines.push('- Link every node in the chain above; a node that does not carry, persist or terminate the traced column earns one line naming what it does to the rows — join, filter, predicate, set operation — because it decides which rows the answer returns.');

@@ -578,6 +578,26 @@ describe('prompt composition', () => {
     expect(bb).toContain('and lie on NO path to or from the origin: sibling');
   });
 
+  // CT is BB plus columns: a neighbour reached only through a node edge (no validated column edge)
+  // still keeps its BB source bucket — the flow-role groups read the same node edges BB does.
+  it('keeps a column-less node-edge neighbour in the source bucket, same as BB', () => {
+    const nodeEdges: Array<[string, string, string]> = [
+      ['raw', 'stage', 'lineage'],
+      ['stage', 'target', 'lineage'],
+      ['lookup', 'target', 'lineage'],
+    ];
+    const bb = buildBbSynthesisBlock('target', nodeEdges);
+    const ct = buildCtSynthesisBlock(
+      'target',
+      [{ hop_node: 'target', hop: 1, from_node: 'raw', from_col: 'Amount', to_node: 'target', to_col: 'Amount' }],
+      undefined,
+      nodeEdges,
+    );
+
+    expect(bb).toContain('leave filter-only lookups bare: raw, lookup');
+    expect(ct).toContain('leave filter-only lookups bare: raw, lookup');
+  });
+
   it('keeps a source upstream when the column chain routes its hop through a writer proc', () => {
     const edge = (from: string, to: string, hop: number) => ({
       hop_node: to, hop, from_node: from, from_col: 'Amount', to_node: to, to_col: 'Amount',
