@@ -227,10 +227,15 @@ function presentBookmark(
   const source = asString(entry.source);
   const id = asString(entry.id);
   const run = source === 'ai' && id !== null ? getStoredRun?.(id) : undefined;
+  const nodeIds = asStringList(entry.allowlistNodeIds);
   return {
     name,
     source,
-    nodes: asStringList(entry.allowlistNodeIds).length,
+    nodes: nodeIds.length,
+    // The ids are the recall keys: `presentRunRecall` answers by id, so a card that reported only
+    // the count left the model no way to ask the stored run about anything and it reached for a
+    // scope walk instead — which is the one discovery call that reroutes to the approval gate.
+    ...spreadCapped('node_ids', nodeIds),
     ai_run: presentAiRun(run, getDdl),
   };
 }

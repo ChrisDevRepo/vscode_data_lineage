@@ -166,7 +166,10 @@ export const CHAT_MARKDOWN_FORMAT = [
  * Role and phase identity ("Current phase: DISCOVERY") are already established by
  * {@link buildGeneralSystemPrompt}, composed once upstream of this block — this function adds
  * only what that surface doesn't cover: which tool answers which question, and the one
- * AI-decided exception (a named column needs the hop-by-hop walk to trace). No restated
+ * AI-decided exception (a named column needs the hop-by-hop walk to trace). The applied-bookmark
+ * line leads the list because it selects the evidence source before the kind of ask picks a tool:
+ * a question about a bookmarked graph is a read of a run already stored, and answering it with a
+ * scope walk is what turned "what do I see here" into a fresh approval gate. No restated
  * phase/state framing, no routing taxonomy. The `over_discovery_budget` guard is deliberately
  * unmentioned — `lineage_get_scope_bundle` is the only place it can fire, that call site always
  * wires the mechanical `detectReroute` detector (`detectOverBudgetFromResult`, `agent/graph.ts`),
@@ -180,6 +183,7 @@ export const CHAT_MARKDOWN_FORMAT = [
 function buildDiscoveryPrompt(): string {
   return [
     'Answer from these tools, in chat:',
+    '- Applied AI bookmark + a question about what is on screen → `lineage_get_screen_state` with `ids` from the card, or `filter` for pruned/open_leads/stale; that run is already stored. Ground one object with `lineage_get_object_detail`; do not re-walk the bookmark scope with `lineage_get_scope_bundle`.',
     '- Single-object ask → `lineage_get_object_detail` (one object at a time).',
     '- Graph-scope ask → `lineage_get_scope_bundle`, scoped to what the question needs — set upstream_depth and downstream_depth from what the question implies (0 on a side to exclude it), not an unbounded all-directions walk by default. Set `include_ddl:true` when the user wants the logic/DDL for that scope, not just the node/edge structure.',
     '- DDL/text search → `lineage_search_ddl`.',
@@ -188,8 +192,8 @@ function buildDiscoveryPrompt(): string {
     '### Examples',
     '',
     '<example>',
-    'User: "what does spProcA do"',
-    "Action: `lineage_get_object_detail(id:'[dbo].[spProcA]')` → chat answer.",
+    'User: "what do I see here / how is this calculated" — an AI bookmark is applied',
+    'Action: `lineage_get_screen_state(ids: […])` → answer from the stored run; if it falls short, say what is missing and ask before exploring.',
     '</example>',
     '',
     '<example>',

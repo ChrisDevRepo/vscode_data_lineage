@@ -149,6 +149,7 @@ describe('screen-state presenter', () => {
       name: 'Q3 impact check',
       source: 'ai',
       nodes: 8,
+      node_ids: ids(8, 'k'),
       ai_run: null,
     });
     expect(screen.view).toEqual({ level: 'overview', visible_nodes: 14, total_nodes: 1240 });
@@ -229,7 +230,22 @@ describe('screen-state presenter', () => {
       getStoredRun: (bookmarkId) => { seen.push(bookmarkId); return storedRun(); },
     });
     expect(seen).toEqual([]);
-    expect(screen.bookmark).toEqual({ name: 'My view', source: 'user', nodes: 4, ai_run: null });
+    expect(screen.bookmark).toEqual({ name: 'My view', source: 'user', nodes: 4, node_ids: ids(4), ai_run: null });
+  });
+
+  it('carries the applied bookmark ids the stored-run recall is keyed by, capped at 20', () => {
+    // The card is the only place a model learns which ids the bookmark holds; without them the
+    // stored run is unreachable by `ids` and a scope walk is the only tool left to reach for.
+    const { screen } = presentScreenState({
+      ...EMPTY,
+      uiState: {
+        screenState: { bookmark: { id: 'bm-3', name: 'Wide view', source: 'ai', allowlistNodeIds: ids(23, 'w') } },
+      },
+    });
+    const bookmark = screen.bookmark as { nodes: number; node_ids: string[]; node_ids_omitted: number };
+    expect(bookmark.nodes).toBe(23);
+    expect(bookmark.node_ids).toEqual(ids(23, 'w').slice(0, 20));
+    expect(bookmark.node_ids_omitted).toBe(3);
   });
 
   it('renders ai_run null when the store resolves nothing and tolerates a malformed snapshot', () => {

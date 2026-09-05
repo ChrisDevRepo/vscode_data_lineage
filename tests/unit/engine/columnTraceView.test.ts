@@ -21,6 +21,7 @@ import {
   COLUMN_NODE_WIDTH,
   COLUMN_TRANSFORM_NODE_WIDTH,
   COLUMN_TRANSFORM_NODE_MIN_HEIGHT,
+  COLUMN_AI_ANNOTATION_BAND,
 } from '../../../src/engine/columnTraceView';
 import { DEFAULT_CONFIG, type ExtensionConfig } from '../../../src/engine/types';
 
@@ -472,5 +473,50 @@ describe('columnTraceView layout settings', () => {
     const view = buildColumnTraceView({ relations, objects, config: topDown, layoutDirection: 'LR' });
 
     expect(rankGap(view)).toBe(COLUMN_NODE_WIDTH + topDown.layout.rankSeparation);
+  });
+});
+
+/**
+ * The AI badge and note draw above and below the card through `NodeToolbar`, outside the box Dagre
+ * measures. At the default separation of 30 their ~32px band does not fit, and one node's note lands
+ * on the next node's badge — so the band is carried by the vertical separation instead.
+ */
+describe('columnTraceView AI annotation band', () => {
+  const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.t'));
+  const relations: ColumnTraceRelation[] = [
+    { hopNode: 'dbo.t', fromNode: 'dbo.s1', fromCol: 'Amount', toNode: 'dbo.t', toCol: 'Amount' },
+    { hopNode: 'dbo.t', fromNode: 'dbo.s2', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Qty' },
+  ];
+
+  /** Vertical space between the two rank siblings, measured edge to edge. */
+  function siblingGap(view: ReturnType<typeof buildColumnTraceView>): number {
+    const [upper, lower] = [findNode(view, 'dbo.s1'), findNode(view, 'dbo.s2')]
+      .sort((a, b) => a.position.y - b.position.y);
+    return lower.position.y - (upper.position.y + upper.height);
+  }
+
+  it('adds the band to the rank-sibling gap under LR', () => {
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG, layoutDirection: 'LR' });
+
+    expect(siblingGap(view)).toBe(DEFAULT_CONFIG.layout.nodeSeparation + COLUMN_AI_ANNOTATION_BAND);
+  });
+
+  it('adds the band to the rank gap under TB, where the vertical neighbour is the next rank', () => {
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG, layoutDirection: 'TB' });
+    const source = findNode(view, 'dbo.s1');
+    const target = findNode(view, 'dbo.t');
+
+    expect(target.position.y - (source.position.y + source.height))
+      .toBe(DEFAULT_CONFIG.layout.rankSeparation + COLUMN_AI_ANNOTATION_BAND);
+  });
+
+  it('stays additive to the configured separation rather than replacing it', () => {
+    const tight: ExtensionConfig = {
+      ...DEFAULT_CONFIG,
+      layout: { ...DEFAULT_CONFIG.layout, nodeSeparation: 4 },
+    };
+    const view = buildColumnTraceView({ relations, objects, config: tight, layoutDirection: 'LR' });
+
+    expect(siblingGap(view)).toBe(4 + COLUMN_AI_ANNOTATION_BAND);
   });
 });

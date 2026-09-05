@@ -218,6 +218,24 @@ export const COLUMN_ROW_HEIGHT = 22;
 export const COLUMN_NODE_BORDER_WIDTH = 2;
 
 /**
+ * Vertical space the AI badge and note occupy outside the card, added to the layout's vertical
+ * separation.
+ *
+ * @remarks
+ * Both annotations render through React Flow's `NodeToolbar` (`AiNodeAnnotations.tsx`), which is
+ * positioned outside the node box and therefore invisible to Dagre: the badge above (~16px plus its
+ * 2px offset) and the note below (~12px plus 2px) draw ~32px that no node height accounts for. At
+ * the default `nodeSeparation` of 30 that guarantees a collision — the reported symptom is one
+ * node's note landing on the next node's badge. The band is added to the separation rather than to
+ * the node height because Dagre returns a centred box: a taller box would move the card inside the
+ * reserved space and need a compensating offset at every read of the position.
+ *
+ * Applied unconditionally in the column view, which is only ever built from AI metadata, so every
+ * column-trace graph is an AI view.
+ */
+export const COLUMN_AI_ANNOTATION_BAND = 32;
+
+/**
  * Opacity of a column-view edge outside the hovered path.
  *
  * @remarks
@@ -412,6 +430,26 @@ function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
     if (dataType) row.dataType = dataType;
     return row;
   });
+}
+
+/**
+ * Widens the layout separation on the axis the AI annotations grow along.
+ *
+ * @remarks
+ * Under `LR` the ranks are columns and a node's vertical neighbour is its rank sibling, so the band
+ * belongs to `nodeSeparation`; under `TB` the vertical neighbour is the next rank, so it belongs to
+ * `rankSeparation`. Returned as a config copy rather than a separate layout input because the layout
+ * cache keys on both separations — a banded layout would otherwise reuse an unbanded cache entry.
+ *
+ * @param config - Live extension configuration.
+ * @param direction - Resolved rankdir for this view.
+ * @returns A config carrying {@link COLUMN_AI_ANNOTATION_BAND} on the vertical separation.
+ */
+function withAnnotationBand(config: ExtensionConfig, direction: 'LR' | 'TB'): ExtensionConfig {
+  const layout = direction === 'TB'
+    ? { ...config.layout, rankSeparation: config.layout.rankSeparation + COLUMN_AI_ANNOTATION_BAND }
+    : { ...config.layout, nodeSeparation: config.layout.nodeSeparation + COLUMN_AI_ANNOTATION_BAND };
+  return { ...config, layout };
 }
 
 /**
@@ -617,13 +655,15 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   }
 
   // Laid out by graphBuilder's dagreLayout so the column view shares the object view's
-  // rankdir/separation/margins; only the per-node box differs (rows give variable heights).
+  // rankdir/separation/margins; only the per-node box differs (rows give variable heights) and the
+  // vertical separation carries the AI annotation band the node box cannot express.
   const boxes = new Map(nodes.map(n => [n.id, { width: n.width, height: n.height }]));
+  const direction = input.layoutDirection ?? input.config.layout.direction;
   const positions = dagreLayout({
     nodeIds: nodes.map(n => n.id),
     edges: edges.filter(e => e.source !== e.target).map(e => ({ source: e.source, target: e.target })),
-    config: input.config,
-    direction: input.layoutDirection ?? input.config.layout.direction,
+    config: withAnnotationBand(input.config, direction),
+    direction,
     sizeOf: id => boxes.get(id) ?? { width: COLUMN_NODE_WIDTH, height: 0 },
   });
   for (const node of nodes) {

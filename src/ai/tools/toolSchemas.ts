@@ -595,7 +595,7 @@ export const GetContextInputSchema = z.object({}).strict();
 /** `lineage_get_screen_state` input: no field returns the screen card; `ids` or `filter` recalls the stored run. */
 export const GetScreenStateInputSchema = z.object({
   ids: z.array(z.string()).min(1).max(SCREEN_STATE_MAX_IDS).optional()
-    .describe('Canonical object ids, e.g. "[dbo].[factsales]", to recall from the stored run. Use without filter.'),
+    .describe('Canonical object ids to recall from the stored run, taken from the screen card\'s node_ids. Use without filter.'),
   filter: z.enum(['pruned', 'open_leads', 'stale']).optional()
     .describe('One class of the stored run to list: pruned, open_leads, or stale. Use without ids.'),
 }).strict().superRefine((value, ctx) => {

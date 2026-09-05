@@ -736,7 +736,7 @@
           "type": "object",
           "properties": {
             "ids": {
-              "description": "Canonical object ids, e.g. \"[dbo].[factsales]\", to recall from the stored run. Use without filter.",
+              "description": "Canonical object ids to recall from the stored run, taken from the screen card's node_ids. Use without filter.",
               "minItems": 1,
               "maxItems": 20,
               "type": "array",

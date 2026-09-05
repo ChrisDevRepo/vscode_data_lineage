@@ -66,6 +66,12 @@ describe('prompt composition', () => {
     expect(discover).toContain('lineage_search_ddl');
     expect(discover).toContain('User-facing chat text: Markdown only');
     expect(discover).not.toContain('lineage_start_exploration');
+    // An applied AI bookmark is a run already stored: it is read back, never re-walked. The scope
+    // walk is the one discovery call that reroutes to the approval gate, so answering "what do I
+    // see here" with it proposed a fresh exploration over a graph the user had already approved.
+    expect(discover).toContain('Applied AI bookmark');
+    expect(discover).toContain('do not re-walk the bookmark scope');
+    expect(discover).toContain('ask before exploring');
     expect(active).toContain('Active Exploration Protocol');
     expect(active).toContain('DECISION SOURCE');
     expect(active).not.toContain('User-facing chat text: Markdown only');
