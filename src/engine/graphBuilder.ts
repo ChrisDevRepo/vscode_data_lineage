@@ -34,7 +34,7 @@ import { notifyUser } from '../utils/notify';
  * @param level - Severity, in the host log vocabulary.
  * @param text - Ready-to-log line, already carrying its `[Category]` prefix.
  */
-export type GraphLogSink = (level: 'info' | 'debug' | 'warn' | 'error', text: string) => void;
+type GraphLogSink = (level: 'info' | 'debug' | 'warn' | 'error', text: string) => void;
 
 /**
  * Where this module's diagnostics go. Defaults to a no-op so the engine stays usable outside the
@@ -110,7 +110,7 @@ function collectTraceEdges(graph: Graph, nodeIds: Set<string>): Set<string> {
 /**
  * Represents the structured result of graph compilation.
  */
-export interface GraphResult {
+interface GraphResult {
   /** Nodes formatted for React Flow. */
   flowNodes: FlowNode[];
   /** Edges formatted for React Flow. */
@@ -546,7 +546,7 @@ export function applyTraceToFlow(
  * `direction` and `sizeOf` exist for callers that lay out a non-object view — the column view
  * carries its own direction and variable row heights. Both participate in the layout cache key.
  */
-export interface LayoutInput {
+interface LayoutInput {
   nodeIds: string[];
   edges: Array<{ source: string; target: string }>;
   config: ExtensionConfig;

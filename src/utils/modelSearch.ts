@@ -51,7 +51,7 @@ function exceedsRedosBudget(regex: RegExp): boolean {
  * The reason travels with the rejection so the hint is derived from the measurement that actually
  * happened. A `redos` verdict is a wall-clock heuristic, and re-running it can disagree with itself.
  */
-export type SearchRegexResult =
+type SearchRegexResult =
   /** The pattern compiled and stayed inside the ReDoS budget. */
   | { ok: true; regex: RegExp }
   /** The pattern is not valid JavaScript regex syntax; `error` is what V8 raised. */

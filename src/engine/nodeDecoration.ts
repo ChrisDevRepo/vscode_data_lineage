@@ -52,7 +52,7 @@ interface CacheEntry {
 }
 
 /** Retains the decorated node produced for each id across renders. */
-export type NodeDecorationCache = Map<string, CacheEntry>;
+type NodeDecorationCache = Map<string, CacheEntry>;
 
 /**
  * Creates the retention map {@link decorateFlowNodes} reuses across renders.
@@ -259,7 +259,7 @@ interface ColumnCacheEntry {
 }
 
 /** Retains the React Flow node produced for each column-view node across renders. */
-export type ColumnNodeCache = Map<string, ColumnCacheEntry>;
+type ColumnNodeCache = Map<string, ColumnCacheEntry>;
 
 /**
  * Creates the retention map {@link projectColumnNodes} reuses across renders.

@@ -59,12 +59,12 @@ export function aiRunStorageKey(bookmarkId: string): string {
 export const UNKNOWN_DDL_HASH = 'unknown';
 
 /** Minimal write surface of the global-state store the run records live in. */
-export type RunStoreWriter = {
+type RunStoreWriter = {
   update(key: string, value: unknown): PromiseLike<void>;
 };
 
 /** Minimal read surface of the global-state store the run records live in. */
-export type RunStoreReader = {
+type RunStoreReader = {
   get<T>(key: string): T | undefined;
 };
 

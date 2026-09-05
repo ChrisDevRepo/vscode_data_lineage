@@ -89,7 +89,7 @@ function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, re
  *
  * @remarks
  * The drop is deterministic and by design, but it is the one filter in the chain that leaves no
- * trace of its own: `gatedOut` is computed for diagnostics and has no consumer, so a run in which
+ * trace of its own: `gatedOut` was computed for diagnostics and had no consumer, so a run in which
  * `business_capture` — sole owner of the decision-impacting data-quality capture instruction — was
  * never issued reads identically to one in which the model was asked and found nothing. Lifted onto
  * the builder result so the graph can log it.
@@ -198,7 +198,7 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
  * Blinkered-worker scope: what to analyse, the node + its neighbours, and continuity/self-correction
  * memory (short-term summaries + `recent_rejections`). No progress chrome, no user-interaction framing.
  */
-export interface ActiveHopInstruction {
+interface ActiveHopInstruction {
   /** Per-focus user message shipped to the active worker. */
   readonly message: string;
   /** Focus-sensitive YAML capture keys shipped in that message. */

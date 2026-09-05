@@ -32,7 +32,7 @@ export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';
  * upstream columns feed this one, `outgoing` that one upstream column feeds several downstream
  * columns, and `terminal` that the trace recorded no upstream for it.
  */
-export type ColumnRowShape = 'renamed' | 'incoming' | 'outgoing' | 'terminal';
+type ColumnRowShape = 'renamed' | 'incoming' | 'outgoing' | 'terminal';
 
 /**
  * One row inside a column-trace node: a traced column, or a port on a transform node.
@@ -103,7 +103,7 @@ export interface ColumnTraceViewEdge {
 }
 
 /** The complete column-level rendering of one trace. */
-export interface ColumnTraceView {
+interface ColumnTraceView {
   /** Positioned nodes. */
   nodes: ColumnTraceViewNode[];
   /** Per-column edges between row handles. */

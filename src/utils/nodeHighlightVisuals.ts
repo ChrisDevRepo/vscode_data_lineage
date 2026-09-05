@@ -1,5 +1,5 @@
 /** Highlight/dim/glow styling shared by every node card renderer, so the color rule lives once. */
-export interface NodeHighlightStyle {
+interface NodeHighlightStyle {
   /** True when either click-selection or an AI highlight applies. */
   isHighlighted: boolean;
   /** Border/left-accent color to substitute for the node's normal border/schema color. */
