@@ -8,6 +8,7 @@
 
 import type { ClassificationValue } from '../session/classification';
 import type { CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
+import type { ColumnTransformClass } from '../../engine/shared/bridgeContract';
 
 
 /**
@@ -61,6 +62,13 @@ export interface SmNodeState {
   source: SmNodeStateSource;
   reason: SmNodeStateReason;
   columns?: string[];
+  /**
+   * Column-trace role at the hop that dispatched this node — a carrier of traced columns, or a
+   * node that only decides which rows the answer returns. Absent in BB and on any node no hop has
+   * dispatched yet; `columns` cannot express it, because an empty column set and an unstated one
+   * are both dropped from the record.
+   */
+  columnRole?: SmNodeColumnRole;
   viaNodeId?: string;
   atHop?: number;
 }
@@ -107,6 +115,11 @@ interface ColumnRef {
   node: string;
   /** Name of the column in that neighbor (or `@param` for procedures). */
   col: string;
+  /**
+   * Optional transform classification for this contributor. Absent when the model did not classify
+   * it; the engine never substitutes a default.
+   */
+  transforms?: ColumnTransformClass[];
 }
 
 /**
@@ -126,6 +139,11 @@ export interface ColumnEdge {
   to_node: string;
   /** Column name on the consumer. */
   to_col: string;
+  /**
+   * Transform classification carried verbatim from the submitting contributor. Absent when the
+   * model supplied none — an unclassified edge stays unclassified across the hop.
+   */
+  transforms?: ColumnTransformClass[];
 }
 
 
@@ -276,7 +294,80 @@ interface RouteRequest {
   nodeId: string;
   /** The specific question or sub-goal the AI intends to answer at this node. */
   question: string;
+  /**
+   * Per-neighbor column decision for this route, absent when the router states none.
+   * Wire spelling of {@link ColumnCarry}: omitted is `inherit`, a non-empty list is `carry`,
+   * and the literal `'none'` is `row_role_only`. Three states, never an empty array — an
+   * omitted field and an empty list would otherwise read alike.
+   */
+  columns?: RouteColumns;
 }
+
+/**
+ * Wire form of a route request's per-neighbor column decision.
+ *
+ * @remarks
+ * `'none'` is a word rather than `[]` on purpose: the model states a row role explicitly, and a
+ * reader of the payload never has to decide what an empty array means. Translated to
+ * {@link ColumnCarry} at the engine boundary by `columnCarryFromRoute`.
+ */
+export type RouteColumns = string[] | 'none';
+
+/**
+ * The per-neighbor column decision travelling with one queued hop.
+ *
+ * @remarks
+ * Three states, discriminated so no reader infers meaning from an empty array:
+ * `inherit` — the caller stated no column opinion, so the session's traced targets apply, which
+ * is the behavior every pre-existing caller relies on;
+ * `carry` — exactly these columns travel to the neighbor (an empty list is the engine's own
+ * resolution "none of the traced columns bind on this node", which the tracer may still recover
+ * at dispatch, exactly as before);
+ * `row_role_only` — the router judged the neighbor to shape rows and carry no traced value, so it
+ * is dispatched as a plain whole-object neighbor and no target set is padded back onto it.
+ */
+export type ColumnCarry =
+  | { readonly kind: 'inherit' }
+  | { readonly kind: 'carry'; readonly columns: readonly string[] }
+  | { readonly kind: 'row_role_only' };
+
+/** Shared `inherit` carry — the stateless default, safe to hand out by reference. */
+export const INHERIT_CARRY: ColumnCarry = { kind: 'inherit' };
+
+/** Shared `row_role_only` carry — the stateless row-role decision, safe to hand out by reference. */
+export const ROW_ROLE_ONLY_CARRY: ColumnCarry = { kind: 'row_role_only' };
+
+/**
+ * Lifts the legacy `string[] | undefined` column argument into a {@link ColumnCarry}.
+ *
+ * @param columns - Columns the caller resolved, or `undefined` when it has no column opinion.
+ * @returns `inherit` for `undefined`, otherwise `carry` over the given list.
+ */
+export function columnCarryOf(columns: readonly string[] | undefined): ColumnCarry {
+  return columns === undefined ? INHERIT_CARRY : { kind: 'carry', columns };
+}
+
+/**
+ * Translates one route request's wire column decision into a {@link ColumnCarry}.
+ *
+ * @param columns - The route request's `columns` field as submitted.
+ * @returns The discriminated carry decision; `inherit` when the field was omitted.
+ */
+export function columnCarryFromRoute(columns: RouteColumns | undefined): ColumnCarry {
+  if (columns === undefined) return INHERIT_CARRY;
+  if (columns === 'none') return ROW_ROLE_ONLY_CARRY;
+  return { kind: 'carry', columns };
+}
+
+/**
+ * How a node served the traced columns at the hop that dispatched it.
+ *
+ * @remarks
+ * Orthogonal to {@link SmNodeAction} and {@link SmNodeStateReason}, which answer what happened to
+ * the node and why. A node can be analyzed, passed through, or pruned under either role, so the
+ * role is its own field and survives a later, stronger verdict instead of being overwritten by it.
+ */
+export type SmNodeColumnRole = 'carrier' | 'row_role_only';
 
 /**
  * Per-route outcome in a successful `submitFindings` return.

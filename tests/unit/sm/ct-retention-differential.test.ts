@@ -1627,3 +1627,198 @@ describe('route-border demand — the guard demands only what the router admits 
     expect(deep?.reason, 'the deferral names the depth axis, not the schema axis').toBe('depth');
   });
 });
+
+/**
+ * The per-neighbour fork: at `A → C, D` the router carries traced columns through `C` and sends
+ * `D` on as a plain whole-object neighbour because it supplies no value and only decides which
+ * rows the answer returns.
+ *
+ * `[ct].[vwrowgate]` declares `Amount` itself, so the engine has every reason to hand it the
+ * traced column and did so before this channel existed: the omission was re-padded from the
+ * session's target set at `agendaColumnsFor` and again at dispatch. The three states of
+ * `route_requests[].columns` — not stated, stated as columns, stated as none — are what separates
+ * "the router had no opinion" from "the router said none", and only the third suppresses the pad.
+ */
+const FORK_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
+  ['[ct].[vwforktop]', V, ['Amount']],
+  ['[ct].[vwvaluefeed]', V, ['Amount']],
+  ['[ct].[forkvaluesrc]', T, ['Amount']],
+  ['[ct].[vwrowgate]', V, ['Amount', 'GateFlag']],
+  ['[ct].[rowgatesrc]', T, ['Amount', 'GateFlag']],
+];
+const FORK_EDGES: ReadonlyArray<readonly [string, string]> = [
+  ['[ct].[forkvaluesrc]', '[ct].[vwvaluefeed]'],
+  ['[ct].[vwvaluefeed]', '[ct].[vwforktop]'],
+  ['[ct].[rowgatesrc]', '[ct].[vwrowgate]'],
+  ['[ct].[vwrowgate]', '[ct].[vwforktop]'],
+];
+const FORK_ORIGIN = '[ct].[vwforktop]';
+const FORK_CARRIER = '[ct].[vwvaluefeed]';
+const FORK_ROW_GATE = '[ct].[vwrowgate]';
+
+const FORK_CASE: RetentionCase = {
+  id: 'per-neighbour fork',
+  origin: FORK_ORIGIN,
+  tracedColumn: 'Amount',
+  nodes: FORK_NODES,
+  edges: FORK_EDGES,
+  reachRequired: [],
+  flow: {},
+  measuredLost: [],
+};
+
+/** The `columns` decision the fork's row-gate route carries, as the model would submit it. */
+type ForkColumns = string[] | 'none' | undefined;
+
+/** Starts the fork trace and commits the origin hop with the given decision for the row gate. */
+function startFork(rowGateColumns: ForkColumns): {
+  engine: NavigationEngine;
+  model: DatabaseModel;
+  graph: ReturnType<typeof makeGraph>;
+} {
+  const { model, graph } = buildWorld(FORK_CASE);
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const init = engine.init({
+    origin: FORK_ORIGIN,
+    question: 'trace Amount',
+    direction: 'upstream',
+    analysisMode: 'ct',
+    targetColumns: ['Amount'],
+    depthIntent: { kind: 'explicit', levels: 6 },
+  });
+  expect('ok' in init, 'CT init succeeds').toBe(true);
+
+  const originCtx = engine.getHopContext() as { focus_node?: { id: string } };
+  expect(originCtx.focus_node?.id, 'the origin is dispatched first').toBe(FORK_ORIGIN);
+  const committed = engine.submitFindings({
+    focus_node_id: FORK_ORIGIN,
+    sections: [{ angle: 'business' as const, text: 'origin exposes Amount' }],
+    summary: 'origin',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: FORK_CARRIER, col: 'Amount' }] }],
+    route_requests: [
+      { nodeId: FORK_CARRIER, question: 'where does vwvaluefeed read Amount from?' },
+      {
+        nodeId: FORK_ROW_GATE,
+        question: 'which rows does vwrowgate admit into vwforktop?',
+        ...(rowGateColumns === undefined ? {} : { columns: rowGateColumns }),
+      },
+    ],
+  }) as SubmitOk;
+  expect(committed.error, 'the origin hop commits').toBeUndefined();
+  return { engine, model, graph };
+}
+
+/**
+ * Runs the walk to exhaustion, recording the active column set each focus was dispatched with.
+ *
+ * @param engine - A fork engine whose origin hop has already committed.
+ * @returns Focus id → the active columns that hop actually received.
+ */
+function driveForkHops(engine: NavigationEngine): Map<string, string[]> {
+  const dispatched = new Map<string, string[]>();
+  for (let guard = 0; guard < 12; guard++) {
+    const ctx = engine.getHopContext() as {
+      focus_node?: { id: string };
+      working_memory?: { column_aspect?: { active_columns?: string[] } };
+    };
+    if (!ctx.focus_node) break;
+    const focusId = ctx.focus_node.id;
+    const active = [...(ctx.working_memory?.column_aspect?.active_columns ?? [])];
+    dispatched.set(focusId, active);
+    const outcome = engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: `${focusId} analysed` }],
+      summary: focusId,
+      verdict: 'analyze',
+      // Terminal form: this hop accounts for each active column and names no upstream real column.
+      column_flow: active.map(col => ({ out_col: col, upstream_columns: [] })),
+      route_requests: engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `what does ${id} contribute?` })),
+    }) as SubmitOk;
+    expect(outcome.error, `${focusId} commits`).toBeUndefined();
+  }
+  return dispatched;
+}
+
+describe('CT per-neighbour column carry — three states of route_requests[].columns', () => {
+  it('not stated inherits the traced columns, exactly as before the channel existed', () => {
+    const { engine } = startFork(undefined);
+    const dispatched = driveForkHops(engine);
+    expect(
+      dispatched.get(FORK_ROW_GATE),
+      'an omitted decision still inherits the session target set — the pre-existing behaviour',
+    ).toEqual(['Amount']);
+  });
+
+  it('stated columns carry exactly those columns', () => {
+    const { engine } = startFork(['Amount']);
+    const dispatched = driveForkHops(engine);
+    expect(dispatched.get(FORK_ROW_GATE), 'the named column reaches the neighbour').toEqual(['Amount']);
+  });
+
+  it('stated as none dispatches a plain whole-object hop and is not re-padded', () => {
+    const { engine } = startFork('none');
+    const dispatched = driveForkHops(engine);
+    expect(
+      dispatched.get(FORK_ROW_GATE),
+      'the row-role neighbour declares Amount and is still dispatched with no active column',
+    ).toEqual([]);
+    expect(
+      dispatched.get(FORK_CARRIER),
+      'its sibling on the same fork keeps the column rider',
+    ).toEqual(['Amount']);
+  });
+
+  it('marks the two forks apart on the node state that reaches the snapshot and the result', () => {
+    const { engine } = startFork('none');
+    driveForkHops(engine);
+    const states = new Map(engine.getResult().node_states.map(state => [state.nodeId, state]));
+    expect(states.get(FORK_ROW_GATE)?.columnRole, 'the row gate is marked row-role-only').toBe('row_role_only');
+    expect(states.get(FORK_CARRIER)?.columnRole, 'the carrier is marked a carrier').toBe('carrier');
+    // The role is orthogonal to the verdict: both hops submitted `analyze`.
+    expect(states.get(FORK_ROW_GATE)?.action, 'the row gate is still analysed').toBe('analyze');
+  });
+
+  it('a route stating none wins over the BFS seed already queued for that node', () => {
+    // The row gate is a direct neighbour, so `init` seeded it with the target set before the
+    // router ever saw it. The route merges onto that entry, and the stated decision replaces the
+    // seed's inherited columns rather than unioning with them.
+    const { engine } = startFork('none');
+    const snapshot = engine.toJSON() as { agenda: Array<{ nodeId: string; activeColumns?: string[]; columnCarry?: { kind: string } }> };
+    const queued = snapshot.agenda.find(entry => entry.nodeId === FORK_ROW_GATE);
+    expect(queued?.columnCarry?.kind, 'the authored decision is on the queued entry').toBe('row_role_only');
+    expect(queued?.activeColumns, 'and the projection it implies is empty, not the target set').toEqual([]);
+  });
+
+  it('survives a checkpoint round trip', () => {
+    const { engine, model, graph } = startFork('none');
+    const restored = NavigationEngine.fromJSON(JSON.parse(JSON.stringify(engine.toJSON())), model, graph, () => {}, {});
+    const dispatched = driveForkHops(restored);
+    expect(
+      dispatched.get(FORK_ROW_GATE),
+      'the decision is durable — a resumed session does not re-pad the neighbour',
+    ).toEqual([]);
+  });
+
+  it('restores a checkpoint written before the channel existed, unchanged', () => {
+    // Backward compatibility: strip the field the old writer never emitted. An entry with no
+    // authored decision is `inherit`, which is the behaviour that checkpoint was written under.
+    const { engine, model, graph } = startFork('none');
+    const legacy = JSON.parse(JSON.stringify(engine.toJSON())) as {
+      agenda: Array<{ nodeId: string; activeColumns?: string[]; columnCarry?: unknown }>;
+      nodeStates: Array<{ columnRole?: unknown }>;
+    };
+    for (const entry of legacy.agenda) {
+      delete entry.columnCarry;
+      if (entry.nodeId === FORK_ROW_GATE) entry.activeColumns = ['Amount'];
+    }
+    for (const state of legacy.nodeStates) delete state.columnRole;
+
+    const restored = NavigationEngine.fromJSON(legacy, model, graph, () => {}, {});
+    const dispatched = driveForkHops(restored);
+    expect(
+      dispatched.get(FORK_ROW_GATE),
+      'the pre-change checkpoint restores and behaves as it did when it was written',
+    ).toEqual(['Amount']);
+  });
+});

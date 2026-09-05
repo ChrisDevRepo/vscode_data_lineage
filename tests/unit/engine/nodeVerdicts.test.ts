@@ -1,15 +1,18 @@
 /**
- * Per-node CT verdict field on `AIViewMetadata.nodeVerdicts` (host-wire package P2).
+ * CT-only additive fields on `AIViewMetadata`: per-node `nodeVerdicts` (host-wire package P2) and
+ * the per-edge `columnAspect.edges[].transforms` classification.
  *
  * @remarks
- * Proves the field round-trips through the strict write schema used to send `ai-view-preview`
+ * Proves each field round-trips through the strict write schema used to send `ai-view-preview`
  * frames to the webview, and that the tolerant read schema used for persisted project records
- * keeps a record whose `nodeVerdicts` entries carry a field this build never declared — the same
+ * keeps a record whose entries carry a field this build never declared — the same
  * forward-compatibility guarantee already covered for `badges`/`columnAspect` in
  * `projectStore.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
 import {
+  COLUMN_TRANSFORM_CLASSES,
+  COLUMN_TRANSFORM_DIRECTION,
   ExtensionToWebviewMsgSchema,
   ProjectReadSchema,
   type FilterProfile,
@@ -126,5 +129,85 @@ describe('AIViewMetadata.nodeVerdicts', () => {
     const parsed = ProjectReadSchema.safeParse(project);
     expect(parsed.success).toBe(true);
     expect(parsed.success && parsed.data.filterProfiles?.[0]?.aiMetadata?.nodeVerdicts).toBeUndefined();
+  });
+});
+
+describe('AIViewMetadata.columnAspect edge transforms', () => {
+  const edge = {
+    hopNode:  '[dbo].[vwSales]',
+    fromNode: '[dbo].[FactSales]',
+    toNode:   '[dbo].[vwSales]',
+    fromCol:  'Amount',
+    toCol:    'NetAmount',
+  };
+  const preview = (edges: unknown[]): unknown => ({
+    type: 'ai-view-preview',
+    name: 'Trace',
+    nodeIds: ['[dbo].[vwSales]', '[dbo].[FactSales]'],
+    aiMetadata: { ...baseAiMetadata, columnAspect: { edges } },
+  });
+
+  it('round-trips a multi-select classification through the strict write schema', () => {
+    const parsed = ExtensionToWebviewMsgSchema.safeParse(
+      preview([{ ...edge, transforms: ['aggregate', 'compute', 'filter'] }]),
+    );
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.type === 'ai-view-preview'
+      && parsed.data.aiMetadata.columnAspect?.edges[0]?.transforms)
+      .toEqual(['aggregate', 'compute', 'filter']);
+  });
+
+  it('accepts an edge that carries no transforms at all', () => {
+    const parsed = ExtensionToWebviewMsgSchema.safeParse(preview([edge]));
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.type === 'ai-view-preview'
+      && parsed.data.aiMetadata.columnAspect?.edges[0]?.transforms)
+      .toBeUndefined();
+  });
+
+  it('rejects an unrecognised transform value on the strict write schema', () => {
+    expect(ExtensionToWebviewMsgSchema.safeParse(
+      preview([{ ...edge, transforms: ['derive'] }]),
+    ).success).toBe(false);
+  });
+
+  it('keeps a persisted project whose column-trace edge predates the classifier', () => {
+    const project = {
+      id: 'proj-3',
+      name: 'AW',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      connection: dacpacConn,
+      filterProfiles: [{
+        id: 'view-3',
+        name: 'CT View',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        filter: {
+          schemas: [],
+          types: [],
+          hideIsolated: false,
+          focusSchemas: [],
+          showExternalRefs: true,
+          externalRefTypes: [],
+        },
+        aiMetadata: { ...baseAiMetadata, columnAspect: { edges: [edge] } },
+      }],
+    };
+    const parsed = ProjectReadSchema.safeParse(project);
+    expect(parsed.success).toBe(true);
+    const edges = parsed.success
+      ? parsed.data.filterProfiles?.[0]?.aiMetadata?.columnAspect?.edges
+      : undefined;
+    expect(edges).toEqual([edge]);
+  });
+
+  it('maps every declared class to exactly one direction, and the split matches the contract', () => {
+    expect(Object.keys(COLUMN_TRANSFORM_DIRECTION).sort())
+      .toEqual([...COLUMN_TRANSFORM_CLASSES].sort());
+    // The DIRECT/INDIRECT split licenses a distinct edge treatment downstream; no class is both.
+    expect(COLUMN_TRANSFORM_CLASSES.filter(c => COLUMN_TRANSFORM_DIRECTION[c] === 'DIRECT'))
+      .toEqual(['pass_through', 'compute', 'aggregate']);
+    expect(COLUMN_TRANSFORM_CLASSES.filter(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT'))
+      .toEqual(['combine', 'filter']);
   });
 });

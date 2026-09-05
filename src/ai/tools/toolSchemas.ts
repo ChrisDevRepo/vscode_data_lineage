@@ -6,7 +6,7 @@
  * `toolProvider.ts`, schema unit tests) import directly from this module.
  */
 import { z } from 'zod';
-import { AI_MAX_SCOPE_NODE_IDS } from '../../engine/shared/bridgeContract';
+import { AI_MAX_SCOPE_NODE_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
   ExplorationDepthSelectionSchema,
@@ -391,6 +391,31 @@ const CapturedSectionSchema = z.object({
   text: z.string().min(1).describe('Grounded analysis for this node under the selected angle.'),
 }).strict();
 
+/**
+ * Single source for the `route_requests[].columns` describe text.
+ *
+ * @remarks
+ * The per-neighbor fork at a branch: one neighbor carries traced columns, its sibling only decides
+ * which rows the answer returns. `column_flow[].upstream_columns` cannot state this — it is keyed
+ * by an output column of the focus, so it asserts provenance, and the carry decision would ride on
+ * that assertion. Kept as one exported constant because the field's contract must read the same on
+ * the strict per-mode schemas and on the permissive registered union.
+ */
+export const ROUTE_COLUMNS_DESCRIPTION =
+  'Column-trace sessions only. Which traced columns travel to this neighbor: list them to carry exactly '
+  + 'those, or send the word "none" when the neighbor supplies no traced value and only decides which rows '
+  + 'the answer returns (a filter, a join key) — it is then explored as a whole object, with no column '
+  + 'question attached. Omit the field to carry whatever the trace already carries.';
+
+/**
+ * Per-route column decision. A word rather than an empty array for the row-role case, so an
+ * omitted field and a stated "no columns" can never be read as the same payload.
+ */
+const RouteColumnsSchema = z.union([
+  z.array(z.string().min(1)).min(1),
+  z.literal('none'),
+]);
+
 const RouteRequestSchema = z.object({
   nodeId: z.string().describe('Exact current-hop neighbor ID to queue.'),
   question: z.string().describe(
@@ -400,6 +425,7 @@ const RouteRequestSchema = z.object({
     'through? Resolves whether the qty chain continues upstream." Frame it around the routed node, not the ' +
     'current focus; "analyze this node" carries no decision and is not a usable sub-question.',
   ),
+  columns: RouteColumnsSchema.optional().describe(ROUTE_COLUMNS_DESCRIPTION),
 }).strict();
 
 /**
@@ -422,6 +448,14 @@ export const PRUNE_NEIGHBORS_DESCRIPTION =
 const ColumnRefSchema = z.object({
   node: z.string().describe('Canonical upstream node ID.'),
   col: z.string().describe('Real upstream column name.'),
+  transforms: z.array(ColumnTransformClassSchema).optional().describe(
+    'How this upstream column reaches out_col. Multi-select — list every class that applies, since one ' +
+    'edge is often several. Omit the field entirely when the DDL does not determine it; never guess. ' +
+    'pass_through: rename, SELECT *, synonym, straight copy. compute: formula, CASE, COALESCE, cast, ' +
+    'concat, string/date function. aggregate: SUM/COUNT/MIN/MAX, GROUP BY, window function, PIVOT. ' +
+    'combine: JOIN, UNION/EXCEPT/INTERSECT, APPLY, UNPIVOT. filter: WHERE, HAVING, join ON predicate, ' +
+    'TOP, DISTINCT.',
+  ),
 }).strict();
 
 const ColumnFlowEntrySchema = z.object({

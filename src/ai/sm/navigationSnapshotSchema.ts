@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SmState } from './smTypes';
+import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 
 /** Stable restore failure raised only by the strict navigation-checkpoint boundary. */
 export class InvalidEngineCheckpointError extends Error {
@@ -52,6 +53,9 @@ const ColumnEdgeSchema = z.object({
   from_col: NonEmptyString,
   to_node: NonEmptyString,
   to_col: NonEmptyString,
+  // Absent in a checkpoint written before the classifier existed, and absent whenever the model
+  // did not classify the edge; restores unclassified either way.
+  transforms: z.array(ColumnTransformClassSchema).optional(),
 }).strict();
 
 const ColumnAspectSchema = z.object({
@@ -73,6 +77,9 @@ const NodeStateSchema = z.object({
     'non_bodied_passthrough',
   ]),
   columns: z.array(NonEmptyString).optional(),
+  // Absent in a checkpoint written before the per-node column role existed, and absent on any node
+  // no hop has dispatched; restores roleless either way.
+  columnRole: z.enum(['carrier', 'row_role_only']).optional(),
   viaNodeId: NonEmptyString.optional(),
   atHop: NonNegativeInt.optional(),
 }).strict();
@@ -167,6 +174,12 @@ const InitSnapshotSchema = z.discriminatedUnion('analysisMode', [
   }).strict(),
 ]);
 
+const ColumnCarrySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('inherit') }).strict(),
+  z.object({ kind: z.literal('carry'), columns: z.array(NonEmptyString) }).strict(),
+  z.object({ kind: z.literal('row_role_only') }).strict(),
+]);
+
 const AgendaEntrySchema = z.object({
   taskIds: NonEmptyStrings,
   nodeId: NonEmptyString,
@@ -176,6 +189,11 @@ const AgendaEntrySchema = z.object({
   // agenda entry records what the engine resolved on that node, and "none of them" is a resolved
   // answer. The CT refinement below still requires the projection to be present.
   activeColumns: z.array(NonEmptyString).optional(),
+  // The router's authored per-neighbor decision, kept beside the resolved projection because only
+  // it can say "this neighbor carries no traced value" — `activeColumns: []` is also what an
+  // engine-resolved empty bind looks like. Absent in a checkpoint written before per-neighbor carry
+  // existed, which restores as the `inherit` those checkpoints were written under.
+  columnCarry: ColumnCarrySchema.optional(),
   lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
 
@@ -325,9 +343,11 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     });
     snapshot.nodeStates.forEach((state, i) => {
       if (state.columns !== undefined) issue('BB node state cannot carry column state', ['nodeStates', i, 'columns']);
+      if (state.columnRole !== undefined) issue('BB node state cannot carry a column role', ['nodeStates', i, 'columnRole']);
     });
     snapshot.agenda.forEach((entry, i) => {
       if (entry.activeColumns !== undefined) issue('BB agenda cannot carry active columns', ['agenda', i, 'activeColumns']);
+      if (entry.columnCarry !== undefined) issue('BB agenda cannot carry a column decision', ['agenda', i, 'columnCarry']);
       if (entry.lineageQuestions !== undefined) issue('BB agenda cannot carry lineage questions', ['agenda', i, 'lineageQuestions']);
     });
   } else {

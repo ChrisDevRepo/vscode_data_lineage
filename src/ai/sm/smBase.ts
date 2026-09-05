@@ -1,4 +1,4 @@
-import { DEFAULT_SM_START_DEPTH, EngineAspectMode, InvalidRoute, type DepthIntent } from './smTypes';
+import { columnCarryFromRoute, columnCarryOf, DEFAULT_SM_START_DEPTH, EngineAspectMode, INHERIT_CARRY, InvalidRoute, type DepthIntent } from './smTypes';
 import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { buildIncompleteRejection } from './smCompleteness';
 import { checkActiveScopeAdmission } from '../support/tokenBudget';
@@ -31,7 +31,7 @@ import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, ColumnCarry, RouteColumns, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens } from '../support/tokenBudget';
 import { ColumnTracer } from "./columnTracer";
 import { AgendaManager, type AgendaEntry } from './agendaManager';
@@ -221,6 +221,9 @@ function cloneAgendaEntry(entry: AgendaEntry): AgendaEntry {
     priority: entry.priority,
     depth: entry.depth,
     ...(entry.activeColumns ? { activeColumns: [...entry.activeColumns] } : {}),
+    ...(entry.columnCarry
+      ? { columnCarry: entry.columnCarry.kind === 'carry' ? { kind: 'carry' as const, columns: [...entry.columnCarry.columns] } : entry.columnCarry }
+      : {}),
     ...(entry.lineageQuestions ? { lineageQuestions: [...entry.lineageQuestions] } : {}),
   };
 }
@@ -685,7 +688,7 @@ export class NavigationEngine implements IHopStateMachine {
     action: SmNodeAction,
     source: SmNodeStateSource,
     reason: SmNodeStateReason,
-    meta: { columns?: string[]; viaNodeId?: string; atHop?: number } = {},
+    meta: { columns?: string[]; columnRole?: SmNodeColumnRole; viaNodeId?: string; atHop?: number } = {},
   ): void {
     const id = resolveModelNodeId(nodeId, this.nodeMap) ?? nodeId.toLowerCase();
     if (!this.nodeMap.has(id)) return;
@@ -697,10 +700,15 @@ export class NavigationEngine implements IHopStateMachine {
     };
     const existing = this.nodeStates.get(id);
     const mergedColumns = Array.from(new Set([...(existing?.columns ?? []), ...(meta.columns ?? [])]));
+    // The role is what the dispatching hop observed, so a fresh observation replaces an older one;
+    // it is not merged with the action rank, because a stronger verdict says nothing about whether
+    // the node carried a traced column.
+    const columnRole = meta.columnRole ?? existing?.columnRole;
     if (existing && rank(existing.action) > rank(action)) {
       this.nodeStates.set(id, {
         ...existing,
         columns: mergedColumns.length > 0 ? mergedColumns : existing.columns,
+        ...(columnRole ? { columnRole } : {}),
       });
       return;
     }
@@ -711,6 +719,7 @@ export class NavigationEngine implements IHopStateMachine {
       source,
       reason,
       ...(mergedColumns.length > 0 ? { columns: mergedColumns } : {}),
+      ...(columnRole ? { columnRole } : {}),
       ...(meta.viaNodeId ? { viaNodeId: meta.viaNodeId } : existing?.viaNodeId ? { viaNodeId: existing.viaNodeId } : {}),
       ...(typeof meta.atHop === 'number' ? { atHop: meta.atHop } : existing?.atHop !== undefined ? { atHop: existing.atHop } : {}),
     });
@@ -1683,7 +1692,7 @@ export class NavigationEngine implements IHopStateMachine {
       nodeId: originNode.id,
       createdHop: 0,
     }, 'root', initialActiveColumns));
-    this.enqueueHop(originNode.id, params.question, 0, 3, { columns: initialActiveColumns, existingTaskId: rootTask.id });
+    this.enqueueHop(originNode.id, params.question, 0, 3, { carry: columnCarryOf(initialActiveColumns), existingTaskId: rootTask.id });
     this.seedAgenda(originNode.id, this._direction, initialActiveColumns, rootTask.id);
     this._status = 'initialized';
 
@@ -1874,7 +1883,7 @@ export class NavigationEngine implements IHopStateMachine {
       const supplementColumns = this.tracer?.targetColumns;
       if (request.leadId) this.taskLedger.scheduleLead(request.leadId);
       this.enqueueHop(id, request.question, depth, 3, {
-        columns: supplementColumns,
+        carry: columnCarryOf(supplementColumns),
         freshScopeExpansion: wasNewToScope,
         reactivated: wasVisited,
         existingTaskId: request.taskId,
@@ -1927,20 +1936,28 @@ export class NavigationEngine implements IHopStateMachine {
 
       // CT: recover active columns from accumulated edges; empty sets still dispatch to the AI.
       if (this.tracer) {
-        const spineBound = this.tracer.determineActiveColumnsForCandidate(
-          candidate.nodeId,
-          candidate.activeColumns ?? [],
-        );
-        const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
-        // The spine carries a column under the spelling of the node that named it, and a
-        // non-bodied carrier in between is never analysed, so neither can say what the upstream
-        // node calls the same value. When the bind empties the set, re-test the traced targets
-        // against this node's own declared columns before concluding it carries none: a node
-        // declaring a traced column is asked about it by name, and one declaring none of them
-        // still dispatches empty and is analysed for what it does to the row set instead.
-        candidate.activeColumns = bound.length > 0
-          ? bound
-          : this.resolveActiveColumnsForNode(candidate.nodeId, this.tracer.targetColumns) ?? [];
+        if (candidate.columnCarry?.kind === 'row_role_only') {
+          // The router stated this neighbor supplies no traced value and only decides which rows
+          // the answer returns, so it is dispatched as a plain whole-object hop. Spine recovery and
+          // the target-set fallback below both exist to find columns the router did not state;
+          // neither may re-state the one it declined.
+          candidate.activeColumns = [];
+        } else {
+          const spineBound = this.tracer.determineActiveColumnsForCandidate(
+            candidate.nodeId,
+            candidate.activeColumns ?? [],
+          );
+          const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
+          // The spine carries a column under the spelling of the node that named it, and a
+          // non-bodied carrier in between is never analysed, so neither can say what the upstream
+          // node calls the same value. When the bind empties the set, re-test the traced targets
+          // against this node's own declared columns before concluding it carries none: a node
+          // declaring a traced column is asked about it by name, and one declaring none of them
+          // still dispatches empty and is analysed for what it does to the row set instead.
+          candidate.activeColumns = bound.length > 0
+            ? bound
+            : this.resolveActiveColumnsForNode(candidate.nodeId, this.tracer.targetColumns) ?? [];
+        }
       }
 
       entry = candidate;
@@ -2639,6 +2656,11 @@ export class NavigationEngine implements IHopStateMachine {
       finding.verdict === 'analyze' ? 'submitted_analyze' : 'submitted_passthrough',
       {
         columns: this.tracer?.activeColumns,
+        // The hop's own dispatch decides the role: a focus that was handed traced columns is a
+        // carrier, one handed none was explored for what it does to the row set. Recorded here so
+        // the snapshot, the synthesis surface and the render read the fact instead of each
+        // re-deriving it from a column list that drops when empty.
+        ...(this.tracer ? { columnRole: this.tracer.activeColumns.length > 0 ? 'carrier' as const : 'row_role_only' as const } : {}),
         atHop: this.hopCount,
       },
     );
@@ -2663,7 +2685,7 @@ export class NavigationEngine implements IHopStateMachine {
         // reactivated is always false here: enqueueHop's visited-guard (above) already rejects any
         // route targeting an already-visited node, so reactivation only ever arises via supplementAgenda.
         this.enqueueHop(nid, req.question, 0, 2, {
-          columns: routeColumns ? [...routeColumns] : undefined,
+          carry: this.routeCarryFor(nid, req.columns, routeColumns),
           lineageQuestions: lineageQuestionsByNode?.get(nid),
           freshScopeExpansion: isFreshExpansion,
           admitContractedBodiedTarget: !targetIsBodied,
@@ -2826,7 +2848,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private seedAgenda(originId: string, direction: 'upstream' | 'downstream' | 'bidirectional', targetCols: string[] | undefined, rootTaskId: string): void {
     for (const nid of this.directionalNeighbors(originId, direction)) {
-      this.enqueueHop(nid, `Analyze relationship to ${originId}`, 1, 0, { columns: targetCols, parentTaskId: rootTaskId });
+      this.enqueueHop(nid, `Analyze relationship to ${originId}`, 1, 0, { carry: columnCarryOf(targetCols), parentTaskId: rootTaskId });
     }
   }
 
@@ -2847,12 +2869,17 @@ export class NavigationEngine implements IHopStateMachine {
     // Spine-empty candidates fall back to the requested set verbatim (determineActiveColumnsForCandidate
     // above) — bound that result to the pass node's own declared columns too, same predicate as enqueueHop.
     const carried = this.tracer ? (this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []) : spineBound;
+    // Same rule as `enqueueHop`'s contraction: a stated row role belongs to the branch, not to the
+    // pass node, so it travels on rather than being re-resolved into a column question.
+    const forwardedCarry: ColumnCarry = entry.columnCarry?.kind === 'row_role_only'
+      ? entry.columnCarry
+      : columnCarryOf(carried);
     const questions = entry.taskIds
       .map(taskId => this.taskLedger.getTask(taskId)?.question)
       .filter((question): question is string => Boolean(question));
     for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
       for (const question of questions.length ? questions : [`Continue through ${entry.nodeId}`]) {
-        this.enqueueHop(nid, question, entry.depth + 1, entry.priority, { columns: carried });
+        this.enqueueHop(nid, question, entry.depth + 1, entry.priority, { carry: forwardedCarry });
       }
     }
   }
@@ -2918,8 +2945,12 @@ export class NavigationEngine implements IHopStateMachine {
     depth: number,
     priority: number,
     opts: {
-      /** Columns of interest (column-trace mode); BB tasks must not carry any. */
-      readonly columns?: string[];
+      /**
+       * The per-neighbor column decision for this hop (column-trace mode); BB tasks must not carry
+       * any columns. Omitting the option is {@link INHERIT_CARRY} — the caller has no column
+       * opinion — which is what every non-routing caller means.
+       */
+      readonly carry?: ColumnCarry;
       /**
        * CT chain-continuation questions opened for `targetId` by the committing hop's
        * `column_flow` edges — carried onto the agenda entry itself so `<lineage_questions>`
@@ -2952,7 +2983,7 @@ export class NavigationEngine implements IHopStateMachine {
     } = {},
   ): void {
     const {
-      columns,
+      carry = INHERIT_CARRY,
       lineageQuestions,
       visitedRefs = new Set<string>(),
       freshScopeExpansion = !this.scopeNodeIds.has(targetId),
@@ -3005,12 +3036,14 @@ export class NavigationEngine implements IHopStateMachine {
       return;
     }
 
-    // Omitted and empty are different facts and are kept apart here: omitted means the caller has
-    // no column opinion, `[]` means the engine determined that none of the traced columns resolve
-    // on this node. Collapsing the two would let the target set be re-padded onto a node that
-    // declares none of it. `agendaColumnsFor` owns the mode projection, including BB's rule that
-    // an agenda entry carries no column state at all.
-    const activeColumns = columns?.filter(Boolean);
+    // Three facts, kept apart by {@link ColumnCarry}: `inherit` is "the caller has no column
+    // opinion", `carry: []` is "the engine determined that none of the traced columns resolve on
+    // this node" (the tracer may still recover them at dispatch), and `row_role_only` is the
+    // router's own statement that this neighbor carries no traced value at all. Collapsing any two
+    // would let the target set be re-padded onto a node the router excluded from it.
+    // `agendaColumnsFor` owns the mode projection, including BB's rule that an agenda entry carries
+    // no column state at all.
+    const activeColumns = carry.kind === 'carry' ? carry.columns.filter(Boolean) : undefined;
     if (!this.tracer && activeColumns?.length) {
       throw new Error('BB agenda tasks must not carry active columns');
     }
@@ -3018,7 +3051,7 @@ export class NavigationEngine implements IHopStateMachine {
       const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId);
       const alreadyQueued = this._agenda.has(targetId);
       // Bodied node — push directly (or merge into existing entry).
-      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(activeColumns), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
+      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       // Only grow the denominator if we expand beyond the approved scope or reactivate a cycle,
       // so that Y matches the approved scope "contract" for normal in-scope exploration.
       if (!alreadyQueued && (freshScopeExpansion || reactivated)) {
@@ -3036,7 +3069,7 @@ export class NavigationEngine implements IHopStateMachine {
       // hop" oracle here: a non-bodied origin/supplement target may already be in scopeNodeIds
       // (contracted-through earlier) yet never have had its own agenda slot until now.
       const alreadyQueued = this._agenda.has(targetId);
-      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(activeColumns), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
+      this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       if (!alreadyQueued && !SCRIPT_TYPES.has(node.type)) {
         this._totalNodes++;
         this.log('debug', `[Agenda] enqueue ${targetId} — non-bodied direct push (total +1 → ${this._totalNodes})`);
@@ -3056,11 +3089,18 @@ export class NavigationEngine implements IHopStateMachine {
     // traced columns, which is a fact about columns and not a reason to stop walking — the node
     // behind it re-derives its own set at dispatch (see the column-spine bind in `runHop`).
     const ctCarried = this.tracer
-      ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(columns)) ?? []
+      ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(carry, activeColumns)) ?? []
       : undefined;
-    const carried = ctCarried ?? columns;
+    const carried = ctCarried ?? activeColumns;
+    // A stated row role survives the contraction: the router judged the whole branch behind this
+    // carrier to shape rows, and a carrier cannot upgrade that to a column question. Every other
+    // carry forwards its resolved columns, exactly as before. No role is claimed for those: an
+    // empty bind on a carrier means the carrier declares none of the traced columns, which is not
+    // the same statement as the router's.
+    const forwardedCarry: ColumnCarry = carry.kind === 'row_role_only' ? carry : columnCarryOf(carried);
     this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
       columns: carried,
+      ...(carry.kind === 'row_role_only' ? { columnRole: 'row_role_only' as const } : {}),
       viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
       atHop: this.hopCount,
     });
@@ -3073,7 +3113,7 @@ export class NavigationEngine implements IHopStateMachine {
         ? buildPassthroughReAnchor(targetId, nid, this.mode.kind)
         : '';
       const forwarded = `${question}${reAnchor}`;
-      this.enqueueHop(nid, forwarded, depth + 1, priority, { columns: carried, lineageQuestions, visitedRefs, parentTaskId, admitContractedBodiedTarget });
+      this.enqueueHop(nid, forwarded, depth + 1, priority, { carry: forwardedCarry, lineageQuestions, visitedRefs, parentTaskId, admitContractedBodiedTarget });
     }
   }
 
@@ -3081,8 +3121,8 @@ export class NavigationEngine implements IHopStateMachine {
    * Projects the agenda entry's persisted `activeColumns` for one CT hop.
    *
    * @remarks
-   * Mirrors {@link ensureExecutableTask}'s task-ledger fallback: when the caller omits columns
-   * (e.g. `route_requests` with no `columns`), the agenda entry must still carry the tracer's
+   * Mirrors {@link ensureExecutableTask}'s task-ledger fallback: when the caller states no column
+   * opinion (a `route_requests` entry with no `columns`), the agenda entry must still carry the tracer's
    * non-empty {@link ColumnTracer.targetColumns} so the CT checkpoint invariant in
    * `NavigationSnapshotSchema` (agenda entries require a defined `activeColumns` in CT mode) is
    * always satisfiable at {@link toJSON}. BB mode passes `activeColumns` through unchanged (always
@@ -3092,8 +3132,56 @@ export class NavigationEngine implements IHopStateMachine {
    * mutable per hop, and sharing the tracer's `target_columns` array would let one hop's edit
    * rewrite the frozen target set that the snapshot invariant compares against.
    */
-  private agendaColumnsFor(activeColumns: string[] | undefined): string[] | undefined {
+  /**
+   * Resolves the column decision one accepted route carries to its neighbor.
+   *
+   * @remarks
+   * The two channels answer different questions and are combined, not ranked by field order.
+   * `column_flow[].upstream_columns` is a provenance assertion keyed by an output column of the
+   * focus — naming a node there asserts that node supplies a traced value. `route_requests[].columns`
+   * is the carry decision for that neighbor. A stated `none` alongside a provenance assertion for
+   * the same node is a self-contradiction in one submit; the positive assertion is the evidence and
+   * wins, normalized with a log rather than silently, because the alternative is dispatching a node
+   * the same hop just proved carries a traced column with no column to ask about.
+   *
+   * @param nodeId - The resolved route target.
+   * @param stated - The route request's own `columns` field as submitted.
+   * @param flowColumns - Columns this hop's `column_flow` attributed to `nodeId`, if any.
+   * @returns The carry decision to enqueue with.
+   */
+  private routeCarryFor(nodeId: string, stated: RouteColumns | undefined, flowColumns: ReadonlySet<string> | undefined): ColumnCarry {
+    const carry = columnCarryFromRoute(stated);
+    if (!flowColumns || flowColumns.size === 0) return carry;
+    if (carry.kind === 'row_role_only') {
+      this.log('debug', `[Normalize] route carry hop=${this.hopCount} id=${nodeId} from=none to=[${[...flowColumns].join(', ')}] — column_flow attributes traced columns to this node`);
+      return { kind: 'carry', columns: [...flowColumns] };
+    }
+    if (carry.kind === 'carry') return { kind: 'carry', columns: [...new Set([...flowColumns, ...carry.columns])] };
+    return { kind: 'carry', columns: [...flowColumns] };
+  }
+
+  /**
+   * Projects the authored carry decision onto an agenda entry, when there is one worth persisting.
+   *
+   * @remarks
+   * `inherit` is the absence of a decision and is left off the entry, so a checkpoint written
+   * before per-neighbor carry existed restores identically. BB entries never record one: the mode
+   * has no column channel, and the snapshot schema refuses the field on a BB agenda.
+   *
+   * @param carry - The caller's column decision for this hop.
+   * @returns A spreadable `columnCarry` fragment, or an empty object.
+   */
+  private carryToRecord(carry: ColumnCarry): { columnCarry?: ColumnCarry } {
+    if (!this.tracer || carry.kind === 'inherit') return {};
+    return { columnCarry: carry.kind === 'carry' ? { kind: 'carry', columns: [...carry.columns] } : carry };
+  }
+
+  private agendaColumnsFor(carry: ColumnCarry, activeColumns: string[] | undefined): string[] | undefined {
     if (!this.tracer) return activeColumns?.length ? activeColumns : undefined;
+    // A stated row role is the one carry the target set must not fill in: the router judged this
+    // neighbor to shape rows and carry no traced value, and `[]` keeps the CT snapshot invariant
+    // (a CT agenda entry projects a resolved column set) satisfied without padding one back on.
+    if (carry.kind === 'row_role_only') return [];
     if (activeColumns !== undefined) return activeColumns;
     const fallback = this.tracer.targetColumns;
     return fallback ? [...fallback] : undefined;

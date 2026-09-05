@@ -153,6 +153,8 @@ notes:
     the description.
     If the node is a passthrough, name what it passes or filters in one
     short clause ("Filters to IsValid rows").
+    In a column trace, name the traced column at this node and any rename
+    ("OrderAmt → NetAmountA") — column names, not the expression.
     GOOD: "Computes NetAmountA at INSERT"
     BAD : "Computes NetAmountA = QtyA × PriceA at INSERT\nAlso computes
     AdjustedAmountA" (multi-line + formula belongs in the section body).

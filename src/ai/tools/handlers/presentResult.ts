@@ -457,6 +457,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               toNode:   e.to_node,
               fromCol:  e.from_col,
               toCol:    e.to_col,
+              ...(e.transforms ? { transforms: e.transforms } : {}),
             })),
           },
           nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states),

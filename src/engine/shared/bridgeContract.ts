@@ -282,12 +282,56 @@ const AINodeTextSchema = z.object({
   text: z.string(),
 }).strict();
 
+/**
+ * Column-transform classes carried on a column-lineage edge.
+ *
+ * @remarks
+ * Aligned to OpenLineage's `ColumnLineageDatasetFacet` transformation types so an exported facet
+ * needs no translation table: `pass_through`→IDENTITY, `compute`→TRANSFORMATION/CONDITIONAL,
+ * `aggregate`→AGGREGATION/GROUP_BY/WINDOW, `combine`→JOIN, `filter`→FILTER. Multi-select, because
+ * one edge is routinely several at once (an aggregate over a computed expression) and the facet
+ * models `transformations` as an array for exactly that reason.
+ *
+ * The single home for the value set: ai, engine and webview all read it here, so no surface can
+ * carry a value the others reject.
+ */
+export const COLUMN_TRANSFORM_CLASSES = ['pass_through', 'compute', 'aggregate', 'combine', 'filter'] as const;
+
+/** One column-transform class from {@link COLUMN_TRANSFORM_CLASSES}. */
+export type ColumnTransformClass = typeof COLUMN_TRANSFORM_CLASSES[number];
+
+/**
+ * Whether a transform class carries the upstream value into the output (DIRECT) or only shaped
+ * which rows appear (INDIRECT), in OpenLineage's own terms.
+ *
+ * @remarks
+ * Load-bearing and exhaustive: no class is both, so a renderer can key a distinct edge treatment
+ * off this map alone. Adding a class to {@link COLUMN_TRANSFORM_CLASSES} without an entry here
+ * fails to typecheck.
+ */
+export const COLUMN_TRANSFORM_DIRECTION: Readonly<Record<ColumnTransformClass, 'DIRECT' | 'INDIRECT'>> = {
+  pass_through: 'DIRECT',
+  compute:      'DIRECT',
+  aggregate:    'DIRECT',
+  combine:      'INDIRECT',
+  filter:       'INDIRECT',
+};
+
+/** Zod form of {@link COLUMN_TRANSFORM_CLASSES}, shared by every schema that carries the field. */
+export const ColumnTransformClassSchema = z.enum(COLUMN_TRANSFORM_CLASSES);
+
 const ColumnAspectEdgeSchema = z.object({
   hopNode:  z.string(),
   fromNode: z.string(),
   toNode:   z.string(),
   fromCol:  z.string(),
   toCol:    z.string(),
+  /**
+   * Optional: absent whenever the model did not classify the edge, and absent on every edge
+   * written before the field existed. The engine never fills it in — an unclassified edge stays
+   * unclassified rather than acquiring a guessed class.
+   */
+  transforms: z.array(ColumnTransformClassSchema).optional(),
 }).strict();
 
 const ColumnAspectSchema = z.object({

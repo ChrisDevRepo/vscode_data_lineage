@@ -334,14 +334,16 @@ function computeDirectionGroups(
  * The single direction statement BB and CT synthesis both use, so the two modes state direction
  * identically — same rule as {@link computeFlowRoleGroups}, no per-mode clone.
  *
+ * Takes the computed buckets rather than the edges: a caller that also reasons about a bucket reads
+ * the same object these lines state, so the rendered claim and the caller's branch cannot disagree.
+ *
  * @param originNodeId - The queried origin the buckets are relative to.
- * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
+ * @param direction - Buckets from {@link computeDirectionGroups} for that origin.
  */
 function buildDirectionLines(
   originNodeId: string,
-  edges: ReadonlyArray<{ from: string; to: string }>,
+  direction: ReturnType<typeof computeDirectionGroups>,
 ): string[] {
-  const direction = computeDirectionGroups(originNodeId, edges);
   return [
     `Edge direction relative to ${originNodeId} — engine-computed and authoritative. Any list above is in HOP order, which is NOT direction order; never infer direction from a node's position in it:`,
     `- upstream (data flows INTO the origin): ${direction.upstream.join(', ') || '(none)'}`,
@@ -397,7 +399,7 @@ export function buildBbSynthesisBlock(
     '## Flow-Role Highlights',
     ...buildFlowRoleHighlightLines(groups, presentedNodeIds),
     '',
-    ...buildDirectionLines(originNodeId, flowEdges),
+    ...buildDirectionLines(originNodeId, computeDirectionGroups(originNodeId, flowEdges)),
   ].join('\n');
 }
 
@@ -438,7 +440,8 @@ export function buildCtSynthesisBlock(
   const directionEdges = nodeEdges.length > 0
     ? nodeEdges.map(([from, to]) => ({ from, to }))
     : edges.map(e => ({ from: e.from_node, to: e.to_node }));
-  lines.push(...buildDirectionLines(originNodeId, directionEdges));
+  const direction = computeDirectionGroups(originNodeId, directionEdges);
+  lines.push(...buildDirectionLines(originNodeId, direction));
   if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
     lines.push('');
     lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
@@ -462,7 +465,13 @@ export function buildCtSynthesisBlock(
   lines.push('');
   lines.push('Structure present_result using this CT chain:');
   lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link nodes needed for the answer, including passthrough tables when they are source/target/bridge nodes in the column chain.');
-  lines.push('- Link every node in the chain above; a node that does not carry, persist or terminate the traced column earns one line rather than being left out.');
+  lines.push('- Link every node in the chain above; a node that does not carry, persist or terminate the traced column earns one line naming what it does to the rows — join, filter, predicate, set operation — because it decides which rows the answer returns.');
+  // Gated on the same downstream bucket the direction lines above state: on a purely upstream trace
+  // there is nothing downstream to name, and an unconditional invitation gets answered with an
+  // object outside the trace.
+  if (direction.downstream.length > 0) {
+    lines.push('- The downstream nodes named above consume the traced column: give each one a line stating what changes there when it changes.');
+  }
   lines.push('- terminal source = the furthest-upstream object this trace reached; it can be a table without a detail slot, and it is as far as this trace got — never call it the system of record.');
   lines.push(...buildFlowRoleHighlightLines(groups, presentedNodeIds));
   return lines.join('\n');

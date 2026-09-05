@@ -1,3 +1,5 @@
+import type { ColumnCarry } from './smTypes';
+
 /**
  * Represents an entry in the navigation agenda.
  *
@@ -22,11 +24,37 @@ export interface AgendaEntry {
   /** Specific columns of interest for this node (primarily used in Column Trace mode). */
   activeColumns?: string[];
   /**
+   * The router's per-neighbor column decision for this hop, as authored — distinct from
+   * `activeColumns`, which is the engine's resolved projection and is rewritten at dispatch.
+   * Only `row_role_only` changes what dispatch does; `inherit` and `carry` are already fully
+   * expressed by `activeColumns`, so a checkpoint written before this field existed restores as
+   * the `inherit` it was written under.
+   */
+  columnCarry?: ColumnCarry;
+  /**
    * CT chain-continuation questions opened for this node by an earlier hop's `column_flow`
    * edges — rendered as `<lineage_questions>` only when this entry is dispatched, never by
    * whichever node happens to dequeue next.
    */
   lineageQuestions?: string[];
+}
+
+/**
+ * Resolves the carry decision when two enqueues land on one node.
+ *
+ * @remarks
+ * A stated decision beats an unstated one, and the later statement wins between two stated ones:
+ * `inherit` (or an absent field) is "no opinion" and never overwrites what is already recorded,
+ * while a router that names columns or names a row role has judged this exact neighbor and its
+ * word stands until the router says otherwise.
+ *
+ * @param existing - Carry already on the queued entry, if any.
+ * @param incoming - Carry supplied by the re-push, if any.
+ * @returns The carry to record, or `undefined` when neither side stated one.
+ */
+function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): ColumnCarry | undefined {
+  if (incoming === undefined || incoming.kind === 'inherit') return existing;
+  return incoming;
 }
 
 /** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
@@ -77,7 +105,14 @@ export class AgendaManager {
       for (const taskId of entry.taskIds) {
         if (!existing.taskIds.includes(taskId)) existing.taskIds.push(taskId);
       }
-      if (entry.activeColumns) {
+      const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry);
+      if (carry) existing.columnCarry = carry;
+      if (carry?.kind === 'row_role_only') {
+        // The router stated this neighbor carries no traced value. That replaces whatever a BFS
+        // seed or an earlier inherit put on the entry, rather than unioning with it — a union
+        // would re-pad the very columns the statement removed.
+        if (entry.activeColumns !== undefined) existing.activeColumns = [...entry.activeColumns];
+      } else if (entry.activeColumns) {
         existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns);
       }
       if (entry.lineageQuestions) {

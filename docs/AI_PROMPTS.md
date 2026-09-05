@@ -256,6 +256,27 @@ preview is a separate discovery path and does not grant SM mutation authority.
   with any rejection, so an unsupported reference is corrected on the next
   attempt instead of reaching the answer. `column_flow` records provenance and
   never narrows what the answer retains.
+- Each upstream column reference in `column_flow` may carry `transforms`: how
+  that upstream column reaches the output column, as one or more of
+  `pass_through`, `compute`, `aggregate`, `combine` and `filter`. Multi-select,
+  because one edge is routinely several classes at once. The field is optional
+  and is omitted rather than guessed when the DDL does not settle it — the engine
+  verifies a classification but never authors one, so an unclassified edge stays
+  unclassified. The value set and its DIRECT / INDIRECT split have one home,
+  `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`, shared by
+  the tool schema, the wire contract and the webview.
+- A routing request may carry `columns`, which states per neighbor whether the
+  traced columns follow it. Three states, kept apart end to end: the field
+  omitted means the neighbor inherits whatever the trace already carries; a
+  non-empty list names the columns to trace through it; the literal `none` marks
+  a neighbor that only decides which rows the answer returns, so it is explored
+  as a whole object and is not asked about columns it does not supply. `none` is
+  a word rather than an empty array because an empty array and an omitted field
+  would be one payload with two meanings. The field is BB-unknown and is refused
+  in a BB session by the same rejection that refuses `column_flow` there. A
+  `none` on a node the same hop named in `column_flow[].upstream_columns` is
+  normalized to the attributed columns with a log — the positive provenance
+  assertion outranks the absence claim.
 
 The locked answer classification determines which section angles are required.
 Validation requires the locked angles to be present; off-classification

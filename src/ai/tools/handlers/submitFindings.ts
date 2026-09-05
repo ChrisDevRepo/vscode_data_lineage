@@ -56,6 +56,15 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
         }, rawInput);
       }
+      // Same guard, same code: `route_requests[].columns` is the per-neighbor half of the same
+      // column channel, and a BB session has no traced columns for a route to carry.
+      if (!engine.columnAspect && Array.isArray(rawInput.route_requests)
+        && rawInput.route_requests.some(req => req !== null && typeof req === 'object' && !Array.isArray(req) && 'columns' in req)) {
+        return s.logAndReturn('submit_findings', {
+          error: REJECTION_CODES.bbFieldUnknown,
+          hint: 'This session is in BB mode — `route_requests[].columns` is not accepted, because no columns are being traced. Submit each route with `nodeId` and `question` only.',
+        }, rawInput);
+      }
 
       // Middleware: normalize identifier encodings into a local copy only. The raw model payload
       // stays immutable; strict mode-specific Zod parses the normalized copy below.

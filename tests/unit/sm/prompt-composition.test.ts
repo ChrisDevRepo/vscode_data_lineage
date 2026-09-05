@@ -470,6 +470,51 @@ describe('prompt composition', () => {
     expect(ct).not.toContain('prune non-relevant neighbors via `prune_neighbors`');
   });
 
+  // Composition is XOR at the AI preview (the CT synthesis block OR the BB synthesis block) but AND
+  // at the hop instruction: CT is BB's verdict definition PLUS a column rider, never a replacement.
+  // Before this was true, `verdictCategoriesCt` SUBSTITUTED BB's `analyze` trigger instead of
+  // extending it — a node applying business logic to a row without touching a traced column had no
+  // verdict left to claim: not `analyze` (the CT trigger named only columns), false as `passthrough`
+  // ("no logic here" is false of a row-logic node), and false as `prune` (the node is on the answer
+  // path). CLAUDE.md HARD RULE: "CT is BB plus columns, never a parallel solution." This test pins
+  // the AND at the verdict surface the way the test above already pins it at the neighbor-decision
+  // core.
+  it('extends BB verdict guidance in CT rather than substituting it (AND at the hop instruction)', () => {
+    const bb = buildSmProtocol({ classification: 'business' });
+    const ct = buildSmProtocol({
+      classification: 'both',
+      targetColumns: ['TotalRevenue'],
+    });
+
+    // Shared retention line (NEIGHBOR_DECISION_CORE): a neighbor that decides which rows the answer
+    // returns is never "nothing the answer needs" in either mode.
+    const retentionLine = 'decides which rows the answer returns';
+    expect(bb).toContain(retentionLine);
+    expect(ct).toContain(retentionLine);
+
+    // Anti-substitution pin: CT states the row-logic trigger as an extension of BB's, not a swap.
+    expect(ct).toContain('as in BB, it applies business logic on the data path');
+    const rowLogicTrigger = 'applies business logic on the data path';
+    const rowLogicExamples = 'a calculation, condition, status transition, or audit decision';
+    for (const line of [rowLogicTrigger, rowLogicExamples]) {
+      expect(bb).toContain(line);
+      expect(ct).toContain(line);
+    }
+
+    // CT is a superset, not a replacement: its own column trigger still stands alongside BB's.
+    expect(ct).toContain('transforms the traced value or is its terminal source');
+    expect(ct).toContain('column_flow');
+
+    // Prune verdict tail (PRUNE_VERDICT_TAIL) is byte-shared between the two verdict blocks.
+    expect(bb).toContain('a sink the question does not ask about');
+    expect(ct).toContain('a sink the question does not ask about');
+
+    // Mode-neutral derive-from-DDL clause, present on both hop decision contracts.
+    const deriveFromDdl = 'neighbor roles purely from the provided DDL whenever possible';
+    expect(bb).toContain(deriveFromDdl);
+    expect(ct).toContain(deriveFromDdl);
+  });
+
   it('grounds synthesis roles in the supplied graph', () => {
     const edges: Array<[string, string, string]> = [
       ['raw', 'stage', 'lineage'],
@@ -553,6 +598,33 @@ describe('prompt composition', () => {
     expect(ct).toContain('- upstream (data flows INTO the origin): raw');
     expect(ct).toContain('- downstream (data flows OUT of the origin): (none)');
     expect(ct).toContain('the origin: (none)');
+  });
+
+  // Impact is an engine-gated bullet, not standing text: it renders only when the trace actually
+  // reached a downstream consumer, so a purely upstream trace pays nothing for it and cannot be
+  // invited to name a consumer it never visited.
+  it('invites downstream impact only when the trace reached a downstream node', () => {
+    const edge = (from: string, to: string, hop: number) => ({
+      hop_node: to, hop, from_node: from, from_col: 'Amount', to_node: to, to_col: 'Amount',
+    });
+    const upstreamOnly = buildCtSynthesisBlock('target', [edge('raw', 'target', 1)]);
+    const withConsumer = buildCtSynthesisBlock('target', [
+      edge('raw', 'target', 1),
+      edge('target', 'consumer', 2),
+    ]);
+
+    expect(upstreamOnly).not.toContain('downstream nodes named above');
+    expect(withConsumer).toContain('downstream nodes named above');
+  });
+
+  // A node that supplies no value still decides which rows the answer returns; the CT preview keeps
+  // a home for it so row-deciding joins and filters are not silently demoted out of the answer.
+  it('gives a row-deciding node a home in the CT preview', () => {
+    const ct = buildCtSynthesisBlock('target', [
+      { hop_node: 'target', hop: 1, from_node: 'raw', from_col: 'Amount', to_node: 'target', to_col: 'Amount' },
+    ]);
+
+    expect(ct).toContain('decides which rows the answer returns');
   });
 
   it('assembles one decision contract and escapes mission XML once', () => {

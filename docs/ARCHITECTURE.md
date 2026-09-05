@@ -349,14 +349,52 @@ deliberate: composition on one does not imply the same composition on the
 other, and re-deriving one from the other is the recurring error this
 paragraph exists to stop.
 
-A current limitation follows from the AND surface: the per-neighbor fork
-above is not expressible today. A route request cannot carry columns — the
-route schema is strict and carries only a node id and a question. An omitted
-column set is re-padded from the session's target columns before the neighbor
-is dispatched, so the omission does not reach the dispatch. And there is no
-durable per-node mark distinguishing a column carrier from a row-role-only
-node. Together these mean the fork described above cannot yet be expressed by
-the route path itself.
+The route path carries that fork. `route_requests[].columns` states the
+per-neighbor decision in three distinguishable states, and the type keeps them
+apart end to end (`ColumnCarry`, `smTypes.ts`): the field omitted is `inherit`,
+a non-empty list is `carry`, and the word `none` is `row_role_only`. The word is
+deliberate — an empty array and an omitted field would be one payload with two
+meanings, and the re-pad this replaced was exactly that confusion. Only
+`row_role_only` suppresses the target-set fallback, at `agendaColumnsFor` and
+again at dispatch, so a neighbor the router sent on as a plain object is not
+handed the columns it declined. The decision persists on the agenda entry
+(`columnCarry`), surviving a checkpoint and a contraction through a non-bodied
+carrier; the realized role persists on the node state
+(`SmNodeState.columnRole`), which is orthogonal to the verdict, since a node can
+be analyzed, passed through, or pruned under either role. Provenance still beats
+an absence claim: a `none` on a node the same hop named in
+`column_flow[].upstream_columns` is normalized to the attributed columns with a
+log, because that hop just proved the node carries them.
+
+A column edge carries a transform classification, and the classification is
+multi-select. `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`
+is the single home for the five values, and every layer — the model-facing tool
+schema, the wire contract, the webview — reads them from there, so no surface can
+accept a value another rejects. The values align to OpenLineage's
+`ColumnLineageDatasetFacet` transformation types, which is also why the field is
+an array: one edge is routinely several classes at once, and that facet models
+`transformations` the same way.
+
+| class | direction | covers |
+|---|---|---|
+| `pass_through` | DIRECT | rename, `SELECT *`, synonym, straight copy |
+| `compute` | DIRECT | formula, `CASE`, `COALESCE`, cast, concat, string and date functions |
+| `aggregate` | DIRECT | `SUM`/`COUNT`/`MIN`/`MAX`, `GROUP BY`, window functions, `PIVOT` |
+| `combine` | INDIRECT | `JOIN`, `UNION`/`EXCEPT`/`INTERSECT`, `APPLY`, `UNPIVOT` |
+| `filter` | INDIRECT | `WHERE`, `HAVING`, a join `ON` predicate, `TOP`, `DISTINCT` |
+
+The DIRECT / INDIRECT split carried by `COLUMN_TRANSFORM_DIRECTION` is the
+load-bearing half. DIRECT means the upstream value reaches the output; INDIRECT
+means no value crosses the edge at all and the node only decided which rows
+appear. That is what licenses drawing the two differently, and it is the same
+distinction the AND surface makes one level up — an INDIRECT-only neighbor is
+precisely the row-role-only node that earns the whole-object instruction alone.
+
+The field is optional on both contracts, and the engine never fills it in. An
+edge recorded before the field existed, or one the model declined to classify,
+stays unclassified rather than acquiring a guessed class — the engine's role over
+`column_flow` is verification, not authorship, and inventing a classification
+would be authorship.
 
 Neighbor visibility is the same in both modes. CT presents the focus node's
 neighbors, and permits routing to them, exactly as BB does — including a neighbor

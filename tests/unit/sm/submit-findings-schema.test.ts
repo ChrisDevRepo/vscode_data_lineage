@@ -3,6 +3,7 @@ import {
   SubmitFindingsBbInputSchema,
   SubmitFindingsCtInputSchema,
   PresentResultModelSchema,
+  SubmitFindingsModelSchema,
   PresentResultRepairPatchSchema,
   PresentResultSynthesisModelSchema,
   presentResultSchemaForPhase,
@@ -104,7 +105,10 @@ describe("Submit Findings Schema", () => {
   expect(!parsed.success, 'CT requires column_flow field').toBe(true);
 });
 
-  it("route_requests[].columns is no longer part of CT; column spine lives in column_flow", () => {
+  it("route_requests[].columns parses on the shared base; BB-mode refusal is the handler's", () => {
+  // `HopFindingBaseSchema` is shared, so the field parses in both modes. A BB session has no traced
+  // columns for a route to carry, and the pre-Zod mode guard in `executeSubmitFindings` owns that
+  // refusal (`REJECTION_CODES.bbFieldUnknown`) — the same owner that refuses `column_flow` in BB.
   const parsed = SubmitFindingsBbInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
     sections: [{ angle: 'business', text: 'ok' }],
@@ -112,7 +116,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] }],
   });
-  expect(!parsed.success, 'BB rejects route_requests[].columns').toBe(true);
+  expect(parsed.success, 'the shared base parses the per-neighbour column channel').toBe(true);
 });
 
   it("BB accepts route_requests without columns", () => {
@@ -126,16 +130,60 @@ describe("Submit Findings Schema", () => {
   expect(parsed.success, 'BB accepts route_requests without columns').toBe(true);
 });
 
-  it("CT rejects route_requests[].columns", () => {
-  const parsed = SubmitFindingsCtInputSchema.safeParse({
+  it("CT route_requests[].columns states all three carry decisions, and never an empty array", () => {
+  const submit = (columns?: unknown) => SubmitFindingsCtInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
     sections: [{ angle: 'business', text: 'ok' }],
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [],
-    route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] }],
+    route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', ...(columns === undefined ? {} : { columns }) }],
   });
-  expect(!parsed.success, 'CT rejects route_requests[].columns').toBe(true);
+  expect(submit().success, 'not stated — the field is optional').toBe(true);
+  expect(submit(['amount']).success, 'stated as these columns').toBe(true);
+  expect(submit('none').success, 'stated as none — a row-role-only neighbour').toBe(true);
+  // The third state is a word, not an empty list: `[]` and an omitted field would otherwise be one
+  // payload with two meanings.
+  expect(submit([]).success, 'an empty column list is not a way to say "none"').toBe(false);
+  expect(submit('all').success, 'no other word is accepted').toBe(false);
+});
+
+  it("both route schema surfaces accept the same route payloads", () => {
+  // The strict per-mode schemas and the permissive registered union share one `RouteRequestSchema`,
+  // and this pins that they cannot drift apart on the column channel.
+  const routes = [
+    { nodeId: '[dbo].[vStaging]', question: 'trace' },
+    { nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] },
+    { nodeId: '[dbo].[vStaging]', question: 'trace', columns: 'none' },
+  ];
+  for (const route of routes) {
+    const strict = SubmitFindingsCtInputSchema.safeParse({
+      focus_node_id: '[dbo].[vSales]',
+      sections: [{ angle: 'business', text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: [route],
+    });
+    const registered = SubmitFindingsModelSchema.safeParse({
+      focus_node_id: '[dbo].[vSales]',
+      sections: [{ angle: 'business', text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      route_requests: [route],
+    });
+    expect(strict.success, `strict CT accepts ${JSON.stringify(route.columns)}`).toBe(true);
+    expect(registered.success, `registered union accepts ${JSON.stringify(route.columns)}`).toBe(true);
+  }
+  const rejected = { nodeId: '[dbo].[vStaging]', question: 'trace', columns: [] };
+  expect(SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]', sections: [{ angle: 'business', text: 'ok' }], summary: 'ok',
+    verdict: 'analyze', column_flow: [], route_requests: [rejected],
+  }).success, 'strict CT refuses the empty list').toBe(false);
+  expect(SubmitFindingsModelSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]', sections: [{ angle: 'business', text: 'ok' }], summary: 'ok',
+    verdict: 'analyze', route_requests: [rejected],
+  }).success, 'the registered union refuses it too').toBe(false);
 });
 
   it("CT accepts upstream_columns in column_flow with plain route_requests", () => {

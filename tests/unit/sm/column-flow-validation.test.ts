@@ -1466,3 +1466,133 @@ describe("CT target boundary: object references are never columns", () => {
     expect(!engine.columnAspect, 'checkColumnTargets: neither call adopts a column aspect').toBe(true);
   });
 });
+
+describe("Column transform classification", () => {
+  const originNode: LineageNode = makeNode({
+    id: 'origin',
+    schema: 'dbo',
+    name: 'origin_view',
+    type: 'view',
+    columns: [
+      { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' },
+      { name: 'region', type: 'nvarchar(50)', nullable: 'NULL', extra: '' },
+    ],
+  });
+  const baseTable: LineageNode = makeNode({
+    id: 'base_table',
+    schema: 'dbo',
+    name: 'base_table',
+    type: 'table',
+    columns: [
+      { name: 'raw_amount', type: 'int', nullable: 'NOT NULL', extra: '' },
+      { name: 'raw_region', type: 'nvarchar(50)', nullable: 'NULL', extra: '' },
+    ],
+  });
+  const ctNodes: LineageNode[] = [originNode, baseTable];
+  const ctEdgePairs: Array<[string, string]> = [['base_table', 'origin']];
+  const ctModel: DatabaseModel = makeModel(ctNodes, ctEdgePairs, ['dbo']);
+  const ctGraph = makeGraph(ctNodes, ctEdgePairs);
+  function ctEngine(targetColumns = ['amount']): NavigationEngine {
+    const engine = new NavigationEngine(ctModel, ctGraph, () => {}, {});
+    engine.init({ origin: 'origin', question: 'test', direction: 'upstream', targetColumns });
+    engine.getHopContext();
+    return engine;
+  }
+  const submission = (upstream: unknown) => ({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [upstream] }],
+  });
+
+  it("accepts a multi-select classification and rejects an unknown value at the tool schema", () => {
+    const multi = SubmitFindingsCtInputSchema.safeParse(
+      submission({ node: 'base_table', col: 'raw_amount', transforms: ['aggregate', 'combine'] }),
+    );
+    expect(multi.success, 'multi-select transforms parse').toBe(true);
+
+    const bare = SubmitFindingsCtInputSchema.safeParse(
+      submission({ node: 'base_table', col: 'raw_amount' }),
+    );
+    expect(bare.success, 'an upstream column with no transforms still parses').toBe(true);
+    expect(bare.success && bare.data.column_flow[0].upstream_columns[0].transforms, 'omitted stays omitted').toBeUndefined();
+
+    const unknown = SubmitFindingsCtInputSchema.safeParse(
+      submission({ node: 'base_table', col: 'raw_amount', transforms: ['derive'] }),
+    );
+    expect(unknown.success, 'an unrecognised class is a Zod rejection, not a normalized value').toBe(false);
+  });
+
+  it("carries a multi-select classification through the hop onto the staged column edge", () => {
+    const engine = ctEngine(['amount']);
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'amount',
+        upstream_columns: [{ node: 'base_table', col: 'raw_amount', transforms: ['aggregate', 'filter'] }],
+      }],
+    });
+    expect('ok' in result && result.ok, 'classified column_flow accepted').toBe(true);
+    const edges = engine.columnAspect?.edges ?? [];
+    expect(edges.length, 'one edge staged').toBe(1);
+    expect(edges[0]?.transforms, 'both declared classes ride onto the edge, in order').toEqual(['aggregate', 'filter']);
+  });
+
+  it("stages no transforms when the model classified nothing — the engine never invents a class", () => {
+    const engine = ctEngine(['amount']);
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount' }] }],
+    });
+    expect('ok' in result && result.ok, 'unclassified column_flow accepted').toBe(true);
+    const edge = (engine.columnAspect?.edges ?? [])[0];
+    expect(edge && 'transforms' in edge, 'an unclassified edge carries no transforms key at all').toBe(false);
+  });
+
+  it("classifies each (out_col, upstream column) pair independently", () => {
+    const engine = ctEngine(['amount', 'region']);
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount', transforms: ['compute'] }] },
+        { out_col: 'region', upstream_columns: [{ node: 'base_table', col: 'raw_region', transforms: ['pass_through'] }] },
+      ],
+    });
+    expect('ok' in result && result.ok, 'per-pair classification accepted').toBe(true);
+    const edges = engine.columnAspect?.edges ?? [];
+    expect(edges.map(e => `${e.to_col}:${(e.transforms ?? []).join('+')}`).sort())
+      .toEqual(['amount:compute', 'region:pass_through']);
+  });
+
+  it("restores a classified edge through the strict checkpoint schema", () => {
+    const engine = ctEngine(['amount']);
+    engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'amount',
+        upstream_columns: [{ node: 'base_table', col: 'raw_amount', transforms: ['compute', 'combine'] }],
+      }],
+    });
+    const restored = NavigationEngine.fromJSON(
+      JSON.parse(JSON.stringify(engine.toJSON())),
+      ctModel,
+      ctGraph,
+      () => {},
+    );
+    expect(restored.columnAspect?.edges[0]?.transforms, 'the classification survives a checkpoint round-trip')
+      .toEqual(['compute', 'combine']);
+  });
+});

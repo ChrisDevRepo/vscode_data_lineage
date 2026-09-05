@@ -136,6 +136,22 @@ describe("Submit Findings Handler", () => {
   expect((result() as { error?: string }).error, 'BB preserves the established CT-field rejection envelope').toBe('bb_field_unknown');
 });
 
+  it("BB refuses a per-neighbour column decision through the same envelope", () => {
+  // `route_requests[].columns` parses on the shared base schema, so the mode refusal is the
+  // handler's — the same pre-Zod guard and the same code that refuses `column_flow` in BB.
+  const { services, result } = setup();
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Wrong mode field.' }],
+    summary: 'Wrong mode field.',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'origin', question: 'q', columns: 'none' }],
+  }, services);
+  const rejected = result() as { error?: string; hint?: string };
+  expect(rejected.error, 'no new rejection mechanism — one code, one envelope').toBe('bb_field_unknown');
+  expect(/route_requests\[\]\.columns/.test(rejected.hint ?? ''), 'the hint names the field to drop').toBe(true);
+});
+
   it("CT accepts prune_neighbors — same decision space as BB (D1 convergence)", () => {
   const { services, result } = setupCt();
   executeSubmitFindings({

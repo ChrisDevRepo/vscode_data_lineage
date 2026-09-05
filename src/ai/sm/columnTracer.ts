@@ -277,6 +277,9 @@ export class ColumnTracer {
           to_col: toCol,
           from_node: fromNode,
           from_col: cont.col,
+          // Carried verbatim per contributor, or omitted. The value set is already enforced by the
+          // tool schema, so there is nothing left to check and nothing to substitute when absent.
+          ...(cont.transforms ? { transforms: [...cont.transforms] } : {}),
         });
       }
     }
