@@ -608,11 +608,36 @@ describe('prompt composition', () => {
     expect(getAllowedLmToolNames({ kind: 'active', mode: 'sm_bb' }).has('lineage_start_exploration')).toBe(false);
   });
 
-  it('never licenses leaving a kept node bare', () => {
+  // Two surfaces state this one rule and the model reads both: the notes schema description it
+  // fills, and the synthesis reminder it reads before filling it. `buildPassthroughFlowFacts`
+  // lists every kept node with no detail slot and requires each one covered, so a surface saying
+  // some nodes "stay bare" is the opposite instruction for the same node. Both are pinned here
+  // because fixing one and not the other is how the contradiction survived a first repair.
+  it('never licenses leaving a kept node bare, on either surface that states the rule', () => {
     const projected = toModelJsonSchema(PresentResultModelSchema) as { properties?: Record<string, { description?: string }> };
     const notesDescription = projected.properties?.notes?.description ?? '';
 
     expect(notesDescription).not.toContain('stay bare');
     expect(notesDescription).toMatch(/engine lists with no detail slot earns a note/);
+
+    const result: SmResult = {
+      status: 'complete',
+      originNodeId: '[ct].[vwtarget]',
+      fullNodes: [
+        { id: '[ct].[vwtarget]', s: 'ct', n: 'vwtarget', t: 'view' },
+        { id: '[ct].[calendar]', s: 'ct', n: 'calendar', t: 'table' },
+      ],
+      edges: [['[ct].[calendar]', '[ct].[vwtarget]', 'read']],
+      detail_slots: [],
+      node_states: [],
+      columnAspect: null,
+    };
+    const reminder = buildSmCompletionEnvelope(result, 'What feeds Discount?', []).synthesis_reminder;
+    const notesLine = reminder.split('\n').find((line) => line.startsWith('- `notes[]`')) ?? '';
+
+    expect(notesLine, 'the reminder states the notes rule').not.toBe('');
+    expect(notesLine, 'and does not license a bare node').not.toContain('stay bare');
+    expect(notesLine).toMatch(/engine lists with no detail slot earns a note/);
+    expect(reminder, 'the engine lists the uncovered kept node').toContain('[ct].[calendar]');
   });
 });
