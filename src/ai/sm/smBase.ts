@@ -3177,7 +3177,8 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   private agendaColumnsFor(carry: ColumnCarry, activeColumns: string[] | undefined): string[] | undefined {
-    if (!this.tracer) return activeColumns?.length ? activeColumns : undefined;
+    // The enqueue guard upstream throws before a BB entry can reach here with columns.
+    if (!this.tracer) return undefined;
     // A stated row role is the one carry the target set must not fill in: the router judged this
     // neighbor to shape rows and carry no traced value, and `[]` keeps the CT snapshot invariant
     // (a CT agenda entry projects a resolved column set) satisfied without padding one back on.
