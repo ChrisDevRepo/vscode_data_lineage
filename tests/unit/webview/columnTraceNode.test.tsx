@@ -56,6 +56,23 @@ function makeData(columns: string[]): ColumnTraceNodeData {
   } as unknown as ColumnTraceNodeData;
 }
 
+function makeTransformData(portCount: number): ColumnTraceNodeData {
+  return {
+    view: {
+      id: 'ai.spbuildsalesreport',
+      label: 'spBuildSalesReport',
+      schema: 'ai',
+      objectType: 'procedure',
+      isTransformNode: true,
+      rows: Array.from({ length: portCount }, (_, i) => ({ name: `@p${i}` })),
+      width: 150,
+      height: 96,
+      x: 0,
+      y: 0,
+    },
+  } as unknown as ColumnTraceNodeData;
+}
+
 /**
  * Stands in for `GraphCanvas` as the hover owner: it holds the thread the rows read and lights
  * exactly the row that reported the hover. The canvas widens that to the connected column path;
@@ -112,6 +129,58 @@ describe('ColumnTraceNode', () => {
     expect(rendered.map(r => r.textContent)).toEqual(['OrderId', 'CustomerId', 'Total']);
     // A bare column name is ambiguous across a multi-node trace, so the object rides the label.
     expect(rendered[0].getAttribute('aria-label')).toBe('dbo.Orders column OrderId');
+  });
+
+  it('shows the declared backend data type beside the column name, and no shape annotation', () => {
+    // The type comes from the extracted model, never from the AI; the structural shape annotation
+    // it replaced ("incoming (2)") is gone from the row entirely.
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="dbo.orders" data={{
+            ...makeData(['OrderId', 'Total']),
+            view: {
+              ...makeData(['OrderId', 'Total']).view,
+              rows: [
+                { name: 'OrderId', dataType: 'int' },
+                { name: 'Total', shape: 'incoming', contributors: 2, dataType: 'money' },
+              ],
+            },
+          }} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const rendered = rows();
+    expect(rendered[0].textContent).toBe('OrderIdint');
+    expect(rendered[1].textContent, 'the shape annotation does not survive next to the type').toBe('Totalmoney');
+    expect(rendered[1].getAttribute('aria-label')).toBe('dbo.Orders column Total, money');
+  });
+
+  it('renders a procedure as a circle-and-gear super node instead of a port card', () => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="ai.spbuildsalesreport" data={makeTransformData(2)} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    // No port rows in the page: the hub's identity is the circle, not a borrowed column list.
+    expect(rows(), 'no row is focusable on the super node').toHaveLength(0);
+    expect(host.querySelector('circle'), 'the gear body is a stroked circle').not.toBeNull();
+    expect(host.textContent).toContain('ai.spBuildSalesReport');
+  });
+
+  it('keeps one invisible port handle pair per traced column on the super node', () => {
+    // The handles are the edges' attachment points; removing the port card must not remove them,
+    // or every line through the hub would have nowhere to land.
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="ai.spbuildsalesreport" data={makeTransformData(3)} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    expect(document.querySelectorAll('.react-flow__handle')).toHaveLength(6);
   });
 
   it('is a single tab stop however many columns it traces', () => {

@@ -11,6 +11,7 @@
 
 import { dagreLayout } from './graphBuilder';
 import { normalizeColName } from '../utils/sql';
+import type { ColumnTransformClass } from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
 
 /**
@@ -48,6 +49,11 @@ export interface ColumnTraceRow {
   shape?: ColumnRowShape;
   /** Contributing upstream (`incoming`) or feeding downstream (`outgoing`) column count. */
   contributors?: number;
+  /**
+   * Declared SQL data type from the extracted model — backend metadata, never an AI claim. Absent
+   * for borrowed transform-port names and for columns the host model declares no type for.
+   */
+  dataType?: string;
 }
 
 /** Object identity the view needs for a node header, supplied by the caller's graph model. */
@@ -60,6 +66,12 @@ export interface ColumnTraceViewObject {
   schema: string;
   /** Object type as carried by the graph model. */
   objectType: string;
+  /**
+   * Declared column data types from the extracted model, keyed by {@link normalizeColName}. Row
+   * rows join against this to show the type beside the name; absent when the host model declares
+   * no columns for the object.
+   */
+  columnTypes?: ReadonlyMap<string, string>;
 }
 
 /** A node in the column-trace view, positioned and sized for the canvas. */
@@ -100,6 +112,17 @@ export interface ColumnTraceViewEdge {
   targetColumn: string;
   /** Whether the value changed between the two endpoints. */
   state: ColumnLineState;
+  /**
+   * Transform classes the model recorded for the relation, absent on an unclassified edge. The
+   * marker chip keys its per-class glyphs off this; the verdict-derived {@link state} alone no
+   * longer decides what the chip shows when a classification exists.
+   */
+  transforms?: ColumnTransformClass[];
+  /**
+   * One-clause model note for the relation ("SUM of line totals"), absent whenever the model
+   * offered none. Printed verbatim as the chip tooltip's second line.
+   */
+  note?: string;
 }
 
 /** The complete column-level rendering of one trace. */
@@ -122,6 +145,10 @@ export interface ColumnTraceRelation {
   toNode: string;
   /** Target column name. */
   toCol: string;
+  /** Transform classes the model recorded for this relation; absent on an unclassified edge. */
+  transforms?: ColumnTransformClass[];
+  /** One-clause model note for the relation; absent whenever the model offered none. */
+  note?: string;
 }
 
 /** Input to {@link buildColumnTraceView}. */
@@ -154,6 +181,26 @@ export interface ColumnTraceViewInput {
 
 /** Node width used for every column-trace node. */
 export const COLUMN_NODE_WIDTH = 214;
+
+/**
+ * Node width used for a transform super node — a procedure or function rendered as a circle-and-gear
+ * hub rather than a column-port card. Narrower than a table card on purpose: the node's identity is
+ * the circle, not a column list.
+ */
+export const COLUMN_TRANSFORM_NODE_WIDTH = 150;
+
+/**
+ * Minimum height of a transform super node — room for the circle, the name strip beneath it, and
+ * one port even when the trace records a single column through the node.
+ */
+export const COLUMN_TRANSFORM_NODE_MIN_HEIGHT = 96;
+
+/**
+ * Vertical distance between consecutive port handles on a transform super node. The handles stay
+ * the edges' attachment points (invisible, fanned across the circle), so the spread — not the
+ * circle's radius — decides how far apart two lines through the same hub land.
+ */
+export const COLUMN_TRANSFORM_PORT_SPREAD = 26;
 
 /** Height of a column-trace node header. */
 export const COLUMN_NODE_HEADER_HEIGHT = 28;
@@ -361,6 +408,8 @@ function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
     const row: ColumnTraceRow = { name };
     if (shape) row.shape = shape;
     if (contributors !== undefined) row.contributors = contributors;
+    const dataType = acc.object.columnTypes?.get(rowKey);
+    if (dataType) row.dataType = dataType;
     return row;
   });
 }
@@ -415,6 +464,10 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     hopNode: string;
     /** Rendered hop node the relation is drawn through; unset when the hop is an endpoint. */
     viaId?: string;
+    /** Transform classes the model recorded, carried to every leg the relation is drawn as. */
+    transforms?: ColumnTransformClass[];
+    /** One-clause model note, carried beside the classes to every leg. */
+    note?: string;
   }
 
   const normalized: NormalizedRelation[] = [];
@@ -491,21 +544,28 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetCol: relation.toCol,
       hopNode: relation.hopNode,
       viaId,
+      transforms: relation.transforms,
+      note: relation.note,
     });
   });
 
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map((acc) => {
     const rows = buildRows(acc);
-    const height = COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH;
+    const isTransform = acc.object.objectType === 'procedure' || acc.object.objectType === 'function';
     return {
       id: acc.object.id,
       label: acc.object.label,
       schema: acc.object.schema,
       objectType: acc.object.objectType,
-      isTransformNode: acc.object.objectType === 'procedure' || acc.object.objectType === 'function',
+      isTransformNode: isTransform,
       rows,
-      width: COLUMN_NODE_WIDTH,
-      height,
+      width: isTransform ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH,
+      // A table card sizes to its header and rows; a transform super node sizes to a circle with the
+      // port spread fanned across it, so the box stays compact and symmetric however few ports run
+      // through it.
+      height: isTransform
+        ? Math.max(COLUMN_TRANSFORM_NODE_MIN_HEIGHT, rows.length * COLUMN_TRANSFORM_PORT_SPREAD + 34)
+        : COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
       position: { x: 0, y: 0 },
     };
   });
@@ -521,6 +581,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     target: string,
     targetCol: string,
     state: ColumnLineState,
+    transforms?: ColumnTransformClass[],
+    note?: string,
   ): void {
     // Two relations through the same hop share a leg — the two inbound halves stay distinct, their
     // outbound halves are one line. Drawing both would stack identical lines on the same handles.
@@ -537,17 +599,21 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetColumn: targetCol,
       state,
     };
+    // Both legs of a hop-routed relation carry the same classification: the split is a drawing
+    // decision, and the value's story is one fact about the original endpoint pair.
+    if (transforms) edge.transforms = transforms;
+    if (note) edge.note = note;
     edges.push(edge);
   }
 
   for (const relation of normalized) {
     const state = resolveVerdictLineState(relation.hopNode, input.verdicts);
     if (relation.viaId) {
-      pushEdge(relation.index, 'a', relation.sourceId, relation.sourceCol, relation.viaId, relation.sourceCol, state);
-      pushEdge(relation.index, 'b', relation.viaId, relation.targetCol, relation.targetId, relation.targetCol, state);
+      pushEdge(relation.index, 'a', relation.sourceId, relation.sourceCol, relation.viaId, relation.sourceCol, state, relation.transforms, relation.note);
+      pushEdge(relation.index, 'b', relation.viaId, relation.targetCol, relation.targetId, relation.targetCol, state, relation.transforms, relation.note);
       continue;
     }
-    pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state);
+    pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state, relation.transforms, relation.note);
   }
 
   // Laid out by graphBuilder's dagreLayout so the column view shares the object view's

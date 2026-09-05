@@ -280,6 +280,7 @@ export class ColumnTracer {
           // Carried verbatim per contributor, or omitted. The value set is already enforced by the
           // tool schema, so there is nothing left to check and nothing to substitute when absent.
           ...(cont.transforms ? { transforms: [...cont.transforms] } : {}),
+          ...(cont.note ? { note: cont.note } : {}),
         });
       }
     }

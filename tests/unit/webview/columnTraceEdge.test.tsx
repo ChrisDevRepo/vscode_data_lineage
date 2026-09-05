@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 //
-// Cover for the column-view edge marker: `ColumnTraceEdge` draws the transform-chip that flags
-// where a value changes between two traced columns, and `ColumnTransformGlyph` is the ring drawn
-// inside both that chip and the legend key.
+// Cover for the column-view edge marker: `ColumnTraceEdge` draws the marker chip that flags where
+// a value changes between two traced columns. A model-classified edge shows one glyph per transform
+// class; an unclassified transformation keeps the neutral ring; a `pass_through`-only edge draws no
+// chip at all, because identity is what an unmarked line already says.
 //
 // Everything here mounts for real, including `ColumnTraceEdge` itself. The one obstacle is
 // `EdgeLabelRenderer`, which portals into a node the real `<ReactFlow>` wrapper creates from a
@@ -18,8 +19,12 @@ import { StrictMode, act, useEffect, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Position, ReactFlowProvider, useStoreApi } from '@xyflow/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ColumnTraceEdge, ColumnTransformGlyph, type ColumnTraceEdgeData } from '../../../src/components/ColumnTraceEdge';
-import { Legend } from '../../../src/components/Legend';
+import {
+  ColumnTraceEdge,
+  ColumnTransformGlyph,
+  describeColumnEdge,
+  type ColumnTraceEdgeData,
+} from '../../../src/components/ColumnTraceEdge';
 
 // React 19 reads this to decide whether `act` may drive updates; without it every act() warns.
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -91,49 +96,58 @@ function edgeChip(): HTMLElement | null {
   return portalHost?.querySelector<HTMLElement>('.ln-column-edge-chip') ?? null;
 }
 
-function makeData(state: ColumnTraceEdgeData['state']): ColumnTraceEdgeData {
-  return { state, lit: true, sourceColumn: 'OrderId', targetColumn: 'OrderId' };
+function chipClasses(): string[] {
+  return [...(edgeChip()?.querySelectorAll<HTMLElement>('[data-transform-class]') ?? [])]
+    .map(el => el.getAttribute('data-transform-class')!);
+}
+
+function makeData(overrides: Partial<ColumnTraceEdgeData> = {}): ColumnTraceEdgeData {
+  return { state: 'transformation', lit: true, sourceColumn: 'OrderId', targetColumn: 'OrderId', ...overrides };
 }
 
 describe('ColumnTraceEdge', () => {
   it('draws the marker chip when the endpoints recorded a transformation', () => {
-    mountEdge(makeData('transformation'));
+    mountEdge(makeData());
     expect(edgeChip(), 'the only state with something to assert gets the chip').not.toBeNull();
+  });
+
+  it('draws the class glyph the model recorded for the edge', () => {
+    mountEdge(makeData({ transforms: ['combine'] }));
+    expect(chipClasses(), 'the chip shows one glyph per recorded class').toEqual(['combine']);
+  });
+
+  it('collapses a third class into a count so the chip cannot grow without bound', () => {
+    // A filtering join is combine + filter; a fourth class has no room. Two glyphs plus a count is
+    // the whole vocabulary the chip spends on classification.
+    mountEdge(makeData({ transforms: ['combine', 'filter', 'compute'] }));
+    expect(chipClasses()).toEqual(['combine', 'filter']);
+    expect(edgeChip()!.textContent, 'the remainder is a count, not a dropped fact').toContain('+1');
   });
 
   // `ColumnLineState` is `'passthrough' | 'transformation' | 'unknown'` (src/engine/columnTraceView.ts).
   // An unmarked line already reads as "unchanged", so `passthrough` earns no chip; `unknown` has
   // nothing to assert either. Both are exercised by name, not inferred from the one positive case.
   it('draws no chip for a passthrough edge', () => {
-    mountEdge(makeData('passthrough'));
+    mountEdge(makeData({ state: 'passthrough' }));
     expect(edgeChip(), 'an unremarkable line stays unmarked').toBeNull();
   });
 
   it('draws no chip for an edge whose state could not be determined', () => {
-    mountEdge(makeData('unknown'));
+    mountEdge(makeData({ state: 'unknown' }));
     expect(edgeChip(), 'nothing to assert is not the same as a transformation').toBeNull();
   });
 
-  it('renders the same glyph markup the legend key promises', () => {
-    // The legend imports `ColumnTransformGlyph` expressly so its key cannot describe a symbol the
-    // canvas no longer draws (see the export's own remarks in ColumnTraceEdge.tsx). Rendering both
-    // through their real call sites — the edge chip and the legend row — and diffing the resulting
-    // SVG is what would catch one of them drifting to a second, hand-copied glyph.
-    mountEdge(makeData('transformation'));
-    const canvasGlyph = edgeChip()!.querySelector('svg')!.outerHTML;
-
-    mount(<Legend schemas={[]} showColumnFlowKey />);
-    const legendGlyph = host.querySelector('.ln-column-edge-chip svg')!.outerHTML;
-
-    expect(legendGlyph).toBe(canvasGlyph);
-
-    // Both call sites resolve to the exported component itself, not merely to visually similar
-    // markup — pin that against a bare, unwrapped render too.
-    mount(<ColumnTransformGlyph />);
-    expect(host.querySelector('svg')!.outerHTML).toBe(canvasGlyph);
+  it('draws no chip for a pass_through-only edge — identity is what an unmarked line already says', () => {
+    mountEdge(makeData({ transforms: ['pass_through'] }));
+    expect(edgeChip(), 'marking a copy would spend attention to say nothing').toBeNull();
   });
 
-  it('draws the glyph as an open ring, never the arrow pair it replaced', () => {
+  it('keeps the chip beside pass_through when a real class rides with it', () => {
+    mountEdge(makeData({ transforms: ['pass_through', 'filter'] }));
+    expect(chipClasses(), 'the identity glyph is dropped, the class that acts is kept').toEqual(['filter']);
+  });
+
+  it('draws the unclassified mark as an open ring, never the arrow pair it replaced', () => {
     // Two opposed arrows used to mark a transform; on a canvas where edge direction is already the
     // primary signal they read as bidirectional, which is backwards. A ring carries no direction,
     // so this pins the shape that fixed the misreading rather than just the fact that something
@@ -143,5 +157,27 @@ describe('ColumnTraceEdge', () => {
     expect(svg.getAttribute('fill'), 'unfilled — a filled dot is the object-type legend mark').toBe('none');
     expect(svg.querySelectorAll('circle')).toHaveLength(1);
     expect(svg.querySelectorAll('path'), 'no leftover arrowhead geometry').toHaveLength(0);
+  });
+
+  it('names the class first, then the model note, in the tooltip', () => {
+    // The tooltip is the only surface left that names the class — the column-flow legend row was
+    // removed — so the enum text is the first line and the model's own clause the second.
+    expect(describeColumnEdge({ sourceColumn: 'A', targetColumn: 'B', transforms: ['combine'], note: 'JOIN on ProductId' }))
+      .toBe('Combine:\nJOIN on ProductId');
+  });
+
+  it('stacks every recorded class into the tooltip name', () => {
+    expect(describeColumnEdge({ sourceColumn: 'A', targetColumn: 'B', transforms: ['combine', 'filter'] }))
+      .toBe('Combine + Filter:\nA → B — shapes which rows reach here.');
+  });
+
+  it('falls back to the structural description when the model offered no note', () => {
+    expect(describeColumnEdge({ sourceColumn: 'OrderTotal', targetColumn: 'NetAmount', transforms: ['compute'] }))
+      .toBe('Compute:\nOrderTotal → NetAmount — the value changes here.');
+  });
+
+  it('describes an unclassified transformation without inventing a class', () => {
+    expect(describeColumnEdge({ sourceColumn: 'OrderTotal', targetColumn: 'NetAmount' }))
+      .toBe('OrderTotal → NetAmount — the value changes here.');
   });
 });

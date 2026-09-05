@@ -59,6 +59,7 @@ import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHo
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
+import { normalizeColName } from '../utils/sql';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 /**
@@ -544,6 +545,14 @@ export function GraphCanvas({
     const relations = activeAiMetadata?.columnAspect?.edges;
     if (!relations?.length) return null;
     try {
+      // Declared types are backend metadata from the extracted model (never an AI claim); the trace
+      // rows join against this map to show the type beside each column name.
+      const columnTypesByNode = new Map<string, ReadonlyMap<string, string>>();
+      for (const node of model?.nodes ?? []) {
+        if (node.columns?.length) {
+          columnTypesByNode.set(node.id.toLowerCase(), new Map(node.columns.map(c => [normalizeColName(c.name), c.type])));
+        }
+      }
       const objects = new Map<string, ColumnTraceViewObject>();
       for (const node of flowNodes) {
         if (node.type === 'schemaNode') continue;
@@ -553,6 +562,7 @@ export function GraphCanvas({
           label: data.label,
           schema: data.schema,
           objectType: data.objectType,
+          columnTypes: columnTypesByNode.get(node.id.toLowerCase()),
         });
       }
       const verdicts = activeAiMetadata?.nodeVerdicts?.length
@@ -576,7 +586,7 @@ export function GraphCanvas({
       });
       return null;
     }
-  }, [activeAiMetadata, config, flowNodes]);
+  }, [activeAiMetadata, config, flowNodes, model]);
 
   /** Whether the column view — not the object view — is the rendering currently on stage. */
   const columnViewActive = columnView && !!columnTraceView;
@@ -1261,6 +1271,8 @@ export function GraphCanvas({
             lit,
             sourceColumn: edge.sourceColumn,
             targetColumn: edge.targetColumn,
+            ...(edge.transforms?.length ? { transforms: edge.transforms } : {}),
+            ...(edge.note ? { note: edge.note } : {}),
           } satisfies ColumnTraceEdgeData,
         };
       });
@@ -1633,7 +1645,6 @@ export function GraphCanvas({
           isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
           expandedSchemas={expandedSchemas}
           isSidebarOpen={isDetailSearchOpen || !!analysisMode}
-          showColumnFlowKey={columnViewActive}
         />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}

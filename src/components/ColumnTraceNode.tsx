@@ -8,6 +8,9 @@ import {
   COLUMN_NODE_BORDER_WIDTH,
   COLUMN_ROW_HEIGHT,
   COLUMN_ROW_DIM_OPACITY,
+  COLUMN_TRANSFORM_NODE_WIDTH,
+  COLUMN_TRANSFORM_NODE_MIN_HEIGHT,
+  COLUMN_TRANSFORM_PORT_SPREAD,
   type ColumnTraceRow,
   type ColumnLineState,
 } from '../engine/columnTraceView';
@@ -23,14 +26,6 @@ function lineStateColor(state: ColumnLineState | undefined): string {
   return 'var(--ln-fg-dim)';
 }
 
-function shapeLabel(row: ColumnTraceRow): string | null {
-  if (!row.shape) return null;
-  if (row.shape === 'incoming' || row.shape === 'outgoing') {
-    return `${row.shape}${typeof row.contributors === 'number' ? ` (${row.contributors})` : ''}`;
-  }
-  return row.shape;
-}
-
 /**
  * Row hover/focus transition.
  *
@@ -41,8 +36,37 @@ function shapeLabel(row: ColumnTraceRow): string | null {
  */
 const ROW_TRANSITION = 'background-color 120ms ease, opacity 120ms ease';
 
+/** Diameter of the gear circle drawn for a transform super node. */
+const TRANSFORM_CIRCLE_INSET = 14;
+
+/** Height of the name strip beneath a transform super node's circle. */
+const TRANSFORM_NAME_STRIP_HEIGHT = 20;
+
 function rowCenter(index: number): number {
   return COLUMN_NODE_HEADER_HEIGHT + index * COLUMN_ROW_HEIGHT + COLUMN_ROW_HEIGHT / 2;
+}
+
+/**
+ * Handle anchor and gear-circle geometry for a transform super node.
+ *
+ * @remarks
+ * The circle is the node's whole body, so the invisible port handles are fanned across its arc —
+ * each column edge through the hub lands at its own point on the circle instead of stacking at one
+ * midpoint. The vertical spread is clamped to the arc's usable span so every handle sits ON the
+ * circle; `left` places the handle at the arc's x for that row, which is what makes the line meet
+ * the visible stroke rather than stopping at the invisible box edge.
+ */
+function transformPortGeometry(portCount: number, width: number, height: number) {
+  const cx = width / 2;
+  const usableHeight = height - TRANSFORM_NAME_STRIP_HEIGHT;
+  const cy = usableHeight / 2;
+  const radius = Math.min(width, usableHeight) / 2 - TRANSFORM_CIRCLE_INSET / 2;
+  const arcSpan = radius * 0.86;
+  const first = cy - ((portCount - 1) * COLUMN_TRANSFORM_PORT_SPREAD) / 2;
+  return { cx, cy, radius, portY: (index: number) => {
+    const raw = first + index * COLUMN_TRANSFORM_PORT_SPREAD;
+    return Math.min(cy + arcSpan, Math.max(cy - arcSpan, raw));
+  } };
 }
 
 function ColumnTraceRowLine({
@@ -75,7 +99,6 @@ function ColumnTraceRowLine({
   const isHoveredRow = !!hoveredPath?.has(rowKey);
   const isDeemphasised = !!hoveredPath && !isHoveredRow;
   const isPinnedRow = pinnedRow === rowKey;
-  const label = shapeLabel(row);
 
   const style: CSSProperties = {
     height: COLUMN_ROW_HEIGHT,
@@ -97,7 +120,7 @@ function ColumnTraceRowLine({
 
   // Both glyphs are aria-hidden, so the row's own label is the only thing announced; it names the
   // object as well as the column, since a bare column name is ambiguous across a multi-node trace.
-  const ariaLabel = `${nodeTitle} column ${row.name}${label ? `, ${label}` : ''}`;
+  const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}`;
 
   return (
     <div
@@ -136,12 +159,91 @@ function ColumnTraceRowLine({
       <span className="text-[10px]" style={{ color: 'var(--ln-fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isHoveredRow ? 600 : 400 }}>
         {row.name}
       </span>
-      {label && (
+      {row.dataType && (
         <span className="text-[9px]" style={{ color: 'var(--ln-fg-muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>
-          {label}
+          {row.dataType}
         </span>
       )}
     </div>
+  );
+}
+
+/** State-of-the-art cog: one stroked gear body plus its hub, reading as "machine logic" at 22px. */
+function GearGlyph() {
+  return (
+    <svg
+      width={22}
+      height={22}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.9}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r={3.2} />
+      <path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9M18.5 18.5l-1.9-1.9M7.4 7.4L5.5 5.5" />
+    </svg>
+  );
+}
+
+/**
+ * The transform super node: a circle-and-gear hub standing in for the port card a procedure used to
+ * render as.
+ *
+ * @remarks
+ * Every interaction survives the reshaping — the node keeps its id, its click and context-menu
+ * wiring, and its (invisible) port handles, so neighbours, SQL and the column thread all behave
+ * exactly as on the port card; only the visibility changes. The name strip sits under the circle,
+ * and the AI badge/note toolbars keep their slots above and below the node box.
+ */
+function TransformNodeBody({ view, nodeTitle }: { view: ColumnTraceNodeData['view']; nodeTitle: string }) {
+  const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
+  const height = view.height || COLUMN_TRANSFORM_NODE_MIN_HEIGHT;
+  const { cx, cy, radius } = transformPortGeometry(view.rows.length, width, height);
+  const schemaColor = getSchemaColor(view.schema);
+
+  return (
+    <>
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          left: cx - radius,
+          top: cy - radius,
+          width: radius * 2,
+          height: radius * 2,
+          borderRadius: '50%',
+          border: `1.5px solid ${schemaColor}`,
+          background: `color-mix(in srgb, ${schemaColor} 10%, var(--ln-bg-elevated))`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--ln-fg-muted)',
+          pointerEvents: 'none',
+        }}
+      >
+        <GearGlyph />
+      </div>
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: TRANSFORM_NAME_STRIP_HEIGHT,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '0 4px',
+        }}
+      >
+        <span className="text-[10px]" style={{ color: 'var(--ln-fg)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {nodeTitle}
+        </span>
+      </div>
+    </>
   );
 }
 
@@ -214,7 +316,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       className="rounded-lg border ln-node-card transition-all duration-300 ease-in-out"
       style={{
         position: 'relative',
-        width: view.width || COLUMN_NODE_WIDTH,
+        width: view.width || (view.isTransformNode ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH),
         height: view.height,
         borderWidth: COLUMN_NODE_BORDER_WIDTH,
         borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
@@ -230,76 +332,104 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         overflow: 'hidden',
       }}
     >
-      <div
-        style={{
-          height: COLUMN_NODE_HEADER_HEIGHT,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '0 8px',
-          flexShrink: 0,
-          backgroundColor: view.isTransformNode ? 'color-mix(in srgb, var(--ln-ai-or) 16%, var(--ln-bg-elevated))' : 'var(--ln-bg-elevated)',
-          borderBottom: '1px solid var(--ln-border-light)',
-        }}
-      >
-        <span className="text-[11px]" aria-hidden="true" style={{ color: 'var(--ln-fg-muted)', lineHeight: 1 }}>{icon}</span>
-        <span className="text-[10px]" style={{ color: 'var(--ln-fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
-          {nodeTitle}
-        </span>
-        {view.isTransformNode ? (
-          <span className="text-[8px]" style={{ color: 'var(--ln-ai-or)', fontWeight: 700, letterSpacing: '0.03em', flexShrink: 0 }}>
-            TRANSFORM
-          </span>
-        ) : (
-          <span className="text-[8px]" style={{ color: 'var(--ln-fg-muted)', flexShrink: 0 }}>{typeLabel}</span>
-        )}
-      </div>
-
-      <div role={rowsVisible ? 'list' : undefined} style={{ position: 'relative', height: rowsBlockHeight, flexShrink: 0 }}>
-        {rowsVisible ? (
-          view.rows.map((row) => (
-            <ColumnTraceRowLine
-              key={row.name}
-              row={row}
-              nodeId={id}
-              nodeTitle={nodeTitle}
-              isTransformNode={view.isTransformNode}
-              lineState={data.rowLineStates?.[row.name]}
-              focused={focusedRow === row.name}
-              isTabStop={row.name === tabStopRow}
-              registerRef={registerRowRef}
-              onKeyDown={handleRowKeyDown}
-              onFocusStart={() => { setFocusedRow(row.name); setActiveRow(row.name); }}
-              onFocusEnd={() => setFocusedRow(null)}
-            />
-          ))
-        ) : (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span className="text-[9px]" style={{ color: 'var(--ln-fg-muted)' }}>{summaryLine}</span>
+      {view.isTransformNode ? (
+        <TransformNodeBody view={view} nodeTitle={nodeTitle} />
+      ) : (
+        <>
+          <div
+            style={{
+              height: COLUMN_NODE_HEADER_HEIGHT,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '0 8px',
+              flexShrink: 0,
+              backgroundColor: 'var(--ln-bg-elevated)',
+              // A double-weight divider is the boundary between the object the card is about and the
+              // columns it carries — the two halves of the card read as separate zones, not as one
+              // list with a title.
+              borderBottom: '2px solid var(--ln-border-strong, var(--ln-border-light))',
+            }}
+          >
+            <span className="text-[11px]" aria-hidden="true" style={{ color: 'var(--ln-fg-muted)', lineHeight: 1 }}>{icon}</span>
+            <span className="text-[10px]" style={{ color: 'var(--ln-fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>
+              {nodeTitle}
+            </span>
+            <span className="text-[8px]" style={{ color: 'var(--ln-fg-muted)', flexShrink: 0 }}>{typeLabel}</span>
           </div>
-        )}
-      </div>
 
-      {view.rows.map((row, i) => (
-        <Handle
-          key={`t-${row.name}`}
-          type="target"
-          position={Position.Left}
-          id={columnHandleId(row.name, 'target')}
-          className="w-2! h-2! ln-handle"
-          style={{ top: rowCenter(i) }}
-        />
-      ))}
-      {view.rows.map((row, i) => (
-        <Handle
-          key={`s-${row.name}`}
-          type="source"
-          position={Position.Right}
-          id={columnHandleId(row.name, 'source')}
-          className="w-2! h-2! ln-handle"
-          style={{ top: rowCenter(i) }}
-        />
-      ))}
+          <div role={rowsVisible ? 'list' : undefined} style={{ position: 'relative', height: rowsBlockHeight, flexShrink: 0 }}>
+            {rowsVisible ? (
+              view.rows.map((row) => (
+                <ColumnTraceRowLine
+                  key={row.name}
+                  row={row}
+                  nodeId={id}
+                  nodeTitle={nodeTitle}
+                  isTransformNode={view.isTransformNode}
+                  lineState={data.rowLineStates?.[row.name]}
+                  focused={focusedRow === row.name}
+                  isTabStop={row.name === tabStopRow}
+                  registerRef={registerRowRef}
+                  onKeyDown={handleRowKeyDown}
+                  onFocusStart={() => { setFocusedRow(row.name); setActiveRow(row.name); }}
+                  onFocusEnd={() => setFocusedRow(null)}
+                />
+              ))
+            ) : (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span className="text-[9px]" style={{ color: 'var(--ln-fg-muted)' }}>{summaryLine}</span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {view.rows.map((row, i) => {
+        // A transform super node's ports fan across the circle arc; a table card's ports sit on its
+        // rows. Either way the handle is invisible — it is only the edge attachment point.
+        const portStyle: CSSProperties = view.isTransformNode
+          ? (() => {
+              const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
+              const { cx, radius, portY } = transformPortGeometry(view.rows.length, width, view.height);
+              const y = portY(i);
+              const dx = Math.sqrt(Math.max(radius * radius - (y - (view.height - TRANSFORM_NAME_STRIP_HEIGHT) / 2) ** 2, 0));
+              return { top: y - 4, left: cx - dx - 4 };
+            })()
+          : { top: rowCenter(i) };
+        return (
+          <Handle
+            key={`t-${row.name}`}
+            type="target"
+            position={Position.Left}
+            id={columnHandleId(row.name, 'target')}
+            className="w-2! h-2! ln-handle"
+            style={portStyle}
+          />
+        );
+      })}
+      {view.rows.map((row, i) => {
+        const portStyle: CSSProperties = view.isTransformNode
+          ? (() => {
+              const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
+              const { cx, radius, portY } = transformPortGeometry(view.rows.length, width, view.height);
+              const y = portY(i);
+              const cy = (view.height - TRANSFORM_NAME_STRIP_HEIGHT) / 2;
+              const dx = Math.sqrt(Math.max(radius * radius - (y - cy) ** 2, 0));
+              return { top: y - 4, left: cx + dx - 4 };
+            })()
+          : { top: rowCenter(i) };
+        return (
+          <Handle
+            key={`s-${row.name}`}
+            type="source"
+            position={Position.Right}
+            id={columnHandleId(row.name, 'source')}
+            className="w-2! h-2! ln-handle"
+            style={portStyle}
+          />
+        );
+      })}
     </div>
     </>
   );

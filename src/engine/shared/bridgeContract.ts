@@ -332,6 +332,12 @@ const ColumnAspectEdgeSchema = z.object({
    * unclassified rather than acquiring a guessed class.
    */
   transforms: z.array(ColumnTransformClassSchema).optional(),
+  /**
+   * Optional one-clause model note for the edge ("SUM of line totals"), absent whenever the model
+   * offered none. Surface text only: the webview prints it in the edge tooltip and nothing parses
+   * it, so an old edge without one reads the structural description instead.
+   */
+  note: z.string().optional(),
 }).strict();
 
 const ColumnAspectSchema = z.object({

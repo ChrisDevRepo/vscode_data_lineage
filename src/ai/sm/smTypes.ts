@@ -120,6 +120,12 @@ interface ColumnRef {
    * it; the engine never substitutes a default.
    */
   transforms?: ColumnTransformClass[];
+  /**
+   * Optional one-clause model note for the contributor ("SUM of line totals"). Surface text the
+   * webview prints verbatim; nothing parses it, so an absent note degrades to the structural
+   * description.
+   */
+  note?: string;
 }
 
 /**
@@ -144,6 +150,11 @@ export interface ColumnEdge {
    * model supplied none — an unclassified edge stays unclassified across the hop.
    */
   transforms?: ColumnTransformClass[];
+  /**
+   * One-clause model note carried verbatim beside {@link transforms}. Absent whenever the model
+   * offered none — the webview then describes the edge structurally instead.
+   */
+  note?: string;
 }
 
 

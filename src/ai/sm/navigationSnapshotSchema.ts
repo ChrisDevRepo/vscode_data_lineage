@@ -56,6 +56,9 @@ const ColumnEdgeSchema = z.object({
   // Absent in a checkpoint written before the classifier existed, and absent whenever the model
   // did not classify the edge; restores unclassified either way.
   transforms: z.array(ColumnTransformClassSchema).optional(),
+  // Absent in a checkpoint written before the per-edge note existed, and absent whenever the model
+  // offered none; restores noteless either way. Surface text only — never parsed on restore.
+  note: z.string().optional(),
 }).strict();
 
 const ColumnAspectSchema = z.object({

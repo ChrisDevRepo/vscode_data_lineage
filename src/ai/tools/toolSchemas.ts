@@ -456,6 +456,11 @@ const ColumnRefSchema = z.object({
     'combine: JOIN, UNION/EXCEPT/INTERSECT, APPLY, UNPIVOT. filter: WHERE, HAVING, join ON predicate, ' +
     'TOP, DISTINCT.',
   ),
+  note: z.string().max(200).optional().describe(
+    'One short grounded clause naming the rule or expression behind the transforms — e.g. ' +
+    '"SUM of OrderLines Qty * Price" — at most ~12 words. Omit when transforms is omitted or the ' +
+    'DDL gives nothing concrete to quote; never speculate.',
+  ),
 }).strict();
 
 const ColumnFlowEntrySchema = z.object({

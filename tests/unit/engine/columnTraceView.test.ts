@@ -19,6 +19,8 @@ import {
   type ColumnTraceViewInput,
   type ColumnTraceViewObject,
   COLUMN_NODE_WIDTH,
+  COLUMN_TRANSFORM_NODE_WIDTH,
+  COLUMN_TRANSFORM_NODE_MIN_HEIGHT,
 } from '../../../src/engine/columnTraceView';
 import { DEFAULT_CONFIG, type ExtensionConfig } from '../../../src/engine/types';
 
@@ -209,6 +211,57 @@ describe('columnTraceView', () => {
     expect(node.height).toBe(
       COLUMN_NODE_HEADER_HEIGHT + 2 * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
     );
+  });
+
+  it('joins the declared backend data type onto the row, keyed by normalised column name', () => {
+    const objects = mkObjects({ ...mkObj('dbo.s'), columnTypes: new Map([['amount', 'decimal(18,2)']]) }, mkObj('dbo.t'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: '[Amount]', toNode: 'dbo.t', toCol: 'Amount' },
+    ];
+
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    expect(findRow(view, 'dbo.s', '[Amount]').dataType).toBe('decimal(18,2)');
+    // No declared type on the target — no invented one either.
+    expect(findRow(view, 'dbo.t', 'Amount').dataType).toBeUndefined();
+  });
+
+  it('carries the classification and note onto the edge', () => {
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t', toCol: 'B', transforms: ['compute'], note: 'A * 2' },
+    ];
+
+    const [edge] = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }).edges;
+    expect(edge.transforms).toEqual(['compute']);
+    expect(edge.note).toBe('A * 2');
+  });
+
+  it('puts the same classification on both legs of a relation routed through the hop', () => {
+    // The split into two legs is a drawing decision only — the value's story is one fact, so both
+    // halves name the same classes and the same note.
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total', transforms: ['aggregate'], note: 'SUM of Qty' },
+    ];
+
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    for (const leg of view.edges) {
+      expect(leg.transforms).toEqual(['aggregate']);
+      expect(leg.note).toBe('SUM of Qty');
+    }
+  });
+
+  it('sizes a transform super node as a compact circle box, not a port card', () => {
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.p', toCol: 'A' },
+    ];
+
+    const node = findNode(buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }), 'dbo.p');
+    expect(node.width).toBe(COLUMN_TRANSFORM_NODE_WIDTH);
+    // One port: the box holds at its floor rather than shrinking to the row-card height.
+    expect(node.height).toBe(COLUMN_TRANSFORM_NODE_MIN_HEIGHT);
+    expect(node.isTransformNode).toBe(true);
   });
 });
 

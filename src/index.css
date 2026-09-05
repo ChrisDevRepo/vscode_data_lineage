@@ -313,7 +313,7 @@ body.vscode-reduce-motion *::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 8px;
   background: var(--ln-bg-elevated);
   color: var(--ln-ai-or);
   border: 1px solid var(--ln-border-light);
