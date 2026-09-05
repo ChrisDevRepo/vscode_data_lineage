@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   quoteIds,
+  sanitizeDescriptionForChat,
   sanitizeProviderErrorDiagnostic,
   isTransportProviderError,
   describeProviderErrorForUser,
@@ -128,5 +129,33 @@ describe('provider transport-error classification', () => {
 
     expect(diagnostic.code).toBe('net::ERR_CONNECTION_RESET');
     expect(isTransportProviderError(diagnostic)).toBe(true);
+  });
+});
+
+/**
+ * Regression tests for the chat-replay sanitizer (`src/ai/support/text.ts`).
+ *
+ * @remarks
+ * A cached AI description reaches chat only through this transform: `#focus-node:` links resolve
+ * solely inside the graph webview, and the engine's `### Objects` transport line is a footnote in
+ * the webview renderer but would render as a heading-scale object list in chat.
+ */
+describe('sanitizeDescriptionForChat', () => {
+  it('reduces every focus-node link to its label, inside and outside the Objects line', () => {
+    const out = sanitizeDescriptionForChat(
+      'Body mentions [vwX](#focus-node:%5Bai%5D.%5Bvwx%5D) inline.\n\n### Objects [vwX](#focus-node:%5Bai%5D.%5Bvwx%5D), [spY](#focus-node:%5Bai%5D.%5Bspy%5D)',
+    );
+    expect(out).not.toContain('#focus-node:');
+    expect(out).toContain('Body mentions vwX inline.');
+  });
+
+  it('demotes the Objects line to a small italic footnote', () => {
+    const out = sanitizeDescriptionForChat('### Objects [vwX](#focus-node:%5Bai%5D.%5Bvwx%5D), [spY](#focus-node:%5Bai%5D.%5Bspy%5D)');
+    expect(out).toBe('*Objects: vwX, spY*');
+  });
+
+  it('leaves ordinary prose markdown untouched', () => {
+    const md = '## 1 Result\n\nText with `code` and [a real link](https://example.com).\n\n---\n\nClosing.';
+    expect(sanitizeDescriptionForChat(md)).toBe(md);
   });
 });

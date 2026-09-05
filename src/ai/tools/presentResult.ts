@@ -453,13 +453,18 @@ function encodeFocusNodeId(id: string): string {
  * `AiDescriptionOverlay`. The AI never writes the blob directly — it writes the
  * parts (title, intro, sections[], closing) and the engine assembles them
  * deterministically here. Section numbering (`## N {label}`), badge chips, and
- * the `### Objects [name](#focus-node:id)` link header are all engine-owned;
+ * the `### Objects [name](#focus-node:id)` footnote are all engine-owned;
  * they are not AI-authored fields.
  *
  * Numbered badges are emitted only for AI-provided `sections[].node_ids[]`, in
  * narrative order, so chips on the graph align with `## N` headings in the
  * description. Nodes not linked by the AI get no badge. Leading numbers in
  * AI-supplied labels are stripped to keep numbering deterministic.
+ *
+ * The object links render as a footnote at the END of each section body, not a
+ * heading under the section title: the renderer restyles the `### Objects`
+ * transport line into a small muted paragraph, so the link list reads as a
+ * side note at body-small size instead of competing with the section heading.
  *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
@@ -470,8 +475,10 @@ export function orderAndAssemble(
   opts?: {
     title?: string;
     intro?: string;
+    /** Engine-owned block (e.g. the CT column chain) inserted between the intro and the first section. */
+    preface?: string;
     closing?: string;
-    /** Optional node lookup for injecting clickable H3 object-name headings per section. */
+    /** Optional node lookup for injecting clickable object-link footnotes per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
   },
 ): { badges: Array<{ node_id: string; text: string }>; description: string } {
@@ -522,23 +529,69 @@ export function orderAndAssemble(
   const parts: string[] = [];
   if (opts?.title)        parts.push(`# ${opts.title}`);
   if (opts?.intro)        parts.push(opts.intro);
+  if (opts?.preface)      parts.push(opts.preface);
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
     const nodeIds = labelToNodeIds.get(label) ?? [];
-    let objectHeadings = '';
+    let objectFootnote = '';
     if (opts?.nodeMap && nodeIds.length > 0) {
       const links = nodeIds
         .map(id => opts.nodeMap!.get(id))
         .filter((node): node is { id: string; name: string } => !!node)
         .map(node => `[${node.name}](#focus-node:${encodeFocusNodeId(node.id)})`);
-      if (links.length > 0) objectHeadings = `### Objects ${links.join(', ')}\n\n`;
+      if (links.length > 0) objectFootnote = `### Objects ${links.join(', ')}`;
     }
-    parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);
+    let section = `## ${n} ${label}`;
+    if (text)          section += `\n\n${text}`;
+    if (objectFootnote) section += `\n\n${objectFootnote}`;
+    parts.push(section);
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
   return { badges: numberedBadges, description: parts.join('\n\n') };
+}
+
+/**
+ * One validated CT column-flow edge, reduced to the structural fields the chain table reads.
+ *
+ * @remarks Structural on purpose: the sm-side `ColumnEdge` satisfies it without an import, so
+ * this assembler stays a pure document builder with no dependency on navigation state.
+ */
+export type ColumnChainEdge = {
+  hop: number;
+  from_node: string;
+  from_col: string;
+  to_node: string;
+  to_col: string;
+};
+
+/**
+ * Builds the engine-owned "Column Chain" preface for a CT result from validated column-flow edges.
+ *
+ * @remarks
+ * CT answers differ from BB by a proven column chain, and that chain already exists in validated
+ * form (`column_flow` per hop) — this renders it as a deterministic table at the top of the
+ * document instead of leaving the distinction to prose. Like badges and section numbering, the
+ * table is engine output: the model never writes it, so it can never drift from the recorded
+ * edges. Rows are ordered by hop; the unnumbered `## Column Chain` heading is deliberately not a
+ * `## N` section, so it takes no section number and no navigation chip.
+ *
+ * @param edges - Validated column-flow edges accumulated by the engine.
+ * @returns The preface markdown, or `undefined` when no edge was recorded (nothing to show).
+ */
+export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): string | undefined {
+  if (edges.length === 0) return undefined;
+  const rows = [...edges]
+    .sort((a, b) => a.hop - b.hop)
+    .map(e => `| ${e.hop} | \`${e.to_node}\` | \`${e.to_col}\` | \`${e.from_node}\`.${e.from_col}\` |`);
+  return [
+    '## Column Chain',
+    '',
+    '| Hop | Produces | Column | Reads from |',
+    '| --- | --- | --- | --- |',
+    ...rows,
+  ].join('\n');
 }
 
 /**

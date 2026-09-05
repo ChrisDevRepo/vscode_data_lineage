@@ -64,13 +64,25 @@ describe('renderAiMarkdown — structure', () => {
     const host = render(fixture);
     expect(host.querySelectorAll('h1')).toHaveLength(1);
     expect(host.querySelectorAll('h2')).toHaveLength(3);
-    expect(host.querySelectorAll('h3')).toHaveLength(4);
+    expect(host.querySelectorAll('h3')).toHaveLength(1);
   });
 
-  it('marks up the engine-assembled Objects heading', () => {
-    const labels = render(fixture).querySelectorAll('h3 .ln-ai-objects-label');
-    expect(labels).toHaveLength(3);
-    expect(labels[0].textContent).toBe('Objects');
+  it('gives numbered section headings a stable id for chip navigation', () => {
+    const host = render(fixture);
+    const ids = Array.from(host.querySelectorAll<HTMLHeadingElement>('h2[id]')).map(h => h.id);
+    expect(ids).toEqual(['ln-ai-sec-1', 'ln-ai-sec-2', 'ln-ai-sec-3']);
+  });
+
+  it('leaves unnumbered headings without a section id', () => {
+    const host = render('## Column Chain\n\n| a |\n| --- |\n| 1 |');
+    expect(host.querySelector('h2')?.getAttribute('id') ?? null).toBeNull();
+  });
+
+  it('marks up the engine-assembled Objects footnote', () => {
+    const footnotes = render(fixture).querySelectorAll('p.ln-ai-objects');
+    expect(footnotes).toHaveLength(3);
+    expect(footnotes[0].querySelector('.ln-ai-objects-label')?.textContent).toBe('Objects');
+    expect(footnotes[0].querySelectorAll('a[href^="#focus-node:"]')).toHaveLength(2);
   });
 });
 

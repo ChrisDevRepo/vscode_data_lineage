@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  buildColumnChainPreface,
   findDisconnectedViewNodes,
   isRepairablePresentResultFailure,
   mergePresentResultRepairPatch,
@@ -362,5 +363,35 @@ describe('Present Result Closure', () => {
     expect(session.explorationRunId, 'no exploration has been approved in this chat').toBeNull();
     expect((session.explorationRunId ?? session.id).length > 0, 'the presentation falls back to the chat session id').toBe(true);
     expect(session.explorationRunId ?? session.id, 'the fallback is the chat session id itself').toBe(session.id);
+  });
+});
+
+describe('CT column chain preface', () => {
+  it('builds a hop-ordered chain table from validated edges', () => {
+    const preface = buildColumnChainPreface([
+      { hop: 2, from_node: '[ai].[vwRawOrders]', from_col: 'OrderQty', to_node: '[ai].[SalesStaging]', to_col: 'OrderQty' },
+      { hop: 1, from_node: '[ai].[vwExternalOrders]', from_col: 'Quantity', to_node: '[ai].[RawOrderImport]', to_col: 'RawQty' },
+    ]);
+    expect(preface).toBeDefined();
+    expect(preface).toContain('## Column Chain');
+    expect(preface).toContain('| Hop | Produces | Column | Reads from |');
+    // Hop ordering wins regardless of accumulation order, so the table reads as one chain.
+    expect(preface!.indexOf('vwExternalOrders')).toBeLessThan(preface!.indexOf('vwRawOrders'));
+    expect(preface!.split('\n').filter(l => l.startsWith('| 1 '))).toHaveLength(1);
+    expect(preface!.split('\n').filter(l => l.startsWith('| 2 '))).toHaveLength(1);
+  });
+
+  it('returns undefined with no recorded edges — BB output stays unchanged', () => {
+    expect(buildColumnChainPreface([])).toBeUndefined();
+  });
+
+  it('inserts the preface between the intro and the first section', () => {
+    const { description } = orderAndAssemble(
+      [{ label: 'Result', text: 'Body.' }],
+      { title: 'T', intro: 'Intro.', preface: '## Column Chain\n\n| Hop |\n| --- |\n| 1 |', closing: 'Done.' },
+    );
+    expect(description.indexOf('Intro.')).toBeLessThan(description.indexOf('## Column Chain'));
+    expect(description.indexOf('## Column Chain')).toBeLessThan(description.indexOf('## 1 Result'));
+    expect(description.indexOf('## 1 Result')).toBeLessThan(description.indexOf('Done.'));
   });
 });

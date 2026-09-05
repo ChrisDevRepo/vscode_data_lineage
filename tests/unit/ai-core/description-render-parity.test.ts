@@ -80,6 +80,20 @@ describe('focus-node object links round-trip to the id the overlay resolves', ()
     expect(description).toContain('### Objects ');
     expect(resolvedIds(description)).toHaveLength(1);
   });
+
+  it('places the Objects footnote after the section body, not under the section heading', () => {
+    const { description } = orderAndAssemble(
+      [{ label: 'Result', text: 'Body text.', node_ids: ['a', 'b'] }],
+      {
+        nodeMap: new Map([
+          ['a', { id: 'a', name: 'A' }],
+          ['b', { id: 'b', name: 'B' }],
+        ]),
+      },
+    );
+    expect(description.indexOf('Body text.')).toBeLessThan(description.indexOf('### Objects '));
+    expect(description).toContain('### Objects [A](#focus-node:a), [B](#focus-node:b)');
+  });
 });
 
 describe('intro and closing reach the renderer unchanged', () => {

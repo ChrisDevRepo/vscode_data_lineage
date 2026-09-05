@@ -11,7 +11,7 @@ import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
 import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
-  findBareNonPrunedNodes,
+  findBareNonPrunedNodes, buildColumnChainPreface,
   isRepairablePresentResultFailure,
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
@@ -368,7 +368,22 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let assembledDescription: string | undefined = undefined;
       if (presentInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
-        const assembled = orderAndAssemble(presentInput.sections, { title: presentInput.title, intro: presentInput.intro, closing: presentInput.closing, nodeMap });
+        // CT results carry a validated column chain the BB contract has no counterpart for; the
+        // engine renders it as a deterministic table so the CT document is visibly a column trace,
+        // not a BB narrative with formulas. No edges — no preface (undefined keeps BB output unchanged).
+        const columnChainPreface = resultGraph.columnAspect
+          ? buildColumnChainPreface(resultGraph.columnAspect.edges)
+          : undefined;
+        const assembled = orderAndAssemble(
+          presentInput.sections,
+          {
+            title: presentInput.title,
+            intro: presentInput.intro,
+            closing: presentInput.closing,
+            nodeMap,
+            ...(columnChainPreface ? { preface: columnChainPreface } : {}),
+          },
+        );
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
       }

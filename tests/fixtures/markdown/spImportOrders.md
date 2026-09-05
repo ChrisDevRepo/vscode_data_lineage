@@ -4,14 +4,12 @@
 
 ## 1 ERP Data Sources
 
-### Objects [SAPOrders](#focus-node:[ai].[saporders]), [OracleOrders](#focus-node:[ai].[oracleorders])
-
 - **`[ai].[SAPOrders]`**: Provides native SAP sales transactions.
 - **`[ai].[OracleOrders]`**: Supplies external Oracle transaction records using proprietary column names (`ItemCount`, `TotalValue`, `Area`, `TxDate`).
 
-## 2 Federation & Normalization
+### Objects [SAPOrders](#focus-node:[ai].[saporders]), [OracleOrders](#focus-node:[ai].[oracleorders])
 
-### Objects [vwExternalOrders](#focus-node:[ai].[vwexternalorders])
+## 2 Federation & Normalization
 
 - **Source Lineage Attribution**: Adds explicit source markers:
   $$ \text{SourceSystem} = \text{'SAP'} \quad \text{for SAP orders} $$
@@ -20,9 +18,9 @@
   - `ItemCount` $\rightarrow$ `Quantity`
   - `TotalValue` $\rightarrow$ `Amount`
 
-## 3 Import & Quality Orchestration
+### Objects [vwExternalOrders](#focus-node:[ai].[vwexternalorders])
 
-### Objects [spImportOrders](#focus-node:[ai].[spimportorders])
+## 3 Import & Quality Orchestration
 
 1. **Intra-Batch Deduplication**: Assigns sequence numbers per system and date partition:
    $$ \text{RowSeq} = \operatorname{ROW\_NUMBER}() \text{ OVER } (\operatorname{PARTITION BY} \text{SourceSystem}, \text{OrderDate} \operatorname{ORDER BY} \text{OrderID}) $$
@@ -41,6 +39,8 @@ SELECT OrderID, Quantity FROM ai.vwExternalOrders;
 ```
 
 ⚠️ **Silent Negative Quantity Clamping**: Coercing negative quantities directly to `0` can mask ERP reversal transactions.
+
+### Objects [spImportOrders](#focus-node:[ai].[spimportorders])
 
 ---
 

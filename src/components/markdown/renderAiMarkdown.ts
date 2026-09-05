@@ -9,8 +9,11 @@ import { markedKatexExtension } from './markedKatexExtension';
  */
 export const FOCUS_NODE_HREF_PREFIX = '#focus-node:';
 
-/** Leading text of the engine-assembled `### Objects <links>` heading. */
+/** Leading text of the engine-assembled `### Objects <links>` footnote line. */
 const OBJECTS_HEADING_PREFIX = 'Objects ';
+
+/** `id` prefix the section-chip navigation scrolls to; the engine numbers `## N` sections. */
+export const AI_SECTION_ID_PREFIX = 'ln-ai-sec-';
 
 const marked = new Marked({ gfm: true, breaks: false })
   .use(markedKatexExtension(katex))
@@ -18,8 +21,18 @@ const marked = new Marked({ gfm: true, breaks: false })
     renderer: {
       heading(token: Tokens.Heading): string {
         const body = this.parser.parseInline(token.tokens);
+        // The engine emits the object-link list as an `### Objects` transport line at the END of a
+        // section; render it as a small muted footnote paragraph, not a heading — the links then
+        // share one small size with the "Objects" label instead of heading-scale text.
         if (token.depth === 3 && body.startsWith(OBJECTS_HEADING_PREFIX)) {
-          return `<h3><span class="ln-ai-objects-label">Objects</span>${body.slice(OBJECTS_HEADING_PREFIX.length)}</h3>\n`;
+          return `<p class="ln-ai-objects"><span class="ln-ai-objects-label">Objects</span>${body.slice(OBJECTS_HEADING_PREFIX.length)}</p>\n`;
+        }
+        // Numbered `## N {label}` section headings carry a stable id so the report's section chips
+        // can scroll to them. Unnumbered headings (e.g. the engine's `## Column Chain` preface)
+        // take no chip and keep their plain form.
+        if (token.depth === 2) {
+          const sectionNumber = /^\s*(\d+)\s/.exec(token.text ?? '');
+          if (sectionNumber) return `<h2 id="${AI_SECTION_ID_PREFIX}${sectionNumber[1]}">${body}</h2>\n`;
         }
         return `<h${token.depth}>${body}</h${token.depth}>\n`;
       },
@@ -27,7 +40,9 @@ const marked = new Marked({ gfm: true, breaks: false })
   });
 
 // KaTeX exposes each expression's source through `data-latex`; `style` is in DOMPurify's default allowlist.
-const SANITIZE_CONFIG = { ADD_ATTR: ['data-latex'] };
+// `id` is allowed by default too — it is restated here so the section-chip anchors never depend on
+// that default silently changing upstream.
+const SANITIZE_CONFIG = { ADD_ATTR: ['data-latex', 'id'] };
 
 /**
  * Renders an engine-assembled AI description to sanitized HTML.

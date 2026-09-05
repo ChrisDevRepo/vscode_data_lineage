@@ -78,6 +78,8 @@ const AiDescriptionOverlay = lazy(async () => {
   const module = await import('./AiDescriptionOverlay');
   return { default: module.AiDescriptionOverlay };
 });
+// Type-only import keeps the lazy chunk boundary intact while typing the chip-row prop.
+import type { AiReportSection } from './AiDescriptionOverlay';
 
 /** Padding factor applied when fitting the graph view. */
 const FIT_VIEW_PADDING = 0.15;
@@ -531,6 +533,28 @@ export function GraphCanvas({
 
   // AI metadata comes from the active AI profile or the transient AI preview, whichever is on stage.
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
+  const aiDescription = activeAiMetadata?.description;
+
+  // AI report column + section focus — owned by the canvas so it can reserve the panel's width for
+  // the React Flow area and dim the graph around a focused report section. Both reset when a new
+  // document arrives (new AI result or profile switch).
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<number | null>(null);
+  const aiPanelDefaultOpen = !!(
+    (aiPreview && aiPreview.nodeIds.size === 0) ||
+    (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
+  );
+  useEffect(() => {
+    setAiPanelOpen(aiPanelDefaultOpen);
+    setActiveSection(null);
+  }, [aiDescription, aiPanelDefaultOpen]);
+  // The narrowed canvas re-fits once the panel has claimed or released its width, so the visible
+  // graph re-centers instead of leaving nodes under the docked column.
+  useEffect(() => {
+    if (!aiDescription) return;
+    const t = setTimeout(() => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); }, 80);
+    return () => clearTimeout(t);
+  }, [aiPanelOpen, aiDescription, fitView]);
 
   /**
    * Column-level rendering of the active trace; null when the run recorded no column findings.
@@ -638,6 +662,9 @@ export function GraphCanvas({
         ));
         return;
       }
+      // Direct canvas selection replaces report-section focus — the section dim must not fight
+      // the click-selection highlight underneath it.
+      setActiveSection(null);
       onNodeClick(node.id);
     },
     [graphMode, onNodeClick, onSchemaNodeSelect]
@@ -1041,6 +1068,31 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
+  // Report sections derived from the bridged badge chips — the engine writes "N label" per badged
+  // node, so the overlay's chip row needs no extra bridge payload. Badges without a leading
+  // number are not section badges and take no chip.
+  const aiSections = useMemo((): AiReportSection[] => {
+    const badges = activeAiMetadata?.badges;
+    if (!badges?.length) return [];
+    const byNumber = new Map<number, AiReportSection>();
+    for (const badge of badges) {
+      const match = /^(\d+)\s+(.+)$/.exec(badge.text);
+      if (!match) continue;
+      const n = Number(match[1]);
+      const existing = byNumber.get(n);
+      if (existing) existing.nodeIds.push(badge.nodeId);
+      else byNumber.set(n, { n, label: match[2], nodeIds: [badge.nodeId] });
+    }
+    return [...byNumber.values()].sort((a, b) => a.n - b.n);
+  }, [activeAiMetadata]);
+
+  // The focused section's node set; null when section focus is off or the section has no nodes.
+  const activeSectionNodeIds = useMemo((): Set<string> | null => {
+    if (activeSection == null) return null;
+    const section = aiSections.find(s => s.n === activeSection);
+    return section?.nodeIds.length ? new Set(section.nodeIds) : null;
+  }, [aiSections, activeSection]);
+
   const aiNoteMap = useMemo((): Map<string, { text: string }> => {
     const m = new Map<string, { text: string }>();
     const notes = activeAiMetadata?.notes;
@@ -1206,26 +1258,27 @@ export function GraphCanvas({
       }
       // Same selection/AI decoration rule as the object view's decorateFlowNodes (shared via
       // resolveBaseSelectionState) — column view is the same node, only more drilled into.
+      // A focused report section overrides the dim: its nodes stay lit, everything else dims.
       const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
       byNode.set(view.id, {
         view,
         rowsVisible: notesVisible,
         rowLineStates,
         highlighted: isHighlighted ? 'yellow' : undefined,
-        dimmed,
+        dimmed: activeSectionNodeIds ? !activeSectionNodeIds.has(view.id) : dimmed,
         aiHighlight: aiHighlightMap.get(view.id),
         aiBadge: aiBadgeMap.get(view.id),
         aiNote: notesVisible ? aiNoteMap.get(view.id) : undefined,
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, activeSectionNodeIds]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
       return projectColumnNodes(columnTraceView.nodes, columnNodeData, columnPositions, columnNodeCache.current);
     }
-    return decorateFlowNodes(localNodes, {
+    const decorated = decorateFlowNodes(localNodes, {
       graphMode,
       highlightedNodeId,
       level1Neighbors,
@@ -1242,7 +1295,16 @@ export function GraphCanvas({
       onExpandSchema: onExpandExpandedSchemaViewSchema,
       onMakeSchemaCenter: onCenterExpandedSchemaViewSchema,
     }, nodeDecorationCache.current);
-  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
+    // A focused report section dims everything outside it — applied after the decoration pass so
+    // section focus never disturbs the selection/trace state underneath. Schema clusters carry no
+    // section badges and stay untouched.
+    if (!activeSectionNodeIds) return decorated;
+    return decorated.map(node =>
+      node.type === 'schemaNode' || activeSectionNodeIds.has(node.id)
+        ? node
+        : { ...node, data: { ...(node.data as CustomNodeData), dimmed: true } },
+    );
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions, activeSectionNodeIds]);
 
   const displayEdges = useMemo(() => {
     if (columnViewActive && columnTraceView) {
@@ -1533,7 +1595,16 @@ export function GraphCanvas({
             No objects match current filters. Adjust type toggles or search term.
           </div>
         ) : (
-          <div style={{ width: '100%', height: '100%', position: 'absolute' }}>
+          <div
+            style={{
+              // The docked AI report column claims the right strip of the canvas; React Flow
+              // re-measures on resize, so shrinking its wrapper keeps every node visible beside
+              // the panel. Width must stay in sync with `.ln-ai-description-anchor`.
+              width: aiDescription && aiPanelOpen ? 'calc(100% - min(440px, 55vw))' : '100%',
+              height: '100%',
+              position: 'absolute',
+            }}
+          >
             <ColumnHoverProvider value={columnHover}>
               <ReactFlow
                 nodes={displayNodes}
@@ -1671,17 +1742,18 @@ export function GraphCanvas({
             staleNodeNames={[]}
           />
         )}
-        {/* AI description overlay — collapsible markdown panel at top-center */}
+        {/* AI report column — docked right, collapsible to a slim rail; section chips scroll the
+            document and highlight that section's nodes while the rest dim */}
         {activeAiMetadata?.description && (
           <Suspense fallback={null}>
             <AiDescriptionOverlay
               viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
               description={activeAiMetadata.description}
-              defaultExpanded={
-                (aiPreview && aiPreview.nodeIds.size === 0) ||
-                (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
-                ? true : false
-              }
+              expanded={aiPanelOpen}
+              onExpandedChange={setAiPanelOpen}
+              sections={aiSections}
+              activeSection={activeSection}
+              onFocusSection={setActiveSection}
               onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
             />
           </Suspense>

@@ -238,16 +238,19 @@ function safeDiagnosticToken(value: string, fallback: string): string {
  * @remarks
  * `#focus-node:` links only resolve inside the graph webview's own React tree (they zoom/focus a
  * node on the canvas); a chat surface — the native Copilot panel — has no such target, so the link
- * markup would render as dead or broken-looking links.
+ * markup would render as dead or broken-looking links. The engine's `### Objects` transport line
+ * (a footnote in the webview renderer) is demoted to a small italic line so chat never renders a
+ * heading-scale object list.
  *
  * @param description - The full assembled markdown from `AiSession.lastPresentResultDescription`.
- * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label`.
+ * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label` and
+ *   the Objects footnote rendered as `*Objects: …*`.
  */
 export function sanitizeDescriptionForChat(description: string): string {
   return description
     .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => {
       const cleaned = tail.replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
-      return `### Objects ${cleaned}`;
+      return `*Objects: ${cleaned}*`;
     })
     .replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
 }

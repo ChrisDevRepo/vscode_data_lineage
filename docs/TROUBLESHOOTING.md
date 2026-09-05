@@ -24,6 +24,8 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **Theme colours wrong after switching themes.** Reload the window.
 
+**Putting the graph or the AI report beside other work.** The graph webview is a normal VS Code editor tab: drag it to any editor group (left, right, below), split it, or right-click → **Move Editor into New Window** to get a standalone window — the AI report column travels with it. The chat view (including `@lineage`) docks the same way via its drag handle or the **View: Move Chat** command. Within the graph, the AI report itself is the docked right column: collapse it to the slim right-edge rail, and use the numbered section chips to jump to a section — the chip also highlights that section's nodes on the graph and dims the rest (click again, or click any node, to clear).
+
 ## `@lineage` chat participant
 
 **No response.** Load a graph first, then make sure a VS Code Language Model Chat provider is installed, configured, and available to Chat. [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) is one supported provider.
