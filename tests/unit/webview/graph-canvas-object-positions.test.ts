@@ -64,6 +64,21 @@ describe('GraphCanvas — bookmarks and exports read object-space positions', ()
     );
   });
 
+  it('drops the pinned/hovered column thread along with hand-placed positions when the relation set changes', () => {
+    // A bookmark→bookmark switch keeps column mode up but swaps the relation set in one commit, so
+    // the degradation effect never fires; a surviving thread lights rows of the new set (or dims
+    // every row) until the next click. The thread state belongs to the relation set like the
+    // hand-placed positions do.
+    const anchor = source.indexOf('const columnRelations = activeAiMetadata?.columnAspect;');
+    expect(anchor, 'the relation set is declared once').toBeGreaterThan(-1);
+    const end = source.indexOf('}, [columnRelations]);', anchor);
+    expect(end, 'the relation-set effect closes over columnRelations').toBeGreaterThan(anchor);
+    const effect = source.slice(anchor, end);
+    for (const reset of ['setColumnPositions({});', 'setHoveredColumn(null);', 'setPinnedColumn(null);']) {
+      expect(effect, `${reset} runs in the relation-set effect`).toContain(reset);
+    }
+  });
+
   for (const name of POSITION_CONSUMERS) {
     it(`${name} reads objectNodes() and not getNodes()`, () => {
       const body = callbackSource(name);
