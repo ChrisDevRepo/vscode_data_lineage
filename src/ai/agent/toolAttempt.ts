@@ -132,14 +132,22 @@ interface OmittedStructuredValue {
   readonly bytes: number;
 }
 
+/**
+ * A value's JSON form, or `undefined` when it has none (a cyclic or BigInt value, or `undefined`
+ * itself). The single place a serialization failure is absorbed: callers turn `undefined` into
+ * the size-only stub that the replayed detail and the trace then carry.
+ */
+function serializedJson(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Clones a safe JSON value into retry state or replaces it atomically with a size-only stub. */
 function boundStructuredValue(value: unknown, maxBytes: number): unknown | OmittedStructuredValue {
-  let serialized: string | undefined;
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    return { omitted: true, bytes: 0 };
-  }
+  const serialized = serializedJson(value);
   if (serialized === undefined) return { omitted: true, bytes: 0 };
   const bytes = Buffer.byteLength(serialized);
   if (bytes > maxBytes || sensitiveTraceReason(value)) return { omitted: true, bytes };
@@ -980,12 +988,10 @@ const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set(['sections', 'n
  * without a `text` body is bounded exactly as a `submit_findings` entry is.
  */
 function boundListElementFragment(element: unknown): unknown {
-  let overheadBytes = MAX_CORRECTION_FRAGMENT_BYTES;
-  try {
-    overheadBytes = Buffer.byteLength(JSON.stringify(truncateHeldDraftSection(element, 0)) ?? '');
-  } catch {
-    // An unserializable element collapses to the stub below, exactly as it would unbounded.
-  }
+  // An unmeasurable element leaves no text budget, so it collapses to the same size-only stub
+  // `boundStructuredValue` records for it — one owner for the unserializable case.
+  const overhead = serializedJson(truncateHeldDraftSection(element, 0));
+  const overheadBytes = overhead === undefined ? MAX_CORRECTION_FRAGMENT_BYTES : Buffer.byteLength(overhead);
   const textBudget = Math.max(0, MAX_CORRECTION_FRAGMENT_BYTES - overheadBytes);
   return boundStructuredValue(truncateHeldDraftSection(element, textBudget), MAX_CORRECTION_FRAGMENT_BYTES);
 }

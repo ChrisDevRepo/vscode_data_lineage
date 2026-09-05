@@ -14,6 +14,7 @@
 import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
 import { bidirectional } from 'graphology-shortest-path';
+import { bfsFromNode } from 'graphology-traversal';
 import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
 
 /**
@@ -242,7 +243,7 @@ function walkComponent(graph: Graph, members: readonly string[], entry: string, 
  * Walks one component from `entry`: how far every member sits from it, and the walk to the farthest.
  *
  * @remarks
- * One forward BFS from `entry` measures every member's shortest-path length, then one bidirectional
+ * One outbound BFS from `entry` measures every member's shortest-path length, then one bidirectional
  * search reconstructs the winning walk — linear in the component instead of one search per member.
  * The BFS stays among the members without losing a distance: a shortest path from `entry` to a
  * member cannot leave the component (see {@link walkComponent}). Tail selection is the first member,
@@ -257,16 +258,13 @@ function walkComponent(graph: Graph, members: readonly string[], entry: string, 
 function walkFromEntry(graph: Graph, members: readonly string[], entry: string): { dist: Map<string, number>; tail: string[] } {
   if (members.length === 1) return { dist: new Map([[entry, 0]]), tail: [entry] };
   const memberIds = new Set(members);
-  const dist = new Map<string, number>([[entry, 0]]);
-  const queue = [entry];
-  for (let i = 0; i < queue.length; i++) {
-    const node = queue[i]!;
-    graph.forEachOutNeighbor(node, (neighbor) => {
-      if (!memberIds.has(neighbor) || dist.has(neighbor)) return;
-      dist.set(neighbor, dist.get(node)! + 1);
-      queue.push(neighbor);
-    });
-  }
+  const dist = new Map<string, number>();
+  // Returning true prunes the walk at a non-member: a shortest path between members never leaves
+  // the component, so nothing outside it is expanded and no distance is lost.
+  bfsFromNode(graph, entry, (node, _attributes, depth) => {
+    if (!memberIds.has(node)) return true;
+    dist.set(node, depth);
+  }, { mode: 'outbound' });
   let exit = entry;
   let best = 0;
   for (const member of members) {
