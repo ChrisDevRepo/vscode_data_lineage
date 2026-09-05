@@ -53,7 +53,9 @@ export const MAX_TOOL_SEMANTIC_FAILURES = 3;
  * Rejection codes exempt from the model's semantic budget: provider/transport artifacts
  * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration}) plus
  * {@link REJECTION_CODES.duplicateRead}, a deliberate policy exemption for a model resending a
- * call it already has the answer to — not a transport artifact.
+ * call it already has the answer to — not a transport artifact. The exemption is bounded by the
+ * shared unproductive-resend absorption: past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive
+ * identical resends the duplicate charges a strike.
  */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
@@ -1475,15 +1477,30 @@ export async function executeToolGenerationAttempt(
     if (reused) {
       input.onToolResult?.(call.toolName, call.input, false, reused.result);
       if (reusableKey && priorObservationKeys.has(reusableKey)) {
-        recordToolOutcome(call, {
+        const rejection = recordToolOutcome(call, {
           status: 'rejected',
           code: REJECTION_CODES.duplicateRead,
           message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
           correction: { hint: DUPLICATE_READ_HINT },
           detail: { acceptedCallId: reused.callId },
-        }, calls, observations, rejections, input.traceSyntheticRejection);
+        }, calls, observations, rejections, input.traceSyntheticRejection)!;
+        // Free while the model may still act on the answer it already holds; past
+        // MAX_FREE_UNPRODUCTIVE_RESENDS consecutive identical resends it charges like every other
+        // non-converging resend, so the phase closes instead of spinning to the provider-call cap.
+        const unproductiveStreak = isUnproductiveResend(input.priorRejection, call.toolName, call.input, reusableKey)
+          ? (input.priorRejection?.unproductiveStreak ?? 0) + 1
+          : 0;
+        if (unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS) {
+          chargeableFailures++;
+          if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
+        }
+        rejections[rejections.length - 1] = {
+          ...rejection,
+          inputHash: reusableKey,
+          ...(unproductiveStreak > 0 ? { unproductiveStreak } : {}),
+        };
         logSyntheticRejection(input, 'duplicate_read', call, REJECTION_CODES.duplicateRead,
-          `repeats accepted callId ${reused.callId}`);
+          `repeats accepted callId ${reused.callId} unproductiveStreak=${unproductiveStreak}`);
         continue;
       }
       recordToolOutcome(call, {

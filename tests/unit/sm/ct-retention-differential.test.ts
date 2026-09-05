@@ -388,28 +388,34 @@ function driveCt(engine: NavigationEngine, testCase: RetentionCase): void {
   throw new Error(`${testCase.id}: CT walk did not terminate within 25 hops`);
 }
 
-/** Drives a BB walk, routing every required neighbour the hop offers. */
-function driveBb(engine: NavigationEngine): void {
+/**
+ * Drives a BB walk, routing every neighbour the engine requires an account for.
+ *
+ * @remarks
+ * Reads the same required set {@link driveCt} reads, so the two arms differ only in the column
+ * aspect. The hop context carries no required list of its own; a driver that inferred one from
+ * `edge_direction === 'upstream'` matched the required set only on an upstream walk and left a
+ * downstream case's write targets unrouted, which the sink trim then dropped — a driver defect
+ * that read as a mode divergence.
+ */
+function driveBb(engine: NavigationEngine, testCase: RetentionCase): void {
   for (let hop = 0; hop < 25; hop++) {
-    const ctx = engine.getHopContext() as {
-      done?: boolean;
-      focus_node?: { id: string };
-      required_neighbors?: string[];
-      neighbors?: Array<{ id: string; edge_direction?: string }>;
-    };
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
     if (ctx.done || !ctx.focus_node) return;
     const focusId = ctx.focus_node.id;
-    const targets = ctx.required_neighbors
-      ?? (ctx.neighbors ?? []).filter(n => n.edge_direction === 'upstream').map(n => n.id);
-    engine.submitFindings({
+    const outcome = engine.submitFindings({
       focus_node_id: focusId,
       sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
       summary: `${focusId}`,
       verdict: 'analyze',
-      route_requests: targets.map(id => ({ nodeId: id, question: 'what does this contribute upstream?' })),
+      route_requests: engine.requiredNeighborIds(focusId).map(id => ({
+        nodeId: id,
+        question: `What does ${id} decide about the rows ${focusId} admits?`,
+      })),
     });
+    expect('error' in outcome, `${testCase.id}: the BB hop at ${focusId} is accepted, not rejected`).toBe(false);
   }
-  throw new Error('BB walk did not terminate within 25 hops');
+  throw new Error(`${testCase.id}: BB walk did not terminate within 25 hops`);
 }
 
 describe('CT retention — every required dependency survives into the result', () => {
@@ -474,7 +480,7 @@ describe('BB control — the same topology loses nothing today', () => {
       });
       expect('ok' in init, `${testCase.id}: BB init succeeds`).toBe(true);
 
-      driveBb(engine);
+      driveBb(engine, testCase);
       const rendered = new Set(engine.getResult().fullNodes.map(n => n.id));
       const lost = testCase.reachRequired.filter(required => !rendered.has(required));
       expect(lost, `${testCase.id}: BB keeps every required dependency`).toEqual([]);
@@ -1198,7 +1204,7 @@ describe('CT and BB render the same graph for the same question', () => {
         direction: 'upstream',
         depthIntent: { kind: 'explicit', levels: 6 },
       }), `${testCase.id}: BB init succeeds`).toBe(true);
-      driveBb(bb);
+      driveBb(bb, testCase);
       const bbSet = new Set(bb.getResult().fullNodes.map(node => node.id));
 
       // Reported as two sets so a failure names the whole divergence, and says which way it went:

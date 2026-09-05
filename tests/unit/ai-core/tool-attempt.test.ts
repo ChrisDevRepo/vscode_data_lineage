@@ -1225,6 +1225,36 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(replayed.map((message) => String(message.content)).join(' ')).toContain('[ai].[vwpricelist]');
   });
 
+  it('bounds the duplicate_read exemption: identical resends past the free allowance charge a strike until the phase closes', async () => {
+    const { registry, invocations } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const resend = (index: number) => ({ toolCalls: [validCall(`call-${index}`, 'lineage_get_screen_state', { filter: 'stale' })] });
+    const port = new ScriptedModelPort(Array.from({ length: 8 }, (_, index) => resend(index + 1)));
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const failuresPerAttempt: number[] = [];
+    while (state.stopReason === null && failuresPerAttempt.length < 8) {
+      const result = await executeToolAttempt(port, plan, { priorState: state });
+      failuresPerAttempt.push(result.semanticFailures);
+      state = recordToolAttempt(state, result);
+    }
+
+    // One dispatch; every later call is the same read. The first duplicate and the two absorbed
+    // resends after it are free; from the third consecutive identical resend each one charges.
+    expect(invocations).toHaveLength(1);
+    expect(failuresPerAttempt).toEqual([0, 0, 0, 0, 1, 1, 1]);
+    expect(state.rejections.every((rejection) => rejection.code === REJECTION_CODES.duplicateRead)).toBe(true);
+    expect(state.rejections.at(-1)?.unproductiveStreak).toBe(5);
+    expect(state.semanticFailures).toBe(3);
+    expect(state.stopReason).toBe('semantic_failures');
+  });
+
   it('logs a [Reject] line for every rejection it raises without a dispatch, so the log and the trace count the same rejections', async () => {
     const { registry } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
     const port = new ScriptedModelPort([
