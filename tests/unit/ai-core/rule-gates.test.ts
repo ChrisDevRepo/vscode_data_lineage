@@ -368,7 +368,7 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
   const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
 
   /** Placement shape the Formulas bullet already uses: mandatory carry-through, one occurrence, best section. */
-  const placementRule = /every .*present in the captured bodies.*appears exactly once.*in its most relevant section/i;
+  const placementRule = /every .*present in the captured.*bodies.*appears exactly once.*in its most relevant section/i;
 
   it('reads the shipped general template and its Formulas placement rule as the positive control', () => {
     expect(general).toContain('- **Risks / data-quality flags**');
@@ -378,7 +378,9 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
   it('states the risk bullet as a placement rule, never as a permission gate', () => {
     const risks = renderRuleBullet(general, 'Risks / data-quality flags');
 
+    expect(general).toMatch(/stages: \[discovery, synthesis\]/);
     expect(risks).toMatch(placementRule);
+    expect(risks).toMatch(/captured or loaded bodies/);
     expect(risks).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
   });
 
@@ -399,7 +401,8 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
     const scope = renderRuleBullet(general, 'Scope');
 
     expect(scope).toMatch(/audit, logging, retention, error-handling/);
-    expect(scope).toMatch(/captured ⚠️ on such a branch is that one line, never a deletion/i);
+    expect(scope).toMatch(/⚠️ on such a branch is that one line, never a deletion/i);
+    expect(scope).not.toMatch(/a captured ⚠️ on such a branch/);
   });
 });
 
