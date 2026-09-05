@@ -13,6 +13,7 @@ import {
   type Node as FlowNode,
   type Edge as FlowEdge,
   type NodeTypes,
+  type EdgeTypes,
   type NodeMouseHandler,
   type OnNodesChange,
   type OnEdgesChange,
@@ -26,6 +27,7 @@ import { CustomNode } from './CustomNode';
 import { Spinner } from './ui/Spinner';
 import { SchemaNode } from './SchemaNode';
 import type { ColumnTraceNodeData, CustomNodeData, SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot, TraceNeighborOption, TraceNodeControls, TraceSideControls } from '../engine/types';
+import { ColumnTraceEdge, type ColumnTraceEdgeData } from './ColumnTraceEdge';
 import { Legend } from './Legend';
 import { deriveLegendSchemas, deriveLegendColorMap } from './legendDerivation';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -49,7 +51,6 @@ import {
   buildColumnTraceView,
   columnRowKey,
   resolveRowLineStates,
-  COLUMN_EDGE_DIM_OPACITY,
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
@@ -69,6 +70,9 @@ import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
  */
 const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode, columnTraceNode: ColumnTraceNode } satisfies NodeTypes;
 
+/** Mapping of custom edge types for React Flow; module-level for the same reason as {@link nodeTypes}. */
+const edgeTypes = { columnTraceEdge: ColumnTraceEdge } satisfies EdgeTypes;
+
 const AiDescriptionOverlay = lazy(async () => {
   const module = await import('./AiDescriptionOverlay');
   return { default: module.AiDescriptionOverlay };
@@ -86,20 +90,8 @@ const NOTES_ZOOM_OUT = 0.45;
 /** Zoom above which AI notes are shown once they are hidden. */
 const NOTES_ZOOM_IN = 0.55;
 
-/** Font size of the transformation glyph on a column-view edge. */
-const COLUMN_EDGE_LABEL_FONT_SIZE = 15;
-
-/** Font weight of the transformation glyph on a column-view edge. */
-const COLUMN_EDGE_LABEL_FONT_WEIGHT = 700;
-
 /** Arrow-head width and height, in px, of a column-view edge. */
 const COLUMN_EDGE_MARKER_SIZE = 14;
-
-/** Stroke width of a column-view edge lit by hover or selection. */
-const COLUMN_EDGE_LIT_STROKE_WIDTH = 1.6;
-
-/** Stroke width of a column-view edge outside the lit set. */
-const COLUMN_EDGE_DIM_STROKE_WIDTH = 1;
 
 
 /**
@@ -1258,20 +1250,18 @@ export function GraphCanvas({
         const lit = hoveredColumnPath ? litByHover(edge) : litBySelection(edge);
         return {
           id: edge.id,
+          type: 'columnTraceEdge',
           source: edge.source,
           target: edge.target,
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
-          ...(edge.state === 'transformation' ? {
-            label: '⚙',
-            labelShowBg: false,
-            labelStyle: { fill: 'var(--ln-ai-bu)', fontSize: COLUMN_EDGE_LABEL_FONT_SIZE, fontWeight: COLUMN_EDGE_LABEL_FONT_WEIGHT },
-          } : {}),
           markerEnd: { type: MarkerType.ArrowClosed, width: COLUMN_EDGE_MARKER_SIZE, height: COLUMN_EDGE_MARKER_SIZE },
-          style: {
-            strokeWidth: lit ? COLUMN_EDGE_LIT_STROKE_WIDTH : COLUMN_EDGE_DIM_STROKE_WIDTH,
-            opacity: lit ? 1 : COLUMN_EDGE_DIM_OPACITY,
-          },
+          data: {
+            state: edge.state,
+            lit,
+            sourceColumn: edge.sourceColumn,
+            targetColumn: edge.targetColumn,
+          } satisfies ColumnTraceEdgeData,
         };
       });
     }
@@ -1539,6 +1529,7 @@ export function GraphCanvas({
                 onNodesChange={columnViewActive ? onColumnNodesChange : onNodesChange}
                 onEdgesChange={onEdgesChange}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 onNodeClick={handleNodeClick}
                 onNodeDoubleClick={handleNodeDoubleClick}
                 onNodeContextMenu={(event, node) => {
@@ -1642,6 +1633,7 @@ export function GraphCanvas({
           isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
           expandedSchemas={expandedSchemas}
           isSidebarOpen={isDetailSearchOpen || !!analysisMode}
+          showColumnFlowKey={columnViewActive}
         />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}

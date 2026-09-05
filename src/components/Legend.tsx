@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { createSchemaColorMap, getSchemaColorFromMap, type SchemaColorMap } from '../utils/schemaColors';
 import { schemaKey } from '../utils/sql';
+import { ColumnTransformGlyph, COLUMN_EDGE_CHIP_SIZE } from './ColumnTraceEdge';
 
 interface LegendProps {
   /** A list of database schema names to display in the legend. */
@@ -13,6 +14,8 @@ interface LegendProps {
   expandedSchemas?: ReadonlySet<string>;
   /** Optional flag indicating if the main sidebar is open, used for dynamic positioning. */
   isSidebarOpen?: boolean;
+  /** True while the column-trace detail view is rendered, which adds the edge-marker key. */
+  showColumnFlowKey?: boolean;
 }
 
 /** The maximum number of schemas to display before showing an "expand" button. */
@@ -27,6 +30,7 @@ export const Legend = memo(function Legend({
   isExpandedSchemaViewActive = false,
   expandedSchemas,
   isSidebarOpen,
+  showColumnFlowKey = false,
 }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -58,10 +62,10 @@ export const Legend = memo(function Legend({
       <button
         onClick={() => setCollapsed(!collapsed)}
         aria-expanded={!collapsed}
-        aria-label="Toggle schema legend"
+        aria-label="Toggle legend"
         className="w-full flex items-center justify-between px-3 py-2 transition-colors text-left ln-legend-header"
       >
-        <span className="text-[10px] font-normal uppercase tracking-wider">SCHEMAS</span>
+        <span className="text-[10px] font-normal uppercase tracking-wider">LEGEND</span>
         <span className="text-[10px] opacity-70 ml-1.5">{collapsed ? '▼' : '▲'}</span>
       </button>
 
@@ -103,6 +107,31 @@ export const Legend = memo(function Legend({
               )}
             </div>
           </div>
+
+          {showColumnFlowKey && (
+            <div className="mt-2.5 pt-2.5" style={{ borderTop: '1px solid var(--ln-border-light)' }}>
+              <div className="text-[10px] font-normal uppercase tracking-wider mb-1.5" style={{ color: 'var(--ln-fg-muted)' }}>
+                COLUMN FLOW
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="ln-column-edge-chip shrink-0"
+                    style={{ width: COLUMN_EDGE_CHIP_SIZE, height: COLUMN_EDGE_CHIP_SIZE }}
+                  >
+                    <ColumnTransformGlyph />
+                  </div>
+                  <span className="text-[11px] ln-text">Value changes here — hover for detail</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="shrink-0 flex items-center justify-center" style={{ width: COLUMN_EDGE_CHIP_SIZE, height: COLUMN_EDGE_CHIP_SIZE }}>
+                    <div style={{ width: COLUMN_EDGE_CHIP_SIZE, height: 1, background: 'var(--ln-edge-color)' }} />
+                  </div>
+                  <span className="text-[11px] ln-text">Passes through unchanged</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

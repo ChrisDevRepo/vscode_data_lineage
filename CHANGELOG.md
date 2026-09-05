@@ -6,6 +6,7 @@
 - The assistant reads what is on screen, and recalls a saved AI view's findings and open questions in later chats.
 
 ### Changed
+- The transform marker on a column edge in the column view is now a chip you can hover for detail, with a matching legend key; an unmarked line means the value passed through unchanged.
 - The approval card's depth line states what the engine will do with the depth (a default start it can extend) instead of what the assistant estimates, so the card carries only facts.
 - A depth stated in a question is a hard limit per direction; objects past it become follow-up leads.
 - Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.

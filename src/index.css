@@ -308,6 +308,25 @@ body.vscode-reduce-motion *::after {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+/* Column-edge marker — chip centred on a column-view edge that carries a transformation */
+.ln-column-edge-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--ln-bg-elevated);
+  color: var(--ln-ai-or);
+  border: 1px solid var(--ln-border-light);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  cursor: help;
+}
+
+.ln-column-edge-chip:hover,
+.ln-column-edge-chip:focus-visible {
+  border-color: var(--ln-ai-or);
+  outline: none;
+}
+
 /* AI note — title line visible below node, full text on hover */
 .ln-ai-note-label {
   font-size: 9px;
