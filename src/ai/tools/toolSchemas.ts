@@ -436,7 +436,7 @@ export const ROUTE_REQUESTS_DESCRIPTION =
   'Current-hop neighbor nodes worth exploring next, each with a self-contained verification question.';
 
 /**
- * Single source for the `prune_neighbors` field describe text (decision D-020): a prune is valid
+ * Single source for the `prune_neighbors` field describe text: a prune is valid
  * for a neighbor off the answer path — outside the approved exploration scope, or inside it with
  * nothing the answer needs. Shared by the strict per-mode schemas and the permissive registered
  * union so the registered surface cannot narrow this decision space out of sync with

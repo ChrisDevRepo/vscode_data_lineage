@@ -96,8 +96,8 @@ replace instruction text but cannot change those gates.
 The shipped template file groups the public customization surface into:
 
 - discovery answer style (`discovery_chat`);
-- active capture instructions for business, technical, structural/non-bodied,
-  and column-trace evidence;
+- active capture instructions for business, technical, the shared structural
+  callouts, structural/non-bodied, and column-trace evidence;
 - synthesis instructions for summary, title, introduction, closing,
   highlights, notes, and technical loading patterns;
 - a shared `general` style layer.

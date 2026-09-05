@@ -34,13 +34,13 @@ const ANALYTICAL_ROUTE_QUESTION =
  * One resolution rule for `<required_neighbors>`, composed by both hop decision contracts so the
  * rendered checklist can never drift from the guard the moment either wording changed. CT is BB
  * plus column tracking — a neighbor that carries none of the traced columns still restricts the row
- * set, and reading it is part of the trace, so CT resolves the same list (D-020).
+ * set, and reading it is part of the trace, so CT resolves the same list.
  */
 const REQUIRED_NEIGHBOR_RESOLUTION =
   '- Resolve every ID in `<required_neighbors>` with one explicit decision this hop: list it in `route_requests` to walk it, or in `prune_neighbors` when current evidence proves it is off the answer path. Omitting a required ID is never an option.';
 
 /**
- * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (D-020: same
+ * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (same
  * instruction, same pruning, same routing in BB and CT — each contract adds only its own framing
  * line, its verdict wording, and its mode additions).
  */
@@ -85,7 +85,7 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 }
 
 
-const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).'; // P1-22: shared by BB + CT verdict blocks so CT prunes the same sinks BB does
+const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
 const BLOCK = {
   /** Node classification protocol. */
   verdictCategories: [
@@ -605,7 +605,7 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
  * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
  * @returns A markdown checklist, or an empty string when no hop captured a formula.
  */
-export function buildCapturedFormulaFacts(result: SmResult): string {
+function buildCapturedFormulaFacts(result: SmResult): string {
   const seen = new Set<string>();
   const lines: string[] = [];
   for (const slot of result.detail_slots) {

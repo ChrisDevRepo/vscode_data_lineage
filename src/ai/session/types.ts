@@ -81,7 +81,7 @@ export interface ResultGraph {
  * compares the structural fingerprint against the last release tag and fails the gate when the
  * structure changes without a bump.
  */
-export const AI_TEMPLATE_SCHEMA_VERSION = 2;
+export const AI_TEMPLATE_SCHEMA_VERSION = 3;
 
 /**
  * Collection of Markdown-formatted instructions for AI report generation.
@@ -127,6 +127,12 @@ export interface AiOutputTemplates {
    * synthesis already formatted and is lifted verbatim.
    */
   technical_capture: string;
+  /**
+   * The ⚠️ structural-callout contract — fired at ACTIVE phase on every bodied focus,
+   * once per hop beside whichever capture recipes the classification fires. One home for the
+   * exposure classes and the one-line form both angles cite.
+   */
+  structural_callouts: string;
   /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/Downstream/Grain). */
   structural_summary: string;
   /**
@@ -168,6 +174,7 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   notes: '',
   business_capture: '',
   technical_capture: '',
+  structural_callouts: '',
   structural_summary: '',
   general: '',
   loading_pattern: '',

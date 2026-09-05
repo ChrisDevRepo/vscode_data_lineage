@@ -14,8 +14,8 @@
 #
 #   active      per-hop analysis. Each fired *_capture writes ONE section:
 #               business → 1, technical → 1, both → 2. Blocks are independent.
-#               → business_capture, technical_capture, structural_summary,
-#                 column_trace_capture (column-trace mode only)
+#               → business_capture, technical_capture, structural_callouts,
+#                 structural_summary, column_trace_capture (column-trace mode only)
 #
 #   synthesis   final document. The AI writes these parts; the engine assembles,
 #               numbers, and decorates them — do not template what the engine builds.
@@ -30,7 +30,7 @@
 # Per-key reference: docs/AI_PROMPTS.md
 # ──────────────────────────────────────────────────────────────────────────────
 
-schemaVersion: 2
+schemaVersion: 3
 
 # ── Discovery (chat-only) — editable via overlay ─────────────────────────────
 
@@ -211,7 +211,7 @@ business_capture:
     3. **Decision rules (how)** — what condition triggers the change and what outcome it drives.
     4. **Lifecycle impact** — business status/phase transitions when present.
     5. **Audit-trail meaning** — what business event each audit entry represents.
-    6. **Structural callouts** — ⚠️ findings per <structural_callouts> below.
+    6. **Structural callouts** — decision-impacting ⚠️ findings the DDL proves.
     7. **Technical evidence** — formulas, predicates, thresholds, and key column references
        used to explain business logic.
     </emphasis>
@@ -243,24 +243,6 @@ business_capture:
        SELECT is structured.
     8. Wrap column and object names in `\`backticks\`` only when used.
     </body_recipe>
-
-    <structural_callouts>
-    You read DDL, never rows: assert only STRUCTURAL EXPOSURE the code proves,
-    never a data-quality FACT. The classes: silent value overwrite
-    (COALESCE/ISNULL masking, unguarded UPDATE); unintended row multiplication
-    (join grain, a window/partition or dedup key omitting a value column);
-    rows silently dropped (INNER where LEFT was meant, a range or validity
-    predicate that raises nothing, a filter on a nullable column);
-    non-determinism (GETDATE() in a view, TOP without ORDER BY); truncation
-    (implicit narrowing cast); hardcoded no-op logic; stale or incomplete
-    reference-data joins; swallowed errors (TRY/CATCH continuing, a fallback
-    leaving a value unset or NULL); unimplemented branches; SQL comments
-    carrying important information.
-
-    One line each: class · evidence anchor · mechanism · consequence, naming
-    the object and the expression. ⚠️ prefixes only a decision-impacting
-    finding backed by the DDL already loaded. When none exist, say nothing.
-    </structural_callouts>
   example: |
     `spCalcA` computes `NetAmountA` at the final INSERT into
     `FactTableA`, only for rows with `Status = 'CONFIRMED'`.
@@ -347,24 +329,6 @@ technical_capture:
     headings; open with a bold label instead), SQL in ```sql fences
     (snippet only), join steps as ordered lists, ⚠️ inline at risks.
 
-    <structural_callouts>
-    You read DDL, never rows: assert only STRUCTURAL EXPOSURE the code proves,
-    never a data-quality FACT. The classes: silent value overwrite
-    (COALESCE/ISNULL masking, unguarded UPDATE); unintended row multiplication
-    (join grain, a window/partition or dedup key omitting a value column);
-    rows silently dropped (INNER where LEFT was meant, a range or validity
-    predicate that raises nothing, a filter on a nullable column);
-    non-determinism (GETDATE() in a view, TOP without ORDER BY); truncation
-    (implicit narrowing cast); hardcoded no-op logic; stale or incomplete
-    reference-data joins; swallowed errors (TRY/CATCH continuing, a fallback
-    leaving a value unset or NULL); unimplemented branches; SQL comments
-    carrying important information.
-
-    One line each: class · evidence anchor · mechanism · consequence, naming
-    the object and the expression. ⚠️ prefixes only a decision-impacting
-    finding backed by the DDL already loaded. When none exist, say nothing.
-    </structural_callouts>
-
     Each capture is independent — synthesis detects sibling variants
     across nodes and emits comparison tables at assembly time.
   example: >
@@ -387,6 +351,33 @@ technical_capture:
     downstream; no ISNULL guard before the INSERT.
     Candidate: an index covering `(ProductId, OrderDate)` may help the
     downstream aggregation — validate against existing indexes first.
+
+# ── Structural callouts (active phase, bodied focus) ─────────────────────────
+# One contract for the ⚠️ findings every capture angle may raise. Fires once per
+# bodied hop beside whichever capture recipes the classification fires, so the
+# rule is sent once under `both` instead of once per angle.
+
+structural_callouts:
+  stages: [active]
+  instruction: |
+    Structural callouts, in any section you write this hop. You read DDL,
+    never rows: assert only STRUCTURAL EXPOSURE the code proves, never a
+    data-quality FACT. The classes: silent value overwrite (COALESCE/ISNULL
+    masking, unguarded UPDATE); unintended row multiplication (join grain, a
+    window/partition or dedup key omitting a value column); rows silently
+    dropped (INNER where LEFT was meant, a range or validity predicate that
+    raises nothing, a filter on a nullable column); non-determinism (GETDATE()
+    in a view, TOP without ORDER BY); truncation (implicit narrowing cast);
+    hardcoded no-op logic; stale or incomplete reference-data joins; swallowed
+    errors (TRY/CATCH continuing, a fallback leaving a value unset or NULL);
+    unimplemented branches; SQL comments carrying important information.
+
+    One line each: class · evidence anchor · mechanism · consequence, naming
+    the object and the expression. ⚠️ prefixes only a decision-impacting
+    finding backed by the DDL already loaded. When none exist, say nothing.
+  example: >
+    ⚠️ Rows silently dropped — `WHERE o.Region = r.Region` on nullable
+    `Region` in `vwOrders`: an order with no region never reaches `FactSales`.
 
 # ── Reduced capture for non-bodied starting points ───────────────────────────
 

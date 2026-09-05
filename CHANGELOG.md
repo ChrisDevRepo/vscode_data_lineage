@@ -6,6 +6,7 @@
 - The assistant reads what is on screen, and recalls a saved AI view's findings and open questions in later chats.
 
 ### Changed
+- The ⚠️ structural-callout rule for AI captures now lives in one template key, `structural_callouts`, sent once per hop instead of once per capture angle. The template `schemaVersion` is 3: a custom overlay file needs re-scaffolding with "Data Lineage: Create AI Output Templates".
 - The transform marker on a column edge in the column view is now a chip you can hover for detail, with a matching legend key; an unmarked line means the value passed through unchanged.
 - The column-trace hop instruction now extends the object instruction instead of replacing it, so a node that shapes rows without carrying a traced column is classified the same way whether or not column tracing is active.
 - During a column trace the assistant decides per neighbour whether to follow the traced columns into it: an object that only narrows which rows the answer returns is now explored as a whole object, instead of being asked about columns it does not supply.

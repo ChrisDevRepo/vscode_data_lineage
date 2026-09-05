@@ -27,7 +27,7 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * overlaid), so an overlay that disagrees with this map is silently routed by
  * this map with no warning.
  *
- * Capture keys (`business_capture`, `technical_capture`) fire at active phase;
+ * Capture keys (`business_capture`, `technical_capture`, `structural_callouts`) fire at active phase;
  * render keys fire at synthesis. The slot body is the canonical surface, but not
  * the only one: the `general` render key states its own rule over what capture
  * produced — every captured ⚠️ callout carried through exactly once, its
@@ -54,6 +54,7 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   notes:                ['synthesis'],
   business_capture:     ['active'],
   technical_capture:    ['active'],
+  structural_callouts:  ['active'],
   structural_summary:   ['active'],
   general:              ['discover', 'synthesis'],
   loading_pattern:      ['synthesis'],
@@ -95,6 +96,7 @@ const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
 const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
   'technical_capture',
+  'structural_callouts',
   'structural_summary',
 ]);
 
@@ -188,7 +190,7 @@ export function resolveStagePrompt(
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }
-      if ((key === 'business_capture' || key === 'technical_capture') && render.focusKind === 'non_bodied') {
+      if ((key === 'business_capture' || key === 'technical_capture' || key === 'structural_callouts') && render.focusKind === 'non_bodied') {
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }
