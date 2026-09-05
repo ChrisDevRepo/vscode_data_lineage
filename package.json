@@ -771,7 +771,7 @@
     "test:core": "node tests/tools/run-vitest.mjs run tests/unit/parser tests/unit/engine tests/unit/webview",
     "test:runtime": "node tests/tools/run-vitest.mjs run tests/unit/ai-core tests/unit/sm",
     "test:parser": "node tests/tools/run-vitest.mjs run tests/unit/parser",
-    "test:bfs": "node tests/tools/run-vitest.mjs run tests/unit/engine/graph-analysis-aw.test.ts tests/unit/engine/graphAnalysis.test.ts tests/unit/engine/graphBuilder.test.ts",
+    "test:bfs": "node tests/tools/run-vitest.mjs run tests/unit/engine",
     "coverage:core": "node tests/tools/run-vitest.mjs run --coverage tests/unit/parser tests/unit/engine tests/unit/webview",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tests/unit/tsconfig.json --noEmit",
