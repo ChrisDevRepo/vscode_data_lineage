@@ -1149,12 +1149,16 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messagesBefore: state.messages.length,
     }));
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
-    // Post-commit progress echo: the model's own one-line digest for the node just finished, so the
-    // chat shows a running trail below the "Hop X/Y" counter rather than only that single line. Skipped
-    // for a bare prune with nothing captured (`committedFinding.summary` empty) — nothing to show.
+    // Post-commit thinking line: the model's own one-line digest for the node just finished, hanging
+    // under the "Hop X/Y — analysing <focus>" counter emitted above. It carries only what that counter
+    // does not — hop number and focus name are already stated there, so restating them reads as two
+    // competing status lines instead of one thought. Italics render through the progress channel's
+    // markdown string; VS Code already paints progress in the dimmed description foreground. `⛔ pruned`
+    // survives because the verdict is genuinely new information. Skipped for a bare prune with nothing
+    // captured (`committedFinding.summary` empty) — nothing to show.
     if (committedFinding.value && committedFinding.value.summary.trim()) {
-      const verdictMark = committedFinding.value.verdict === 'prune' ? '⛔ pruned' : '✓';
-      deps.sink.status('scoping', `${verdictMark} Hop ${hop}: ${focusLabel} — ${truncStatusLabel(committedFinding.value.summary, 200)}`);
+      const prunedMark = committedFinding.value.verdict === 'prune' ? '⛔ pruned — ' : '';
+      deps.sink.status('scoping', `  ↳ _${prunedMark}${truncStatusLabel(committedFinding.value.summary, 200)}_`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {

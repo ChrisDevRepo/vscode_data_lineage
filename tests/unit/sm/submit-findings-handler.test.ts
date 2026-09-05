@@ -247,14 +247,16 @@ describe("Submit Findings Handler", () => {
 });
 
   // The echo itself lives in the agent graph's active-hop node, which has no public test seam
-  // (it runs only inside a full provider turn). Its three rules are pinned at the source that
-  // owns them so a silent rewrite of the trail fails here.
-  it("the per-hop echo marks a prune, ticks every other verdict, and skips an empty summary", () => {
+  // (it runs only inside a full provider turn). Its rules are pinned at the source that owns them
+  // so a silent rewrite of the trail fails here. The line hangs under the "Hop X/Y — analysing
+  // <focus>" counter, so restating the hop number or the focus name is the defect, not the contract.
+  it("the per-hop thinking line marks only a prune, stays subordinate to the counter, and skips an empty summary", () => {
   const source = readFileSync(new URL('../../../src/ai/agent/graph.ts', import.meta.url), 'utf8');
-  const echo = source.slice(source.indexOf('const verdictMark'));
+  const echo = source.slice(source.indexOf('const prunedMark'));
   expect(source.includes("committedFinding.value && committedFinding.value.summary.trim()"), 'an empty summary produces no echo').toBe(true);
-  expect(echo.includes("=== 'prune' ? '⛔ pruned' : '✓'"), 'a prune is marked, every other verdict is ticked').toBe(true);
-  expect(echo.includes('${verdictMark} Hop ${hop}: ${focusLabel}'), 'the echo names the hop number and the node just finished').toBe(true);
+  expect(echo.includes("=== 'prune' ? '⛔ pruned — ' : ''"), 'a prune is marked; every other verdict adds no glyph the counter already implies').toBe(true);
+  expect(echo.includes('`  ↳ _${prunedMark}'), 'the line is indented under the counter and italicised').toBe(true);
+  expect(!echo.includes('Hop ${hop}') && !echo.includes('${focusLabel}'), 'the line never restates the hop number or the focus name the counter already carries').toBe(true);
 });
 
 });
