@@ -1954,9 +1954,19 @@ export class NavigationEngine implements IHopStateMachine {
           // against this node's own declared columns before concluding it carries none: a node
           // declaring a traced column is asked about it by name, and one declaring none of them
           // still dispatches empty and is analysed for what it does to the row set instead.
+          // A recorded `carry: []` is the engine's OWN determination, made at the contraction in
+          // `enqueueHop`, that the carrier this entry was reached through declares none of the traced
+          // columns. It is a determined answer, not an absent one (the three-facts note at the
+          // contraction says so), so the target-set fallback must not re-pad the seed spelling onto
+          // the node behind that carrier — five hops later the seed spelling is stale as well as
+          // unfounded. `inherit` and an absent carry keep the fallback: those are no opinion.
+          const carryDeterminedNone =
+            candidate.columnCarry?.kind === 'carry' && candidate.columnCarry.columns.length === 0;
           candidate.activeColumns = bound.length > 0
             ? bound
-            : this.resolveActiveColumnsForNode(candidate.nodeId, this.tracer.targetColumns) ?? [];
+            : carryDeterminedNone
+              ? []
+              : this.resolveActiveColumnsForNode(candidate.nodeId, this.tracer.targetColumns) ?? [];
         }
       }
 

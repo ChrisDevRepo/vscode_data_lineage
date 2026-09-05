@@ -1093,6 +1093,28 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     expect(!('error' in readerResult), `J23 RC2 stage 3 (GREEN control): reader_proc submitting only its legitimate OrderAmount contribution is accepted, not rejected — actual: ${'error' in readerResult ? `${readerResult.error}: ${readerResult.hint ?? ''}` : 'ok'}`).toBe(true);
   });
 
+  it("RC3: an entry the contraction bound to [] dispatches with no active columns — the seed spelling is not re-padded at dispatch onto a node with no column surface", () => {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    expect('ok' in init, 'J23 RC3: CT session initializes at origin_view').toBe(true);
+    const hop = engine.getHopContext() as { done?: boolean };
+    expect(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC3: first dispatched hop is origin_view').toBe(true);
+    // No upstream_columns names staging.OrderAmount here, so no OrderAmount route ever merges
+    // into writer_proc's seed-time entry — the entry the seed-time contraction bound to [] reaches
+    // dispatch exactly as bound, with nothing to test the fallback's re-padding against but itself.
+    const commit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'terminal' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Discount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
+    });
+    expect(!('error' in commit), `J23 RC3: origin_view commit accepted (${'error' in commit ? commit.error : ''})`).toBe(true);
+    j23DispatchUntil(engine, 'writer_proc');
+    expect([...(engine.columnAspect?.active_columns ?? [])].join(','), 'J23 RC3: writer_proc dispatches with no active columns — the contraction bound its entry to [], and the dispatch-time fallback must not re-pad the stale seed spelling Discount onto a node the router already excluded').toBe('');
+  });
+
   it("green pin: a carrier-adjacent node with no declared columns array forwards the candidate active-column set unchanged (existence exemption preserved, not itself a defect)", () => {
     const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
     engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
