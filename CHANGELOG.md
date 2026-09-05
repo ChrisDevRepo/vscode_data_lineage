@@ -38,7 +38,7 @@
 - Upgraded the graph rendering library and corrected large-graph rendering: dragging stays responsive, and a trace past the render limit reports it instead of drawing an oversized view.
 - Formulas in AI descriptions render as mathematics, inline and as blocks.
 - Depth follows data-flow direction, so a shared audit table no longer makes objects look closer.
-- Repeated identical tool calls no longer loop a turn without an answer.
+- Repeated identical tool calls no longer loop a turn without an answer, and a read the model keeps resending after it was already answered is charged like any other unproductive resend once the short grace is used, so the turn ends with a clear failure instead of running to the call limit.
 - A repair turn that keeps resending an identical rejected result is bounded by the attempt budget after a short grace, so it ends with a clear failure instead of looping until the call limit stops it.
 - Schema-invalid tool calls are rejected naming the sent value and the expected shape of every offending field, so one repair round can fix a mistyped field instead of guessing.
 - A per-side exploration depth that the local model server sends quoted as a JSON string is decoded and accepted instead of failing the turn after repeated rejections.
