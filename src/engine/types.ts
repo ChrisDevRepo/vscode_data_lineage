@@ -780,7 +780,7 @@ export type CustomNodeData = {
  * The business data associated with a single column-trace node in the React Flow canvas.
  */
 export type ColumnTraceNodeData = {
-  /** Positioned view node computed by {@link import('./columnTraceView').buildColumnTraceView}. */
+  /** Positioned view node computed by `buildColumnTraceView` (`src/engine/columnTraceView.ts`). */
   view: ColumnTraceViewNode;
   /** Whether the row list renders; false collapses the node to a single summary line. */
   rowsVisible?: boolean;

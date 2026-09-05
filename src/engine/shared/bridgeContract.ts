@@ -70,7 +70,7 @@ export const AiGateRefineSchema = z.object({
 export type AiGateRefine = z.infer<typeof AiGateRefineSchema>;
 
 /**
- * Zod schema mirroring the runtime {@link import('../types').ColumnDef} shape.
+ * Zod schema mirroring the runtime `ColumnDef` shape (`src/engine/types.ts`).
  *
  * @remarks
  * Field names and types must stay aligned with `engine/types.ts#ColumnDef`.

@@ -726,7 +726,7 @@ function truncateHeldDraftSection(section: unknown, targetBytes: number): unknow
  * The held draft gives the repair turn enough context to emit a scoped patch instead of
  * reconstructing the full envelope. It uses the same {@link MAX_ATTEMPT_CONTEXT_BYTES}
  * truncate-then-collapse policy as {@link renderObservationsContext}.
- * @param heldDraft - The exact `sections`/`highlight_groups` currently on hold, or `null`/`undefined`
+ * @param heldDraft - The exact `sections`/`notes`/`highlight_groups` currently on hold, or `null`/`undefined`
  * when no repairable draft is active for this call.
  * @returns Zero messages when nothing is held, otherwise one delimited user-role message.
  */

@@ -587,7 +587,7 @@ export const SearchDdlInputSchema = z.object({
  * Model-facing `lineage_present_result` input schema.
  *
  * @remarks
- * Mirrors the AI-authored {@link import('./presentResult').PresentResultInput} contract
+ * Mirrors the AI-authored `PresentResultInput` contract (`src/ai/tools/handlers/presentResult.ts`)
  * for the single registered tool. The runtime handler (`toolProvider.presentResult`)
  * still consumes the structural `PresentResultInput` TS type; this Zod object exists so
  * the model-facing JSON Schema has one generated source under the drift guard. `angle`

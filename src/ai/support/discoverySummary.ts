@@ -5,7 +5,7 @@
  *
  * @remarks
  * Called once per reviewable exploration proposal, at proposal-build time
- * ({@link import('../tools/handlers/startExploration')}), never at approval. The composed text is
+ * (`src/ai/tools/handlers/startExploration.ts`), never at approval. The composed text is
  * cached on the revision-bound proposal and shown verbatim at the bottom of the native approval
  * card; approval reuses that exact cached string via `NavigationEngine.setDiscoverySummary`
  * rather than recomposing it.
