@@ -175,27 +175,21 @@ business_capture:
 
     ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Use only
     rules, formulas, thresholds, and relationships present in DDL. If a
-    construct is absent from the DDL text, treat it as out of scope — a
-    commented-out or documented-but-inactive branch is present, not absent,
-    and is reported as inactive. Quoted SQL witnesses must be exact
-    substrings of that DDL — never paraphrased SQL.
+    construct is absent from DDL, treat it as out of scope. Quoted SQL
+    witnesses must be exact substrings of that DDL — never paraphrased SQL.
     When the DDL proves the mechanism but not the intent, prevalence, or
     runtime impact, state `not established from the available SQL` — never
     fill a gap with a plausible inference.
 
     <scope_relevance>
-    System/backend logging is not part of the business answer — prune it
-    (verdict: prune). That covers any sink that records who ran what and when
-    rather than business values: ETL load logs, error-capture tables,
-    run/audit-of-procedure logs, retention bookkeeping, and the procedures whose
-    only job is to write them. Decide by its columns — event type, object name,
-    procedure name, row counts, messages, timestamps means backend logging.
-    A business audit trail is the exception: it stores the traced column's own
-    values, as a before/after or as-of history of that column. Keep it as a
-    consumer, with a one-line caption, and do not prune it.
-    Either way, when the question is specifically about logging, errors,
-    auditing or retention, keep the sink and analyze it. Keep any node that
-    transforms or carries a value on the answer path.
+    A sink that records who ran what and when — event type, object or
+    procedure name, row counts, messages, timestamps — is backend logging:
+    prune it (verdict: prune), with the procedures whose only job is to write
+    it. A sink holding the traced column's own values, as before/after or
+    as-of history, is a business audit trail: keep it as a consumer with a
+    one-line caption. Keep any node that transforms or carries a value on the
+    answer path, and keep any sink when the question is itself about logging,
+    errors, auditing or retention.
     </scope_relevance>
 
     Submit one section: `{ angle: "business", text: "<body>" }`. The
@@ -215,9 +209,7 @@ business_capture:
     3. **Decision rules (how)** — what condition triggers the change and what outcome it drives.
     4. **Lifecycle impact** — business status/phase transitions when present.
     5. **Audit-trail meaning** — what business event each audit entry represents.
-    6. **Structural callouts** — add ⚠️ only for significant, decision-impacting
-       structural exposure read off this DDL, grounded in the loaded evidence.
-       The classes are listed in <structural_callouts> below.
+    6. **Structural callouts** — ⚠️ findings per <structural_callouts> below.
     7. **Technical evidence** — formulas, predicates, thresholds, and key column references
        used to explain business logic.
     </emphasis>
@@ -228,18 +220,17 @@ business_capture:
     2. Walk through business rules in plain language first. Name what
        changes for the business when each rule fires.
     3. When the DDL declares a mode, status, or strategy switch — a
-       parameter with an allowed-value list, a CASE ladder, or an IF
-       branch set — name every declared value and what each one does. A
-       value whose implementation is commented out or absent is reported
-       as declared but not active, never omitted.
+       parameter with an allowed-value list, a CASE ladder, an IF branch
+       set — name every declared value and what each one does. A value
+       whose implementation is commented out or absent is declared but
+       not active, never omitted.
     4. For EVERY computed or derived expression in the DDL (arithmetic,
        CASE result, COALESCE fallback, aggregation), write the formula as
        a `$$ … $$` block and explain the business meaning of its terms
        briefly. A `$$ … $$` block must preserve the DDL expression term
-       for term: left side the declared target (column or variable),
-       right side its declared expression, with no operator added,
-       dropped, or reordered — when a faithful rendering is not possible,
-       quote the SQL instead.
+       for term — declared target on the left, its declared expression on
+       the right, with no operator added, dropped, or reordered; when a
+       faithful rendering is not possible, quote the SQL instead.
     5. Capture both **upstream assumptions** and **downstream effects** when
        evidenced in current DDL context.
     6. Express status-enum lifecycles as numbered transitions
@@ -252,25 +243,21 @@ business_capture:
     </body_recipe>
 
     <structural_callouts>
-    DBA-level correctness findings belong to every answer angle and are never
-    a reason to select one. You read DDL, never rows, so never assert a
-    data-quality FACT, only STRUCTURAL EXPOSURE the code proves. The classes:
-    silent value overwrite (COALESCE/ISNULL masking, unguarded UPDATE);
-    unintended row multiplication (join grain, a window/partition or dedup key
-    omitting a value column); rows silently dropped (INNER where LEFT was
-    meant, a range or validity predicate that raises nothing, a filter on a
-    nullable column); non-determinism (GETDATE() in a view, TOP without ORDER
-    BY); truncation (implicit narrowing cast); hardcoded no-op logic; stale or
-    incomplete reference-data joins; swallowed errors (TRY/CATCH continuing, a
-    fallback leaving a value unset or NULL); unimplemented branches; SQL
-    comments carrying important information.
+    You read DDL, never rows: assert only STRUCTURAL EXPOSURE the code proves,
+    never a data-quality FACT. The classes: silent value overwrite
+    (COALESCE/ISNULL masking, unguarded UPDATE); unintended row multiplication
+    (join grain, a window/partition or dedup key omitting a value column);
+    rows silently dropped (INNER where LEFT was meant, a range or validity
+    predicate that raises nothing, a filter on a nullable column);
+    non-determinism (GETDATE() in a view, TOP without ORDER BY); truncation
+    (implicit narrowing cast); hardcoded no-op logic; stale or incomplete
+    reference-data joins; swallowed errors (TRY/CATCH continuing, a fallback
+    leaving a value unset or NULL); unimplemented branches; SQL comments
+    carrying important information.
 
     One line each: class · evidence anchor · mechanism · consequence, naming
     the object and the expression. ⚠️ prefixes only a decision-impacting
-    finding backed by the DDL already loaded. Browse only the objects already
-    in scope — the question and its sub-questions stay the focus and a callout
-    never widens the traversal. When none exist, say nothing: never "no issues
-    found" or other filler.
+    finding backed by the DDL already loaded. When none exist, say nothing.
     </structural_callouts>
   example: |
     `spCalcA` computes `NetAmountA` at the final INSERT into
@@ -325,24 +312,20 @@ technical_capture:
        CASE conditions, COALESCE fallbacks, computed-column formulas, the
        window-function partition clause. Snippet only, not the full
        INSERT/SELECT statement.
-    2. Loading pattern (procedures only) — decide from the statement that
-       clears the target table, quotable verbatim from `bb_ddl`: `reload`
-       only when a `TRUNCATE` or an unfiltered `DELETE` against the
-       target is present; `append` when the target is only ever inserted
-       into (temp-table `#…` writes and audit/log writes do not count);
-       `upsert` (MERGE or UPDATE + conditional INSERT); `historization`
-       (versioned history); `purge` (DELETE-only, no INSERT to the
-       target); `orchestration` (EXECs other SPs, no mutation). No
-       quotable clearing or inserting statement decides the shape — use
-       `not established from the available SQL`. Coarse only —
-       sub-variants (SCD1/SCD2/CDC) belong in prose if relevant. Omit
-       when the focus is a view, UDF, or table.
+    2. Loading pattern (procedures only) — decide from a statement against
+       the target quotable verbatim from `bb_ddl`: `reload` (TRUNCATE or
+       unfiltered DELETE + INSERT); `append` (target only ever inserted
+       into — temp-table `#…` and audit/log writes do not count); `upsert`
+       (MERGE or UPDATE + conditional INSERT); `historization` (versioned
+       history); `purge` (DELETE-only); `orchestration` (EXECs other SPs,
+       no mutation). With no such quotable statement, use `not established
+       from the available SQL`. Coarse only — sub-variants (SCD1/SCD2/CDC)
+       belong in prose. Omit when the focus is a view, UDF, or table.
     3. Computed columns — the formula as a `$$ … $$` block alongside its
        snippet.
     4. Relationship role labels — "reads lookup from `DimProduct`",
        "writes via MERGE to `FactTableA`", "triggered by `spLoadA`".
-    5. Join types when hinted (HASH / MERGE / LOOP); flag Cartesian risk
-       with ⚠️.
+    5. Join types when hinted (HASH / MERGE / LOOP).
     6. Antipatterns — excessive DISTINCT, OR in join predicates,
        correlated subqueries in SELECT, scalar UDFs in WHERE.
     7. Distribution / indexing hints — partition key, hash-distribution
@@ -363,25 +346,21 @@ technical_capture:
     (snippet only), join steps as ordered lists, ⚠️ inline at risks.
 
     <structural_callouts>
-    DBA-level correctness findings belong to every answer angle and are never
-    a reason to select one. You read DDL, never rows, so never assert a
-    data-quality FACT, only STRUCTURAL EXPOSURE the code proves. The classes:
-    silent value overwrite (COALESCE/ISNULL masking, unguarded UPDATE);
-    unintended row multiplication (join grain, a window/partition or dedup key
-    omitting a value column); rows silently dropped (INNER where LEFT was
-    meant, a range or validity predicate that raises nothing, a filter on a
-    nullable column); non-determinism (GETDATE() in a view, TOP without ORDER
-    BY); truncation (implicit narrowing cast); hardcoded no-op logic; stale or
-    incomplete reference-data joins; swallowed errors (TRY/CATCH continuing, a
-    fallback leaving a value unset or NULL); unimplemented branches; SQL
-    comments carrying important information.
+    You read DDL, never rows: assert only STRUCTURAL EXPOSURE the code proves,
+    never a data-quality FACT. The classes: silent value overwrite
+    (COALESCE/ISNULL masking, unguarded UPDATE); unintended row multiplication
+    (join grain, a window/partition or dedup key omitting a value column);
+    rows silently dropped (INNER where LEFT was meant, a range or validity
+    predicate that raises nothing, a filter on a nullable column);
+    non-determinism (GETDATE() in a view, TOP without ORDER BY); truncation
+    (implicit narrowing cast); hardcoded no-op logic; stale or incomplete
+    reference-data joins; swallowed errors (TRY/CATCH continuing, a fallback
+    leaving a value unset or NULL); unimplemented branches; SQL comments
+    carrying important information.
 
     One line each: class · evidence anchor · mechanism · consequence, naming
     the object and the expression. ⚠️ prefixes only a decision-impacting
-    finding backed by the DDL already loaded. Browse only the objects already
-    in scope — the question and its sub-questions stay the focus and a callout
-    never widens the traversal. When none exist, say nothing: never "no issues
-    found" or other filler.
+    finding backed by the DDL already loaded. When none exist, say nothing.
     </structural_callouts>
 
     Each capture is independent — synthesis detects sibling variants

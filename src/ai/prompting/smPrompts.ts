@@ -34,9 +34,7 @@ const ANALYTICAL_ROUTE_QUESTION =
  * One resolution rule for `<required_neighbors>`, composed by both hop decision contracts so the
  * rendered checklist can never drift from the guard the moment either wording changed. CT is BB
  * plus column tracking — a neighbor that carries none of the traced columns still restricts the row
- * set, and reading it is part of the trace, so CT resolves the same list. Mode-pure by construction:
- * D-020 — a required ID always gets one explicit decision this hop, a route or an evidence-backed
- * prune; omitting it is never an option, and both modes share the same wording.
+ * set, and reading it is part of the trace, so CT resolves the same list (D-020).
  */
 const REQUIRED_NEIGHBOR_RESOLUTION =
   '- Resolve every ID in `<required_neighbors>` with one explicit decision this hop: list it in `route_requests` to walk it, or in `prune_neighbors` when current evidence proves it is off the answer path. Omitting a required ID is never an option.';
@@ -44,8 +42,7 @@ const REQUIRED_NEIGHBOR_RESOLUTION =
 /**
  * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (D-020: same
  * instruction, same pruning, same routing in BB and CT — each contract adds only its own framing
- * line, its verdict wording, and its mode additions). Route, retain, or prune are the three
- * decisions; the engine enforces the same accounting in both modes.
+ * line, its verdict wording, and its mode additions).
  */
 const NEIGHBOR_DECISION_CORE = [
   'Use mission/task metadata as source of truth; treat history prose as context only.',
@@ -88,19 +85,20 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 }
 
 
+const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).'; // P1-22: shared by BB + CT verdict blocks so CT prunes the same sinks BB does
 const BLOCK = {
   /** Node classification protocol. */
   verdictCategories: [
     '## Verdict Protocol — every focus node is one of three states',
     '- analyze: The node applies business logic on the data path — a calculation, condition, status transition, or audit decision. Analyze it in depth and feature it in the answer. (Applies to logic-bearing bodied nodes; a non-bodied table focus follows the engine path — structural-summary, still kept.)',
     '- passthrough: The node is on the data path but applies no logic — a SELECT * or synonym, or a raw source / bridge / target table. Keep it in the lineage and link it by flow role (Source / Transform / Target); give it a one-line summary, not deep analysis. The trace continues *through* it — its neighbors carry the same question forward. A pure-data table is the canonical passthrough: there is no logic to analyze, yet it is usually the Source or Target the answer is about — always keep it.',
-    '- prune: The node is not part of this lineage answer — remove it. It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).',
+    `- prune: The node is not part of this lineage answer — remove it. ${PRUNE_VERDICT_TAIL}`,
   ].join('\n'),
   verdictCategoriesCt: [
     '## Verdict Protocol — every focus node is one of three states',
     '- analyze: The node transforms the traced value or is its terminal source. Fill column_flow.',
     '- passthrough: The value flows through unchanged — no logic here. Keep it and continue the trace: fill column_flow with the real upstream_columns, or [] when the value originates here. A raw source / bridge / target table is the canonical passthrough — always keep it.',
-    '- prune: The traced value never passes through this focus node — remove it. It is the only verdict that removes a node.',
+    `- prune: The traced value never passes through this focus node — remove it. ${PRUNE_VERDICT_TAIL}`,
     '- Trace the value, not the name: upstream of a computed column it continues under other names, and a node carrying it is on-trace. Not a key transform and not off-trace means `passthrough`. The engine, not you, decides when the walk is done.',
   ].join('\n'),
 
@@ -290,13 +288,10 @@ function computeFlowRoleGroups(
  * Buckets every traced node by its DIRECTED relation to the origin.
  *
  * @remarks
- * The `## Column Trace Chain` list is emitted in hop order, and hop order is not direction order: a
- * sibling reader discovered at hop 5 sits between two genuinely upstream hops, so direction is left
- * to be inferred from position and is inferred wrong. These buckets state it instead.
- *
- * `sideBranch` is the bucket that matters — a node that reads a traced node but lies on no path to
- * or from the origin. It is neither upstream nor downstream, and describing it as upstream inverts
- * a real edge.
+ * The `## Column Trace Chain` list renders in hop order, which is not direction order, so direction
+ * cannot be inferred from a node's position in it — these buckets state it explicitly instead.
+ * `sideBranch` is the bucket that matters: a node that reads a traced node but lies on no path to or
+ * from the origin is neither upstream nor downstream, and calling it upstream inverts a real edge.
  *
  * @param originNodeId - The queried origin.
  * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
@@ -366,7 +361,7 @@ function buildDirectionLines(
  *
  * Candidates are bounded by the presented set: `highlight_groups[].node_ids` rejects anything the
  * render does not carry, and the synthesis prompt makes linking a named terminal source mandatory,
- * so naming a border-cut source here orders a call `present_result` refuses (T8S, `vwRawOrders`).
+ * so naming a border-cut source here would order a call `present_result` refuses.
  *
  * @param groups - Mechanically computed flow-role buckets.
  * @param presented - Ids the render carries; a bucket member outside it is dropped from the line.
@@ -545,9 +540,8 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * its caption. Deterministic: nodes and neighbor lists sort by id, ids lowercased.
  *
  * A qualifying node with no `node_states` entry was never dispositioned — scope reachability alone
- * put it in the render — so it lists under its own heading with `notes[]` as the only surface.
- * Section-linking one states it as answer evidence, which is what carried a calendar join and a
- * logging chain into a T8 discount answer.
+ * put it in the render — so it lists under its own heading with `notes[]` as the only surface;
+ * section-linking it would state it as answer evidence it never earned.
  *
  * @param result - Completed SM result: `fullNodes` the rendered kept set, `detail_slots` the
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
@@ -595,10 +589,8 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
  * The carry rule already exists in prose ("never fields within a kept item",
  * `buildPresentationDetailContract`), but every OTHER mandatory-carry class at synthesis is
  * enumerated as a checklist — kept node ids, undispositioned ids, the column chain, terminal-source
- * candidates — while formulas reach the model only inside slot prose it must re-scan. Measured
- * consequence at the same hop: node coverage is honoured (T7 @ 739076f1 captioned all 26 ids and
- * repaired the one the validator named) while formula carry ran 2/11 there, 4/15 at 37875e19 and
- * 7/13 at the frozen baseline — the same instruction, the same model, the same effort setting.
+ * candidates — while formulas reach the model only inside slot prose it must re-scan; this closes
+ * that gap the same way.
  *
  * Enumeration only: this states evidence the engine already holds, sorted by capture order and
  * de-duplicated per node so the block is byte-stable across runs. Which blocks belong in the answer
@@ -697,11 +689,10 @@ const SmCompletionEnvelopeSchema = z.object({
  * it carries the terminal-source facts CT synthesis depends on. `ctPrunedNodeIds` lists the focus
  * nodes pruned via `verdict=prune` in CT.
  *
- * `result.fullNodes` is the render bound and therefore the id set `present_result` accepts, so it is
- * stated as `scope.node_ids` and every naming surface is filtered to it: `node_states[]` and the
- * enumerated highlight candidates. Before that, synthesis saw the valid set only as a count while
- * three other surfaces named ids the validator rejects, and the prompt made linking one of them
- * mandatory — the T8S breaker.
+ * `result.fullNodes` is the render bound and therefore the id set `present_result` accepts: it is
+ * stated as `scope.node_ids`, and `node_states[]` plus the enumerated highlight candidates are
+ * filtered to it. An id the render dropped or the depth border cut still reaches the model through
+ * the recorded evidence (the column chain, the detail slots) — in prose, never in a `node_ids` field.
  *
  * @param result - The completed `engine.getResult()` archive (full `detail_slots` across all hops).
  * @param userQuestion - The verbatim mission question anchoring the synthesis reminder.
@@ -712,10 +703,6 @@ export function buildSmCompletionEnvelope(
   userQuestion: string,
   deferred: ReadonlyArray<DeferredQuestion>,
 ): SmCompletionEnvelope {
-  // The render bound is the single source of node identity at synthesis: `present_result` accepts
-  // exactly these ids, so every surface of this envelope that NAMES a node names one of them. An id
-  // the render dropped or the depth border cut reaches the model through the recorded evidence
-  // (the column chain, the detail slots) and belongs in prose, never in a `node_ids` field.
   const presentedNodeIds = result.fullNodes.map(node => node.id);
   const presented = new Set(presentedNodeIds);
   const flowBlock = result.columnAspect && result.columnAspect.edges.length > 0

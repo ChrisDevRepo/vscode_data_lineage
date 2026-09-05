@@ -402,6 +402,23 @@ const RouteRequestSchema = z.object({
   ),
 }).strict();
 
+/**
+ * Single source for the `route_requests` field describe text, shared by the strict per-mode
+ * schemas and the permissive registered union so the contract cannot drift between them.
+ */
+export const ROUTE_REQUESTS_DESCRIPTION =
+  'Current-hop neighbor nodes worth exploring next, each with a self-contained verification question.';
+
+/**
+ * Single source for the `prune_neighbors` field describe text (decision D-020): a prune is valid
+ * for a neighbor off the answer path — outside the approved exploration scope, or inside it with
+ * nothing the answer needs. Shared by the strict per-mode schemas and the permissive registered
+ * union so the registered surface cannot narrow this decision space out of sync with
+ * `NEIGHBOR_DECISION_CORE` (`src/ai/prompting/smPrompts.ts`).
+ */
+export const PRUNE_NEIGHBORS_DESCRIPTION =
+  'Current-hop neighbor IDs to drop from the session because current evidence proves they are off the answer path — out of the approved scope, or in scope with nothing the answer needs.';
+
 const ColumnRefSchema = z.object({
   node: z.string().describe('Canonical upstream node ID.'),
   col: z.string().describe('Real upstream column name.'),
@@ -459,7 +476,7 @@ const HopFindingBaseSchema = z.object({
    * Optional list of neighbors to queue for the next hops. Each entry's
    * `nodeId` must already be a real id you have seen.
    */
-  route_requests: z.array(RouteRequestSchema).max(AI_MAX_SCOPE_NODE_IDS).optional().describe('Current-hop neighbor nodes worth exploring next, each with a self-contained verification question.'),
+  route_requests: z.array(RouteRequestSchema).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
   badge_label: z.string().min(1).max(50)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
@@ -476,9 +493,7 @@ const HopFindingBaseSchema = z.object({
  */
 export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('bb'),
-  prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(
-    'Current-hop neighbor IDs to drop from a BB session because current evidence proves they are off the answer path — out of the approved scope, or in scope with nothing the answer needs.',
-  ),
+  prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
 }).strict();
 
 /**
@@ -491,9 +506,7 @@ export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
 export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('ct'),
   column_flow: ColumnFlowSchema,
-  prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(
-    'Current-hop neighbor IDs to drop from the session, per the Verdict Protocol\'s off-path definition for this mode. Same contract as BB.',
-  ),
+  prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
 }).strict();
 
 /**
@@ -833,15 +846,8 @@ export const SubmitFindingsModelSchema = z.object({
   // it is the broader, VS Code-registered surface, and the strict per-mode schema (bb/ct) is what
   // actually gates the model immediately before dispatch — see submitFindingsSchemaForMode.
   verdict: hopVerdictSchema('bb'),
-  route_requests: z.array(z.object({
-    nodeId: z.string().describe('Exact current-hop neighbor ID to queue.'),
-    question: z.string().describe('Self-contained verification question for that neighbor and the mission decision it resolves.'),
-  }).strict()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(
-    'Current-hop neighbor nodes to explore next. Use exact neighbor IDs and a concrete question for each route.',
-  ),
-  prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(
-    'Current-hop neighbor IDs to drop from a BB session because current evidence proves they are out of scope.',
-  ),
+  route_requests: z.array(RouteRequestSchema).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
+  prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
   badge_label: z.string().min(1).max(50)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
