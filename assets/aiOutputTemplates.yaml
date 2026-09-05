@@ -152,7 +152,7 @@ notes:
     Glancing at graph + notes should tell the story; deeper logic lives in
     the description.
     If the node is a passthrough, name what it passes or filters in one
-    short clause ("Passthrough — IsValid filter").
+    short clause ("Filters to IsValid rows").
     GOOD: "Computes NetAmountA at INSERT"
     BAD : "Computes NetAmountA = QtyA × PriceA at INSERT\nAlso computes
     AdjustedAmountA" (multi-line + formula belongs in the section body).

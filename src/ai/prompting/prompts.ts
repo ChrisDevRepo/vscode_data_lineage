@@ -360,7 +360,7 @@ function buildSynthesisPrompt(): string {
     '- `summary` (REQUIRED, one line), `title`, `intro`, `closing`: content and style are owned by each field\'s template rendered below — follow the template; on contradiction the template wins. Put the detailed walkthrough in `sections[].text`, not `intro`.',
     '- `highlight_groups[]`: scheme choice and glow selectivity are owned by the highlights template.',
     '',
-    'Use `suggested_sections` from the completion result as a starting skeleton when present. In CT, every terminal source node named in the "Column Trace Chain" block must appear in a section\'s `node_ids[]` or in a `source` highlight group — including tables without detail slots — because a column trace without its origins does not answer the question. Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
+    'Use `suggested_sections` from the completion result as a starting skeleton when present. In CT, every terminal source node named in the "Column Trace Chain" block must appear in a section\'s `node_ids[]`, in a `source` highlight group, or as a `notes[].node_id` — including tables without detail slots — because a column trace without its origins does not answer the question. The same holds for every other node named in that block, endpoints and hop nodes alike, on any one of those three surfaces. Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
   ].join('\n');
 }
 
@@ -648,7 +648,7 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
     'CT uses a column-first contract.',
-    'PRIMARY job this hop: fill `column_flow` — structural provenance for each active column.',
+    'Main job this hop: fill `column_flow` — structural provenance for each active column, and `[]` when this node carries none.',
     'SUPPORTING job: fill `sections[].text` — business/technical context explaining WHY the column flows this way.',
     'Use `column_flow` only for the active tracked column chain.',
     'Put only real upstream table/view/procedure node+column refs in `upstream_columns`.',

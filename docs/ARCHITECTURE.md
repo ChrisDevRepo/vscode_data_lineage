@@ -336,6 +336,28 @@ is invisible until a run diverges. Where a shared guard leaves a single
 implementation behind, the abstraction that carried the two variants is deleted
 with it.
 
+Composition is surface-dependent, and the two surfaces compose differently on
+purpose. At the AI preview / synthesis surface, composition is exclusive: the
+column-trace presentation block replaces the whole-object block rather than
+sitting beside it. Same graph, presented and focused differently — this is the
+XOR surface. At the per-hop instruction surface, composition is additive: the
+whole-object instruction always ships to a dispatched neighbor, and a neighbor
+that carries traced columns earns the column-trace rider on top of it; a
+neighbor that only shapes rows — a filter, a join — gets the whole-object
+instruction alone. This is the AND surface. Naming both surfaces here is
+deliberate: composition on one does not imply the same composition on the
+other, and re-deriving one from the other is the recurring error this
+paragraph exists to stop.
+
+A current limitation follows from the AND surface: the per-neighbor fork
+above is not expressible today. A route request cannot carry columns — the
+route schema is strict and carries only a node id and a question. An omitted
+column set is re-padded from the session's target columns before the neighbor
+is dispatched, so the omission does not reach the dispatch. And there is no
+durable per-node mark distinguishing a column carrier from a row-role-only
+node. Together these mean the fork described above cannot yet be expressed by
+the route path itself.
+
 Neighbor visibility is the same in both modes. CT presents the focus node's
 neighbors, and permits routing to them, exactly as BB does — including a neighbor
 that carries none of the traced columns. A view joined with `INNER JOIN`

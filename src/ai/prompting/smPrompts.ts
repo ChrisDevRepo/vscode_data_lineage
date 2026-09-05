@@ -53,7 +53,7 @@ const NEIGHBOR_DECISION_CORE = [
   '- For each other current-hop neighbor:',
   '  - Route it when mission-relevant, using a concrete verification question. The engine defers routes outside the approved schema/depth scope.',
   '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays; if later scheduled as focus, use its focus verdict.',
-  '  - Add it to `prune_neighbors` when current evidence proves it is off the answer path — outside the approved exploration scope, or inside it with nothing the answer needs. An executed prune must never orphan committed work; the engine refuses such a prune.',
+  '  - Add it to `prune_neighbors` when current evidence proves it is off the answer path — outside the approved exploration scope, or inside it with nothing the answer needs. A neighbor that supplies no value but decides which rows the answer returns — a join, filter or predicate source — is not \"nothing the answer needs\": route or retain it. An executed prune must never orphan committed work; the engine refuses such a prune.',
   '- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.',
   '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
   ANALYTICAL_ROUTE_QUESTION,
@@ -96,7 +96,7 @@ const BLOCK = {
   ].join('\n'),
   verdictCategoriesCt: [
     '## Verdict Protocol — every focus node is one of three states',
-    '- analyze: The node transforms the traced value or is its terminal source. Fill column_flow.',
+    '- analyze: The node transforms the traced value or is its terminal source — or, as in BB, it applies business logic on the data path (a calculation, condition, status transition, or audit decision) without touching a traced column. Analyze it in depth either way. Fill column_flow for each active column; a node carrying none submits []. (Applies to logic-bearing bodied nodes; a non-bodied table focus follows the engine path — structural-summary, still kept.)',
     '- passthrough: The value flows through unchanged — no logic here. Keep it and continue the trace: fill column_flow with the real upstream_columns, or [] when the value originates here. A raw source / bridge / target table is the canonical passthrough — always keep it.',
     `- prune: The traced value never passes through this focus node — remove it. ${PRUNE_VERDICT_TAIL}`,
     '- Trace the value, not the name: upstream of a computed column it continues under other names, and a node carrying it is on-trace. Not a key transform and not off-trace means `passthrough`. The engine, not you, decides when the walk is done.',
@@ -149,7 +149,7 @@ const BLOCK = {
     '- In CT, `column_flow[].upstream_columns` records the value path; it does not open a route — add `route_requests` for every named contributor, carrying the analytical question when the node applies logic worth capturing.',
     '- The engine already supplies the column A→B continuation (`<lineage_questions>`); keep `column_flow[].upstream_columns` precise and structural, and answer the analytical question in your capture narration (`sections[].text`) — never invent columns to satisfy it.',
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
-    '- Derive column origins purely from the provided DDL whenever possible (e.g., explicit SELECT columns).',
+    '- Derive column origins and neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
     '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where the column names are hidden.',
     '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
   ].join('\n'),
@@ -442,7 +442,6 @@ export function buildCtSynthesisBlock(
   if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
     lines.push('');
     lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
-    lines.push('- Keep excluded branches out of the column chain narrative and sections[].');
   }
   const ctNodeIds = new Set<string>([originNodeId]);
   for (const edge of edges) {
@@ -462,12 +461,10 @@ export function buildCtSynthesisBlock(
   );
   lines.push('');
   lines.push('Structure present_result using this CT chain:');
-  lines.push('- summary: one sentence naming origin column → traced path → terminal source');
-  lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
   lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link nodes needed for the answer, including passthrough tables when they are source/target/bridge nodes in the column chain.');
-  lines.push('- Keep passthrough or tangential nodes compact unless they carry, persist, or terminate the traced column.');
+  lines.push('- Link every node in the chain above; a node that does not carry, persist or terminate the traced column earns one line rather than being left out.');
+  lines.push('- terminal source = the furthest-upstream object this trace reached; it can be a table without a detail slot, and it is as far as this trace got — never call it the system of record.');
   lines.push(...buildFlowRoleHighlightLines(groups, presentedNodeIds));
-  lines.push('  — terminal source = the deepest data origin in this trace; can be a table without a detail slot');
   return lines.join('\n');
 }
 
