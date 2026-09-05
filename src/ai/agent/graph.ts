@@ -1150,19 +1150,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }));
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
     // Post-commit thinking line: the model's own one-line digest for the node just finished, hanging
-    // under the "Hop X/Y — analysing <focus>" counter emitted above. It carries only what that counter
-    // does not — hop number and focus name are already stated there, so restating them reads as two
-    // competing status lines instead of one thought. The progress channel renders markdown — VS Code
-    // wraps the plain string as an IMarkdownString (`MarkdownString.from`) and `ChatProgressContentPart`
-    // hands it to the markdown renderer — so `_…_` italicises, on top of the dimmed description
-    // foreground progress already uses. The leading indent must be NBSP: CommonMark strips 1–3 leading
-    // spaces from a paragraph, so a plain-space indent renders flush left. Codicons are unavailable
-    // here for the same reason — a plain string carries no `supportThemeIcons`, so `$(…)` would print
-    // literally. `⛔ pruned` survives because the verdict is genuinely new information. Skipped for a
-    // bare prune with nothing captured (`committedFinding.summary` empty) — nothing to show.
+    // under the "Hop X/Y — analysing <focus>" counter emitted above. The two lines differ by role,
+    // not by an ornament: the counter is the status progress, the digest is the thinking info, so it
+    // carries no arrow glyph — italics alone set it apart. The progress channel renders markdown —
+    // VS Code wraps the plain string as an IMarkdownString (`MarkdownString.from`) and
+    // `ChatProgressContentPart` hands it to the markdown renderer — so `_…_` italicises, on top of
+    // the dimmed description foreground progress already uses. Codicons are unavailable here for the
+    // same reason — a plain string carries no `supportThemeIcons`, so `$(…)` would print literally.
+    // `⛔ pruned` survives because the verdict is genuinely new information. Skipped for a bare prune
+    // with nothing captured (`committedFinding.summary` empty) — nothing to show.
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       const prunedMark = committedFinding.value.verdict === 'prune' ? '⛔ pruned — ' : '';
-      deps.sink.status('scoping', `\u00a0\u00a0↳ _${prunedMark}${truncStatusLabel(committedFinding.value.summary, 200)}_`);
+      deps.sink.status('scoping', `_${prunedMark}${truncStatusLabel(committedFinding.value.summary, 200)}_`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {
