@@ -1,9 +1,21 @@
 # Changelog
 
-## Unreleased
+## [1.1.1] - 2026-08-26
+
+### Added
+- The assistant reads what is on screen, and recalls a saved AI view's findings and open questions in later chats.
 
 ### Changed
 - The approval card's depth line states what the engine will do with the depth (a default start it can extend) instead of what the assistant estimates, so the card carries only facts.
+- A depth stated in a question is a hard limit per direction; objects past it become follow-up leads.
+- Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.
+- The longest-chain report lists up to 25 chains, deepest first, instead of reusing the graph node limit as a chain count.
+- A trace narrowed to part of the model is held to the same render limit as any other view, and reports when it exceeds it rather than drawing an oversized view. Adjust the ceiling with `dataLineageViz.renderLimit`.
+- A one-direction trace (upstream only, or downstream only) now draws every edge between the objects it includes; an edge that pointed against the trace direction between two traced objects was previously hidden.
+
+### Removed
+- Saved views no longer restore the camera position they were captured at; a restored view fits the graph instead.
+- The always-on column-flow tooltip on objects; the column view, which shows the same flows in full, replaces it.
 
 ### Fixed
 - Retrying a rejected tool call no longer fails a Gemini 3 turn with a provider 400 over a missing thought signature: the replayed exchange is closed by a user-role continuation note — the provider's documented turn boundary — sent to every provider alike.
@@ -16,25 +28,9 @@
 - A follow-up widens the exploration border only for a lead the run itself offered.
 - A contributor column the engine cannot verify is logged instead of accepted silently, and the notes schema no longer licenses a bare kept node the engine requires covered.
 - The column view degrades quietly when a node has no column data, costs one tab stop, and builds hover adjacency once.
+- Switching between saved AI views in column mode no longer keeps the previous view's pinned or hovered column thread lighting rows of the new view.
+- Focusing a column card centers on the card instead of on an object-sized box above it.
 - Dev-only transitive dependencies updated; `npm audit` reports no known vulnerabilities.
-
-## [1.1.1] - 2026-08-26
-
-### Added
-- The assistant reads what is on screen, and recalls a saved AI view's findings and open questions in later chats.
-
-### Changed
-- A depth stated in a question is a hard limit per direction; objects past it become follow-up leads.
-- Column-level findings from an AI column analysis can be shown on the objects; object lineage stays the default view.
-- The longest-chain report lists up to 25 chains, deepest first, instead of reusing the graph node limit as a chain count.
-- A trace narrowed to part of the model is held to the same render limit as any other view, and reports when it exceeds it rather than drawing an oversized view. Adjust the ceiling with `dataLineageViz.renderLimit`.
-- A one-direction trace (upstream only, or downstream only) now draws every edge between the objects it includes; an edge that pointed against the trace direction between two traced objects was previously hidden.
-
-### Removed
-- Saved views no longer restore the camera position they were captured at; a restored view fits the graph instead.
-- The always-on column-flow tooltip on objects; the column view, which shows the same flows in full, replaces it.
-
-### Fixed
 - Upgraded the graph rendering library and corrected large-graph rendering: dragging stays responsive, and a trace past the render limit reports it instead of drawing an oversized view.
 - Formulas in AI descriptions render as mathematics, inline and as blocks.
 - Depth follows data-flow direction, so a shared audit table no longer makes objects look closer.

@@ -741,9 +741,13 @@ export function GraphCanvas({
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
+        // Column cards are taller than object nodes and declare their own box; object nodes
+        // declare none, so the object default stands in and their framing is unchanged.
+        const width = targetNode.width ?? NODE_WIDTH;
+        const height = targetNode.height ?? NODE_HEIGHT;
         void setCenter(
-          targetNode.position.x + NODE_WIDTH / 2,
-          targetNode.position.y + NODE_HEIGHT / 2,
+          targetNode.position.x + width / 2,
+          targetNode.position.y + height / 2,
           { zoom: 0.8, duration: FIT_VIEW_DURATION }
         );
       } else {
@@ -1155,20 +1159,27 @@ export function GraphCanvas({
     return () => cancelAnimationFrame(raf);
   }, [columnViewActive, nodesInitialized, fitGraph]);
 
-  // Hand-placed column nodes belong to the relation set that produced the layout, so only a new
-  // relation set invalidates them. Keying this on `columnTraceView` would also fire on every
-  // re-derivation of the rendered node array — a filter toggle would silently discard the drags
-  // `onColumnNodesChange` exists to keep.
+  // Hand-placed column nodes and the pinned/hovered thread belong to the relation set that
+  // produced them, so only a new relation set invalidates them — a bookmark→bookmark switch
+  // keeps column mode up but lights rows of a different set (or dims everything) if the thread
+  // survives. Keying this on `columnTraceView` would also fire on every re-derivation of the
+  // rendered node array — a filter toggle would silently discard the drags `onColumnNodesChange`
+  // exists to keep.
   const columnRelations = activeAiMetadata?.columnAspect;
   useEffect(() => {
     setColumnPositions({});
+    setHoveredColumn(null);
+    setPinnedColumn(null);
   }, [columnRelations]);
 
   // A view with no column findings has no column mode to be in; drop back rather than render empty.
+  // The thread goes with it: a pin outlives a hover, so leaving it set would light rows of a view
+  // that no longer renders once column mode comes back up.
   useEffect(() => {
     if (!columnTraceView) {
       setColumnView(false);
       setHoveredColumn(null);
+      setPinnedColumn(null);
     }
   }, [columnTraceView]);
 
@@ -1251,9 +1262,11 @@ export function GraphCanvas({
           target: edge.target,
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
-          ...(edge.state === 'transformation' ? { label: '⚙' } : {}),
-          labelShowBg: false,
-          labelStyle: { fill: 'var(--ln-ai-bu)', fontSize: COLUMN_EDGE_LABEL_FONT_SIZE, fontWeight: COLUMN_EDGE_LABEL_FONT_WEIGHT },
+          ...(edge.state === 'transformation' ? {
+            label: '⚙',
+            labelShowBg: false,
+            labelStyle: { fill: 'var(--ln-ai-bu)', fontSize: COLUMN_EDGE_LABEL_FONT_SIZE, fontWeight: COLUMN_EDGE_LABEL_FONT_WEIGHT },
+          } : {}),
           markerEnd: { type: MarkerType.ArrowClosed, width: COLUMN_EDGE_MARKER_SIZE, height: COLUMN_EDGE_MARKER_SIZE },
           style: {
             strokeWidth: lit ? COLUMN_EDGE_LIT_STROKE_WIDTH : COLUMN_EDGE_DIM_STROKE_WIDTH,
