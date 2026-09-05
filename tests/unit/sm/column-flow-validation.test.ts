@@ -747,6 +747,48 @@ describe("Column Flow Validation", () => {
   expect(bbRejected, 'Defect B: a BB snapshot carrying agenda activeColumns still rejects (BB superRefine untouched)').toBe(true);
 });
 
+  it("a BB snapshot carrying either per-neighbour column field REJECTS, on the same axis as activeColumns", () => {
+  // `columnCarry` (the router's authored decision) and `columnRole` (the role the dispatching hop
+  // realized) are the CT column channel in its per-neighbour form, so the BB checkpoint refuses
+  // them exactly as it refuses `activeColumns`. Both are asserted from a real BB snapshot, one
+  // field at a time, so a refinement that only covers one of them is not hidden by the other.
+  const bbEngine = new NavigationEngine(ctForwardModel, ctForwardGraph, () => {}, {});
+  bbEngine.init({ origin: 'ct_origin', question: 'bb baseline', direction: 'downstream' });
+  bbEngine.getHopContext();
+  bbEngine.submitFindings({
+    focus_node_id: 'ct_origin',
+    sections: [{ angle: 'business' as const, text: 'origin analysis' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'ct_down', question: 'what does ct_down do with this?' }],
+  });
+  const clean = JSON.parse(JSON.stringify(bbEngine.toJSON())) as {
+    agenda: Array<Record<string, unknown>>;
+    nodeStates: Array<Record<string, unknown>>;
+  };
+  expect(clean.agenda.length > 0, 'the BB baseline queues an entry to corrupt').toBe(true);
+  expect(clean.nodeStates.length > 0, 'the BB baseline records a node state to corrupt').toBe(true);
+
+  const restores = (mutate: (snapshot: typeof clean) => void): boolean => {
+    const copy = JSON.parse(JSON.stringify(clean)) as typeof clean;
+    mutate(copy);
+    try {
+      NavigationEngine.fromJSON(copy as never, ctForwardModel, ctForwardGraph, () => {});
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  expect(restores(() => {}), 'the untouched BB snapshot restores — the corruptions below are what fail').toBe(true);
+  expect(restores(s => { s.agenda[0].columnCarry = { kind: 'row_role_only' }; }),
+    'a BB agenda entry cannot carry a per-neighbour column decision').toBe(false);
+  expect(restores(s => { s.agenda[0].columnCarry = { kind: 'carry', columns: ['amount'] }; }),
+    'not even a carry that names a real column of the BB origin').toBe(false);
+  expect(restores(s => { s.nodeStates[0].columnRole = 'carrier'; }),
+    'a BB node state cannot carry a column role').toBe(false);
+});
+
   it("throw path (toJSON()'s own catch) logs the issuePaths diagnostic, not just the generic message", () => {
   const logs: string[] = [];
   const engine = ctForwardRoutedEngine((_level, message) => logs.push(message));

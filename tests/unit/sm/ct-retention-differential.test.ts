@@ -41,6 +41,16 @@ interface RetentionCase {
   readonly measuredLost: readonly string[];
   /** Active column set the hop at this node must be dispatched with, asserted at dequeue. */
   readonly expectActiveColumns?: Readonly<Record<string, readonly string[]>>;
+  /** Traversal direction for both arms; upstream unless the case needs a write side. */
+  readonly direction?: 'upstream' | 'downstream' | 'bidirectional';
+  /** Schemas the user's filter admits, seeding the session allowlist. Unset means no allowlist. */
+  readonly filterSchemas?: readonly string[];
+  /**
+   * Ids the render itself is expected to drop — in scope, never pruned, and dispositioned by no
+   * hop. Unset means the render drops nothing, which is what every case asserted before the field
+   * existed and what each of them still asserts.
+   */
+  readonly expectRenderDropped?: readonly string[];
 }
 
 const V = 'view' as const, T = 'table' as const, P = 'procedure' as const, F = 'function' as const;
@@ -266,6 +276,42 @@ const CASES: readonly RetentionCase[] = [
     expectActiveColumns: { '[ct].[vworderfeed]': ['NetAmount'] },
     measuredLost: [],
   },
+  {
+    // Every case above traces upstream, where each scope node supplies the one below it, so the
+    // render's sink trim has no candidate and the drop stage of this suite never runs. This case
+    // gives it one. `[audit].[loadlog]` is a write sink outside the user's schema filter: the BFS
+    // seed deliberately keeps out-of-allowlist reachables (they are the gate classes a user can
+    // approve), while the route path refuses them, so no hop is ever demanded to account for it
+    // and it reaches `getResult` in scope, unpruned and dispositioned by nobody. Supplying nothing
+    // the render keeps, it is a side-effect sink, not answer evidence — and CT drops it for the
+    // same reason BB does, which is what the paired arms below check.
+    id: 'C16 — an out-of-filter write sink no hop dispositioned is dropped, in both modes',
+    origin: '[ct].[vwsalesfeed]', tracedColumn: 'Amount',
+    direction: 'downstream',
+    filterSchemas: ['ct'],
+    nodes: [
+      ['[ct].[vwsalesfeed]', V, ['Amount']],
+      ['[ct].[sploadfact]', P, ['Amount']],
+      ['[ct].[factsales]', T, ['Amount']],
+      ['[audit].[loadlog]', T, ['LoadedAt']],
+    ],
+    edges: [
+      ['[ct].[vwsalesfeed]', '[ct].[sploadfact]'],
+      ['[ct].[sploadfact]', '[ct].[factsales]'],
+      ['[ct].[sploadfact]', '[audit].[loadlog]'],
+    ],
+    reachRequired: ['[ct].[sploadfact]', '[ct].[factsales]'],
+    flow: {
+      '[ct].[vwsalesfeed]': [{ out_col: 'Amount', upstream_columns: [] }],
+      '[ct].[sploadfact]': [{
+        out_col: 'Amount',
+        upstream_columns: [{ node: '[ct].[vwsalesfeed]', col: 'Amount' }],
+        writes_to: { node: '[ct].[factsales]', col: 'Amount' },
+      }],
+    },
+    expectRenderDropped: ['[audit].[loadlog]'],
+    measuredLost: [],
+  },
 ];
 
 function buildWorld(testCase: RetentionCase): { model: DatabaseModel; graph: ReturnType<typeof makeGraph> } {
@@ -279,6 +325,27 @@ function buildWorld(testCase: RetentionCase): { model: DatabaseModel; graph: Ret
   const edgePairs = testCase.edges.map(([source, target]) => [source, target] as [string, string]);
   const schemaNames = Array.from(new Set(nodes.map(n => n.schema)));
   return { model: makeModel(nodes, edgePairs, schemaNames), graph: makeGraph(nodes, edgePairs) };
+}
+
+/** Engine config for a case: the user's schema filter when it has one, nothing otherwise. */
+function engineConfig(testCase: RetentionCase): { activeFilter?: ReturnType<typeof makeActiveFilter> } {
+  return testCase.filterSchemas
+    ? { activeFilter: makeActiveFilter({ schemas: [...testCase.filterSchemas] }) }
+    : {};
+}
+
+/**
+ * Asserts the render dropped exactly the ids the case names, and returns them for the survivor scan.
+ *
+ * @param testCase - The case under test; an unset `expectRenderDropped` means "the render drops nothing".
+ * @param recorded - `renderDroppedNodeIds` from the snapshot taken after `getResult`.
+ * @returns The recorded drops, as a set.
+ */
+function expectedDrops(testCase: RetentionCase, recorded: readonly string[] | undefined): Set<string> {
+  const dropped = [...(recorded ?? [])].sort();
+  expect(dropped, `${testCase.id}: the render drops exactly what the case names`)
+    .toEqual([...(testCase.expectRenderDropped ?? [])].sort());
+  return new Set(dropped);
 }
 
 /**
@@ -349,11 +416,11 @@ describe('CT retention — every required dependency survives into the result', 
   for (const testCase of CASES) {
     it(`${testCase.id}`, () => {
       const { model, graph } = buildWorld(testCase);
-      const engine = new NavigationEngine(model, graph, () => {}, {});
+      const engine = new NavigationEngine(model, graph, () => {}, engineConfig(testCase));
       const init = engine.init({
         origin: testCase.origin,
         question: `trace ${testCase.tracedColumn}`,
-        direction: 'upstream',
+        direction: testCase.direction ?? 'upstream',
         analysisMode: 'ct',
         targetColumns: [testCase.tracedColumn],
         depthIntent: { kind: 'explicit', levels: 6 },
@@ -368,14 +435,22 @@ describe('CT retention — every required dependency survives into the result', 
       const lost = testCase.reachRequired.filter(required => !rendered.has(required));
       expect(lost, `${testCase.id}: required dependencies missing from the answer (wave 1 measured: ${testCase.measuredLost.join(', ') || 'none'})`).toEqual([]);
 
-      // Causation: a node admitted to scope and never pruned must reach the result. A failure here
-      // is a silent engine drop, not a model decision.
+      // The render's own disposition, named by the case rather than inferred from the gap below.
+      // A case that expects none holds the drop stage to the same standard it held before this
+      // record existed: any drop at all is the failure.
       const state = engine.toJSON();
+      const dropped = expectedDrops(testCase, state.renderDroppedNodeIds);
+
+      // Causation: a node admitted to scope and never pruned must reach the result, unless the
+      // render dropped it above and said so. A failure here is a silent engine drop, not a model
+      // decision.
       const survivors = bfsReachable(graph, testCase.origin, new Set(state.removedSet), undefined, new Set(state.scopeNodeIds));
       survivors.add(testCase.origin);
       for (const id of survivors) {
+        if (dropped.has(id)) continue;
         expect(rendered.has(id), `${testCase.id}: ${id} is in scope and unpruned, so it is not silently dropped`).toBe(true);
       }
+      expect([...dropped].filter(id => rendered.has(id)), `${testCase.id}: a recorded drop is absent from the render`).toEqual([]);
 
       // The conservation backstop in `getResult` logs this delta and asserts it is empty. Under the
       // old CT scope rebuild that assertion was false by construction; guard it so a reintroduction
@@ -390,11 +465,11 @@ describe('BB control — the same topology loses nothing today', () => {
   for (const testCase of CASES) {
     it(`${testCase.id}`, () => {
       const { model, graph } = buildWorld(testCase);
-      const engine = new NavigationEngine(model, graph, () => {}, {});
+      const engine = new NavigationEngine(model, graph, () => {}, engineConfig(testCase));
       const init = engine.init({
         origin: testCase.origin,
         question: 'what feeds this object and what restricts its rows?',
-        direction: 'upstream',
+        direction: testCase.direction ?? 'upstream',
         depthIntent: { kind: 'explicit', levels: 6 },
       });
       expect('ok' in init, `${testCase.id}: BB init succeeds`).toBe(true);
@@ -403,6 +478,10 @@ describe('BB control — the same topology loses nothing today', () => {
       const rendered = new Set(engine.getResult().fullNodes.map(n => n.id));
       const lost = testCase.reachRequired.filter(required => !rendered.has(required));
       expect(lost, `${testCase.id}: BB keeps every required dependency`).toEqual([]);
+      // Render-drop parity: the trim reads no column state, so the set it drops is a property of
+      // the topology and the walk, not of the mode. CT asserting the same list against the same
+      // case is the whole claim — a drop one mode makes and the other does not is a divergence.
+      expectedDrops(testCase, engine.toJSON().renderDroppedNodeIds);
     });
   }
 });
@@ -1670,14 +1749,23 @@ const FORK_CASE: RetentionCase = {
 /** The `columns` decision the fork's row-gate route carries, as the model would submit it. */
 type ForkColumns = string[] | 'none' | undefined;
 
-/** Starts the fork trace and commits the origin hop with the given decision for the row gate. */
-function startFork(rowGateColumns: ForkColumns): {
+/**
+ * Starts the fork trace and commits the origin hop with the given decision for the row gate.
+ *
+ * @param rowGateColumns - The `columns` decision the origin hop states for the row-gate route.
+ * @param opts - `carrierColumns` states a decision for the sibling route the origin's `column_flow`
+ *   already attributes `Amount` to; `log` captures the engine's log stream.
+ */
+function startFork(rowGateColumns: ForkColumns, opts: {
+  carrierColumns?: ForkColumns;
+  log?: (level: string, message: string) => void;
+} = {}): {
   engine: NavigationEngine;
   model: DatabaseModel;
   graph: ReturnType<typeof makeGraph>;
 } {
   const { model, graph } = buildWorld(FORK_CASE);
-  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const engine = new NavigationEngine(model, graph, opts.log ?? (() => {}), {});
   const init = engine.init({
     origin: FORK_ORIGIN,
     question: 'trace Amount',
@@ -1697,7 +1785,11 @@ function startFork(rowGateColumns: ForkColumns): {
     verdict: 'analyze',
     column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: FORK_CARRIER, col: 'Amount' }] }],
     route_requests: [
-      { nodeId: FORK_CARRIER, question: 'where does vwvaluefeed read Amount from?' },
+      {
+        nodeId: FORK_CARRIER,
+        question: 'where does vwvaluefeed read Amount from?',
+        ...(opts.carrierColumns === undefined ? {} : { columns: opts.carrierColumns }),
+      },
       {
         nodeId: FORK_ROW_GATE,
         question: 'which rows does vwrowgate admit into vwforktop?',
@@ -1769,6 +1861,26 @@ describe('CT per-neighbour column carry — three states of route_requests[].col
     ).toEqual(['Amount']);
   });
 
+  it('normalizes a none the same hop contradicted in column_flow, and says so in the log', () => {
+    // Two channels, one hop: `column_flow` attributes `Amount` to the carrier (a provenance
+    // assertion) while the route for the same node states `none` (an absence claim). The evidence
+    // wins. Without the normalization the carrier is dispatched with no active column and the very
+    // edge the same submit staged has nothing to continue from.
+    const logs: string[] = [];
+    const { engine } = startFork(undefined, { carrierColumns: 'none', log: (_l, m) => logs.push(m) });
+    const dispatched = driveForkHops(engine);
+    expect(
+      dispatched.get(FORK_CARRIER),
+      'the attributed column reaches the node the same hop said supplies it',
+    ).toEqual(['Amount']);
+    const states = new Map(engine.getResult().node_states.map(state => [state.nodeId, state]));
+    expect(states.get(FORK_CARRIER)?.columnRole, 'and it is realized as a carrier, not a row gate').toBe('carrier');
+    expect(
+      logs.some(line => line.includes('[Normalize] route carry') && line.includes(FORK_CARRIER) && line.includes('from=none')),
+      'the overridden claim is logged, never silently dropped',
+    ).toBe(true);
+  });
+
   it('marks the two forks apart on the node state that reaches the snapshot and the result', () => {
     const { engine } = startFork('none');
     driveForkHops(engine);
@@ -1820,5 +1932,129 @@ describe('CT per-neighbour column carry — three states of route_requests[].col
       dispatched.get(FORK_ROW_GATE),
       'the pre-change checkpoint restores and behaves as it did when it was written',
     ).toEqual(['Amount']);
+  });
+});
+
+/**
+ * The three carry states, separated on one topology by the set each one dispatches.
+ *
+ * The fork above proves `none` apart from the other two, but its traced set is a single column, so
+ * "carry these columns" and "inherit the session's" name the same set there and either state
+ * satisfies the other's assertion. Two traced columns and a stated subset separate them: a route
+ * naming `GateFlag` alone must reach its neighbour as `GateFlag` alone, which an inherit cannot
+ * produce and a `none` cannot either.
+ *
+ * The narrowed neighbour sits at depth 2 on purpose. A direct neighbour is already on the agenda
+ * from the origin seed, and a stated `carry` merges into that seeded entry as a union — the seed's
+ * inherited set is not a competing opinion the router can narrow, only one it can add to.
+ */
+const NARROW_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
+  ['[ct].[vwnarrowtop]', V, ['Amount', 'GateFlag']],
+  ['[ct].[vwnarrowmid]', V, ['Amount', 'GateFlag']],
+  ['[ct].[vwnarrowgate]', V, ['Amount', 'GateFlag']],
+  ['[ct].[narrowsrc]', T, ['Amount', 'GateFlag']],
+];
+const NARROW_EDGES: ReadonlyArray<readonly [string, string]> = [
+  ['[ct].[narrowsrc]', '[ct].[vwnarrowgate]'],
+  ['[ct].[vwnarrowgate]', '[ct].[vwnarrowmid]'],
+  ['[ct].[vwnarrowmid]', '[ct].[vwnarrowtop]'],
+];
+const NARROW_ORIGIN = '[ct].[vwnarrowtop]';
+const NARROW_MID = '[ct].[vwnarrowmid]';
+const NARROW_GATE = '[ct].[vwnarrowgate]';
+
+const NARROW_CASE: RetentionCase = {
+  id: 'stated-subset carry',
+  origin: NARROW_ORIGIN,
+  tracedColumn: 'Amount',
+  nodes: NARROW_NODES,
+  edges: NARROW_EDGES,
+  reachRequired: [],
+  flow: {},
+  measuredLost: [],
+};
+
+/**
+ * Traces `Amount` and `GateFlag` upstream, stating `decision` for the depth-2 route only.
+ *
+ * @param decision - The `columns` field the mid hop's route to the gate carries, or `undefined` to
+ *   omit the field entirely.
+ * @returns Focus id → the active columns that hop was dispatched with.
+ */
+function driveNarrowWalk(decision: ForkColumns): Map<string, string[]> {
+  const { model, graph } = buildWorld(NARROW_CASE);
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const init = engine.init({
+    origin: NARROW_ORIGIN,
+    question: 'trace Amount and GateFlag',
+    direction: 'upstream',
+    analysisMode: 'ct',
+    targetColumns: ['Amount', 'GateFlag'],
+    depthIntent: { kind: 'explicit', levels: 6 },
+  });
+  expect('ok' in init, 'CT init succeeds on both traced columns').toBe(true);
+
+  const dispatched = new Map<string, string[]>();
+  for (let guard = 0; guard < 12; guard++) {
+    const ctx = engine.getHopContext() as {
+      focus_node?: { id: string };
+      working_memory?: { column_aspect?: { active_columns?: string[] } };
+    };
+    if (!ctx.focus_node) break;
+    const focusId = ctx.focus_node.id;
+    const active = [...(ctx.working_memory?.column_aspect?.active_columns ?? [])];
+    dispatched.set(focusId, active);
+    // The origin attributes both traced columns to the mid node, so the spine reaches it; every
+    // later hop is terminal and names no further upstream column, which keeps the dispatched set a
+    // statement about the carry decision alone.
+    const columnFlow = focusId === NARROW_ORIGIN
+      ? active.map(col => ({ out_col: col, upstream_columns: [{ node: NARROW_MID, col }] }))
+      : active.map(col => ({ out_col: col, upstream_columns: [] }));
+    const outcome = engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: `${focusId} analysed` }],
+      summary: focusId,
+      verdict: 'analyze',
+      column_flow: columnFlow,
+      route_requests: engine.requiredNeighborIds(focusId).map(id => ({
+        nodeId: id,
+        question: `what does ${id} contribute?`,
+        ...(focusId === NARROW_MID && id === NARROW_GATE && decision !== undefined ? { columns: decision } : {}),
+      })),
+    }) as SubmitOk;
+    expect(outcome.error, `${focusId} commits`).toBeUndefined();
+  }
+  return dispatched;
+}
+
+describe('CT per-neighbour column carry — a stated subset is not an inherit', () => {
+  it('inherits both traced columns when the route states nothing', () => {
+    expect(
+      driveNarrowWalk(undefined).get(NARROW_GATE)?.slice().sort(),
+      'no opinion stated, so the session target set applies unchanged',
+    ).toEqual(['Amount', 'GateFlag']);
+  });
+
+  it('carries only the stated subset, never the wider set it was queued under', () => {
+    expect(
+      driveNarrowWalk(['GateFlag']).get(NARROW_GATE),
+      'the router named one of the two traced columns and that is what the neighbour is asked about',
+    ).toEqual(['GateFlag']);
+  });
+
+  it('carries nothing when the route states none', () => {
+    expect(
+      driveNarrowWalk('none').get(NARROW_GATE),
+      'a row-role neighbour declaring both traced columns is still dispatched with neither',
+    ).toEqual([]);
+  });
+
+  it('gives the three states three different dispatches on one topology', () => {
+    // The discriminator, stated once: same graph, same question, same walk — only the `columns`
+    // field differs, and no two states may produce the same set. Collapsing any pair in the engine
+    // fails here rather than passing under the other's assertion.
+    const sets = [undefined, ['GateFlag'] as string[], 'none' as const]
+      .map(decision => (driveNarrowWalk(decision).get(NARROW_GATE) ?? []).slice().sort().join('|'));
+    expect(new Set(sets).size, `three states, three dispatched sets (got ${sets.join(' / ')})`).toBe(3);
   });
 });
