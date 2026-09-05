@@ -608,17 +608,15 @@ describe('prompt composition', () => {
     expect(getAllowedLmToolNames({ kind: 'active', mode: 'sm_bb' }).has('lineage_start_exploration')).toBe(false);
   });
 
-  // Two surfaces state this one rule and the model reads both: the notes schema description it
-  // fills, and the synthesis reminder it reads before filling it. `buildPassthroughFlowFacts`
-  // lists every kept node with no detail slot and requires each one covered, so a surface saying
-  // some nodes "stay bare" is the opposite instruction for the same node. Both are pinned here
-  // because fixing one and not the other is how the contradiction survived a first repair.
+  // The schema description (structure, owned by Zod) keeps only the section-link/note-linkage
+  // shape; the completeness rule itself — every kept node with no detail slot earns a note, never
+  // "stay bare" — is wording, owned solely by the synthesis reminder in smPrompts.ts (surviving
+  // home per the schema/wording split), and pinned below on `notesLine`.
   it('never licenses leaving a kept node bare, on either surface that states the rule', () => {
     const projected = toModelJsonSchema(PresentResultModelSchema) as { properties?: Record<string, { description?: string }> };
     const notesDescription = projected.properties?.notes?.description ?? '';
 
     expect(notesDescription).not.toContain('stay bare');
-    expect(notesDescription).toMatch(/engine lists with no detail slot earns a note/);
 
     const result: SmResult = {
       status: 'complete',

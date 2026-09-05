@@ -485,19 +485,14 @@ export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
  * CT-mode submit_findings input.
  *
  * @remarks
- * Self-status is `analyze`, `passthrough`, or `prune` (AI-decided; executed through the topology-safe
- * don't-orphan path with reason `submitted_prune` — 1.4b). `column_flow` is required on every analyze/passthrough hop; the engine
- * checks each active tracked column is accounted for. `column_flow: []` is valid only when the node
- * has no tracked column interaction. A non-empty entry with `upstream_columns: []` means the node
- * carries/produces the active column but there is no upstream real column to route.
- * `prune_neighbors` is the same key BB carries: same decision space, same topology-safe
- * handling — CT is BB plus column tracking, so every BB field is present on the CT form.
+ * CT is BB plus column tracking, so every BB field — including `prune_neighbors` — is present on
+ * the CT form; `column_flow`'s own contract is documented on {@link ColumnFlowSchema}.
  */
 export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('ct'),
   column_flow: ColumnFlowSchema,
   prune_neighbors: z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS).optional().describe(
-    'Current-hop neighbor IDs to drop from the session because current evidence proves they are off the answer path. Same contract as BB: a required neighbor is routed or pruned with evidence; queued work is protected and every executed prune is orphan-guarded.',
+    'Current-hop neighbor IDs to drop from the session, per the Verdict Protocol\'s off-path definition for this mode. Same contract as BB.',
   ),
 }).strict();
 
@@ -677,7 +672,7 @@ export const PresentResultModelSchema = z.object({
     // contiguous span of the supplied answer. One schema serving both stages can only state what
     // they share; each stage's own rule belongs in its prompt, next to the validator that enforces it.
     text: z.string().describe('One-sentence caption, grounded in the evidence supplied for this stage.'),
-  }).strict()).optional().describe('One-sentence captions below nodes. Give every node linked in sections[].node_ids one short caption; a node in highlight_groups[].node_ids must be explained by a section link or a note. Every kept node the engine lists with no detail slot earns a note here — that list is the authority on what still needs covering, and a node it names is never left bare.'),
+  }).strict()).optional().describe('One-sentence captions below nodes. Give every node linked in sections[].node_ids one short caption; a node in highlight_groups[].node_ids must be explained by a section link or a note.'),
   is_update: coercedBoolean().optional().describe('True only when updating an existing presentation or repairing a held draft.'),
 }).strict();
 

@@ -43,7 +43,7 @@ const REQUIRED_NEIGHBOR_RESOLUTION =
 
 /**
  * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (D-020: same
- * instruction, same pruning, same auto-add in BB and CT — each contract adds only its own framing
+ * instruction, same pruning, same routing in BB and CT — each contract adds only its own framing
  * line, its verdict wording, and its mode additions). Route, retain, or prune are the three
  * decisions; the engine enforces the same accounting in both modes.
  */
@@ -98,10 +98,10 @@ const BLOCK = {
   ].join('\n'),
   verdictCategoriesCt: [
     '## Verdict Protocol — every focus node is one of three states',
-    '- analyze: The node transforms a tracked column or is its terminal source. Fill column_flow.',
-    '- passthrough: The column flows through unchanged — no logic here. Keep the node and continue the trace: fill column_flow with the real upstream_columns, or upstream_columns:[] when the column is produced here with no upstream real column. A raw source / bridge / target table is the canonical passthrough — always keep it.',
-    '- prune: The focus node is not part of this column trace — remove it. It is the only verdict that removes a node.',
-    '- If it is not a key transform and not off-trace, use `passthrough`; the node stays in the graph. The engine, not you, decides when the walk is done (it ends only when every scoped node has been visited).',
+    '- analyze: The node transforms the traced value or is its terminal source. Fill column_flow.',
+    '- passthrough: The value flows through unchanged — no logic here. Keep it and continue the trace: fill column_flow with the real upstream_columns, or [] when the value originates here. A raw source / bridge / target table is the canonical passthrough — always keep it.',
+    '- prune: The traced value never passes through this focus node — remove it. It is the only verdict that removes a node.',
+    '- Trace the value, not the name: upstream of a computed column it continues under other names, and a node carrying it is on-trace. Not a key transform and not off-trace means `passthrough`. The engine, not you, decides when the walk is done.',
   ].join('\n'),
 
   /**
@@ -148,7 +148,7 @@ const BLOCK = {
     '- Emit explicit `verdict` for the focus node every hop (`analyze`, `passthrough`, or `prune` if the node is off the answer path).',
     ...NEIGHBOR_DECISION_CORE,
     '- Put only real upstream table/view/procedure node+column refs in `column_flow[].upstream_columns`; the engine carries those columns to the next hop.',
-    '- In CT, `column_flow[].upstream_columns` already opens the route for a named contributor; add `route_requests` to carry the analytical question when the node applies logic worth capturing.',
+    '- In CT, `column_flow[].upstream_columns` records the value path; it does not open a route — add `route_requests` for every named contributor, carrying the analytical question when the node applies logic worth capturing.',
     '- The engine already supplies the column A→B continuation (`<lineage_questions>`); keep `column_flow[].upstream_columns` precise and structural, and answer the analytical question in your capture narration (`sections[].text`) — never invent columns to satisfy it.',
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
     '- Derive column origins purely from the provided DDL whenever possible (e.g., explicit SELECT columns).',
@@ -694,8 +694,8 @@ const SmCompletionEnvelopeSchema = z.object({
  *
  * @remarks
  * The CT chain block ({@link buildCtSynthesisBlock}) is appended only when column edges were recorded;
- * it carries the terminal-source facts CT synthesis depends on. Off-trace nodes are excluded upstream
- * by the CT scope filter; `ctPrunedNodeIds` lists focus nodes pruned via `verdict=prune` in CT.
+ * it carries the terminal-source facts CT synthesis depends on. `ctPrunedNodeIds` lists the focus
+ * nodes pruned via `verdict=prune` in CT.
  *
  * `result.fullNodes` is the render bound and therefore the id set `present_result` accepts, so it is
  * stated as `scope.node_ids` and every naming surface is filtered to it: `node_states[]` and the

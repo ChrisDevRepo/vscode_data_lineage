@@ -2048,7 +2048,7 @@ export class NavigationEngine implements IHopStateMachine {
    * @remarks Single source for that set: the guard callback and the per-hop envelope render
    * ({@link buildActiveHopInstruction}) both read it, so the rendered checklist can never drift
    * from what the engine enforces. CT is BB plus column tracking — the guard runs unconditionally
-   * there too; CT's column_flow auto-add counts as routing for the same accounting.
+   * there too, and CT satisfies it the same way BB does, through `route_requests`.
    *
    * @param focusId - Current focus node id.
    * @returns Directional neighbor ids that must be routed or accounted for before the walk advances.
