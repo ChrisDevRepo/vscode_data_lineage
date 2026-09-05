@@ -220,8 +220,8 @@ function cloneAgendaEntry(entry: AgendaEntry): AgendaEntry {
     nodeId: entry.nodeId,
     priority: entry.priority,
     depth: entry.depth,
-    ...(entry.activeColumns ? { activeColumns: entry.activeColumns } : {}),
-    ...(entry.lineageQuestions ? { lineageQuestions: entry.lineageQuestions } : {}),
+    ...(entry.activeColumns ? { activeColumns: [...entry.activeColumns] } : {}),
+    ...(entry.lineageQuestions ? { lineageQuestions: [...entry.lineageQuestions] } : {}),
   };
 }
 
@@ -2452,9 +2452,10 @@ export class NavigationEngine implements IHopStateMachine {
     // so it runs unconditionally (D-020: in both modes a required neighbor is satisfied by a route
     // OR by a prune that passed the don't-orphan check; `prune_neighbors` may carry in-scope
     // neighbors off the answer path, not only out-of-scope ones).
+    const pruneNeighborIds = new Set((finding.prune_neighbors ?? []).map(id => id.toLowerCase()));
     for (const reqId of requiredNodeIds) {
       if (acceptedNids.has(reqId) || prunedNeighborNids.has(reqId)) continue;
-      const invalidlyPruned = (finding.prune_neighbors ?? []).some(id => id.toLowerCase() === reqId);
+      const invalidlyPruned = pruneNeighborIds.has(reqId);
       invalidRoutes.push({
         kind: 'missing_required_route',
         id: reqId,

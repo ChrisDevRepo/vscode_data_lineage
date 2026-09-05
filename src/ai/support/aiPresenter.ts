@@ -23,7 +23,7 @@ export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
   ) as Partial<T>;
 }
 
-const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', exec: 'exec', read: 'read' };
+const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', exec: 'exec' };
 const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
 /**

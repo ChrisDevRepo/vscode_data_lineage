@@ -436,14 +436,15 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         return s.logAndReturn('present_result', validation, rawInput);
       }
 
+      // The approved exploration this render belongs to; a discovery-turn render, which never
+      // passed an approval gate, has none and is stamped with the chat session instead.
+      const runId = sess.explorationRunId ?? sess.id;
       const aiMetadata: PresentationArtifact['aiMetadata'] = {
         summary: validation.summary,
         description: validation.description,
         createdAt: new Date().toISOString(),
         modelName: sess.modelName ?? 'unknown',
-        // The approved exploration this render belongs to; a discovery-turn render, which never
-        // passed an approval gate, has none and is stamped with the chat session instead.
-        runId: sess.explorationRunId ?? sess.id,
+        runId,
         highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
         badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
         notes: validation.notes.map(n => ({ nodeId: n.node_id, text: n.text })),
@@ -466,7 +467,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         name: validation.name,
         nodeIds: [...validation.node_ids],
         aiMetadata,
-        ...(checkpoint ? { runId: sess.explorationRunId ?? sess.id, checkpoint } : {}),
+        ...(checkpoint ? { runId, checkpoint } : {}),
       };
 
       const panel = s.getPanel();
