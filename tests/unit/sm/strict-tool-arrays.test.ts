@@ -188,3 +188,36 @@ describe("string-encoded sections", () => {
       'the model-facing submit_findings schema bytes are unchanged by the coercion').toBe(true);
   });
 });
+
+// route_requests and prune_neighbors arriving JSON-string-encoded is the same asymmetry sections
+// already absorbs: the same generation emitted both sections (accepted) and route_requests
+// (rejected as invalid_tool_input) string-encoded, because sections alone used coercedStringArray.
+describe("string-encoded route_requests and prune_neighbors", () => {
+  const arrayForm = SubmitFindingsBbInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: '[dbo].[vOrders]', question: 'Does vOrders carry TotalDue unchanged?' }],
+    prune_neighbors: ['[dbo].[vDead]'],
+  });
+
+  const stringEncoded = SubmitFindingsBbInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: '[{"nodeId":"[dbo].[vOrders]","question":"Does vOrders carry TotalDue unchanged?"}]',
+    prune_neighbors: '["[dbo].[vDead]"]',
+  });
+
+  it("submit_findings accepts string-encoded route_requests and prune_neighbors", () => {
+    expect(stringEncoded.success, 'submit_findings accepts string-encoded route_requests and prune_neighbors').toBe(true);
+  });
+
+  it("string-encoded and array forms parse to the same value", () => {
+    expect(arrayForm.success && stringEncoded.success && JSON.stringify(stringEncoded.data.route_requests) === JSON.stringify(arrayForm.data.route_requests)
+      && JSON.stringify(stringEncoded.data.prune_neighbors) === JSON.stringify(arrayForm.data.prune_neighbors),
+      'string-encoded and array forms parse to the same value').toBe(true);
+  });
+});
