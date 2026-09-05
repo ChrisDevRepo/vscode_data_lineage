@@ -85,20 +85,43 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 }
 
 
+/**
+ * The one `lineage_get_neighbor_columns` trigger. BB's role-opacity test is what feeds route and
+ * prune, so CT carries it verbatim and appends its column-specific case; narrowing CT to hidden
+ * column names alone dropped the role test CT still needs.
+ */
+const NEIGHBOR_COLUMNS_TRIGGER = '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone';
+
 const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
+
+/**
+ * The one prune trigger, byte-shared by the BB and CT verdict blocks and mirrored into the
+ * `submit_findings` schema description (`hopVerdictSchema`).
+ *
+ * @remarks
+ * CT stated a value test here instead ("the traced value never passes through this focus node"),
+ * which prunes a node that shapes which rows appear but carries no traced value — a node BB keeps.
+ * Same question, two graphs. CT is BB plus columns: it may add to this trigger, never replace it.
+ */
+export const PRUNE_VERDICT_LEAD = 'The node is not part of this lineage answer — remove it.';
+
+/** Passthrough lead and body, byte-shared by both verdict blocks; CT adds its column clauses. */
+const PASSTHROUGH_VERDICT_LEAD = 'The node is on the data path but applies no logic — a SELECT * or synonym, or a raw source / bridge / target table.';
+const PASSTHROUGH_VERDICT_BODY = 'Keep it in the lineage and link it by flow role (Source / Transform / Target); give it a one-line summary, not deep analysis. The trace continues *through* it — its neighbors carry the same question forward. A pure-data table is the canonical passthrough: there is no logic to analyze, yet it is usually the Source or Target the answer is about — always keep it.';
+
 const BLOCK = {
   /** Node classification protocol. */
   verdictCategories: [
     '## Verdict Protocol — every focus node is one of three states',
     '- analyze: The node applies business logic on the data path — a calculation, condition, status transition, or audit decision. Analyze it in depth and feature it in the answer. (Applies to logic-bearing bodied nodes; a non-bodied table focus follows the engine path — structural-summary, still kept.)',
-    '- passthrough: The node is on the data path but applies no logic — a SELECT * or synonym, or a raw source / bridge / target table. Keep it in the lineage and link it by flow role (Source / Transform / Target); give it a one-line summary, not deep analysis. The trace continues *through* it — its neighbors carry the same question forward. A pure-data table is the canonical passthrough: there is no logic to analyze, yet it is usually the Source or Target the answer is about — always keep it.',
-    `- prune: The node is not part of this lineage answer — remove it. ${PRUNE_VERDICT_TAIL}`,
+    `- passthrough: ${PASSTHROUGH_VERDICT_LEAD} ${PASSTHROUGH_VERDICT_BODY}`,
+    `- prune: ${PRUNE_VERDICT_LEAD} ${PRUNE_VERDICT_TAIL}`,
   ].join('\n'),
   verdictCategoriesCt: [
     '## Verdict Protocol — every focus node is one of three states',
     '- analyze: The node transforms the traced value or is its terminal source — or, as in BB, it applies business logic on the data path (a calculation, condition, status transition, or audit decision) without touching a traced column. Analyze it in depth either way. Fill column_flow for each active column; a node carrying none submits []. (Applies to logic-bearing bodied nodes; a non-bodied table focus follows the engine path — structural-summary, still kept.)',
-    '- passthrough: The value flows through unchanged — no logic here. Keep it and continue the trace: fill column_flow with the real upstream_columns, or [] when the value originates here. A raw source / bridge / target table is the canonical passthrough — always keep it.',
-    `- prune: The traced value never passes through this focus node — remove it. ${PRUNE_VERDICT_TAIL}`,
+    `- passthrough: ${PASSTHROUGH_VERDICT_LEAD} The traced value flows through it unchanged. ${PASSTHROUGH_VERDICT_BODY} Fill column_flow with the real upstream_columns, or [] when the value originates here.`,
+    `- prune: ${PRUNE_VERDICT_LEAD} Carrying no traced column is not by itself a reason to prune. ${PRUNE_VERDICT_TAIL}`,
     '- Trace the value, not the name: upstream of a computed column it continues under other names, and a node carrying it is on-trace. Not a key transform and not off-trace means `passthrough`. The engine, not you, decides when the walk is done.',
   ].join('\n'),
 
@@ -137,7 +160,7 @@ const BLOCK = {
     '- Emit explicit `verdict` for the focus node every hop.',
     ...NEIGHBOR_DECISION_CORE,
     '- Derive neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
-    '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone.',
+    `${NEIGHBOR_COLUMNS_TRIGGER}.`,
     '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
   ].join('\n'),
   hopDecisionContractCt: [
@@ -150,7 +173,7 @@ const BLOCK = {
     '- The engine already supplies the column A→B continuation (`<lineage_questions>`); keep `column_flow[].upstream_columns` precise and structural, and answer the analytical question in your capture narration (`sections[].text`) — never invent columns to satisfy it.',
     '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
     '- Derive column origins and neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
-    '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where the column names are hidden.',
+    `${NEIGHBOR_COLUMNS_TRIGGER}, or the column names are hidden.`,
     '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
   ].join('\n'),
 } as const;

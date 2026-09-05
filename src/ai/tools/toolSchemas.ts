@@ -12,6 +12,7 @@ import {
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
 import { coercedBoolean, coercedStringArray, coercedStringObject, nullAsAbsent } from '../support/inputNormalization';
+import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -482,12 +483,16 @@ const ColumnFlowEntrySchema = z.object({
  * the BB wording. A single shared description text previously carried only the BB definitions into
  * CT mode, so the model read two incompatible definitions of "analyze" (system prompt vs. schema).
  * Each mode now gets its own schema description matching its own protocol block.
+ *
+ * "prune" is the exception: it is one trigger in both modes, so both descriptions carry
+ * {@link PRUNE_VERDICT_LEAD} verbatim — this schema description is the last text the model reads
+ * before it answers, and a CT-only value test here prunes a row-shaping node BB keeps.
  */
 const hopVerdictSchema = (mode: 'bb' | 'ct') =>
   z.enum(['analyze', 'passthrough', 'prune']).describe(
     mode === 'ct'
-      ? 'Your assessment of the focus node, per the Verdict Protocol in the system prompt. Use the CT definitions: "analyze" transforms a tracked column or is its terminal source, "passthrough" carries it unchanged, "prune" is off this column trace.'
-      : 'Your assessment of the focus node, per the Verdict Protocol in the system prompt. Use the BB definitions: "analyze" applies logic on the data path, "passthrough" is on the path with no logic, "prune" is off the answer path.',
+      ? `Your assessment of the focus node, per the Verdict Protocol in the system prompt. Use the CT definitions: "analyze" transforms a tracked column or is its terminal source, "passthrough" carries it unchanged, "prune": ${PRUNE_VERDICT_LEAD}`
+      : `Your assessment of the focus node, per the Verdict Protocol in the system prompt. Use the BB definitions: "analyze" applies logic on the data path, "passthrough" is on the path with no logic, "prune": ${PRUNE_VERDICT_LEAD}`,
   );
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_IDS).describe(

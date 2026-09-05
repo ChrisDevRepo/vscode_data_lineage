@@ -657,7 +657,6 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     'Use `column_flow` only for the active tracked column chain.',
     'Put only real upstream table/view/procedure node+column refs in `upstream_columns`.',
     'Do not encode literals, NULLs, parameters, generated sequence values, audit/logging columns, or filter-only columns as `upstream_columns`; explain them in `sections[].text` when they matter.',
-    'Optional: add `route_requests` sub-questions for upstream nodes when a custom question is clearer; the engine carries columns from `column_flow`.',
     '',
     '`column_flow` and `sections[]` are separate fields.',
     '`column_trace_capture` writes `column_flow`; business/technical captures write `sections[]`.',

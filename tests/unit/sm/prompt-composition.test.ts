@@ -521,6 +521,22 @@ describe('prompt composition', () => {
     expect(ct).toContain(deriveFromDdl);
   });
 
+  // Same-graph pin. CT once replaced BB's prune trigger with a value test ("the traced value never
+  // passes through this focus node"), so a row-shaping node — one that decides which rows appear
+  // but carries no traced value — was prunable in CT and kept in BB: the same question, two
+  // graphs. The lead is byte-shared now; CT may only add to it.
+  it('states BB\'s prune trigger verbatim in CT and only adds to it', () => {
+    const bb = buildSmProtocol({ classification: 'business' });
+    const ct = buildSmProtocol({ classification: 'both', targetColumns: ['TotalRevenue'] });
+
+    const pruneLead = '- prune: The node is not part of this lineage answer — remove it.';
+    expect(bb).toContain(pruneLead);
+    expect(ct).toContain(pruneLead);
+
+    // The value test must not survive as an alternative prune trigger.
+    expect(ct).not.toContain('The traced value never passes through this focus node');
+  });
+
   it('grounds synthesis roles in the supplied graph', () => {
     const edges: Array<[string, string, string]> = [
       ['raw', 'stage', 'lineage'],
