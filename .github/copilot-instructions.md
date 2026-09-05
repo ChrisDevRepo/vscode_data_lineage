@@ -98,9 +98,12 @@ caller in Copilot agent mode cannot reach a mutating tool at all.
 Within one phase the retry context re-projects accepted observations and the
 newest rejection. An accepted call retires every earlier rejection of the same
 tool, and a resend byte-identical to a read accepted in an earlier attempt is
-answered with an uncharged `duplicate_read` envelope naming the accepted call —
-a silent replay left the model with no response to act on and it repeated the
-call until the provider-call stop.
+answered with a `duplicate_read` envelope naming the accepted call — a silent
+replay left the model with no response to act on and it repeated the call until
+the provider-call stop. The envelope is free while the model may still act on the
+answer it holds; past the shared unproductive-resend allowance each further
+identical resend charges a semantic strike, so a model that keeps replaying the
+read closes the phase instead of spinning to the provider-call cap.
 
 A replayed rejection exchange always closes on a user-role continuation note,
 and that is provider contract, not prose. A request whose history ends on a
