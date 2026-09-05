@@ -56,20 +56,29 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
         }, rawInput);
       }
-      // Same guard, same code: `route_requests[].columns` is the per-neighbor half of the same
-      // column channel, and a BB session has no traced columns for a route to carry.
-      if (!engine.columnAspect && Array.isArray(rawInput.route_requests)
-        && rawInput.route_requests.some(req => req !== null && typeof req === 'object' && !Array.isArray(req) && 'columns' in req)) {
-        return s.logAndReturn('submit_findings', {
-          error: REJECTION_CODES.bbFieldUnknown,
-          hint: 'This session is in BB mode — `route_requests[].columns` is not accepted, because no columns are being traced. Submit each route with `nodeId` and `question` only.',
-        }, rawInput);
+      // `route_requests[].columns` rides on the shared route schema BB also advertises, so a BB hop
+      // can fill a field its own mode cannot read. The engine serves that hop perfectly by ignoring
+      // the field, so it is dropped from a local copy and logged — never rejected. A rejection here
+      // would spend a generation on a field that carries no meaning in the mode.
+      let bbColumnRoutes = 0;
+      let stripped: SubmitFindingsInputObject = rawInput;
+      if (!engine.columnAspect && Array.isArray(rawInput.route_requests)) {
+        const routes = rawInput.route_requests.map(req => {
+          if (req === null || typeof req !== 'object' || Array.isArray(req) || !('columns' in req)) return req;
+          bbColumnRoutes++;
+          const { columns: _bbHasNoTracedColumns, ...rest } = req as Record<string, unknown>;
+          return rest;
+        });
+        if (bbColumnRoutes > 0) {
+          stripped = { ...rawInput, route_requests: routes };
+          s.logger.debug(`[submit_findings] dropped route_requests[].columns on ${bbColumnRoutes} route(s): BB mode traces no columns`);
+        }
       }
 
       // Middleware: normalize identifier encodings into a local copy only. The raw model payload
       // stays immutable; strict mode-specific Zod parses the normalized copy below.
       const modelNodeMap = getModelNodeMap(s.requireModel());
-      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
+      const normalized = normalizeSubmitFindingsInputIds(stripped, modelNodeMap);
       const normalizedInput = normalized.input;
       for (const event of normalized.normalizations) {
         s.logger.debug(

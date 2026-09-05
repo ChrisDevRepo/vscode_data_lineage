@@ -136,20 +136,41 @@ describe("Submit Findings Handler", () => {
   expect((result() as { error?: string }).error, 'BB preserves the established CT-field rejection envelope').toBe('bb_field_unknown');
 });
 
-  it("BB refuses a per-neighbour column decision through the same envelope", () => {
-  // `route_requests[].columns` parses on the shared base schema, so the mode refusal is the
-  // handler's — the same pre-Zod guard and the same code that refuses `column_flow` in BB.
-  const { services, result } = setup();
-  executeSubmitFindings({
+  it("BB normalizes away a per-neighbour column decision instead of rejecting the hop", () => {
+  // `route_requests[].columns` parses on the shared base schema BB itself advertises, so a BB hop
+  // can fill a field its own mode cannot read. The engine serves that hop perfectly by ignoring the
+  // field, so the field is dropped and logged — a rejection would spend a generation on a field
+  // that carries no meaning in the mode, and a CT-only rule may never fail a BB run.
+  const { engine, services, result } = setup();
+  const logs: string[] = [];
+  (services as unknown as { logger: { debug: (line: string) => void } }).logger.debug =
+    (line: string) => { logs.push(line); };
+  const reachedEngine: Array<{ route_requests?: Array<Record<string, unknown>> }> = [];
+  const engineSubmit = engine.submitFindings.bind(engine);
+  (engine as unknown as { submitFindings: (finding: never) => unknown }).submitFindings = (finding: never) => {
+    reachedEngine.push(finding);
+    return engineSubmit(finding);
+  };
+  const raw = {
     focus_node_id: 'origin',
-    sections: [{ angle: 'business', text: 'Wrong mode field.' }],
-    summary: 'Wrong mode field.',
+    sections: [{ angle: 'business', text: 'Origin dispatches both paths.' }],
+    summary: 'Origin dispatches both paths.',
     verdict: 'analyze',
-    route_requests: [{ nodeId: 'origin', question: 'q', columns: 'none' }],
-  }, services);
-  const rejected = result() as { error?: string; hint?: string };
-  expect(rejected.error, 'no new rejection mechanism — one code, one envelope').toBe('bb_field_unknown');
-  expect(/route_requests\[\]\.columns/.test(rejected.hint ?? ''), 'the hint names the field to drop').toBe(true);
+    route_requests: [
+      { nodeId: 'a', question: 'Trace A.', columns: 'none' },
+      { nodeId: 'b', question: 'Trace B.' },
+    ],
+  };
+  executeSubmitFindings(raw, services);
+  const accepted = result() as { error?: string };
+  expect(accepted.error, 'a field meaningless in the mode never costs a generation').toBeUndefined();
+  expect(engine.toJSON().memory.detailSlots.origin !== undefined, 'the accepted BB hop commits its authored detail').toBe(true);
+  expect(
+    reachedEngine[0]?.route_requests?.some(req => 'columns' in req),
+    'the mode-meaningless field never reaches the engine',
+  ).toBe(false);
+  expect(logs.some(line => /route_requests\[\]\.columns/.test(line)), 'the drop is logged, never silent').toBe(true);
+  expect(raw.route_requests[0].columns, 'the raw model payload stays immutable').toBe('none');
 });
 
   it("CT accepts prune_neighbors — same decision space as BB (D1 convergence)", () => {
