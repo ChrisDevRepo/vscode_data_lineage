@@ -378,6 +378,8 @@ describe('CT column chain preface', () => {
     // Hop ordering wins regardless of accumulation order, so the table reads as one chain.
     expect(preface!.indexOf('vwExternalOrders')).toBeLessThan(preface!.indexOf('vwRawOrders'));
     expect(preface!.split('\n').filter(l => l.startsWith('| 1 '))).toHaveLength(1);
+    // The source cell is one code span — node and column together — so no backtick is left unmatched.
+    expect(preface).toContain('| 1 | `[ai].[RawOrderImport]` | `RawQty` | `[ai].[vwExternalOrders].Quantity` |');
     expect(preface!.split('\n').filter(l => l.startsWith('| 2 '))).toHaveLength(1);
   });
 

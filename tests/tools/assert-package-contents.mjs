@@ -76,6 +76,8 @@ const forbidden = [
   { pattern: /\.tmp$/iu, label: 'stray .tmp scratch file' },
   { pattern: /(?:^|\/)evidence(?:\/|$)/iu, label: 'evidence/ artifact directory' },
   { pattern: /\.vsix$/iu, label: 'packaged .vsix artifact' },
+  // The only dacpac the VSIX ships is assets/demo.dacpac; one at the repo root is a staged internal model.
+  { pattern: /^[^/]+\.dacpac$/iu, label: 'root-level dacpac' },
 ];
 
 const missing = required.filter((file) => !files.includes(file));

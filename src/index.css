@@ -564,8 +564,8 @@ body.vscode-reduce-motion *::after {
   color: var(--ln-fg);
 }
 .ln-ai-section-chip.ln-active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--ln-button-bg);
+  color: var(--ln-button-fg);
   border-color: transparent;
 }
 

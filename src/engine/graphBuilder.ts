@@ -34,7 +34,7 @@ import { notifyUser } from '../utils/notify';
  * @param level - Severity, in the host log vocabulary.
  * @param text - Ready-to-log line, already carrying its `[Category]` prefix.
  */
-type GraphLogSink = (level: 'info' | 'debug' | 'warn' | 'error', text: string) => void;
+type GraphLogSink = (level: 'info' | 'debug' | 'warn', text: string) => void;
 
 /**
  * Where this module's diagnostics go. Defaults to a no-op so the engine stays usable outside the

@@ -332,7 +332,7 @@ function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unkn
       summary: optionalString(slot?.summary),
       section: sections.length > 0 ? sections : undefined,
       stale: stale.has(id),
-      in_current_model: input.isInModel?.(id) ?? false,
+      in_current_model: input.isInModel ? input.isInModel(id) : undefined,
     });
   });
 }
@@ -416,7 +416,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
  * phrase names the surfaces present, never their contents, which stay behind the tool call.
  *
  * @param uiState - Latest `filter-changed` ui-state buffer, unvalidated.
- * @returns The phrase, entity-escaped for its prompt slot, or `null` when no trace, analysis, or bookmark is applied.
+ * @returns The raw phrase — the prompt slot builder escapes it — or `null` when no trace, analysis, or bookmark is applied.
  */
 export function describeScreen(uiState: unknown): string | null {
   const { ui, extras } = screenStateParts(uiState);

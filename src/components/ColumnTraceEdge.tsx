@@ -17,7 +17,7 @@ const LIT_STROKE_WIDTH = 1.6;
 const DIM_STROKE_WIDTH = 1;
 
 /** Outer size, in px, of the marker chip centred on the edge path. */
-export const COLUMN_EDGE_CHIP_SIZE = 32;
+const COLUMN_EDGE_CHIP_SIZE = 32;
 
 /** Size, in px, of a glyph drawn inside the chip. */
 const CHIP_GLYPH_SIZE = 20;
@@ -54,7 +54,7 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
  * The legend row for column flow was removed: the chip's tooltip is now the only surface that
  * names the class, so these strings are load-bearing on hover alone.
  */
-export const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
+const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
   pass_through: 'Pass through',
   compute: 'Compute',
   aggregate: 'Aggregate',
@@ -75,7 +75,7 @@ export const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass
 export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
   const classes = (data.transforms ?? []).filter(c => c !== 'pass_through');
   if (classes.length === 0) {
-    return `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
+    return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
   }
   const indirectOnly = classes.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
   const detail = data.note
@@ -112,7 +112,7 @@ function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransfor
  * aggregates, the converging pair joins, the funnel filters. All are stroked primitives in the
  * shared 24-unit box so they render as one family at chip scale.
  */
-export function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
+function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
   switch (transformClass) {
     case 'pass_through':
       return (

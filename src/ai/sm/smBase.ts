@@ -1785,7 +1785,7 @@ export class NavigationEngine implements IHopStateMachine {
       // Naming the lead id as a repair is unreachable advice: `leadIds` is host-selected (the
       // follow-up pill), and the only production caller — the `supplement` branch of
       // start_exploration — passes `nodeIds` alone. The hint names the one input the model can
-      // actually fill, and the exit for having no node to name (P1-40).
+      // actually fill, and the exit for having no node to name.
       return {
         error: 'supplement_empty',
         hint: 'supplement requires at least one node id in supplement.nodeIds — pending leads are host-selected and cannot be supplied here. Name the ids from the completed exploration you want extended; if no node is left to extend, do not resend an empty supplement — answer from the completed exploration, or start a fresh exploration by providing an origin instead of supplement.',
@@ -1815,7 +1815,7 @@ export class NavigationEngine implements IHopStateMachine {
     // corrected retry can drop the pruned id (mutations below assume every target is enqueueable).
     // The whole batch is reported at once: returning on the first pruned id charged one generation
     // per pruned id, and where the pruned ids are the only targets, "drop it" produces the empty
-    // list that lands straight on `supplement_empty`. Both exits are named here (P1-40).
+    // list that lands straight on `supplement_empty`. Both exits are named here.
     const prunedTargets: string[] = [];
     let survivingTargets = 0;
     for (const request of requested) {
@@ -2173,7 +2173,7 @@ export class NavigationEngine implements IHopStateMachine {
     // false, and every hint here that offers `passthrough` as the repair. A passthrough at a focus
     // carrying a tracked column is refused by that same guard unless it also carries a column_flow
     // entry per declared column, so a hint naming passthrough alone spends a generation only to
-    // land on `column_chain_incomplete` (P1-40).
+    // land on `column_chain_incomplete`.
     let declaredActiveColumns: readonly string[] = [];
     if (this.tracer) {
       const declaredNorm = new Set(
@@ -2466,7 +2466,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     // Completeness guard, both modes: every in-scope directional neighbor must be routed or pruned
     // before advance. CT is BB plus column tracking — neighbor accounting is the shared behaviour,
-    // so it runs unconditionally (D-020: in both modes a required neighbor is satisfied by a route
+    // so it runs unconditionally (in both modes a required neighbor is satisfied by a route
     // OR by a prune that passed the don't-orphan check; `prune_neighbors` may carry in-scope
     // neighbors off the answer path, not only out-of-scope ones).
     const pruneNeighborIds = new Set((finding.prune_neighbors ?? []).map(id => id.toLowerCase()));
@@ -2519,7 +2519,7 @@ export class NavigationEngine implements IHopStateMachine {
       const submittedFlow = finding.column_flow ?? [];
       // `declaredActiveColumns` (hoisted above the prune branch) decides both halves: whether the
       // empty-flow declaration is checkably false, and — when the hop is rejected for any reason —
-      // whether the hint may still offer that escape (P1-37).
+      // whether the hint may still offer that escape.
       const contradicted = declaredActiveColumns;
       const declaresNoTrackedColumns =
         finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
@@ -2549,8 +2549,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.heldFindingDraft.hold(structuredClone(finding));
         // Every repair below must apply to the shape that produced the rejection. Choosing a
         // subset presumes a set: with one staged route the model judges it essential, keeps it,
-        // and resubmits byte-identical until the breaker — three times in
-        // wave-739076f1-local-mlx/run-T8 (P1-22). Dropping the route is the repair that always
+        // and resubmits byte-identical until the breaker. Dropping the route is the repair that always
         // exists, so it is named in both branches and is the only one named where it is the only
         // one left.
         const staged = scopeAddNids.size;
@@ -3459,8 +3458,7 @@ export class NavigationEngine implements IHopStateMachine {
       return parseNavigationSnapshot(snapshot);
     } catch (err) {
       // The engine's own state must always satisfy the strict checkpoint boundary; a rejection
-      // here is an internal invariant violation, not model/user behavior — the LogFn contract has
-      // no `error` level, so `warn` is the closest available severity. issuePaths only (no
+      // here is an internal invariant violation, not model/user behavior. issuePaths only (no
       // checkpoint values) so the line stays safe to persist.
       if (err instanceof InvalidEngineCheckpointError) {
         this.log('error', `[Checkpoint] serialize rejected — paths=${trunc(err.diagnostic, LOG_TRUNC_CONTENT)}`, err);

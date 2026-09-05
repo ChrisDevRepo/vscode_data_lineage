@@ -1161,7 +1161,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // with nothing captured (`committedFinding.summary` empty) — nothing to show.
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       const prunedMark = committedFinding.value.verdict === 'prune' ? '⛔ pruned — ' : '';
-      deps.sink.status('scoping', `_${prunedMark}${truncStatusLabel(committedFinding.value.summary, 200)}_`);
+      deps.sink.status('scoping', `_${prunedMark}${truncStatusLabel(committedFinding.value.summary, LOG_TRUNC_CONTENT)}_`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {

@@ -151,7 +151,7 @@ export function checkActiveScopeAdmission(
   const tokens = estimateTokens(projectedDdlChars);
   // Both arms carry the same counts and limits. The rejection always recorded the budget it broke
   // and the admission recorded nothing, so a run that grew the scope comfortably and a run that
-  // never grew it at all read identically in the log (P1-39).
+  // never grew it at all read identically in the log.
   const counts = { nodes: projectedNodes, tokens };
   const limits = { node_cap: explorationBudget.nodeCap, token_budget: explorationBudget.tokenBudget };
   if (!explorationBudget.exceeds(projectedNodes, tokens)) return { ok: true, counts, limits };

@@ -85,6 +85,10 @@ codex.md
 .continue/**
 .aider*
 
+# A dacpac at the repo root is an internal model staged for a lane run (see .gitignore); the
+# shipped fixture is assets/demo.dacpac only. vsce globs do not cross `/`, so this is root-only.
+*.dacpac
+
 # Misc
 PLAN*.md
 AGENTS*

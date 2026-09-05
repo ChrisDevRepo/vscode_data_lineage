@@ -96,7 +96,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       continue;
     }
     if (input.scopeNodeIds.has(id)) {
-      // The hop-level prune decision (D-020): an in-scope neighbour the model has decided is off
+      // The hop-level prune decision: an in-scope neighbour the model has decided is off
       // the answer path is pruned at the hop, like any out-of-scope one. Queued work is the one
       // protection — a prune may not pull a neighbour that already owns a pending hop; the
       // don't-orphan topology check governs every accepted prune after this.

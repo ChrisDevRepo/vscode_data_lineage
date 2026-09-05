@@ -584,7 +584,7 @@ export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): stri
   if (edges.length === 0) return undefined;
   const rows = [...edges]
     .sort((a, b) => a.hop - b.hop)
-    .map(e => `| ${e.hop} | \`${e.to_node}\` | \`${e.to_col}\` | \`${e.from_node}\`.${e.from_col}\` |`);
+    .map(e => `| ${e.hop} | \`${e.to_node}\` | \`${e.to_col}\` | \`${e.from_node}.${e.from_col}\` |`);
   return [
     '## Column Chain',
     '',

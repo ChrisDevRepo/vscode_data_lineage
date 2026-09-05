@@ -1,7 +1,10 @@
-import React, { memo, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 import { AI_SECTION_ID_PREFIX, FOCUS_NODE_HREF_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
+
+/** How long the copy button reads "Copied" before it reverts. */
+const COPIED_FEEDBACK_MS = 2000;
 
 /** One numbered report section, derived client-side from the bridged badge chips (`"N label"`). */
 export interface AiReportSection {
@@ -59,7 +62,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const [copied, setCopied] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [fontScale, setFontScale] = useState<0 | 1 | 2>(0);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
 
   function focusNodeFromEvent(target: EventTarget | null): (() => void) | null {
     const anchor = (target as HTMLElement | null)?.closest('a');
@@ -101,7 +105,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   function handleCopy() {
     navigator.clipboard.writeText(description).then(() => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
     }).catch(err => window.vscode?.postMessage({ type: 'error', error: `Clipboard write failed: ${err instanceof Error ? err.message : String(err)}` }));
   }
 
@@ -237,7 +242,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             ))}
           </div>
         )}
-        <div className="ln-ai-description-body" ref={bodyRef}>
+        <div className="ln-ai-description-body">
           {rawMode ? (
             <pre className="ln-ai-description-raw">{description}</pre>
           ) : (
