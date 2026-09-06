@@ -305,8 +305,8 @@ technical_capture:
        no mutation). With no such quotable statement, use `not established
        from the available SQL`. Coarse only — sub-variants (SCD1/SCD2/CDC)
        belong in prose. Omit when the focus is a view, UDF, or table.
-    3. Computed columns — the formula as a `$$ … $$` block alongside its
-       snippet.
+    3. Computed columns — each distinct formula, one per branch or
+       strategy, as a `$$ … $$` block alongside its snippet.
     4. Relationship role labels — "reads lookup from `DimProduct`",
        "writes via MERGE to `FactTableA`", "triggered by `spLoadA`".
     5. Join types when hinted (HASH / MERGE / LOOP).
@@ -370,11 +370,16 @@ structural_callouts:
     in a view, TOP without ORDER BY); truncation (implicit narrowing cast);
     hardcoded no-op logic; stale or incomplete reference-data joins; swallowed
     errors (TRY/CATCH continuing, a fallback leaving a value unset or NULL);
-    unimplemented branches; SQL comments carrying important information.
+    unimplemented branches; SQL comments carrying important information,
+    including a comment or status/error-message literal that contradicts
+    what the executable statement does — the executable statement
+    establishes behavior, and the disagreement is itself reportable.
 
     One line each: class · evidence anchor · mechanism · consequence, naming
     the object and the expression. ⚠️ prefixes only a decision-impacting
-    finding backed by the DDL already loaded. When none exist, say nothing.
+    finding backed by the DDL already loaded, and every such finding gets
+    its own ⚠️ line even where body prose already narrates it — only ⚠️
+    lines reach the answer. When none exist, say nothing.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.Region = r.Region` on nullable
     `Region` in `vwOrders`: an order with no region never reaches `FactSales`.
