@@ -2423,7 +2423,10 @@ export class NavigationEngine implements IHopStateMachine {
         for (const nid of actionPolicy.acceptedPruneIds) {
           const disconnected = this.firstDisconnectedAfterPrune(nid, requiredConnectedIds, stagedRemoved);
           if (disconnected) {
-            this.log('debug', `[Reject] prune_neighbor hop=${this.hopCount} id=${nid} reason=would_orphan_noted disconnected=${disconnected}`);
+            // `[Reject]` counts tool dispatches (toolProvider/toolAttempt); this refusal is one id
+            // inside one call's array and is already carried by the `route_validation_failed` that
+            // follows it, so labelling it `[Reject]` counted one event twice in the log.
+            this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${nid} reason=would_orphan_noted disconnected=${disconnected}`);
             invalidRoutes.push({ kind: 'prune_would_orphan', id: nid, reason: `Pruning \`${nid}\` would orphan committed node \`${disconnected}\` from the origin.` });
             continue;
           }
