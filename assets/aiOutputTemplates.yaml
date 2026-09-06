@@ -52,26 +52,23 @@ discovery_chat:
     Keep internal tool names, call syntax, and payload fields out of the answer.
     Organize multi-object answers by the question's flow and group simple source
     or pass-through objects when helpful. Show a raw node/edge inventory only
-    when the user explicitly asks for one. Use headings, bullets, tables, or SQL
-    fences only when they make the answer clearer.
+    when the user explicitly asks for one.
 
 # ── Card + top of the document ───────────────────────────────────────────────
 
 summary:
   stages: [synthesis]
   instruction: >
-    One-line graph purpose — aim for ~120 chars. Shown in the info card. This is
-    prose, not a fixed-width label: write the full purpose; avoid padding or clipping to a number.
+    One-line graph purpose for the info card — prose, ~120 chars: the subject
+    of the analysis and where its data lands.
   example: "Revenue lineage from raw orders through price calculation to FactTableA."
 
 title:
   stages: [synthesis]
   instruction: >
-    Optional. Aim for ≤80 chars (hard cap 120 — over-length titles are rejected
-    and re-asked). Names the analysis subject and its key finding:
-    "[Subject] — [key computation, pattern, or finding]". Include the final
-    output object if space allows. Omit step counts and numbers.
-    GOOD: "NetAmountA — QtyA × PriceA, 6-hop chain to FactTableA"
+    Optional, ≤80 chars and hard-capped at 120:
+    "[Subject] — [key computation, pattern, or finding]", ending on the final
+    output object where it fits.
   example: "NetAmountA — QtyA × PriceA, 6-hop ETL to FactTableA"
 
 intro:
@@ -80,10 +77,9 @@ intro:
     2–4 sentences of narrative prose as a standalone paragraph before the
     sections. Open with the direct answer to the user's stated question —
     name the origin, the key relationship, or the finding the user asked
-    for — then set architectural context. Refer to shared state by role
-    ("central scratch-pad table", "terminal publication step") rather than
-    by listing its columns. Schema details (column names, data types,
-    nullability) belong in the later sections.
+    for — then set architectural context. Shared state is named by role
+    ("central scratch-pad table", "terminal publication step"); its columns,
+    types and keys belong in the later sections.
   example: >
     Read as a business-driven view: NetAmountA is the product of QtyA
     and PriceA — both computed independently before joining at
@@ -98,17 +94,13 @@ closing:
   stages: [synthesis]
   instruction: >
     Required whenever this template appears — the engine renders it only
-    for results large enough to need a wrap-up.
-    After the sections, separated by a `---` divider, write a brief
-    closing block:
-    (1) one-paragraph through-line that names the overall pipeline answer
-    in the lens the user requested.
-    Add a risk callout block carrying every ⚠️ callout from the captured
-    evidence that no section already placed — significance was settled at
-    capture, so carry each one through rather than re-judging it. In
-    business-only missions, keep callouts business-facing (impact/scope),
-    not technical internals.
-    Write complete sentences and finish the closing cleanly.
+    for results large enough to need a wrap-up. After the sections,
+    separated by a `---` divider, two parts: one paragraph naming the
+    overall pipeline answer in the lens the user requested, then a risk
+    block carrying the ⚠️ callouts from the captured evidence that no
+    section placed — significance was settled at capture. A business
+    mission states impact and scope; the mechanism stays in the sections.
+    Complete sentences, finished cleanly.
   example: |
     The spBuildFactA pipeline reloads from staging each run, applies a
     four-stage cascade (order staging → price calculation → discount
@@ -134,10 +126,10 @@ highlights:
     or CHANGE the answer's values (formula, condition, classification, status
     transition). Carry-through plumbing (renames, SELECT * bridges, movement
     procs, plain storage tables, row filters) stays uncolored — the graph is a
-    map: colored landmarks on a plain background. Highlight selectively:
-    emphasis, not the full node list; the linked sections already carry the
-    complete set. Pick one scheme: Lineage (source/transform/target) or
-    Diagnostic (good/warn/fail). Keep one scheme. Lineage colors follow DATA
+    map: colored landmarks on a plain background — emphasis, not the full
+    node list; the linked sections already carry the complete set. One
+    scheme per graph: Lineage (source/transform/target) or Diagnostic
+    (good/warn/fail). Lineage colors follow DATA
     FLOW, not question direction: `source` = the deepest data origins the trace
     reached (raw/base feeds), `target` = where the data lands — in an upstream
     trace that is the queried object itself.
@@ -145,19 +137,14 @@ highlights:
 notes:
   stages: [synthesis]
   instruction: >
-    Per-node captions (node_id, text). ONE short sentence under each node —
-    what it does specifically in this flow, not a generic description. Keep
-    it terse; ~120 chars typical. No SQL snippets, no formulas, no multi-line
-    captions. Detail belongs in the section body, not in the graph caption.
-    Glancing at graph + notes should tell the story; deeper logic lives in
-    the description.
-    If the node is a passthrough, name what it passes or filters in one
-    short clause ("Filters to IsValid rows").
-    In a column trace, name the traced column at this node and any rename
-    ("OrderAmt → NetAmountA") — column names, not the expression.
+    Per-node captions (node_id, text). One sentence per node, ~120 chars,
+    on a single line: what this node does in this flow. SQL, formulas and
+    the deeper logic live in the section body — glancing at graph + notes
+    tells the story. A passthrough names what it passes or filters
+    ("Filters to IsValid rows"). In a column trace the caption also names
+    the traced column here and any rename ("OrderAmt → NetAmountA") —
+    column names, not the expression.
     GOOD: "Computes NetAmountA at INSERT"
-    BAD : "Computes NetAmountA = QtyA × PriceA at INSERT\nAlso computes
-    AdjustedAmountA" (multi-line + formula belongs in the section body).
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
@@ -170,79 +157,58 @@ business_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Capture this node's BUSINESS LOGIC from current DDL so a business analyst
-    can understand: what changes, why the rule exists, how the rule is decided,
-    and what assumptions/effects exist both upstream and downstream.
+    What this node does to the business meaning of the data, read from
+    `bb_ddl`: the rules, the values they produce, and what changes downstream.
+    Quoted SQL is an exact substring of that DDL; a mechanism shown without
+    its intent, prevalence or runtime effect reads as `not established from
+    the available SQL`.
     </purpose>
 
-    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Use only
-    rules, formulas, thresholds, and relationships present in DDL. If a
-    construct is absent from DDL, treat it as out of scope. Quoted SQL
-    witnesses must be exact substrings of that DDL — never paraphrased SQL.
-    When the DDL proves the mechanism but not the intent, prevalence, or
-    runtime impact, state `not established from the available SQL` — never
-    fill a gap with a plausible inference.
-
     <scope_relevance>
-    A sink that records who ran what and when — event type, object or
-    procedure name, row counts, messages, timestamps — is backend logging:
-    prune it (verdict: prune), with the procedures whose only job is to write
-    it. A sink holding the traced column's own values, as before/after or
-    as-of history, is a business audit trail: keep it as a consumer with a
-    one-line caption. Keep any node that transforms or carries a value on the
-    answer path, and keep any sink when the question is itself about logging,
-    errors, auditing or retention.
+    A sink recording who ran what and when — event type, object name, row
+    counts, messages, timestamps — is backend logging: verdict `prune`, with
+    the procedures whose only job is to write it. A sink holding the traced
+    column's own values, before/after or as-of, is a business audit trail: a
+    consumer with a one-line caption. Either is in scope when the question is
+    about logging, errors, auditing or retention.
     </scope_relevance>
 
-    Submit one section: `{ angle: "business", text: "<body>" }`. The
-    archive has no length cap and synthesis lifts your text verbatim —
-    write at the depth the node's role in answering the user's question
-    warrants. Nodes that directly address the question get full depth;
-    context nodes in scope but tangential to the question get a brief
-    functional note. Brevity here becomes brevity in the final report.
-    A node central to the question typically needs several paragraphs
-    covering every rule and branch visible in its DDL — a 2–3 sentence
-    summary is under-depth for such a node.
+    Submit one section: `{ angle: "business", text: "<body>" }`. The archive
+    has no length cap and synthesis lifts the text verbatim; depth follows
+    what the node does, not how central it is.
 
-    <emphasis>
-    Highest-value content, in order:
-    1. **Business outcome** — what changes for users, reporting, or decisions.
-    2. **Business intent (why)** — the decision objective this rule serves.
-    3. **Decision rules (how)** — what condition triggers the change and what outcome it drives.
-    4. **Lifecycle impact** — business status/phase transitions when present.
-    5. **Audit-trail meaning** — what business event each audit entry represents.
-    6. **Structural callouts** — decision-impacting ⚠️ findings the DDL proves.
-    7. **Technical evidence** — formulas, predicates, thresholds, and key column references
-       used to explain business logic.
-    </emphasis>
+    <section_skeleton>
+    A detailed business section, in this order:
+    1. Purpose — the domain role in one line, and the decision the rule serves.
+    2. Rules and branches — every declared value of a mode, status or strategy
+       switch (parameter allow-list, CASE ladder, IF set) and what it changes
+       for the business. A branch commented out or absent is declared but not
+       active, and reads as that.
+    3. Grain — the join and WHERE predicates the rows arrive under, and the
+       row that comes out: "one row per …".
+    4. Formulas — per distinct expression, write the formula as a `$$ … $$`
+       block with the business meaning of its terms. A `$$ … $$` block must
+       preserve the DDL expression term for term: declared target on the
+       left, its declared expression on the right, no operator added,
+       dropped, or reordered; when a faithful rendering is not possible,
+       quote the SQL instead.
+    5. Column mapping — a `| From | To | Business meaning |` row per rename
+       or derivation.
+    6. Lifecycle — status transitions as numbered steps ("1. New →
+       2. Approved → 3. Shipped"), the business state change rather than the
+       UPDATE that effects it.
+    7. Loading step — what the DML does to the target: truncate+insert,
+       merge, append, purge.
+    8. Error handling — what happens when a step fails, and what the rows
+       carry afterwards.
+    9. Upstream assumptions and downstream effects.
+    10. Gaps — what the DDL leaves open, as `not established from the
+       available SQL`.
 
-    <body_recipe>
-    1. Open with one sentence naming the domain role ("computes revenue
-       at INSERT") and the decision objective ("why this rule exists").
-    2. Walk through business rules in plain language first. Name what
-       changes for the business when each rule fires.
-    3. When the DDL declares a mode, status, or strategy switch — a
-       parameter with an allowed-value list, a CASE ladder, an IF branch
-       set — name every declared value and what each one does. A value
-       whose implementation is commented out or absent is declared but
-       not active, never omitted.
-    4. For EVERY computed or derived expression in the DDL (arithmetic,
-       CASE result, COALESCE fallback, aggregation), write the formula as
-       a `$$ … $$` block and explain the business meaning of its terms
-       briefly. A `$$ … $$` block must preserve the DDL expression term
-       for term — declared target on the left, its declared expression on
-       the right, with no operator added, dropped, or reordered; when a
-       faithful rendering is not possible, quote the SQL instead.
-    5. Capture both **upstream assumptions** and **downstream effects** when
-       evidenced in current DDL context.
-    6. Express status-enum lifecycles as numbered transitions
-       ("1. New → 2. Approved → 3. Shipped"). Capture the business
-       state change, not the SQL UPDATE that effects it.
-    7. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
-       this view makes queryable and its business meaning — not how the
-       SELECT is structured.
-    8. Wrap column and object names in `\`backticks\`` only when used.
-    </body_recipe>
+    The evidence for 3, 4 and 7 is a short ```sql fence of the deciding
+    expression. A SELECT-only view has no step 6 or 7: it says what data it
+    makes queryable, under which predicate, and what that means.
+    </section_skeleton>
   example: |
     `spCalcA` computes `NetAmountA` at the final INSERT into
     `FactTableA`, only for rows with `Status = 'CONFIRMED'`.
@@ -275,65 +241,45 @@ technical_capture:
   stages: [active]
   instruction: |
     <purpose>
-    Capture HOW this node runs — execution mechanics, query shape, loading
-    pattern, performance affordances and traps.
+    The DML this node runs, read from `bb_ddl`, and the mechanics that decide
+    which rows survive. Quoted SQL is an exact substring of that DDL; a pattern
+    whose runtime effect needs a plan or statistics reads as a candidate, `not
+    established from the available SQL`. Columns, datatypes, keys, indexes and
+    FKs are already on the node — this section is the DML, not the catalogue.
     </purpose>
 
-    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Make
-    claims only about indexes, partitioning, performance issues, or references
-    present in DDL. Tie performance claims to visible SQL constructs (JOIN,
-    WHERE, DISTINCT, subquery). If it is absent from DDL, it is out of scope.
-    Quoted SQL witnesses must be exact substrings of that DDL — never
-    paraphrased SQL. When the DDL shows a pattern but not its runtime effect,
-    state `not established from the available SQL` rather than inferring it.
+    Submit one section: `{ angle: "technical", text: "<body>" }`. The archive
+    has no length cap.
 
-    Submit one section: `{ angle: "technical", text: "<body>" }`. The
-    archive has no length cap; synthesis lifts your text verbatim. Write
-    as deeply as the node's implementation warrants.
+    <section_skeleton>
+    A detailed technical section, in this order:
+    1. Purpose — the execution role in one line.
+    2. Rules and branches — each declared value of a parameter allow-list, CASE
+       ladder or IF set, and the statement it runs; one commented out or absent
+       is declared but not active.
+    3. Join shape and grain — JOIN and WHERE predicates in a short ```sql
+       fence, the join type where hinted (HASH / MERGE / LOOP), the row that
+       comes out: "one row per …".
+    4. Formulas — per distinct expression, a `$$ … $$` block beside its
+       snippet, with the source → target mapping where a rename happens.
+    5. State transitions — the procedure's steps as a numbered walk.
+    6. Loading step — the shape a statement against the target shows: `reload`
+       (TRUNCATE or unfiltered DELETE + INSERT), `append` (inserts only),
+       `upsert` (MERGE or UPDATE + conditional INSERT), `historization`,
+       `purge`, `orchestration` (EXECs other procedures); coarse, SCD/CDC in
+       prose. Absent, or a view/UDF focus: no shape.
+    7. Error handling — TRY/CATCH, retry and lock behaviour, and the value the
+       rows carry after a failure.
+    8. Antipatterns — non-sargable or implicitly converting predicate,
+       excessive DISTINCT, OR in a join predicate, correlated subquery or
+       scalar UDF per row, unguarded UPDATE or DELETE, TRUNCATE outside a
+       transaction, loading order that reads a target before it is written.
+    9. Comments — read against the statement they annotate; a correct one that
+       answers the question belongs in the body.
+    </section_skeleton>
 
-    <body_recipe>
-    1. SQL evidence — quote the key expressions verbatim: JOIN predicates,
-       CASE conditions, COALESCE fallbacks, computed-column formulas, the
-       window-function partition clause. Snippet only, not the full
-       INSERT/SELECT statement.
-    2. Loading pattern (procedures only) — decide from a statement against
-       the target quotable verbatim from `bb_ddl`: `reload` (TRUNCATE or
-       unfiltered DELETE + INSERT); `append` (target only ever inserted
-       into — temp-table `#…` and audit/log writes do not count); `upsert`
-       (MERGE or UPDATE + conditional INSERT); `historization` (versioned
-       history); `purge` (DELETE-only); `orchestration` (EXECs other SPs,
-       no mutation). With no such quotable statement, use `not established
-       from the available SQL`. Coarse only — sub-variants (SCD1/SCD2/CDC)
-       belong in prose. Omit when the focus is a view, UDF, or table.
-    3. Computed columns — each distinct formula, one per branch or
-       strategy, as a `$$ … $$` block alongside its snippet.
-    4. Relationship role labels — "reads lookup from `DimProduct`",
-       "writes via MERGE to `FactTableA`", "triggered by `spLoadA`".
-    5. Join types when hinted (HASH / MERGE / LOOP).
-    6. Antipatterns — excessive DISTINCT, OR in join predicates,
-       correlated subqueries in SELECT, scalar UDFs in WHERE.
-    7. Distribution / indexing hints — partition key, hash-distribution
-       column, clustered-index column order.
-    8. Datatype declarations — call out non-default precisions
-       (`DECIMAL(19,4)` vs `DECIMAL(18,2)`), nullability surprises, and
-       casts that change semantics (`CAST AS DATE` truncating time).
-    9. Execution-plan candidates visible in the SQL text — flag as
-       candidates requiring validation, never as confirmed behavior:
-       sargability, parameter sniffing, and statistics effects need
-       schema metadata or plan evidence beyond this DDL.
-    10. DDL comments and version annotations — author intent that would be
-       lost after this hop. Check each comment against the executable
-       statement it annotates; one verified correct and relevant to the
-       question being answered belongs in the detail description, not just
-       captured.
-    </body_recipe>
-
-    Format with markdown — no `#`/`##` headings (the engine owns section
-    headings; open with a bold label instead), SQL in ```sql fences
-    (snippet only), join steps as ordered lists, ⚠️ inline at risks.
-
-    Each capture is independent — synthesis detects sibling variants
-    across nodes and emits comparison tables at assembly time.
+    Markdown; the engine owns `#`/`##` headings, so a bold label opens the
+    body and SQL sits in ```sql fences as snippets.
   example: >
     Loading: TRUNCATE + INSERT — full reload, no delta tracking.
 
@@ -363,26 +309,17 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    Structural callouts, in any section you write this hop. You read DDL,
-    never rows: assert only STRUCTURAL EXPOSURE the code proves, never a
-    data-quality FACT. The classes: silent value overwrite (COALESCE/ISNULL
-    masking, unguarded UPDATE); unintended row multiplication (join grain, a
-    window/partition or dedup key omitting a value column); rows silently
-    dropped (INNER where LEFT was meant, a range or validity predicate that
-    raises nothing, a filter on a nullable column); non-determinism (GETDATE()
-    in a view, TOP without ORDER BY); truncation (implicit narrowing cast);
-    hardcoded no-op logic; stale or incomplete reference-data joins; swallowed
-    errors (TRY/CATCH continuing, a fallback leaving a value unset or NULL);
-    unimplemented branches; SQL comments carrying important information,
-    including a comment or status/error-message literal that contradicts
-    what the executable statement does — the executable statement
-    establishes behavior, and the disagreement is itself reportable.
+    ⚠️ lines this hop: STRUCTURAL EXPOSURE the loaded DDL proves, not a fact
+    about rows. One ⚠️ line per finding — class · evidence anchor · mechanism ·
+    consequence — decision-impacting, one per mechanism per node, not restated
+    across sections.
 
-    One line each: class · evidence anchor · mechanism · consequence, naming
-    the object and the expression. ⚠️ prefixes only a decision-impacting
-    finding backed by the DDL already loaded, and every such finding gets
-    its own ⚠️ line even where body prose already narrates it — only ⚠️
-    lines reach the answer. When none exist, say nothing.
+    Classes: silent value overwrite (COALESCE/ISNULL masking, unguarded
+    UPDATE); row multiplication (join or dedup grain); rows silently dropped
+    (INNER for LEFT, a filter on a nullable column); non-determinism (GETDATE()
+    in a view, TOP without ORDER BY); truncation; hardcoded no-op logic; stale
+    reference-data joins; swallowed errors; unimplemented branches; a comment
+    or status literal claiming behaviour the statement does not implement.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.Region = r.Region` on nullable
     `Region` in `vwOrders`: an order with no region never reaches `FactSales`.
@@ -392,45 +329,38 @@ structural_callouts:
 structural_summary:
   stages: [active]
   instruction: >
-    Fires only when the focus node has no DDL body (table/non-bodied).
-    For this hop only, it replaces `business_capture` and `technical_capture`. It replaces the
-    recipes but not the section count: submit one section per angle the mission requires, each
-    carrying this same body, because the locked classification decides how many sections a hop
-    must contain and the focus type does not change it.
+    Fires only when the focus node has no DDL body (table/non-bodied), in place
+    of the capture recipes for this hop. It replaces the recipes but not the
+    section count: one section per angle the mission requires, each carrying
+    this same body — the locked classification sets the count, the focus type
+    does not.
 
-    Describe what this node **is**; point to the surrounding procedures for
-    what it **does**. Non-bodied nodes carry structure, not behaviour.
+    What this node **is**, read from `focus_node` alone; the surrounding
+    procedure slots carry what it **does**.
 
-    ⛔ STRICT GROUNDING — use only `focus_node` data. Use only columns,
-    objects, neighbors, and relationships present in that data. If a field is
-    missing/empty, output the explicit empty-case text below.
-
-    Required parts, in this order, each opened with a bold label on its own line:
+    The parts, in this order, each opened with a bold label on its own line:
 
     **Purpose**
-    One short sentence naming the role of this node in the pipeline.
-    Source: node id / type from focus_node.
+    One sentence naming the node's role in the pipeline, from its id and type.
 
     **Columns**
-    From `cols[]` only, render a `| Column | Type | Role / ⚠️ |` table. Role is a short phrase
-    (key / dim / metric / audit / computed). Flag nullable columns with ⚠️.
-    If `cols[]` is absent: write "Column metadata not available in current model."
+    A `| Column | Type | Role / ⚠️ |` table from `cols[]`, role as a short phrase
+    (key / dim / metric / audit / computed), ⚠️ on a nullable column.
+    Absent `cols[]`: "Column metadata not available in current model."
 
     **Upstream sources**
-    Populate from `in[]` in focus_node — these are the nodes that write TO
-    this table. One line per entry: node id + one-sentence role.
-    If `in[]` is empty or absent: write "No upstream sources found in graph."
+    One line per `in[]` entry — the nodes that write TO this table: node id and
+    its role in one sentence.
+    Empty or absent `in[]`: "No upstream sources found in graph."
 
     **Downstream consumers**
-    Populate from `out[]` in focus_node — these are the nodes that read FROM
-    this table. One line per entry: node id + one-sentence role.
-    If `out[]` is empty or absent: write "No downstream consumers found in graph."
+    One line per `out[]` entry — the nodes that read FROM this table: node id and
+    its role in one sentence.
+    Empty or absent `out[]`: "No downstream consumers found in graph."
 
     **Grain / keys**
-    Derive from PK-flagged columns in `cols[]` and `fks[]` in focus_node only.
-    If neither is present: write "Key information not available in current model."
-
-    Scope: structure and relationships only — the surrounding procedure slots carry all transform logic.
+    From the PK-flagged columns in `cols[]` and from `fks[]`.
+    Neither present: "Key information not available in current model."
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
 # Fires additively alongside business_capture / technical_capture when the
@@ -472,19 +402,14 @@ column_trace_capture:
     ## Example — no tracked column passes through this node
     column_flow: []    ← off-trace (see Verdict below)
 
-    ## Verdict — choose based on how the node interacts with tracked columns
-    - `analyze`: the node transforms or is the terminal source of a target column.
-      Fill column_flow for each active column.
-      Terminal (no upstream possible): upstream_columns: [] — stored base column,
-      hardcoded literal, or system function (GETDATE(), NEWID()). Empty
-      upstream_columns signals the branch ends here.
-    - `passthrough`: column flows through unchanged; the upstream writer is not yet visited.
-      Fill column_flow naming the upstream column, then add route_requests to visit it.
-      The edge is recorded here; full attribution resolves at the routed node.
-    - Off-trace (no tracked column here): submit column_flow: [] — engine-valid only when the node
-      has no active tracked columns. The node and its analysis are kept; route its neighbours as
-      usual. Use sections[].text for what it does to the surviving rows (joins, filters, predicates,
-      set operations).
+    ## Verdict — the Verdict Protocol above decides it; column_flow follows
+    On `analyze`, column_flow carries each active column — upstream_columns: []
+    where the value originates here (stored base column, hardcoded literal, system
+    function such as GETDATE() or NEWID()). On `passthrough`, column_flow names the
+    upstream column and route_requests visits its writer, where full attribution
+    resolves.
+    Off-trace (no tracked column here): column_flow: [] — the node stays for what it
+    does to the rows, stated in sections[].text.
 
     ## Non-bodied table focus (TABLE written by a procedure)
     When the focus node is a TABLE (no DDL — only schema metadata), the procedure that
@@ -520,37 +445,30 @@ column_trace_capture:
 general:
   stages: [discovery, synthesis]
   instruction: >
-    Apply this rendering set across every assembled section so the document
-    reads consistently end-to-end. Prioritize business clarity; include
-    technical formatting only when needed to clarify business meaning:
+    How the captured material renders across the assembled sections, business
+    meaning first:
 
-    - **Formulas**: every calculation present in the captured bodies that
-      bears on the asked question appears exactly once as a `$$ … $$`
-      block in its most relevant section; ground every formula in
-      captured content.
-    - **Column renames**: render as a `| From | To | Business meaning |`
-      table only when the rename pattern is central to business understanding.
-    - **Source guards** (WHERE / JOIN / MERGE predicates that filter or key
-      the data): quote short SQL snippets only when needed for business
-      clarification; use fenced ```sql blocks with short snippets, not full
-      statements.
-    - **Status-enum lifecycles**: express as numbered transitions
-      ("1. New → 2. Approved → 3. Shipped").
-    - **Risks / data-quality flags**: every ⚠️ callout present in the
-      captured or loaded bodies appears exactly once as a ⚠️ line in its most
-      relevant section; significance was settled at capture, so carry each
-      one through rather than re-judging it. In business-only missions,
-      phrase risk in business terms first; add technical detail only when
-      it clarifies impact.
-    - **Scope**: answer ONLY what was asked. Side branches the question did
-      not ask about (audit, logging, retention, error-handling paths) get at
-      most a one-line note, not their own section or highlight — a
-      ⚠️ on such a branch is that one line, never a deletion. In a
-      column trace, sections and highlights follow the value chain of the
-      traced column and its terminal sources.
+    - **Formulas**: every calculation present in the captured bodies appears
+      exactly once as a `$$ … $$` block in its most relevant section.
+    - **Column renames**: a `| From | To | Business meaning |` row per rename
+      or derivation the bodies carry.
+    - **Source guards**: the WHERE / JOIN / MERGE predicates that filter or
+      key the data, as short ```sql snippets rather than whole statements.
+    - **Status-enum lifecycles**: numbered transitions ("1. New →
+      2. Approved → 3. Shipped").
+    - **Risks / data-quality flags**: every ⚠️ callout present in the captured
+      or loaded bodies appears exactly once as a ⚠️ line in its most relevant
+      section; significance was settled at capture. A business mission states
+      the impact first, the mechanism second.
+    - **Scope**: the sections follow the question. Side branches the question
+      did not ask about (audit, logging, retention, error-handling paths) are
+      one line inside the section they hang off, not a section or highlight of
+      their own — a ⚠️ on such a branch is that one line, never a deletion. A
+      column trace follows the value chain of the traced column and its
+      terminal sources.
 
-    These rules apply only when the captured or loaded body has the underlying material.
-    Use sourced tables, formulas, and fences only.
+    Each bullet renders what the captured or loaded bodies contain; nothing is
+    invented to fill one.
   example: >
     $$NetAmountA = QtyA \times PriceA \times (1 - DiscountA)$$
 
@@ -575,23 +493,15 @@ general:
 loading_pattern:
   stages: [synthesis]
   instruction: |
-    Write it only when every bodied procedure got the same shape and that shape is not
-    `not established from the available SQL`; otherwise emit nothing.
+    One statement about the whole pipeline, not per section: when every bodied
+    procedure carried the same captured load shape, name that shape once — in
+    `closing` if a closing is requested,
+    otherwise in the section that covers the load, with what it means for
+    consumers.
 
-    When the precondition holds, name the shared shape once — in `closing`
-    if a closing is requested, otherwise in the section that covers the load
-    — because it is one statement about the whole pipeline, not per section.
-    Recognized shapes (coarse — no SCD1/SCD2/CDC sub-variants):
-
-    - `reload`        TRUNCATE or unfiltered DELETE + INSERT / full refresh
-    - `append`        INSERT-only, no UPDATE or DELETE
-    - `upsert`        MERGE or UPDATE + conditional INSERT
-    - `historization` versioned history / change tracking
-    - `purge`         DELETE-only / retention
-    - `orchestration` EXECs other SPs, no data mutation on the target
-
-    Skip entirely when the analysis spans non-bodied origins only, or
-    when classification is `business`.
+    Nothing at all when the shapes differ, when the shape was `not established
+    from the available SQL`, when the analysis spans non-bodied origins only,
+    or when classification is `business`.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
     INSERT — each run rebuilds `FactTableA` from scratch with no
