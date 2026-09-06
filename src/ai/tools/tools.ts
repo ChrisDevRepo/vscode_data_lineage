@@ -810,7 +810,7 @@ export function searchDdl(
   }));
   const matches = searchBodyScripts(
     searchableNodes,
-    query,
+    compiled.regex,
     typeSet,
     SNIPPET_CONTEXT_LINES,
     Number.MAX_SAFE_INTEGER,

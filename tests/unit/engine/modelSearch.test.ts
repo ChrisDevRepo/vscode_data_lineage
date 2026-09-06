@@ -162,6 +162,21 @@ describe('model search', () => {
     expect(searchBodyScripts(nodes, 'A')).toEqual([]);
   });
 
+  it('matches a compiled regex against bodies — the lineage_search_ddl contract (T3 loop, 2026-09-06)', () => {
+    // The tool validates the pattern with compileSearchRegex but the body search matched the raw
+    // pattern text as a substring, so `(?i)totalquantity` and `total.*quantity` returned nothing.
+    for (const pattern of ['(?i)totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
+      const compiled = compileSearchRegex(pattern);
+      expect(compiled.ok).toBe(true);
+      if (!compiled.ok) return;
+      const hits = searchBodyScripts(nodes, compiled.regex);
+      expect(hits.map(h => h.node.id)).toEqual(['dbo.getorderssummary']);
+      expect(hits[0].snippet).toContain('TotalQuantity');
+    }
+    const none = compileSearchRegex('no.such.token');
+    expect(none.ok && searchBodyScripts(nodes, none.regex)).toEqual([]);
+  });
+
   it('applies body type, context, and result limits', () => {
     const procedures = searchBodyScripts(
       nodes,

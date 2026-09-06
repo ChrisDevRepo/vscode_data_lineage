@@ -243,21 +243,33 @@ export function searchCatalog(
  */
 export function searchBodyScripts(
   nodes: SearchableNode[],
-  query: string,
+  query: string | RegExp,
   types?: Set<ObjectType>,
   contextLines = 2,
   limit = 100,
 ): DdlMatch[] {
-  if (query.length < 2) return [];
-  const lower = query.toLowerCase();
+  // A string is a case-insensitive substring (the detail sidebar); a RegExp is the pattern
+  // `compileSearchRegex` accepted for `lineage_search_ddl`, whose contract is a regex search —
+  // matching on the raw pattern text made every regex form (`(?i)x`, `a.*b`) return nothing.
+  const regex = typeof query === 'string' ? null : query;
+  if (typeof query === 'string' && query.length < 2) return [];
+  const lower = typeof query === 'string' ? query.toLowerCase() : '';
   let filtered = nodes;
   if (types && types.size > 0) filtered = filtered.filter(n => n.bodyScript && types.has(n.type));
 
   const matches: DdlMatch[] = [];
   for (const node of filtered) {
     if (!node.bodyScript) continue;
-    if (!node.bodyScript.toLowerCase().includes(lower)) continue;
-    matches.push({ node, snippet: buildSnippet(node.bodyScript, query, contextLines) });
+    let term: string;
+    if (regex === null) {
+      if (!node.bodyScript.toLowerCase().includes(lower)) continue;
+      term = query as string;
+    } else {
+      const hit = new RegExp(regex.source, regex.flags.replace('g', '')).exec(node.bodyScript);
+      if (!hit || hit[0].length === 0) continue;
+      term = hit[0];
+    }
+    matches.push({ node, snippet: buildSnippet(node.bodyScript, term, contextLines) });
     if (matches.length >= limit) break;
   }
   return matches;
