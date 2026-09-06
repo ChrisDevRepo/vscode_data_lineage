@@ -1023,6 +1023,7 @@ export interface HopLogEntry {
 export type InvalidRouteKind = | 'absent_route'
       | 'absent_contributor'
       | 'bad_out_col'
+      | 'untracked_out_col'
       | 'bad_contributor_col'
       | 'missing_required_route'
       | 'self_loop_column'

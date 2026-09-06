@@ -1,4 +1,5 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { activeModeOf } from '../../../src/ai/tools/toolPolicy';
@@ -165,6 +166,46 @@ describe("Column Flow Validation", () => {
     expect(detail.includes('amount'), 'detail lists the valid active column as data').toBe(true);
   }
 });
+
+  it("P1-16: out_col existing on the node but off the tracked spine → out_col_not_tracked (verb-led order + tracked set)", () => {
+    const engine = ctEngine(['amount']); // active = ['amount']; origin also declares 'region'
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'region', upstream_columns: [] }],
+      route_requests: requiredRoutes(engine),
+    });
+    expect('error' in result && result.error === 'out_col_not_tracked', 'on-node but untracked out_col → out_col_not_tracked').toBe(true);
+    if ('error' in result) {
+      const hint = result.hint ?? '';
+      expect(/^Set column_flow\[\]\.out_col to a tracked column/i.test(hint), 'hint is a verb-led order naming the repair').toBe(true);
+      expect(!/\bdo not\b|\bnever\b|\bdon't\b/i.test(hint), 'hint avoids negative framing').toBe(true);
+      const detail = JSON.stringify('detail' in result ? result.detail : '');
+      expect(detail.includes('region'), 'detail names the offending on-node out_col').toBe(true);
+      expect(detail.includes('amount'), 'detail lists the tracked column as data').toBe(true);
+    }
+  });
+
+  it("P1-16: out_col the node does not carry at all stays out_col_not_on_node, including a tracked name the node never declares", () => {
+    // 'GhostCol' is on the tracked spine but absent from the node's DDL, so it passes the
+    // active-columns gate and is caught by the existence gate — still case (a): not on the node.
+    const ctModel: DatabaseModel = makeModel([], [], ['dbo']);
+    const tracer = new ColumnTracer(['GhostCol']);
+    const nodeMap = new Map<string, any>([
+      ['origin', { id: 'origin', type: 'view', columns: [{ name: 'amount' }] }],
+    ]);
+    const finding = {
+      verdict: 'analyze' as const, summary: 's', sections: [],
+      column_flow: [{ out_col: 'GhostCol', upstream_columns: [] }],
+    };
+    const res = tracer.validateColumnFlow('origin', finding as any, nodeMap, ctModel, null);
+    expect(res.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'tracked-but-undeclared out_col is reported as bad_out_col').toBe(true);
+    expect(res.invalidRoutes.every(r => r.kind !== 'untracked_out_col'), 'a column absent from the node never takes the untracked split').toBe(true);
+    const envelope = buildRouteValidationRejection(res.invalidRoutes);
+    expect('error' in envelope && envelope.error === 'out_col_not_on_node', 'single-kind envelope keeps the out_col_not_on_node machine code').toBe(true);
+  });
 
   it("Test 6: upstream node absent from model → drop-with-notice", () => {
   const engine = ctEngine(['amount']);

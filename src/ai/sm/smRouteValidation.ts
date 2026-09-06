@@ -32,6 +32,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Record it as an unresolved upstream source in your analysis and keep the upstream columns that resolve — it is not in the loaded model.',
   bad_out_col:
     'Declare column_flow only for an active tracked column this node carries, or submit column_flow: [] if it carries none.',
+  untracked_out_col:
+    'Set column_flow[].out_col to a tracked column from detail.available_columns - the named column exists on this node but the trace does not follow it - or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
     'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
   missing_required_route:
@@ -64,6 +66,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   absent_route: 'route_validation_failed',
   absent_contributor: 'route_validation_failed',
   bad_out_col: 'out_col_not_on_node',
+  untracked_out_col: 'out_col_not_tracked',
   bad_contributor_col: 'contributor_col_not_on_source',
   missing_required_route: 'missing_required_route',
   self_loop_column: 'column_self_loop',

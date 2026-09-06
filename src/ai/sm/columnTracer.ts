@@ -199,8 +199,14 @@ export class ColumnTracer {
       if (!activeNorm.includes(normalizeColName(entry.out_col))) {
         // `available_columns` names the tracked set and nothing else. Falling back to the node's
         // own DDL columns listed the rejected value itself as a valid one, so the envelope
-        // contradicted its own reason and no rewrite of it could succeed.
-        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns] });
+        // contradicted its own reason and no rewrite of it could succeed. A column that is on the
+        // node yet off the tracked spine gets its own kind so the repair (pick a tracked column)
+        // stays distinguishable from naming a column the node does not carry at all; when the node
+        // declares no columns, existence is unverifiable and the not-on-node code stands.
+        const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(normalizeColName(entry.out_col));
+        invalidRoutes.push(existsOnNode
+          ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, available_columns: [...this.aspect.active_columns] }
+          : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns] });
         continue;
       }
 
