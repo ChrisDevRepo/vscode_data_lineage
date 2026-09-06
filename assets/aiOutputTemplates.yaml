@@ -499,9 +499,8 @@ loading_pattern:
     otherwise in the section that covers the load, with what it means for
     consumers.
 
-    Nothing at all when the shapes differ, when the shape was `not established
-    from the available SQL`, when the analysis spans non-bodied origins only,
-    or when classification is `business`.
+    Nothing at all when the shapes differ, when no shape was captured, when the
+    analysis spans non-bodied origins only, or when classification is `business`.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
     INSERT — each run rebuilds `FactTableA` from scratch with no
