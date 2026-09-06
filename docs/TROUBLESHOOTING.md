@@ -50,20 +50,17 @@ UI does not create a separate button for each deferred route.
 
 **Deep analysis stops before the whole scope is covered.** No error is shown: on reaching the hop cap the engine stops exploring and synthesizes what it already has, so the answer is a partial result rather than a failure. Narrow the scope or raise `dataLineageViz.ai.maxRounds`, then reload the window — the runtime reads that setting once at activation.
 
-**Model choice.** Per-hop latency and protocol compliance differ by model. Models running directly on Microsoft infrastructure — Copilot-native Anthropic Claude Sonnet and OpenAI GPT, or an Azure AI Foundry deployment — gave the best results in testing. The figures below are ballparks from running three test questions during development on a mid-size sample database — one discovery question, one object trace and one column trace. Duration and tokens are the totals for all three questions of one run; where several runs exist the value is the average over those runs and the run count is shown. Only runs that completed all three questions and recorded token usage are counted, and rows are grouped by the reasoning level in effect because the levels are not comparable with each other. Where the provider reports reasoning tokens they were about 60k of the total on gpt-5.4-mini and 30k on deepseek-v4-flash. Quality is the scorecard of those same runs against golden answers: *good* means the discovery and object-trace answers were complete and the column-trace answer had minor omissions; *okay* means every answer was usable but each had omissions; *weak* would mean wrong or missing objects, and no listed model scored that.
+**Model choice.** Per-hop latency and protocol compliance differ by model. Models running directly on Microsoft infrastructure — Copilot-native Anthropic Claude Sonnet and OpenAI GPT, or an Azure AI Foundry deployment — gave the best results in testing. The figures below are ballparks from running three test questions during development on a mid-size sample database — one discovery question, one object trace and one column trace. Duration and tokens are the totals for all three questions of one run, averaged where several runs exist. Only runs that completed all three questions are counted, and the reasoning level in effect is shown because rows at different levels are not comparable with each other. Where the provider reports reasoning tokens they were about 60k of the total on gpt-5.4-mini and 30k on deepseek-v4-flash. Quality is the scorecard of those same runs against golden answers: *good* means the discovery and object-trace answers were complete and the column-trace answer had minor omissions; *okay* means every answer was usable but each had omissions; *weak* would mean wrong or missing objects, and no listed model scored that.
 
-| Provider | Model | Quality | Duration (three questions) | Tokens (three questions) | Runs |
+| Provider | Model | Reasoning | Quality | Duration (three questions) | Tokens (three questions) |
 |---|---|---|---|---|---|
-| **Reasoning: medium** | | | | | |
-| Azure AI Foundry | gpt-5.4-mini | good | ~8 min | ~300k | 10 |
-| **Reasoning: low** | | | | | |
-| Fireworks | deepseek-v4-flash-0731 | good | ~10 min | ~345k | 2 |
-| **Reasoning: provider default (no level set)** | | | | | |
-| Google | gemini-3.8-flash | good | ~8 min | ~415k | 10 |
-| **Reasoning: off** | | | | | |
-| Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | okay | ~21 min | ~375k | 1 |
+| GitHub Copilot | claude-sonnet-5 | high | good | ~14 min | not reported by the Copilot API |
+| Azure AI Foundry | gpt-5.4-mini | medium | good | ~8 min | ~300k |
+| Fireworks | deepseek-v4-flash-0731 | low | good | ~10 min | ~345k |
+| Google | gemini-3.8-flash | provider default | good | ~8 min | ~415k |
+| Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~21 min | ~375k |
 
-These numbers are snapshots of particular days and say nothing about what a given setup will do; they depend on model, region, load, reasoning settings and database size. Copilot-native models are not in the table because the Copilot API reports neither token usage nor the reasoning level in effect. Models reached through OpenRouter and Z.ai showed high or erratic latency and timeouts during testing and are not in the table. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete — up to the zero-output limit below.
+These numbers are snapshots of particular days and say nothing about what a given setup will do; they depend on model, region, load, reasoning settings and database size. Models reached through OpenRouter and Z.ai showed high or erratic latency and timeouts during testing and are not in the table. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete — up to the zero-output limit below.
 
 **"The language model produced no output within 600s; the request was aborted (first-output
 timeout)."** The provider accepted the request and then streamed nothing at all for ten minutes, so
