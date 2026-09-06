@@ -206,7 +206,7 @@ business_capture:
     10. Gaps — what the DDL leaves open, as `not established from the
        available SQL`.
 
-    The evidence for 3, 4 and 7 is a short ```sql fence of the deciding
+    The evidence for 3, 4, 7 and 8 is a short ```sql fence of the deciding
     expression. A SELECT-only view has no step 6 or 7: it says what data it
     makes queryable, under which predicate, and what that means.
     </section_skeleton>
@@ -246,7 +246,7 @@ technical_capture:
     which rows survive. Quoted SQL is an exact substring of that DDL; a pattern
     whose runtime effect needs a plan or statistics reads as a candidate, `not
     established from the available SQL`. Columns, datatypes, keys, indexes and
-    FKs are already on the node — this section is the DML, not the catalogue.
+    FKs are already on the node.
     </purpose>
 
     Submit one section: `{ angle: "technical", text: "<body>" }`. The archive
