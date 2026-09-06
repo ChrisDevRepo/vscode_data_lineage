@@ -9,23 +9,20 @@ const COPIED_FEEDBACK_MS = 2000;
 /** Which edge of the canvas the report column is docked against. */
 export type AiDockPosition = 'right' | 'left' | 'bottom';
 
-/** The next dock position in the cycle a click on the dock button steps through. */
-const NEXT_DOCK_POSITION: Record<AiDockPosition, AiDockPosition> = { right: 'left', left: 'bottom', bottom: 'right' };
-
-/** `⚠️` occurrences per numbered `## N` section — the rail table-of-contents' warning badge. */
-function warningCountsBySection(description: string): Map<number, number> {
-  const counts = new Map<number, number>();
-  let current: number | null = null;
-  for (const line of description.split('\n')) {
-    const heading = /^##\s+(\d+)\s/.exec(line);
-    if (heading) { current = Number(heading[1]); continue; }
-    if (/^#{1,2}\s/.test(line)) { current = null; continue; }
-    if (current == null) continue;
-    const hits = line.match(/⚠️/g);
-    if (hits) counts.set(current, (counts.get(current) ?? 0) + hits.length);
-  }
-  return counts;
-}
+/**
+ * The dock choices, in the order their buttons sit in the header.
+ *
+ * @remarks
+ * A segmented control rather than one cycling button: three exclusive layout options is exactly
+ * what a segmented control is for — every position is one click away and the current one is
+ * readable without hovering, where a cycle asked for up to three clicks and a tooltip to find out
+ * where it was.
+ */
+const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; glyph: string; label: string }> = [
+  { position: 'left', glyph: '\u2BC7', label: 'Dock report panel left' },
+  { position: 'bottom', glyph: '\u2BC6', label: 'Dock report panel bottom' },
+  { position: 'right', glyph: '\u2BC8', label: 'Dock report panel right' },
+];
 
 /** One numbered report section, derived client-side from the bridged badge chips (`"N label"`). */
 export interface AiReportSection {
@@ -111,8 +108,6 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     observer.observe(el);
     return () => observer.disconnect();
   }, [expanded, onPanelResize]);
-
-  const sectionWarnings = useMemo(() => warningCountsBySection(description), [description]);
 
   // The chip row lights every section a node click matched; a plain focus (chip click, keyboard
   // nav, restored layout) has no multi-highlight, so it falls back to just the active one.
@@ -208,12 +203,6 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     onFocusSection?.(activeSection === n ? null : n);
   }
 
-  /** A rail table-of-contents row expands the pane and jumps straight to its section. */
-  function handleRailSectionJump(n: number) {
-    onExpandedChange?.(true);
-    onFocusSection?.(n);
-  }
-
   const html = useMemo(() => renderAiMarkdown(description), [description]);
   const railName = viewName || 'AI Report';
   const overlayClassName = [
@@ -239,21 +228,6 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           <span className="ln-ai-description-rail-name">{railName}</span>
           <span className="ln-ai-description-rail-toggle">&#x25C0;</span>
         </button>
-        {sections && sections.length > 0 && (
-          <div className="ln-ai-description-rail-toc" role="navigation" aria-label="Report sections">
-            {sections.map(section => (
-              <button
-                key={section.n}
-                className="ln-ai-description-rail-toc-item"
-                onClick={() => handleRailSectionJump(section.n)}
-                title={`${section.n} ${section.label} — ${section.nodeIds.length} object(s)${sectionWarnings.get(section.n) ? `, ${sectionWarnings.get(section.n)} warning(s)` : ''}`}
-              >
-                {section.n}·{section.nodeIds.length}
-                {sectionWarnings.get(section.n) ? ` ⚠${sectionWarnings.get(section.n)}` : ''}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
     );
   }
@@ -266,15 +240,20 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             {railName}
           </span>
           <div className="ln-ai-description-actions">
-            <Tooltip content={`Docked ${dockPosition} — click to move to ${NEXT_DOCK_POSITION[dockPosition]}`}>
-              <button
-                className="ln-ai-description-action"
-                onClick={() => onDockPositionChange?.(NEXT_DOCK_POSITION[dockPosition])}
-                aria-label="Move report panel dock position"
-              >
-                &#x21C4;
-              </button>
-            </Tooltip>
+            <div className="ln-ai-dock-group" role="group" aria-label="Report panel dock position">
+              {DOCK_CHOICES.map(choice => (
+                <Tooltip key={choice.position} content={choice.label}>
+                  <button
+                    className={`ln-ai-description-action${dockPosition === choice.position ? ' ln-active' : ''}`}
+                    onClick={() => onDockPositionChange?.(choice.position)}
+                    aria-label={choice.label}
+                    aria-pressed={dockPosition === choice.position}
+                  >
+                    {choice.glyph}
+                  </button>
+                </Tooltip>
+              ))}
+            </div>
             <Tooltip content="Open in editor">
               <button
                 className="ln-ai-description-action"

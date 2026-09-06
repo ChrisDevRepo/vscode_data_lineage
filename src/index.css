@@ -308,6 +308,18 @@ body.vscode-reduce-motion *::after {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+/* Report-section focus, on the labels only: the focused section's badges read lit and every other
+   badge steps back. Node bodies are untouched — selection and the column thread own that channel. */
+.ln-ai-badge-lit {
+  background: var(--ln-ai-bg);
+  border-color: var(--ln-ai-border);
+  box-shadow: 0 0 0 1px var(--ln-ai-border), 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+.ln-ai-badge-dim {
+  opacity: 0.35;
+}
+
 /* Column-edge marker — chip centred on a column-view edge that carries a transformation */
 .ln-column-edge-chip {
   display: flex;
@@ -439,30 +451,6 @@ body.vscode-reduce-motion *::after {
   color: var(--ln-fg-muted);
 }
 
-/* Collapsed rail's table of contents — one row per section, still reachable without expanding */
-.ln-ai-description-rail-toc {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-  margin-top: 6px;
-}
-.ln-ai-description-rail-toc-item {
-  font-size: 9px;
-  padding: 3px 6px;
-  border: 1px solid var(--ln-border-light);
-  border-right: none;
-  border-radius: 6px 0 0 6px;
-  background: var(--ln-widget-bg);
-  color: var(--ln-fg-muted);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ln-ai-description-rail-toc-item:hover {
-  background: var(--ln-hover-bg);
-  color: var(--ln-fg);
-}
-
 /* Expanded report column */
 .ln-ai-description-overlay {
   flex: 1;
@@ -528,6 +516,19 @@ body.vscode-reduce-motion *::after {
 .ln-ai-description-action:disabled:hover {
   background: none;
   opacity: 0.35;
+}
+
+/* Dock segmented control — three exclusive positions, the current one pressed */
+.ln-ai-dock-group {
+  display: inline-flex;
+  gap: 1px;
+  margin-right: 4px;
+}
+.ln-ai-description-action.ln-active {
+  opacity: 1;
+  background: var(--ln-ai-bg);
+  color: var(--ln-fg);
+  border-color: var(--ln-ai-border);
 }
 .ln-ai-description-text-action {
   min-width: 24px;

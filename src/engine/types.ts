@@ -404,6 +404,13 @@ export function formatColumnType(
  *
  * @returns Normalized column definition.
  */
+/**
+ * The type a column shows when the source model declares none — a computed column whose expression
+ * the model did not resolve. One home for the placeholder, so a later pass can recognise its own
+ * unresolved rows rather than string-matching a dash.
+ */
+export const UNRESOLVED_COLUMN_TYPE = '—';
+
 export function buildColumnDef(
   name: string,
   typeName: string,
@@ -417,7 +424,7 @@ export function buildColumnDef(
   return {
     name,
     type: isComputed
-      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '') : '—')
+      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '') : UNRESOLVED_COLUMN_TYPE)
       : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? ''),
     nullable: nullable ? 'NULL' : 'NOT NULL',
     extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
@@ -763,7 +770,7 @@ export type CustomNodeData = {
   /** Resolved schema color supplied by the parent graph projection. */
   schemaColor?: string;
   /** AI-authored badge rendered above the node. */
-  aiBadge?: { text: string };
+  aiBadge?: AiBadge;
   /** AI-authored note rendered below the node. */
   aiNote?: { text: string };
   /** AI-authored highlight styling applied to the node border and glow. */
@@ -775,6 +782,17 @@ export type CustomNodeData = {
   /** Interactive trace controls for adding or pruning direct neighbors. */
   traceControls?: TraceNodeControls;
 };
+
+/**
+ * An AI-authored section label rendered above a node.
+ *
+ * @remarks
+ * `emphasis` is the report's section focus, not a node state: with a section focused its own labels
+ * read `lit` and every other label `dim`, while the node bodies keep whatever the selection and the
+ * column thread already say about them. The two channels stay separate on purpose — a section focus
+ * that dimmed nodes would overwrite the answer the user is looking at.
+ */
+export type AiBadge = { text: string; emphasis?: 'lit' | 'dim' };
 
 /**
  * The business data associated with a single column-trace node in the React Flow canvas.
@@ -799,7 +817,7 @@ export type ColumnTraceNodeData = {
   /** AI-authored highlight styling applied to the node border and glow. */
   aiHighlight?: { color: string; glow: string; shadow: string };
   /** AI-authored badge rendered above the node. */
-  aiBadge?: { text: string };
+  aiBadge?: AiBadge;
   /** AI-authored note rendered below the node. */
   aiNote?: { text: string };
 };

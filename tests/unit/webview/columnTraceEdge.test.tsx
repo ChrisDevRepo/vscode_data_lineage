@@ -92,6 +92,10 @@ function mountEdge(data: ColumnTraceEdgeData): void {
   );
 }
 
+function edgePath(): SVGPathElement | null {
+  return host.querySelector<SVGPathElement>('path.react-flow__edge-path');
+}
+
 function edgeChip(): HTMLElement | null {
   return portalHost?.querySelector<HTMLElement>('.ln-column-edge-chip') ?? null;
 }
@@ -145,6 +149,30 @@ describe('ColumnTraceEdge', () => {
   it('keeps the chip beside pass_through when a real class rides with it', () => {
     mountEdge(makeData({ transforms: ['pass_through', 'filter'] }));
     expect(chipClasses(), 'the identity glyph is dropped, the class that acts is kept').toEqual(['filter']);
+  });
+
+  it('breaks the line for a relation that only shaped which rows arrive', () => {
+    // OpenLineage's DIRECT/INDIRECT split, said in the line: a column used in a WHERE reaches the
+    // output without its value ever landing in it, and lineage viewers draw that edge broken.
+    mountEdge(makeData({ transforms: ['filter'] }));
+    expect(edgePath()!.style.strokeDasharray, 'filter-only is indirect').not.toBe('');
+  });
+
+  it('keeps the line solid when the value itself travels', () => {
+    mountEdge(makeData({ transforms: ['filter', 'compute'] }));
+    expect(edgePath()!.style.strokeDasharray, 'one direct class makes the whole edge direct').toBe('');
+  });
+
+  it('marks a computed value with fx, the formula notation of the tools this reader already uses', () => {
+    mountEdge(makeData({ transforms: ['compute'] }));
+    const glyph = edgeChip()!.querySelector('[data-transform-class="compute"]')!;
+    expect(glyph.textContent, 'the letters are the convention, not a hand-drawn curve').toBe('fx');
+  });
+
+  it('marks a join with the two overlapping circles every merge dialog draws', () => {
+    mountEdge(makeData({ transforms: ['combine'] }));
+    const glyph = edgeChip()!.querySelector('[data-transform-class="combine"]')!;
+    expect(glyph.querySelectorAll('circle'), 'two circles — one is the unclassified ring').toHaveLength(2);
   });
 
   it('draws the unclassified mark as an open ring, never the arrow pair it replaced', () => {

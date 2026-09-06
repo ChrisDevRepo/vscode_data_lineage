@@ -172,7 +172,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           }}
         />
       )}
-      {data.aiBadge && <AiBadgeToolbar text={data.aiBadge.text} />}
+      {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
       {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
       <Tooltip content={tooltipContent} placement="top" multiline maxWidth={300} asChild>
         <div

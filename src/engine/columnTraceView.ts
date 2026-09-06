@@ -125,12 +125,36 @@ export interface ColumnTraceViewEdge {
   note?: string;
 }
 
+/**
+ * Two ports of one node the same relation passes between — the hop's inside link.
+ *
+ * @remarks
+ * A relation drawn through an analysing hop lands on two ports of that hop when the column is
+ * renamed across it (`Qty` in, `TotalRevenue` out). The two are one continuation of a single
+ * thread, but no edge is drawn between them: the transform circle already says the change happens
+ * there. Recorded here so a caller following the thread crosses the hop instead of dead-ending on
+ * the port it arrived at.
+ *
+ * One entry per relation, never a mesh across the hub: two relations meeting at one output port
+ * stay two bridges, so unrelated threads through the same procedure do not merge.
+ */
+export interface ColumnTracePortBridge {
+  /** Node whose two ports the bridge links. */
+  nodeId: string;
+  /** Column name of the port the relation enters on. */
+  fromColumn: string;
+  /** Column name of the port the relation leaves on. */
+  toColumn: string;
+}
+
 /** The complete column-level rendering of one trace. */
 interface ColumnTraceView {
   /** Positioned nodes. */
   nodes: ColumnTraceViewNode[];
   /** Per-column edges between row handles. */
   edges: ColumnTraceViewEdge[];
+  /** Inside-the-hop port links, drawn as nothing and traversed like an edge. */
+  portBridges: ColumnTracePortBridge[];
 }
 
 /** One recorded column relation, as it arrives on the wire. */
@@ -510,6 +534,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
 
   const normalized: NormalizedRelation[] = [];
   const seenRelations = new Set<string>();
+  const portBridges: ColumnTracePortBridge[] = [];
+  const seenBridges = new Set<string>();
 
   input.relations.forEach((relation, index) => {
     const sourceObj = input.objects.get(relation.fromNode.toLowerCase());
@@ -563,6 +589,13 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
         });
         addOutbound(viaAcc.outbound, outRowKey, `${targetKey}::${targetRowKey}`);
         if (inRowKey !== outRowKey) {
+          // The two ports are one thread through the hub; nothing is drawn between them, so the
+          // link is recorded for whoever follows the thread.
+          const bridgeKey = `${hopKey}::${inRowKey}->${outRowKey}`;
+          if (!seenBridges.has(bridgeKey)) {
+            seenBridges.add(bridgeKey);
+            portBridges.push({ nodeId: hopObj.id, fromColumn: relation.fromCol, toColumn: relation.toCol });
+          }
           addOutbound(viaAcc.outbound, inRowKey, `${hopKey}::${outRowKey}`);
           pushInbound(viaAcc.inbound, outRowKey, {
             otherNodeKey: hopKey,
@@ -671,5 +704,5 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     if (positioned) node.position = positioned;
   }
 
-  return { nodes, edges };
+  return { nodes, edges, portBridges };
 }

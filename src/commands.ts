@@ -179,13 +179,14 @@ export function registerCommands(
       const panel = getActivePanel();
       if (sess.presentationArtifact && panel) {
         const preview = sess.presentationArtifact;
+        // Revealed first, so the webview lays the preview out against a canvas that has a size.
+        panel.reveal(vscode.ViewColumn.One);
         void postToWebview(panel, {
           type: 'ai-view-preview',
           name: preview.name,
           nodeIds: [...preview.nodeIds],
           aiMetadata: preview.aiMetadata,
         }, aiLogger);
-        panel.reveal(vscode.ViewColumn.One);
         return;
       }
       notifyInfo(aiLogger, 'AI create view', 'No validated AI lineage preview is available for this session.', {

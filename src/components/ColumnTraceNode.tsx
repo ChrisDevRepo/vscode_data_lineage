@@ -190,7 +190,8 @@ function GearGlyph() {
 
 /**
  * The transform super node: a circle-and-gear hub standing in for the port card a procedure used to
- * render as.
+ * render as. The circle is the whole node — no card is drawn around it, since a procedure is a
+ * process rather than an object holding columns, so its stroke carries the selection colour.
  *
  * @remarks
  * Every interaction survives the reshaping — the node keeps its id, its click and context-menu
@@ -198,7 +199,14 @@ function GearGlyph() {
  * exactly as on the port card; only the visibility changes. The name strip sits under the circle,
  * and the AI badge/note toolbars keep their slots above and below the node box.
  */
-function TransformNodeBody({ view, nodeTitle }: { view: ColumnTraceNodeData['view']; nodeTitle: string }) {
+function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
+  view: ColumnTraceNodeData['view'];
+  nodeTitle: string;
+  /** Circle stroke — the schema colour, or the highlight colour while the node is selected. */
+  strokeColor: string;
+  /** Selection glow, on the circle rather than on a box that is no longer drawn. */
+  boxShadow: string | undefined;
+}) {
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
   const height = view.height || COLUMN_TRANSFORM_NODE_MIN_HEIGHT;
   const { cx, cy, radius } = transformPortGeometry(view.rows.length, width, height);
@@ -215,8 +223,9 @@ function TransformNodeBody({ view, nodeTitle }: { view: ColumnTraceNodeData['vie
           width: radius * 2,
           height: radius * 2,
           borderRadius: '50%',
-          border: `1.5px solid ${schemaColor}`,
+          border: `1.5px solid ${strokeColor}`,
           background: `color-mix(in srgb, ${schemaColor} 10%, var(--ln-bg-elevated))`,
+          boxShadow,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -310,21 +319,26 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   return (
     <>
-      {data.aiBadge && <AiBadgeToolbar text={data.aiBadge.text} />}
+      {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
       {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
     <div
-      className="rounded-lg border ln-node-card transition-all duration-300 ease-in-out"
+      className={view.isTransformNode ? 'transition-all duration-300 ease-in-out' : 'rounded-lg border ln-node-card transition-all duration-300 ease-in-out'}
       style={{
         position: 'relative',
         width: view.width || (view.isTransformNode ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH),
         height: view.height,
-        borderWidth: COLUMN_NODE_BORDER_WIDTH,
-        borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
-        borderLeftColor: highlighted ? highlightColor : schemaColor,
-        borderLeftWidth: 6,
-        backgroundColor: 'var(--ln-node-bg)',
+        // A procedure is a process, not a table: the circle IS the node, so it carries no card
+        // chrome around it — the box stays as the layout and port geometry only, and the circle's
+        // own stroke takes the selection colour the card border would have taken.
+        ...(view.isTransformNode ? {} : {
+          borderWidth: COLUMN_NODE_BORDER_WIDTH,
+          borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
+          borderLeftColor: highlighted ? highlightColor : schemaColor,
+          borderLeftWidth: 6,
+          backgroundColor: 'var(--ln-node-bg)',
+          boxShadow,
+        }),
         opacity,
-        boxShadow,
         transform,
         zIndex,
         display: 'flex',
@@ -333,7 +347,12 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       }}
     >
       {view.isTransformNode ? (
-        <TransformNodeBody view={view} nodeTitle={nodeTitle} />
+        <TransformNodeBody
+          view={view}
+          nodeTitle={nodeTitle}
+          strokeColor={highlighted ? highlightColor : schemaColor}
+          boxShadow={boxShadow}
+        />
       ) : (
         <>
           <div

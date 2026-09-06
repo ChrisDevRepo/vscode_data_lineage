@@ -338,6 +338,36 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     expect(findNode(unchanged, 'dbo.p').rows.map((r) => r.name)).toEqual(['Amount']);
   });
 
+  it('bridges the hop\'s two ports, so a thread crossing it does not end there', () => {
+    // The reported defect: TotalRevenue on the target reached the procedure's output port and
+    // stopped, because nothing links that port to the input port the value arrived on.
+    const view = buildColumnTraceView({
+      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' }],
+      objects,
+      config: DEFAULT_CONFIG,
+    });
+    expect(view.portBridges).toEqual([{ nodeId: 'dbo.p', fromColumn: 'Amt', toColumn: 'Amount' }]);
+  });
+
+  it('bridges each relation separately, so two threads through one hop stay apart', () => {
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    expect(view.portBridges).toEqual([
+      { nodeId: 'dbo.p', fromColumn: 'Qty', toColumn: 'Total' },
+      { nodeId: 'dbo.p', fromColumn: 'Price', toColumn: 'Total' },
+    ]);
+    // Qty and Price meet at the same output port; neither is bridged to the other.
+    expect(view.portBridges.some((b) => b.fromColumn === 'Qty' && b.toColumn === 'Price')).toBe(false);
+  });
+
+  it('records no bridge when the name is unchanged, the one port already carrying the thread', () => {
+    const view = buildColumnTraceView({
+      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amount', toNode: 'dbo.t', toCol: 'Amount' }],
+      objects,
+      config: DEFAULT_CONFIG,
+    });
+    expect(view.portBridges).toEqual([]);
+  });
+
   it('renders a hop outside the view as a direct edge, having nothing to route through', () => {
     const withoutProc = mkObjects(mkObj('dbo.s1'), mkObj('dbo.t'));
     const view = buildColumnTraceView({

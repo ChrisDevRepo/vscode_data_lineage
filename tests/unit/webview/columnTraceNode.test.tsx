@@ -170,6 +170,18 @@ describe('ColumnTraceNode', () => {
     expect(host.textContent).toContain('ai.spBuildSalesReport');
   });
 
+  it('draws the super node as the circle alone, with no card around it', () => {
+    // A procedure is a process, not a table: the rectangle read as an object card holding columns.
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="ai.spbuildsalesreport" data={makeTransformData(2)} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    expect(host.querySelector('.ln-node-card'), 'no card chrome around the circle').toBeNull();
+  });
+
   it('keeps one invisible port handle pair per traced column on the super node', () => {
     // The handles are the edges' attachment points; removing the port card must not remove them,
     // or every line through the hub would have nowhere to land.

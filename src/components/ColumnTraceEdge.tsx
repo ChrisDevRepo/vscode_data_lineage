@@ -16,6 +16,18 @@ const LIT_STROKE_WIDTH = 1.6;
 /** Stroke width of a column-view edge outside the lit set. */
 const DIM_STROKE_WIDTH = 1;
 
+/**
+ * Dash pattern of an edge that only shaped which rows arrive, never the value.
+ *
+ * @remarks
+ * The one drawing convention column-lineage tools actually share: OpenLineage splits every column
+ * relation into DIRECT and INDIRECT, and a lineage viewer draws the indirect one broken — a column
+ * used in a WHERE or a JOIN predicate reaches the output without its value ever landing in it. The
+ * `COLUMN_TRANSFORM_DIRECTION` map has classified this since the classes existed; only the line
+ * had not said so.
+ */
+const INDIRECT_DASH_PATTERN = '5 4';
+
 /** Outer size, in px, of the marker chip centred on the edge path. */
 const COLUMN_EDGE_CHIP_SIZE = 32;
 
@@ -107,10 +119,16 @@ function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransfor
  *
  * @remarks
  * Hand-authored rather than imported — the webview ships no icon library, and every other symbol
- * in it is an inline SVG or a Unicode glyph. Each class gets its own convention-bearing shape so
- * the five read apart at a glance: the identity arrow copies, the curve computes, the sigma
- * aggregates, the converging pair joins, the funnel filters. All are stroked primitives in the
- * shared 24-unit box so they render as one family at chip scale.
+ * in it is an inline SVG or a Unicode glyph.
+ *
+ * No lineage tool publishes a glyph vocabulary for column transformations: the ones that classify
+ * at all (OpenLineage and the viewers built on it) encode DIRECT vs INDIRECT in the LINE, which is
+ * why an indirect edge here is drawn broken, and put the transformation itself behind a click. The
+ * chip is this product's own affordance, so each class takes the mark its operation already carries
+ * across data tooling rather than an invented one: the arrow copies, `fx` computes (formula
+ * notation), the sigma aggregates, two overlapping circles join (the merge/join Venn), the funnel
+ * filters. All are stroked primitives in the shared 24-unit box so they render as one family at
+ * chip scale.
  */
 function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
   switch (transformClass) {
@@ -122,24 +140,41 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
         </GlyphSvg>
       );
     case 'compute':
+      // `fx` — formula notation, the mark a data reader meets on every calculated field. Drawn as
+      // text rather than paths: the two letters ARE the convention, and stroking them by hand at
+      // 24 units would only make them harder to read.
       return (
         <GlyphSvg transformClass={transformClass}>
-          <path d="M4 18C9 18 8 6 12 6s3 12 8 12" />
+          <text
+            x="12"
+            y="12"
+            textAnchor="middle"
+            dominantBaseline="central"
+            fill="currentColor"
+            stroke="none"
+            fontSize="15"
+            fontStyle="italic"
+            fontWeight="600"
+            fontFamily="var(--vscode-font-family, sans-serif)"
+          >
+            fx
+          </text>
         </GlyphSvg>
       );
     case 'aggregate':
+      // Sigma, the summation sign — the aggregate mark wherever one is drawn.
       return (
         <GlyphSvg transformClass={transformClass}>
-          <path d="M17 6H7l6.5 6L7 18h10" />
+          <path d="M18 5H6l7 7-7 7h12" />
         </GlyphSvg>
       );
     case 'combine':
+      // Two overlapping circles: the join Venn, the one shape a SQL reader already reads as a
+      // join, drawn in merge dialogs and join documentation alike.
       return (
         <GlyphSvg transformClass={transformClass}>
-          <path d="M4 6h6" />
-          <path d="M4 18h6" />
-          <path d="M10 6c5 0 4.5 6 10 6" />
-          <path d="M10 18c5 0 4.5-6 10-6" />
+          <circle cx="9" cy="12" r="6" />
+          <circle cx="15" cy="12" r="6" />
         </GlyphSvg>
       );
     case 'filter':
@@ -217,6 +252,9 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const opacity = lit ? 1 : COLUMN_EDGE_DIM_OPACITY;
   const classes = (transforms ?? []).filter(c => c !== 'pass_through');
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
+  // Broken line for a relation that never carried the value — the same edge the tooltip calls out
+  // as shaping which rows reach here.
+  const indirect = classes.length > 0 && classes.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
   const showChip = !identityOnly && (state === 'transformation' || classes.length > 0);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
@@ -229,6 +267,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
         style={{
           strokeWidth: lit ? LIT_STROKE_WIDTH : DIM_STROKE_WIDTH,
           opacity,
+          ...(indirect ? { strokeDasharray: INDIRECT_DASH_PATTERN } : {}),
         }}
       />
       {showChip && (

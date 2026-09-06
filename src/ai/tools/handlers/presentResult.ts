@@ -520,6 +520,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const panel = s.getPanel();
       let autoDispatched = false;
       if (panel) {
+        // Revealed before the send, not after: the webview lays the preview out the moment the
+        // message lands, and a hidden panel measures its canvas at zero — the graph would be framed
+        // against a box that does not exist yet and never re-framed once the tab came forward.
+        panel.reveal();
         // Validated send through the bridge sink — the render reflection rides the contract, not a raw
         // side-channel. The webview normalizes node_ids against its model and ACKs via view-render-result.
         try {
@@ -531,7 +535,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         } catch (error) {
           s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
         }
-        if (autoDispatched) panel.reveal();
       }
 
       // A second success violates the single-shot presentation contract; retain a diagnostic canary.

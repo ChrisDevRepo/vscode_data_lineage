@@ -7,6 +7,7 @@ import {
   MiniMap,
   useReactFlow,
   useNodesInitialized,
+  useStore,
   applyNodeChanges,
   applyEdgeChanges,
   MarkerType,
@@ -26,7 +27,7 @@ import { useVsCode } from '../contexts/VsCodeContext';
 import { CustomNode } from './CustomNode';
 import { Spinner } from './ui/Spinner';
 import { SchemaNode } from './SchemaNode';
-import type { ColumnTraceNodeData, CustomNodeData, SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot, TraceNeighborOption, TraceNodeControls, TraceSideControls } from '../engine/types';
+import type { AiBadge, ColumnTraceNodeData, CustomNodeData, SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot, TraceNeighborOption, TraceNodeControls, TraceSideControls } from '../engine/types';
 import { ColumnTraceEdge, type ColumnTraceEdgeData } from './ColumnTraceEdge';
 import { Legend } from './Legend';
 import { deriveLegendSchemas, deriveLegendColorMap } from './legendDerivation';
@@ -248,6 +249,8 @@ interface GraphCanvasProps {
   config: ExtensionConfig;
   /** Callback fired when a node is clicked. */
   onNodeClick: (nodeId: string, findQuery?: string) => void;
+  /** Callback that drops the node selection — the canvas's click-away reset. */
+  onClearSelection?: () => void;
   /** Callback fired when a schema cluster is selected. */
   onSchemaNodeSelect?: (nodeId: string) => void;
   /** Callback fired when a node is right-clicked. */
@@ -453,6 +456,7 @@ export function GraphCanvas({
   graph,
   config,
   onNodeClick,
+  onClearSelection,
   onSchemaNodeSelect,
   onNodeContextMenu,
   onStartTraceImmediate,
@@ -540,6 +544,9 @@ export function GraphCanvas({
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getEdges } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
+  // The pane's own measured width, straight from the flow store. A webview panel that is open but
+  // behind another tab lays out at zero, and a fit against a zero-width pane frames nothing.
+  const paneWidth = useStore(store => store.width);
   const vscodeApi = useVsCode();
 
   // Local state preserves drag positions across highlight changes. Declared above every callback
@@ -577,10 +584,28 @@ export function GraphCanvas({
     if (!aiDescription) return;
     aiLayoutCache.current.set(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName), { open: aiPanelOpen, section: activeSection });
   }, [aiDescription, activeAdvancedProfile?.id, aiViewName, aiPanelOpen, activeSection]);
+  // Read by `handleFocusSection`, which is declared above the sections it needs — the report
+  // column is wired here, and the badge parsing lands further down beside the node click that also
+  // reads it.
+  const aiSectionsRef = useRef<AiReportSection[]>([]);
+  /**
+   * The report navigated to a section: it lights that section's labels and frames its objects.
+   *
+   * @remarks
+   * Framing is part of navigating. A section whose objects sit outside the viewport used to
+   * highlight nothing the user could see, which read as a dead chip. Only this path frames — a node
+   * click also sets the active section, and moving the graph under a click the user just made would
+   * take the node out from under the pointer.
+   */
   const handleFocusSection = useCallback((n: number | null) => {
     setActiveSection(n);
     setHighlightedSections(null);
-  }, []);
+    if (n == null) return;
+    const nodeIds = aiSectionsRef.current.find(section => section.n === n)?.nodeIds;
+    if (!nodeIds?.length) return;
+    const nodes = nodeIds.map(id => ({ id }));
+    requestAnimationFrame(() => { void fitView({ nodes, padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); });
+  }, [fitView]);
   // Which edge the report column docks against, persisted via the webview's own getState/setState
   // (not a new mechanism), merged so this key never clobbers another preference stored there.
   const [dockPosition, setDockPositionState] = useState<AiDockPosition>(() => {
@@ -719,6 +744,7 @@ export function GraphCanvas({
     }
     return [...byNumber.values()].sort((a, b) => a.n - b.n);
   }, [activeAiMetadata]);
+  aiSectionsRef.current = aiSections;
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -1133,20 +1159,25 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  const aiBadgeMap = useMemo((): Map<string, { text: string }> => {
-    const m = new Map<string, { text: string }>();
-    const badges = activeAiMetadata?.badges;
-    if (!badges) return m;
-    for (const b of badges) m.set(b.nodeId, { text: b.text });
-    return m;
-  }, [activeAiMetadata]);
-
   // The focused section's node set; null when section focus is off or the section has no nodes.
   const activeSectionNodeIds = useMemo((): Set<string> | null => {
     if (activeSection == null) return null;
     const section = aiSections.find(s => s.n === activeSection);
     return section?.nodeIds.length ? new Set(section.nodeIds) : null;
   }, [aiSections, activeSection]);
+
+  // Section focus lands on the labels alone: the focused section's badges read lit, the rest dim,
+  // and the node bodies keep the selection and column-thread emphasis they already carry.
+  const aiBadgeMap = useMemo((): Map<string, AiBadge> => {
+    const m = new Map<string, AiBadge>();
+    const badges = activeAiMetadata?.badges;
+    if (!badges) return m;
+    for (const b of badges) {
+      const emphasis = activeSectionNodeIds ? (activeSectionNodeIds.has(b.nodeId) ? 'lit' : 'dim') : undefined;
+      m.set(b.nodeId, emphasis ? { text: b.text, emphasis } : { text: b.text });
+    }
+    return m;
+  }, [activeAiMetadata, activeSectionNodeIds]);
 
   const aiNoteMap = useMemo((): Map<string, { text: string }> => {
     const m = new Map<string, { text: string }>();
@@ -1179,6 +1210,15 @@ export function GraphCanvas({
       link(from, to);
       link(to, from);
     }
+    // A hop that renames the column lands the thread on two of its own ports with no edge between
+    // them — the transform circle says the change happens there. Without the bridge the walk stops
+    // at the port it arrived on and the thread appears to end at the procedure.
+    for (const bridge of columnTraceView.portBridges) {
+      const from = columnRowKey(bridge.nodeId, bridge.fromColumn);
+      const to = columnRowKey(bridge.nodeId, bridge.toColumn);
+      link(from, to);
+      link(to, from);
+    }
     return adjacency;
   }, [columnTraceView]);
 
@@ -1186,8 +1226,9 @@ export function GraphCanvas({
    * Node-and-column keys reachable from the hovered row in either direction.
    *
    * @remarks
-   * Traversal walks the column edges as an undirected graph so the whole thread lights up, not just
-   * its upstream or downstream half.
+   * Traversal walks the column edges and the hops' inside port bridges as one undirected graph, so
+   * the whole thread lights up — not just its upstream or downstream half, and not only as far as
+   * the procedure that renamed it.
    */
   const hoveredColumnPath = useMemo((): Set<string> | null => {
     const active = pinnedColumn ?? hoveredColumn;
@@ -1255,6 +1296,23 @@ export function GraphCanvas({
     setPinnedColumn(null);
   }, []);
 
+  /**
+   * Empty canvas clicked — every emphasis the user turned on goes back to normal.
+   *
+   * @remarks
+   * Click-away is the deselect gesture everywhere else, and a double-click on the pane is two of
+   * these, so both gestures land here; React Flow's zoom-on-double-click is off so the reset is not
+   * fighting a zoom. Section focus, node selection and the pinned column thread are separate
+   * channels that each dim something, so the reset clears all three rather than the last one used.
+   */
+  const handlePaneReset = useCallback(() => {
+    setActiveSection(null);
+    setHighlightedSections(null);
+    setPinnedColumn(null);
+    setHoveredColumn(null);
+    onClearSelection?.();
+  }, [onClearSelection]);
+
   // Each view lays its nodes out in its own coordinate space, so the framing the other one left
   // behind frames nothing here — either direction of the switch is fitted, once the switched-in
   // nodes are measured. The first pass only records the mode: the mount fit is the pending-zoom
@@ -1267,6 +1325,19 @@ export function GraphCanvas({
     const raf = fitGraph();
     return () => cancelAnimationFrame(raf);
   }, [columnViewActive, nodesInitialized, fitGraph]);
+
+  // An AI view arrives on its own, not on a click: the graph is rebuilt while the user is still
+  // reading the chat, and the graph-change fit runs a frame later against whatever the pane
+  // measured then. Framing it waits for measured nodes AND a pane with a width, so the first
+  // picture is the whole view — the same result the Objects/Detail buttons give.
+  const fittedAiViewRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!aiDescription) { fittedAiViewRef.current = null; return; }
+    if (!nodesInitialized || paneWidth === 0 || fittedAiViewRef.current === aiDescription) return;
+    fittedAiViewRef.current = aiDescription;
+    const raf = fitGraph();
+    return () => cancelAnimationFrame(raf);
+  }, [aiDescription, nodesInitialized, paneWidth, fitGraph]);
 
   // Hand-placed column nodes and the pinned/hovered thread belong to the relation set that
   // produced them, so only a new relation set invalidates them — a bookmark→bookmark switch
@@ -1313,27 +1384,28 @@ export function GraphCanvas({
       }
       // Same selection/AI decoration rule as the object view's decorateFlowNodes (shared via
       // resolveBaseSelectionState) — column view is the same node, only more drilled into.
-      // A focused report section overrides the dim: its nodes stay lit, everything else dims.
+      // Report-section focus is not in this channel: it emphasizes the section labels instead, so
+      // it cannot overwrite what selection or the column thread is saying about the bodies.
       const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
       byNode.set(view.id, {
         view,
         rowsVisible: notesVisible,
         rowLineStates,
         highlighted: isHighlighted ? 'yellow' : undefined,
-        dimmed: activeSectionNodeIds ? !activeSectionNodeIds.has(view.id) : dimmed,
+        dimmed,
         aiHighlight: aiHighlightMap.get(view.id),
         aiBadge: aiBadgeMap.get(view.id),
         aiNote: notesVisible ? aiNoteMap.get(view.id) : undefined,
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, activeSectionNodeIds]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
       return projectColumnNodes(columnTraceView.nodes, columnNodeData, columnPositions, columnNodeCache.current);
     }
-    const decorated = decorateFlowNodes(localNodes, {
+    return decorateFlowNodes(localNodes, {
       graphMode,
       highlightedNodeId,
       level1Neighbors,
@@ -1350,16 +1422,7 @@ export function GraphCanvas({
       onExpandSchema: onExpandExpandedSchemaViewSchema,
       onMakeSchemaCenter: onCenterExpandedSchemaViewSchema,
     }, nodeDecorationCache.current);
-    // A focused report section dims everything outside it — applied after the decoration pass so
-    // section focus never disturbs the selection/trace state underneath. Schema clusters carry no
-    // section badges and stay untouched.
-    if (!activeSectionNodeIds) return decorated;
-    return decorated.map(node =>
-      node.type === 'schemaNode' || activeSectionNodeIds.has(node.id)
-        ? node
-        : { ...node, data: { ...(node.data as CustomNodeData), dimmed: true } },
-    );
-  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions, activeSectionNodeIds]);
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
 
   const displayEdges = useMemo(() => {
     if (columnViewActive && columnTraceView) {
@@ -1669,6 +1732,7 @@ export function GraphCanvas({
                 edgeTypes={edgeTypes}
                 onNodeClick={handleNodeClick}
                 onNodeDoubleClick={handleNodeDoubleClick}
+                onPaneClick={handlePaneReset}
                 onNodeContextMenu={(event, node) => {
                   event.preventDefault();
                   if (node.type === 'schemaNode') {
@@ -1700,7 +1764,7 @@ export function GraphCanvas({
                 panOnScroll={false}
                 zoomOnScroll={true}
                 zoomOnPinch={true}
-                zoomOnDoubleClick={true}
+                zoomOnDoubleClick={false}
                 preventScrolling={true}
                 nodeOrigin={[0, 0] as [number, number]}
                 proOptions={{ hideAttribution: true }}

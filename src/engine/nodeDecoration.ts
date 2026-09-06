@@ -1,6 +1,6 @@
 import type { Node as FlowNode } from '@xyflow/react';
 import type { ColumnTraceViewNode } from './columnTraceView';
-import type { ColumnTraceNodeData, CustomNodeData, GraphMode, TraceNodeControls, TraceState } from './types';
+import type { AiBadge, ColumnTraceNodeData, CustomNodeData, GraphMode, TraceNodeControls, TraceState } from './types';
 
 /**
  * Per-node display state that depends on the current selection, trace, and AI overlay rather than
@@ -35,7 +35,7 @@ export interface NodeDecorationInputs {
   /** AI-authored highlight styling by node id. */
   aiHighlightMap: ReadonlyMap<string, { color: string; glow: string; shadow: string }>;
   /** AI-authored badges by node id. */
-  aiBadgeMap: ReadonlyMap<string, { text: string }>;
+  aiBadgeMap: ReadonlyMap<string, AiBadge>;
   /** AI-authored notes by node id. */
   aiNoteMap: ReadonlyMap<string, { text: string }>;
   /** Expands a schema cluster into its objects; undefined outside Schema View. */
@@ -93,7 +93,7 @@ interface NodeDecoration {
   /** AI-authored highlight styling for this node. */
   aiHighlight: { color: string; glow: string; shadow: string } | undefined;
   /** AI-authored badge for this node. */
-  aiBadge: { text: string } | undefined;
+  aiBadge: AiBadge | undefined;
   /** AI-authored note for this node, dropped while notes are hidden. */
   aiNote: { text: string } | undefined;
 }

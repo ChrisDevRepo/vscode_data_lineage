@@ -596,6 +596,12 @@ export function App() {
     [model, vscodeApi, isDetailOpen, highlightedNodeId]
   );
 
+  /** Drops the node selection without selecting another — the canvas's click-away reset. */
+  const handleClearSelection = useCallback(() => {
+    setHighlightedNodeId(null);
+    setInfoBarNodeId(prev => (prev !== null ? null : prev));
+  }, []);
+
   const handleSchemaNodeSelect = useCallback(() => {
     setHighlightedNodeId(null);
     setInfoBarNodeId(null);
@@ -1524,6 +1530,7 @@ export function App() {
         isDetailSearchOpen={isDetailSearchOpen}
         onToggleDetailSearch={() => setIsDetailSearchOpen(prev => !prev)}
         onNodeClick={handleNodeClick}
+        onClearSelection={handleClearSelection}
         onSchemaNodeSelect={handleSchemaNodeSelect}
         onNodeContextMenu={handleNodeContextMenu}
         onStartTraceImmediate={startTraceImmediate}

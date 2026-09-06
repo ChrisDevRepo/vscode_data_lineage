@@ -22,13 +22,14 @@ import {
   ForeignKeyInfo,
   ConstraintMaps,
   buildColumnDef,
+  UNRESOLVED_COLUMN_TYPE,
   enrichColumnsWithConstraints,
   createEmptySchemaInfo,
   DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { applyExclusionFilter } from './modelFilters';
-import { stripBrackets, schemaKey } from '../utils/sql';
+import { stripBrackets, schemaKey, normalizeColName } from '../utils/sql';
 import { trunc } from '../utils/log';
 
 interface DacpacExtractionOptions {
@@ -389,6 +390,8 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
   const objects: ExtractedObject[] = [];
   const seen = new Set<string>();
   const constraintMaps = extractConstraintMaps(constraintElements ?? elements);
+  // Computed column (`[obj]::col`) → the single source column it reads, resolved after the loop.
+  const computedSources = new Map<string, string>();
 
   for (const el of elements) {
     const type = el['@_Type'];
@@ -410,7 +413,7 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
     if (COLUMN_BEARING_DACPAC_TYPES.has(type)) {
-      columns = extractColumnsFromXml(el);
+      columns = extractColumnsFromXml(el, computedSources);
       if (columns && (type === 'SqlTable' || type === 'SqlExternalTable')) {
         fks = enrichColumnsWithConstraints(columns, normalizeName(name), constraintMaps);
       }
@@ -426,7 +429,62 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
     });
   }
 
+  resolveComputedColumnTypes(objects, computedSources);
   return objects;
+}
+
+/**
+ * Gives a computed column the declared type of the single column it reads.
+ *
+ * @remarks
+ * A DACPAC declares no type for a view's columns: they are `SqlComputedColumn` elements with no
+ * `TypeSpecifier`, which is why an unresolved one renders as `—`. Where the model does name the one
+ * source column the value comes from, that column's declared type is this column's type — this
+ * borrows it rather than inferring anything. A column reading zero columns or several is an
+ * expression with no type to borrow and keeps the `—`.
+ *
+ * Iterated to a fixpoint because a view can read a view: the first pass types the columns fed by
+ * tables, the next the ones fed by those views. Bounded so a circular model cannot spin.
+ *
+ * @param objects - Extracted objects, mutated in place.
+ * @param computedSources - Computed column key → the source column name the model recorded.
+ */
+function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources: Map<string, string>): void {
+  if (computedSources.size === 0) return;
+  const declared = new Map<string, string>();
+  for (const obj of objects) {
+    const objectId = normalizeName(obj.fullName);
+    for (const col of obj.columns ?? []) declared.set(`${objectId}::${normalizeColName(col.name)}`, col.type);
+  }
+
+  const keyOf = (reference: string): string | null => {
+    const parts = reference.match(/\[[^\]]+\]/g)?.map(stripBrackets) ?? reference.split('.');
+    if (parts.length < 2) return null;
+    const column = parts[parts.length - 1];
+    const owner = parts.slice(0, -1).map(part => `[${part}]`).join('.');
+    return `${normalizeName(owner)}::${normalizeColName(column)}`;
+  };
+
+  const MAX_PASSES = 5;
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    let resolved = 0;
+    for (const obj of objects) {
+      const objectId = normalizeName(obj.fullName);
+      for (const col of obj.columns ?? []) {
+        if (col.type !== UNRESOLVED_COLUMN_TYPE) continue;
+        const key = `${objectId}::${normalizeColName(col.name)}`;
+        const reference = computedSources.get(key);
+        if (!reference) continue;
+        const sourceKey = keyOf(reference);
+        const sourceType = sourceKey ? declared.get(sourceKey) : undefined;
+        if (!sourceType || sourceType === UNRESOLVED_COLUMN_TYPE) continue;
+        col.type = sourceType;
+        declared.set(key, sourceType);
+        resolved++;
+      }
+    }
+    if (resolved === 0) return;
+  }
 }
 
 /**
@@ -458,9 +516,10 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
  * @param el - The source element.
  * @returns An array of column definitions.
  */
-function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
+function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, string>): ColumnDef[] {
   const cols: ColumnDef[] = [];
   const rels = asArray(el.Relationship);
+  const objectId = normalizeName(el['@_Name'] ?? '');
 
   for (const rel of rels) {
     if (rel['@_Name'] !== 'Columns') continue;
@@ -476,6 +535,22 @@ function extractColumnsFromXml(el: XmlElement): ColumnDef[] {
         let length: string | undefined;
         let precision: string | undefined;
         let scale: string | undefined;
+
+        if (isComputed && computedSources) {
+          // A view's columns arrive as computed columns with no TypeSpecifier — the type is not in
+          // the model. What IS in the model is what the column reads: a single ExpressionDependency
+          // names the source column, whose declared type is this column's type. Recorded here and
+          // resolved once every object's declared columns are known.
+          const refs = asArray(colEl.Relationship)
+            .filter(r => r['@_Name'] === 'ExpressionDependencies')
+            .flatMap(r => asArray(r.Entry))
+            .flatMap(entry => asArray(entry.References))
+            .map(ref => ref['@_Name'])
+            .filter((n): n is string => !!n);
+          // Exactly one: two or more means an expression over several columns, and an expression
+          // has no declared type to borrow.
+          if (refs.length === 1) computedSources.set(`${objectId}::${normalizeColName(colName)}`, refs[0]);
+        }
 
         if (!isComputed) {
           for (const colRel of asArray(colEl.Relationship)) {
