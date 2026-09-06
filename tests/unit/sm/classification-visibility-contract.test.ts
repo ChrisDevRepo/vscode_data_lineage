@@ -64,6 +64,17 @@ describe('classification is visible where it is chosen and where it is approved'
     expect(reportingLine('both')).not.toContain('dropped');
   });
 
+  it.each(['business' as const, 'technical' as const])(
+    'bounds the loss on %s: a structural correctness finding survives either angle',
+    (classification) => {
+      // `structural_callouts` sits outside CLASSIFICATION_GATED, so it fires under every angle.
+      // A label naming only the drop overstates it, and the gate exists so the user can correct
+      // the value on what it actually costs.
+      const line = reportingLine(classification);
+      expect(line).toContain('structural correctness findings are kept either way');
+    },
+  );
+
   it('renders no line when the AI has not locked a classification', () => {
     // An absent verdict is not a value to render — an invented default would misreport the run.
     expect(summaryFor(undefined)).not.toContain('Reporting on:');
@@ -151,7 +162,7 @@ describe('classification travels from the tool payload to the approval card', ()
   it('renders the "Reporting on" line from the classification the payload carried', async () => {
     // The contract above is proved on a hand-set field; this drives the production path, so a
     // handler that stopped forwarding the payload value would fail here and nowhere else.
-    expect(await gateDetail('technical')).toContain('- **Reporting on:** technical mechanics (business findings are dropped)');
+    expect(await gateDetail('technical')).toContain('- **Reporting on:** technical mechanics (business findings are dropped; structural correctness findings are kept either way)');
   });
 
   it('follows the payload rather than a default', async () => {

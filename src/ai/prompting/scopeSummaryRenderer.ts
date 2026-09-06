@@ -19,8 +19,8 @@ import { pluralize } from '../support/text';
  * line the one scope field that discards analysis is the only one the user cannot correct.
  */
 const CLASSIFICATION_LABELS: Record<ClassificationValue, string> = {
-  business: 'business logic (technical-only findings are dropped)',
-  technical: 'technical mechanics (business findings are dropped)',
+  business: 'business logic (technical-only findings are dropped; structural correctness findings are kept either way)',
+  technical: 'technical mechanics (business findings are dropped; structural correctness findings are kept either way)',
   both: 'business logic and technical mechanics',
 };
 

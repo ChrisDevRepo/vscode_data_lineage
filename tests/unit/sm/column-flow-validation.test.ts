@@ -164,6 +164,11 @@ describe("Column Flow Validation", () => {
     const detail = JSON.stringify('detail' in result ? result.detail : '');
     expect(detail.includes('wrong_col'), 'detail names the offending out_col').toBe(true);
     expect(detail.includes('amount'), 'detail lists the valid active column as data').toBe(true);
+    // The empty-flow escape is open only where the focus declares none of the active columns;
+    // offering it unconditionally spends a generation to land on column_chain_incomplete, so the
+    // order names the per-column repair first and conditions the escape.
+    expect(/Every active tracked column still needs its own entry/.test(hint), 'hint names the per-column repair').toBe(true);
+    expect(/Submit column_flow: \[\] only where this node declares none of them/.test(hint), 'hint conditions the empty-flow escape on what the node declares').toBe(true);
   }
 });
 
