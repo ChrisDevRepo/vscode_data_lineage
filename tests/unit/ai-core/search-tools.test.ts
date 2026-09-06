@@ -16,6 +16,8 @@
  *   names an invalid pattern instead of answering with an empty list;
  * - an over-budget result hands off with the existing `over_discovery_budget` fact and omits the
  *   list entirely, never a partial one;
+ * - a hit inside a SQL comment carries `commented: true` while a live hit's row is unchanged
+ *   (M0-T3: the 3-line context window dropped the enclosing block, and dead SQL read as behaviour);
  * - `package.json` `languageModelTools` is what the generator produces from `TOOL_DEFS`.
  *
  * Cap-setting calls (`setDiscoveryTokenBudget` — process-wide mutable module state) are made
@@ -61,7 +63,10 @@ function makeModel(extra: LineageNode[] = []): DatabaseModel {
   };
 }
 
-type DdlRow = { id: string; name: string; type: string; line: number; text: string; context: string };
+type DdlRow = {
+  id: string; name: string; type: string; line: number; text: string; context: string;
+  commented?: true;
+};
 type DdlResult = {
   results?: DdlRow[]; total?: number; objects?: number; hint?: string; error?: string;
   searched?: { bodies: number; types: string[] }; reason?: string; results_omitted?: boolean;
@@ -132,6 +137,36 @@ describe('search tools — grep contract', () => {
     const onVwX = (res.results ?? []).filter(r => r.id === '[ai].[vwx]');
     expect(onVwX.length, 'the node is scanned, not skipped').toBeGreaterThan(0);
     expect(onVwX.some(r => r.text.includes('xId')), 'the real match is reported').toBe(true);
+  });
+
+  it('marks a hit inside a comment and leaves a live hit\'s row byte-identical', () => {
+    const commented = makeModel([node({
+      id: '[ai].[vwdelta]', name: 'vwDelta', type: 'view',
+      bodyScript: [
+        'CREATE VIEW ai.vwDelta AS',
+        'SELECT w.Id FROM ai.Watermark w',
+        '/* DELTA MODE, deferred to v5.0',
+        '   a',
+        '   b',
+        '   SELECT * FROM ai.Watermark',
+        '*/',
+      ].join('\n'),
+    })]);
+    const rows = (searchDdl(commented, 'ai\\.Watermark') as DdlResult).results ?? [];
+    expect(rows.map(r => [r.line, r.commented]), 'the live hit is unflagged, the dead one is flagged')
+      .toEqual([[2, undefined], [6, true]]);
+
+    // The wire shape: a live row is the exact JSON it was before the field existed, key order
+    // included; the flag is appended only where it is true.
+    expect(JSON.stringify(rows[0])).toBe(JSON.stringify({
+      id: '[ai].[vwdelta]', name: 'vwDelta', type: 'view', line: 2,
+      text: 'SELECT w.Id FROM ai.Watermark w',
+      context: 'CREATE VIEW ai.vwDelta AS\nSELECT w.Id FROM ai.Watermark w\n/* DELTA MODE, deferred to v5.0',
+    }));
+    expect(JSON.stringify(rows[1]).endsWith(',"commented":true}'), 'appended, never in place of a field')
+      .toBe(true);
+    expect(JSON.stringify(rows[1]).length - JSON.stringify({ ...rows[1], commented: undefined }).length)
+      .toBe(',"commented":true'.length);
   });
 
   it('an over-budget result hands off with the over_discovery_budget fact and omits the list', () => {

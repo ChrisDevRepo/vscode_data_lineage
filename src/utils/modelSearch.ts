@@ -40,6 +40,16 @@ export interface BodyMatch extends DdlMatch {
   line: number;
   /** The matching line, right-trimmed. */
   text: string;
+  /**
+   * Present, and always `true`, when the match itself sits inside a SQL comment.
+   *
+   * @remarks
+   * Omitted when the match is executable, so a live hit's reported shape is unchanged. The flag is
+   * a structural fact about the text — a block comment, or `--` to end of line — and never a
+   * filter: a comment can carry the answer (a renamed column, a documented formula), so a
+   * commented match is reported like any other and the reading is left to the consumer.
+   */
+  commented?: true;
 }
 
 /** Context lines placed around a match by {@link searchBodyScripts} — the one governor; both callers take it. */
@@ -296,11 +306,14 @@ export function searchBodyScripts(
     if (!body) continue;
     const lines = body.split('\n');
     const lineStarts = buildLineStarts(lines);
+    // One pass per body, and only once a match exists: a body nobody hits is never scanned.
+    let commentMask: Uint8Array | null = null;
+    const comments = (): Uint8Array => (commentMask ??= scanComments(lines, lineStarts, body.length));
 
     if (scanner === null) {
       const idx = body.toLowerCase().indexOf(lower);
       if (idx < 0) continue;
-      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap));
+      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, comments()));
       if (matches.length >= cap) break;
       continue;
     }
@@ -312,7 +325,7 @@ export function searchBodyScripts(
       // A zero-length match (`x*`, `^`) advances nothing on its own: skip the position rather than
       // the node, or the first empty match hides every real match later in the same body.
       if (hit[0].length === 0) { scanner.lastIndex++; continue; }
-      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap));
+      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, comments()));
       if (matches.length >= cap) { capped = true; break; }
     }
     if (capped) break;
@@ -351,14 +364,78 @@ function makeMatch(
   matchText: string,
   contextLines: number,
   lineCap: number,
+  commentMask: Uint8Array,
 ): BodyMatch {
   const matchLine = lineIndexAt(lineStarts, index);
-  return {
+  const match: BodyMatch = {
     node,
     line:    matchLine + 1,
     text:    lines[matchLine].trimEnd(),
     snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap),
   };
+  // Set only when true: an executable match keeps the shape it has always had.
+  if (commentMask[index] === 1) match.commented = true;
+  return match;
+}
+
+/**
+ * Marks every character of a body that lies inside a SQL comment.
+ *
+ * @param lines - The body split on newlines, as {@link searchBodyScripts} already holds it.
+ * @param lineStarts - Start offset of each line, so a flag lands at the body offset a match uses.
+ * @param length - Length of the body the offsets index into.
+ * @returns One byte per body character: `1` inside a comment, `0` outside.
+ *
+ * @remarks
+ * The context window a match is reported with is a few lines wide, so a match deep inside a long
+ * comment block arrives indistinguishable from live code — the whole comment structure sits outside
+ * the window. This pass restores that one bit, per character rather than per line, so a match after
+ * a trailing `--` is marked while live code on the same line is not.
+ *
+ * Enough T-SQL to be right about where a comment starts and ends: block comments nest, a `--` runs
+ * to end of line, and a string literal or a bracketed identifier hides both delimiters. Doubled
+ * `''` and `]]` escapes need no case of their own — closing and immediately reopening leaves the
+ * same state with nothing between. Quoted `"` identifiers are not tracked: both readings of `"` are
+ * delimiters, but a lone `"` is the more common typo and tracking it would swallow the rest of a
+ * body. An unterminated block comment marks the remainder, which is how a reader takes it too.
+ */
+function scanComments(lines: string[], lineStarts: number[], length: number): Uint8Array {
+  const mask = new Uint8Array(length);
+  /** `/*` nesting depth; T-SQL nests block comments and requires them balanced. */
+  let depth = 0;
+  /** The character that closes the open literal or identifier, or `''` when none is open. */
+  let closer = '';
+  for (let l = 0; l < lines.length; l++) {
+    const line = lines[l];
+    const base = lineStarts[l];
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const next = line[i + 1];
+      if (depth > 0) {
+        mask[base + i] = 1;
+        if (ch === '/' && next === '*') { depth++; mask[base + ++i] = 1; }
+        else if (ch === '*' && next === '/') { depth--; mask[base + ++i] = 1; }
+        continue;
+      }
+      if (closer !== '') {
+        if (ch === closer) closer = '';
+        continue;
+      }
+      if (ch === '-' && next === '-') {
+        mask.fill(1, base + i, base + line.length);
+        break;
+      }
+      if (ch === '/' && next === '*') {
+        depth = 1;
+        mask[base + i] = 1;
+        mask[base + ++i] = 1;
+        continue;
+      }
+      if (ch === '\'') closer = '\'';
+      else if (ch === '[') closer = ']';
+    }
+  }
+  return mask;
 }
 
 /**

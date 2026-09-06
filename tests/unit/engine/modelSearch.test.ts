@@ -267,6 +267,107 @@ describe('model search', () => {
   });
 });
 
+/**
+ * A match inside a SQL comment is marked (M0-T3, 2026-09-06).
+ *
+ * The reported context is a 3-line window, so a match deep inside a block comment arrived
+ * indistinguishable from live code: three answers described commented-out SQL as running behaviour.
+ * The marker is additive — `commented` is set only when true, and never filters a hit, because two
+ * of that same answer's correct facts came from inside a comment.
+ */
+describe('model search — commented matches', () => {
+  /** Runs `pattern` over one body and returns `[line, commented]` for every hit, in order. */
+  function hits(bodyScript: string, pattern: string): [number, boolean][] {
+    const compiled = compileSearchRegex(pattern);
+    if (!compiled.ok) throw new Error(`${pattern} must compile`);
+    const body: SearchableNode[] = [{
+      id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript,
+    }];
+    return searchBodyScripts(body, compiled.regex).map(h => [h.line, h.commented === true]);
+  }
+
+  it('marks a hit inside a block comment and leaves a live hit unmarked', () => {
+    const hit = hits([
+      'SELECT SUM(RawAmount) FROM #RawBatch',   // 1 — live
+      '/* RECONCILIATION QUERY',                // 2
+      '   deferred, kept for reference',        // 3
+      '   more prose',                          // 4
+      '   and more prose',                      // 5
+      '   still more prose',                    // 6
+      '   SELECT SUM(RawAmount) FROM ai.Raw',   // 7 — 5 lines below the opener
+      '*/',                                     // 8
+    ].join('\n'), 'SUM\\(RawAmount\\)');
+    expect(hit, 'the live hit is unmarked, the one inside the block is marked')
+      .toEqual([[1, false], [7, true]]);
+  });
+
+  it('marks a hit the 3-line context window cannot explain', () => {
+    // The window is [hit-1, hit, hit+1]; the opener sits outside it, which is the whole defect.
+    const compiled = compileSearchRegex('DELETE');
+    if (!compiled.ok) throw new Error('DELETE must compile');
+    const lines = ['/* OLD DEDUP APPROACH (pre v2.0)', 'a', 'b', 'c', 'd', 'e', 'DELETE d1', 'f', '*/'];
+    const [match] = searchBodyScripts(
+      [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: lines.join('\n') }],
+      compiled.regex,
+    );
+    expect(match.snippet, 'no delimiter is visible in the reported context').not.toContain('/*');
+    expect(match.commented, 'and the marker says so anyway').toBe(true);
+  });
+
+  it('tracks nested block comments and clears the marker after the outer close', () => {
+    expect(hits([
+      'SELECT 1 AS Target',            // 1 — live, before
+      '/* outer',                      // 2
+      '  /* inner Target */',          // 3 — inner close does not end the outer block
+      '  Target inside outer',         // 4
+      '*/',                            // 5
+      'SELECT 2 AS Target',            // 6 — live again
+    ].join('\n'), 'Target'))
+      .toEqual([[1, false], [3, true], [4, true], [6, false]]);
+  });
+
+  it('marks a line comment to end of line only, leaving live code on that line unmarked', () => {
+    expect(hits([
+      'SELECT Target FROM t -- Target was renamed',  // 1 — live match, then commented match
+      '-- Target',                                   // 2
+      'SELECT Target',                               // 3 — the line comment does not carry over
+    ].join('\n'), 'Target'))
+      .toEqual([[1, false], [1, true], [2, true], [3, false]]);
+  });
+
+  it('is not fooled by a comment delimiter inside a string literal or a bracketed identifier', () => {
+    expect(hits([
+      "SELECT 'no /* Target here' AS a",   // 1 — the literal opens no block
+      'SELECT Target FROM t',              // 2 — so this is live
+      "SELECT '-- Target' AS b",           // 3 — nor does the literal start a line comment
+      'SELECT Target FROM u',              // 4
+      'SELECT [Target -- col] FROM v',     // 5 — a bracketed identifier hides "--" too
+      'SELECT Target FROM w',              // 6
+    ].join('\n'), 'Target'))
+      .toEqual([[1, false], [2, false], [3, false], [4, false], [5, false], [6, false]]);
+  });
+
+  it("closes a literal on a doubled '' escape without swallowing the rest of the body", () => {
+    expect(hits([
+      "SELECT 'it''s fine' AS a",   // 1 — '' is a close and a reopen, net state unchanged
+      '/* Target */',               // 2 — so this block is still seen
+      'SELECT Target',              // 3
+    ].join('\n'), 'Target'))
+      .toEqual([[2, true], [3, false]]);
+  });
+
+  it('leaves a live match byte-identical to the shape before the marker existed', () => {
+    const compiled = compileSearchRegex('Target');
+    if (!compiled.ok) throw new Error('Target must compile');
+    const [live] = searchBodyScripts(
+      [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT Target' }],
+      compiled.regex,
+    );
+    expect(Object.keys(live), 'no key is added to a live hit').toEqual(['node', 'line', 'text', 'snippet']);
+    expect('commented' in live, 'the field is omitted, not false').toBe(false);
+  });
+});
+
 describe('regexRejectHint', () => {
   /** Compiles `pattern`, asserts it was refused, and returns the hint derived from that refusal. */
   function hintFor(pattern: string): string {

@@ -712,6 +712,10 @@ export function runAnalysis(
  * result too large for the discovery budget hands off to the approval path rather than returning a
  * partial list.
  *
+ * A hit whose match sits inside a SQL comment carries `commented: true`; an executable hit carries
+ * nothing extra. Marked, never filtered — a comment can hold the answer, and the few context lines
+ * a hit ships with cannot show the block it sits in.
+ *
  * @param model - The database model.
  * @param query - The regex pattern.
  * @param types - Optional filter for scriptable object types.
@@ -749,6 +753,8 @@ export function searchDdl(
   // No limit argument: a grep result is never sliced. Size is answered by the budget check below.
   const matches = searchBodyScripts(searchableNodes, compiled.regex, typeSet);
 
+  // `commented` is spread in only when the match sits inside a comment, so a live hit serializes
+  // exactly as before; a dead one says so instead of reading as behaviour.
   const results = matches.map(m => ({
     id:      m.node.id,
     name:    m.node.name,
@@ -756,6 +762,7 @@ export function searchDdl(
     line:    m.line,
     text:    m.text,
     context: m.snippet,
+    ...(m.commented ? { commented: true as const } : {}),
   }));
 
   // What was actually read, so a zero-match answer is a fact about the search rather than advice
