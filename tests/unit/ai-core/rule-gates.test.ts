@@ -367,17 +367,13 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
   const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
   const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
 
-  /** Placement shape the Formulas bullet already uses: mandatory carry-through, one occurrence, best section. */
+  /** Placement shape the risk bullet carries: mandatory carry-through, one occurrence, best section. */
   const placementRule = /every .*present in the captured.*bodies.*appears exactly once.*in its most relevant section/i;
-
-  it('reads the shipped general template and its Formulas placement rule as the positive control', () => {
-    expect(general).toContain('- **Risks / data-quality flags**');
-    expect(renderRuleBullet(general, 'Formulas')).toMatch(placementRule);
-  });
 
   it('states the risk bullet as a placement rule, never as a permission gate', () => {
     const risks = renderRuleBullet(general, 'Risks / data-quality flags');
 
+    expect(general).toContain('- **Risks / data-quality flags**');
     expect(general).toMatch(/stages: \[discovery, synthesis\]/);
     expect(risks).toMatch(placementRule);
     expect(risks).toMatch(/captured or loaded bodies/);

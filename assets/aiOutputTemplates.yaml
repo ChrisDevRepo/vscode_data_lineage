@@ -450,8 +450,6 @@ general:
     How the captured material renders across the assembled sections, business
     meaning first:
 
-    - **Formulas**: every calculation present in the captured bodies appears
-      exactly once as a `$$ … $$` block in its most relevant section.
     - **Column renames**: a `| From | To | Business meaning |` row per rename
       or derivation the bodies carry.
     - **Source guards**: the WHERE / JOIN / MERGE predicates that filter or
