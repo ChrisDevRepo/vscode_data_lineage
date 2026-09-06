@@ -176,7 +176,8 @@ export const CHAT_MARKDOWN_FORMAT = [
  * and graph dispatch treats the tool result as a reroute terminal, so the model does not receive
  * another discovery attempt to act on it — therefore no prose describing
  * that path is ever reachable. Tool parameter routing and filter-boundary semantics live in
- * each tool's modelDescription.
+ * each tool's modelDescription — including the scope-depth mechanics this list used to restate,
+ * which now have one home in `lineage_get_scope_bundle`'s description and its `.describe()` texts.
  *
  * @returns The assembled discovery-phase prompt string.
  */
@@ -184,9 +185,11 @@ function buildDiscoveryPrompt(): string {
   return [
     'Answer from these tools, in chat:',
     '- Applied AI bookmark + a question about what is on screen → `lineage_get_screen_state` with `ids` from the card, or `filter` for pruned/open_leads/stale; that run is already stored. Ground one object with `lineage_get_object_detail`; do not re-walk the bookmark scope with `lineage_get_scope_bundle`.',
-    '- Single-object ask → `lineage_get_object_detail` (one object at a time).',
-    '- Graph-scope ask → `lineage_get_scope_bundle`, scoped to what the question needs — set upstream_depth and downstream_depth from what the question implies (0 on a side to exclude it), not an unbounded all-directions walk by default. Set `include_ddl:true` when the user wants the logic/DDL for that scope, not just the node/edge structure.',
-    '- DDL/text search → `lineage_search_ddl`.',
+    '- What is loaded, which schemas, the active filter → `lineage_get_context`.',
+    '- Unknown or unresolved object name → `lineage_search_objects`.',
+    "- One object's columns, keys, neighbours or body → `lineage_get_object_detail`.",
+    '- Which bodies mention X → `lineage_search_ddl`.',
+    '- Many objects, upstream or downstream of one → `lineage_get_scope_bundle`, scoped to what the question needs.',
     '- Graph-pattern or structural-anomaly question → `lineage_detect_graph_patterns`.',
     '',
     '### Examples',
