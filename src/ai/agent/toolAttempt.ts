@@ -38,6 +38,7 @@ import {
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { attemptContextBytes, storedEvidenceKindBytes } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { IToolRegistry } from '../tools/registry';
 import type { ConverseInstructionPlan, InstructionPhase } from './instructionPlan';
@@ -99,22 +100,14 @@ const MAX_CORRECTION_FRAGMENT_BYTES = 2_048;
 /** Maximum distinct structural entries retained by one rejection. */
 const MAX_CORRECTION_FRAGMENTS = 4;
 
-/**
- * Total byte budget for the rendered `<runtime_tool_context>` retry payload.
- *
- * @remarks
- * A mechanical bound on the engine's re-projection of cumulative observations/rejections onto the
- * next attempt. It is NOT truncation of any delivered tool response (those already reached the model
- * when the call first ran) and never a rejection axis — an oversized payload is shrunk deterministically,
- * never refused.
- *
- * 48 KiB specifically: three quarters of the 64 KiB discovery ceiling, leaving the remaining quarter
- * of that budget for the instruction and question text the retry payload is appended to.
+/*
+ * The retry-context byte budget (`attemptContextBytes()`) and the per-kind stored-evidence share
+ * (`storedEvidenceKindBytes()`) are governed by `support/tokenBudget.ts`: a ceiling sized for a
+ * 128k window, scaled down with the selected model's input window. They bound the engine's
+ * re-projection of cumulative observations/rejections onto the next attempt — never a delivered
+ * tool response, never a rejection axis: an oversized payload is shrunk deterministically, never refused.
  */
-const MAX_ATTEMPT_CONTEXT_BYTES = 49_152;
 
-/** Checkpoint share for successful evidence; one admitted discovery bundle must fit losslessly. */
-const MAX_STORED_EVIDENCE_KIND_BYTES = MAX_ATTEMPT_CONTEXT_BYTES - 4_096;
 
 /** Hard-slices engine correction text to {@link MAX_REJECTION_TEXT_CHARS} with a plain ellipsis when over. */
 function capRejectionText(text: string): string {
@@ -479,7 +472,7 @@ function boundStoredObservations(observations: readonly ToolAttemptObservation[]
   let retainedBytesSum = 0;
   for (let index = observations.length - 1; index >= 0; index--) {
     const source = observations[index];
-    const cappedResult = capUtf8Text(source.result, MAX_STORED_EVIDENCE_KIND_BYTES);
+    const cappedResult = capUtf8Text(source.result, storedEvidenceKindBytes());
     // `acceptedCallKey` is carried through truncation: it is the read-dedupe identity, so dropping
     // it here would silently re-dispatch an already-accepted read on exactly the over-budget hops
     // that caused the truncation.
@@ -487,13 +480,13 @@ function boundStoredObservations(observations: readonly ToolAttemptObservation[]
       ? source
       : { ...source, result: cappedResult };
     const boundedBytes = Buffer.byteLength(JSON.stringify(bounded));
-    if (prependedArrayBytes(retainedBytesSum, retained.length, boundedBytes) > MAX_STORED_EVIDENCE_KIND_BYTES) {
+    if (prependedArrayBytes(retainedBytesSum, retained.length, boundedBytes) > storedEvidenceKindBytes()) {
       // The newest observation is never dropped outright: it is the evidence the next attempt needs.
       if (retained.length === 0) {
         const identityBytes = Buffer.byteLength(JSON.stringify({ ...source, result: '' }));
         retained.push({
           ...source,
-          result: capUtf8Text(source.result, Math.max(128, MAX_STORED_EVIDENCE_KIND_BYTES - identityBytes - 64)),
+          result: capUtf8Text(source.result, Math.max(128, storedEvidenceKindBytes() - identityBytes - 64)),
         });
         break;
       }
@@ -511,7 +504,7 @@ function boundStoredObservations(observations: readonly ToolAttemptObservation[]
         omittedBytes: Buffer.byteLength(source.result),
       };
       const stubBytes = Buffer.byteLength(JSON.stringify(stub));
-      if (prependedArrayBytes(retainedBytesSum, retained.length, stubBytes) > MAX_STORED_EVIDENCE_KIND_BYTES) break;
+      if (prependedArrayBytes(retainedBytesSum, retained.length, stubBytes) > storedEvidenceKindBytes()) break;
       retained.unshift(stub);
       retainedBytesSum += stubBytes;
       continue;
@@ -529,7 +522,7 @@ function boundStoredRejections(rejections: readonly ToolAttemptRejection[]): Too
   for (let index = rejections.length - 1; index >= 0; index--) {
     const rejection = rejections[index];
     const rejectionBytes = Buffer.byteLength(JSON.stringify(rejection));
-    if (prependedArrayBytes(retainedBytesSum, retained.length, rejectionBytes) > MAX_STORED_EVIDENCE_KIND_BYTES) {
+    if (prependedArrayBytes(retainedBytesSum, retained.length, rejectionBytes) > storedEvidenceKindBytes()) {
       if (retained.length === 0) retained.push(essentialCurrentRejection(rejection));
       break;
     }
@@ -603,7 +596,7 @@ export function renderToolAttemptContext(state: ToolPhaseAttemptState): string {
   let observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
   let rejections: readonly RenderedRejection[] = state.rejections;
   let rendered = renderAttemptContext(state, observations, rejections);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES;
+  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes();
 
   if (overBudget() && state.observations.length > 0) {
     const shrunk = shrinkObservationsByTruncateThenCollapse(
@@ -657,10 +650,10 @@ function shrinkObservationsByTruncateThenCollapse(
   state: ToolPhaseAttemptState,
   render: (observations: readonly RenderedObservation[]) => string,
 ): { observations: RenderedObservation[]; rendered: string } {
-  const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / state.observations.length);
+  const fairShare = Math.floor(attemptContextBytes() / state.observations.length);
   const truncated = state.observations.map((observation) => truncateObservationResult(observation, fairShare));
   let rendered = render(truncated);
-  for (let i = 0; i < truncated.length && Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES; i++) {
+  for (let i = 0; i < truncated.length && Buffer.byteLength(rendered) > attemptContextBytes(); i++) {
     truncated[i] = collapseObservation(state.observations[i]);
     rendered = render(truncated);
   }
@@ -707,7 +700,7 @@ function renderObservationsContext(state: ToolPhaseAttemptState): ModelMessage[]
   if (state.observations.length === 0) return [];
   let observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
   let rendered = renderObservationsOnly(state, observations);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES;
+  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes();
 
   if (overBudget()) {
     const shrunk = shrinkObservationsByTruncateThenCollapse(
@@ -762,7 +755,7 @@ function truncateHeldDraftSection(section: unknown, targetBytes: number): unknow
  *
  * @remarks
  * The held draft gives the repair turn enough context to emit a scoped patch instead of
- * reconstructing the full envelope. It uses the same {@link MAX_ATTEMPT_CONTEXT_BYTES}
+ * reconstructing the full envelope. It uses the same {@link attemptContextBytes}
  * truncate-then-collapse policy as {@link renderObservationsContext}.
  * @param heldDraft - The exact `sections`/`notes`/`highlight_groups` currently on hold, or `null`/`undefined`
  * when no repairable draft is active for this call.
@@ -776,10 +769,10 @@ function renderHeldDraftRepairContext(
   const notes = heldDraft.notes;
   const highlightGroups = heldDraft.highlight_groups;
   let rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES;
+  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes();
 
   if (overBudget() && Array.isArray(sections) && sections.length > 0) {
-    const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / sections.length);
+    const fairShare = Math.floor(attemptContextBytes() / sections.length);
     sections = sections.map((section) => truncateHeldDraftSection(section, fairShare));
     rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
   }
@@ -824,18 +817,22 @@ function boundedCorrectionArgs(fragments: readonly ToolCorrectionFragment[] | un
  * ladder. A synthetic `missing_required_tool_call` rejection carries no provider `callId` and cannot
  * form a valid assistant/tool pair — it falls back to one plain user-role note.
  * @param state - Cumulative typed state for the current logical phase or hop.
+ * @param draftHeldFor - Tool whose held repair draft is rendered in the same attempt; its replayed
+ * call carries no correction fragments because the draft block is the payload.
  * @returns Zero messages when there is no rejection, one fallback user note for a callId-less
  * rejection, or one assistant tool-call and its paired tool result, closed by one user-role
  * continuation note (see {@link rejectionContinuationMessage}).
  */
-function renderRejectionExchange(state: ToolPhaseAttemptState): ModelMessage[] {
+function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: string): ModelMessage[] {
   if (state.rejections.length === 0) return [];
   const rejection = state.rejections[state.rejections.length - 1];
   if (!rejection.callId) {
     const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
     return [modelUserMessage(note)];
   }
-  const input = boundedCorrectionArgs(rejection.correctionFragments);
+  // The held draft rendered alongside this exchange already carries the tool's full payload, so the
+  // replayed call names the tool and call id only — the same text is never sent twice per attempt.
+  const input = rejection.toolName === draftHeldFor ? {} : boundedCorrectionArgs(rejection.correctionFragments);
   const output: Record<string, unknown> = { code: rejection.code, reason: rejection.reason };
   if (rejection.hint !== undefined) output.hint = rejection.hint;
   if (rejection.detail !== undefined) output.detail = rejection.detail;
@@ -904,7 +901,7 @@ function collapseOldestRejectionsToFit(
   let high = state.rejections.length - 1;
   while (low < high) {
     const count = Math.floor((low + high) / 2);
-    if (Buffer.byteLength(renderAttemptContext(state, observations, project(count))) <= MAX_ATTEMPT_CONTEXT_BYTES) high = count;
+    if (Buffer.byteLength(renderAttemptContext(state, observations, project(count))) <= attemptContextBytes()) high = count;
     else low = count + 1;
   }
   return project(low);
@@ -1006,6 +1003,9 @@ function rejectionFromInvalid(
  * flagged element leaves it reconstructing the unflagged ones from memory, which is exactly how a
  * repair turn drops captured formulas and risks from an already-correct section.
  */
+/** The one tool whose rejected draft the session holds for repair (`presentResultRepairDraft`). */
+const PRESENT_RESULT_TOOL = 'lineage_present_result';
+
 const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set(['sections', 'notes', 'highlight_groups']);
 
 /**
@@ -1015,14 +1015,27 @@ const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set(['sections', 'n
  * back to the shared size-only stub when even the truncated element does not fit. An element
  * without a `text` body is bounded exactly as a `submit_findings` entry is.
  */
-function boundListElementFragment(element: unknown): unknown {
+function boundListElementFragment(element: unknown, elementBytes: number): unknown {
   // An unmeasurable element leaves no text budget, so it collapses to the same size-only stub
   // `boundStructuredValue` records for it — one owner for the unserializable case.
   const overhead = serializedJson(truncateHeldDraftSection(element, 0));
-  const overheadBytes = overhead === undefined ? MAX_CORRECTION_FRAGMENT_BYTES : Buffer.byteLength(overhead);
-  const textBudget = Math.max(0, MAX_CORRECTION_FRAGMENT_BYTES - overheadBytes);
-  return boundStructuredValue(truncateHeldDraftSection(element, textBudget), MAX_CORRECTION_FRAGMENT_BYTES);
+  const overheadBytes = overhead === undefined ? elementBytes : Buffer.byteLength(overhead);
+  const textBudget = Math.max(0, elementBytes - overheadBytes);
+  return boundStructuredValue(truncateHeldDraftSection(element, textBudget), elementBytes);
 }
+
+/**
+ * Total byte budget one whole-list replay may spend — the same spend four full fragments cost, so a
+ * list is never cheaper to drop than to carry.
+ *
+ * @remarks
+ * A whole-list root is replayed complete or not at all, because its resend replaces the list and a
+ * partial replay would read back as a deletion of the elements left out. Completeness is therefore
+ * held by bytes, not by entry count: every element gets an equal share of this budget, an element
+ * over its share is truncated then stubbed by {@link boundListElementFragment}, and no list is ever
+ * silently skipped for being long.
+ */
+const WHOLE_LIST_CORRECTION_BYTES = MAX_CORRECTION_FRAGMENTS * MAX_CORRECTION_FRAGMENT_BYTES;
 
 /** Selects only correction-relevant structural array entries; prose and result sections are excluded. */
 function correctionFragments(input: unknown, issuePaths: readonly string[]): ToolCorrectionFragment[] {
@@ -1038,20 +1051,20 @@ function correctionFragments(input: unknown, issuePaths: readonly string[]): Too
     const values = record[root];
     if (!Array.isArray(values) || !Number.isSafeInteger(index) || index < 0 || index >= values.length) continue;
     if (seen.has(`${root}.${index}`)) continue;
-    const wholeList = WHOLE_LIST_CORRECTION_ROOTS.has(root);
-    const positions = wholeList ? values.map((_element, position) => position) : [index];
-    // A whole-list root is replayed complete or not at all: its resend replaces the list, so a
-    // partial replay would read back as a deletion of the elements the budget left out.
-    if (fragments.length + positions.length > MAX_CORRECTION_FRAGMENTS) continue;
-    for (const position of positions) {
-      seen.add(`${root}.${position}`);
-      fragments.push({
-        path: `${root}.${position}`,
-        value: wholeList
-          ? boundListElementFragment(values[position])
-          : boundStructuredValue(values[position], MAX_CORRECTION_FRAGMENT_BYTES),
+    if (WHOLE_LIST_CORRECTION_ROOTS.has(root)) {
+      const elementBytes = Math.floor(WHOLE_LIST_CORRECTION_BYTES / values.length);
+      values.forEach((element, position) => {
+        seen.add(`${root}.${position}`);
+        fragments.push({ path: `${root}.${position}`, value: boundListElementFragment(element, elementBytes) });
       });
+      continue;
     }
+    if (fragments.length + 1 > MAX_CORRECTION_FRAGMENTS) continue;
+    seen.add(`${root}.${index}`);
+    fragments.push({
+      path: `${root}.${index}`,
+      value: boundStructuredValue(values[index], MAX_CORRECTION_FRAGMENT_BYTES),
+    });
   }
   return fragments;
 }
@@ -1223,12 +1236,15 @@ export async function executeToolAttempt(
   // Observations, the held present_result repair draft (when one is active), and the current
   // rejection are three independent, conversation-native message groups — never the synthetic mixed
   // digest {@link renderToolAttemptContext} still renders for detectEntryNode.
+  const heldDraftMessages = priorState && priorState.providerCalls > 0
+    ? renderHeldDraftRepairContext(options.presentResultRepairDraftContext?.())
+    : [];
   const messages = priorState && priorState.providerCalls > 0
     ? [
         ...plan.input.messages,
         ...renderObservationsContext(priorState),
-        ...renderHeldDraftRepairContext(options.presentResultRepairDraftContext?.()),
-        ...renderRejectionExchange(priorState),
+        ...heldDraftMessages,
+        ...renderRejectionExchange(priorState, heldDraftMessages.length > 0 ? PRESENT_RESULT_TOOL : undefined),
       ]
     : plan.input.messages;
   return executeToolGenerationAttempt(model, {
@@ -1471,7 +1487,7 @@ export async function executeToolGenerationAttempt(
       // present_result prevalidation rejects, and every other tool's invalid_tool_input, stay
       // chargeable via the untouched shared guard below.
       const isRepairTurnPresentResultPrevalidation = call.code === 'invalid_tool_input'
-        && call.toolName === 'lineage_present_result'
+        && call.toolName === PRESENT_RESULT_TOOL
         && input.presentResultRepairDraftHeld === true;
       // Same normalized identity + streak bookkeeping as the dispatched-rejection path: the
       // comparison chain must survive attempts whose rejection came from prevalidation, or a
@@ -1625,13 +1641,13 @@ export async function executeToolGenerationAttempt(
       // approval process, and no discovery path hands off on result size — only an oversized
       // *scope* reroutes (`detectOverBudgetFromResult` in graph.ts) — so the case is logged where
       // it occurs instead of passing silently.
-      if (!controlSuccess && !terminalSuccess && Buffer.byteLength(resultText) > MAX_STORED_EVIDENCE_KIND_BYTES) {
+      if (!controlSuccess && !terminalSuccess && Buffer.byteLength(resultText) > storedEvidenceKindBytes()) {
         input.debugLog?.(
           `[Observation] result exceeds the evidence share phase=${safeLogIdentifier(input.phase, 'unknown')}`
           + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
           + ` callId=${safeCallId(call.callId)}`
           + ` bytes=${Buffer.byteLength(resultText)}`
-          + ` share=${MAX_STORED_EVIDENCE_KIND_BYTES}`,
+          + ` share=${storedEvidenceKindBytes()}`,
         );
       }
       if (!controlSuccess && !terminalSuccess && reusableKey && !reusableObservations.has(reusableKey)) {

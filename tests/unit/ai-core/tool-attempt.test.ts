@@ -972,6 +972,55 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
   });
 
+  it('replays a present_result rejection by name and call id only while the held draft carries the payload', async () => {
+    const sections = [
+      { label: 'Formula', text: 'HELD-SECTION-0', node_ids: ['[dbo].[Orders]'] },
+      { label: 'Risk', text: 'HELD-SECTION-1', node_ids: ['[dbo].[Ghost]'] },
+    ];
+    const { replayed } = await replayAfterRejection({
+      toolName: 'lineage_present_result',
+      input: { sections, narrative: RAW_PROSE_MARKER },
+      envelope: rejectionEnvelope({
+        reason: 'sections entry 1 names an unknown node id.',
+        detail: [{ path: 'sections.1.node_ids', expected: 'known node id' }],
+      }),
+      presentResultRepairDraftHeld: true,
+      presentResultRepairDraftContext: () => ({ sections, notes: [], highlight_groups: [] }),
+    });
+
+    // The draft block is the one carrier of the section text; the replayed call adds no second copy.
+    expect(replayedToolArgs(replayed)).toEqual({});
+    const wire = JSON.stringify(replayed);
+    expect(wire.split('HELD-SECTION-0').length - 1).toBe(1);
+    expect(wire.split('HELD-SECTION-1').length - 1).toBe(1);
+    expect(wire).not.toContain(RAW_PROSE_MARKER);
+  });
+
+  it('replays a long present_result list complete, bounded by bytes rather than skipped past four entries', async () => {
+    const sections = Array.from({ length: 6 }, (_unused, index) => ({
+      label: `Section ${index}`,
+      text: index === 0 ? `LONG-${'s'.repeat(9_000)}` : `SHORT-SECTION-${index}`,
+    }));
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input: { sections, narrative: RAW_PROSE_MARKER },
+      reason: 'sections.5: Unrecognized key: "notes"',
+      issuePaths: ['sections.5.notes'],
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['sections.5.notes']);
+    const args = replayedToolArgs(replayed);
+    const replayedSections = args.sections as unknown[];
+    expect(replayedSections).toHaveLength(6);
+    expect(replayedSections.every((entry) => entry !== undefined)).toBe(true);
+    const wire = JSON.stringify(replayed);
+    for (let index = 1; index < 6; index += 1) expect(wire).toContain(`SHORT-SECTION-${index}`);
+    // The oversized element is truncated to its share of the list budget, never carried whole.
+    expect(wire).not.toContain('s'.repeat(9_000));
+    expect(Buffer.byteLength(JSON.stringify(replayedSections))).toBeLessThanOrEqual(MAX_CORRECTION_FRAGMENTS * MAX_BOUNDED_STRUCTURED_BYTES + 512);
+    expect(wire).not.toContain(RAW_PROSE_MARKER);
+  });
+
   it('replays every section of a schema-invalid present_result call instead of empty arguments', async () => {
     const { replayed, first } = await replayAfterInvalidCall({
       toolName: 'lineage_present_result',

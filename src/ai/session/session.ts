@@ -15,6 +15,7 @@ import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult, SmState } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
+import { discoveryBlockBytes, discoveryEvidenceItemBytes } from '../support/tokenBudget';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError } from '../support/toolErrorEnvelope';
 import { longestPrefixFitting } from '../support/textTruncation';
@@ -90,26 +91,17 @@ export type ExplorationActivationOutcome =
  * discovery walk cannot grow the retained set even when every result is individually small.
  */
 export const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
-/**
- * Maximum UTF-8 bytes retained for one canonical discovery result — held below
- * {@link MAX_DISCOVERY_EVIDENCE_BYTES} so one oversized result cannot consume the whole projection.
+/*
+ * The byte bounds on the discovery-evidence message, on one evidence item, and on the replayed
+ * discovery transcript are governed by `support/tokenBudget.ts` (`discoveryBlockBytes()`,
+ * `discoveryEvidenceItemBytes()`): one 64 KiB ceiling per block, scaled down with the selected
+ * model's input window.
  */
-export const MAX_DISCOVERY_EVIDENCE_ITEM_BYTES = 61_440;
-/**
- * Maximum UTF-8 bytes projected by the complete discovery-evidence message — the 64 KiB prompt-budget
- * ceiling the per-item and per-count bounds exist to keep.
- */
-export const MAX_DISCOVERY_EVIDENCE_BYTES = 65_536;
 /**
  * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn history
  * by turn count, independently of how large any single turn is.
  */
 export const MAX_DISCOVERY_TRANSCRIPT_TURNS = 20;
-/**
- * Maximum UTF-8 bytes in the rendered canonical discovery transcript — the same 64 KiB ceiling as
- * evidence, applied to replayed history so the two cannot compound.
- */
-export const MAX_DISCOVERY_TRANSCRIPT_BYTES = 65_536;
 
 /** Provider-neutral accepted discovery result eligible for cross-turn grounding. */
 export interface DiscoveryEvidenceObservation {
@@ -145,7 +137,7 @@ function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn): DiscoveryTranscriptT
     { role: 'assistant', content: assistant },
   ];
   const fits = (user: string, assistant: string): boolean =>
-    Buffer.byteLength(renderDiscoveryTranscript([build(user, assistant)]), 'utf8') <= MAX_DISCOVERY_TRANSCRIPT_BYTES;
+    Buffer.byteLength(renderDiscoveryTranscript([build(user, assistant)]), 'utf8') <= discoveryBlockBytes();
   const user = turn[0].content;
   const assistant = turn[1].content;
   if (fits(user, assistant)) return turn;
@@ -646,12 +638,12 @@ export class AiSession {
         { role: 'assistant', content: assistant },
       ]));
       while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
-        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > MAX_DISCOVERY_TRANSCRIPT_BYTES) {
+        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > discoveryBlockBytes()) {
         this.discoveryTranscript.shift();
       }
     }
     for (const observation of observations) {
-      if (!observation.toolName || Buffer.byteLength(observation.result, 'utf8') > MAX_DISCOVERY_EVIDENCE_ITEM_BYTES) continue;
+      if (!observation.toolName || Buffer.byteLength(observation.result, 'utf8') > discoveryEvidenceItemBytes()) continue;
       let result: unknown;
       try {
         result = JSON.parse(observation.result);
@@ -661,7 +653,7 @@ export class AiSession {
       if (result === null || typeof result !== 'object' || readToolError(result)) continue;
       this.discoveryEvidence.push({ toolName: observation.toolName, result });
       while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
-        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > MAX_DISCOVERY_EVIDENCE_BYTES) {
+        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > discoveryBlockBytes()) {
         this.discoveryEvidence.shift();
       }
     }

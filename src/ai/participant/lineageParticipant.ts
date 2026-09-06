@@ -32,6 +32,7 @@ import {
   EXPLORATION_WINDOW_SHARE,
   setExplorationNodeCap,
   setExplorationTokenBudget,
+  setModelWindowTokens,
 } from '../support/tokenBudget';
 import {
   setDiscoveryNodeCap,
@@ -290,6 +291,7 @@ export class LineageParticipant {
     const modelWindow = request.model.maxInputTokens > 0
       ? request.model.maxInputTokens
       : Number.POSITIVE_INFINITY;
+    setModelWindowTokens(request.model.maxInputTokens);
     setDiscoveryNodeCap(
       config.get<number>('ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
     );

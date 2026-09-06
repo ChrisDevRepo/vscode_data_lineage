@@ -2,12 +2,10 @@ import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { ModelMessage } from '../../../src/ai/model/modelPort';
 import {
   AiSession,
-  MAX_DISCOVERY_EVIDENCE_BYTES,
-  MAX_DISCOVERY_EVIDENCE_ITEM_BYTES,
   MAX_DISCOVERY_EVIDENCE_OBSERVATIONS,
-  MAX_DISCOVERY_TRANSCRIPT_BYTES,
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../../../src/ai/session/session';
+import { discoveryBlockBytes, discoveryEvidenceItemBytes } from '../../../src/ai/support/tokenBudget';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -80,7 +78,7 @@ describe('discovery-memory', () => {
         { toolName: 'lineage_get_object_detail', result: '{malformed' },
         { toolName: 'lineage_get_object_detail', result: '"primitive"' },
         { toolName: 'lineage_get_object_detail', result: JSON.stringify({ error: 'invalid_object', message: 'rejected-payload' }) },
-        { toolName: 'lineage_get_object_detail', result: JSON.stringify({ ddl: 'x'.repeat(MAX_DISCOVERY_EVIDENCE_ITEM_BYTES) }) },
+        { toolName: 'lineage_get_object_detail', result: JSON.stringify({ ddl: 'x'.repeat(discoveryEvidenceItemBytes()) }) },
       ],
     );
     expect(sess.getDiscoveryHistory().length, 'invalid discovery payloads add no evidence message').toBe(2);
@@ -94,7 +92,7 @@ describe('discovery-memory', () => {
     const evidence = String(sess.getDiscoveryHistory().at(-1)?.content ?? '');
     const parsed = JSON.parse(evidence) as { observations: Array<{ result: { id: string } }> };
     expect(parsed.observations.length <= MAX_DISCOVERY_EVIDENCE_OBSERVATIONS, 'evidence observation count stays within the hard cap').toBe(true);
-    expect(Buffer.byteLength(evidence, 'utf8') <= MAX_DISCOVERY_EVIDENCE_BYTES, 'rendered evidence stays within the hard byte cap').toBe(true);
+    expect(Buffer.byteLength(evidence, 'utf8') <= discoveryBlockBytes(), 'rendered evidence stays within the hard byte cap').toBe(true);
     expect(parsed.observations.some(item => item.result.id === `node-${MAX_DISCOVERY_EVIDENCE_OBSERVATIONS + 4}`), 'newest accepted evidence survives eviction').toBe(true);
     expect(!parsed.observations.some(item => item.result.id === 'node-0'), 'oldest evidence is evicted first').toBe(true);
   });
@@ -136,7 +134,7 @@ describe('discovery-memory', () => {
       ]);
     }
     const h = sess.getDiscoveryHistory();
-    expect(Buffer.byteLength(JSON.stringify(plainOf(h)), 'utf8') <= MAX_DISCOVERY_TRANSCRIPT_BYTES, 'rendered transcript stays within the UTF-8 byte cap').toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(plainOf(h)), 'utf8') <= discoveryBlockBytes(), 'rendered transcript stays within the UTF-8 byte cap').toBe(true);
     expect(h.length, 'byte eviction retains two complete pairs at this boundary').toBe(4);
     expect(typeof h[0].content === 'string' ? h[0].content : '', 'byte eviction removes the oldest complete pair').toBe('wide-q1');
     const lastContent = h.at(-1)?.content;
@@ -145,11 +143,11 @@ describe('discovery-memory', () => {
     const oversized = new AiSession();
     oversized.appendDiscoveryTurn([
       new HumanMessage('newest oversized question'),
-      new AIMessage('💡'.repeat(MAX_DISCOVERY_TRANSCRIPT_BYTES)),
+      new AIMessage('💡'.repeat(discoveryBlockBytes())),
     ]);
     const newest = oversized.getDiscoveryHistory();
     expect(newest.map(message => message.getType()).join(','), 'oversized newest turn remains a complete pair').toBe('human,ai');
-    expect(Buffer.byteLength(JSON.stringify(plainOf(newest)), 'utf8') <= MAX_DISCOVERY_TRANSCRIPT_BYTES, 'oversized newest turn is deterministically text-bounded').toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(plainOf(newest)), 'utf8') <= discoveryBlockBytes(), 'oversized newest turn is deterministically text-bounded').toBe(true);
     expect(String(newest[1]?.content).includes('truncated to discovery memory bound'), 'oversized newest answer carries the truncation marker').toBe(true);
   });
 

@@ -7,7 +7,7 @@
  *
  * The projection is bounded: replayed history is capped to the same turn-count and byte ceilings
  * as the session's canonical discovery transcript ({@link MAX_DISCOVERY_TRANSCRIPT_TURNS} /
- * {@link MAX_DISCOVERY_TRANSCRIPT_BYTES}), evicting oldest whole turns first, so native history —
+ * {@link discoveryBlockBytes}), evicting oldest whole turns first, so native history —
  * which only grows — can never push the assembled request past a model's input window.
  */
 import type * as vscode from 'vscode';
@@ -19,14 +19,14 @@ import {
   type ModelMessage,
 } from '../model/modelPort';
 import {
-  MAX_DISCOVERY_TRANSCRIPT_BYTES,
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../session/session';
+import { discoveryBlockBytes } from '../support/tokenBudget';
 import { longestPrefixFitting } from '../support/textTruncation';
 
 /**
  * Maximum UTF-8 bytes replayed from one historical tool result — a single 60 KB DDL payload in an
- * old round must not consume the whole {@link MAX_DISCOVERY_TRANSCRIPT_BYTES} history budget.
+ * old round must not consume the whole {@link discoveryBlockBytes} history budget.
  */
 const MAX_HISTORY_TOOL_RESULT_BYTES = 8_192;
 
@@ -152,7 +152,7 @@ function boundReplayedHistory(
     const size = groupBytes(groups[index]);
     if (
       kept.length > 0
-      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > MAX_DISCOVERY_TRANSCRIPT_BYTES)
+      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > discoveryBlockBytes())
     ) break;
     kept.unshift(groups[index]);
     bytes += size;

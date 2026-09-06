@@ -103,6 +103,61 @@ export function checkScopeBudget(
   };
 }
 
+// ─── Bounded prompt blocks ───────────────────────────────────────────────────
+
+/**
+ * Fraction of the selected model's input window one bounded prompt block may claim — the retry
+ * context, the discovery evidence projection, the replayed discovery transcript.
+ *
+ * @remarks
+ * The byte ceilings below were sized for a 128Ki-token window, where this share equals them; on a
+ * smaller BYOK window the same share scales every block down together, so a retry block can never
+ * exceed the window it is appended to. Each ceiling is the block's own home; this share is theirs.
+ */
+export const CONTEXT_BLOCK_WINDOW_SHARE = 0.125;
+
+/** Ceiling for the rendered `<runtime_tool_context>` retry payload — three quarters of the 64 KiB discovery ceiling, leaving a quarter for the instruction and question the payload is appended to. */
+export const MAX_ATTEMPT_CONTEXT_BYTES = 49_152;
+
+/** Ceiling for the complete discovery-evidence message and for the replayed discovery transcript — one 64 KiB prompt budget, applied to each so the two cannot compound. */
+export const MAX_DISCOVERY_BLOCK_BYTES = 65_536;
+
+/** Headroom reserved inside a block for identity fields, so one bounded item never fills the whole block. */
+export const CONTEXT_BLOCK_ITEM_HEADROOM_BYTES = 4_096;
+
+let modelWindowTokens = Number.POSITIVE_INFINITY;
+
+/** Calibrates every bounded prompt block to the selected model's input window; non-positive means unknown, i.e. the ceilings apply. */
+export function setModelWindowTokens(value: number): void {
+  modelWindowTokens = value > 0 ? value : Number.POSITIVE_INFINITY;
+}
+
+/** Bytes one bounded prompt block may hold on the selected model: its ceiling, or the window share when that is smaller. */
+function contextBlockBytes(ceiling: number): number {
+  const share = Math.floor(modelWindowTokens * CONTEXT_BLOCK_WINDOW_SHARE * CHARS_PER_TOKEN);
+  return Number.isFinite(share) ? Math.max(CONTEXT_BLOCK_ITEM_HEADROOM_BYTES, Math.min(ceiling, share)) : ceiling;
+}
+
+/** Byte budget for the rendered retry context on the selected model. */
+export function attemptContextBytes(): number {
+  return contextBlockBytes(MAX_ATTEMPT_CONTEXT_BYTES);
+}
+
+/** Byte budget for one stored evidence kind (observations or rejections) on the selected model. */
+export function storedEvidenceKindBytes(): number {
+  return attemptContextBytes() - CONTEXT_BLOCK_ITEM_HEADROOM_BYTES;
+}
+
+/** Byte budget for the complete discovery-evidence message, and for the replayed discovery transcript, on the selected model. */
+export function discoveryBlockBytes(): number {
+  return contextBlockBytes(MAX_DISCOVERY_BLOCK_BYTES);
+}
+
+/** Byte budget for one canonical discovery result, held below {@link discoveryBlockBytes} so one result cannot fill the block. */
+export function discoveryEvidenceItemBytes(): number {
+  return discoveryBlockBytes() - CONTEXT_BLOCK_ITEM_HEADROOM_BYTES;
+}
+
 // ─── Active-phase (exploration) admission guard ──────────────────────────────
 
 /** Default total-scope node cap during active exploration — overridden via `ai.explorationNodeCap`. Sized well above the discovery cap (hop loop legitimately grows scope) but far below the 500-item DoS ceiling. */
