@@ -424,6 +424,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         );
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
+        // One badge per node is a rendering constraint the assembler resolves first-wins; the
+        // node stays described in every section's text, so nothing the model authored is lost.
+        if (assembled.droppedSectionLinks.length > 0) {
+          s.logger.debug(`[Presentation] ${assembled.droppedSectionLinks.length} duplicate section link(s) dropped (first section keeps the badge) — ${trunc(assembled.droppedSectionLinks.map(d => `${d.node_id}: "${d.dropped_from}" → kept in "${d.kept_in}"`).join(', '), 300)}`);
+        }
       }
 
       s.logger.info(

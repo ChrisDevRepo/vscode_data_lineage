@@ -147,10 +147,10 @@ describe('present_result reports every defect class in one rejection', () => {
     name: 'Import flow',
     summary: 'One-line purpose.',
     sections: [
-      // `[ai].[raw]` is linked twice — the structural defect.
       { label: 'Validation', text: 'Source rows are validated.', node_ids: ['[ai].[raw]'] },
       { label: 'Dedup', text: 'Duplicates are removed.' },
-      { label: 'Failures', text: 'Failures go to ErrorLog.', node_ids: ['[ai].[raw]', '[ai].[errorlog]'] },
+      // `[ai].[ghost]` is in no result graph — the structural defect.
+      { label: 'Failures', text: 'Failures go to ErrorLog.', node_ids: ['[ai].[ghost]', '[ai].[errorlog]'] },
     ],
     // Skips the middle paragraph — the reuse defect.
     notes: [{ node_id: '[ai].[errorlog]', text: 'Source rows are validated. Failures go to ErrorLog.' }],
@@ -168,7 +168,7 @@ describe('present_result reports every defect class in one rejection', () => {
     );
     if (result.success) throw new Error('a payload with two defect classes must not validate');
     expect(result.errors.some(e => e.includes('unbroken span'))).toBe(true);
-    expect(result.errors.some(e => e.includes('already appears in section'))).toBe(true);
+    expect(result.errors.some(e => e.includes('[ai].[ghost]'))).toBe(true);
   });
 
   it('names the offending entries so a repair need not re-derive them', () => {
@@ -184,7 +184,7 @@ describe('present_result reports every defect class in one rejection', () => {
     expect(result.detail?.map(d => d.path)).toEqual(expect.arrayContaining(['notes.0', 'sections.2']));
   });
 
-  it('names the canonical section and the editable index for a node linked to two sections', () => {
+  it('names the section holding the unlinkable id so a repair need not re-derive it', () => {
     const result = validatePresentResult(
       submission,
       nodeIds,
@@ -194,14 +194,10 @@ describe('present_result reports every defect class in one rejection', () => {
       findDiscoveryPreviewReuseViolations(source.body, submission),
     );
     if (result.success) throw new Error('a payload with two defect classes must not validate');
-    const message = result.errors.find(e => e.includes('already appears in section'));
+    const message = result.errors.find(e => e.includes('[ai].[ghost]'));
     expect(message).toBeDefined();
-    // First-seen section ('Validation') is canonical; the later section ('Failures', sections[2])
-    // is the one the repair must edit — both are runtime values, not hardcoded trace text.
-    // Labels render through normalizePresentSectionLabel (lowercased) in this hint.
-    expect(message).toContain('already appears in section "validation"');
-    expect(message).toContain('remove it from section "failures"');
-    expect(message).toContain('sections[2].node_ids');
+    // The offending section label is a runtime value, not hardcoded trace text.
+    expect(message).toContain('Failures');
   });
 
   // An unknown-node-id rejection used to name the rule and nothing else. Several distinct rules

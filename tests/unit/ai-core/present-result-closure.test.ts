@@ -193,19 +193,37 @@ describe('Present Result Closure', () => {
       'accepts an unmatched inline-code delimiter (formatting never rejects)').toBe(true);
   });
 
-  it('rejects same node linked to multiple final sections', () => {
+  // A node genuinely participating in two steps is a correct answer, not a repairable defect: one
+  // badge per node is a rendering constraint with a deterministic resolution, so the engine applies
+  // it. Observable contract only — accepted, first section owns the badge and the object link, the
+  // later link is gone from both surfaces, and the later section's text is untouched.
+  it('accepts a node linked from two sections, keeping the first and dropping the later link', () => {
     const sections = [
-      { label: 'Source', node_ids: ['a'], text: 'One.' },
+      { label: 'Source', node_ids: ['a', 'b'], text: 'One.' },
       { label: 'Output', node_ids: ['a'], text: 'Two.' },
     ];
-    const assembled = orderAndAssemble(sections);
+    const nodeMap = new Map([['a', { id: 'a', name: 'Alpha' }], ['b', { id: 'b', name: 'Beta' }]]);
+    const assembled = orderAndAssemble(sections, { nodeMap });
     const result = validatePresentResult({
-      name: 'bad',
-      summary: 'bad',
+      name: 'ok',
+      summary: 'ok',
       sections,
-      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
-    }, ['a'], assembled.badges, assembled.description);
-    expect(!result.success && result.errors.some(e => e.includes('already appears in section')), 'rejects same node linked to multiple final sections').toBe(true);
+      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a', 'b'] }],
+    }, ['a', 'b'], assembled.badges, assembled.description);
+    expect(result.success, 'accepts a node linked from two sections').toBe(true);
+
+    // Badge surface: exactly one badge for "a", owned by the first section.
+    const badgesForA = assembled.badges.filter(badge => badge.node_id === 'a');
+    expect(badgesForA.map(badge => badge.text), 'first section owns the only badge for the shared node').toEqual(['1 Source']);
+
+    // Description surface agrees with the badge surface — Alpha is linked under section 1 only.
+    const [sourceBody, outputBody] = assembled.description.split('\n## ');
+    expect(sourceBody.includes('[Alpha](#focus-node:a)'), 'first section keeps the object link').toBe(true);
+    expect(outputBody.includes('[Alpha](#focus-node:a)'), 'later section drops the object link').toBe(false);
+    expect(outputBody.includes('Two.'), 'later section keeps its text').toBe(true);
+
+    // The drop is reported, never silent.
+    expect(assembled.droppedSectionLinks, 'the dropped link is reported for logging').toEqual([{ node_id: 'a', dropped_from: 'Output', kept_in: 'Source' }]);
   });
 
   it('rejects new renders without highlight_groups', () => {
@@ -329,10 +347,9 @@ describe('Present Result Closure', () => {
     expect(!badPatch.success, 'repair patch rejects graph-edit fields').toBe(true);
   });
 
-  it('duplicate section ownership authorizes a held-draft repair', () => {
+  it('an unlinkable section node_id authorizes a held-draft repair', () => {
     const sections = [
-      { label: 'Source', node_ids: ['a'], text: 'One.' },
-      { label: 'Output', node_ids: ['a'], text: 'Two.' },
+      { label: 'Source', node_ids: ['a', 'ghost'], text: 'One.' },
     ];
     const assembled = orderAndAssemble(sections);
     const result = validatePresentResult({
@@ -341,8 +358,8 @@ describe('Present Result Closure', () => {
       sections,
       highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
     }, ['a'], assembled.badges, assembled.description);
-    expect(!result.success && isRepairablePresentResultFailure(result), 'duplicate section ownership authorizes a held-draft repair').toBe(true);
-    expect(!result.success && result.repairFields.join(',') === 'sections', 'duplicate section ownership authorizes sections only').toBe(true);
+    expect(!result.success && isRepairablePresentResultFailure(result), 'an unlinkable section node_id authorizes a held-draft repair').toBe(true);
+    expect(!result.success && result.repairFields.join(',') === 'sections', 'an unlinkable section node_id authorizes sections only').toBe(true);
   });
 
   it('reads the structural flag, not the error text — decoupled from wording (would fail under the old string-match implementation)', () => {

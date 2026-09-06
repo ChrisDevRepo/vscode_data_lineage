@@ -461,6 +461,10 @@ function encodeFocusNodeId(id: string): string {
  * description. Nodes not linked by the AI get no badge. Leading numbers in
  * AI-supplied labels are stripped to keep numbering deterministic.
  *
+ * A node the AI links from more than one section is normalized here, not rejected: the first
+ * section wins the badge and the object link, the later links are returned in
+ * `droppedSectionLinks` for the caller to log, and no section text changes.
+ *
  * The object links render as a footnote at the END of each section body, not a
  * heading under the section title: the renderer restyles the `### Objects`
  * transport line into a small muted paragraph, so the link list reads as a
@@ -468,7 +472,8 @@ function encodeFocusNodeId(id: string): string {
  *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
- * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
+ * @returns The numbered badges for the graph, the fully assembled markdown description, and any
+ *   duplicate section links first-wins dropped while assembling them.
  */
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
@@ -481,7 +486,11 @@ export function orderAndAssemble(
     /** Optional node lookup for injecting clickable object-link footnotes per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
   },
-): { badges: Array<{ node_id: string; text: string }>; description: string } {
+): {
+  badges: Array<{ node_id: string; text: string }>;
+  description: string;
+  droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }>;
+} {
   // Strip leading "N " or "N. " so AI numbers don't interfere with label matching.
   const stripLeadingNumber = (s: string) => (typeof s === 'string' ? s : '').replace(/^\d+[\.]?\s+/, '').trim();
 
@@ -500,11 +509,28 @@ export function orderAndAssemble(
   const labelToNumber = new Map<string, number>();
   uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
 
-  // Build (node_id → label) map from sections[].node_ids
+  // One badge per node is a rendering constraint, so the engine resolves it here rather than
+  // charging the model a repair turn for a section split that is factually right. First-wins: the
+  // first section claiming a node owns its badge chip and its object link; a later claim is
+  // dropped from BOTH surfaces, so the chip and the section footnote can never disagree. The
+  // later section's TEXT is untouched — a node participating in several steps stays described in
+  // each of them, it just carries one badge.
   const nodeToLabel = new Map<string, string>();
+  const labelToNodeIds = new Map<string, string[]>();
+  const droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }> = [];
   for (const sec of sections) {
     const label = stripLeadingNumber(sec.label);
-    for (const id of sec.node_ids ?? []) nodeToLabel.set(id, label);
+    let kept = labelToNodeIds.get(label);
+    if (!kept) { kept = []; labelToNodeIds.set(label, kept); }
+    for (const id of sec.node_ids ?? []) {
+      const owner = nodeToLabel.get(id);
+      if (owner !== undefined) {
+        if (owner !== label) droppedSectionLinks.push({ node_id: id, dropped_from: label, kept_in: owner });
+        continue;
+      }
+      nodeToLabel.set(id, label);
+      kept.push(id);
+    }
   }
 
   // Emit numbered badge chips, dropping any node whose label has no matching section.
@@ -519,12 +545,6 @@ export function orderAndAssemble(
 
   // Assemble markdown: title → intro → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
-  // First-occurrence node_ids list per unique label (AI-authored order preserved).
-  const labelToNodeIds = new Map<string, string[]>();
-  for (const sec of sections) {
-    const label = stripLeadingNumber(sec.label);
-    if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, sec.node_ids ?? []);
-  }
 
   const parts: string[] = [];
   if (opts?.title)        parts.push(`# ${opts.title}`);
@@ -549,7 +569,7 @@ export function orderAndAssemble(
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
-  return { badges: numberedBadges, description: parts.join('\n\n') };
+  return { badges: numberedBadges, description: parts.join('\n\n'), droppedSectionLinks };
 }
 
 /**
@@ -810,7 +830,6 @@ export function validatePresentResult(
   // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
   if (hasSections) {
     const labels = new Set<string>();
-    const nodeToSectionLabel = new Map<string, string>();
     for (const [sectionIndex, sec] of input.sections.entries()) {
       const label = (sec.label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
       const normalizedLabel = normalizePresentSectionLabel(sec.label);
@@ -830,14 +849,11 @@ export function validatePresentResult(
           // section text or any other section/note/highlight content the model already got right.
           addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
         }
+        // One badge per node is a rendering constraint with a deterministic resolution, so
+        // `orderAndAssemble` applies first-wins and logs the dropped links. Rejecting here charged
+        // the model a repair turn for a byte-identical resend it had no way to improve.
         for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
           sectionLinkedNodeIds.add(nodeId);
-          const existingLabel = nodeToSectionLabel.get(nodeId);
-          if (existingLabel && existingLabel !== normalizedLabel) {
-            addError('sections', `Node "${nodeId}" already appears in section "${existingLabel}" — remove it from section "${normalizedLabel}" (sections[${sectionIndex}].node_ids) and keep it only in "${existingLabel}".`, ['sections'], [`sections.${sectionIndex}`]);
-          } else {
-            nodeToSectionLabel.set(nodeId, normalizedLabel);
-          }
         }
       }
       if (typeof sec.text !== 'string' || sec.text.trim().length === 0) {
