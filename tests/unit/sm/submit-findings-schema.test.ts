@@ -372,6 +372,58 @@ describe("Submit Findings Schema", () => {
   expect((writesToSchema as { type?: string })?.type, 'writes_to remains a plain object schema').toBe('object');
 });
 
+  it("an unknown key inside a column_flow entry is stripped on both surfaces, never rejected", () => {
+  // The registered union is what `vscodeModelPort` parses before the handler runs, so a surplus
+  // key there ended the turn as `invalid_tool_input` on a payload whose declared fields were all
+  // valid. The entry envelope now drops what it does not declare — the same treatment the handler
+  // already gives `route_requests[].columns` — and the strict per-mode schema strips identically.
+  const entry = {
+    out_col: 'amount',
+    upstream_columns: [{ node: '[dbo].[vStaging]', col: 'amount' }],
+    confidence: 'high',
+    transforms: ['pass_through'],
+  };
+  const registered = SubmitFindingsModelSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [entry],
+  });
+  expect(registered.success, 'the registered union accepts the surplus key').toBe(true);
+  expect(registered.success && Object.keys(registered.data.column_flow![0]).sort().join(','), 'and keeps only the declared fields')
+    .toBe('out_col,upstream_columns');
+  const strict = SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ ...entry, writes_to: { node: '[dbo].[vMart]', col: 'amount', to_col: 'amount' } }],
+  });
+  expect(strict.success, 'the strict CT schema accepts it too').toBe(true);
+  expect(strict.success && Object.keys(strict.data.column_flow[0].writes_to!).sort().join(','), 'writes_to drops its surplus key as well')
+    .toBe('col,node');
+  // Stripping the envelope never softens the declared fields.
+  expect(SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 7, upstream_columns: [] }],
+  }).success, 'a declared field with the wrong type still rejects').toBe(false);
+});
+
+  it("the column_flow entry still advertises additionalProperties:false to the model", () => {
+  // The permission for the lenient parse is that the advertised contract does not move: the model
+  // is still told not to send surplus keys, so this must never become a licence to invent fields.
+  const jsonSchema = z.toJSONSchema(SubmitFindingsModelSchema, { io: 'input', unrepresentable: 'throw' }) as {
+    properties?: { column_flow?: { items?: Record<string, unknown> & { properties?: { writes_to?: Record<string, unknown> } } } };
+  };
+  const entrySchema = jsonSchema.properties?.column_flow?.items;
+  expect(entrySchema?.additionalProperties, 'the entry keeps additionalProperties:false').toBe(false);
+  expect(entrySchema?.properties?.writes_to?.additionalProperties, 'writes_to keeps additionalProperties:false').toBe(false);
+});
+
   it("empty badge_label rejects", () => {
   // Blank labels are invalid input; the boundary never silently discards them.
   const base = {

@@ -465,14 +465,44 @@ const ColumnRefSchema = z.object({
   ),
 }).strict();
 
-const ColumnFlowEntrySchema = z.object({
+/**
+ * Preprocess that drops keys the wrapped object schema does not declare, before it parses.
+ *
+ * @remarks
+ * Sibling of `nullAsAbsent` (`src/ai/support/inputNormalization.ts`) for the `column_flow` entry
+ * shape, where a surplus key is absence-equivalent to every reader: the engine reads named fields
+ * off the parsed entry (`src/ai/sm/columnTracer.ts`, `src/ai/sm/smBase.ts`) and no consumer can
+ * see a key the schema never declared. Only the entry envelope is normalized — the values of the
+ * declared fields, and the strict `upstream_columns` refs, pass through untouched so their own
+ * rejections surface normally. Removes the provider-prevalidation rejection an unknown key raised
+ * (`vscodeModelPort` parses the registered union before the handler runs), so the payload reaches
+ * the handler and the schema strips there instead; the advertised contract is unchanged —
+ * `.strict()` is retained, so `additionalProperties: false` still tells the model not to send
+ * surplus keys, and the model-facing JSON Schema is byte-identical (`z.toJSONSchema`,
+ * `io: 'input'`, is transparent to `z.preprocess`).
+ *
+ * @param schema - The object schema whose declared keys define what survives.
+ * @returns The preprocess-wrapped schema; output type is identical to `schema`.
+ */
+function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
+  const declared = new Set(Object.keys(schema.shape));
+  return z.preprocess((value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+    const entries = Object.entries(value as Record<string, unknown>).filter(([key]) => declared.has(key));
+    return entries.length === Object.keys(value as Record<string, unknown>).length
+      ? value
+      : Object.fromEntries(entries);
+  }, schema);
+}
+
+const ColumnFlowEntrySchema = declaredKeysOnly(z.object({
   out_col: z.string().describe('Tracked output column on the current focus node.'),
-  writes_to: nullAsAbsent(z.object({
+  writes_to: nullAsAbsent(declaredKeysOnly(z.object({
     node: z.string().describe('Canonical downstream node ID.'),
     col: z.string().describe('Downstream column receiving this value.'),
-  }).strict().optional()).describe('Optional downstream write destination observed in the current node.'),
+  }).strict()).optional()).describe('Optional downstream write destination observed in the current node.'),
   upstream_columns: z.array(ColumnRefSchema).describe('Real upstream columns that contribute to out_col; use [] only when none exists.'),
-}).strict();
+}).strict());
 
 /**
  * Mode-locked `verdict` field description for `submit_findings`.
