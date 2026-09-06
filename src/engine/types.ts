@@ -396,6 +396,13 @@ export function formatColumnType(
 }
 
 /**
+ * The type a column shows when the source model declares none — a computed column whose expression
+ * the model did not resolve. One home for the placeholder, so a later pass can recognise its own
+ * unresolved rows rather than string-matching a dash.
+ */
+export const UNRESOLVED_COLUMN_TYPE = '—';
+
+/**
  * Build a ColumnDef from raw metadata — single code path for both dacpac and DMV.
  *
  * @param name - Name to use.
@@ -411,13 +418,6 @@ export function formatColumnType(
  *
  * @returns Normalized column definition.
  */
-/**
- * The type a column shows when the source model declares none — a computed column whose expression
- * the model did not resolve. One home for the placeholder, so a later pass can recognise its own
- * unresolved rows rather than string-matching a dash.
- */
-export const UNRESOLVED_COLUMN_TYPE = '—';
-
 export function buildColumnDef(
   name: string,
   typeName: string,
@@ -800,7 +800,12 @@ export type CustomNodeData = {
  * column thread already say about them. The two channels stay separate on purpose — a section focus
  * that dimmed nodes would overwrite the answer the user is looking at.
  */
-export type AiBadge = { text: string; emphasis?: 'lit' | 'dim' };
+export type AiBadge = {
+  /** Section label text. */
+  text: string;
+  /** `lit` for the focused section's own labels, `dim` for every other label. */
+  emphasis?: 'lit' | 'dim';
+};
 
 /**
  * The business data associated with a single column-trace node in the React Flow canvas.

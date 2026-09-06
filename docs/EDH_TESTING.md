@@ -107,8 +107,9 @@ npm run test:bfs
 
 `test:parser` and `test:bfs` are the two focused Core subsets, and they are the
 deterministic heart of the product: `test:parser` covers SQL parsing and
-dependency extraction, `test:bfs` covers graph construction, traversal, and
-analysis only (`graphBuilder`, `graphAnalysis`, `graph-analysis-aw`).
+dependency extraction, `test:bfs` runs all of `tests/unit/engine` — graph
+construction, traversal, and analysis (`graphBuilder`, `graphAnalysis`,
+`graph-analysis-aw`) plus schema, search, and model-building coverage.
 `NavigationEngine` and state-machine coverage lives in `test:runtime`.
 
 Run one file or test name directly when developing:

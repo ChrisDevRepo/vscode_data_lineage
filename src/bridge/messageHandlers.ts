@@ -65,7 +65,12 @@ export type WebviewMessageHandlers = {
  * `pending` holds the connection negotiation currently in flight, so concurrent stats requests
  * join it rather than each opening their own connection.
  */
-export type StatsConnState = { uri: string | undefined; pending: Promise<string | undefined> | null };
+export type StatsConnState = {
+  /** Negotiated connection uri, or `undefined` before the first successful negotiation. */
+  uri: string | undefined;
+  /** The in-flight negotiation, joined by concurrent requests instead of starting a second one. */
+  pending: Promise<string | undefined> | null;
+};
 
 /**
  * Resolves the connection uri table profiling runs against, negotiating at most one connection.
@@ -217,9 +222,14 @@ export function isMssqlAvailable(): boolean {
   return vscode.extensions.getExtension(MSSQL_EXTENSION_ID) !== undefined;
 }
 
-// Rewrites `[label](#focus-node:<id>)` to plain `label`: the scheme (`FOCUS_NODE_HREF_PREFIX` in
-// `components/markdown/renderAiMarkdown.ts`, restated rather than imported across the webview/host
-// bundle boundary) only resolves inside the lineage webview's own click handler — dead elsewhere.
+/**
+ * Rewrites `[label](#focus-node:<id>)` to plain `label`.
+ *
+ * @remarks
+ * The scheme (`FOCUS_NODE_HREF_PREFIX` in `components/markdown/renderAiMarkdown.ts`, restated
+ * rather than imported across the webview/host bundle boundary) only resolves inside the lineage
+ * webview's own click handler — dead elsewhere.
+ */
 export function stripFocusNodeLinks(markdown: string): string {
   return markdown.replace(/\[([^\]]*)\]\(#focus-node:[^)]*\)/g, '$1');
 }

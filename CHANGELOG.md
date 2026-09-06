@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.1] - 2026-09-06
 
 ### Added
 - The assistant checks each SQL comment against the statement it annotates. A comment that

@@ -11,7 +11,7 @@ import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray, coercedStringObject, nullAsAbsent } from '../support/inputNormalization';
+import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, nullAsAbsent } from '../support/inputNormalization';
 import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
@@ -464,36 +464,6 @@ const ColumnRefSchema = z.object({
     'DDL gives nothing concrete to quote; never speculate.',
   ),
 }).strict();
-
-/**
- * Preprocess that drops keys the wrapped object schema does not declare, before it parses.
- *
- * @remarks
- * Sibling of `nullAsAbsent` (`src/ai/support/inputNormalization.ts`) for the `column_flow` entry
- * shape, where a surplus key is absence-equivalent to every reader: the engine reads named fields
- * off the parsed entry (`src/ai/sm/columnTracer.ts`, `src/ai/sm/smBase.ts`) and no consumer can
- * see a key the schema never declared. Only the entry envelope is normalized — the values of the
- * declared fields, and the strict `upstream_columns` refs, pass through untouched so their own
- * rejections surface normally. Removes the provider-prevalidation rejection an unknown key raised
- * (`vscodeModelPort` parses the registered union before the handler runs), so the payload reaches
- * the handler and the schema strips there instead; the advertised contract is unchanged —
- * `.strict()` is retained, so `additionalProperties: false` still tells the model not to send
- * surplus keys, and the model-facing JSON Schema is byte-identical (`z.toJSONSchema`,
- * `io: 'input'`, is transparent to `z.preprocess`).
- *
- * @param schema - The object schema whose declared keys define what survives.
- * @returns The preprocess-wrapped schema; output type is identical to `schema`.
- */
-function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
-  const declared = new Set(Object.keys(schema.shape));
-  return z.preprocess((value) => {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
-    const entries = Object.entries(value as Record<string, unknown>).filter(([key]) => declared.has(key));
-    return entries.length === Object.keys(value as Record<string, unknown>).length
-      ? value
-      : Object.fromEntries(entries);
-  }, schema);
-}
 
 const ColumnFlowEntrySchema = declaredKeysOnly(z.object({
   out_col: z.string().describe('Tracked output column on the current focus node.'),

@@ -46,7 +46,7 @@ const NODE_ID_ACCEPTED_SHOWN = 5;
  * normalizes every `node_ids` entry with `resolveModelNodeId`), so exactly one member of this union
  * is a hallucination and the rest are real objects the render does not carry. A real object rejected
  * as "unknown" tells the model to invent a replacement instead of moving the fact into prose, which
- * is what ran the T8S synthesis into the semantic-failure breaker. The classification itself belongs
+ * is what has run a synthesis into the semantic-failure breaker. The classification itself belongs
  * to the caller — only the session holds the engine snapshot — so it arrives as
  * {@link PresentNodeIdStateLookup}.
  */
@@ -579,10 +579,15 @@ export function orderAndAssemble(
  * this assembler stays a pure document builder with no dependency on navigation state.
  */
 export type ColumnChainEdge = {
+  /** 1-based hop index the edge was traced at. */
   hop: number;
+  /** Source node id. */
   from_node: string;
+  /** Source column name. */
   from_col: string;
+  /** Destination node id. */
   to_node: string;
+  /** Destination column name. */
   to_col: string;
 };
 
@@ -776,8 +781,7 @@ export function validatePresentResult(
   // engine records — and calling the second one "unknown" tells the model to invent a replacement
   // instead of moving the fact into prose. The census is call-level, not per-site, because the model
   // sees only the first reason line: the replay caps it and drops `detail`, so an offender named
-  // solely in the third message never reaches it (T8S resubmitted one id three times while two more
-  // classes stayed unnamed).
+  // solely in the third message never reaches it.
   const resolvedSet = new Set(resolvedNodeIds);
   const nodeIdStateCache = new Map<string, PresentNodeIdState>();
   const stateOf = (nodeId: string): PresentNodeIdState => {

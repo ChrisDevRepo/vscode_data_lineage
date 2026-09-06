@@ -3329,9 +3329,8 @@ export class NavigationEngine implements IHopStateMachine {
    * evidence of any, and neither is the investigation task that same hop resolved. A recorded edge
    * exempts the node at any of its three positions: a procedure moves a column between two other
    * nodes and is therefore only ever the `hop_node`, never an endpoint, so reading endpoints alone
-   * deleted the carrier proc a column trace exists to name (T8S, `[ai].[spbuildsalesreport]` — the
-   * question's own direct consumer, dropped because its write target lay past the depth border).
-   * Every other reason
+   * drops the carrier proc a column trace exists to name — the question's own direct consumer,
+   * exempted only because its write target lay past the depth border. Every other reason
    * (`submitted_analyze`, a contraction's `non_bodied_passthrough`, a user filter) exempts the node
    * outright, as does a task still open — routed or queued and never reached is not a verdict. Such
    * a node that also supplies nothing the render keeps (every edge joining it to the render set

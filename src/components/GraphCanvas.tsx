@@ -613,6 +613,11 @@ export function GraphCanvas({
   }, [vscodeApi]);
   // The panel's own measured size, once its ResizeObserver has reported one (native CSS `resize`).
   const [panelSizePx, setPanelSizePx] = useState<{ width: number; height: number } | null>(null);
+  // Stable identity so the overlay's ResizeObserver effect doesn't resubscribe on every render; the
+  // bailout also stops the observer's own initial-entry callback from ever triggering a state change.
+  const handleAiPanelResize = useCallback((width: number, height: number) => {
+    setPanelSizePx(prev => (prev && prev.width === width && prev.height === height) ? prev : { width, height });
+  }, []);
   // Reserved-space style for the React Flow wrapper: the panel's measured width (right/left dock)
   // or height (bottom dock), else the CSS default kept in sync with `.ln-ai-description-anchor*`.
   const aiCanvasReserve = !(aiDescription && aiPanelOpen)
@@ -877,6 +882,12 @@ export function GraphCanvas({
       }
     });
   }, [getNode, setCenter]);
+
+  // Stable identity so the AI report overlay's effects don't resubscribe on every GraphCanvas render.
+  const handleAiFocusNode = useCallback((nodeId: string) => {
+    zoomToNode(nodeId);
+    onNodeClick(nodeId);
+  }, [zoomToNode, onNodeClick]);
 
   // O(1) lookups for search and pending-zoom checks. First-wins maps preserve `.find()` semantics.
   const flowNodeLookup = useMemo(() => {
@@ -1865,10 +1876,10 @@ export function GraphCanvas({
               sections={aiSections}
               activeSection={activeSection}
               onFocusSection={handleFocusSection}
-              onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
+              onFocusNode={handleAiFocusNode}
               dockPosition={dockPosition}
               onDockPositionChange={setDockPosition}
-              onPanelResize={(width, height) => setPanelSizePx({ width, height })}
+              onPanelResize={handleAiPanelResize}
             />
           </Suspense>
         )}

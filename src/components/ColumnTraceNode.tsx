@@ -367,7 +367,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
               // A double-weight divider is the boundary between the object the card is about and the
               // columns it carries — the two halves of the card read as separate zones, not as one
               // list with a title.
-              borderBottom: '2px solid var(--ln-border-strong, var(--ln-border-light))',
+              borderBottom: '2px solid var(--ln-border-light)',
             }}
           >
             <span className="text-[11px]" aria-hidden="true" style={{ color: 'var(--ln-fg-muted)', lineHeight: 1 }}>{icon}</span>

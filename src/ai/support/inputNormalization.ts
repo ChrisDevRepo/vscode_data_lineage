@@ -106,10 +106,10 @@ export function coercedStringNull<T extends z.ZodType>(schema: T) {
  *
  * @remarks
  * Sibling of {@link coercedStringNull} for an `.optional()` (non-nullable) field the engine
- * already treats as absence-equivalent — observed 2026-09, local-mlx T8S:
- * `column_flow.0.writes_to: null` was rejected twice as `expected object, received null` and the
- * run died on the semantic-failure breaker (`writes_to` is a `.strict()` object schema with
- * `.optional()`, never `.nullable()`). The two engine readers of this field
+ * already treats as absence-equivalent: a provider sending `column_flow.0.writes_to: null` is
+ * rejected as `expected object, received null` and can run the turn into the semantic-failure
+ * breaker (`writes_to` is a `.strict()` object schema with `.optional()`, never `.nullable()`).
+ * The two engine readers of this field
  * (`src/ai/sm/columnTracer.ts`, `src/ai/sm/smBase.ts`) already read `entry.writes_to?.node` /
  * `?.col` with optional chaining, so `null` and `undefined` already mean the same thing
  * ("no redirect") to every consumer — only the schema was stricter than its readers. Encoding-only
@@ -124,6 +124,36 @@ export function coercedStringNull<T extends z.ZodType>(schema: T) {
  */
 export function nullAsAbsent<T extends z.ZodType>(schema: T) {
   return z.preprocess((value) => (value === null || value === 'null' ? undefined : value), schema);
+}
+
+/**
+ * Preprocess that drops keys the wrapped object schema does not declare, before it parses.
+ *
+ * @remarks
+ * Sibling of {@link nullAsAbsent} for the `column_flow` entry shape (`src/ai/tools/toolSchemas.ts`),
+ * where a surplus key is absence-equivalent to every reader: the engine reads named fields off the
+ * parsed entry (`src/ai/sm/columnTracer.ts`, `src/ai/sm/smBase.ts`) and no consumer can see a key
+ * the schema never declared. Only the entry envelope is normalized — the values of the declared
+ * fields pass through untouched so their own rejections surface normally. Removes the
+ * provider-prevalidation rejection an unknown key raised (`vscodeModelPort` parses the registered
+ * union before the handler runs), so the payload reaches the handler and the schema strips there
+ * instead; the advertised contract is unchanged — `.strict()` is retained, so
+ * `additionalProperties: false` still tells the model not to send surplus keys, and the
+ * model-facing JSON Schema is byte-identical (`z.toJSONSchema`, `io: 'input'`, is transparent to
+ * `z.preprocess`).
+ *
+ * @param schema - The object schema whose declared keys define what survives.
+ * @returns The preprocess-wrapped schema; output type is identical to `schema`.
+ */
+export function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
+  const declared = new Set(Object.keys(schema.shape));
+  return z.preprocess((value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+    const entries = Object.entries(value as Record<string, unknown>).filter(([key]) => declared.has(key));
+    return entries.length === Object.keys(value as Record<string, unknown>).length
+      ? value
+      : Object.fromEntries(entries);
+  }, schema);
 }
 
 /**

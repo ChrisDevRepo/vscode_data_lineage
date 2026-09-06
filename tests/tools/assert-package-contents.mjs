@@ -76,6 +76,9 @@ const forbidden = [
   { pattern: /\.tmp$/iu, label: 'stray .tmp scratch file' },
   { pattern: /(?:^|\/)evidence(?:\/|$)/iu, label: 'evidence/ artifact directory' },
   { pattern: /\.vsix$/iu, label: 'packaged .vsix artifact' },
+  // Mirrors .vscodeignore: `.verify*/**` (package-verification scratch trees) and `debug.log`.
+  { pattern: /(?:^|\/)\.verify[^/]*\//iu, label: 'package-verification scratch tree' },
+  { pattern: /(?:^|\/)debug\.log$/iu, label: 'debug.log artifact' },
   // The only dacpac the VSIX ships is assets/demo.dacpac; one at the repo root is a staged internal model.
   { pattern: /^[^/]+\.dacpac$/iu, label: 'root-level dacpac' },
 ];
