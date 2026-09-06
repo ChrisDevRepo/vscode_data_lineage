@@ -608,10 +608,10 @@ export const GetScreenStateInputSchema = z.object({
 
 /** `lineage_search_objects` input. */
 export const SearchObjectsInputSchema = z.object({
-  query: z.string().describe('Object name or column name to search for. At least 2 characters, never \'*\' — e.g. "SalesOrder". May be empty ONLY together with schemas[] to list everything in those schemas. Do not include schema prefixes like \'[dbo].\'.'),
+  query: z.string().describe('In substring mode: an object or column name fragment, at least 2 characters, never \'*\' — e.g. "SalesOrder", without a schema prefix like \'[dbo].\'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas.'),
   types: z.array(z.enum(['table', 'view', 'procedure', 'function', 'external'])).optional().describe('Optional object-type filter.'),
   schemas: z.array(z.string()).optional().describe('Optional schema-name filter; use with an empty query to list objects in those schemas.'),
-  mode: z.enum(['substring', 'regex']).optional().describe('Name matching strategy; substring is the normal discovery default.'),
+  mode: z.enum(['substring', 'regex']).optional().describe('Name matching strategy: "substring" (default) or "regex".'),
 }).strict();
 
 /** `lineage_get_object_detail` input. */
@@ -628,8 +628,8 @@ export const DetectGraphPatternsInputSchema = z.object({
 
 /** `lineage_search_ddl` input. */
 export const SearchDdlInputSchema = z.object({
-  query: z.string().describe('Regular expression to match against SQL bodies.'),
-  types: z.array(z.enum(['view', 'procedure', 'function'])).optional().describe('Optional SQL object-type filter.'),
+  query: z.string().describe('The regular expression to match against SQL body text.'),
+  types: z.array(z.enum(['view', 'procedure', 'function'])).optional().describe('Optional body-type filter; omit to search all three.'),
 }).strict();
 
 /**

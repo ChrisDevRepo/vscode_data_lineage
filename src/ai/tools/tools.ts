@@ -36,8 +36,6 @@ import { estimateTokens, REGEX_MAX_LENGTH, checkScopeBudget } from '../support/t
 // Re-exported for the discovery-budget-guard unit test, which drives the caps through this module.
 export { setDiscoveryNodeCap, setDiscoveryTokenBudget } from '../support/tokenBudget';
 
-/** Number of context lines shown in DDL/body search snippets. */
-const SNIPPET_CONTEXT_LINES = 2;
 /** Hard cap on `search_columns` results — prevents unbounded enumeration on wide schemas. */
 const COLUMN_SEARCH_LIMIT = 50;
 
@@ -274,7 +272,13 @@ export function getContext(
 
 
 /**
- * Validates a search query for sanity.
+ * Validates a substring-mode search query for sanity.
+ *
+ * @remarks
+ * Only reached in substring mode, where the query is matched literally — so a query made of
+ * nothing but regex punctuation matches nothing at all, which is what the second rejection says.
+ * The wording used to claim the opposite ("matches everything"), which is only true of a pattern
+ * in regex mode and sent the model chasing a narrower query instead of the right mode.
  *
  * @param query - The user-provided search string.
  * @returns Success status or an error with a hint.
@@ -285,7 +289,7 @@ function validateQuery(query: string): { ok: true } | { ok: false; error: string
     return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters — a real name fragment like "SalesOrder" or a schema name like "ai". To list everything in a schema, send an empty query WITH schemas:["<schema>"].' };
   }
   if (/^[.*?+^$]+$/.test(trimmed)) {
-    return { ok: false, error: 'query_too_broad', hint: 'Query matches everything. Be more specific or use schemas[] to narrow scope.' };
+    return { ok: false, error: 'query_not_a_name', hint: 'Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, set mode:"regex" to use it as a pattern, or send an empty query WITH schemas:["<schema>"] to list a schema.' };
   }
   return { ok: true };
 }
@@ -315,7 +319,12 @@ export function searchObjects(
   mode: 'substring' | 'regex' = 'substring',
   activeFilter?: SerializedFilterState | null,
 ) {
-  const normalizedQuery = normalizeSearchQueryInput(query);
+  const isRegex = mode === 'regex';
+  // A regex is passed through untouched. The id normalizer splits on "." to lift a schema prefix
+  // out of `[dbo].[FactSales]`, which in a pattern is the any-character metacharacter: it turned
+  // `sales\..*order` into query `.*order` with schemaHint `sales\`, silently searching the wrong
+  // thing. Trimming is skipped for the same reason — trailing space is part of a pattern.
+  const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
   const normalizedSchemas =
     schemas && schemas.length > 0
       ? schemas
@@ -325,15 +334,23 @@ export function searchObjects(
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
-  const effectiveQuery = normalizedQuery.query.trim();
+  const effectiveQuery = isRegex ? normalizedQuery.query : normalizedQuery.query.trim();
+  // An unusable pattern is named, never answered with an empty list: `searchCatalog` swallows a
+  // compile failure and returns [], which reads to the model as "no such object exists".
+  if (isRegex) {
+    const compiled = compileSearchRegex(effectiveQuery);
+    if (!compiled.ok) {
+      return { error: 'invalid_regex' as const, hint: regexRejectHint(effectiveQuery, compiled) };
+    }
+  }
   const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
   // Empty query WITH an explicit schema scope is a legitimate "list everything in schema X"
   // ask — there is no name fragment to search, so enumerate the schema directly instead of
   // rejecting (query_too_short) or handing an empty string to searchCatalog (which matches
   // nothing). Case-insensitive so the model's `ai` matches a node schema stored as `ai`/`AI`.
-  const listAllInSchemas = mode !== 'regex' && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
+  const listAllInSchemas = !isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
 
-  if (mode !== 'regex' && !listAllInSchemas) {
+  if (!isRegex && !listAllInSchemas) {
     const validation = validateQuery(normalizedQuery.query);
     if (!validation.ok) {
       return { error: validation.error, hint: validation.hint };
@@ -362,7 +379,7 @@ export function searchObjects(
   let columnNodes = model.nodes as SearchableNode[];
   if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
   if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
-  const columnHits = mode === 'substring' && !listAllInSchemas
+  const columnHits = !isRegex && !listAllInSchemas
     ? searchColumns(columnNodes, effectiveQuery, COLUMN_SEARCH_LIMIT)
     : [];
   const seenIds = new Set(nameHits.map(n => n.id));
@@ -438,7 +455,7 @@ export function searchObjects(
     }
     return {
       ...base,
-      ai_hint: `No results for "${effectiveQuery}". Try search_ddl for DDL body matches, try regex mode, or broaden with fewer filters.`,
+      ai_hint: `No results for "${effectiveQuery}". Try search_ddl for DDL body matches${isRegex ? '' : ', try regex mode'}, or broaden with fewer filters.`,
     };
   }
   return base;
@@ -767,33 +784,35 @@ export function runAnalysis(
 }
 
 /**
- * Searches for substrings or patterns within the DDL/source code of scriptable objects.
+ * Searches the DDL/source code of scriptable objects with a regular expression.
  *
  * @remarks
- * This tool is essential for finding logic-level dependencies (e.g., specific business logic,
- * hardcoded strings, or column mappings) that are not captured as formal graph edges.
- * It searches through views, stored procedures, and functions.
+ * The contract is grep's, the shape models are trained on: a pattern in, every match out with its
+ * object, 1-based line number, matched line and surrounding context. Nothing is sliced — an empty
+ * result is stated as a fact, an unusable pattern is an error naming the regex problem, and a
+ * result too large for the discovery budget hands off to the approval path rather than returning a
+ * partial list.
  *
  * @param model - The database model.
- * @param query - The search string or regex pattern.
+ * @param query - The regex pattern.
  * @param types - Optional filter for scriptable object types.
  * @param store - Optional column store for high-fidelity DDL.
- * @param onNormalize - Optional sink for a debug line when `query` is rewritten before compiling.
- * @returns A list of matches with snippets and object metadata.
+ * @param onDebug - Optional sink for a debug line when `query` is rewritten, or the result is over budget.
+ * @returns Every matching line with its object metadata, or the empty/invalid/over-budget fact.
  */
 export function searchDdl(
   model: DatabaseModel,
   query: string,
   types?: ('view' | 'procedure' | 'function')[],
   store?: import('../../engine/columnStore').ColumnStore,
-  onNormalize?: (msg: string) => void,
+  onDebug?: (msg: string) => void,
 ): object {
   if (query.length > REGEX_MAX_LENGTH) {
     return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   // Reject invalid / catastrophically slow regex
-  const compiled = compileSearchRegex(query, onNormalize);
+  const compiled = compileSearchRegex(query, onDebug);
   if (!compiled.ok) {
     return { error: 'invalid_regex' as const, hint: regexRejectHint(query, compiled) };
   }
@@ -808,23 +827,46 @@ export function searchDdl(
     ...n,
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
-  const matches = searchBodyScripts(
-    searchableNodes,
-    compiled.regex,
-    typeSet,
-    SNIPPET_CONTEXT_LINES,
-    Number.MAX_SAFE_INTEGER,
-  );
+  // No limit argument: a grep result is never sliced. Size is answered by the budget check below.
+  const matches = searchBodyScripts(searchableNodes, compiled.regex, typeSet);
 
   const results = matches.map(m => ({
     id:      m.node.id,
     name:    m.node.name,
     type:    m.node.type,
-    matches: [m.snippet],
+    line:    m.line,
+    text:    m.text,
+    context: m.snippet,
   }));
 
-  if (results.length === 0) {
-    return { results, total: 0, hint: 'No matches. Try a shorter substring, check spelling, or call lineage_search_objects to confirm object names.' };
+  // What was actually read, so a zero-match answer is a fact about the search rather than advice
+  // about the pattern: a wrong `types` filter and a genuinely absent string read differently here.
+  const searched = {
+    bodies: searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length,
+    types:  ddlTypes,
+  };
+  const objects = new Set(results.map(r => r.id)).size;
+
+  if (results.length === 0) return { results, total: 0, objects: 0, searched };
+
+  // Same discovery budget guard as the catalog listing and the pattern report, token axis only.
+  // Over budget → the counts WITHOUT the match list, never a sliced one: the model narrows the
+  // pattern or the types, and an oversized ask is the hand-off to the approval-gated path.
+  const payload = { results, total: results.length, objects, searched };
+  const resultChars = JSON.stringify(payload).length;
+  const budget = checkScopeBudget(0, resultChars);
+  if (!budget.ok) {
+    onDebug?.(`searchDdl: ${results.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${budget.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
+    return {
+      reason:          budget.reason,
+      counts:          budget.counts,
+      limits:          budget.limits,
+      total:           results.length,
+      objects,
+      searched,
+      results_omitted: true as const,
+      hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
+    };
   }
-  return { results, total: results.length };
+  return payload;
 }

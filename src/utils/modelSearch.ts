@@ -28,6 +28,26 @@ interface DdlMatch {
   snippet: string;
 }
 
+/**
+ * One match inside a body script, in the shape a grep-style tool reports.
+ *
+ * @remarks
+ * `line` and `text` carry the location and the matched line itself; `snippet` adds the surrounding
+ * context lines. A body with several matches produces one entry per match, never one per object.
+ */
+export interface BodyMatch extends DdlMatch {
+  /** 1-based line number of the match within the body script. */
+  line: number;
+  /** The matching line, right-trimmed. */
+  text: string;
+}
+
+/** Context lines placed around a match by {@link searchBodyScripts} — the one governor; both callers take it. */
+const DEFAULT_SNIPPET_CONTEXT_LINES = 2;
+
+/** Width, in characters, the detail sidebar can render on one line before a match needs a window. */
+const SIDEBAR_LINE_CAP = 50;
+
 /** Heuristic ReDoS guard budget, in milliseconds, applied by {@link compileSearchRegex}. */
 const REDOS_BUDGET_MS = 5;
 
@@ -234,45 +254,108 @@ export function searchCatalog(
  * Searches the SQL DDL body scripts for a specific term.
  *
  * @param nodes - The catalog of nodes to search.
- * @param query - The term to search for (minimum 2 chars).
+ * @param query - The term to search for (minimum 2 chars), or a compiled pattern.
  * @param types - Optional set of allowed object types.
- * @param contextLines - Number of context lines to include in the snippet (default: 2).
- * @param limit - Maximum number of results to return (default: 100).
+ * @param contextLines - Number of context lines to include in the snippet.
+ * @param limit - Maximum number of matches to return; omitted means unbounded.
  *
- * @returns An array of matches, each containing a node and a context snippet.
+ * @returns An array of matches, each carrying its node, 1-based line, matched line and context.
+ *
+ * @remarks
+ * The two query forms are two callers with two contracts. A string is the detail sidebar's
+ * case-insensitive substring: one match per object, the panel's line width applied, and its own
+ * display cap. A RegExp is the pattern `compileSearchRegex` accepted for `lineage_search_ddl`,
+ * whose contract is grep's: every match in every body, with its line number, and no truncation —
+ * neither a per-line window nor a result cap.
  */
 export function searchBodyScripts(
   nodes: SearchableNode[],
   query: string | RegExp,
   types?: Set<ObjectType>,
-  contextLines = 2,
-  limit = 100,
-): DdlMatch[] {
-  // A string is a case-insensitive substring (the detail sidebar); a RegExp is the pattern
-  // `compileSearchRegex` accepted for `lineage_search_ddl`, whose contract is a regex search —
-  // matching on the raw pattern text made every regex form (`(?i)x`, `a.*b`) return nothing.
+  contextLines = DEFAULT_SNIPPET_CONTEXT_LINES,
+  limit?: number,
+): BodyMatch[] {
   const regex = typeof query === 'string' ? null : query;
   if (typeof query === 'string' && query.length < 2) return [];
   const lower = typeof query === 'string' ? query.toLowerCase() : '';
+  const lineCap = regex === null ? SIDEBAR_LINE_CAP : Number.POSITIVE_INFINITY;
+  const cap = limit ?? Number.POSITIVE_INFINITY;
   let filtered = nodes;
   if (types && types.size > 0) filtered = filtered.filter(n => n.bodyScript && types.has(n.type));
 
-  const matches: DdlMatch[] = [];
+  // One allocation for the whole sweep, not one per node: `compileSearchRegex` fixes the flags to
+  // `i`, and walking every match in a body needs the `g` flag's `lastIndex` cursor.
+  const scanner = regex === null ? null : new RegExp(regex.source, `${regex.flags}g`);
+
+  const matches: BodyMatch[] = [];
   for (const node of filtered) {
-    if (!node.bodyScript) continue;
-    let term: string;
-    if (regex === null) {
-      if (!node.bodyScript.toLowerCase().includes(lower)) continue;
-      term = query as string;
-    } else {
-      const hit = new RegExp(regex.source, regex.flags.replace('g', '')).exec(node.bodyScript);
-      if (!hit || hit[0].length === 0) continue;
-      term = hit[0];
+    const body = node.bodyScript;
+    if (!body) continue;
+    const lines = body.split('\n');
+    const lineStarts = buildLineStarts(lines);
+
+    if (scanner === null) {
+      const idx = body.toLowerCase().indexOf(lower);
+      if (idx < 0) continue;
+      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap));
+      if (matches.length >= cap) break;
+      continue;
     }
-    matches.push({ node, snippet: buildSnippet(node.bodyScript, term, contextLines) });
-    if (matches.length >= limit) break;
+
+    scanner.lastIndex = 0;
+    let hit: RegExpExecArray | null;
+    let capped = false;
+    while ((hit = scanner.exec(body)) !== null) {
+      // A zero-length match (`x*`, `^`) advances nothing on its own: skip the position rather than
+      // the node, or the first empty match hides every real match later in the same body.
+      if (hit[0].length === 0) { scanner.lastIndex++; continue; }
+      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap));
+      if (matches.length >= cap) { capped = true; break; }
+    }
+    if (capped) break;
   }
   return matches;
+}
+
+/** Start offset of every line, so a match index resolves to its line without rescanning the body. */
+function buildLineStarts(lines: string[]): number[] {
+  const starts = new Array<number>(lines.length);
+  let offset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    starts[i] = offset;
+    offset += lines[i].length + 1;
+  }
+  return starts;
+}
+
+/** Zero-based index of the line containing `index`. */
+function lineIndexAt(lineStarts: number[], index: number): number {
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (lineStarts[mid] <= index) low = mid; else high = mid - 1;
+  }
+  return low;
+}
+
+/** Assembles one reported match from its position in the body. */
+function makeMatch(
+  node: SearchableNode,
+  lines: string[],
+  lineStarts: number[],
+  index: number,
+  matchText: string,
+  contextLines: number,
+  lineCap: number,
+): BodyMatch {
+  const matchLine = lineIndexAt(lineStarts, index);
+  return {
+    node,
+    line:    matchLine + 1,
+    text:    lines[matchLine].trimEnd(),
+    snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap),
+  };
 }
 
 /**
@@ -304,38 +387,37 @@ export function searchColumns(
   return matches;
 }
 
+/** Characters of lead-in kept before the match when a line is windowed to {@link SIDEBAR_LINE_CAP}. */
+const SIDEBAR_WINDOW_LEAD = 10;
+
 /**
  * Builds a formatted context snippet for a match found in a body script.
  *
- * @param body - The full SQL text.
- * @param term - The matched term.
+ * @param lines - The body split on newlines.
+ * @param matchLine - Zero-based index of the line holding the match.
+ * @param matchText - The text that matched, used to place the window on an over-wide line.
  * @param contextLines - The number of lines around the match to include.
+ * @param lineCap - Width at which a line is windowed around the match; `Infinity` never windows.
  * @returns A multi-line string containing the match context.
  */
-function buildSnippet(body: string, term: string, contextLines: number): string {
-  const lower = body.toLowerCase();
-  const idx = lower.indexOf(term.toLowerCase());
-  if (idx < 0) return '';
-
-  const lines = body.split('\n');
-  let charCount = 0;
-  let matchLine = 0;
-  for (let i = 0; i < lines.length; i++) {
-    charCount += lines[i].length + 1;
-    if (charCount > idx) { matchLine = i; break; }
-  }
-
+function buildSnippet(
+  lines: string[],
+  matchLine: number,
+  matchText: string,
+  contextLines: number,
+  lineCap: number,
+): string {
   const start = Math.max(0, matchLine - (contextLines - 1));
   const end = Math.min(lines.length, matchLine + contextLines);
-  const termLower = term.toLowerCase();
-  const LINE_CAP = 50; // sidebar panel is ~50 monospace chars wide
+  const termLower = matchText.toLowerCase();
   return lines.slice(start, end).map(l => {
     const trimmed = l.trimEnd();
-    const matchPos = trimmed.toLowerCase().indexOf(termLower);
-    if (matchPos < 0 || trimmed.length <= LINE_CAP) return trimmed;
+    if (trimmed.length <= lineCap) return trimmed;
+    const matchPos = termLower.length > 0 ? trimmed.toLowerCase().indexOf(termLower) : -1;
+    if (matchPos < 0) return trimmed;
     // Trim long lines so the match stays within the visible panel width.
-    const windowStart = Math.max(0, matchPos - 10);
-    const windowEnd = Math.min(trimmed.length, windowStart + LINE_CAP);
+    const windowStart = Math.max(0, matchPos - SIDEBAR_WINDOW_LEAD);
+    const windowEnd = Math.min(trimmed.length, windowStart + lineCap);
     return (windowStart > 0 ? '\u2026' : '') +
       trimmed.slice(windowStart, windowEnd) +
       (windowEnd < trimmed.length ? '\u2026' : '');

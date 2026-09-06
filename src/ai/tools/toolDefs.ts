@@ -67,7 +67,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_objects', inputSchema: SearchObjectsInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search for database objects by name or column.',
-    modelDescription: 'Search database objects by name or column name using substring or regex matching. Returns object IDs and metadata. Each result carries an `in_user_filter` flag — when an in-filter search returns 0 hits but out-of-filter results exist, include that schema in the next search; the active filter is a display preference, not a boundary.',
+    modelDescription: 'Search database objects by name or column name using substring or regex matching. With `mode:"regex"` the query is a JavaScript regular expression, always case-insensitive, matched against both the object name and `schema.name`, and taken verbatim — no schema prefix is split off it; an unusable pattern returns `invalid_regex` with the repair, never an empty list. Returns object IDs and metadata. Each result carries an `in_user_filter` flag — when an in-filter search returns 0 hits but out-of-filter results exist, include that schema in the next search; the active filter is a display preference, not a boundary.',
     progressLabel: 'Searching database objects…',
   },
   {
@@ -108,7 +108,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_ddl', inputSchema: SearchDdlInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search SQL body scripts for a text pattern.',
-    modelDescription: 'Performs a regex search across view, procedure, and function DDL bodies. Returns matching lines with context.',
+    modelDescription: 'Searches view, procedure and function bodies with a JavaScript regular expression — all three types when `types` is omitted. Matching is always case-insensitive, so an inline flag group such as `(?i)` is unnecessary and is ignored. `^` and `$` anchor the whole body rather than each line, and `.` never crosses a line break. Returns every matching line with its object, 1-based line number and surrounding context; no matches is reported as `total: 0`, and an unusable pattern as `invalid_regex` with the repair.',
     progressLabel: 'Searching SQL bodies…',
   },
   {

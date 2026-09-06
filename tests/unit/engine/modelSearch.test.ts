@@ -177,6 +177,59 @@ describe('model search', () => {
     expect(none.ok && searchBodyScripts(nodes, none.regex)).toEqual([]);
   });
 
+  it('reports every match in a body with its 1-based line and matched line text', () => {
+    // Grep's contract: one entry per match, located. One entry per object hid the second and
+    // later occurrences, so the model could not tell "mentioned once" from "used throughout".
+    const compiled = compileSearchRegex('OrderID');
+    if (!compiled.ok) throw new Error('OrderID must compile');
+    const hits = searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const));
+    expect(hits.map(h => h.line), 'line 3 once, line 5 twice').toEqual([3, 5, 5]);
+    expect(hits[0].text).toBe('SELECT o.OrderID, SUM(d.Quantity) AS TotalQuantity');
+    expect(hits[2].text).toBe('JOIN Sales.OrderDetail d ON o.OrderID = d.OrderID');
+  });
+
+  it('keeps ^, $ and . anchored to the whole body — the flags are fixed to "i"', () => {
+    const count = (pattern: string): number => {
+      const compiled = compileSearchRegex(pattern);
+      if (!compiled.ok) throw new Error(`${pattern} must compile`);
+      return searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const)).length;
+    };
+    expect(count('^CREATE'), '^ is the body start').toBe(1);
+    expect(count('^SELECT'), 'SELECT starts a line, not the body').toBe(0);
+    expect(count('d.OrderID$'), '$ is the body end').toBe(1);
+    expect(count('AS.SELECT'), '. never crosses a line break').toBe(0);
+  });
+
+  it('does not skip a body whose first match is empty', () => {
+    // `x*` matches the empty string at offset 0; the scan advances one position instead of
+    // abandoning the node, so the real match later in the same body is still reported.
+    const body: SearchableNode[] = [{
+      id: 'dbo.vwx', name: 'vwX', schema: 'dbo', type: 'view',
+      bodyScript: 'SELECT ColA\nFROM dbo.xTable',
+    }];
+    const compiled = compileSearchRegex('x*');
+    if (!compiled.ok) throw new Error('x* must compile');
+    const hits = searchBodyScripts(body, compiled.regex);
+    expect(hits.length, 'the node is scanned, not skipped').toBeGreaterThan(0);
+    expect(hits.some(h => h.text.includes('xTable')), 'the real match is reported').toBe(true);
+  });
+
+  it('never windows a regex match line, and still windows the sidebar substring line', () => {
+    const wide = 'x'.repeat(120);
+    const body: SearchableNode[] = [{
+      id: 'dbo.vwwide', name: 'vwWide', schema: 'dbo', type: 'view',
+      bodyScript: `SELECT ${wide} AS TotalQuantity FROM dbo.T`,
+    }];
+    const compiled = compileSearchRegex('TotalQuantity');
+    if (!compiled.ok) throw new Error('TotalQuantity must compile');
+    const [regexHit] = searchBodyScripts(body, compiled.regex);
+    expect(regexHit.snippet, 'a tool result is never elided').not.toContain('\u2026');
+    expect(regexHit.snippet).toContain(wide);
+
+    const [stringHit] = searchBodyScripts(body, 'TotalQuantity');
+    expect(stringHit.snippet, 'the sidebar still windows to its panel width').toContain('\u2026');
+  });
+
   it('applies body type, context, and result limits', () => {
     const procedures = searchBodyScripts(
       nodes,
