@@ -904,7 +904,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // The memo was composed and reviewed at proposal time, never here — reuse verbatim.
     if (cachedDiscoverySummary) engine.setDiscoverySummary(cachedDiscoverySummary);
     return {
-      messages: [modelUserMessage('Gate approved. Please proceed with the hop-by-hop analysis.')],
+      // The first hop is blinkered like every later one: the replayed participant history and the
+      // entry/gate exchange are dropped here, and hop 1 starts from the same continuation anchor
+      // that every committed hop reseeds (see the per-hop wipe in activeWorkerNode).
+      messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
       engineSnapshot: engine.toJSON(),
       phase: 'active_coordinator',
     };
@@ -1321,8 +1324,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     if (res.stop === 'reroute') {
       const live = sess.stateMachine as NavigationEngine | null;
+      // The hop cap is per exploration, not per turn: a supplement continues the same engine, so
+      // the graph counter resumes from the hops that engine has already run instead of from zero.
       return {
         engineSnapshot: live ? live.toJSON() : state.engineSnapshot,
+        activeHopCount: live ? safeHopCount(live) : state.activeHopCount,
         toolAttempt: null,
         phase: 'active_coordinator',
       };
@@ -1473,7 +1479,6 @@ function routeAfterDetectEntry(state: AgentStateType): string {
 function routeAfterDiscovery(state: AgentStateType): string {
   if (state.outcome) return END;
   if (state.phase === 'discover' && state.toolAttempt?.phase === 'discover') return AGENT_NODES.discovery;
-  if (state.phase === 'visual_preview' && state.toolAttempt?.phase === 'visual_preview') return AGENT_NODES.visualPreview;
   if (state.gate) return AGENT_NODES.gate;
   if (state.phase === 'sm_entry') return AGENT_NODES.smEntry;
   return END;

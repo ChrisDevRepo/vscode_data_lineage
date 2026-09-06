@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { HumanMessage } from '@langchain/core/messages';
+import { z } from 'zod';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { SubmitFindingsModelSchema } from '../../../src/ai/tools/toolSchemas';
 
@@ -151,6 +152,33 @@ describe('VscodeModelPort prose tool-call promotion (C2)', () => {
 
     expect(result).toMatchObject({ status: 'completed', finishReason: 'stop', toolCalls: [] });
     expect(result.text).toBe(prose);
+  });
+
+  it('does not promote when more than one offered schema accepts the payload', async () => {
+    // A prose payload names no tool; two accepting schemas leave its identity undetermined, so the
+    // generation stays a text finish instead of being bound to whichever definition came first.
+    const debugLog = vi.fn();
+    const sendRequest = vi.fn().mockResolvedValue({ stream: trackedStream([N15_ACTIVE_PAYLOAD]) });
+    const model = {
+      id: 'publisher.exact', name: 'Exact', vendor: 'test', family: 'scripted', version: '1',
+      sendRequest,
+    };
+    const port = new VscodeModelPort(model as never, { debugLog });
+    const permissiveTool = {
+      name: 'lineage_permissive',
+      description: 'Accepts any object.',
+      inputSchema: z.looseObject({}),
+    };
+    const result = await port.generateToolTurn({
+      messages: [new HumanMessage('analyze')],
+      tools: [SUBMIT_FINDINGS_TOOL, permissiveTool],
+      toolChoice: 'required',
+      phase: 'scoping',
+    });
+    expect(result).toMatchObject({ status: 'completed', finishReason: 'stop', toolCalls: [] });
+    expect(result.text).toBe(N15_ACTIVE_PAYLOAD);
+    expect(debugLog).toHaveBeenCalledWith(expect.stringContaining('prose-tool-call-ambiguous'));
+    expect(debugLog).toHaveBeenCalledWith(expect.stringContaining('tools=lineage_submit_findings,lineage_permissive'));
   });
 
   it('does not promote a fenced payload that fails the tool schema (UAT n15 badge_label overflow)', async () => {

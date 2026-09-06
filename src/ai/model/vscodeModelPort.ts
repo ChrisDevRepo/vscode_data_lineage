@@ -414,11 +414,17 @@ export class VscodeModelPort implements ModelPort {
       // as prose seven times in a row; each drew a synthetic `missing_required_tool_call` rejection
       // because the provider never emitted a native tool-call chunk. Promotion recovers that call
       // before it is measured, so a payload the tool's own schema accepts never pays for the miss.
-      const resolvedParts = promoteProseToolCall(parts, definitions);
+      const promotion = promoteProseToolCall(parts, definitions);
+      const resolvedParts = promotion.parts;
       if (resolvedParts !== parts) {
         this.options.debugLog?.(
           `[AI] prose-tool-call-promoted phase=${phase ?? 'unknown'} call=${generation}`
           + ` tool=${(resolvedParts[0] as { readonly toolName: string }).toolName}`,
+        );
+      } else if (promotion.ambiguousTools) {
+        this.options.debugLog?.(
+          `[AI] prose-tool-call-ambiguous phase=${phase ?? 'unknown'} call=${generation}`
+          + ` tools=${promotion.ambiguousTools.join(',')}`,
         );
       }
       // One measurement row per completed generation, for all three port entry points. `usage` is
@@ -480,13 +486,15 @@ const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parame
  * @param parts - The drained generation, in stream order.
  * @param definitions - Tool definitions offered for this generation, already narrowed to the
  * active tool choice.
- * @returns `parts` unchanged, or a single-element array holding the promoted tool-call part.
+ * @returns `parts` unchanged, or a single-element array holding the promoted tool-call part;
+ * `ambiguousTools` names every accepting schema when more than one accepted the payload and no
+ * promotion was made.
  */
 function promoteProseToolCall(
   parts: readonly PortGenerationPart[],
   definitions: readonly ModelToolDefinition[],
-): readonly PortGenerationPart[] {
-  if (definitions.length === 0 || parts.some((part) => part.type === 'tool-call')) return parts;
+): { readonly parts: readonly PortGenerationPart[]; readonly ambiguousTools?: readonly string[] } {
+  if (definitions.length === 0 || parts.some((part) => part.type === 'tool-call')) return { parts };
   const text = parts
     .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
@@ -506,7 +514,7 @@ function promoteProseToolCall(
     // pair at all (e.g. a genuinely empty generation) is not this envelope — matching zero pairs
     // must not manufacture an empty `{}` candidate that a permissive schema could accept.
     const xmlParameters = [...text.matchAll(XML_TOOL_PARAMETER)];
-    if (xmlParameters.length === 0) return parts;
+    if (xmlParameters.length === 0) return { parts };
     candidate = Object.fromEntries(
       xmlParameters.map(([, name, raw]): [string, unknown] => {
         const value = raw.trim();
@@ -518,15 +526,22 @@ function promoteProseToolCall(
       }),
     );
   }
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return parts;
-  const definition = definitions.find((entry) => entry.inputSchema.safeParse(candidate).success);
-  if (!definition) return parts;
-  return [{
-    type: 'tool-call',
-    callId: 'text-promoted-0',
-    toolName: definition.name,
-    input: candidate,
-  }];
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return { parts };
+  // A prose payload names no tool, so its identity is the one schema that accepts it. Two accepting
+  // schemas leave the tool undetermined and the generation stays a text finish — the attempt
+  // policy then charges the miss as it would any other text-only answer.
+  const accepting = definitions.filter((entry) => entry.inputSchema.safeParse(candidate).success);
+  if (accepting.length !== 1) {
+    return accepting.length === 0 ? { parts } : { parts, ambiguousTools: accepting.map((entry) => entry.name) };
+  }
+  return {
+    parts: [{
+      type: 'tool-call',
+      callId: 'text-promoted-0',
+      toolName: accepting[0].name,
+      input: candidate,
+    }],
+  };
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
