@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- The assistant checks each SQL comment against the statement it annotates. A comment that
+  contradicts the code, or that carries an operational instruction such as "do not use this
+  procedure", is called out; one verified correct and relevant to the question is written into the
+  detail description instead of only being captured. An incomplete comment is not a finding.
+
+### Changed
+- A question that asks for lineage "back to its original sources", with no level count, is no longer
+  answered as if it had asked for three levels. The approval card and the assistant's working memory
+  now report the depth the engine actually enforces, so an unbounded trace is not silently truncated
+  and delivered as complete.
+- An AI capture writes its own marked line for every structural finding, including one the
+  surrounding prose already describes, so a finding that was detected is also delivered.
+- The computed-column recipe renders every distinct formula on a branch, not one per column.
+
+### Fixed
+- A long turn no longer stalls and ends without an answer when two large object bodies cannot be
+  held at once: evicting a body no longer discards the record that the read already happened, which
+  had made the assistant re-request the same object until the turn ran out of tool calls.
+- A tool call a model emits in the `<function=...>` XML form is read as a call instead of being
+  rejected as message text, and the rejection hint now names the channel as the repair rather than
+  asking again for fields that were already present.
+- A refused prune candidate is logged as a prune outcome rather than a rejection, so the run summary,
+  the host log and the trace no longer report three different rejection counts for the same run.
+
 ## [1.1.1] - 2026-08-26
 
 ### Added
