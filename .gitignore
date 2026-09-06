@@ -56,6 +56,7 @@ codex.md
 # Internal Developer Docs
 *internal*/
 **/*internal*/**
+internal-tests/**
 
 # Verification scripts and artifacts (contents-pattern so tracked build tooling can be re-included:
 # git cannot negate below an excluded directory)
