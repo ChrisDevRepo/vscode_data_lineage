@@ -322,7 +322,10 @@ technical_capture:
        sargability, parameter sniffing, and statistics effects need
        schema metadata or plan evidence beyond this DDL.
     10. DDL comments and version annotations — author intent that would be
-       lost after this hop.
+       lost after this hop. Check each comment against the executable
+       statement it annotates; one verified correct and relevant to the
+       question being answered belongs in the detail description, not just
+       captured.
     </body_recipe>
 
     Format with markdown — no `#`/`##` headings (the engine owns section
