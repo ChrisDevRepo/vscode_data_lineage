@@ -506,22 +506,26 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const held = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration
       ? { gate: sess.phase.gate, revision: sess.pendingExploration.revision }
       : null;
+    // Deterministic re-entries the host owns: the SM-offer pill's seeded trace envelope and the
+    // post-discovery preview action, both matched on our own marker — no entry-detector model call.
+    // A follow-up pill stays clickable in the transcript while a later proposal is held, so it
+    // reaches this node under the same held state a slash command does.
+    const marker: 'trace' | 'preview' | null = state.prompt.startsWith(TRACE_REQUEST_MARKER)
+      ? 'trace'
+      : state.prompt.startsWith(PREVIEW_REQUEST_MARKER) ? 'preview' : null;
+    // A stated command and a host-owned pill both outrank a held proposal: drop the hold so the
+    // fresh route is not mistaken for a refine by the start_exploration handler's `isRefining`
+    // check, which would judge the new start against the abandoned proposal's revision.
+    if (held && (slash || marker)) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
     if (slash) {
-      // A stated command outranks a held proposal: drop the hold so the fresh route is not
-      // mistaken for a refine by the start_exploration handler's `isRefining` check.
-      if (held) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
       return { ctx, messages, entry: slash.entry, executionTrigger: slash.trigger, targetColumns: slash.targetColumns, phase: 'detect_entry' };
     }
-
-    // Deterministic deeper-analysis re-entry: the host seeds this prompt (our own marker) when the
-    // user clicks the SM-offer pill — route straight to SM, no entry-detector model call.
-    if (state.prompt.startsWith(TRACE_REQUEST_MARKER)) {
+    if (marker === 'trace') {
       return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, phase: 'detect_entry' };
     }
-
-    // The explicit post-discovery preview action is host-owned, so it remains lightweight even
-    // though equivalent free-text visual intent restores origin/main's approval-gated SM route.
-    if (state.prompt.startsWith(PREVIEW_REQUEST_MARKER)) {
+    // The explicit post-discovery preview action stays lightweight even though equivalent free-text
+    // visual intent restores origin/main's approval-gated SM route.
+    if (marker === 'preview') {
       return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, phase: 'detect_entry' };
     }
 

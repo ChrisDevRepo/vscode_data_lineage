@@ -4,6 +4,11 @@ import type { ModelPort } from '../../../src/ai/model/modelPort';
 import { TurnEventSink, type NativeGateEvent, type TurnEvent } from '../../../src/ai/runtime/turnEventSink';
 import { AiSession } from '../../../src/ai/session/session';
 import {
+  RUN_TRACE_TRIGGER,
+  TRACE_REQUEST_MARKER,
+  expandRunTracePrompt,
+} from '../../../src/ai/prompting/prompts';
+import {
   ScriptedModelPort,
   scriptedRegistry,
   validCall,
@@ -276,6 +281,71 @@ describe('revision-bound gate refinement runtime', () => {
     await slashRuntime.run('/search Sales');
 
     // The stated command wins, so the abandoned proposal cannot be mistaken for a refine target.
+    expect(session.pendingExploration).toBeNull();
+    expect(session.phase.kind).not.toBe('awaiting_gate');
+  });
+
+  it('drops a held proposal when the next turn is the post-discovery trace pill', async () => {
+    const session = new AiSession();
+    const holdEpoch = session.beginTurn();
+    seedProposal(session, holdEpoch);
+    // The captured discovery walk that made the pill render; it survives the hold, so the pill in
+    // the transcript above the proposal stays clickable while the gate is parked.
+    session.recordDiscovery('[ai].[FactSalesReport]', 2, 'What feeds FactSalesReport?', 'DimCalendar feeds it.');
+
+    const holdModel = new ScriptedModelPort([
+      {
+        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
+          origin: '[ai].[FactSalesReport]',
+          analysisMode: 'bb',
+          classification: 'business',
+        })],
+      },
+    ]);
+    const { registry } = scriptedRegistry([
+      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
+      { name: 'lineage_start_exploration', result: GATE_RESULT },
+    ]);
+    const holdTurn = makeGateSink();
+    const holdRuntime = new AgentRuntime({
+      threadId: 'hold-then-pill',
+      getSession: () => session,
+      model: holdModel as unknown as ModelPort,
+      registry,
+      sink: holdTurn.sink,
+      turnEpoch: holdEpoch,
+      maxRounds: 1,
+    });
+    const holding = holdRuntime.run('/trace [ai].[FactSalesReport]');
+    const heldGate = await holdTurn.nextGate();
+    holdRuntime.resumeGate(heldGate.gateId, { kind: 'hold' });
+    await expect(holding).resolves.toBe('ok');
+    expect(session.pendingExploration).not.toBeNull();
+
+    // The host expands the pill sentinel exactly as the participant does before the turn starts.
+    const pillPrompt = expandRunTracePrompt(RUN_TRACE_TRIGGER, session);
+    expect(pillPrompt.startsWith(TRACE_REQUEST_MARKER)).toBe(true);
+
+    const pillEpoch = session.beginTurn();
+    const pillModel = new ScriptedModelPort([
+      {
+        toolCalls: [validCall('search-1', 'lineage_search_objects', { query: 'Sales' })],
+      },
+    ]);
+    const pillRuntime = new AgentRuntime({
+      threadId: 'pill-turn',
+      getSession: () => session,
+      model: pillModel as unknown as ModelPort,
+      registry,
+      sink: makeGateSink().sink,
+      turnEpoch: pillEpoch,
+      maxRounds: 1,
+    });
+
+    await pillRuntime.run(pillPrompt);
+
+    // A host-owned route is as stated as a slash command: the hold is dropped, so the trace turn's
+    // fresh start_exploration is not judged against the abandoned proposal's revision.
     expect(session.pendingExploration).toBeNull();
     expect(session.phase.kind).not.toBe('awaiting_gate');
   });
