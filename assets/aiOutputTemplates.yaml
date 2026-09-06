@@ -186,8 +186,9 @@ business_capture:
        active, and reads as that.
     3. Grain — the join and WHERE predicates the rows arrive under, and the
        row that comes out: "one row per …".
-    4. Formulas — per distinct expression, write the formula as a `$$ … $$`
-       block with the business meaning of its terms. A `$$ … $$` block must
+    4. Formulas — per distinct assigned expression and its fallback default,
+       write the formula as a `$$ … $$` block with the business meaning of
+       its terms. A `$$ … $$` block must
        preserve the DDL expression term for term: declared target on the
        left, its declared expression on the right, no operator added,
        dropped, or reordered; when a faithful rendering is not possible,
@@ -260,8 +261,9 @@ technical_capture:
     3. Join shape and grain — JOIN and WHERE predicates in a short ```sql
        fence, the join type where hinted (HASH / MERGE / LOOP), the row that
        comes out: "one row per …".
-    4. Formulas — per distinct expression, a `$$ … $$` block beside its
-       snippet, with the source → target mapping where a rename happens.
+    4. Formulas — per distinct assigned expression and its fallback default, a
+       `$$ … $$` block beside its snippet, with the source → target mapping
+       where a rename happens.
     5. State transitions — the procedure's steps as a numbered walk.
     6. Loading step — the shape a statement against the target shows: `reload`
        (TRUNCATE or unfiltered DELETE + INSERT), `append` (inserts only),
@@ -310,16 +312,16 @@ structural_callouts:
   stages: [active]
   instruction: |
     ⚠️ lines this hop: STRUCTURAL EXPOSURE the loaded DDL proves, not a fact
-    about rows. One ⚠️ line per finding — class · evidence anchor · mechanism ·
-    consequence — decision-impacting, one per mechanism per node, not restated
-    across sections.
+    about rows. One ⚠️ line per finding — class · the deciding statement quoted
+    whole · mechanism read off that quote · consequence — decision-impacting,
+    one per mechanism per node.
 
-    Classes: silent value overwrite (COALESCE/ISNULL masking, unguarded
-    UPDATE); row multiplication (join or dedup grain); rows silently dropped
-    (INNER for LEFT, a filter on a nullable column); non-determinism (GETDATE()
-    in a view, TOP without ORDER BY); truncation; hardcoded no-op logic; stale
-    reference-data joins; swallowed errors; unimplemented branches; a comment
-    or status literal claiming behaviour the statement does not implement.
+    Classes: silent value overwrite (COALESCE/ISNULL masking); row
+    multiplication (join or dedup grain); rows silently dropped;
+    non-determinism (GETDATE() in a view, TOP without ORDER BY); truncation;
+    hardcoded no-op logic; stale reference-data joins; swallowed errors;
+    unimplemented branches; a comment or status literal claiming behaviour the
+    statement does not implement.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.Region = r.Region` on nullable
     `Region` in `vwOrders`: an order with no region never reaches `FactSales`.
