@@ -86,11 +86,12 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 
 
 /**
- * The one `lineage_get_neighbor_columns` trigger. BB's role-opacity test is what feeds route and
- * prune, so CT carries it verbatim and appends its column-specific case; narrowing CT to hidden
- * column names alone dropped the role test CT still needs.
+ * The one `lineage_get_neighbor_columns` trigger, exported for the tool catalog so the BB/CT
+ * decision blocks and the `modelDescription` state it from this source alone. BB's role-opacity
+ * test is what feeds route and prune, so CT carries it verbatim and appends its column-specific
+ * case; narrowing CT to hidden column names alone dropped the role test CT still needs.
  */
-const NEIGHBOR_COLUMNS_TRIGGER = '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone';
+export const NEIGHBOR_COLUMNS_TRIGGER = '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone';
 
 const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
 
