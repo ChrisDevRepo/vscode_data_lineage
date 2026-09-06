@@ -1,6 +1,7 @@
 /** Detects a multi-object discovery walk from accepted graph-owned tool observations. */
 import { z } from 'zod';
 import type { ToolAttemptObservation } from './toolAttempt';
+import { readToolError } from '../support/toolErrorEnvelope';
 
 /** The captured walk used to seed the SM-offer pill / `lineage_start_exploration`. */
 interface DiscoveryWalk {
@@ -41,6 +42,9 @@ export function captureDiscoveryWalkFromObservations(
       onMalformed?.(observation.toolName, observation.callId);
       continue;
     }
+    // An error envelope in an observation slot is a read that inspected nothing — the engine's own
+    // reply (a body refused storage, a dispatcher rejection), never malformed canonical output.
+    if (readToolError(raw)) continue;
     const view = ObjectDetailIdView.safeParse(raw);
     if (!view.success) {
       onMalformed?.(observation.toolName, observation.callId);

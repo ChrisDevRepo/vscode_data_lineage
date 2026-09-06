@@ -249,6 +249,31 @@ describe('executeToolGenerationAttempt — mixed valid/invalid tool batch', () =
     expect(rejected.invocations).toHaveLength(2);
     expect(rejected.result.calls.map(call => call.status)).toEqual(['rejected', 'executed']);
   });
+
+  it('gives two reads the handler cannot tell apart one dedupe key', async () => {
+    // The key follows the handler's own normalizers: `[ai].[SpImportOrders]` and
+    // `ai.spimportorders` are the same object lookup, and a bracketed query with the same explicit
+    // schema is the same search. Keyed on the raw payload each pair dispatched twice.
+    const detail = await runAttempt(
+      [{ toolCalls: [
+        validCall('call-1', 'lineage_get_object_detail', { id: '[ai].[SpImportOrders]' }),
+        validCall('call-2', 'lineage_get_object_detail', { id: 'ai.spimportorders' }),
+      ] }],
+      [{ name: 'lineage_get_object_detail', result: '{"id":"[ai].[spimportorders]"}', effect: 'read' }],
+    );
+    expect(detail.invocations).toHaveLength(1);
+    expect(detail.result.observations).toHaveLength(1);
+
+    const search = await runAttempt(
+      [{ toolCalls: [
+        validCall('call-3', 'lineage_search_objects', { query: '[ai].[Orders]' }),
+        validCall('call-4', 'lineage_search_objects', { query: 'Orders', schemas: ['ai'], mode: 'substring' }),
+      ] }],
+      [{ name: 'lineage_search_objects', result: '{"matches":[]}', effect: 'read' }],
+    );
+    expect(search.invocations).toHaveLength(1);
+    expect(search.result.observations).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -523,10 +548,10 @@ describe('executeToolGenerationAttempt — truncated generation classification',
 });
 
 // ---------------------------------------------------------------------------
-// (d) 48KB shrink ladder with explicit, non-silent omission accounting
+// (d) 48KB attempt context: held observations render whole, rejection text shrinks
 // ---------------------------------------------------------------------------
 
-describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () => {
+describe('renderToolAttemptContext — held observations render whole', () => {
   function stateWithObservations(bodies: readonly string[]): ToolPhaseAttemptState {
     return {
       phase: 'active',
@@ -550,40 +575,22 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
     expect(rendered).not.toContain('omitted');
   });
 
-  it('truncates then collapses oversized observations with exact byte accounting', () => {
-    const body = 'D'.repeat(40_000);
-    const rendered = renderToolAttemptContext(stateWithObservations([body, body]));
+  it('renders every held observation body verbatim — the re-projection is the delivery', () => {
+    // Each attempt is a fresh request: a body shrunk here is a body the model never receives. The
+    // store already refused anything that does not fit, so rendering has nothing left to shrink.
+    const first = `{"definition":"CREATE VIEW dbo.A AS ${'A'.repeat(20_000)}"}`;
+    const second = `{"definition":"CREATE VIEW dbo.B AS ${'B'.repeat(20_000)}"}`;
+    const rendered = renderToolAttemptContext(stateWithObservations([first, second]));
 
-    expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
-
-    // Ladder step 1: equal-share truncation at floor(49152 / 2) = 24576 bytes per observation,
-    // so the reported drop is exactly 40000 - 24576. Nothing is dropped silently.
-    const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / 2);
-    const dropped = body.length - fairShare;
-    expect(rendered).toContain(`+${dropped} bytes omitted from retry context`);
-    expect(rendered).toContain('the full result was delivered when this call first ran');
-
-    // Ladder step 2: the oldest observation collapses to an identity+size stub whose byte count is
-    // the ORIGINAL body size, so the model still learns exactly how much evidence exists.
-    expect(rendered).toContain('\\"omitted\\":true,\\"bytes\\":40000');
+    expect(rendered).toContain('A'.repeat(20_000));
+    expect(rendered).toContain('B'.repeat(20_000));
+    expect(rendered).not.toContain('omitted');
+    expect(rendered).not.toContain('collapsed');
   });
 
-  it('reduces every oversized body under a wide batch, each reduction explicitly accounted', () => {
-    const rendered = renderToolAttemptContext(stateWithObservations(Array.from({ length: 12 }, () => 'X'.repeat(30_000))));
-
-    expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
-    // Equal-share truncation at floor(49152 / 12) = 4096 bytes, then oldest-first collapse until
-    // the rendered payload fits. Both reductions state their exact byte cost.
-    const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / 12);
-    expect(rendered).toContain(`+${30_000 - fairShare} bytes omitted from retry context`);
-    expect(rendered).toContain('\\"omitted\\":true,\\"bytes\\":30000');
-    // No body survives at anything approaching its original size.
-    expect(rendered).not.toContain('X'.repeat(fairShare + 1));
-  });
-
-  it('falls back to a single counted observation summary when rejections alone exceed the budget', () => {
+  it('drops bulk rejection detail while every held observation body survives', () => {
     const state: ToolPhaseAttemptState = {
-      ...stateWithObservations(Array.from({ length: 12 }, () => 'X'.repeat(30_000))),
+      ...stateWithObservations(Array.from({ length: 3 }, () => 'X'.repeat(10_000))),
       semanticFailures: 2,
       rejections: [
         {
@@ -608,13 +615,12 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
     const rendered = renderToolAttemptContext(state);
 
     expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
-    // Terminal observation step: one count+bytes summary standing in for all 12 observations.
-    expect(rendered).toContain('"collapsed":true,"count":12,"bytes":360000');
-    expect(rendered).not.toContain('XXXXXXXXXX');
-    // Terminal rejection step: bulk detail dropped, the actionable correction retained in full.
+    // Engine correction text is the only shrink axis left: bulk detail goes, the actionable
+    // correction stays in full, and the accepted evidence is untouched by either step.
     expect(rendered).not.toContain('TERMINAL-BULK-');
     expect(rendered).toContain('NEWEST-HINT: resend column_flow entry 3.');
     expect(rendered).toContain('column_flow.3');
+    expect(rendered).toContain('X'.repeat(10_000));
   });
 
   it('preserves the newest correction in full while collapsing older rejection envelopes', () => {
@@ -668,25 +674,9 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
     expect(rendered).toContain('column_flow.3');
   });
 
-  it('bounds a stored observation to the checkpoint share with a total-size marker', () => {
-    const body = 'B'.repeat(60_000);
-    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), {
-      stop: 'continue',
-      providerCalls: 1,
-      semanticFailures: 0,
-      observations: [{ callId: 'call-0', toolName: 'lineage_get_details', result: body }],
-      rejections: [],
-    });
-
-    const [stored] = state.observations;
-    expect(Buffer.byteLength(stored.result)).toBeLessThanOrEqual(MAX_STORED_EVIDENCE_KIND_BYTES);
-    expect(stored.result).toContain('[+60000 bytes total; remainder omitted]');
-  });
-
-  it('keeps the read-dedupe identity on a truncated observation', () => {
+  it('stores an accepted body whole and keeps its read-dedupe identity', () => {
     // `acceptedCallKey` is what a later attempt reuses instead of re-dispatching an identical read.
-    // Dropping it while truncating disables the dedupe on exactly the over-budget hops that caused
-    // the truncation, so the next attempt pays for the same read again.
+    const body = 'B'.repeat(40_000);
     const state = recordToolAttempt(initialToolPhaseAttemptState('active'), {
       stop: 'continue',
       providerCalls: 1,
@@ -694,34 +684,17 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
       observations: [{
         callId: 'call-0',
         toolName: 'lineage_get_object_detail',
-        result: 'B'.repeat(60_000),
+        result: body,
         acceptedCallKey: 'accepted-key-0',
       }],
       rejections: [],
     });
 
+    expect(state.observations[0].result).toBe(body);
     expect(state.observations[0].acceptedCallKey).toBe('accepted-key-0');
+    expect(Buffer.byteLength(state.observations[0].result)).toBeLessThanOrEqual(MAX_STORED_EVIDENCE_KIND_BYTES);
   });
 
-  it('keeps the read-dedupe identity on an evicted observation', () => {
-    // Two bodies that cannot co-reside in the checkpoint share must not evict each other's dedupe
-    // identity: the engine would re-dispatch both every hop and spin to MAX_TOOL_PROVIDER_CALLS.
-    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), {
-      stop: 'continue',
-      providerCalls: 1,
-      semanticFailures: 0,
-      observations: [
-        { callId: 'call-0', toolName: 'lineage_get_object_detail', result: 'A'.repeat(28_000), acceptedCallKey: 'key-a' },
-        { callId: 'call-1', toolName: 'lineage_get_object_detail', result: 'B'.repeat(21_000), acceptedCallKey: 'key-b' },
-      ],
-      rejections: [],
-    });
-
-    expect(state.observations.map(o => o.acceptedCallKey)).toEqual(['key-a', 'key-b']);
-    expect(state.observations[0].result).toContain('"omitted":true');
-    expect(state.observations[1].result).toBe('B'.repeat(21_000));
-    expect(Buffer.byteLength(JSON.stringify(state.observations))).toBeLessThanOrEqual(45_056);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1388,10 +1361,9 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(rendered(3)).toContain('[ai].[vwpricelist]');
   });
 
-  it('serves a repeat of an evicted read instead of rejecting it, so the model gets the body the checkpoint dropped', async () => {
-    // T3 2026-09-06: two object bodies that cannot co-reside in the evidence share evicted each
-    // other, and the repeat the model issued for the body it could no longer see was refused as a
-    // duplicate. Six of ten provider calls went to that refusal and the hop ended with no answer.
+  it('stores the first body whole, answers the second that does not fit with a result_too_large reply, and still dedupes the repeat of the first', async () => {
+    // 2026-09-06 ruling: a body too large for the hop is not truncated and not silently dropped —
+    // the reply says so and hands the read to the hop-by-hop path. Held bodies are never touched.
     const bodies: Record<string, string> = {
       spimportorders: JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(28_000) }),
       spcleanorders: JSON.stringify({ id: 'spcleanorders', body: 'B'.repeat(21_000) }),
@@ -1427,21 +1399,29 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
       state = recordToolAttempt(state, result);
     }
 
-    // The second attempt's storage evicts the first body; the third call is that evicted read.
-    expect(state.observations[0].result).toContain('"omitted":true');
+    // The first body is stored whole and is still whole after the second call.
+    expect(state.observations[0].result).toBe(bodies.spimportorders);
+    // The second does not fit alongside it: the stored observation is the too-big reply, in the
+    // tool-error shape, naming the sizes and the hand-off.
+    expect(JSON.parse(state.observations[1].result)).toEqual({
+      error: 'result_too_large',
+      tool: 'lineage_get_object_detail',
+      bytes: Buffer.byteLength(bodies.spcleanorders),
+      held_bytes: Buffer.byteLength(bodies.spimportorders),
+      budget: MAX_STORED_EVIDENCE_KIND_BYTES,
+      hint: 'This result is larger than the evidence one hop can hold, so none of it was stored. Stop this tool loop; narrow the request with lineage_get_scope_bundle, or take the consent-gated hop-by-hop path with lineage_start_exploration, which reads one object per hop.',
+    });
+    const tooBig = logged.filter((message) => message.startsWith('[Observation] result too big'));
+    expect(tooBig).toHaveLength(1);
+    expect(tooBig[0]).toContain('callId=call-2');
+    expect(tooBig[0]).toContain(`bytes=${Buffer.byteLength(bodies.spcleanorders)}`);
+    // The repeat of the still-held first read is a duplicate, not a second dispatch.
     expect(invocations.map((invocation) => (invocation.input as { id: string }).id))
-      .toEqual(['spimportorders', 'spcleanorders', 'spimportorders']);
-    expect(results[2].rejections).toEqual([]);
-    expect(results[2].calls.map((call) => call.status)).toEqual(['executed']);
-    expect(results[2].semanticFailures).toBe(0);
+      .toEqual(['spimportorders', 'spcleanorders']);
+    expect(results[2].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
     expect(state.semanticFailures).toBe(0);
-    // The fresh full body is the newest observation, and the model sees it on the next request.
-    expect(state.observations.at(-1)?.result).toBe(bodies.spimportorders);
+    // The held body reaches the model on the next request; nothing was shrunk to make room.
     expect(port.requests[3].messages.map((message) => String(message.content)).join(' ')).toContain('A'.repeat(1_000));
-    const reserved = logged.filter((message) => message.startsWith('[Observation] re-served evicted read'));
-    expect(reserved).toHaveLength(1);
-    expect(reserved[0]).toContain('callId=call-3');
-    expect(reserved[0]).toContain(`bytes=${Buffer.byteLength(bodies.spimportorders)}`);
   });
 
   it('keeps duplicate_read, hint unchanged, for a repeat whose stored body is still present', async () => {
@@ -1479,7 +1459,6 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(results[1].rejections[0]?.hint)
       .toBe('You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.');
     expect(state.observations[0].result).toBe(body);
-    expect(logged.some((message) => message.startsWith('[Observation] re-served evicted read'))).toBe(false);
   });
 
   it('replays turn 23: two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {

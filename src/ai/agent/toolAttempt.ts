@@ -46,6 +46,8 @@ import { sanitizeForLog } from '../../utils/log';
 import { isCancellationOutcome } from '../support/cancellation';
 import { safeIdentifier } from '../support/logIdentifier';
 import { longestPrefixFitting } from '../support/textTruncation';
+import { normalizeSearchQueryInput } from '../support/inputNormalization';
+import { compileSearchRegex } from '../../utils/modelSearch';
 
 /** Cumulative semantic failures allowed in one logical phase/hop before termination. */
 export const MAX_TOOL_SEMANTIC_FAILURES = 3;
@@ -70,6 +72,34 @@ const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
  * is a true statement in every state it reaches the model in.
  */
 const DUPLICATE_READ_HINT = 'You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.';
+
+/**
+ * Hand-off carried by a `result_too_large` reply — the same route `over_discovery_budget` names for
+ * an oversized scope, because a body larger than the evidence share is read one object per hop, not
+ * in one discovery answer.
+ */
+const RESULT_TOO_LARGE_HINT = 'This result is larger than the evidence one hop can hold, so none of it was stored. Stop this tool loop; narrow the request with lineage_get_scope_bundle, or take the consent-gated hop-by-hop path with lineage_start_exploration, which reads one object per hop.';
+
+/**
+ * The stored stand-in for an accepted result that does not fit the evidence share: a "too big"
+ * reply in the tool-error shape the model already repairs from, never a prefix of the body.
+ *
+ * @param toolName - Tool whose result was refused storage.
+ * @param bytes - Size of the refused result.
+ * @param heldBytes - Bytes of observation bodies already held for this phase/hop.
+ * @param budget - The evidence share both were measured against.
+ * @returns The JSON reply stored as this call's observation.
+ */
+function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number, budget: number): string {
+  return JSON.stringify({
+    error: 'result_too_large',
+    tool: toolName,
+    bytes,
+    held_bytes: heldBytes,
+    budget,
+    hint: RESULT_TOO_LARGE_HINT,
+  });
+}
 
 /** Reports whether a rejection code counts against {@link MAX_TOOL_SEMANTIC_FAILURES}. */
 function isChargeableRejection(code: string): boolean {
@@ -103,11 +133,15 @@ const MAX_CORRECTION_FRAGMENTS = 4;
 /*
  * The retry-context byte budget (`attemptContextBytes()`) and the per-kind stored-evidence share
  * (`storedEvidenceKindBytes()`) are governed by `support/tokenBudget.ts`: a ceiling sized for a
- * 128k window, scaled down with the selected model's input window. They bound the engine's
- * re-projection of cumulative observations/rejections onto the next attempt — never a delivered
- * tool response, never a rejection axis: an oversized payload is shrunk deterministically, never refused.
+ * 128k window, scaled down with the selected model's input window.
+ *
+ * The re-projection IS the delivery: every attempt is a fresh request, so a body the store shrinks
+ * is a body the model never receives. An accepted body is therefore stored whole or not at all —
+ * `executeToolGenerationAttempt` measures the held observations plus the candidate against the
+ * evidence share and, when the candidate does not fit, stores a `result_too_large` reply that hands
+ * the read to the hop-by-hop path. Held bodies are never shrunk and never dropped. The rejection
+ * ladder below bounds engine-produced correction text, which is not a tool result.
  */
-
 
 /** Hard-slices engine correction text to {@link MAX_REJECTION_TEXT_CHARS} with a plain ellipsis when over. */
 function capRejectionText(text: string): string {
@@ -228,16 +262,10 @@ export interface ToolAttemptObservation {
   readonly callId: string;
   /** Accepted non-terminal tool name. */
   readonly toolName: string;
-  /** Canonical registry result safe to project into a later attempt. */
+  /** The canonical registry result, whole, or the `result_too_large` reply that replaced it. */
   readonly result: string;
   /** Private identity used to reuse an equivalent accepted read without dispatching it again. */
   readonly acceptedCallKey?: string;
-  /**
-   * Byte size of the body {@link boundStoredObservations} dropped, present exactly when `result` is
-   * the identity+size stub instead of the served body. A read whose body is gone is no longer an
-   * answer the model holds, so its repeat is a genuine read and never a `duplicate_read`.
-   */
-  readonly omittedBytes?: number;
 }
 
 /** Ordered disposition of one provider-emitted call. */
@@ -397,7 +425,61 @@ export function initialToolPhaseAttemptState(phase: InstructionPhase): ToolPhase
   };
 }
 
-function acceptedCallKey(toolName: string, input: unknown): string {
+/** The one tool whose `query` is a regular expression without an explicit `mode` (`lineage_search_ddl`). */
+const DDL_SEARCH_TOOL = 'lineage_search_ddl';
+
+/**
+ * Key form of an id-like field: brackets dropped, case folded.
+ *
+ * @remarks
+ * Exactly the two differences `resolveModelNodeId` (`support/inputNormalization`) already resolves
+ * onto one node, so an id the lookup cannot distinguish never earns a second dedupe key. Every
+ * dotted part is kept, so a three-part id never folds onto another database's object. The engine's
+ * own `normalizeName` is the canonical form but lives outside `src/engine/shared`, which `src/ai`
+ * may not import (rule gate: "adds no engine import outside src/engine/shared").
+ */
+function normalizedIdKey(raw: string): string {
+  return raw.replace(/[[\]]/g, '').trim().toLowerCase();
+}
+
+/**
+ * Projects a call's input through the same normalizers its handler applies before answering, so the
+ * dedupe key follows what the tool actually reads.
+ *
+ * @remarks
+ * The handler cannot tell `[dbo].[FactSales]` from `dbo.FactSales`, an omitted `mode` from
+ * `"substring"`, or a pattern from the same pattern carrying a redundant inline flag group — keying
+ * on the raw payload gave each of those its own key, dispatched the same read twice, and stored the
+ * same body twice. The query normalizers are the handlers' own ({@link normalizeSearchQueryInput},
+ * {@link compileSearchRegex}); ids fold through {@link normalizedIdKey}.
+ */
+function normalizedKeyInput(toolName: string, input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  const raw = input as Record<string, unknown>;
+  const normalized: Record<string, unknown> = { ...raw };
+  if (typeof raw.id === 'string') normalized.id = normalizedIdKey(raw.id);
+  if (typeof raw.origin === 'string') normalized.origin = normalizedIdKey(raw.origin);
+  if (Array.isArray(raw.ids)) normalized.ids = raw.ids.map((id) => typeof id === 'string' ? normalizedIdKey(id) : id);
+  if (typeof raw.query === 'string') {
+    if (raw.mode === 'regex' || toolName === DDL_SEARCH_TOOL) {
+      const compiled = compileSearchRegex(raw.query);
+      normalized.query = compiled.ok ? compiled.regex.source : raw.query;
+    } else {
+      const { query, schemaHint } = normalizeSearchQueryInput(raw.query);
+      normalized.query = query;
+      // The schema lifted out of the query is a filter only while the call sends none itself —
+      // exactly the fallback `searchObjects` applies.
+      const sendsSchemas = Array.isArray(raw.schemas) && raw.schemas.length > 0;
+      if (schemaHint !== undefined && !sendsSchemas) normalized.schemas = [schemaHint];
+    }
+  }
+  // The default mode: `substring` sent explicitly and omitted are one search.
+  if (raw.mode === 'substring') delete normalized.mode;
+  return normalized;
+}
+
+function acceptedCallKey(toolName: string, rawInput: unknown): string {
+  const input = normalizedKeyInput(toolName, rawInput);
   const sort = (value: unknown): unknown => Array.isArray(value)
     ? value.map(sort)
     : value && typeof value === 'object'
@@ -466,55 +548,6 @@ function prependedArrayBytes(itemBytesSum: number, itemCount: number, newItemByt
   return 2 + itemBytesSum + newItemBytes + itemCount;
 }
 
-/** Retains the newest observations within a fixed checkpoint-memory share. */
-function boundStoredObservations(observations: readonly ToolAttemptObservation[]): ToolAttemptObservation[] {
-  const retained: ToolAttemptObservation[] = [];
-  let retainedBytesSum = 0;
-  for (let index = observations.length - 1; index >= 0; index--) {
-    const source = observations[index];
-    const cappedResult = capUtf8Text(source.result, storedEvidenceKindBytes());
-    // `acceptedCallKey` is carried through truncation: it is the read-dedupe identity, so dropping
-    // it here would silently re-dispatch an already-accepted read on exactly the over-budget hops
-    // that caused the truncation.
-    const bounded = cappedResult === source.result
-      ? source
-      : { ...source, result: cappedResult };
-    const boundedBytes = Buffer.byteLength(JSON.stringify(bounded));
-    if (prependedArrayBytes(retainedBytesSum, retained.length, boundedBytes) > storedEvidenceKindBytes()) {
-      // The newest observation is never dropped outright: it is the evidence the next attempt needs.
-      if (retained.length === 0) {
-        const identityBytes = Buffer.byteLength(JSON.stringify({ ...source, result: '' }));
-        retained.push({
-          ...source,
-          result: capUtf8Text(source.result, Math.max(128, storedEvidenceKindBytes() - identityBytes - 64)),
-        });
-        break;
-      }
-      // Past the share the body goes and the identity stays. `acceptedCallKey` is the read-dedupe
-      // key: evicting it re-dispatches a read already served, and two bodies that cannot co-reside
-      // evict each other every hop, spinning the phase to MAX_TOOL_PROVIDER_CALLS with no answer
-      // (T3 2026-09-06: 28_752 + 21_148 bytes against a 45_056 share, six wasted provider calls).
-      // Same identity+size projection the render path already collapses an over-budget body to.
-      // `omittedBytes` records that the body went, so the dedupe answers the model's repeat with
-      // the read instead of a `duplicate_read` naming observations that no longer carry it.
-      if (source.acceptedCallKey === undefined) continue;
-      const stub = {
-        ...source,
-        result: collapseObservation(source).result,
-        omittedBytes: Buffer.byteLength(source.result),
-      };
-      const stubBytes = Buffer.byteLength(JSON.stringify(stub));
-      if (prependedArrayBytes(retainedBytesSum, retained.length, stubBytes) > storedEvidenceKindBytes()) break;
-      retained.unshift(stub);
-      retainedBytesSum += stubBytes;
-      continue;
-    }
-    retained.unshift(bounded);
-    retainedBytesSum += boundedBytes;
-  }
-  return retained;
-}
-
 /** Retains the newest corrections within a fixed checkpoint-memory share. */
 function boundStoredRejections(rejections: readonly ToolAttemptRejection[]): ToolAttemptRejection[] {
   const retained: ToolAttemptRejection[] = [];
@@ -551,7 +584,9 @@ export function recordToolAttempt(
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const semanticFailures = state.semanticFailures + attempt.semanticFailures;
-  const observations = boundStoredObservations([...state.observations, ...attempt.observations]);
+  // Stored whole, in arrival order: the accept-time measurement in `executeToolGenerationAttempt`
+  // already held every body to the evidence share, so there is nothing left here to shrink.
+  const observations = [...state.observations, ...attempt.observations];
   const repairedTools = new Set(attempt.observations.map((observation) => observation.toolName));
   const rejections = boundStoredRejections([
     ...state.rejections.filter((rejection) => !repairedTools.has(rejection.toolName)),
@@ -593,27 +628,13 @@ export function recordToolAttempt(
  * @returns Delimited engine-produced recovery data for one fresh model request.
  */
 export function renderToolAttemptContext(state: ToolPhaseAttemptState): string {
-  let observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
+  const observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
   let rejections: readonly RenderedRejection[] = state.rejections;
   let rendered = renderAttemptContext(state, observations, rejections);
   const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes();
 
-  if (overBudget() && state.observations.length > 0) {
-    const shrunk = shrinkObservationsByTruncateThenCollapse(
-      state,
-      (candidate) => renderAttemptContext(state, candidate, rejections),
-    );
-    observations = shrunk.observations;
-    rendered = shrunk.rendered;
-  }
-
   if (overBudget() && state.rejections.length > 1) {
     rejections = collapseOldestRejectionsToFit(state, observations);
-    rendered = renderAttemptContext(state, observations, rejections);
-  }
-
-  if (overBudget() && state.observations.length > 0) {
-    observations = collapseAllObservations(state);
     rendered = renderAttemptContext(state, observations, rejections);
   }
 
@@ -631,43 +652,10 @@ export function renderToolAttemptContext(state: ToolPhaseAttemptState): string {
   return rendered;
 }
 
-type RenderedObservation = Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'> | {
-  readonly collapsed: true; readonly count: number; readonly bytes: number;
-};
+type RenderedObservation = Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'>;
 type RenderedRejection = ToolAttemptRejection | {
   readonly collapsed: true; readonly count: number; readonly reason: string;
 };
-
-/**
- * Truncates each observation over an equal per-item share, then collapses whichever remain
- * oversized oldest-first, re-invoking `render` after each step and measuring the serialized,
- * escaped, delimited bytes that will actually be sent to the model. Shared by
- * {@link renderToolAttemptContext} and {@link renderObservationsContext} so the shrink algorithm
- * exists once; `render` supplies the caller's own JSON envelope (with or without a `rejections`
- * field).
- */
-function shrinkObservationsByTruncateThenCollapse(
-  state: ToolPhaseAttemptState,
-  render: (observations: readonly RenderedObservation[]) => string,
-): { observations: RenderedObservation[]; rendered: string } {
-  const fairShare = Math.floor(attemptContextBytes() / state.observations.length);
-  const truncated = state.observations.map((observation) => truncateObservationResult(observation, fairShare));
-  let rendered = render(truncated);
-  for (let i = 0; i < truncated.length && Buffer.byteLength(rendered) > attemptContextBytes(); i++) {
-    truncated[i] = collapseObservation(state.observations[i]);
-    rendered = render(truncated);
-  }
-  return { observations: truncated, rendered };
-}
-
-/** Replaces every observation body with one count+byte-total summary, dropping all bodies entirely. */
-function collapseAllObservations(state: ToolPhaseAttemptState): RenderedObservation[] {
-  return [{
-    collapsed: true,
-    count: state.observations.length,
-    bytes: state.observations.reduce((total, observation) => total + Buffer.byteLength(observation.result), 0),
-  }];
-}
 
 /** Serializes and escapes an observations-only `<runtime_tool_context>` block (no rejections field). */
 function renderObservationsOnly(state: ToolPhaseAttemptState, observations: readonly RenderedObservation[]): string {
@@ -689,34 +677,15 @@ function renderObservationsOnly(state: ToolPhaseAttemptState, observations: read
  *
  * @remarks
  * Observations and rejections ride separate surfaces so accepted evidence is never re-read as part
- * of a correction (see {@link renderRejectionExchange}). The shrink ladder below shares
- * {@link shrinkObservationsByTruncateThenCollapse} with {@link renderToolAttemptContext} — only the
- * JSON payload's `rejections` field is absent.
+ * of a correction (see {@link renderRejectionExchange}). Every body here was measured against the
+ * evidence share before it was stored, so the block is rendered as held — no shrink step.
  * @param state - Cumulative typed state for the current logical phase or hop.
  * @returns Zero messages when there are no accepted observations, otherwise one delimited user-role
  * message.
  */
 function renderObservationsContext(state: ToolPhaseAttemptState): ModelMessage[] {
   if (state.observations.length === 0) return [];
-  let observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
-  let rendered = renderObservationsOnly(state, observations);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes();
-
-  if (overBudget()) {
-    const shrunk = shrinkObservationsByTruncateThenCollapse(
-      state,
-      (candidate) => renderObservationsOnly(state, candidate),
-    );
-    observations = shrunk.observations;
-    rendered = shrunk.rendered;
-  }
-
-  if (overBudget()) {
-    observations = collapseAllObservations(state);
-    rendered = renderObservationsOnly(state, observations);
-  }
-
-  return [modelUserMessage(rendered)];
+  return [modelUserMessage(renderObservationsOnly(state, state.observations.map(observationForModel)))];
 }
 
 /** Structural shape of what {@link renderHeldDraftRepairContext} renders — never the full presentation envelope. */
@@ -930,27 +899,6 @@ function observationForModel(
   observation: ToolAttemptObservation,
 ): Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'> {
   return { callId: observation.callId, toolName: observation.toolName, result: observation.result };
-}
-
-/** Keeps a byte-bounded prefix of an observation body, appending the approved omission marker when it drops content. */
-function truncateObservationResult(observation: ToolAttemptObservation, targetBytes: number): RenderedObservation {
-  if (Buffer.byteLength(observation.result) <= targetBytes) return observationForModel(observation);
-  const kept = longestPrefixFitting(observation.result, candidate => Buffer.byteLength(candidate) <= targetBytes);
-  const dropped = Buffer.byteLength(observation.result) - Buffer.byteLength(kept);
-  return {
-    callId: observation.callId,
-    toolName: observation.toolName,
-    result: `${kept}…[+${dropped} bytes omitted from retry context — the full result was delivered when this call first ran]`,
-  };
-}
-
-/** Replaces an observation body with the approved identity+size stub, dropping the body entirely. */
-function collapseObservation(observation: ToolAttemptObservation): Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'> {
-  return {
-    callId: observation.callId,
-    toolName: observation.toolName,
-    result: `{"callId":"…","toolName":"…","omitted":true,"bytes":${Buffer.byteLength(observation.result)}}`,
-  };
 }
 
 function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinition[] {
@@ -1428,22 +1376,15 @@ export async function executeToolGenerationAttempt(
   // again for a result it holds, and is answered with a `duplicate_read` envelope instead of a
   // silent replay it cannot see. Same-batch siblings stay silently reused.
   const priorObservationKeys = new Set<string>();
-  // Reads whose stored body the checkpoint bounding pass dropped, by key and dropped byte size.
-  // Neither reusable nor a duplicate: the model cannot answer from a body it no longer holds, so
-  // the repeat is dispatched again and the fresh full result becomes the newest observation, which
-  // the bounding pass never drops. A later full observation for the same key supersedes the stub.
-  const evictedObservationBytes = new Map<string, number>();
+  // Observation bodies already held for this phase/hop. An accepted body is stored whole or not at
+  // all, so this running total is what the next candidate is measured against.
+  let heldObservationBytes = 0;
   for (const observation of input.priorObservations ?? []) {
+    heldObservationBytes += Buffer.byteLength(observation.result);
     const key = observation.acceptedCallKey;
-    if (key === undefined) continue;
-    if (observation.omittedBytes !== undefined) {
-      if (!reusableObservations.has(key)) evictedObservationBytes.set(key, observation.omittedBytes);
-      continue;
-    }
-    if (reusableObservations.has(key)) continue;
+    if (key === undefined || reusableObservations.has(key)) continue;
     reusableObservations.set(key, observation);
     priorObservationKeys.add(key);
-    evictedObservationBytes.delete(key);
   }
 
   for (const call of generated.toolCalls) {
@@ -1571,16 +1512,6 @@ export async function executeToolGenerationAttempt(
       input.debugLog?.(`[AI] tool-result-reused phase=${safeLogIdentifier(input.phase, 'unknown')} tool=${safeLogIdentifier(call.toolName, 'unknown')} callId=${safeCallId(call.callId)}`);
       continue;
     }
-    const evictedBytes = reusableKey === undefined ? undefined : evictedObservationBytes.get(reusableKey);
-    if (evictedBytes !== undefined) {
-      input.debugLog?.(
-        `[Observation] re-served evicted read phase=${safeLogIdentifier(input.phase, 'unknown')}`
-        + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
-        + ` callId=${safeCallId(call.callId)}`
-        + ` key=${reusableKey}`
-        + ` bytes=${evictedBytes}`,
-      );
-    }
     const progressLabel = definition ? definition.progressLabel : `Running ${call.toolName}…`;
     if (progressLabel) input.sink.status('tool', progressLabel);
     const invoked = await dispatchRegistryTool(input, call);
@@ -1627,30 +1558,36 @@ export async function executeToolGenerationAttempt(
         };
       }
     } else {
+      const observe = !controlSuccess && !terminalSuccess;
+      // Storage decision for the one body this call produced, taken here because this is where the
+      // held evidence and the candidate are both known. What is stored is what the next attempt
+      // delivers, so a body that does not fit alongside the held ones is not shrunk to fit: the
+      // read is handed to the hop-by-hop path (2026-09-06 ruling) and the held bodies stay whole.
+      let storedResult = resultText;
+      if (observe) {
+        const candidateBytes = Buffer.byteLength(resultText);
+        if (heldObservationBytes + candidateBytes > storedEvidenceKindBytes()) {
+          storedResult = resultTooLargeReply(call.toolName, candidateBytes, heldObservationBytes, storedEvidenceKindBytes());
+          input.debugLog?.(
+            `[Observation] result too big phase=${safeLogIdentifier(input.phase, 'unknown')}`
+            + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
+            + ` callId=${safeCallId(call.callId)}`
+            + ` bytes=${candidateBytes}`
+            + ` held=${heldObservationBytes}`
+            + ` budget=${storedEvidenceKindBytes()}`,
+          );
+        }
+        heldObservationBytes += Buffer.byteLength(storedResult);
+      }
       recordToolOutcome(call, {
         status: 'executed',
         detail: {
-          result: resultText,
-          observe: !controlSuccess && !terminalSuccess,
-          ...(!controlSuccess && !terminalSuccess && reusableKey ? { acceptedCallKey: reusableKey } : {}),
+          result: storedResult,
+          observe,
+          ...(observe && reusableKey ? { acceptedCallKey: reusableKey } : {}),
         },
       }, calls, observations, rejections);
-      // A single result larger than the whole evidence share cannot be stored losslessly; the
-      // bounding pass keeps a marked prefix, the same over-budget handling the render path applies
-      // to one oversized observation. The 2026-09-06 ruling assigns a body this large to the
-      // approval process, and no discovery path hands off on result size — only an oversized
-      // *scope* reroutes (`detectOverBudgetFromResult` in graph.ts) — so the case is logged where
-      // it occurs instead of passing silently.
-      if (!controlSuccess && !terminalSuccess && Buffer.byteLength(resultText) > storedEvidenceKindBytes()) {
-        input.debugLog?.(
-          `[Observation] result exceeds the evidence share phase=${safeLogIdentifier(input.phase, 'unknown')}`
-          + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
-          + ` callId=${safeCallId(call.callId)}`
-          + ` bytes=${Buffer.byteLength(resultText)}`
-          + ` share=${storedEvidenceKindBytes()}`,
-        );
-      }
-      if (!controlSuccess && !terminalSuccess && reusableKey && !reusableObservations.has(reusableKey)) {
+      if (observe && reusableKey && !reusableObservations.has(reusableKey)) {
         reusableObservations.set(reusableKey, observations[observations.length - 1]);
       }
     }
