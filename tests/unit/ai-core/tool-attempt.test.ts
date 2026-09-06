@@ -1339,6 +1339,100 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(rendered(3)).toContain('[ai].[vwpricelist]');
   });
 
+  it('serves a repeat of an evicted read instead of rejecting it, so the model gets the body the checkpoint dropped', async () => {
+    // T3 2026-09-06: two object bodies that cannot co-reside in the evidence share evicted each
+    // other, and the repeat the model issued for the body it could no longer see was refused as a
+    // duplicate. Six of ten provider calls went to that refusal and the hop ended with no answer.
+    const bodies: Record<string, string> = {
+      spimportorders: JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(28_000) }),
+      spcleanorders: JSON.stringify({ id: 'spcleanorders', body: 'B'.repeat(21_000) }),
+    };
+    const { registry, invocations } = scriptedRegistry([{
+      name: 'lineage_get_object_detail',
+      effect: 'read',
+      result: (input) => bodies[String((input as { id: string }).id)],
+    }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_object_detail', { id: 'spcleanorders' })] },
+      { toolCalls: [validCall('call-3', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { text: 'Both procedures write the staging table.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_object_detail'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('What do these procedures do?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    const logged: string[] = [];
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 4; index++) {
+      const result = await executeToolAttempt(port, plan, {
+        priorState: state,
+        debugLog: (message) => { logged.push(message); },
+      });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    // The second attempt's storage evicts the first body; the third call is that evicted read.
+    expect(state.observations[0].result).toContain('"omitted":true');
+    expect(invocations.map((invocation) => (invocation.input as { id: string }).id))
+      .toEqual(['spimportorders', 'spcleanorders', 'spimportorders']);
+    expect(results[2].rejections).toEqual([]);
+    expect(results[2].calls.map((call) => call.status)).toEqual(['executed']);
+    expect(results[2].semanticFailures).toBe(0);
+    expect(state.semanticFailures).toBe(0);
+    // The fresh full body is the newest observation, and the model sees it on the next request.
+    expect(state.observations.at(-1)?.result).toBe(bodies.spimportorders);
+    expect(port.requests[3].messages.map((message) => String(message.content)).join(' ')).toContain('A'.repeat(1_000));
+    const reserved = logged.filter((message) => message.startsWith('[Observation] re-served evicted read'));
+    expect(reserved).toHaveLength(1);
+    expect(reserved[0]).toContain('callId=call-3');
+    expect(reserved[0]).toContain(`bytes=${Buffer.byteLength(bodies.spimportorders)}`);
+  });
+
+  it('keeps duplicate_read, hint unchanged, for a repeat whose stored body is still present', async () => {
+    const body = JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(1_000) });
+    const { registry, invocations } = scriptedRegistry([{ name: 'lineage_get_object_detail', effect: 'read', result: body }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { text: 'It writes the staging table.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_object_detail'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('What does this procedure do?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    const logged: string[] = [];
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 3; index++) {
+      const result = await executeToolAttempt(port, plan, {
+        priorState: state,
+        debugLog: (message) => { logged.push(message); },
+      });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    expect(invocations).toHaveLength(1);
+    expect(results[1].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
+    // Mirrors the module-private `DUPLICATE_READ_HINT`: with the evicted case now re-served, this
+    // sentence is true in every state it reaches the model in.
+    expect(results[1].rejections[0]?.hint)
+      .toBe('You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.');
+    expect(state.observations[0].result).toBe(body);
+    expect(logged.some((message) => message.startsWith('[Observation] re-served evicted read'))).toBe(false);
+  });
+
   it('replays turn 23: two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {
     const envelope = presentResultRejectionEnvelope({
       reason: 'highlight_groups node_ids must be explained by sections[].node_ids or notes[]: [dbo].[Orders]',

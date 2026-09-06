@@ -63,7 +63,11 @@ const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateRead,
 ]);
 
-/** Hint paired with a `duplicate_read` rejection: the answer material is already in the observations. */
+/**
+ * Hint paired with a `duplicate_read` rejection: the answer material is already in the observations.
+ * Raised only while that body is still stored — an evicted body is re-served instead, so the hint
+ * is a true statement in every state it reaches the model in.
+ */
 const DUPLICATE_READ_HINT = 'You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.';
 
 /** Reports whether a rejection code counts against {@link MAX_TOOL_SEMANTIC_FAILURES}. */
@@ -235,6 +239,12 @@ export interface ToolAttemptObservation {
   readonly result: string;
   /** Private identity used to reuse an equivalent accepted read without dispatching it again. */
   readonly acceptedCallKey?: string;
+  /**
+   * Byte size of the body {@link boundStoredObservations} dropped, present exactly when `result` is
+   * the identity+size stub instead of the served body. A read whose body is gone is no longer an
+   * answer the model holds, so its repeat is a genuine read and never a `duplicate_read`.
+   */
+  readonly omittedBytes?: number;
 }
 
 /** Ordered disposition of one provider-emitted call. */
@@ -492,8 +502,14 @@ function boundStoredObservations(observations: readonly ToolAttemptObservation[]
       // evict each other every hop, spinning the phase to MAX_TOOL_PROVIDER_CALLS with no answer
       // (T3 2026-09-06: 28_752 + 21_148 bytes against a 45_056 share, six wasted provider calls).
       // Same identity+size projection the render path already collapses an over-budget body to.
+      // `omittedBytes` records that the body went, so the dedupe answers the model's repeat with
+      // the read instead of a `duplicate_read` naming observations that no longer carry it.
       if (source.acceptedCallKey === undefined) continue;
-      const stub = { ...source, result: collapseObservation(source).result };
+      const stub = {
+        ...source,
+        result: collapseObservation(source).result,
+        omittedBytes: Buffer.byteLength(source.result),
+      };
       const stubBytes = Buffer.byteLength(JSON.stringify(stub));
       if (prependedArrayBytes(retainedBytesSum, retained.length, stubBytes) > MAX_STORED_EVIDENCE_KIND_BYTES) break;
       retained.unshift(stub);
@@ -1396,11 +1412,22 @@ export async function executeToolGenerationAttempt(
   // again for a result it holds, and is answered with a `duplicate_read` envelope instead of a
   // silent replay it cannot see. Same-batch siblings stay silently reused.
   const priorObservationKeys = new Set<string>();
+  // Reads whose stored body the checkpoint bounding pass dropped, by key and dropped byte size.
+  // Neither reusable nor a duplicate: the model cannot answer from a body it no longer holds, so
+  // the repeat is dispatched again and the fresh full result becomes the newest observation, which
+  // the bounding pass never drops. A later full observation for the same key supersedes the stub.
+  const evictedObservationBytes = new Map<string, number>();
   for (const observation of input.priorObservations ?? []) {
-    if (observation.acceptedCallKey !== undefined && !reusableObservations.has(observation.acceptedCallKey)) {
-      reusableObservations.set(observation.acceptedCallKey, observation);
-      priorObservationKeys.add(observation.acceptedCallKey);
+    const key = observation.acceptedCallKey;
+    if (key === undefined) continue;
+    if (observation.omittedBytes !== undefined) {
+      if (!reusableObservations.has(key)) evictedObservationBytes.set(key, observation.omittedBytes);
+      continue;
     }
+    if (reusableObservations.has(key)) continue;
+    reusableObservations.set(key, observation);
+    priorObservationKeys.add(key);
+    evictedObservationBytes.delete(key);
   }
 
   for (const call of generated.toolCalls) {
@@ -1528,6 +1555,16 @@ export async function executeToolGenerationAttempt(
       input.debugLog?.(`[AI] tool-result-reused phase=${safeLogIdentifier(input.phase, 'unknown')} tool=${safeLogIdentifier(call.toolName, 'unknown')} callId=${safeCallId(call.callId)}`);
       continue;
     }
+    const evictedBytes = reusableKey === undefined ? undefined : evictedObservationBytes.get(reusableKey);
+    if (evictedBytes !== undefined) {
+      input.debugLog?.(
+        `[Observation] re-served evicted read phase=${safeLogIdentifier(input.phase, 'unknown')}`
+        + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
+        + ` callId=${safeCallId(call.callId)}`
+        + ` key=${reusableKey}`
+        + ` bytes=${evictedBytes}`,
+      );
+    }
     const progressLabel = definition ? definition.progressLabel : `Running ${call.toolName}…`;
     if (progressLabel) input.sink.status('tool', progressLabel);
     const invoked = await dispatchRegistryTool(input, call);
@@ -1582,6 +1619,21 @@ export async function executeToolGenerationAttempt(
           ...(!controlSuccess && !terminalSuccess && reusableKey ? { acceptedCallKey: reusableKey } : {}),
         },
       }, calls, observations, rejections);
+      // A single result larger than the whole evidence share cannot be stored losslessly; the
+      // bounding pass keeps a marked prefix, the same over-budget handling the render path applies
+      // to one oversized observation. The 2026-09-06 ruling assigns a body this large to the
+      // approval process, and no discovery path hands off on result size — only an oversized
+      // *scope* reroutes (`detectOverBudgetFromResult` in graph.ts) — so the case is logged where
+      // it occurs instead of passing silently.
+      if (!controlSuccess && !terminalSuccess && Buffer.byteLength(resultText) > MAX_STORED_EVIDENCE_KIND_BYTES) {
+        input.debugLog?.(
+          `[Observation] result exceeds the evidence share phase=${safeLogIdentifier(input.phase, 'unknown')}`
+          + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
+          + ` callId=${safeCallId(call.callId)}`
+          + ` bytes=${Buffer.byteLength(resultText)}`
+          + ` share=${MAX_STORED_EVIDENCE_KIND_BYTES}`,
+        );
+      }
       if (!controlSuccess && !terminalSuccess && reusableKey && !reusableObservations.has(reusableKey)) {
         reusableObservations.set(reusableKey, observations[observations.length - 1]);
       }
