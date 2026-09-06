@@ -563,9 +563,6 @@ export function GraphCanvas({
   // the React Flow area and dim the graph around a focused report section.
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<number | null>(null);
-  // Section numbers a node click lights up as chips (may be several); a chip click or keyboard nav
-  // clears this back to null, falling back to lighting only `activeSection`.
-  const [highlightedSections, setHighlightedSections] = useState<number[] | null>(null);
   const aiPanelDefaultOpen = !!(
     (aiPreview && aiPreview.nodeIds.size === 0) ||
     (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
@@ -578,7 +575,6 @@ export function GraphCanvas({
     const cached = aiLayoutCache.current.get(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName));
     setAiPanelOpen(cached?.open ?? aiPanelDefaultOpen);
     setActiveSection(cached?.section ?? null);
-    setHighlightedSections(null);
   }, [aiDescription, aiPanelDefaultOpen, activeAdvancedProfile?.id, aiViewName]);
   useEffect(() => {
     if (!aiDescription) return;
@@ -599,7 +595,6 @@ export function GraphCanvas({
    */
   const handleFocusSection = useCallback((n: number | null) => {
     setActiveSection(n);
-    setHighlightedSections(null);
     if (n == null) return;
     const nodeIds = aiSectionsRef.current.find(section => section.n === n)?.nodeIds;
     if (!nodeIds?.length) return;
@@ -759,11 +754,10 @@ export function GraphCanvas({
       }
       // Direct canvas selection replaces report-section focus — the section dim must not fight
       // the click-selection highlight underneath it. A node badged into the report instead lands
-      // the pane on the first section (document order) that discusses it, and lights every chip
-      // that does; a node in no section keeps the plain deselect.
+      // the pane on the section (at most one, first-wins already resolved it) that discusses it;
+      // a node in no section keeps the plain deselect.
       const matches = sectionsForNode(aiSections, node.id);
       setActiveSection(matches[0] ?? null);
-      setHighlightedSections(matches.length ? matches : null);
       onNodeClick(node.id);
     },
     [graphMode, onNodeClick, onSchemaNodeSelect, aiSections]
@@ -1307,7 +1301,6 @@ export function GraphCanvas({
    */
   const handlePaneReset = useCallback(() => {
     setActiveSection(null);
-    setHighlightedSections(null);
     setPinnedColumn(null);
     setHoveredColumn(null);
     onClearSelection?.();
@@ -1871,7 +1864,6 @@ export function GraphCanvas({
               onExpandedChange={setAiPanelOpen}
               sections={aiSections}
               activeSection={activeSection}
-              highlightedSections={highlightedSections ?? undefined}
               onFocusSection={handleFocusSection}
               onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
               dockPosition={dockPosition}

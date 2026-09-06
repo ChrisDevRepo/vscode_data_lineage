@@ -47,9 +47,6 @@ interface AiDescriptionOverlayProps {
   sections?: readonly AiReportSection[];
   /** The focused section number, or `null` when no section focus is active — the scroll target. */
   activeSection?: number | null;
-  /** Chips to render active — defaults to `[activeSection]`; a clicked node in several sections
-   *  lights up all of them, while only the first (`activeSection`) is scrolled to and dimmed. */
-  highlightedSections?: readonly number[];
   /** Called when the user (de)selects a section chip — the canvas highlights that section's nodes. */
   onFocusSection?: (n: number | null) => void;
   /** Called when a `#focus-node:<nodeId>` link is clicked — zooms the graph to that node. */
@@ -82,7 +79,6 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   onExpandedChange,
   sections,
   activeSection,
-  highlightedSections,
   onFocusSection,
   onFocusNode,
   dockPosition = 'right',
@@ -109,9 +105,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     return () => observer.disconnect();
   }, [expanded, onPanelResize]);
 
-  // The chip row lights every section a node click matched; a plain focus (chip click, keyboard
-  // nav, restored layout) has no multi-highlight, so it falls back to just the active one.
-  const litSections = highlightedSections ?? (activeSection != null ? [activeSection] : []);
+  // The chip row lights the active section only — a node badge resolves to at most one section
+  // (first-wins at assembly), so there is never more than one chip to light.
+  const litSections = activeSection != null ? [activeSection] : [];
 
   // Body scroll survives collapse/expand: the rail swap unmounts `.ln-ai-description-body`, so its
   // native scrollTop is lost — captured on every scroll and reapplied once the body remounts.
