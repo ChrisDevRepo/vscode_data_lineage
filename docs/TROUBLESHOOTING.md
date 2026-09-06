@@ -57,7 +57,7 @@ UI does not create a separate button for each deferred route.
 | GitHub Copilot | claude-sonnet-5 | high | good | ~14 min | not reported by the Copilot API |
 | Azure AI Foundry | gpt-5.4-mini | medium | good | ~8 min | ~300k |
 | Fireworks | deepseek-v4-flash-0731 | low | good | ~10 min | ~345k |
-| Google | gemini-3.8-flash | provider default | good | ~8 min | ~415k |
+| Google | gemini-3.8-flash | medium (the model default) | good | ~8 min | ~415k |
 | Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~21 min | ~375k |
 
 These numbers are snapshots of particular days and say nothing about what a given setup will do; they depend on model, region, load, reasoning settings and database size. Models reached through OpenRouter and Z.ai showed high or erratic latency and timeouts during testing and are not in the table. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete — up to the zero-output limit below.
