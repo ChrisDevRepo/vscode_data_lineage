@@ -184,8 +184,8 @@ business_capture:
        switch (parameter allow-list, CASE ladder, IF set) and what it changes
        for the business. A branch commented out or absent is declared but not
        active, and reads as that.
-    3. Grain — the join and WHERE predicates the rows arrive under, and the
-       row that comes out: "one row per …".
+    3. Grain — the row that comes out ("one row per …"), and the predicates
+       and join keys the rows arrive under.
     4. Formulas — per distinct assigned expression and its fallback default,
        write the formula as a `$$ … $$` block with the business meaning of
        its terms. A `$$ … $$` block must
@@ -197,7 +197,8 @@ business_capture:
        or derivation.
     6. Lifecycle — status transitions as numbered steps ("1. New →
        2. Approved → 3. Shipped"), the business state change rather than the
-       UPDATE that effects it.
+       UPDATE or CASE that effects it; the ladder renders as those steps, not
+       as a $$ block.
     7. Loading step — what the DML does to the target: truncate+insert,
        merge, append, purge.
     8. Error handling — what happens when a step fails, and what the rows
@@ -207,8 +208,7 @@ business_capture:
        available SQL`.
 
     The evidence for 3, 4, 7 and 8 is a short ```sql fence of the deciding
-    expression. A SELECT-only view has no step 6 or 7: it says what data it
-    makes queryable, under which predicate, and what that means.
+    expression.
     </section_skeleton>
   example: |
     `spCalcA` computes `NetAmountA` at the final INSERT into
@@ -277,7 +277,8 @@ technical_capture:
        scalar UDF per row, unguarded UPDATE or DELETE, TRUNCATE outside a
        transaction, loading order that reads a target before it is written.
     9. Comments — read against the statement they annotate; a correct one that
-       answers the question belongs in the body.
+       answers the question belongs in the body, carrying the comment's own
+       terms.
     </section_skeleton>
 
     Markdown; the engine owns `#`/`##` headings, so a bold label opens the
@@ -337,18 +338,14 @@ structural_summary:
     this same body — the locked classification sets the count, the focus type
     does not.
 
-    What this node **is**, read from `focus_node` alone; the surrounding
-    procedure slots carry what it **does**.
+    What this node **is**, read from `focus_node` alone; its columns, types and
+    keys are on the node already, and the surrounding procedure slots carry
+    what it **does**.
 
     The parts, in this order, each opened with a bold label on its own line:
 
     **Purpose**
     One sentence naming the node's role in the pipeline, from its id and type.
-
-    **Columns**
-    A `| Column | Type | Role / ⚠️ |` table from `cols[]`, role as a short phrase
-    (key / dim / metric / audit / computed), ⚠️ on a nullable column.
-    Absent `cols[]`: "Column metadata not available in current model."
 
     **Upstream sources**
     One line per `in[]` entry — the nodes that write TO this table: node id and
@@ -359,10 +356,6 @@ structural_summary:
     One line per `out[]` entry — the nodes that read FROM this table: node id and
     its role in one sentence.
     Empty or absent `out[]`: "No downstream consumers found in graph."
-
-    **Grain / keys**
-    From the PK-flagged columns in `cols[]` and from `fks[]`.
-    Neither present: "Key information not available in current model."
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
 # Fires additively alongside business_capture / technical_capture when the

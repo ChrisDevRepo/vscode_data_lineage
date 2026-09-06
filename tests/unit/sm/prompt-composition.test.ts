@@ -69,9 +69,10 @@ describe('prompt composition', () => {
     // An applied AI bookmark is a run already stored: it is read back, never re-walked. The scope
     // walk is the one discovery call that reroutes to the approval gate, so answering "what do I
     // see here" with it proposed a fresh exploration over a graph the user had already approved.
+    // Precedence is the contract: the bookmark route selects the evidence source before the kind
+    // of ask reaches the scope-walk route.
     expect(discover).toContain('Applied AI bookmark');
-    expect(discover).toContain('do not re-walk the bookmark scope');
-    expect(discover).toContain('ask before exploring');
+    expect(discover.indexOf('Applied AI bookmark')).toBeLessThan(discover.indexOf('lineage_get_scope_bundle'));
     expect(active).toContain('Active Exploration Protocol');
     expect(active).toContain('DECISION SOURCE');
     expect(active).not.toContain('User-facing chat text: Markdown only');
@@ -705,10 +706,11 @@ describe('prompt composition', () => {
     expect(active).toContain('REJECTION SELF-REPAIR');
   });
 
-  // The synthesis reminder rides the completion tool_result at the highest-attention slot, so a
-  // permission gate stated there is the last word the model reads on ⚠️ callouts and outranks the
-  // placement rule assets/aiOutputTemplates.yaml carries. Both surfaces must state the same rule.
-  it('places captured ⚠️ callouts at synthesis instead of re-adjudicating significance', () => {
+  // The ⚠️ placement rule has two homes, both pinned in tests/unit/ai-core/rule-gates.test.ts: the
+  // `general` risks bullet and the `closing` block. The synthesis reminder rides the completion
+  // tool_result at the highest-attention slot, so anything it says about ⚠️ callouts is the last
+  // word and outranks those two — it therefore states nothing about them.
+  it('leaves ⚠️ significance to the templates, opening no gate at the highest-attention slot', () => {
     const result: SmResult = {
       status: 'complete',
       originNodeId: '[dbo].[origina]',
@@ -719,10 +721,9 @@ describe('prompt composition', () => {
       columnAspect: null,
     };
     const reminder = buildSmCompletionEnvelope(result, 'What feeds NetAmountA?', []).synthesis_reminder;
-    const policy = reminder.split('\n').find((line) => line.startsWith('- ⚠️ callout policy')) ?? '';
 
-    expect(policy).toContain('significance was settled at capture');
-    expect(policy).not.toMatch(/only for significant|include risk callouts only/i);
+    expect(reminder).not.toMatch(/only for significant|include risk callouts only|⚠️ only for/i);
+    expect(reminder.split('\n').filter((line) => line.startsWith('- ⚠️ callout policy'))).toEqual([]);
   });
 
   it('pins the tool-policy allow-lists the split boundary sentence depends on', () => {
@@ -732,9 +733,9 @@ describe('prompt composition', () => {
   });
 
   // The schema description (structure, owned by Zod) keeps only the section-link/note-linkage
-  // shape; the completeness rule itself — every kept node with no detail slot earns a note, never
-  // "stay bare" — is wording, owned solely by the synthesis reminder in smPrompts.ts (surviving
-  // home per the schema/wording split), and pinned below on `notesLine`.
+  // shape; the completeness rule itself — a kept node with no detail slot is covered on one of the
+  // three link surfaces, never left bare — is wording, owned solely by smPrompts.ts, and stated on
+  // the passthrough digest heading that renders directly above the nodes it governs.
   it('never licenses leaving a kept node bare, on either surface that states the rule', () => {
     const projected = toModelJsonSchema(PresentResultModelSchema) as { properties?: Record<string, { description?: string }> };
     const notesDescription = projected.properties?.notes?.description ?? '';
@@ -758,7 +759,14 @@ describe('prompt composition', () => {
 
     expect(notesLine, 'the reminder states the notes rule').not.toBe('');
     expect(notesLine, 'and does not license a bare node').not.toContain('stay bare');
-    expect(notesLine).toMatch(/engine lists with no detail slot earns a note/);
+
+    const digestHeading = reminder.split('\n').find((line) => line.startsWith('Kept passthrough nodes')) ?? '';
+
+    expect(digestHeading, 'the covering duty is stated beside the nodes it governs').not.toBe('');
+    expect(digestHeading).toContain('`sections[].node_ids`');
+    expect(digestHeading).toContain('`highlight_groups[].node_ids`');
+    expect(digestHeading).toContain('`notes[].node_id`');
+    expect(digestHeading).not.toContain('stay bare');
     expect(reminder, 'the engine lists the uncovered kept node').toContain('[ct].[calendar]');
   });
 });

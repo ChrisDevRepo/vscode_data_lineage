@@ -253,11 +253,10 @@ function buildSynthesisReminder(question: string): string {
     `- User question: "${question}"`,
     '- `intro`: one paragraph anchored to the question and the locked Mission type, no headings.',
     '- `sections[]`: the body, in graph order — terminal sources, then each transform, then the origin and what reads it. `section.label` is the heading, `section.node_ids[]` links the nodes that section documents, and `section.text` carries, for each linked node, the rules it applies, the predicates that shape its rows, its `$$` formulas and its ⚠️ callouts, with the short SQL that grounds them — drawn from `detail_slots[]`, `node_states[]` and the engine facts below.',
-    '- `notes[]`: the caption line under a node. Every kept node the engine lists with no detail slot earns a note here, written from its writer/reader facts below.',
+    '- `notes[]`: the caption line under a node — one sentence on what it does in this flow.',
     '- `highlight_groups[]`: the Lineage palette over the flow roles below, at least a `target` group on the origin.',
     '- `summary`: one sentence naming the answer.',
     '- `result.scope.node_ids` is the id set this render accepts; `sections[].node_ids[]`, `notes[].node_id` and `highlight_groups[].node_ids[]` name ids from it, and any other object the evidence names is prose in `sections[].text`.',
-    '- ⚠️ callout policy: each captured ⚠️ appears once, in the section that documents its node — significance was settled at capture.',
     '- Formulas are LaTeX math: `$...$` inline, `$$…$$` for a standalone block (e.g. `$$ NetAmountA = QtyA \\times PriceA $$`), with `\\times`, `\\text{}`, `\\operatorname{COALESCE}`.',
     'This is the document beside the graph, not a chat reply: Markdown only, no arbitrary HTML, SQL in fenced ```sql blocks. Length follows the captured evidence, not the question — every kept node keeps its rules, predicates and formulas.',
   ].join('\n');
@@ -600,7 +599,7 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
   const undispositioned = qualifying.filter(n => !actionById.has(n.id));
 
   return [
-    'Kept passthrough nodes (engine flow facts) — the kept nodes with no detail slot, each covered by a `sections[].node_ids`, `highlight_groups[].node_ids` or `notes[].node_id` entry whose caption is written from its writer/reader facts:',
+    'Kept passthrough nodes (engine flow facts) — the kept nodes with no detail slot. Each one is a paragraph in the section its writer or reader documents — what it holds for this flow, the predicate it is read or written under, and the row grain it lands at, read off that writer\'s and reader\'s captured DML — and carries a `sections[].node_ids`, `highlight_groups[].node_ids` or `notes[].node_id` entry:',
     ...dispositioned.map(renderLine),
     ...(undispositioned.length > 0
       ? [
