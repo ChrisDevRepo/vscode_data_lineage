@@ -2,14 +2,12 @@
  * Pure SM sliding-memory policy for the native LangGraph host.
  *
  * @remarks
- * The host runs active analysis as serial LangGraph worker calls. Sliding wipe is applied at the graph
- * hop boundary. This module holds provider-neutral trimming logic over LangChain messages —
- * no VS Code calls and no session state — so it is deterministically unit-testable without
- * a live model.
- *
- * The hop-boundary decision itself (when to wipe) is the engine's authoritative `getHopDiagnostics().hop`
- * counter, read by the host closure — not re-derived here. This module only answers *how* to trim once
- * the host decides a wipe is due.
+ * The host runs active analysis as serial LangGraph worker calls. On the success path the graph
+ * reseeds the thread to a single continuation anchor (`[RESET_HISTORY, anchor]`) at approval and
+ * after every committed hop, so nothing needs trimming there. This module answers the one case
+ * where the accumulated thread is still worth a tail — the active loop stopping incomplete — by
+ * keeping the anchor plus the last well-formed tool pair. Provider-neutral, no VS Code calls and
+ * no session state, so it is deterministically unit-testable without a live model.
  */
 
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -56,9 +54,9 @@ function findLastToolPair(messages: readonly ModelMessage[]): ToolPairIndices | 
 }
 
 /**
- * Extracts the sliding-memory tail from the accumulated history: a single leading user anchor
- * plus the last well-formed tool pair. This provides the Short-Term Memory view for the AI
- * without destructively wiping the underlying state.
+ * Extracts the tail worth keeping from an accumulated history: a single leading user anchor plus
+ * the last well-formed tool pair. Used when the active loop ends incomplete; a committed hop is
+ * reseeded to the anchor alone by the graph.
  *
  * @remarks
  * The stable prefix (mission brief, contract, discovery summary) rides in the re-rendered `system`

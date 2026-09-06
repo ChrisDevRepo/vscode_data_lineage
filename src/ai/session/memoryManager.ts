@@ -451,8 +451,8 @@ export class AiMemoryManager {
   }
 
   /**
-   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the system
-   * prompt `<short_term_memory>` block.
+   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the per-hop
+   * user message's `<short_term_memory>` block.
    *
    * @remarks
    * Same sliding window used by `getWorkingMemory` — exposed separately so prompt builders

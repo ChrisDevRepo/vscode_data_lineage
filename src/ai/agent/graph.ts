@@ -498,7 +498,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     // Slash commands are the user STATING intent (command parsing, not language guessing) — the
     // only deterministic route. All free-prose intent goes to the structured detector below
-    // (engine-has-no-intent-authority rule): no regex over prose ever decides a route.
+    // (engine-has-no-intent-authority rule): no regex over prose decides a route, with one stated
+    // exception — the host-owned aggregate facts fast path in tryBuildDeterministicContextAnswer
+    // answers a platform/schema/count question from the snapshot without a model call. It matches
+    // English phrasing only; any other phrasing takes the detector.
     const slash = detectSlashRoute(state.prompt);
     const held = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration
       ? { gate: sess.phase.gate, revision: sess.pendingExploration.revision }

@@ -61,18 +61,22 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
 - Active exploration keeps a stable system prefix (protocol, stage block,
   mission brief, escaped canonical `<original_question>`, and discovery
   summary) and sends focus, task, capture recipe, escaped hop context, recent
-  summaries, and rejection guidance in a bounded per-hop message. Broad
-  participant history and prior-hop tool payloads are not replayed into every
-  hop. The canonical question is resolved at `start_exploration` from
+  summaries, and rejection guidance in a bounded per-hop message. The thread is
+  reseeded to one continuation anchor at approval and after every committed hop,
+  so no hop — the first included — carries the participant history or a prior
+  hop's tool payloads. The canonical question is resolved at `start_exploration` from
   user-authored text (verbatim discovery prompt, then the current turn's
   prompt) before the model-supplied paraphrase.
 - Per-hop memory is tiered so repeated hops stay flat in size: recent hop
   summaries ride in a fixed-size sliding window, the full findings archive
   accumulates engine-side and is replayed once at synthesis rather than per
   hop, and rejection history compacts to a bounded ring of one-line entries.
-  A rejected tool call is echoed back into history by name and call id only —
-  its payload is never resent — and only the newest rejection carries the full
-  repair envelope. The replayed exchange closes on a user-role continuation
+  A rejected tool call is echoed back into history as a native tool-call and
+  tool-result pair: only the newest rejection is replayed, its arguments are the
+  bounded correction fragments the rejection flagged — never the raw payload —
+  and for `present_result`, whose rejected draft the session holds and renders
+  as its own block, the replayed call carries the name and call id only, so no
+  section text is sent twice in one attempt. The replayed exchange closes on a user-role continuation
   note: with history ending on a tool result, the replayed function call stays
   inside the provider's current turn, where Gemini 3 enforces thought-signature
   echo on every function call and `LanguageModelToolCallPart` carries no

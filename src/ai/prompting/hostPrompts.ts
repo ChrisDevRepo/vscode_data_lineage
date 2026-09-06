@@ -252,15 +252,17 @@ export function buildGateRefinePrompt(
 }
 
 /**
- * The leading user anchor seeded into active-phase history after a sliding-memory wipe.
+ * The leading user anchor the active-phase thread is reseeded to at approval and after every
+ * committed hop.
  *
  * @remarks
- * Once the host wipes the active history (hop 2+), the trimmed array is reseeded as
- * `[anchor, last-tool-call, last-tool-result]`. The anchor keeps the
- * conversation leading with a `user` turn (strict providers reject a leading assistant turn) and
- * points the model at the next agenda node — the hop protocol, agenda, and rolling
- * `<short_term_memory>` all live in the re-rendered `system`, so this stays a one-line continuation
- * directive, not a per-hop task config.
+ * The graph replaces the thread with `[anchor]` alone (`RESET_HISTORY` + this message); the
+ * per-hop task, focus context and rolling `<short_term_memory>` ride the worker user message that
+ * follows, and the hop protocol and session memo blocks live in the stable `system`. The anchor
+ * keeps the conversation leading with a `user` turn (strict providers reject a leading assistant
+ * turn) and points the model at the next agenda node, so it stays a one-line continuation
+ * directive, not a per-hop task config. The incomplete-stop path keeps the last tool pair behind
+ * it instead (`extractShortTermMemory`).
  *
  * @returns The anchor user-message text.
  */

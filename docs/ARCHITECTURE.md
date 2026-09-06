@@ -37,16 +37,18 @@ it again:
 - **Normalization** — the shared coercion and id-resolution helpers in
   [`src/ai/support/inputNormalization.ts`](../src/ai/support/inputNormalization.ts)
   put a tool argument into its declared shape and resolve a model-written object
-  reference against the loaded snapshot.
+  reference against the loaded snapshot. Every normalization that changes a
+  model-written value is logged as `[Normalize] tool=… field=… from=… to=…`;
+  a silent rewrite is a defect.
 - **Schema parse** — the tool's Zod schema is the structural contract; a payload
   that does not parse never reaches a handler.
 - **Policy rejection** — the small set of phase- and state-dependent checks a
   schema cannot express ([`src/ai/interaction/`](../src/ai/interaction/)),
-  returned to the model through one shared error envelope whose reason comes from
-  the central registry in
+  returned to the model through one shared error envelope. A code that a second
+  surface or a second emission site names is one entry in
   [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts), so
-  the emitting check and the instruction that teaches the recovery name the same
-  code.
+  the emitting check and the instruction that teaches the recovery cannot drift
+  apart; a code with one emitter and no instruction lives where it is emitted.
 
 The layering is the containment strategy. Model nondeterminism — a hallucinated
 id, an invented column, an out-of-contract argument — is absorbed at the boundary
@@ -118,7 +120,7 @@ flowchart LR
 flowchart LR
     Q([User request]) --> D[Discovery]
     D -->|direct answer| END(((End)))
-    D -->|explicit bounded graph| P[Visual preview] --> END
+    D -->|answer offers a preview| PB([Preview button, next turn]) --> P[Visual preview] --> END
     D -->|deep analysis or column trace| G[/Consent gate/]
     G -->|refine| G
     G -->|cancel| END
@@ -293,10 +295,14 @@ session writers rather than prompt-inferred state. An empty native
 through the normal reset path.
 
 The Detail Archive is the durable semantic store for an exploration.
-`NavigationEngine` separately owns agenda and node lifecycle. Each active hop
-rebuilds a bounded Working Memory projection from the archive and current
-engine facts; active requests do not accumulate the full transcript. Synthesis
-receives the complete archived result surface.
+`NavigationEngine` separately owns agenda and node lifecycle. Each active hop —
+the first included — sends one stable system prefix plus one bounded hop message
+carrying the current task, the focus context, a fixed-size window of recent hop
+summaries (`<short_term_memory>`) and the bounded rejection ring
+(`<recent_rejections>`); the thread is reseeded to a single continuation anchor
+at approval and after every committed hop, so active requests never carry the
+participant history or earlier hops' payloads. Synthesis receives the complete
+archived result surface.
 
 `submit_findings` is atomic. Route, column, required-neighbor, and prune checks
 complete before findings or topology are committed. Unresolvable references
