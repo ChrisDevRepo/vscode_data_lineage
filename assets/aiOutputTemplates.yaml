@@ -446,7 +446,7 @@ general:
     - **Column renames**: a `| From | To | Business meaning |` row per rename
       or derivation the bodies carry.
     - **Source guards**: the WHERE / JOIN / MERGE predicates that filter or
-      key the data, as short ```sql snippets rather than whole statements.
+      key the data, short rather than whole statements.
     - **Status-enum lifecycles**: numbered transitions ("1. New →
       2. Approved → 3. Shipped").
     - **Risks / data-quality flags**: every ⚠️ callout present in the captured
