@@ -81,6 +81,24 @@ const AiDescriptionOverlay = lazy(async () => {
 // Type-only import keeps the lazy chunk boundary intact while typing the chip-row prop.
 import type { AiReportSection } from './AiDescriptionOverlay';
 
+/**
+ * Every section number that badged `nodeId`, in document order — the reverse of `aiSections`'
+ * per-section `nodeIds`, so a node click can land the report on the section that discusses it.
+ * A node absent from every section (e.g. a filter-only neighbor) returns an empty array.
+ */
+export function sectionsForNode(sections: readonly AiReportSection[], nodeId: string): number[] {
+  return sections.filter(s => s.nodeIds.includes(nodeId)).map(s => s.n);
+}
+
+/**
+ * Cache key for the AI pane's open state and pinned section — origin id (the owning filter
+ * profile's id, or `'preview'` for a transient AI run with none) plus the view name, so a re-run
+ * of the same view restores its layout instead of the blind reset a fresh document used to force.
+ */
+export function aiLayoutCacheKey(originId: string | undefined, viewName: string): string {
+  return `${originId ?? 'preview'}::${viewName}`;
+}
+
 /** Padding factor applied when fitting the graph view. */
 const FIT_VIEW_PADDING = 0.15;
 
@@ -536,18 +554,36 @@ export function GraphCanvas({
   const aiDescription = activeAiMetadata?.description;
 
   // AI report column + section focus — owned by the canvas so it can reserve the panel's width for
-  // the React Flow area and dim the graph around a focused report section. Both reset when a new
-  // document arrives (new AI result or profile switch).
+  // the React Flow area and dim the graph around a focused report section.
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<number | null>(null);
+  // Section numbers a node click lights up as chips (may be several); `activeSection` alone is the
+  // scroll target and the dimmed set. A direct chip click or keyboard nav clears this back to null,
+  // so the chip row falls back to lighting only `activeSection`.
+  const [highlightedSections, setHighlightedSections] = useState<number[] | null>(null);
   const aiPanelDefaultOpen = !!(
     (aiPreview && aiPreview.nodeIds.size === 0) ||
     (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
   );
+  const aiViewName = activeAdvancedProfile?.name ?? aiPreview?.name ?? '';
+  // Open state + pinned section survive a re-run of the same view — keyed by origin id + view name
+  // — instead of the blind reset a fresh `aiDescription` used to force on every result.
+  const aiLayoutCache = useRef(new Map<string, { open: boolean; section: number | null }>());
   useEffect(() => {
-    setAiPanelOpen(aiPanelDefaultOpen);
-    setActiveSection(null);
-  }, [aiDescription, aiPanelDefaultOpen]);
+    if (!aiDescription) return;
+    const cached = aiLayoutCache.current.get(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName));
+    setAiPanelOpen(cached?.open ?? aiPanelDefaultOpen);
+    setActiveSection(cached?.section ?? null);
+    setHighlightedSections(null);
+  }, [aiDescription, aiPanelDefaultOpen, activeAdvancedProfile?.id, aiViewName]);
+  useEffect(() => {
+    if (!aiDescription) return;
+    aiLayoutCache.current.set(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName), { open: aiPanelOpen, section: activeSection });
+  }, [aiDescription, activeAdvancedProfile?.id, aiViewName, aiPanelOpen, activeSection]);
+  const handleFocusSection = useCallback((n: number | null) => {
+    setActiveSection(n);
+    setHighlightedSections(null);
+  }, []);
   // The narrowed canvas re-fits once the panel has claimed or released its width, so the visible
   // graph re-centers instead of leaving nodes under the docked column.
   useEffect(() => {
@@ -651,6 +687,25 @@ export function GraphCanvas({
   viewportPreserveVersionRef.current = viewportPreserveVersion;
   const consumedViewportPreserveVersionRef = useRef(viewportPreserveVersion);
 
+  // Report sections derived from the bridged badge chips — the engine writes "N label" per badged
+  // node, so the overlay's chip row needs no extra bridge payload. Badges without a leading
+  // number are not section badges and take no chip. Declared ahead of `handleNodeClick`, which
+  // reads it to route a node click to its section.
+  const aiSections = useMemo((): AiReportSection[] => {
+    const badges = activeAiMetadata?.badges;
+    if (!badges?.length) return [];
+    const byNumber = new Map<number, AiReportSection>();
+    for (const badge of badges) {
+      const match = /^(\d+)\s+(.+)$/.exec(badge.text);
+      if (!match) continue;
+      const n = Number(match[1]);
+      const existing = byNumber.get(n);
+      if (existing) existing.nodeIds.push(badge.nodeId);
+      else byNumber.set(n, { n, label: match[2], nodeIds: [badge.nodeId] });
+    }
+    return [...byNumber.values()].sort((a, b) => a.n - b.n);
+  }, [activeAiMetadata]);
+
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
       if (graphMode === 'overview' && node.type === 'schemaNode') {
@@ -663,11 +718,15 @@ export function GraphCanvas({
         return;
       }
       // Direct canvas selection replaces report-section focus — the section dim must not fight
-      // the click-selection highlight underneath it.
-      setActiveSection(null);
+      // the click-selection highlight underneath it. A node badged into the report instead lands
+      // the pane on the first section (document order) that discusses it, and lights every chip
+      // that does; a node in no section keeps the plain deselect.
+      const matches = sectionsForNode(aiSections, node.id);
+      setActiveSection(matches[0] ?? null);
+      setHighlightedSections(matches.length ? matches : null);
       onNodeClick(node.id);
     },
-    [graphMode, onNodeClick, onSchemaNodeSelect]
+    [graphMode, onNodeClick, onSchemaNodeSelect, aiSections]
   );
 
   const handleNodeDoubleClick: NodeMouseHandler = useCallback(
@@ -1066,24 +1125,6 @@ export function GraphCanvas({
     if (!badges) return m;
     for (const b of badges) m.set(b.nodeId, { text: b.text });
     return m;
-  }, [activeAiMetadata]);
-
-  // Report sections derived from the bridged badge chips — the engine writes "N label" per badged
-  // node, so the overlay's chip row needs no extra bridge payload. Badges without a leading
-  // number are not section badges and take no chip.
-  const aiSections = useMemo((): AiReportSection[] => {
-    const badges = activeAiMetadata?.badges;
-    if (!badges?.length) return [];
-    const byNumber = new Map<number, AiReportSection>();
-    for (const badge of badges) {
-      const match = /^(\d+)\s+(.+)$/.exec(badge.text);
-      if (!match) continue;
-      const n = Number(match[1]);
-      const existing = byNumber.get(n);
-      if (existing) existing.nodeIds.push(badge.nodeId);
-      else byNumber.set(n, { n, label: match[2], nodeIds: [badge.nodeId] });
-    }
-    return [...byNumber.values()].sort((a, b) => a.n - b.n);
   }, [activeAiMetadata]);
 
   // The focused section's node set; null when section focus is off or the section has no nodes.
@@ -1747,13 +1788,14 @@ export function GraphCanvas({
         {activeAiMetadata?.description && (
           <Suspense fallback={null}>
             <AiDescriptionOverlay
-              viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
+              viewName={aiViewName}
               description={activeAiMetadata.description}
               expanded={aiPanelOpen}
               onExpandedChange={setAiPanelOpen}
               sections={aiSections}
               activeSection={activeSection}
-              onFocusSection={setActiveSection}
+              highlightedSections={highlightedSections ?? undefined}
+              onFocusSection={handleFocusSection}
               onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
             />
           </Suspense>

@@ -27,8 +27,11 @@ interface AiDescriptionOverlayProps {
   onExpandedChange?: (expanded: boolean) => void;
   /** Numbered sections for the navigation chips; absent when no badges were bridged. */
   sections?: readonly AiReportSection[];
-  /** The focused section number, or `null` when no section focus is active. */
+  /** The focused section number, or `null` when no section focus is active — the scroll target. */
   activeSection?: number | null;
+  /** Chips to render active — defaults to `[activeSection]`; a clicked node in several sections
+   *  lights up all of them, while only the first (`activeSection`) is scrolled to and dimmed. */
+  highlightedSections?: readonly number[];
   /** Called when the user (de)selects a section chip — the canvas highlights that section's nodes. */
   onFocusSection?: (n: number | null) => void;
   /** Called when a `#focus-node:<nodeId>` link is clicked — zooms the graph to that node. */
@@ -55,6 +58,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   onExpandedChange,
   sections,
   activeSection,
+  highlightedSections,
   onFocusSection,
   onFocusNode,
 }: AiDescriptionOverlayProps) {
@@ -64,6 +68,35 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const [fontScale, setFontScale] = useState<0 | 1 | 2>(0);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
+
+  // The chip row lights every section a node click matched; a plain focus (chip click, keyboard
+  // nav, restored layout) has no multi-highlight, so it falls back to just the active one.
+  const litSections = highlightedSections ?? (activeSection != null ? [activeSection] : []);
+
+  // Body scroll survives collapse/expand: the rail swap unmounts `.ln-ai-description-body`, so its
+  // native scrollTop is lost — captured on every scroll and reapplied once the body remounts.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const savedScrollTop = useRef(0);
+  useEffect(() => {
+    if (expanded && bodyRef.current) bodyRef.current.scrollTop = savedScrollTop.current;
+  }, [expanded]);
+
+  // A chip click, node click or restored layout all land here through `activeSection` — one path
+  // scrolls the document, so a node click reaches its section the same way a chip does.
+  useEffect(() => {
+    if (activeSection == null) return;
+    document.getElementById(`${AI_SECTION_ID_PREFIX}${activeSection}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [activeSection]);
+
+  /** `[` / `]` step to the previous/next section while the pane has focus. */
+  function handlePaneKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if ((e.key !== '[' && e.key !== ']') || !sections?.length) return;
+    e.preventDefault();
+    const idx = activeSection == null ? -1 : sections.findIndex(s => s.n === activeSection);
+    const nextIdx = e.key === ']' ? Math.min(idx + 1, sections.length - 1) : Math.max(idx - 1, 0);
+    onFocusSection?.(sections[nextIdx].n);
+  }
 
   function focusNodeFromEvent(target: EventTarget | null): (() => void) | null {
     const anchor = (target as HTMLElement | null)?.closest('a');
@@ -116,15 +149,11 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   }
 
   /**
-   * A chip click toggles that section's graph focus and scrolls the report to its `## N` heading.
+   * A chip click toggles that section's graph focus; the `activeSection` effect above scrolls the
+   * report to its `## N` heading once the prop change comes back down.
    */
   function handleSectionChip(n: number) {
-    const next = activeSection === n ? null : n;
-    onFocusSection?.(next);
-    if (next !== null) {
-      document.getElementById(`${AI_SECTION_ID_PREFIX}${next}`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    onFocusSection?.(activeSection === n ? null : n);
   }
 
   const html = useMemo(() => renderAiMarkdown(description), [description]);
@@ -157,7 +186,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
 
   return (
     <div className={anchorClassName}>
-      <div className={overlayClassName}>
+      <div className={overlayClassName} onKeyDown={handlePaneKeyDown}>
         <div className="ln-ai-description-header">
           <span className="ln-ai-description-title text-[10px] font-semibold ln-text-muted uppercase tracking-wide">
             {railName}
@@ -232,9 +261,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             {sections.map(section => (
               <button
                 key={section.n}
-                className={`ln-ai-section-chip${activeSection === section.n ? ' ln-active' : ''}`}
+                className={`ln-ai-section-chip${litSections.includes(section.n) ? ' ln-active' : ''}`}
                 onClick={() => handleSectionChip(section.n)}
-                aria-pressed={activeSection === section.n}
+                aria-pressed={litSections.includes(section.n)}
                 title={`${section.n} ${section.label}`}
               >
                 {section.n} {section.label}
@@ -242,7 +271,11 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             ))}
           </div>
         )}
-        <div className="ln-ai-description-body">
+        <div
+          ref={bodyRef}
+          className="ln-ai-description-body"
+          onScroll={(e) => { savedScrollTop.current = e.currentTarget.scrollTop; }}
+        >
           {rawMode ? (
             <pre className="ln-ai-description-raw">{description}</pre>
           ) : (
