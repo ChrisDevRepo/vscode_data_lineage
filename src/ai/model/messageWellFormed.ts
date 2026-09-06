@@ -26,10 +26,10 @@ function tailId(id: string | undefined): string {
 /** Compact role + tool-id dump for diagnostics; call ids are tail-truncated, content omitted. */
 export function snapshotMessages(messages: readonly BaseMessage[]): string {
   return messages.map((message, index) => {
-    if (message instanceof AIMessage && message.tool_calls?.length) {
+    if (AIMessage.isInstance(message) && message.tool_calls?.length) {
       return `[${index}]ai{${message.tool_calls.map((call) => `c:${tailId(call.id)}`).join(',')}}`;
     }
-    if (message instanceof ToolMessage) {
+    if (ToolMessage.isInstance(message)) {
       return `[${index}]tool{r:${tailId(message.tool_call_id)}}`;
     }
     return `[${index}]${message.getType()}`;
@@ -44,12 +44,12 @@ export function snapshotMessages(messages: readonly BaseMessage[]): string {
 export function assertToolPairingWellFormed(messages: readonly BaseMessage[]): void {
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
-    if (!(message instanceof ToolMessage)) continue;
+    if (!ToolMessage.isInstance(message)) continue;
     // Consecutive tool messages all answer the same assistant turn; walk back to its anchor.
     let anchor = i - 1;
-    while (anchor >= 0 && messages[anchor] instanceof ToolMessage) anchor--;
+    while (anchor >= 0 && ToolMessage.isInstance(messages[anchor])) anchor--;
     const assistant = anchor >= 0 ? messages[anchor] : undefined;
-    if (!(assistant instanceof AIMessage)) {
+    if (!AIMessage.isInstance(assistant)) {
       throw new MessageEnvelopeInvariantError(
         `tool message at messages[${i}] has no preceding assistant message`,
         snapshotMessages(messages),

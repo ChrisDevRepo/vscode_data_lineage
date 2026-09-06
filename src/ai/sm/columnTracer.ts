@@ -1,7 +1,7 @@
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { resolveModelNodeId } from '../support/inputNormalization';
-import { getNodeColumns } from '../tools/tools';
+import { getNodeColumns } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName } from '../../utils/sql';

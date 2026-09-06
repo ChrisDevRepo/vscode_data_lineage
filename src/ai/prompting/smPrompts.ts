@@ -7,7 +7,6 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for precision in reasoning models.
  */
 
-import { z } from 'zod';
 import { buildColumnAspectPrompt } from '../prompting/prompts';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 
@@ -688,32 +687,6 @@ interface SmCompletionEnvelope {
 }
 
 /**
- * Runtime guard for {@link SmCompletionEnvelope} — the synthesis evidence surface handed to the
- * model. Validates the envelope STRUCTURE (the fields synthesis depends on) at the boundary; leaf
- * element shapes are permissive (value enums are already enforced at the submit boundary), so this
- * catches real drift — a renamed/removed `detail_slots`/`node_states`/`result` field — without
- * re-litigating per-leaf vocabulary. Enforced via {@link buildSmCompletionEnvelope}.
- */
-const SmCompletionEnvelopeSchema = z.object({
-  ok: z.literal(true),
-  done: z.literal(true),
-  result: z.object({
-    status: z.literal('complete'),
-    originNodeId: z.string(),
-    scope: z.object({ nodes: z.number(), edges: z.number(), node_ids: z.array(z.string()) }).strict(),
-    suggested_sections: z.array(z.object({ label: z.string(), node_ids: z.array(z.string()) }).passthrough()).optional(),
-    node_states: z.array(z.object({ nodeId: z.string(), action: z.string() }).passthrough()),
-    detail_slots: z.array(z.object({
-      nodeId: z.string(), schema: z.string(), name: z.string(), type: z.string(),
-      sections: z.array(z.object({ angle: z.string(), text: z.string() }).passthrough()),
-      summary: z.string(),
-    }).passthrough()),
-  }).strict(),
-  deferred_questions: z.array(z.object({ nodeId: z.string(), question: z.string() }).passthrough()),
-  synthesis_reminder: z.string(),
-}).strict();
-
-/**
  * Assembles the {@link SmCompletionEnvelope} from a completed engine result.
  *
  * @remarks
@@ -760,7 +733,5 @@ export function buildSmCompletionEnvelope(
     deferred_questions: deferred,
     synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock,
   };
-  // Hard-fail on shape drift: surface an upstream bug loudly, not as silently-degraded model input.
-  SmCompletionEnvelopeSchema.parse(envelope);
   return envelope;
 }

@@ -703,8 +703,8 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  *
  * @remarks
  * Current task is the sub-question assigned to the focus node of the present
- * hop. It changes every hop in SM mode, so it lives in the dynamic suffix of
- * the system prompt, not in the cacheable stable prefix.
+ * hop. It changes every hop in SM mode, so it leads the per-hop worker user
+ * message, never the cacheable stable system prefix.
  *
  * The input is exactly one task-ledger question. Root tasks carry the explicit
  * `Root Question:` prefix; routed questions are rendered as the current hop's
@@ -734,7 +734,7 @@ export function buildCurrentTaskBlock(
   const lines = ['<current_task>'];
   for (const task of currentTasks) {
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
-    lines.push(`  <${tag}>${task.question.trim()}</${tag}>`);
+    lines.push(`  <${tag}>${escapePromptText(task.question.trim())}</${tag}>`);
   }
   // Presence, not length: an empty array is the CT engine stating that this node declares none of
   // the traced columns, and that is the hop the block matters most on. Omitting it there left the
@@ -760,7 +760,7 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <lineage_questions>`,
       `    Column-chain continuations opened on an earlier hop for this focus. Address them:`,
-      ...columnLineageQuestions.map(q => `    - ${q}`),
+      ...columnLineageQuestions.map(q => `    - ${escapePromptText(q)}`),
       `  </lineage_questions>`,
     );
   }
@@ -775,8 +775,8 @@ export function buildCurrentTaskBlock(
  *
  * @remarks
  * Surfacing `recent_rejections` here is what lets the host worker self-correct from prior rejected
- * hops: the worker is handed `peekHopContext` (which omits `working_memory`), so this block is the
- * only channel carrying the rejection ring into the worker's system prompt.
+ * hops: the worker is handed `peekHopContext` (which omits `working_memory`), so this block — part
+ * of the per-hop worker user message — is the only channel carrying the rejection ring to the worker.
  *
  * @param stm - Sliding window of the last 3 node summaries.
  * @param recentRejections - The engine's recent-rejection ring (max 5); empty renders no block.

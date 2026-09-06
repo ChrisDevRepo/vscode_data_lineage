@@ -24,7 +24,7 @@ import {
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
 import {
-  PresentResultBoundarySchema,
+  presentResultBoundarySchemaForPhase,
   PRESENT_RESULT_NAME_MAX,
   presentResultRepairPatchSchemaForFields,
 } from '../../tools/toolSchemas';
@@ -38,6 +38,7 @@ import { postToWebview } from '../../../bridge/host';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
+import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 // Required set mirrors buildPassthroughFlowFacts' qualifying filter (kept, minus slotted, minus
 // pruned) narrowed to the traced column chain, not to edge-terminal sources: a staging table that is
@@ -121,7 +122,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
       if (attemptWrite.kind !== 'accepted') {
         return s.logAndReturn('present_result', {
-          error: 'stale_turn',
+          error: REJECTION_CODES.staleTurn,
           hint: 'The turn no longer owns this session. Do not render this result.',
         }, rawInput);
       }
@@ -162,12 +163,26 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: 'Run the discovery question again, then request its graph preview.',
           }, { clearDraft: true });
         }
-        input = {
-          ...(input && typeof input === 'object' && !Array.isArray(input) ? input : {}),
+        const supplied = input && typeof input === 'object' && !Array.isArray(input)
+          ? input as Record<string, unknown>
+          : {};
+        const previewProse: Record<string, string | undefined> = {
           name: `${scope.origin} graph preview`.slice(0, PRESENT_RESULT_NAME_MAX),
           summary: previewNarrative.summary,
           title: previewNarrative.title,
         };
+        // Normalize-with-log: preview prose is engine-owned, but a model that sent its own copy of
+        // one of these fields anyway had that value replaced, and a silent replacement is invisible
+        // in the trace. Only a field whose value actually changed is logged.
+        for (const [field, value] of Object.entries(previewProse)) {
+          const prior = supplied[field];
+          if (typeof prior === 'string' && prior !== value) {
+            s.logger.debug(
+              `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(prior)} to=${value === undefined ? '(absent)' : sanitizeForLog(value)}`,
+            );
+          }
+        }
+        input = { ...supplied, ...previewProse };
       }
 
       if (sess.presentResultRepairDraft.hasRepairableDraft()) {
@@ -227,22 +242,42 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         input = merged;
       } else if (sess.phase.kind === 'exploring' && requestedRepair) {
         return reject({
-          error: 'invalid_input',
+          error: REJECTION_CODES.invalidInput,
           hint: 'is_update:true is accepted during synthesis only for a session-authorized held repair draft. Send the full new-render payload without is_update.',
         }, { clearDraft: true });
       }
 
-      // Zod at the boundary: the advertised structural contract IS the runtime contract.
+      // Mirrors the toolPolicy.ts stage gate this same handler already branches on above
+      // (isVisualPreview / sess.phase.kind === 'completed'). Two consumers: the boundary schema
+      // selection below — the stage decides which fields were offered — and the unknown-node-id
+      // repair hint, which must not name lineage_search_objects on a stage that cannot call it.
+      const presentResultStage: PresentResultStage = isVisualPreview
+        ? 'visual_preview'
+        : sess.phase.kind === 'completed'
+        ? 'completed'
+        : 'synthesis';
+
+      // Zod at the boundary: the advertised structural contract IS the runtime contract, so the
+      // parse runs against the same stage projection the model was offered — a field that stage
+      // omits rejects here as a schema violation, not through a check after a permissive parse.
       // A type/enum/cap violation rejects with field paths the model can self-heal from —
       // never silently nulled fields. Conditional rules stay in validatePresentResult.
-      const boundary = PresentResultBoundarySchema.safeParse(input);
+      const boundary = presentResultBoundarySchemaForPhase(presentResultStage).safeParse(input);
       if (!boundary.success) {
         const fieldErrors = boundary.error.issues.slice(0, 3)
           .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
+        // Offenders ride as `{ path }` entries so the shared rejectionIssuePaths reader reaches the
+        // correction envelope and the trace. A strict-schema key violation names its offenders on
+        // the issue's `keys`, not on a path — the root path would otherwise name nothing.
+        const issuePaths = [...new Set(boundary.error.issues.flatMap(issue =>
+          issue.code === 'unrecognized_keys'
+            ? [...issue.keys]
+            : issue.path.length > 0 ? [issue.path.join('.')] : []))];
         return reject({
           success: false,
           errors: fieldErrors,
           hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
+          ...(issuePaths.length > 0 ? { detail: issuePaths.map(path => ({ path })) } : {}),
         }, { clearDraft: true });
       }
       const presentInput = boundary.data as PresentResultInput;
@@ -251,17 +286,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // never committed, so its merged repair must pass the complete fresh-render validation contract
       // (including non-empty highlight_groups) before the one atomic commit.
       const isAmendment = !isVisualPreview && sess.phase.kind === 'completed' && presentInput.is_update === true;
-
-      if (isVisualPreview || sess.phase.kind !== 'completed') {
-        const hasAdd = presentInput.add_node_ids && presentInput.add_node_ids.length > 0;
-        const hasPrune = presentInput.prune_node_ids && presentInput.prune_node_ids.length > 0;
-        if (hasAdd || hasPrune) {
-          return reject({
-            error: 'invalid_input',
-            hint: 'Graph structure is locked during an initial presentation. add_node_ids and prune_node_ids are strictly forbidden. Only provide sections, notes, and highlights.',
-          }, { clearDraft: true });
-        }
-      }
 
       const previewScope = isVisualPreview && sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
         ? sess.discoveryScopeArtifact
@@ -282,23 +306,37 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const graphSource = resultGraph.source;
       const modelNodeMap = getModelNodeMap(model);
 
+      // Normalize-with-log, the same contract submit_findings holds: an AI decision may be
+      // canonicalised, never rewritten silently. Only a value that actually changed is logged, so a
+      // clean payload costs no output-channel line.
+      const canonicalNodeId = (id: string, field: string): string => {
+        const resolved = resolveModelNodeId(id, modelNodeMap) ?? id;
+        if (resolved !== id) {
+          s.logger.debug(
+            `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(id)} to=${sanitizeForLog(resolved)}`,
+          );
+        }
+        return resolved;
+      };
       if (Array.isArray(presentInput.sections) && presentInput.sections.length > 0) {
-        presentInput.sections = presentInput.sections.map((sec) => {
+        presentInput.sections = presentInput.sections.map((sec, secIndex) => {
           if (!Array.isArray(sec.node_ids) || sec.node_ids.length === 0) return sec;
-          const normalizedNodeIds = sec.node_ids.map((id) => resolveModelNodeId(id, modelNodeMap) ?? id);
+          const normalizedNodeIds = sec.node_ids.map((id, idIndex) =>
+            canonicalNodeId(id, `sections.${secIndex}.node_ids.${idIndex}`));
           return { ...sec, node_ids: normalizedNodeIds };
         });
       }
       if (Array.isArray(presentInput.notes) && presentInput.notes.length > 0) {
-        presentInput.notes = presentInput.notes.map(note => ({
+        presentInput.notes = presentInput.notes.map((note, noteIndex) => ({
           ...note,
-          node_id: resolveModelNodeId(note.node_id, modelNodeMap) ?? note.node_id,
+          node_id: canonicalNodeId(note.node_id, `notes.${noteIndex}.node_id`),
         }));
       }
       if (Array.isArray(presentInput.highlight_groups) && presentInput.highlight_groups.length > 0) {
-        presentInput.highlight_groups = presentInput.highlight_groups.map(group => ({
+        presentInput.highlight_groups = presentInput.highlight_groups.map((group, groupIndex) => ({
           ...group,
-          node_ids: group.node_ids.map(id => resolveModelNodeId(id, modelNodeMap) ?? id),
+          node_ids: group.node_ids.map((id, idIndex) =>
+            canonicalNodeId(id, `highlight_groups.${groupIndex}.node_ids.${idIndex}`)),
         }));
       }
 
@@ -415,14 +453,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         });
       }
 
-      // Mirrors the toolPolicy.ts stage gate this same handler already branches on above
-      // (isVisualPreview / sess.phase.kind === 'completed'): visual_preview and synthesis never
-      // expose lineage_search_objects, so the unknown-node-id repair hint must not name it there.
-      const presentResultStage: PresentResultStage = isVisualPreview
-        ? 'visual_preview'
-        : sess.phase.kind === 'completed'
-        ? 'completed'
-        : 'synthesis';
       // A real object is never rejected as "unknown". The ids above were resolved against the WHOLE
       // loaded model; when the result graph still cannot link one, the engine already records why —
       // pruned, dropped by the render bound, in scope with no verdict, or outside the approved
@@ -509,7 +539,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
       if (successWrite.kind !== 'accepted') {
         return s.logAndReturn('present_result', {
-          error: 'stale_turn',
+          error: REJECTION_CODES.staleTurn,
           hint: 'The result was not committed because the turn no longer owns this session.',
         }, rawInput);
       }

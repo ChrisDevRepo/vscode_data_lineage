@@ -28,7 +28,7 @@ import {
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
 import { toJsonSchema } from '@langchain/core/utils/json_schema';
-import { ModelPortError, type ModelPortErrorCode } from './modelPort';
+import { isHostCancellationError, ModelPortError, type ModelPortErrorCode } from './modelPort';
 import type { WireEvent } from '../observability/wireLog';
 import { toWireMessage } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
@@ -392,8 +392,7 @@ function normalizeBridgeError(
   signal?: AbortSignal,
 ): ModelPortError {
   if (error instanceof ModelPortError) return error;
-  if (token.isCancellationRequested || signal?.aborted
-    || (error instanceof Error && ['AbortError', 'Canceled', 'Cancelled'].includes(error.name))) {
+  if (token.isCancellationRequested || signal?.aborted || isHostCancellationError(error)) {
     return cancelledError();
   }
   const rawCode = isRecord(error) && 'code' in error ? String(error.code) : '';

@@ -10,7 +10,7 @@
  * the last point a human can change it. These tests forbid any of them going silent, and drive the
  * handler so the value on the card is the value the tool payload carried.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRenderer';
 import { buildSmEntrySystemPrompt } from '../../../src/ai/prompting/hostPrompts';
@@ -22,13 +22,6 @@ import type { ClassificationValue } from '../../../src/ai/session/classification
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
-
-// The handler reads `dataLineageViz.ai.maxRounds` for the scope-budget check; the shared stub
-// carries no `workspace`, so the configured default is what this test exercises.
-vi.mock('vscode', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  workspace: { getConfiguration: () => ({ get: <T>(_key: string, fallback: T): T => fallback }) },
-}));
 
 const nodes: LineageNode[] = [
   makeNode({ id: 'origin', schema: 'ai', name: 'vwDiscountCalc', type: 'view' }),
@@ -130,6 +123,7 @@ describe('classification travels from the tool payload to the approval card', ()
     const services = {
       getSession: () => session,
       logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      maxRounds: 50,
       turnEpoch: () => 1,
       requireModel: () => model,
       requireGraph: () => graph,

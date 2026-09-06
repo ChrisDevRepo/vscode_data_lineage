@@ -15,6 +15,7 @@ import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { DatabaseModel } from '../../../src/engine/types';
 import type { Logger } from '../../../src/utils/log';
+import { rejectionIssuePaths } from '../../../src/ai/support/toolErrorEnvelope';
 
 const ORIGIN_NODE = '[dbo].[Orders]';
 
@@ -84,6 +85,7 @@ function handlerProbe(
         return panel as never;
       },
       logger: SILENT_LOGGER,
+      maxRounds: 50,
       turnEpoch: () => capturedEpoch,
       requireModel: () => {
         probe.modelReads += 1;
@@ -152,8 +154,11 @@ describe('executePresentResult — turn-lease enforcement', () => {
       add_node_ids: ['[dbo].[Other]'],
     }, probe.services));
 
-    expect(result.error).toBe('invalid_input');
-    expect(result.hint).toMatch(/strictly forbidden/);
+    // The stage projection the model was offered omits add_node_ids, so the boundary schema is what
+    // rejects it — no hand-written check after a permissive parse.
+    expect(result.success).toBe(false);
+    expect(String((result.errors as string[])[0])).toMatch(/add_node_ids/);
+    expect(rejectionIssuePaths(result.detail)).toContain('add_node_ids');
     expect(session.resultGraph).toBeNull();
   });
 

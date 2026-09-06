@@ -5,8 +5,6 @@
  * Proposal validation and preview construction stay local to this handler.
  * Turn-lease validation and effect serialization remain in the registry wrapper.
  */
-import * as vscode from 'vscode';
-import { DEFAULT_MAX_ROUNDS } from '../../core/agentCore';
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
 import {
@@ -38,6 +36,7 @@ import {
 import type { ToolServices } from './toolServices';
 import { AI_MAX_SCOPE_NODE_IDS } from '../../../engine/shared/bridgeContract';
 import { composeDiscoverySummaryText } from '../../support/discoverySummary';
+import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
 const SAFETY_RATIO = 0.7;
@@ -124,7 +123,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
         if (!priorEngine) {
           return s.logAndReturn('start_exploration', {
-            error: 'supplement_requires_complete_engine',
+            error: REJECTION_CODES.supplementRequiresCompleteEngine,
             hint: "supplement requires a completed prior exploration. Current engine status: none. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
           }, loggedInput);
         }
@@ -284,8 +283,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       // The preview engine is never published. Rejected proposals leave the prior proposal intact.
       if ('error' in initResult) return s.logAndReturn('start_exploration', initResult, loggedInput);
-      const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-      const maxRounds = aiCfg.get<number>('maxRounds', DEFAULT_MAX_ROUNDS);
+      const maxRounds = s.maxRounds;
       const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
       // Pathological breadth only: object lineage can fan out past the sliding-memory budget even
       // at a shallow depth (hub nodes). Recovery is structural narrowing / prune / ask-user — never
@@ -319,7 +317,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('start_exploration', { error: 'stale_turn', hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
+        return s.logAndReturn('start_exploration', { error: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
       // Captured once, before the discovery-memo round-trip below: the card, the memo attachment

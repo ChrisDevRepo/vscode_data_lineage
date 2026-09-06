@@ -11,7 +11,6 @@ import {
   DEFAULT_CONFIG,
   type DatabaseModel,
   type LineageNode,
-  type ColumnDef,
   type ObjectType,
   type AnalysisType,
   type NeighborIndex,
@@ -33,6 +32,8 @@ import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepth
 
 
 import { estimateTokens, REGEX_MAX_LENGTH, checkScopeBudget } from '../support/tokenBudget';
+import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 // Re-exported for the discovery-budget-guard unit test, which drives the caps through this module.
 export { setDiscoveryNodeCap, setDiscoveryTokenBudget } from '../support/tokenBudget';
 
@@ -59,17 +60,6 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   return m;
 }
 
-/**
- * Builds a lookup map for nodes by their ID.
- *
- * @param model - The full database model.
- * @returns A map of node IDs to their respective LineageNode objects.
- */
-export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
-  const m = new Map<string, LineageNode>();
-  for (const n of model.nodes) m.set(n.id, n);
-  return m;
-}
 
 /**
  * Builds a map of lowercase "Schema.Name" to lists of unresolved (unrelated) references.
@@ -94,36 +84,7 @@ function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
 }
 
 
-/**
- * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
- *
- * @param nodeId - The unique identifier of the node.
- * @param nodeMap - The ground-truth map of all nodes.
- * @param store - Optional column store for high-fidelity metadata.
- * @returns An array of column definitions, or `undefined` if the node is not found.
- */
-export function getNodeColumns(
-  nodeId: string, nodeMap: Map<string, LineageNode>,
-  store?: ColumnStore,
-): ColumnDef[] | undefined {
-  return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
-}
 
-/**
- * Retrieves the normalized DDL for a specific node.
- *
- * @param nodeId - The unique identifier of the node.
- * @param nodeMap - The ground-truth map of all nodes.
- * @param store - Optional column store for high-fidelity DDL.
- * @returns The normalized DDL string, or `undefined` if not available.
- */
-export function getNodeDdl(
-  nodeId: string, nodeMap: Map<string, LineageNode>,
-  store?: ColumnStore,
-): string | undefined {
-  const raw = (typeof store?.getDdl === 'function' ? store.getDdl(nodeId) : undefined) ?? nodeMap.get(nodeId)?.bodyScript;
-  return raw ? normalizeBodyScript(raw) : undefined;
-}
 
 /**
  * Constructs a detailed "Focus Node" object for use in exploration hop contexts.
@@ -488,7 +449,7 @@ export function getObjectDetail(
   const nodeMap   = buildNodeMap(model);
   const node      = nodeMap.get(normalizedId);
   if (!node) {
-    return { error: 'not_found' as const, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
+    return { error: REJECTION_CODES.notFound, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
   }
 
   const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
@@ -556,7 +517,7 @@ export function getScopeBundle(
   const origin = normalizeName(input.origin);
   const originNode = nodeMap.get(origin);
   if (!originNode) {
-    return { error: 'not_found' as const, origin: input.origin, hint: 'Call lineage_search_objects to resolve the canonical origin ID.' };
+    return { error: REJECTION_CODES.notFound, origin: input.origin, hint: 'Call lineage_search_objects to resolve the canonical origin ID.' };
   }
 
   const direction = input.direction ?? 'bidirectional';
@@ -701,7 +662,7 @@ export function getNeighborColumns(
   const results = ids.map(id => {
     const node = nodeMap.get(id);
     if (!node) {
-      return { id, error: 'not_found' as const };
+      return { id, error: REJECTION_CODES.notFound };
     }
     const cols = getNodeColumns(id, nodeMap, store);
     const foreignKeys = presentForeignKeys(node.fks);
@@ -717,15 +678,6 @@ export function getNeighborColumns(
   return { results, total: results.length };
 }
 
-/**
- * Object types whose body is the source of lineage information — view / procedure / function.
- *
- * @remarks
- * Drives DDL-vs-columns selection in {@link buildHopFocusNode} and search-target
- * filtering in {@link searchDdl}. Tables and external references are intentionally
- * excluded — they expose columns + foreign keys, not bodies.
- */
-export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
 
 
 

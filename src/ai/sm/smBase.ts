@@ -20,7 +20,8 @@ import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
 import { ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
-import { buildNodeMap, buildEdgeTypeMap, getNodeColumns, getNodeDdl, buildHopFocusNode, SCRIPT_TYPES } from '../tools/tools';
+import { buildEdgeTypeMap, buildHopFocusNode } from '../tools/tools';
+import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
 import { bfsDepthMap, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../../engine/graphGuards';
@@ -37,6 +38,7 @@ import { ColumnTracer } from "./columnTracer";
 import { AgendaManager, type AgendaEntry } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /**
  * Extends the base working memory with topological map data.
@@ -1777,7 +1779,7 @@ export class NavigationEngine implements IHopStateMachine {
   public supplementAgenda(nodeIds: string[], leadIds: string[] = []): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | { error: string; hint?: string } {
     if (this._status !== 'complete') {
       return {
-        error: 'supplement_requires_complete_engine',
+        error: REJECTION_CODES.supplementRequiresCompleteEngine,
         hint: `supplementAgenda is only valid after the prior exploration has completed (status === 'complete'). Current status: ${this._status}.`,
       };
     }

@@ -30,6 +30,8 @@ export interface ToolServices {
   readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>;
   /** Cooperative host cancellation, mirrored from the owning turn's lease. */
   readonly signal?: AbortSignal;
+  /** The hop cap the host resolved once at activation — the same value the graph runtime bounds the active loop with. */
+  readonly maxRounds: number;
   /** Current turn epoch — the turn lease wins over the session field so stale-turn writes are rejectable. */
   turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, throwing the standard no-model error when none is loaded. */

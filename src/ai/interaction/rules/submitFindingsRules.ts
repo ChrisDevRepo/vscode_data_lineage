@@ -1,6 +1,7 @@
 import type { ClassificationValue } from '../../session/classification';
 import type { CapturedSection, CaptureAngle } from '../../session/memoryManager';
 import type { InteractionRuleResult } from '../types';
+import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /** Active-hop submit_findings rejection categories with phase-valid recovery hints. */
 export type SubmitFindingsActiveRecoveryKind = 'focus' | 'route' | 'prune';
@@ -121,7 +122,7 @@ export function mapSubmitFindingsEngineGuard(
     const got = typeof failure.got === 'string' ? failure.got : '';
     const expected = typeof failure.expected === 'string' ? failure.expected : undefined;
     return {
-      error: 'invalid_input',
+      error: REJECTION_CODES.invalidInput,
       message: `focus_node_id \`${got}\` not found in the loaded model.`,
       hint: activeSubmitFindingsRecoveryHint('focus', expected),
     };

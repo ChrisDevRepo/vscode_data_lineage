@@ -14,6 +14,8 @@ import {
   type ToolGenerationResult,
   cancelledToolTurnResult,
   errorToolTurnResult,
+  isHostCancellationError,
+  isPortCancellation,
 } from './modelPort';
 import { VscodeLangChainBridge } from './vscodeLangChainBridge';
 import { systemPromptHash, type WireEvent, type WireRecord } from '../observability/wireLog';
@@ -589,9 +591,7 @@ function bindCancellation(signal?: AbortSignal): {
 }
 
 function isCancellation(error: unknown): boolean {
-  return error instanceof ModelPortError && error.code === 'cancelled'
-    || (error instanceof Error
-      && ['AbortError', 'Canceled', 'Cancelled'].includes(error.name));
+  return isPortCancellation(error) || isHostCancellationError(error);
 }
 
 function cancelledError(): ModelPortError {

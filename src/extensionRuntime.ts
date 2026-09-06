@@ -150,8 +150,14 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     // Their invocations route through the same canonical strict registry builder;
     // the @lineage runtime dispatches its graph calls directly.
     const runStoreLogger = Logger.create(outputChannel, 'AI');
+    // Resolved once at activation; the graph runtime and the start_exploration scope check read the
+    // same value, so the hop cap the model is admitted against is the cap the loop enforces.
+    const maxRounds = vscode.workspace
+      .getConfiguration('dataLineageViz')
+      .get<number>('ai.maxRounds', DEFAULT_MAX_ROUNDS);
     const aiToolHost = {
       getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
+      maxRounds,
     };
     context.subscriptions.push(
       ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
@@ -164,9 +170,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       createRegistry: (lease, model) =>
         buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal }),
       logger: Logger.create(outputChannel, 'AI'),
-      maxRounds: vscode.workspace
-        .getConfiguration('dataLineageViz')
-        .get<number>('ai.maxRounds', DEFAULT_MAX_ROUNDS),
+      maxRounds,
       traceWriter,
     });
 

@@ -26,7 +26,7 @@ import {
 import { buildSmProtocol } from '../prompting/smPrompts';
 import { resolveStagePrompt, type StagePromptResult, type StageRenderScope } from '../prompting/templateRenderer';
 import { escapeDelimitedJson } from '../support/text';
-import { SCRIPT_TYPES } from '../tools/tools';
+import { SCRIPT_TYPES } from '../support/graphUtils';
 
 /**
  * Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user

@@ -14,6 +14,7 @@
  */
 import * as vscode from 'vscode';
 import type Graph from 'graphology';
+import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
 import { Logger, trunc, sanitizeForLog, LOG_TRUNC_JSON, LOG_TRUNC_REJECTION } from '../../utils/log';
@@ -50,6 +51,7 @@ import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
 import type { ModelPort } from '../model/modelPort';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /**
  * Private handler for AI tool execution.
@@ -68,6 +70,7 @@ class ToolHandler implements ToolServices {
     public readonly getStoredRun?: StoredRunReader,
     public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>,
     public readonly signal?: AbortSignal,
+    public readonly maxRounds: number = DEFAULT_MAX_ROUNDS,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
@@ -237,15 +240,8 @@ class ToolHandler implements ToolServices {
 
   public getScopeBundle(input: unknown) {
     try {
-      const parsed = GetScopeBundleInputSchema.safeParse(input);
-      if (!parsed.success) {
-        const issue = parsed.error.issues[0];
-        const field = issue?.path?.join('.') || '(root)';
-        return this.logAndReturn('lineage_get_scope_bundle', {
-          error: 'invalid_input',
-          hint: `Invalid get_scope_bundle input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: origin. Optional: direction, depth, upstream_depth, downstream_depth, include_ddl.`,
-        }, input);
-      }
+      const parsed = parseToolInput(GetScopeBundleInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_scope_bundle', parsed.error, input);
       const sess = this.getSession();
       const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, sess.columnStore) as Record<string, unknown>;
       // Normalization-with-log: silence on `include_ddl` is filled by a declared default, so the
@@ -271,7 +267,7 @@ class ToolHandler implements ToolServices {
         edges,
       }, this.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return this.logAndReturn('get_scope_bundle', { error: 'stale_turn', hint: 'The turn no longer owns this session. Do not render this scope.' }, input);
+        return this.logAndReturn('get_scope_bundle', { error: REJECTION_CODES.staleTurn, hint: 'The turn no longer owns this session. Do not render this scope.' }, input);
       }
       return this.logAndReturn('get_scope_bundle', bundle, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
@@ -345,15 +341,8 @@ class ToolHandler implements ToolServices {
         }, input);
       }
 
-      const parsed = GetNeighborColumnsInputSchema.safeParse(input);
-      if (!parsed.success) {
-        const issue = parsed.error.issues[0];
-        const field = issue?.path?.join('.') || '(root)';
-        return this.logAndReturn('get_neighbor_columns', {
-          error: 'invalid_input',
-          hint: `Invalid get_neighbor_columns input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: ids (non-empty array of node IDs).`,
-        }, input);
-      }
+      const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('get_neighbor_columns', parsed.error, input);
 
       const invalidIds = engine.validateNeighborIds(parsed.data.ids);
       if (invalidIds.length > 0) {
@@ -401,9 +390,9 @@ export function buildAiToolRegistry(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
   turnLease?: TurnLease,
-  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText'>; signal?: AbortSignal },
+  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText'>; signal?: AbortSignal; maxRounds?: number },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.maxRounds);
 
   // Exhaustive catalog binding: adding or removing a tool requires a matching handler entry.
   const dispatch = {

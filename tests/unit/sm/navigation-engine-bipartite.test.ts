@@ -1,5 +1,5 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
-import { SCRIPT_TYPES } from '../../../src/ai/tools/tools';
+import { SCRIPT_TYPES } from '../../../src/ai/support/graphUtils';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';

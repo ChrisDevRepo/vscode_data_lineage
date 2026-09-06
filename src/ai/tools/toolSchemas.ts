@@ -13,6 +13,7 @@ import {
 } from '../../engine/shared/explorationDepthContract';
 import { coercedBoolean, coercedStringArray, coercedStringObject, nullAsAbsent } from '../support/inputNormalization';
 import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -772,6 +773,43 @@ export const PresentResultBoundarySchema = PresentResultModelSchema.extend({
 });
 
 /**
+ * Boundary projection for the stages whose offered schema carries no graph-edit controls.
+ *
+ * @remarks
+ * DERIVED from {@link PresentResultBoundarySchema} via the same `.omit()` list
+ * {@link PresentResultSynthesisModelSchema} applies to the model-facing schema, so the offered
+ * contract and the validated contract cannot drift.
+ *
+ * `is_update` stays accepted here while the model-facing projection omits it: a session-authorized
+ * held draft is merged back into the payload with the held draft's own `is_update` before this
+ * parse runs, so omitting the key would reject the repair path. Its stage rules are owned by the
+ * dispatcher's held-draft branch and by `isAmendment`.
+ */
+const PresentResultLockedGraphBoundarySchema = PresentResultBoundarySchema.omit({
+  prune_node_ids: true,
+  add_node_ids: true,
+});
+
+/**
+ * Selects the runtime boundary schema matching the contract the model was offered at this stage.
+ *
+ * @remarks
+ * The mirror of {@link presentResultSchemaForPhase} on the dispatch side: a field the offered
+ * schema omits is rejected by the schema, not by a hand-written check after a permissive parse.
+ * Preview shares the synthesis projection — the prose fields the preview model schema omits are
+ * filled by the dispatcher from the cached discovery answer before the parse, so only the
+ * graph-edit controls are out of contract there.
+ *
+ * @param phase - Stage the call was dispatched in.
+ * @returns The narrowed boundary schema for a locked-graph stage, else the full boundary schema.
+ */
+export function presentResultBoundarySchemaForPhase(phase?: string): z.ZodType {
+  return phase === 'synthesis' || phase === 'visual_preview'
+    ? PresentResultLockedGraphBoundarySchema
+    : PresentResultBoundarySchema;
+}
+
+/**
  * Strict patch schema for repairing a held `present_result` draft.
  *
  * @remarks
@@ -913,13 +951,13 @@ export function parseToolInput<T extends z.ZodType>(
   input: unknown,
 ):
   | { readonly ok: true; readonly data: z.output<T> }
-  | { readonly ok: false; readonly error: { readonly error: 'invalid_input'; readonly field: string; readonly hint: string } } {
+  | { readonly ok: false; readonly error: { readonly error: typeof REJECTION_CODES.invalidInput; readonly field: string; readonly hint: string } } {
   const parsed = schema.safeParse(input);
   if (parsed.success) return { ok: true, data: parsed.data };
   const issue = parsed.error.issues[0];
   const field = issue.path.length ? issue.path.join('.') : '(input)';
   return {
     ok: false,
-    error: { error: 'invalid_input', field, hint: `Field "${field}": ${issue.message}` },
+    error: { error: REJECTION_CODES.invalidInput, field, hint: `Field "${field}": ${issue.message}` },
   };
 }

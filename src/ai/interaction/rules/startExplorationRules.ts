@@ -146,7 +146,7 @@ export function evaluateParallelStartRule(
 export function evaluateSupplementPrereqRule(engineStatus: string | null): InteractionRuleResult {
   if (engineStatus === 'complete') return null;
   return {
-    error: 'supplement_requires_complete_engine',
+    error: REJECTION_CODES.supplementRequiresCompleteEngine,
     hint: `supplement requires a completed prior exploration. Current engine status: ${engineStatus ?? 'none'}. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').`,
   };
 }
