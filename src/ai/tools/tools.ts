@@ -19,7 +19,7 @@ import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
-import { normalizeBodyScript, minifyDdlForHop } from '../../utils/sql';
+import { minifyDdlForHop } from '../../utils/sql';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import {
@@ -149,22 +149,20 @@ export function buildHopFocusNode(
  * Retrieves the high-level context of the current project for the AI.
  *
  * @remarks
- * This function builds a summary of the loaded model, including schema lists,
- * visible node counts, and token budget estimates. If the catalog is small enough,
- * it inlines the full object list and edges; otherwise, it provides a summary
- * and instructs the AI to use on-demand retrieval.
+ * Orientation only: schema list, node/edge stats, and the active UI filter. The object catalog
+ * itself is `lineage_search_objects`'s job (name/column search) or `lineage_get_scope_bundle`'s
+ * (graph-scope retrieval) — inlining it here duplicated that tool rather than orienting the AI
+ * toward it, so this never returns the per-node list.
  *
  * @param model - The database model.
  * @param activeFilter - The current UI filter state.
  * @param projectName - The name of the active project.
- * @param store - Optional column store.
- * @returns An object containing project metadata and potentially the full catalog.
+ * @returns Project metadata, schema list, stats, and the active filter.
  */
 export function getContext(
   model: DatabaseModel,
   activeFilter: SerializedFilterState | null,
   projectName: string | null,
-  store?: import('../../engine/columnStore').ColumnStore,
 ) {
   const visibleNodes = activeFilter
     ? model.nodes.filter(n => {
@@ -176,28 +174,7 @@ export function getContext(
       }).length
     : model.nodes.length;
 
-  const catalog = model.nodes.map(n => {
-    const base = presentNode(n, model.neighborIndex);
-    const ddlBody = store?.getDdl(n.id) ?? n.bodyScript;
-    if (SCRIPT_TYPES.has(n.type) && ddlBody) {
-      const ddl = normalizeBodyScript(ddlBody);
-      return { ...base, ddl };
-    }
-    const cols = store?.getColumns(n.id) ?? n.columns;
-    if (cols && cols.length > 0) {
-      const enriched: Record<string, unknown> = { ...base, cols: cols.map(c => presentColumn(c)) };
-      if (n.fks && n.fks.length > 0) {
-        enriched.fks = presentForeignKeys(n.fks);
-      }
-      return strip(enriched);
-    }
-    return base;
-  });
-  const nodeTypeById = buildNodeTypeById(model);
-  const edges = model.edges.map(e => [e.source, e.target, edgeApiType(e.type, nodeTypeById.get(e.source) ?? '')]);
-  const catalogChars = JSON.stringify(catalog).length + JSON.stringify(edges).length;
-
-  const summary = {
+  return {
     project_name:  projectName,
     // Read, never inferred: a dacpac carries a DSP-derived platform label just like a live
     // import, so platform presence says nothing about provenance. Falls back to the snapshot
@@ -208,26 +185,6 @@ export function getContext(
     schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
     filter:        activeFilter ? presentFilter(activeFilter) : null,
-    _token_estimate: { catalog_chars: catalogChars, estimated_tokens: estimateTokens(catalogChars) },
-  };
-
-  // Same discovery budget guard as get_scope_bundle, token axis only (the catalog listing has no
-  // per-node scope semantics). Over budget → summary WITHOUT the inlined catalog — the orientation
-  // stats stay usable and the AI retrieves objects on demand; over-budget *scope* requests are
-  // still the single mechanism that routes to hop-by-hop exploration.
-  if (!checkScopeBudget(0, catalogChars).ok) {
-    return {
-      ...summary,
-      model_size: 'large' as const,
-      hint: 'The full catalog exceeds the discovery token budget and was not inlined. Use lineage_search_objects, lineage_get_object_detail, or lineage_get_scope_bundle for on-demand retrieval.',
-    };
-  }
-
-  return {
-    ...summary,
-    model_size: 'small' as const,
-    objects: catalog,
-    edges,
   };
 }
 
@@ -715,15 +672,25 @@ export function runAnalysis(
   // per-node scope semantics. Hub, orphan and external-ref reports are bounded by the graph rather
   // than by a threshold, so a wide warehouse can produce a group list far past the turn budget.
   // Over budget → the counts WITHOUT the group list, never a sliced one: the pattern total stays
-  // usable and the AI narrows the query with min_degree or a different type.
+  // usable and the AI narrows the query with the knob that type actually has, or a different type.
   const groupChars = JSON.stringify(result.groups).length;
   if (!checkScopeBudget(0, groupChars).ok) {
+    // Only `hubs` takes min_degree and only `islands` takes max_size — naming either knob for a
+    // type it does not apply to (orphans, longest-path, cycles, external-refs) is wrong advice.
+    const narrowByType: Partial<Record<AnalysisType, string>> = {
+      hubs:    'Raise min_degree',
+      islands: 'Lower max_size',
+    };
+    const narrowClause = narrowByType[type];
+    const hint = narrowClause
+      ? `The full group list exceeds the discovery token budget and was not inlined. ${narrowClause}, pick a narrower pattern type, or inspect individual objects with lineage_get_object_detail.`
+      : 'The full group list exceeds the discovery token budget and was not inlined. Pick a narrower pattern type, or inspect individual objects with lineage_get_object_detail.';
     return {
       type:            result.type,
       summary:         result.summary,
       total_groups:    result.groups.length,
       groups_omitted:  true as const,
-      hint: 'The full group list exceeds the discovery token budget and was not inlined. Raise min_degree, pick a narrower pattern type, or inspect individual objects with lineage_get_object_detail.',
+      hint,
     };
   }
 

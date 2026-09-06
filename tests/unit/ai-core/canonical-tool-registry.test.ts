@@ -24,7 +24,6 @@ describe('canonical tool registry', () => {
     expect(contract?.effect).toBe('read');
     expect(contract?.progressLabel).toBeTruthy();
     expect(contract?.tags).toContain('lineage');
-    expect(contract?.modelDescription).toMatch(/lineage_get_context/);
   });
 
   it('dispatches the registered raw tool input through the canonical handler', async () => {

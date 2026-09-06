@@ -192,7 +192,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetContextInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_context', parsed.error, input);
       const sess = this.getSession();
-      const ctx = getContext(this.requireModel(), sess.filter, sess.projectName, sess.columnStore);
+      const ctx = getContext(this.requireModel(), sess.filter, sess.projectName);
       return this.logAndReturn('get_context', ctx, input);
     } catch (err) { return this.toolError('get_context', err); }
   }
