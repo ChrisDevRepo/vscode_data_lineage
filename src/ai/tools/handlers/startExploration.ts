@@ -121,11 +121,11 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         if (supplementPrereq) {
           return s.logAndReturn('start_exploration', supplementPrereq, loggedInput);
         }
+        // `evaluateSupplementPrereqRule` rejects a null status with the same envelope, so
+        // reaching here already proves `priorEngine` non-null; this narrows the type for the
+        // engine calls below without a null check that could ever actually fire.
         if (!priorEngine) {
-          return s.logAndReturn('start_exploration', {
-            error: REJECTION_CODES.supplementRequiresCompleteEngine,
-            hint: "supplement requires a completed prior exploration. Current engine status: none. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
-          }, loggedInput);
+          throw new Error('[start_exploration] supplement prerequisite passed without a prior engine');
         }
         // Screened before `admitSupplementTargets`/`supplementAgenda`: both widen the allowlist
         // and extend the agenda of the completed engine, so a CT target list refused after them
