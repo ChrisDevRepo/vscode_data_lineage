@@ -1425,13 +1425,13 @@ export class NavigationEngine implements IHopStateMachine {
     if (params.depthIntent?.kind === 'asymmetric' && (params.direction ?? 'bidirectional') !== 'bidirectional') {
       return {
         error: ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
-        hint: 'Asymmetric depths require direction "bidirectional" — this refine kept a single direction from the prior proposal. Resend with direction "bidirectional", or use one direction with a symmetric depth.',
+        hint: 'Resend this refine with direction "bidirectional" — asymmetric depths require it and the prior proposal kept a single direction — or use one direction with a symmetric depth.',
       };
     }
     if (params.analysisMode === 'ct' && (!params.targetColumns || params.targetColumns.length === 0)) {
       return {
         error: 'target_columns_required_for_ct',
-        hint: 'Provide at least one named targetColumns value for CT, or change analysisMode to "bb".',
+        hint: 'Resend with at least one named targetColumns value for CT, or change analysisMode to "bb" and resend.',
       };
     }
     if (params.analysisMode === 'bb' && params.targetColumns !== undefined) {
@@ -2198,7 +2198,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (focusId === this.originNodeId) {
         return {
           error: 'prune_origin_forbidden',
-          hint: `The exploration origin is immutable. Submit a complete analyze or passthrough finding for this focus.${passthroughColumnClause}`,
+          hint: `Submit a complete analyze or passthrough finding for this focus. The exploration origin is immutable.${passthroughColumnClause}`,
         };
       }
       const requiredConnectedIds = this.committedConnectedIds();
@@ -2207,7 +2207,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (disconnected) {
         return {
           error: 'prune_would_orphan_noted',
-          hint: `Marking [${focusId}] prune would orphan committed node [${disconnected}] (already analyzed or still queued). Use verdict='passthrough' to keep it without pruning.${passthroughColumnClause}`
+          hint: `Use verdict='passthrough' to keep it without pruning. Marking [${focusId}] prune would orphan committed node [${disconnected}] (already analyzed or still queued).${passthroughColumnClause}`
         };
       }
 
@@ -2477,6 +2477,72 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    // Content errors (real node, wrong column) are correctable → hard-reject with a mode-pure,
+    // per-kind hint built from the locked classification's reachable kinds. Every content kind
+    // arises only under columnAspect (CT), so a BB session never produces a route hard-reject.
+    // First pass: reference errors (route/column shape) reject ahead of the CT completeness guard
+    // below, which would otherwise re-report their unaccounted column as column_chain_incomplete
+    // instead of the specific per-kind order. The prune-topology facts — a refused
+    // `prune_neighbors` candidate (`prune_would_orphan`) and the required neighbours it leaves
+    // unaccounted (`missing_required_route`) — are held back for the second pass after the
+    // neighbor-completeness branch, which reports the two together.
+    const contentErrors = invalidRoutes.filter(r => !isAbsentKind(r.kind)
+      && r.kind !== 'prune_would_orphan' && r.kind !== 'missing_required_route');
+    if (contentErrors.length > 0) {
+      this.lastRoutedRejected = contentErrors.length;
+      for (const r of contentErrors) this.memory.recordRejection(r.id, r.reason, this.hopCount);
+      return buildRouteValidationRejection(contentErrors);
+    }
+
+    // CT completeness guard — hoisted half: the contradicted rejection. A focus that declares an
+    // active tracked column but leaves it unaccounted reports `column_chain_incomplete` ahead of
+    // the neighbor-completeness branch below, because the declaration is checkably false and the
+    // prune verdict (`missing_required_route` with `invalidlyPruned`) would leave the false claim
+    // standing. The other half — the focus declares none of the active columns, so the empty-flow
+    // escape is genuinely open — is evaluated after the prune verdict, exactly where this
+    // rejection sat before the hoist.
+    // `verdict:'passthrough'` with an empty `column_flow` is the one exception, and only where the
+    // engine cannot disprove it. It is an account, not a gap: the focus states it carries none of
+    // the active columns onward, which is the escape `buildIncompleteRejection`'s hint offers and
+    // `ColumnTracer.unaccountedActiveColumns` documents.
+    //
+    // Checkable, so still rejected: the focus declares one of the active columns. The origin is
+    // always this case (`init` refuses `unknown_columns` unless the traced columns resolve on it),
+    // and a declared column contradicts the claim outright.
+    //
+    // Not checkable, so accepted with a log: the focus declares none of them, or declares no
+    // columns at all. A procedure exposes no column metadata, so `resolveActiveColumnsForNode`
+    // passes every requested column through — absence of metadata is not absence of the column —
+    // and a node the trace never touched still dispatches carrying the full active set. Demanding a
+    // terminal entry there asks the model to assert a column origin that does not exist, which is
+    // the fabrication class these guards exist to stop; the chain simply ends here and the node is
+    // retained for what it does to the row set.
+    let ctUnaccountedColumns: string[] | null = null;
+    let ctActiveColumns: readonly string[] = [];
+    if (this.tracer) {
+      const submittedFlow = finding.column_flow ?? [];
+      // `declaredActiveColumns` (computed above, shared with the prune hints) decides both halves:
+      // whether the empty-flow declaration is checkably false, and — when the hop is rejected for
+      // any reason — whether the hint may still offer that escape.
+      const contradicted = declaredActiveColumns;
+      const declaresNoTrackedColumns =
+        finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
+      const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow);
+      if (unaccounted.length > 0 && contradicted.length > 0) {
+        this.lastRoutedRejected = unaccounted.length;
+        this.memory.recordRejection(focusId, `column_chain_incomplete: ${unaccounted.join(', ')}`, this.hopCount);
+        this.heldFindingDraft.hold(structuredClone(finding));
+        return buildIncompleteRejection(focusId, unaccounted, [...this.tracer.activeColumns], contradicted);
+      }
+      ctUnaccountedColumns = unaccounted.length > 0 ? unaccounted : null;
+      ctActiveColumns = this.tracer.activeColumns;
+      if (declaresNoTrackedColumns) {
+        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=declares_none — declares none of the active columns [${this.tracer.activeColumns.join(', ')}], column chain ends here`);
+      } else if (unaccounted.length === 0) {
+        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=all_accounted active=${this.tracer.activeColumns.length}`);
+      }
+    }
+
     // Completeness guard, both modes: every in-scope directional neighbor must be routed or pruned
     // before advance. CT is BB plus column tracking — neighbor accounting is the shared behaviour,
     // so it runs unconditionally (in both modes a required neighbor is satisfied by a route
@@ -2497,58 +2563,28 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
 
-    // Content errors (real node, wrong column) are correctable → hard-reject with a mode-pure,
-    // per-kind hint built from the locked classification's reachable kinds. Every content kind
-    // arises only under columnAspect (CT), so a BB session never produces a route hard-reject.
-    const contentErrors = invalidRoutes.filter(r => !isAbsentKind(r.kind));
-    if (contentErrors.length > 0) {
-      this.lastRoutedRejected = contentErrors.length;
-      for (const r of contentErrors) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-      // Only pure neighbor incompleteness retains prose for the established sections:[] retry.
-      if (contentErrors.every(r => r.kind === 'missing_required_route')) {
+    // Second pass: the prune-topology facts held back at the first pass — a refused
+    // `prune_neighbors` candidate and the required neighbours it left unaccounted — reject
+    // together, so one envelope carries both repairs. Only pure neighbor incompleteness retains
+    // prose for the established sections:[] retry.
+    const pruneRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
+    if (pruneRoutes.length > 0) {
+      this.lastRoutedRejected = pruneRoutes.length;
+      for (const r of pruneRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
+      if (pruneRoutes.every(r => r.kind === 'missing_required_route')) {
         this.heldFindingDraft.hold(structuredClone(finding));
       }
-      return buildRouteValidationRejection(contentErrors);
+      return buildRouteValidationRejection(pruneRoutes);
     }
 
-    // CT completeness guard: every active tracked column must be continued or marked terminal.
-    // `verdict:'passthrough'` with an empty `column_flow` is the one exception, and only where the
-    // engine cannot disprove it. It is an account, not a gap: the focus states it carries none of
-    // the active columns onward, which is the escape `buildIncompleteRejection`'s hint offers and
-    // `ColumnTracer.unaccountedActiveColumns` documents.
-    //
-    // Checkable, so still rejected: the focus declares one of the active columns. The origin is
-    // always this case (`init` refuses `unknown_columns` unless the traced columns resolve on it),
-    // and a declared column contradicts the claim outright.
-    //
-    // Not checkable, so accepted with a log: the focus declares none of them, or declares no
-    // columns at all. A procedure exposes no column metadata, so `resolveActiveColumnsForNode`
-    // passes every requested column through — absence of metadata is not absence of the column —
-    // and a node the trace never touched still dispatches carrying the full active set. Demanding a
-    // terminal entry there asks the model to assert a column origin that does not exist, which is
-    // the fabrication class these guards exist to stop; the chain simply ends here and the node is
-    // retained for what it does to the row set.
-    if (this.tracer) {
-      const submittedFlow = finding.column_flow ?? [];
-      // `declaredActiveColumns` (hoisted above the prune branch) decides both halves: whether the
-      // empty-flow declaration is checkably false, and — when the hop is rejected for any reason —
-      // whether the hint may still offer that escape.
-      const contradicted = declaredActiveColumns;
-      const declaresNoTrackedColumns =
-        finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
-      if (declaresNoTrackedColumns) {
-        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=declares_none — declares none of the active columns [${this.tracer.activeColumns.join(', ')}], column chain ends here`);
-      }
-      const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow);
-      if (unaccounted.length > 0) {
-        this.lastRoutedRejected = unaccounted.length;
-        this.memory.recordRejection(focusId, `column_chain_incomplete: ${unaccounted.join(', ')}`, this.hopCount);
-        this.heldFindingDraft.hold(structuredClone(finding));
-        return buildIncompleteRejection(focusId, unaccounted, [...this.tracer.activeColumns], contradicted);
-      }
-      if (!declaresNoTrackedColumns) {
-        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=all_accounted active=${this.tracer.activeColumns.length}`);
-      }
+    // CT completeness guard — deferred half: the focus declares none of the active columns, so the
+    // incomplete chain reports only after the prune verdict above had its chance, at the same
+    // evaluation point this rejection had before the contradicted half was hoisted.
+    if (ctUnaccountedColumns) {
+      this.lastRoutedRejected = ctUnaccountedColumns.length;
+      this.memory.recordRejection(focusId, `column_chain_incomplete: ${ctUnaccountedColumns.join(', ')}`, this.hopCount);
+      this.heldFindingDraft.hold(structuredClone(finding));
+      return buildIncompleteRejection(focusId, ctUnaccountedColumns, [...ctActiveColumns], []);
     }
 
     // Active-phase admission guard: staged scope growth must fit the exploration budget.

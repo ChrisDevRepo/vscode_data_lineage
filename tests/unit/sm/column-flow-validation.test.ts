@@ -415,6 +415,51 @@ describe("Column Flow Validation", () => {
   expect(!hint.trim().endsWith("Use verdict='passthrough' to keep it without pruning."), 'passthrough alone is no longer the whole repair').toBe(true);
 });
 
+  it("P1-40: rejection precedence — a submit that is both contradicted and prune-shaped reports the contradicted verdict", () => {
+    const col = { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' };
+    const topoOrigin: LineageNode = makeNode({ id: 'topo_origin', schema: 'dbo', name: 'topo_origin', type: 'view', columns: [col] });
+    const topoMid: LineageNode = makeNode({ id: 'topo_mid', schema: 'dbo', name: 'topo_mid', type: 'view', columns: [col] });
+    const topoLeaf: LineageNode = makeNode({ id: 'topo_leaf', schema: 'dbo', name: 'topo_leaf', type: 'view', columns: [col] });
+    const n: LineageNode[] = [topoOrigin, topoMid, topoLeaf];
+    const e: Array<[string, string]> = [['topo_mid', 'topo_origin'], ['topo_leaf', 'topo_mid']];
+    const engine = new NavigationEngine(makeModel(n, e, ['dbo']), makeGraph(n, e), () => {}, {});
+    engine.init({ origin: 'topo_origin', question: 'trace amount', direction: 'upstream', targetColumns: ['amount'], depthIntent: { kind: 'explicit', levels: 3 } });
+    engine.getHopContext();
+    // Hop 1 commits the origin and routes only the mid; the leaf stays in scope from the seed,
+    // unvisited and unqueued, so at hop 2 it is a required neighbour the mid must account for.
+    engine.submitFindings({
+      focus_node_id: 'topo_origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'topo_mid', col: 'amount' }] }],
+      route_requests: [{ nodeId: 'topo_mid', question: 'trace amount to the mid' }],
+    });
+    const ctx = engine.getHopContext() as { focus_node?: { id: string } };
+    expect(ctx.focus_node?.id, 'the mid is dispatched next').toBe('topo_mid');
+    expect(engine.requiredNeighborIds('topo_mid'), 'the unrouted leaf is a required neighbour of the mid').toContain('topo_leaf');
+
+    // The mid declares the tracked column but submits column_flow: [] (checkably false) AND leaves
+    // its required neighbour unaccounted — the prune branch's missing_required_route shape. The
+    // column contradiction is the content falsehood, so it outranks the prune verdict.
+    const rejected = engine.submitFindings({
+      focus_node_id: 'topo_mid',
+      sections: [{ angle: 'business' as const, text: 'off the trace' }],
+      summary: 'off the trace',
+      verdict: 'analyze',
+      column_flow: [],
+    });
+    expect('error' in rejected && rejected.error === 'column_chain_incomplete',
+      `contradicted outranks the prune verdict (got ${JSON.stringify(rejected)})`).toBe(true);
+    if ('error' in rejected) {
+      const detail = JSON.stringify('detail' in rejected ? rejected.detail : '');
+      expect(detail.includes('topo_leaf'), 'the unaccounted neighbour is not the headline verdict').toBe(false);
+      const declaredHere = ('detail' in rejected ? (rejected.detail as { declared_here?: string[] }).declared_here : undefined);
+      expect(JSON.stringify(declaredHere), 'the rejection names the declared column that contradicts the empty flow').toBe(JSON.stringify(['amount']));
+      expect(rejected.hint ?? '', 'the repair names the column_flow entry to add').toContain('Add a column_flow entry for each');
+    }
+  });
+
   it("tool set in toolPolicy.", () => {
   expect(activeModeOf(true) === 'sm_ct', 'activeModeOf(hasColumnAspect=true) === sm_ct').toBe(true);
   expect(activeModeOf(false) === 'sm_bb', 'activeModeOf(hasColumnAspect=false) === sm_bb').toBe(true);
