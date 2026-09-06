@@ -612,15 +612,40 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
 
 
 /**
- * Enumerates the `$$ … $$` blocks the hops captured, each keyed by the node whose detail slot holds
- * it, in the same self-check shape {@link buildPassthroughFlowFacts} uses for kept node ids.
+ * One captured artifact in a detail slot: a `$$ … $$` block, a fenced block, or an inline
+ * backticked span — matched left to right, so a delimiter nested inside an outer one is part of
+ * that outer artifact and never a second entry. Group order is the render order: math, fence,
+ * inline; whichever group matched names the form the hop captured.
+ */
+const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
+
+/** An identifier immediately followed by `(` — the lexical mark of a call, hence of a computed value. */
+const CALL_TOKEN = /\w\(/;
+
+/** A whole DML/DDL statement: it performs an action, whatever it calls along the way. */
+const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|create|alter|drop|declare|select|with|if|begin|end)\b/i;
+
+/** The opening word of a filter condition — it decides which rows survive, whatever it is nested in. */
+const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
+
+/**
+ * Enumerates the value computations and filter conditions the hops captured — `$$ … $$` blocks plus
+ * the SQL that computes a value or filters rows — each keyed by the node whose detail slot holds it,
+ * in the same self-check shape {@link buildPassthroughFlowFacts} uses for kept node ids.
  *
  * @remarks
- * The carry rule already exists in prose ("never fields within a kept item",
- * `buildPresentationDetailContract`), but every OTHER mandatory-carry class at synthesis is
- * enumerated as a checklist — kept node ids, undispositioned ids, the column chain, terminal-source
- * candidates — while formulas reach the model only inside slot prose it must re-scan; this closes
- * that gap the same way.
+ * The carry rule already exists in prose ("never fields within a kept item", and "every backticked
+ * SQL predicate … must reappear … verbatim", `buildPresentationDetailContract`), but every OTHER
+ * mandatory-carry class at synthesis is enumerated as a checklist — kept node ids, undispositioned
+ * ids, the column chain, terminal-source candidates — while formulas and predicates reach the model
+ * only inside slot prose it must re-scan; this closes that gap the same way.
+ *
+ * A hop writes the same fact as `$$`, as a fenced line or as an inline span, so the delimiter it
+ * reached for cannot decide what carries; the content does, under one lexical bound. A fenced line
+ * or an inline span is enumerated when it computes a value or filters rows — it carries a
+ * {@link CALL_TOKEN} or opens with a {@link PREDICATE_START} keyword, and is not a whole
+ * {@link STATEMENT_START} statement. A fenced block is read line by line, because one body mixes
+ * both classes.
  *
  * Enumeration only: this states evidence the engine already holds, sorted by capture order and
  * de-duplicated per node so the block is byte-stable across runs. Which blocks belong in the answer
@@ -632,18 +657,36 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
 function buildCapturedFormulaFacts(result: SmResult): string {
   const seen = new Set<string>();
   const lines: string[] = [];
+  // Whitespace-collapsed so an artifact written across lines and the same one written inline are
+  // one entry, not two — the de-duplication key and the rendered line share this form.
+  const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
+  const isEnumerable = (artifact: string): boolean =>
+    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
   for (const slot of result.detail_slots) {
     const nodeId = slot.nodeId.toLowerCase();
+    const push = (formula: string, rendered: string): void => {
+      const key = `${nodeId}\u0000${formula}`;
+      if (formula.length === 0 || seen.has(key)) return;
+      seen.add(key);
+      lines.push(`- ${nodeId} — ${rendered}`);
+    };
     for (const section of slot.sections) {
-      for (const match of section.text.matchAll(/\$\$([\s\S]*?)\$\$/g)) {
-        // Whitespace-collapsed so a block written across lines and the same block written inline
-        // are one entry, not two — the de-duplication key and the rendered line share this form.
-        const formula = match[1].split(/\s+/).filter(Boolean).join(' ');
-        if (formula.length === 0) continue;
-        const key = `${nodeId}\u0000${formula}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        lines.push(`- ${nodeId} — $$ ${formula} $$`);
+      for (const match of section.text.matchAll(CAPTURED_ARTIFACT)) {
+        const [, math, fenced, inline] = match;
+        if (math !== undefined) {
+          const formula = collapse(math);
+          push(formula, `$$ ${formula} $$`);
+          continue;
+        }
+        if (fenced !== undefined) {
+          for (const line of fenced.split('\n')) {
+            const formula = collapse(line);
+            if (isEnumerable(formula)) push(formula, `\`\`\` ${formula} \`\`\``);
+          }
+          continue;
+        }
+        const formula = collapse(inline);
+        if (isEnumerable(formula)) push(formula, `\`${formula}\``);
       }
     }
   }

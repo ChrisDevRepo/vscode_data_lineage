@@ -91,3 +91,71 @@ describe('Completion envelope — captured formulas are enumerated, not left in 
       'an empty class adds no heading to the payload').toBe(false);
   });
 });
+
+/** A hop that captured its evidence as SQL rather than as `$$` — fenced body plus inline spans. */
+const SQL_CAPTURE = [
+  'The load step:\n\n```sql\nTRUNCATE TABLE ai.staging;\nINSERT INTO ai.staging (col_a, col_b)\nSET col_a = COALESCE(src.amount, 0)\n```\n\n'
+  + 'The guard is `COALESCE(src.amount, 0)`, applied once per `batch`, and `COALESCE(src.amount, 0)` again downstream.',
+];
+
+describe('Completion envelope — the checklist enumerates what computes a value', () => {
+  const rowsFor = (nodeId: string): string[] => buildSmCompletionEnvelope(
+    makeResult({ [nodeId]: SQL_CAPTURE }), QUESTION, [],
+  ).synthesis_reminder.split('\n').filter(line => line.startsWith(`- ${nodeId} — `));
+
+  it('enumerates a fenced line that carries a call token', () => {
+    expect(rowsFor(BUILDER), 'the assignment computing a value is listed in the form it was captured')
+      .toContain(`- ${BUILDER} — \`\`\` SET col_a = COALESCE(src.amount, 0) \`\`\``);
+  });
+
+  it('leaves a whole statement out of the checklist', () => {
+    const rows = rowsFor(BUILDER).join('\n');
+    expect(rows.includes('TRUNCATE TABLE'), 'an action with no call token is not evidence of a value').toBe(false);
+    expect(rows.includes('INSERT INTO'), 'a statement with a call token is still an action, not a value').toBe(false);
+  });
+
+  it('enumerates an inline span that computes a value and skips a bare name', () => {
+    const rows = rowsFor(BUILDER);
+    expect(rows, 'the inline expression is carried like any other formula')
+      .toContain(`- ${BUILDER} — \`COALESCE(src.amount, 0)\``);
+    expect(rows.includes(`- ${BUILDER} — \`batch\``), 'a backticked name is a name, not a computation').toBe(false);
+  });
+
+  it('lists a repeated expression once and renders byte-identically across builds', () => {
+    const first = rowsFor(BUILDER);
+    expect(first.filter(row => row === `- ${BUILDER} — \`COALESCE(src.amount, 0)\``),
+      'the same expression captured twice is one checklist entry').toHaveLength(1);
+    expect(rowsFor(BUILDER).join('\n'), 'the block is stable across builds').toBe(first.join('\n'));
+  });
+});
+
+/** A hop that captured its filter logic as SQL — a fenced WHERE line plus an inline JOIN condition. */
+const PREDICATE_CAPTURE = [
+  'The extract step:\n\n```sql\nINSERT INTO ai.staging (col_a)\nWHERE e.IsValid = 1\n```\n\n'
+  + 'Joined via `ON a.CustomerID = b.CustomerID`, keyed by `batch`.',
+];
+
+describe('Completion envelope — the checklist enumerates what filters rows', () => {
+  const rowsFor = (nodeId: string): string[] => buildSmCompletionEnvelope(
+    makeResult({ [nodeId]: PREDICATE_CAPTURE }), QUESTION, [],
+  ).synthesis_reminder.split('\n').filter(line => line.startsWith(`- ${nodeId} — `));
+
+  it('enumerates a fenced line that opens a predicate', () => {
+    expect(rowsFor(BUILDER), 'the filter condition is listed in the form it was captured')
+      .toContain(`- ${BUILDER} — \`\`\` WHERE e.IsValid = 1 \`\`\``);
+  });
+
+  it('enumerates an inline span that opens a join condition', () => {
+    expect(rowsFor(BUILDER), 'the join predicate is carried like any other filter')
+      .toContain(`- ${BUILDER} — \`ON a.CustomerID = b.CustomerID\``);
+  });
+
+  it('leaves a whole statement out of the checklist', () => {
+    const rows = rowsFor(BUILDER).join('\n');
+    expect(rows.includes('INSERT INTO'), 'an action with no call token or predicate opener is not a filter').toBe(false);
+  });
+
+  it('skips a bare backticked name that opens neither a call nor a predicate', () => {
+    expect(rowsFor(BUILDER).includes(`- ${BUILDER} — \`batch\``), 'a name is neither a computation nor a filter').toBe(false);
+  });
+});
