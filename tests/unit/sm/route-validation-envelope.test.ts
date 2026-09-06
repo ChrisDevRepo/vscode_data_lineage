@@ -50,3 +50,37 @@ describe('buildRouteValidationRejection — envelope shape', () => {
     expect(detail[2]).not.toHaveProperty('available_routes');
   });
 });
+
+describe('buildRouteValidationRejection — the hold promise follows the engine hold', () => {
+  const required = ['[s].[a]', '[s].[b]'];
+  const missing: InvalidRoute = {
+    kind: 'missing_required_route',
+    id: '[s].[a]',
+    reason: 'Required neighbor was not accounted for from focus [s].[f]: [s].[a]',
+    available_routes: required,
+  };
+  const orphaning: InvalidRoute = {
+    kind: 'prune_would_orphan',
+    id: '[s].[k]',
+    reason: 'Pruning would orphan a committed node: [s].[k]',
+  };
+  /** The engine holds the draft only for a pure set; the promise is the `sections: []` retry. */
+  function promisesHeldRetry(hint: string): boolean {
+    return /sections:\s*\[\]/.test(hint);
+  }
+
+  it('promises the held retry when neighbor incompleteness is the whole rejection', () => {
+    const rejection = buildRouteValidationRejection([missing]);
+    if (!('error' in rejection)) throw new Error('expected a rejection');
+    expect(promisesHeldRetry(rejection.hint as string)).toBe(true);
+    expect(rejection.hint).toContain('route_requests');
+  });
+
+  it('orders a full resubmission when a prune fault rides along', () => {
+    const rejection = buildRouteValidationRejection([orphaning, missing]);
+    if (!('error' in rejection)) throw new Error('expected a rejection');
+    expect(promisesHeldRetry(rejection.hint as string)).toBe(false);
+    expect(rejection.hint).toContain('route_requests');
+    expect(rejection.hint).toContain('prune_neighbors');
+  });
+});

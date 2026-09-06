@@ -37,7 +37,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_contributor_col:
     'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
   missing_required_route:
-    'Account for each required neighbor listed in detail — add it to `route_requests` to walk it, or keep it in `prune_neighbors` only when the prune was refused for a reason you can fix (it must not orphan committed work and must not target queued work). Omitting a required ID is never an option. Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.',
+    'Account for each required neighbor listed in detail — add it to `route_requests` to walk it, or keep it in `prune_neighbors` only when the prune was refused for a reason you can fix (it must not orphan committed work and must not target queued work). Omitting a required ID is never an option.',
   self_loop_column:
     'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (see detail for the offending node.col). Keep the rest of column_flow, sections, and summary as submitted.',
   prune_absent:
@@ -57,6 +57,17 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_route_conflict:
     'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Remove it from one of them.',
 };
+
+/**
+ * Resubmission order for a rejection that carries `missing_required_route`. The engine holds the
+ * draft only when neighbor incompleteness is the whole rejection, so the promise is emitted per
+ * set composition: the held retry for a pure set, the full envelope when another repair rides
+ * along and the sections have to come back with it.
+ */
+const HELD_RETRY_ORDER =
+  'Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.';
+const FULL_RESUBMIT_ORDER =
+  'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.';
 
 /**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the
@@ -111,6 +122,11 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitRes
   const hint = [
     missingRouteHint,
     ...distinctKinds.filter(k => k !== 'missing_required_route').map(k => ROUTE_REJECTION_DIRECTIVE[k]),
+    // Mirrors the engine's hold condition — pure neighbor incompleteness — so the order the model
+    // follows is the one the engine will honour.
+    missingRouteErrors.length > 0
+      ? (missingRouteErrors.length === errors.length ? HELD_RETRY_ORDER : FULL_RESUBMIT_ORDER)
+      : '',
   ].filter(Boolean).join(' ');
   // available_routes is the identical full required set on every missing_required_route entry, so
   // the envelope states it once — on the first such entry — instead of once per missing id.
