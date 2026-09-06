@@ -458,13 +458,20 @@ export class VscodeModelPort implements ModelPort {
 const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
 
 /**
+ * One `<parameter=name>` pair of the Hermes/XML tool-call envelope — the second recorded spelling
+ * of the same miss. Global: a call carries one pair per field, and the closing tag is the bare
+ * `</parameter>`, never a named or balanced `</tool_call>` form.
+ */
+const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
+
+/**
  * Recovers a tool call a provider described as fenced JSON prose instead of emitting through the
  * native tool-call channel.
  *
  * @remarks
  * Promotion fires only when `parts` carries no real tool-call part already, its concatenated text
- * either contains a fenced JSON block or is itself one JSON value, that text parses, and the parsed
- * object validates against one of
+ * either contains a fenced JSON block, is itself one JSON value, or carries a Hermes/XML
+ * `<parameter=…>` envelope, that text reads as a record, and the record validates against one of
  * `definitions`' own input schemas — the same {@link ModelToolDefinition.inputSchema} the native
  * path validates against, so nothing here relaxes what a tool accepts. Any failure at any step
  * returns `parts` unchanged **by reference**, so a caller can test `resolvedParts !== parts` and a
@@ -492,7 +499,24 @@ function promoteProseToolCall(
   try {
     candidate = JSON.parse(match ? match[1] : text.trim());
   } catch {
-    return parts;
+    // The other recorded spelling of the same miss: `<function=name>` carrying `<parameter=field>`
+    // pairs, values raw for scalars and JSON text for aggregates. The per-value parse is
+    // best-effort so a bare id like `[ai].[x]` stays the string it is; an empty or truncated read
+    // simply fails the schema below and returns `parts` unchanged, as today. No `<parameter=…>`
+    // pair at all (e.g. a genuinely empty generation) is not this envelope — matching zero pairs
+    // must not manufacture an empty `{}` candidate that a permissive schema could accept.
+    const xmlParameters = [...text.matchAll(XML_TOOL_PARAMETER)];
+    if (xmlParameters.length === 0) return parts;
+    candidate = Object.fromEntries(
+      xmlParameters.map(([, name, raw]): [string, unknown] => {
+        const value = raw.trim();
+        try {
+          return [name, JSON.parse(value) as unknown];
+        } catch {
+          return [name, value];
+        }
+      }),
+    );
   }
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return parts;
   const definition = definitions.find((entry) => entry.inputSchema.safeParse(candidate).success);

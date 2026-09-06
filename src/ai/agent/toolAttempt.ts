@@ -1603,7 +1603,7 @@ export async function executeToolGenerationAttempt(
       nonEmptyCode: 'missing_required_tool_call',
       emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
       nonEmptyReason: `The model did not call ${input.requiredTerminalTool}.`,
-      hint: `Call ${input.requiredTerminalTool} with all required fields.`,
+      hint: `Emit ${input.requiredTerminalTool} through the tool-call channel: a fenced JSON body, or a <function=...> block with <parameter=...> pairs, is message text and is not a call. Same fields, correct channel.`,
     });
   }
 
