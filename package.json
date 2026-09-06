@@ -654,7 +654,7 @@
         "toolReferenceName": "lineage_search_ddl",
         "displayName": "Search DDL",
         "userDescription": "Search SQL body scripts for a text pattern.",
-        "modelDescription": "Searches view, procedure and function bodies with a JavaScript regular expression — all three types when `types` is omitted. Matching is always case-insensitive, so an inline flag group such as `(?i)` is unnecessary and is ignored. `^` and `$` anchor the whole body rather than each line, and `.` never crosses a line break. Returns every matching line with its object, 1-based line number and surrounding context; no matches is reported as `total: 0`, and an unusable pattern as `invalid_regex` with the repair.",
+        "modelDescription": "Grep over view, procedure and function bodies: a regular expression in, every match out with its object, 1-based line number, matched line and surrounding context. Case-insensitive; `^` and `$` match per line. No matches is `total: 0`; an unusable pattern is `invalid_regex` with the repair.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",

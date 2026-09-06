@@ -79,34 +79,37 @@ type SearchRegexResult =
   /** The pattern compiled but exceeded the ReDoS budget on the bounded sample. */
   | { ok: false; reason: 'redos' };
 
+/** Flags every search regex compiles with: grep's contract — case-insensitive, `^`/`$` per line. */
+const SEARCH_REGEX_FLAGS = 'im';
+
 /**
- * Strips a leading `(?i)` (or `(?ii)`, etc.) inline-flag group whose flags are a subset of `{i}`.
+ * Strips a leading inline-flag group whose flags are a subset of {@link SEARCH_REGEX_FLAGS}.
  *
  * @param pattern - The raw regex string as received.
  * @returns The pattern with the redundant group removed, or `null` when there is nothing to strip.
  *
  * @remarks
- * `compileSearchRegex` always adds the `i` flag, so a leading `(?i)` asks for exactly the behavior
- * already in force — it is a no-op, not a request the engine can honor by any other means, so
- * stripping it is lossless. Any other flag letter (`(?m)`, `(?s)`, `(?im)`, ...) changes matching
- * semantics the engine does not otherwise apply, so those groups are left untouched and still fail
- * to compile. The scoped form `(?i:...)` is a different construct — it is not a simple prefix, and
- * rewriting it would require re-deriving the subgroup boundary — so it is left untouched too, and
- * still fails to compile like any other unsupported inline-flag syntax.
+ * `compileSearchRegex` always compiles with `i` and `m`, so a leading `(?i)`, `(?m)` or `(?im)`
+ * asks for exactly the behavior already in force — a no-op, so stripping it is lossless. Any other
+ * flag letter (`(?s)`, `(?x)`, ...) changes matching semantics the engine does not otherwise apply,
+ * so those groups are left untouched and still fail to compile. The scoped form `(?i:...)` is a
+ * different construct — it is not a simple prefix, and rewriting it would require re-deriving the
+ * subgroup boundary — so it is left untouched too, and still fails to compile like any other
+ * unsupported inline-flag syntax.
  *
  * When the group is the entire pattern, stripping it would leave an empty pattern, and an empty
  * regex matches every string — trading a refused search for a silent match-everything. That case is
  * left unstripped on purpose, so it still falls through to the normal syntax rejection below.
  */
-function stripRedundantCaseInsensitiveFlag(pattern: string): string | null {
-  const match = /^\(\?(i+)\)/.exec(pattern);
+function stripRedundantInlineFlags(pattern: string): string | null {
+  const match = /^\(\?([im]+)\)/.exec(pattern);
   if (!match) return null;
   const rest = pattern.slice(match[0].length);
   return rest.length > 0 ? rest : null;
 }
 
 /**
- * Compiles a search pattern into a safe, case-insensitive regular expression.
+ * Compiles a search pattern into a safe regular expression with grep's flags ({@link SEARCH_REGEX_FLAGS}).
  *
  * @param pattern - The raw regex string to compile.
  * @param onNormalize - Optional sink for a debug line when a redundant flag group is stripped.
@@ -114,18 +117,18 @@ function stripRedundantCaseInsensitiveFlag(pattern: string): string | null {
  *
  * @remarks
  * Rejects patterns that fail to execute against a bounded sample within the guard budget. A
- * redundant leading `(?i)` is normalized away before compiling rather than rejected — see
- * {@link stripRedundantCaseInsensitiveFlag} for what qualifies and why.
+ * redundant leading `(?i)`/`(?m)`/`(?im)` is normalized away before compiling rather than rejected —
+ * see {@link stripRedundantInlineFlags} for what qualifies and why.
  */
 export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) => void): SearchRegexResult {
-  const stripped = stripRedundantCaseInsensitiveFlag(pattern);
+  const stripped = stripRedundantInlineFlags(pattern);
   const effectivePattern = stripped ?? pattern;
   if (stripped !== null) {
-    onNormalize?.(`compileSearchRegex: stripped redundant "(?i)" flag group (case-insensitive matching is already the default) — pattern="${pattern}" -> "${stripped}"`);
+    onNormalize?.(`compileSearchRegex: stripped redundant inline flag group (flags "${SEARCH_REGEX_FLAGS}" are already in force) — pattern="${pattern}" -> "${stripped}"`);
   }
   let regex: RegExp;
   try {
-    regex = new RegExp(effectivePattern, 'i');
+    regex = new RegExp(effectivePattern, SEARCH_REGEX_FLAGS);
   } catch (err) {
     return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
   }
@@ -143,11 +146,11 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
  *
  * @remarks
  * The repair is read off the rejection rather than re-derived, so the advice always describes the
- * measurement that rejected the pattern. `searchCatalog`'s regex mode (and its callers) always add
- * the `i` flag, so patterns never need — and JavaScript regular expressions never support — an
- * inline flag group. A redundant `(?i)` never reaches this function: `compileSearchRegex` strips it
- * before compiling, so what lands here asks for semantics (`(?m)`, `(?im)`, a scoped `(?i:...)`, ...)
- * the engine does not otherwise apply.
+ * measurement that rejected the pattern. Every search regex compiles with {@link SEARCH_REGEX_FLAGS},
+ * so patterns never need — and JavaScript regular expressions never support — an inline flag group.
+ * A redundant `(?i)`/`(?m)`/`(?im)` never reaches this function: `compileSearchRegex` strips it
+ * before compiling, so what lands here asks for semantics (`(?s)`, a scoped `(?i:...)`, ...) the
+ * engine does not otherwise apply.
  */
 export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexResult, { ok: false }>): string {
   if (rejection.reason === 'syntax') {
@@ -159,7 +162,7 @@ export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexR
       return 'Remove the "(?#...)" comment group — JavaScript regular expressions do not support inline comments.';
     }
     if (/\(\?[a-zA-Z-]+[):]/.test(pattern) && message.includes('Invalid group')) {
-      return 'Remove the inline flag group (e.g. "(?m)") — matches are already case-insensitive by default, and JavaScript regular expressions do not support inline flags.';
+      return 'Remove the inline flag group (e.g. "(?s)") — matching is already case-insensitive with ^ and $ per line, and JavaScript regular expressions do not support inline flags.';
     }
     if (message.includes('Invalid group')) {
       return 'Remove or correct the unsupported "(?...)" group syntax — JavaScript does not recognize it.';
@@ -283,8 +286,8 @@ export function searchBodyScripts(
   let filtered = nodes;
   if (types && types.size > 0) filtered = filtered.filter(n => n.bodyScript && types.has(n.type));
 
-  // One allocation for the whole sweep, not one per node: `compileSearchRegex` fixes the flags to
-  // `i`, and walking every match in a body needs the `g` flag's `lastIndex` cursor.
+  // One allocation for the whole sweep, not one per node: `compileSearchRegex` fixes the flags, and
+  // walking every match in a body needs the `g` flag's `lastIndex` cursor.
   const scanner = regex === null ? null : new RegExp(regex.source, `${regex.flags}g`);
 
   const matches: BodyMatch[] = [];

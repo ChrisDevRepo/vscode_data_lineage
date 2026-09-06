@@ -115,10 +115,10 @@ describe('search tools — grep contract', () => {
     expect('results' in invalid, 'a rejection carries no result list').toBe(false);
   });
 
-  it('anchors and "." keep their whole-body meaning — no line crossing, no per-line anchors', () => {
-    expect((searchDdl(model, '^CREATE') as DdlResult).total, '^ anchors the body start').toBe(1);
-    expect((searchDdl(model, '^SELECT') as DdlResult).total, 'SELECT starts a line, not the body').toBe(0);
-    expect((searchDdl(model, 'OrderId > 0$') as DdlResult).total, '$ anchors the body end').toBe(1);
+  it('anchors work per line like grep, and "." never crosses a line break', () => {
+    expect((searchDdl(model, '^CREATE') as DdlResult).total, '^ matches the first line').toBe(1);
+    expect((searchDdl(model, '^SELECT') as DdlResult).total, '^ matches a line start inside the body').toBe(1);
+    expect((searchDdl(model, 'OrderId > 0$') as DdlResult).total, '$ matches a line end').toBe(1);
     expect((searchDdl(model, 'ai.vwSales AS.SELECT') as DdlResult).total, '. never crosses a line break').toBe(0);
   });
 

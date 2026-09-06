@@ -88,14 +88,15 @@ describe('model search', () => {
     expect(result.ok && result.regex.test('RawOrderImport')).toBe(true);
   });
 
-  it('still rejects a flag group that changes semantics beyond case-insensitivity', () => {
+  it('strips a redundant "(?m)" or "(?im)" too, and still rejects a flag group beyond the grep flags', () => {
     const multiline = compileSearchRegex('(?m)foo');
-    expect(multiline.ok).toBe(false);
-    expect(multiline.ok === false && multiline.reason).toBe('syntax');
-
+    expect(multiline.ok && multiline.regex.source).toBe('foo');
     const mixed = compileSearchRegex('(?im)foo');
-    expect(mixed.ok).toBe(false);
-    expect(mixed.ok === false && mixed.reason).toBe('syntax');
+    expect(mixed.ok && mixed.regex.flags).toBe('im');
+
+    const dotAll = compileSearchRegex('(?s)foo');
+    expect(dotAll.ok).toBe(false);
+    expect(dotAll.ok === false && dotAll.reason).toBe('syntax');
   });
 
   it('leaves the scoped "(?i:...)" form untouched — it is a different construct, not a no-op prefix', () => {
@@ -188,16 +189,18 @@ describe('model search', () => {
     expect(hits[2].text).toBe('JOIN Sales.OrderDetail d ON o.OrderID = d.OrderID');
   });
 
-  it('keeps ^, $ and . anchored to the whole body — the flags are fixed to "i"', () => {
+  it('anchors ^ and $ per line like grep, and . never crosses a line break', () => {
     const count = (pattern: string): number => {
       const compiled = compileSearchRegex(pattern);
       if (!compiled.ok) throw new Error(`${pattern} must compile`);
       return searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const)).length;
     };
-    expect(count('^CREATE'), '^ is the body start').toBe(1);
-    expect(count('^SELECT'), 'SELECT starts a line, not the body').toBe(0);
-    expect(count('d.OrderID$'), '$ is the body end').toBe(1);
+    expect(count('^CREATE'), '^ matches the first line start').toBe(1);
+    expect(count('^SELECT'), '^ matches a line start inside the body').toBe(1);
+    expect(count('d.OrderID$'), '$ matches a line end').toBe(1);
     expect(count('AS.SELECT'), '. never crosses a line break').toBe(0);
+    const inline = compileSearchRegex('(?im)^select');
+    expect(inline.ok && inline.regex.source, 'a redundant (?im) group is stripped, not rejected').toBe('^select');
   });
 
   it('does not skip a body whose first match is empty', () => {
@@ -273,10 +276,10 @@ describe('regexRejectHint', () => {
   }
 
   it('names the flags option instead of blaming nested quantifiers for an inline flag', () => {
-    // A redundant "(?i)" no longer reaches this hint — compileSearchRegex strips it and compiles
-    // the remainder (covered in the 'model search' describe above). "(?m)" requests semantics the
-    // engine does not otherwise apply, so it still fails to compile and still needs this hint.
-    const hint = hintFor('(?m)order');
+    // A redundant "(?i)"/"(?m)" no longer reaches this hint — compileSearchRegex strips it and
+    // compiles the remainder (covered in the 'model search' describe above). "(?s)" requests
+    // semantics the engine does not otherwise apply, so it still fails to compile and needs this hint.
+    const hint = hintFor('(?s)order');
     expect(hint).toContain('inline flag');
     expect(hint).toContain('already case-insensitive');
     expect(hint).not.toContain('nested quantifiers');
