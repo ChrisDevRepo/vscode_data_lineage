@@ -702,6 +702,26 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
 
     expect(state.observations[0].acceptedCallKey).toBe('accepted-key-0');
   });
+
+  it('keeps the read-dedupe identity on an evicted observation', () => {
+    // Two bodies that cannot co-reside in the checkpoint share must not evict each other's dedupe
+    // identity: the engine would re-dispatch both every hop and spin to MAX_TOOL_PROVIDER_CALLS.
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), {
+      stop: 'continue',
+      providerCalls: 1,
+      semanticFailures: 0,
+      observations: [
+        { callId: 'call-0', toolName: 'lineage_get_object_detail', result: 'A'.repeat(28_000), acceptedCallKey: 'key-a' },
+        { callId: 'call-1', toolName: 'lineage_get_object_detail', result: 'B'.repeat(21_000), acceptedCallKey: 'key-b' },
+      ],
+      rejections: [],
+    });
+
+    expect(state.observations.map(o => o.acceptedCallKey)).toEqual(['key-a', 'key-b']);
+    expect(state.observations[0].result).toContain('"omitted":true');
+    expect(state.observations[1].result).toBe('B'.repeat(21_000));
+    expect(Buffer.byteLength(JSON.stringify(state.observations))).toBeLessThanOrEqual(45_056);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -485,8 +485,20 @@ function boundStoredObservations(observations: readonly ToolAttemptObservation[]
           ...source,
           result: capUtf8Text(source.result, Math.max(128, MAX_STORED_EVIDENCE_KIND_BYTES - identityBytes - 64)),
         });
+        break;
       }
-      break;
+      // Past the share the body goes and the identity stays. `acceptedCallKey` is the read-dedupe
+      // key: evicting it re-dispatches a read already served, and two bodies that cannot co-reside
+      // evict each other every hop, spinning the phase to MAX_TOOL_PROVIDER_CALLS with no answer
+      // (T3 2026-09-06: 28_752 + 21_148 bytes against a 45_056 share, six wasted provider calls).
+      // Same identity+size projection the render path already collapses an over-budget body to.
+      if (source.acceptedCallKey === undefined) continue;
+      const stub = { ...source, result: collapseObservation(source).result };
+      const stubBytes = Buffer.byteLength(JSON.stringify(stub));
+      if (prependedArrayBytes(retainedBytesSum, retained.length, stubBytes) > MAX_STORED_EVIDENCE_KIND_BYTES) break;
+      retained.unshift(stub);
+      retainedBytesSum += stubBytes;
+      continue;
     }
     retained.unshift(bounded);
     retainedBytesSum += boundedBytes;
@@ -920,7 +932,7 @@ function truncateObservationResult(observation: ToolAttemptObservation, targetBy
 }
 
 /** Replaces an observation body with the approved identity+size stub, dropping the body entirely. */
-function collapseObservation(observation: ToolAttemptObservation): RenderedObservation {
+function collapseObservation(observation: ToolAttemptObservation): Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'> {
   return {
     callId: observation.callId,
     toolName: observation.toolName,
