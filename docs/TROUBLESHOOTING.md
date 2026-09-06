@@ -60,7 +60,7 @@ UI does not create a separate button for each deferred route.
 | Google | gemini-3.8-flash | medium (the model default) | good | ~8 min | ~415k |
 | Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~21 min | ~375k |
 
-¹ Total of three questions — one discovery, one object trace (BB) and one column trace (CT) — per run, averaged where several runs exist; only runs that completed all three are counted.
+¹ Total of three questions — one discovery, one object trace (BB) and one column trace (CT) — per run, averaged where several runs exist.
 
 These numbers are snapshots of particular days and say nothing about what a given setup will do; they depend on model, region, load, reasoning settings and database size. Models reached through OpenRouter and Z.ai showed high or erratic latency and timeouts during testing and are not in the table. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete — up to the zero-output limit below.
 
