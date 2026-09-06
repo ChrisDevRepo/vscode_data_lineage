@@ -505,8 +505,9 @@ describe('prompt composition', () => {
     expect(bb).toContain(retentionLine);
     expect(ct).toContain(retentionLine);
 
-    // Anti-substitution pin: CT states the row-logic trigger as an extension of BB's, not a swap.
-    expect(ct).toContain('as in BB, it applies business logic on the data path');
+    // Anti-substitution pin, strengthened from a paraphrase anchor ("as in BB, …") to the
+    // composition itself: CT renders BB's verdict block verbatim, so no CT paraphrase of `analyze`
+    // or `passthrough` can exist to compete with it.
     const rowLogicTrigger = 'applies business logic on the data path';
     const rowLogicExamples = 'a calculation, condition, status transition, or audit decision';
     for (const line of [rowLogicTrigger, rowLogicExamples]) {
@@ -514,8 +515,9 @@ describe('prompt composition', () => {
       expect(ct).toContain(line);
     }
 
-    // CT is a superset, not a replacement: its own column trigger still stands alongside BB's.
-    expect(ct).toContain('transforms the traced value or is its terminal source');
+    // CT is a superset, not a replacement: the column aspect is one added sentence, not a second
+    // definition of the three verdicts.
+    expect(ct).toContain('Every verdict carries `column_flow`');
     expect(ct).toContain('column_flow');
 
     // Prune verdict tail (PRUNE_VERDICT_TAIL) is byte-shared between the two verdict blocks.

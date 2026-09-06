@@ -638,10 +638,11 @@ export function buildOriginalQuestionBlock(question: string | null): string {
  * `targetColumns` are set.
  *
  * @remarks
- * Establishes the PRIMARY (`column_flow`) / SUPPORTING (`sections[]`) hierarchy before any
- * capture template renders, and explicitly disambiguates the two fields so the misleading
- * capture-rules header ("submit these as sections[]") does not confuse the model into putting
- * column_flow entries into sections[]. One canonical surface for the CT field hierarchy.
+ * Names the traced columns and disambiguates the two fields, so the misleading capture-rules
+ * header ("submit these as sections[]") does not confuse the model into putting column_flow
+ * entries into sections[]. What `column_flow` may hold has one home — the CT addendum on the hop
+ * decision contract (`smPrompts.ts`); this block states only what that addendum does not: which
+ * template writes which field, and the value classes that are not upstream columns at all.
  *
  * @param targetColumns - The columns being traced, as confirmed at gate-approval.
  * @returns Stable-prefix markdown block anchoring the CT session contract.
@@ -651,15 +652,8 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
     '# Column Trace: active',
     `Target columns: [${targetColumns.join(', ')}]`,
     '',
-    'CT uses a column-first contract.',
-    'Main job this hop: fill `column_flow` — structural provenance for each active column, and `[]` when this node carries none.',
-    'SUPPORTING job: fill `sections[].text` — business/technical context explaining WHY the column flows this way.',
-    'Use `column_flow` only for the active tracked column chain.',
-    'Put only real upstream table/view/procedure node+column refs in `upstream_columns`.',
-    'Do not encode literals, NULLs, parameters, generated sequence values, audit/logging columns, or filter-only columns as `upstream_columns`; explain them in `sections[].text` when they matter.',
-    '',
-    '`column_flow` and `sections[]` are separate fields.',
-    '`column_trace_capture` writes `column_flow`; business/technical captures write `sections[]`.',
+    '`column_flow` and `sections[]` are separate fields: `column_trace_capture` writes `column_flow`, the business/technical captures write `sections[]` — the context explaining why the column flows this way.',
+    'Literals, NULLs, parameters, generated sequence values, audit/logging columns and filter-only columns are not `upstream_columns`; they belong in `sections[].text` when they matter.',
   ].join('\n');
 }
 

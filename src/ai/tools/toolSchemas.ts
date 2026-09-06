@@ -477,22 +477,19 @@ const ColumnFlowEntrySchema = z.object({
  * Mode-locked `verdict` field description for `submit_findings`.
  *
  * @remarks
- * BB and CT define "analyze" / "passthrough" differently (see the Verdict Protocol block in the
- * system prompt): BB's "analyze" is logic-on-the-path; CT's "analyze" additionally covers a tracked
- * column's terminal source — exactly the node class CT's "passthrough" would otherwise claim under
- * the BB wording. A single shared description text previously carried only the BB definitions into
- * CT mode, so the model read two incompatible definitions of "analyze" (system prompt vs. schema).
- * Each mode now gets its own schema description matching its own protocol block.
- *
- * "prune" is the exception: it is one trigger in both modes, so both descriptions carry
- * {@link PRUNE_VERDICT_LEAD} verbatim — this schema description is the last text the model reads
- * before it answers, and a CT-only value test here prunes a row-shaping node BB keeps.
+ * One set of definitions, both modes: this description is the last text the model reads before it
+ * answers, and a CT restatement here rewrote "analyze" and "passthrough" in column vocabulary — a
+ * row-shaping node carrying no traced column then matched neither, leaving `prune` as the only
+ * word available and removing a node BB keeps. CT renders the same sentence and adds its column
+ * clause, matching the composed Verdict Protocol block in the system prompt.
  */
+const VERDICT_DEFINITIONS =
+  `"analyze" applies logic on the data path, "passthrough" is on the path with no logic, "prune": ${PRUNE_VERDICT_LEAD}`;
+
 const hopVerdictSchema = (mode: 'bb' | 'ct') =>
   z.enum(['analyze', 'passthrough', 'prune']).describe(
-    mode === 'ct'
-      ? `Your assessment of the focus node, per the Verdict Protocol in the system prompt. Use the CT definitions: "analyze" transforms a tracked column or is its terminal source, "passthrough" carries it unchanged, "prune": ${PRUNE_VERDICT_LEAD}`
-      : `Your assessment of the focus node, per the Verdict Protocol in the system prompt. Use the BB definitions: "analyze" applies logic on the data path, "passthrough" is on the path with no logic, "prune": ${PRUNE_VERDICT_LEAD}`,
+    `Your assessment of the focus node, per the Verdict Protocol in the system prompt. ${VERDICT_DEFINITIONS}`
+    + (mode === 'ct' ? ' In CT, "analyze" also covers a traced column\'s terminal source, and every verdict carries column_flow.' : ''),
   );
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_IDS).describe(
@@ -512,9 +509,9 @@ const HopFindingBaseSchema = z.object({
   sections: coercedStringArray(CapturedSectionSchema, { max: 2 }).describe('One grounded section for each output angle required by the locked classification.'),
   summary: z.string().describe(
     'One-line digest a later hop reads in isolation after older turns are wiped. Name what this node does ' +
-    'to the traced value — the transform, filter, or pass-through — and which column it hands to which ' +
-    'downstream node. Example: "vwPriceA carries ListPriceA through unchanged and feeds spBuildFactA ' +
-    'with UnitPriceA." Aim for one line; length is never a rejection axis.',
+    'to the data — the transform, filter, or pass-through — and what it hands to which downstream node. ' +
+    'Example: "vwPriceA carries ListPriceA through unchanged and feeds spBuildFactA with UnitPriceA." ' +
+    'Aim for one line; length is never a rejection axis.',
   ),
   /**
    * Optional list of neighbors to queue for the next hops. Each entry's
