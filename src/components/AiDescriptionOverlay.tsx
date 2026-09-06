@@ -6,6 +6,27 @@ import { AI_SECTION_ID_PREFIX, FOCUS_NODE_HREF_PREFIX, renderAiMarkdown } from '
 /** How long the copy button reads "Copied" before it reverts. */
 const COPIED_FEEDBACK_MS = 2000;
 
+/** Which edge of the canvas the report column is docked against. */
+export type AiDockPosition = 'right' | 'left' | 'bottom';
+
+/** The next dock position in the cycle a click on the dock button steps through. */
+const NEXT_DOCK_POSITION: Record<AiDockPosition, AiDockPosition> = { right: 'left', left: 'bottom', bottom: 'right' };
+
+/** `⚠️` occurrences per numbered `## N` section — the rail table-of-contents' warning badge. */
+function warningCountsBySection(description: string): Map<number, number> {
+  const counts = new Map<number, number>();
+  let current: number | null = null;
+  for (const line of description.split('\n')) {
+    const heading = /^##\s+(\d+)\s/.exec(line);
+    if (heading) { current = Number(heading[1]); continue; }
+    if (/^#{1,2}\s/.test(line)) { current = null; continue; }
+    if (current == null) continue;
+    const hits = line.match(/⚠️/g);
+    if (hits) counts.set(current, (counts.get(current) ?? 0) + hits.length);
+  }
+  return counts;
+}
+
 /** One numbered report section, derived client-side from the bridged badge chips (`"N label"`). */
 export interface AiReportSection {
   /** The engine-assigned section number, matching the `## N` heading in the description. */
@@ -36,6 +57,12 @@ interface AiDescriptionOverlayProps {
   onFocusSection?: (n: number | null) => void;
   /** Called when a `#focus-node:<nodeId>` link is clicked — zooms the graph to that node. */
   onFocusNode?: (nodeId: string) => void;
+  /** Which edge the column is docked against — defaults to `'right'`. */
+  dockPosition?: AiDockPosition;
+  /** Called when the dock button moves the column to the next edge. */
+  onDockPositionChange?: (position: AiDockPosition) => void;
+  /** Called with the panel's measured content-box size (a resize drag or dock switch changed it). */
+  onPanelResize?: (width: number, height: number) => void;
 }
 
 /**
@@ -61,6 +88,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   highlightedSections,
   onFocusSection,
   onFocusNode,
+  dockPosition = 'right',
+  onDockPositionChange,
+  onPanelResize,
 }: AiDescriptionOverlayProps) {
   const [rawMode, setRawMode] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -68,6 +98,21 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const [fontScale, setFontScale] = useState<0 | 1 | 2>(0);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
+
+  // Reports the panel's rendered size (a `resize` drag or a dock switch) up to the canvas.
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!expanded || !onPanelResize) return;
+    const el = anchorRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) onPanelResize(Math.round(entry.contentRect.width), Math.round(entry.contentRect.height));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [expanded, onPanelResize]);
+
+  const sectionWarnings = useMemo(() => warningCountsBySection(description), [description]);
 
   // The chip row lights every section a node click matched; a plain focus (chip click, keyboard
   // nav, restored layout) has no multi-highlight, so it falls back to just the active one.
@@ -148,12 +193,25 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     onExpandedChange?.(false);
   }
 
+  // Opens the description as a markdown preview tab; the extension host strips `#focus-node:`
+  // links on the way out (`stripFocusNodeLinks` in `messageHandlers.ts`) since only this webview
+  // resolves them.
+  function handleOpenInEditor() {
+    window.vscode?.postMessage({ type: 'ai-open-in-editor', markdown: description });
+  }
+
   /**
    * A chip click toggles that section's graph focus; the `activeSection` effect above scrolls the
    * report to its `## N` heading once the prop change comes back down.
    */
   function handleSectionChip(n: number) {
     onFocusSection?.(activeSection === n ? null : n);
+  }
+
+  /** A rail table-of-contents row expands the pane and jumps straight to its section. */
+  function handleRailSectionJump(n: number) {
+    onExpandedChange?.(true);
+    onFocusSection?.(n);
   }
 
   const html = useMemo(() => renderAiMarkdown(description), [description]);
@@ -165,6 +223,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   ].filter(Boolean).join(' ');
   const anchorClassName = [
     'ln-ai-description-anchor',
+    dockPosition !== 'right' ? `ln-ai-description-anchor-${dockPosition}` : '',
     maximized ? 'ln-ai-description-anchor-maximized' : '',
   ].filter(Boolean).join(' ');
 
@@ -180,18 +239,51 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           <span className="ln-ai-description-rail-name">{railName}</span>
           <span className="ln-ai-description-rail-toggle">&#x25C0;</span>
         </button>
+        {sections && sections.length > 0 && (
+          <div className="ln-ai-description-rail-toc" role="navigation" aria-label="Report sections">
+            {sections.map(section => (
+              <button
+                key={section.n}
+                className="ln-ai-description-rail-toc-item"
+                onClick={() => handleRailSectionJump(section.n)}
+                title={`${section.n} ${section.label} — ${section.nodeIds.length} object(s)${sectionWarnings.get(section.n) ? `, ${sectionWarnings.get(section.n)} warning(s)` : ''}`}
+              >
+                {section.n}·{section.nodeIds.length}
+                {sectionWarnings.get(section.n) ? ` ⚠${sectionWarnings.get(section.n)}` : ''}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className={anchorClassName}>
+    <div className={anchorClassName} ref={anchorRef}>
       <div className={overlayClassName} onKeyDown={handlePaneKeyDown}>
         <div className="ln-ai-description-header">
           <span className="ln-ai-description-title text-[10px] font-semibold ln-text-muted uppercase tracking-wide">
             {railName}
           </span>
           <div className="ln-ai-description-actions">
+            <Tooltip content={`Docked ${dockPosition} — click to move to ${NEXT_DOCK_POSITION[dockPosition]}`}>
+              <button
+                className="ln-ai-description-action"
+                onClick={() => onDockPositionChange?.(NEXT_DOCK_POSITION[dockPosition])}
+                aria-label="Move report panel dock position"
+              >
+                &#x21C4;
+              </button>
+            </Tooltip>
+            <Tooltip content="Open in editor">
+              <button
+                className="ln-ai-description-action"
+                onClick={handleOpenInEditor}
+                aria-label="Open description in editor"
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M13.75 7a.75.75 0 0 1 .75.75v5.5A1.75 1.75 0 0 1 12.75 15h-9.5A1.75 1.75 0 0 1 1.5 13.25v-9.5A1.75 1.75 0 0 1 3.25 2h5.5a.75.75 0 0 1 0 1.5h-5.5a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25v-5.5a.75.75 0 0 1 .75-.75Z"/><path d="M14.5 1.5h-4a.75.75 0 0 0 0 1.5h2.19L6.22 9.47a.75.75 0 1 0 1.06 1.06L13.75 4V6.5a.75.75 0 0 0 1.5 0v-4a.75.75 0 0 0-.75-.75Z"/></svg>
+              </button>
+            </Tooltip>
             <Tooltip content="Decrease text size">
               <button
                 className="ln-ai-description-action ln-ai-description-text-action"

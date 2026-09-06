@@ -79,22 +79,21 @@ const AiDescriptionOverlay = lazy(async () => {
   return { default: module.AiDescriptionOverlay };
 });
 // Type-only import keeps the lazy chunk boundary intact while typing the chip-row prop.
-import type { AiReportSection } from './AiDescriptionOverlay';
+import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
 
-/**
- * Every section number that badged `nodeId`, in document order — the reverse of `aiSections`'
- * per-section `nodeIds`, so a node click can land the report on the section that discusses it.
- * A node absent from every section (e.g. a filter-only neighbor) returns an empty array.
- */
+/** The panel's reserved extent before its own `ResizeObserver` has reported a measured size. */
+const AI_PANEL_DEFAULT_WIDTH = 'min(440px, 55vw)';
+const AI_PANEL_DEFAULT_HEIGHT = 'min(360px, 45vh)';
+
+/** `window.vscode` state key the dock position is persisted under, merged in alongside other keys. */
+const AI_DOCK_STATE_KEY = 'aiDockPosition';
+
+/** Reverse of `aiSections`' per-section `nodeIds`: every section that badged `nodeId`, in order. */
 export function sectionsForNode(sections: readonly AiReportSection[], nodeId: string): number[] {
   return sections.filter(s => s.nodeIds.includes(nodeId)).map(s => s.n);
 }
 
-/**
- * Cache key for the AI pane's open state and pinned section — origin id (the owning filter
- * profile's id, or `'preview'` for a transient AI run with none) plus the view name, so a re-run
- * of the same view restores its layout instead of the blind reset a fresh document used to force.
- */
+/** Cache key for the AI pane's open state + pinned section — origin id ('preview' with none) + view name. */
 export function aiLayoutCacheKey(originId: string | undefined, viewName: string): string {
   return `${originId ?? 'preview'}::${viewName}`;
 }
@@ -557,17 +556,15 @@ export function GraphCanvas({
   // the React Flow area and dim the graph around a focused report section.
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<number | null>(null);
-  // Section numbers a node click lights up as chips (may be several); `activeSection` alone is the
-  // scroll target and the dimmed set. A direct chip click or keyboard nav clears this back to null,
-  // so the chip row falls back to lighting only `activeSection`.
+  // Section numbers a node click lights up as chips (may be several); a chip click or keyboard nav
+  // clears this back to null, falling back to lighting only `activeSection`.
   const [highlightedSections, setHighlightedSections] = useState<number[] | null>(null);
   const aiPanelDefaultOpen = !!(
     (aiPreview && aiPreview.nodeIds.size === 0) ||
     (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
   );
   const aiViewName = activeAdvancedProfile?.name ?? aiPreview?.name ?? '';
-  // Open state + pinned section survive a re-run of the same view — keyed by origin id + view name
-  // — instead of the blind reset a fresh `aiDescription` used to force on every result.
+  // Open state + pinned section survive a re-run of the same view, keyed by origin id + view name.
   const aiLayoutCache = useRef(new Map<string, { open: boolean; section: number | null }>());
   useEffect(() => {
     if (!aiDescription) return;
@@ -584,13 +581,32 @@ export function GraphCanvas({
     setActiveSection(n);
     setHighlightedSections(null);
   }, []);
+  // Which edge the report column docks against, persisted via the webview's own getState/setState
+  // (not a new mechanism), merged so this key never clobbers another preference stored there.
+  const [dockPosition, setDockPositionState] = useState<AiDockPosition>(() => {
+    const saved = (vscodeApi.getState() as Record<string, unknown> | undefined)?.[AI_DOCK_STATE_KEY];
+    return saved === 'left' || saved === 'bottom' ? saved : 'right';
+  });
+  const setDockPosition = useCallback((position: AiDockPosition) => {
+    setDockPositionState(position);
+    vscodeApi.setState({ ...(vscodeApi.getState() ?? {}), [AI_DOCK_STATE_KEY]: position });
+  }, [vscodeApi]);
+  // The panel's own measured size, once its ResizeObserver has reported one (native CSS `resize`).
+  const [panelSizePx, setPanelSizePx] = useState<{ width: number; height: number } | null>(null);
+  // Reserved-space style for the React Flow wrapper: the panel's measured width (right/left dock)
+  // or height (bottom dock), else the CSS default kept in sync with `.ln-ai-description-anchor*`.
+  const aiCanvasReserve = !(aiDescription && aiPanelOpen)
+    ? { width: '100%', height: '100%' }
+    : dockPosition === 'bottom'
+      ? { width: '100%', height: `calc(100% - ${panelSizePx ? `${panelSizePx.height}px` : AI_PANEL_DEFAULT_HEIGHT})` }
+      : { width: `calc(100% - ${panelSizePx ? `${panelSizePx.width}px` : AI_PANEL_DEFAULT_WIDTH})`, height: '100%' };
   // The narrowed canvas re-fits once the panel has claimed or released its width, so the visible
   // graph re-centers instead of leaving nodes under the docked column.
   useEffect(() => {
     if (!aiDescription) return;
     const t = setTimeout(() => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); }, 80);
     return () => clearTimeout(t);
-  }, [aiPanelOpen, aiDescription, fitView]);
+  }, [aiPanelOpen, dockPosition, aiDescription, fitView]);
 
   /**
    * Column-level rendering of the active trace; null when the run recorded no column findings.
@@ -687,10 +703,8 @@ export function GraphCanvas({
   viewportPreserveVersionRef.current = viewportPreserveVersion;
   const consumedViewportPreserveVersionRef = useRef(viewportPreserveVersion);
 
-  // Report sections derived from the bridged badge chips — the engine writes "N label" per badged
-  // node, so the overlay's chip row needs no extra bridge payload. Badges without a leading
-  // number are not section badges and take no chip. Declared ahead of `handleNodeClick`, which
-  // reads it to route a node click to its section.
+  // Report sections derived from the bridged "N label" badge chips; declared ahead of
+  // `handleNodeClick`, which reads it to route a node click to its section.
   const aiSections = useMemo((): AiReportSection[] => {
     const badges = activeAiMetadata?.badges;
     if (!badges?.length) return [];
@@ -1638,11 +1652,10 @@ export function GraphCanvas({
         ) : (
           <div
             style={{
-              // The docked AI report column claims the right strip of the canvas; React Flow
-              // re-measures on resize, so shrinking its wrapper keeps every node visible beside
-              // the panel. Width must stay in sync with `.ln-ai-description-anchor`.
-              width: aiDescription && aiPanelOpen ? 'calc(100% - min(440px, 55vw))' : '100%',
-              height: '100%',
+              // The docked AI report column claims a strip of the canvas on its dock edge; React
+              // Flow re-measures on resize, so shrinking its wrapper keeps every node visible
+              // beside the panel.
+              ...aiCanvasReserve,
               position: 'absolute',
             }}
           >
@@ -1797,6 +1810,9 @@ export function GraphCanvas({
               highlightedSections={highlightedSections ?? undefined}
               onFocusSection={handleFocusSection}
               onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
+              dockPosition={dockPosition}
+              onDockPositionChange={setDockPosition}
+              onPanelResize={(width, height) => setPanelSizePx({ width, height })}
             />
           </Suspense>
         )}

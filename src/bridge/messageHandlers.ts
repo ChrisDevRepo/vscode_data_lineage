@@ -217,6 +217,13 @@ export function isMssqlAvailable(): boolean {
   return vscode.extensions.getExtension(MSSQL_EXTENSION_ID) !== undefined;
 }
 
+// Rewrites `[label](#focus-node:<id>)` to plain `label`: the scheme (`FOCUS_NODE_HREF_PREFIX` in
+// `components/markdown/renderAiMarkdown.ts`, restated rather than imported across the webview/host
+// bundle boundary) only resolves inside the lineage webview's own click handler — dead elsewhere.
+export function stripFocusNodeLinks(markdown: string): string {
+  return markdown.replace(/\[([^\]]*)\]\(#focus-node:[^)]*\)/g, '$1');
+}
+
 /**
  * Represents a bundle of message handlers and their associated cleanup logic.
  */
@@ -820,6 +827,14 @@ export function createMessageHandlers(
         await host.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
         host.executeCommand('revealFileInOS', uri);
       }
+    },
+    'ai-open-in-editor': async (msg) => {
+      host.log('debug', 'Bridge', 'Opening AI description in editor');
+      const doc = await vscode.workspace.openTextDocument({
+        content: stripFocusNodeLinks(msg.markdown),
+        language: 'markdown',
+      });
+      await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
     },
     'log': (msg) => {
       const level = msg.level ?? 'debug';
