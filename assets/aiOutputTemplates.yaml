@@ -446,18 +446,14 @@ column_trace_capture:
     Account for EVERY active tracked column — each gets one explicit decision:
       → Continue it:  a column_flow entry mapping it to its upstream source column(s) + route upstream.
       → It ends here: a column_flow entry with upstream_columns: [] (terminal — produced here, no upstream real column).
-    If this node carries NONE of the tracked columns, submit column_flow: [] — its column chain is
-    empty and the node is KEPT in the result for what it does to the rows. Put that in
-    sections[].text: joins, filters, predicates, set operations. Route its neighbours as usual.
 
     A tracked column you leave out of column_flow is rejected as column_chain_incomplete —
     account for it (continue / terminal). column_flow is engine-validated:
-    omitting the field returns ct_field_required; column_flow: [] means "no columns accounted"
-    and is valid only when this node has no active tracked columns (off-trace).
+    omitting the field returns ct_field_required (off-trace nodes submit column_flow: [] — see Verdict).
     </purpose>
 
     ## Before submitting — verify
-    □ Every active tracked column appears as an out_col in column_flow (continued, or terminal with upstream_columns: []). If the node has no tracked columns, submit column_flow: [] (off-trace).
+    □ Every active tracked column appears as an out_col in column_flow (continued, or terminal with upstream_columns: []); off-trace nodes submit column_flow: [] (see Verdict).
     □ Each upstream_columns entry is a real INPUT to `out_col`'s value — it appears in `out_col`'s producing expression (the formula / CASE / SELECT clause that computes it). A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
     □ sections[].text — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
     □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
@@ -474,7 +470,7 @@ column_trace_capture:
     verdict: "analyze"
 
     ## Example — no tracked column passes through this node
-    column_flow: []    ← the node and its analysis are kept; only the column chain stops here
+    column_flow: []    ← off-trace (see Verdict below)
 
     ## Verdict — choose based on how the node interacts with tracked columns
     - `analyze`: the node transforms or is the terminal source of a target column.
@@ -485,8 +481,10 @@ column_trace_capture:
     - `passthrough`: column flows through unchanged; the upstream writer is not yet visited.
       Fill column_flow naming the upstream column, then add route_requests to visit it.
       The edge is recorded here; full attribution resolves at the routed node.
-    - No tracked column here: submit column_flow: [] and use sections[].text for what this node
-      decides about the surviving rows. It is retained; only its column chain is empty.
+    - Off-trace (no tracked column here): submit column_flow: [] — engine-valid only when the node
+      has no active tracked columns. The node and its analysis are kept; route its neighbours as
+      usual. Use sections[].text for what it does to the surviving rows (joins, filters, predicates,
+      set operations).
 
     ## Non-bodied table focus (TABLE written by a procedure)
     When the focus node is a TABLE (no DDL — only schema metadata), the procedure that
