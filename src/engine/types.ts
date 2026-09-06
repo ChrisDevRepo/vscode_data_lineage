@@ -352,14 +352,17 @@ export interface ForeignKeyInfo {
  * Handles nvarchar/nchar byte→char conversion and fixed-type detection.
  *
  * @param typeName - SQL type name.
- * @param maxLength - Declared max length.
+ * @param maxLength - Declared max length. Unit depends on `lengthInChars`.
  * @param precision - Declared precision.
  * @param scale - Declared scale.
+ * @param lengthInChars - True when `maxLength` is already a character count (dacpac's
+ *   `TypeSpecifier.Length`). False (default) when `maxLength` is a byte count (DMV's
+ *   `max_length`), which nvarchar/nchar must still be halved to get the character count.
  *
  * @returns Formatted SQL type string.
  */
 export function formatColumnType(
-  typeName: string, maxLength: string, precision: string, scale: string
+  typeName: string, maxLength: string, precision: string, scale: string, lengthInChars = false
 ): string {
   const t = typeName.toLowerCase();
 
@@ -375,8 +378,10 @@ export function formatColumnType(
   // String/binary types: use max_length (-1 = max)
   if (['varchar', 'nvarchar', 'char', 'nchar', 'varbinary', 'binary'].includes(t)) {
     if (maxLength === '-1') return `${typeName}(max)`;
-    // nvarchar/nchar store 2 bytes per char — display char count
-    const len = (t.startsWith('n') && maxLength) ? String(Math.floor(parseInt(maxLength, 10) / 2)) : maxLength;
+    // nvarchar/nchar store 2 bytes per char in a byte count — display char count
+    const len = (t.startsWith('n') && maxLength && !lengthInChars)
+      ? String(Math.floor(parseInt(maxLength, 10) / 2))
+      : maxLength;
     return len ? `${typeName}(${len})` : typeName;
   }
 
@@ -398,9 +403,11 @@ export function formatColumnType(
  * @param nullable - Whether the column is nullable.
  * @param isIdentity - Whether the column is an identity column.
  * @param isComputed - Whether the column is computed.
- * @param maxLength - Declared max length.
+ * @param maxLength - Declared max length. Unit depends on `lengthInChars`.
  * @param precision - Declared precision.
  * @param scale - Declared scale.
+ * @param lengthInChars - True when `maxLength` is already a character count (dacpac). False
+ *   (default) when `maxLength` is a byte count (DMV) — see `formatColumnType`.
  *
  * @returns Normalized column definition.
  */
@@ -420,12 +427,13 @@ export function buildColumnDef(
   maxLength?: string,
   precision?: string,
   scale?: string,
+  lengthInChars = false,
 ): ColumnDef {
   return {
     name,
     type: isComputed
-      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '') : UNRESOLVED_COLUMN_TYPE)
-      : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? ''),
+      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars) : UNRESOLVED_COLUMN_TYPE)
+      : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars),
     nullable: nullable ? 'NULL' : 'NOT NULL',
     extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
   };

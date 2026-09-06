@@ -574,7 +574,9 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
           }
         }
 
-        cols.push(buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale));
+        // dacpac's TypeSpecifier.Length is already a character count (unlike the DMV's
+        // byte-count max_length) — lengthInChars=true tells formatColumnType not to halve it.
+        cols.push(buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true));
       }
     }
   }
