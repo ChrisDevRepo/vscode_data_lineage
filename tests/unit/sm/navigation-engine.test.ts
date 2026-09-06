@@ -205,7 +205,9 @@ describe("NavigationEngine Robustness", () => {
   expect(!('error' in res) && res.scopeSize === 2, 'explicit depth seeds the reviewed scope').toBe(true);
   expect(engine.currentDepth === 1, 'explicit depth is retained as the border').toBe(true);
 
-  engine.getHopContext();
+  const firstCtx = engine.getHopContext() as any;
+  expect(firstCtx.working_memory.approved_border.depth_cap === 1, 'an explicit level count publishes as an enforced depth_cap').toBe(true);
+  expect(firstCtx.working_memory.depth_budget === 1, 'the explicit budget is reported alongside the cap').toBe(true);
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'root' }], summary: 'root', verdict: 'analyze' });
   const child = engine.getHopContext();
   expect(child.focus_node?.id === 'child_a', 'seeded child is the next focus').toBe(true);
@@ -231,7 +233,9 @@ describe("NavigationEngine Robustness", () => {
   const res = engine.init({ origin: 'origin', question: 'Show the downstream flow', direction: 'downstream', depthIntent: { kind: 'default_start' } });
   expect(!('error' in res), 'default_start seeds without error').toBe(true);
 
-  engine.getHopContext();
+  const firstCtx = engine.getHopContext() as any;
+  expect(firstCtx.working_memory.approved_border.depth_cap === null, 'an unstated depth publishes no enforced ceiling — the seed stays growable').toBe(true);
+  expect(firstCtx.working_memory.depth_budget === DEFAULT_SM_START_DEPTH, 'the default seed is still reported as the working budget').toBe(true);
   engine.submitFindings({ focus_node_id: 'origin', sections: [{ angle: 'business' as const, text: 'root' }], summary: 'root', verdict: 'analyze' });
   const child = engine.getHopContext();
   expect(child.focus_node?.id === 'child_a', 'seeded child is the next focus').toBe(true);

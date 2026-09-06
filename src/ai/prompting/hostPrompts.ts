@@ -193,7 +193,7 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     '2. Call `lineage_start_exploration` with `origin` set to that id, `analysisMode` (bb or ct), and a `classification` (business, technical, or both).',
     'This is a fresh exploration: set `origin`; do not set the `supplement` field (that is only for extending a finished exploration).',
     'Set `direction` from the request: upstream for sources/inputs ("all the way up", "show sources"), downstream for usage/impact, bidirectional when the user wants both.',
-    'Pass a depth only when the user stated one — a level count (e.g. "3 levels"), "all" for the whole chain, or a per-side ask (e.g. "2 up, 1 down") as {upstream, downstream}. If the user gave no depth, omit it.',
+    'Pass a depth only when the user stated one — a level count (e.g. "3 levels"), "all" when the ask is unbounded instead of counted ("back to its original sources", "all the way up", "the full chain"), or a per-side ask (e.g. "2 up, 1 down") as {upstream, downstream}, where an unbounded side is "all". Omit depth only when the user gave neither a level count nor an unbounded ask.',
     'Also required before calling `lineage_start_exploration`: `mission_brief`, plus `scopeNotes` when the user stated a constraint no filter field captures.',
     ctLine,
     'The `confirm_sm_start` gate fires after step 2 — that is expected control flow, not an error to retry around.',

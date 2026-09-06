@@ -90,6 +90,13 @@ describe('prompt composition', () => {
     // every later hop (injection-screened win: 6/6 vs 1/6 baseline presence, replay n=6 pairs).
     expect(buildSmEntrySystemPrompt(context)).toContain('mission_brief');
 
+    // Invariant: an unbounded ask ("back to its original sources", not a level count) maps to the
+    // unbounded seed, matching the other three homes of this instruction (toolSchemas.ts,
+    // toolDefs.ts, prompts.ts) — the omission clause only fires on the absence of any depth ask.
+    const entryPrompt = buildSmEntrySystemPrompt(context);
+    expect(entryPrompt).toContain('when the ask is unbounded instead of counted');
+    expect(entryPrompt).toContain('Omit depth only when the user gave neither a level count nor an unbounded ask');
+
     const detector = buildEntryDetectorSystemPrompt(context);
     expect(detector).toContain("Return 'visual_render'");
     expect(detector).toContain('approval-gated hop-by-hop exploration');

@@ -482,9 +482,9 @@ export class NavigationEngine implements IHopStateMachine {
     this.memory = target;
   }
 
-  /** Initial approved BFS seed depth used for diagnostics, never route authorization. */
+  /** Enforced depth ceiling published as `approved_border.depth_cap`; `null` while the seed stays growable. */
   protected computeDepthCap(): number | null {
-    return this.depthBudget;
+    return this.depthEnforcement === 'strict' ? this.depthBudget : null;
   }
 
   /**
