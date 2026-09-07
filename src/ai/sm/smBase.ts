@@ -26,7 +26,7 @@ import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
 import { bfsDepthMap, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
-import { normalizeColName } from '../../utils/sql';
+import { normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
@@ -915,7 +915,24 @@ export class NavigationEngine implements IHopStateMachine {
     if (!columns) return undefined;
     if (columns.length === 0) return [];
     const nodeColumns = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? [];
-    if (nodeColumns.length === 0) return columns;
+    if (nodeColumns.length === 0) {
+      // No declared surface to resolve against (a procedure or function), so there is no declared
+      // name to return — but the request spelling must not escape either. Apply the same
+      // last-segment rule the declared branch below applies, so one column reaches the completeness
+      // guard as one demand: a node-qualified id names another node's column, is never this focus's
+      // own `out_col`, and alongside that column's bare spelling it made `computeUnaccounted` demand
+      // both forms of the single traced column and reject every submission that accounted for one.
+      const bare: string[] = [];
+      const seen = new Set<string>();
+      for (const requested of columns) {
+        const name = stripBrackets(splitSqlName(requested).pop() ?? requested).trim();
+        const key = normalizeColName(name);
+        if (name.length === 0 || seen.has(key)) continue;
+        seen.add(key);
+        bare.push(name);
+      }
+      return bare;
+    }
     const byNorm = new Map<string, string>(nodeColumns.map((c) => [normalizeColName(c.name), c.name]));
     const resolved: string[] = [];
     for (const requested of columns) {
