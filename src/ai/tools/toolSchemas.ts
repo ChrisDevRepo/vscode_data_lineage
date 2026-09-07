@@ -14,6 +14,7 @@ import {
 import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, nullAsAbsent } from '../support/inputNormalization';
 import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import type { PresentResultStage } from './presentResult';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -800,13 +801,18 @@ const PresentResultLockedGraphBoundarySchema = PresentResultBoundarySchema.omit(
  * filled by the dispatcher from the cached discovery answer before the parse, so only the
  * graph-edit controls are out of contract there.
  *
+ * The graph-edit controls are opt-in: `completed` is the only stage whose consumers read
+ * `add_node_ids`/`prune_node_ids`, so it alone selects the full schema and every other stage —
+ * including one added to {@link PresentResultStage} and not wired here — gets the locked
+ * projection.
+ *
  * @param phase - Stage the call was dispatched in.
- * @returns The narrowed boundary schema for a locked-graph stage, else the full boundary schema.
+ * @returns The full boundary schema on the completed stage, else the locked-graph projection.
  */
-export function presentResultBoundarySchemaForPhase(phase?: string): z.ZodType {
-  return phase === 'synthesis' || phase === 'visual_preview'
-    ? PresentResultLockedGraphBoundarySchema
-    : PresentResultBoundarySchema;
+export function presentResultBoundarySchemaForPhase(phase?: PresentResultStage): z.ZodType {
+  return phase === 'completed'
+    ? PresentResultBoundarySchema
+    : PresentResultLockedGraphBoundarySchema;
 }
 
 /**

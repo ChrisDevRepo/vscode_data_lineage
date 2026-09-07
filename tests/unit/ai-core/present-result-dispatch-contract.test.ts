@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
 import { rejectionIssuePaths } from '../../../src/ai/support/toolErrorEnvelope';
+import { presentResultBoundarySchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { DatabaseModel } from '../../../src/engine/types';
@@ -172,5 +173,22 @@ describe('present_result — a rewritten model decision is logged', () => {
     const lines = NORMALIZE_LINES(probe.debugLines);
     expect(lines.some(line => line.includes('field=summary') && line.includes('from=A summary the model authored itself.')),
       'the replaced model text is visible in the log').toBe(true);
+  });
+});
+
+describe('present_result — the boundary schema is an allow-list keyed on the completed stage', () => {
+  /** True when the stage's boundary schema carries the graph-edit controls. */
+  const acceptsGraphEdit = (schema: ReturnType<typeof presentResultBoundarySchemaForPhase>): boolean =>
+    schema.safeParse({ ...validPayload(), add_node_ids: ['[dbo].[Other]'] }).success;
+
+  it('offers the full schema on completed, where add_node_ids is consumed', () => {
+    expect(acceptsGraphEdit(presentResultBoundarySchemaForPhase('completed')),
+      'the completed stage is the one stage that reads add_node_ids').toBe(true);
+  });
+
+  it('offers the locked projection on every other stage, including an absent one', () => {
+    expect(acceptsGraphEdit(presentResultBoundarySchemaForPhase('synthesis')), 'synthesis is locked').toBe(false);
+    expect(acceptsGraphEdit(presentResultBoundarySchemaForPhase('visual_preview')), 'visual_preview is locked').toBe(false);
+    expect(acceptsGraphEdit(presentResultBoundarySchemaForPhase()), 'an absent stage falls to the locked projection').toBe(false);
   });
 });
