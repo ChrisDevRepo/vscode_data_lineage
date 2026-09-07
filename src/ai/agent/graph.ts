@@ -1425,6 +1425,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     .addConditionalEdges(AGENT_NODES.activeWorker, routeAfterActiveWorker, [
       AGENT_NODES.activeWorker,
       AGENT_NODES.activeCoordinator,
+      AGENT_NODES.synthesis,
       END,
     ])
     .addConditionalEdges(AGENT_NODES.followUp, routeAfterFollowUp, [
@@ -1554,6 +1555,9 @@ function routeAfterActiveCoordinator(state: AgentStateType): string {
 
 function routeAfterActiveWorker(state: AgentStateType): string {
   if (state.outcome) return END;
+  // The worker reaches synthesis directly when a salvage hands it the archive; the coordinator's
+  // own hand-off uses the same phase, so both routers read it the same way.
+  if (state.phase === 'synthesis') return AGENT_NODES.synthesis;
   if (state.phase === 'active_worker' && state.toolAttempt?.phase === 'active') return AGENT_NODES.activeWorker;
   if (state.phase === 'active_coordinator') return AGENT_NODES.activeCoordinator;
   return END;
