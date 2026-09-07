@@ -6,22 +6,22 @@
  * `over_discovery_budget`, which the host turns into the SM reroute. See
  * docs/ai-concept/routing-old-vs-new.md (Part B5).
  *
- * Vitest registers every it() during synchronous collection and only runs the callbacks
- * afterward, so a cap-setting call (`setDiscoveryNodeCap`/`setDiscoveryTokenBudget` — process-wide
- * mutable module state in src/ai/tools/tools.ts) left outside an it() would fire during
- * collection, before any test runs, and every it() would then see only the LAST cap value set.
- * Each cap-setting call is made inside the it() it applies to (vitest runs it()s in a file
- * sequentially by default), so each scenario observes its own intended cap. `loadDemoModel()` is
- * awaited in `beforeAll` (a top-level await outside an async function is a syntax error), with
+ * The caps travel with the call as one immutable per-turn budget, so each scenario passes the
+ * caps it means to exercise and no scenario can observe another's. `loadDemoModel()` is awaited in
+ * `beforeAll` (a top-level await outside an async function is a syntax error), with
  * `model`/`graph`/`origin` populated before any it() runs.
  */
 
 import { loadDemoModel, makeGraph } from '../helpers/testUtils';
 import { buildBareGraph } from '../../../src/ai/support/graphUtils';
-import { getScopeBundle, runAnalysis, setDiscoveryNodeCap, setDiscoveryTokenBudget } from '../../../src/ai/tools/tools';
+import { getScopeBundle, runAnalysis } from '../../../src/ai/tools/tools';
+import {
+  createTurnTokenBudget,
+  DEFAULT_TURN_TOKEN_BUDGET as BUDGET,
+} from '../../../src/ai/support/tokenBudget';
 import { GetScopeBundleInputSchema } from '../../../src/ai/tools/toolSchemas';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll } from 'vitest';
 
 function makeDdlModel(bodyScript: string): DatabaseModel {
   const nodes: LineageNode[] = [
@@ -46,17 +46,14 @@ describe('discovery-budget-guard', () => {
   let graph: ReturnType<typeof buildBareGraph>;
   let origin: string;
 
+  /** A node cap far above any demo-model walk, for the cases that exercise something else. */
+  const wideNodes = createTurnTokenBudget({ discoveryNodeCap: 10_000 });
+
   beforeAll(async () => {
     model = await loadDemoModel();
     graph = buildBareGraph(model);
     // An origin with at least one neighbor → BFS scope ≥ 2 nodes.
     origin = model.edges.length ? model.edges[0].source : model.nodes[0].id;
-  });
-
-  afterAll(() => {
-    // restore defaults so later modules in the shared process see the production caps
-    setDiscoveryNodeCap(10);
-    setDiscoveryTokenBudget(10_000);
   });
 
   it('directional scope may omit depth for the backend default', () => {
@@ -81,23 +78,20 @@ describe('discovery-budget-guard', () => {
 
   // ── omitted depth uses the single declared backend default (3) ──
   it('directional omission applies backend depth=3', () => {
-    setDiscoveryNodeCap(10_000);
-    const res = getScopeBundle(model, graph, { origin, direction: 'upstream' }) as Record<string, any>;
+    const res = getScopeBundle(model, graph, { origin, direction: 'upstream' }, wideNodes) as Record<string, any>;
     expect(res.depth, 'directional omission applies backend depth=3').toBe(3);
   });
 
   // ── node-cap fires WITHOUT include_ddl (the strengthened guard) ──
   it('plain scope bundle over node-cap → over_discovery_budget (no include_ddl)', () => {
-    setDiscoveryNodeCap(1);
-    setDiscoveryTokenBudget(10_000);
-    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', depth: 2 }) as Record<string, unknown>;
+    const oneNode = createTurnTokenBudget({ discoveryNodeCap: 1, discoveryTokenBudget: 10_000 });
+    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', depth: 2 }, oneNode) as Record<string, unknown>;
     expect(res.reason, 'plain scope bundle over node-cap → over_discovery_budget (no include_ddl)').toBe('over_discovery_budget');
   });
 
   // ── under the cap → normal bundle, no budget rejection ──
   it('scope bundle under node-cap is not budget-rejected', () => {
-    setDiscoveryNodeCap(10_000);
-    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', depth: 2 }) as Record<string, unknown>;
+    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', depth: 2 }, wideNodes) as Record<string, unknown>;
     expect(res.reason !== 'over_discovery_budget', 'scope bundle under node-cap is not budget-rejected').toBe(true);
     expect(Array.isArray(res.nodes), 'scope bundle returns nodes when under budget').toBe(true);
   });
@@ -109,7 +103,7 @@ describe('discovery-budget-guard', () => {
       origin: '[dbo].[Source]',
       direction: 'downstream',
       depth: 1,
-    }) as Record<string, any>;
+    }, BUDGET) as Record<string, any>;
     expect(Array.isArray(res.nodes), 'auto-DDL scope bundle returns nodes').toBe(true);
     const viewPayload = (res.nodes as Array<Record<string, unknown>>).find(n => n.id === '[dbo].[viewa]');
     expect(res.include_ddl, 'scope bundle auto-enables DDL when it fits').toBe(true);
@@ -119,13 +113,13 @@ describe('discovery-budget-guard', () => {
 
   // ── Oversized DDL without explicit include_ddl stays inline metadata-only ──
   it('Oversized DDL without explicit include_ddl stays inline metadata-only', () => {
-    setDiscoveryTokenBudget(1_000);
+    const tightTokens = createTurnTokenBudget({ discoveryTokenBudget: 1_000 });
     const ddlModel = makeDdlModel('x'.repeat(20_000));
     const res = getScopeBundle(ddlModel, buildBareGraph(ddlModel), {
       origin: '[dbo].[Source]',
       direction: 'downstream',
       depth: 1,
-    }) as Record<string, any>;
+    }, tightTokens) as Record<string, any>;
     expect(res.reason !== 'over_discovery_budget', 'oversized implicit DDL does not force SM').toBe(true);
     expect(res.include_ddl, 'oversized implicit DDL stays disabled').toBe(false);
     expect((res.scope as Record<string, number>).estimated_ddl_tokens, 'metadata-only response reports zero included DDL tokens').toBe(0);
@@ -133,8 +127,7 @@ describe('discovery-budget-guard', () => {
 
   // ── both-side 0 (bidirectional) is a degenerate origin-only request → engine rejects it ──
   it('both-side 0 rejects with the shared asymmetric_depth_both_zero code', () => {
-    setDiscoveryNodeCap(10_000);
-    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', upstream_depth: 0, downstream_depth: 0 }) as Record<string, unknown>;
+    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', upstream_depth: 0, downstream_depth: 0 }, wideNodes) as Record<string, unknown>;
     expect(res.error, 'both-side 0 rejects with the shared asymmetric_depth_both_zero code').toBe('asymmetric_depth_both_zero');
     expect(typeof res.hint === 'string' && res.hint.length > 0, 'both-side 0 rejection carries a field-specific hint').toBe(true);
     expect(res.nodes === undefined, 'both-side 0 rejection carries no scope payload').toBe(true);
@@ -143,7 +136,7 @@ describe('discovery-budget-guard', () => {
   it('one-side-0/one-side-active bidirectional scope is not rejected', () => {
     // A single-direction 0 (e.g. upstream disabled, downstream active) is unaffected — only the
     // bidirectional-both-zero combination is degenerate.
-    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', upstream_depth: 0, downstream_depth: 2 }) as Record<string, unknown>;
+    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', upstream_depth: 0, downstream_depth: 2 }, wideNodes) as Record<string, unknown>;
     expect(res.error === undefined, 'one-side-0/one-side-active bidirectional scope is not rejected').toBe(true);
   });
 
@@ -166,16 +159,15 @@ describe('discovery-budget-guard', () => {
     }
 
     it('inlines the group list when the report fits the discovery budget', () => {
-      setDiscoveryTokenBudget(10_000);
-      const res = runAnalysis(hubHeavyGraph(), 'hubs', 4) as Record<string, unknown>;
+      const res = runAnalysis(hubHeavyGraph(), 'hubs', BUDGET, 4) as Record<string, unknown>;
       expect(res.total_groups).toBe(60);
       expect(res.groups).toHaveLength(60);
       expect(res.groups_omitted).toBeUndefined();
     });
 
     it('omits the group list rather than slicing it when the report exceeds the budget', () => {
-      setDiscoveryTokenBudget(1_000);
-      const res = runAnalysis(hubHeavyGraph(), 'hubs', 4) as Record<string, unknown>;
+      const tightTokens = createTurnTokenBudget({ discoveryTokenBudget: 1_000 });
+      const res = runAnalysis(hubHeavyGraph(), 'hubs', tightTokens, 4) as Record<string, unknown>;
       expect(res.total_groups).toBe(60);
       expect(res.groups).toBeUndefined();
       expect(res.groups_omitted).toBe(true);

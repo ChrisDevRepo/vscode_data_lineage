@@ -15,6 +15,7 @@ import type { DatabaseModel, LineageNode } from '../../../engine/types';
 import type { SerializedFilterState } from '../../../engine/projectStore';
 import type { StoredRunReader } from '../../session/runStore';
 import type { ModelPort } from '../../model/modelPort';
+import type { TurnTokenBudget } from '../../support/tokenBudget';
 
 /** Host capabilities available to mutating lineage-tool handlers. */
 export interface ToolServices {
@@ -30,6 +31,15 @@ export interface ToolServices {
   readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>;
   /** Cooperative host cancellation, mirrored from the owning turn's lease. */
   readonly signal?: AbortSignal;
+  /**
+   * Token budget of the turn that owns this registry.
+   *
+   * @remarks
+   * Fixed when the lease-bound registry was built, so a superseded turn's still-running dispatch
+   * keeps measuring against the caps its own model was admitted under. The external `vscode.lm`
+   * registration, which serves callers outside any turn, carries the shipped defaults.
+   */
+  readonly budget: TurnTokenBudget;
   /** The hop cap the host resolved once at activation — the same value the graph runtime bounds the active loop with. */
   readonly maxRounds: number;
   /** Current turn epoch — the turn lease wins over the session field so stale-turn writes are rejectable. */

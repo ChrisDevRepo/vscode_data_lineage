@@ -38,7 +38,12 @@ import {
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { attemptContextBytes, storedEvidenceKindBytes } from '../support/tokenBudget';
+import {
+  attemptContextBytes,
+  DEFAULT_TURN_TOKEN_BUDGET,
+  storedEvidenceKindBytes,
+  type TurnTokenBudget,
+} from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { IToolRegistry } from '../tools/registry';
 import type { ConverseInstructionPlan, InstructionPhase } from './instructionPlan';
@@ -549,13 +554,16 @@ function prependedArrayBytes(itemBytesSum: number, itemCount: number, newItemByt
 }
 
 /** Retains the newest corrections within a fixed checkpoint-memory share. */
-function boundStoredRejections(rejections: readonly ToolAttemptRejection[]): ToolAttemptRejection[] {
+function boundStoredRejections(
+  rejections: readonly ToolAttemptRejection[],
+  budget: TurnTokenBudget,
+): ToolAttemptRejection[] {
   const retained: ToolAttemptRejection[] = [];
   let retainedBytesSum = 0;
   for (let index = rejections.length - 1; index >= 0; index--) {
     const rejection = rejections[index];
     const rejectionBytes = Buffer.byteLength(JSON.stringify(rejection));
-    if (prependedArrayBytes(retainedBytesSum, retained.length, rejectionBytes) > storedEvidenceKindBytes()) {
+    if (prependedArrayBytes(retainedBytesSum, retained.length, rejectionBytes) > storedEvidenceKindBytes(budget)) {
       if (retained.length === 0) retained.push(essentialCurrentRejection(rejection));
       break;
     }
@@ -576,11 +584,14 @@ function boundStoredRejections(rejections: readonly ToolAttemptRejection[]): Too
  *
  * @param state - Existing phase-local cumulative state.
  * @param attempt - Exactly one completed graph attempt.
+ * @param budget - The recording turn's budget, which sizes the retained-correction share; the
+ *   shipped defaults apply where a caller runs outside a turn.
  * @returns Updated state with independent semantic and physical-call hard stops.
  */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
   attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'semanticFailures' | 'observations' | 'rejections'>,
+  budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const semanticFailures = state.semanticFailures + attempt.semanticFailures;
@@ -591,7 +602,7 @@ export function recordToolAttempt(
   const rejections = boundStoredRejections([
     ...state.rejections.filter((rejection) => !repairedTools.has(rejection.toolName)),
     ...attempt.rejections,
-  ]);
+  ], budget);
   const acceptedTerminal = attempt.stop === 'final'
     || attempt.stop === 'gate'
     || attempt.stop === 'reroute'
@@ -625,16 +636,21 @@ export function recordToolAttempt(
  * provider-native assistant/tool transcript. Angle brackets inside data are JSON escaped so DDL or
  * metadata cannot terminate the runtime delimiter. Invalid provider input is absent by type.
  * @param state - Cumulative typed state for the current logical phase or hop.
+ * @param budget - The rendering turn's budget, which sizes the block; the shipped defaults apply
+ *   where a caller runs outside a turn.
  * @returns Delimited engine-produced recovery data for one fresh model request.
  */
-export function renderToolAttemptContext(state: ToolPhaseAttemptState): string {
+export function renderToolAttemptContext(
+  state: ToolPhaseAttemptState,
+  budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
+): string {
   const observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
   let rejections: readonly RenderedRejection[] = state.rejections;
   let rendered = renderAttemptContext(state, observations, rejections);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes();
+  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes(budget);
 
   if (overBudget() && state.rejections.length > 1) {
-    rejections = collapseOldestRejectionsToFit(state, observations);
+    rejections = collapseOldestRejectionsToFit(state, observations, budget);
     rendered = renderAttemptContext(state, observations, rejections);
   }
 
@@ -728,20 +744,22 @@ function truncateHeldDraftSection(section: unknown, targetBytes: number): unknow
  * truncate-then-collapse policy as {@link renderObservationsContext}.
  * @param heldDraft - The exact `sections`/`notes`/`highlight_groups` currently on hold, or `null`/`undefined`
  * when no repairable draft is active for this call.
+ * @param budget - The rendering turn's budget, which sizes the block.
  * @returns Zero messages when nothing is held, otherwise one delimited user-role message.
  */
 function renderHeldDraftRepairContext(
   heldDraft: HeldDraftRepairContent | null | undefined,
+  budget: TurnTokenBudget,
 ): ModelMessage[] {
   if (!heldDraft) return [];
   let sections = heldDraft.sections;
   const notes = heldDraft.notes;
   const highlightGroups = heldDraft.highlight_groups;
   let rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes();
+  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes(budget);
 
   if (overBudget() && Array.isArray(sections) && sections.length > 0) {
-    const fairShare = Math.floor(attemptContextBytes() / sections.length);
+    const fairShare = Math.floor(attemptContextBytes(budget) / sections.length);
     sections = sections.map((section) => truncateHeldDraftSection(section, fairShare));
     rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
   }
@@ -864,13 +882,14 @@ function renderAttemptContext(
 function collapseOldestRejectionsToFit(
   state: ToolPhaseAttemptState,
   observations: readonly RenderedObservation[],
+  budget: TurnTokenBudget,
 ): RenderedRejection[] {
   const project = (count: number): RenderedRejection[] => [rejectionSummary(count), ...state.rejections.slice(count)];
   let low = 1;
   let high = state.rejections.length - 1;
   while (low < high) {
     const count = Math.floor((low + high) / 2);
-    if (Buffer.byteLength(renderAttemptContext(state, observations, project(count))) <= attemptContextBytes()) high = count;
+    if (Buffer.byteLength(renderAttemptContext(state, observations, project(count))) <= attemptContextBytes(budget)) high = count;
     else low = count + 1;
   }
   return project(low);
@@ -1185,7 +1204,7 @@ export async function executeToolAttempt(
   // rejection are three independent, conversation-native message groups — never the synthetic mixed
   // digest {@link renderToolAttemptContext} still renders for detectEntryNode.
   const heldDraftMessages = priorState && priorState.providerCalls > 0
-    ? renderHeldDraftRepairContext(options.presentResultRepairDraftContext?.())
+    ? renderHeldDraftRepairContext(options.presentResultRepairDraftContext?.(), model.budget)
     : [];
   const messages = priorState && priorState.providerCalls > 0
     ? [
@@ -1566,15 +1585,15 @@ export async function executeToolGenerationAttempt(
       let storedResult = resultText;
       if (observe) {
         const candidateBytes = Buffer.byteLength(resultText);
-        if (heldObservationBytes + candidateBytes > storedEvidenceKindBytes()) {
-          storedResult = resultTooLargeReply(call.toolName, candidateBytes, heldObservationBytes, storedEvidenceKindBytes());
+        if (heldObservationBytes + candidateBytes > storedEvidenceKindBytes(model.budget)) {
+          storedResult = resultTooLargeReply(call.toolName, candidateBytes, heldObservationBytes, storedEvidenceKindBytes(model.budget));
           input.debugLog?.(
             `[Observation] result too big phase=${safeLogIdentifier(input.phase, 'unknown')}`
             + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
             + ` callId=${safeCallId(call.callId)}`
             + ` bytes=${candidateBytes}`
             + ` held=${heldObservationBytes}`
-            + ` budget=${storedEvidenceKindBytes()}`,
+            + ` budget=${storedEvidenceKindBytes(model.budget)}`,
           );
         }
         heldObservationBytes += Buffer.byteLength(storedResult);

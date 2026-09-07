@@ -9,6 +9,10 @@ import {
   applyNativeChatBoundary,
   chatHistoryToModelMessages,
 } from '../../../src/ai/participant/chatHistoryAdapter';
+import { DEFAULT_TURN_TOKEN_BUDGET as BUDGET } from '../../../src/ai/support/tokenBudget';
+
+/** Replays a history under the shipped default budget — the window every case here assumes. */
+const replayHistory = (turns: vscode.ChatContext['history']) => chatHistoryToModelMessages(turns, BUDGET);
 
 describe('native chat history adapter', () => {
   it('cancels an old native gate and applies the existing reset before a new chat continues', () => {
@@ -49,7 +53,7 @@ describe('native chat history adapter', () => {
   });
 
   it('preserves ordered user and assistant prose without owning memory', () => {
-    const messages = chatHistoryToModelMessages(history([
+    const messages = replayHistory(history([
       { prompt: 'Which tables feed Sales?' },
       {
         response: [{ value: { value: 'Sales is fed by Orders.' } }],
@@ -65,7 +69,7 @@ describe('native chat history adapter', () => {
   });
 
   it('rebuilds complete assistant-call/tool-result pairs from native result metadata', () => {
-    const messages = chatHistoryToModelMessages(history([
+    const messages = replayHistory(history([
       { prompt: 'Inspect Sales.OrderHeader' },
       {
         response: [{ value: { value: 'Rendered answer' } }],
@@ -110,7 +114,7 @@ describe('native chat history adapter', () => {
   });
 
   it('never emits an orphan tool call when its matching result is unavailable', () => {
-    const messages = chatHistoryToModelMessages(history([
+    const messages = replayHistory(history([
       {
         response: [{ value: { value: 'The visible answer remains available.' } }],
         result: {
@@ -143,7 +147,7 @@ describe('native chat history adapter', () => {
       { response: [{ value: { value: bigAnswer } }], result: { metadata: {} } },
     ]);
 
-    const messages = chatHistoryToModelMessages(history(turns));
+    const messages = replayHistory(history(turns));
 
     // 4 turns × ~30 KB answers exceed MAX_DISCOVERY_TRANSCRIPT_BYTES (64 KiB): only the newest two
     // turns fit, and the evicted half is replaced by exactly one stub user message at the head.
@@ -160,7 +164,7 @@ describe('native chat history adapter', () => {
       { response: [{ value: { value: `a${index}` } }], result: { metadata: {} } },
     ]).flat();
 
-    const messages = chatHistoryToModelMessages(history(turns));
+    const messages = replayHistory(history(turns));
 
     const userPrompts = messages
       .filter((message) => HumanMessage.isInstance(message))
@@ -173,7 +177,7 @@ describe('native chat history adapter', () => {
   });
 
   it('always keeps the newest turn even when it alone exceeds the byte ceiling', () => {
-    const messages = chatHistoryToModelMessages(history([
+    const messages = replayHistory(history([
       { prompt: 'old question' },
       { response: [{ value: { value: 'old answer' } }], result: { metadata: {} } },
       { prompt: 'trace the second one' },
@@ -214,7 +218,7 @@ describe('native chat history adapter', () => {
       },
     ];
 
-    const messages = chatHistoryToModelMessages(history([1, 2, 3].flatMap(argHeavyTurn)));
+    const messages = replayHistory(history([1, 2, 3].flatMap(argHeavyTurn)));
 
     const userPrompts = messages
       .filter((message) => HumanMessage.isInstance(message))
@@ -225,7 +229,7 @@ describe('native chat history adapter', () => {
   });
 
   it('caps one oversized replayed tool result without splitting its call/result pair', () => {
-    const messages = chatHistoryToModelMessages(history([
+    const messages = replayHistory(history([
       { prompt: 'Inspect the big object' },
       {
         response: [{ value: { value: 'Rendered answer' } }],

@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
+import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { DatabaseModel } from '../../../src/engine/types';
 import type { Logger } from '../../../src/utils/log';
@@ -85,6 +86,7 @@ function handlerProbe(
         return panel as never;
       },
       logger: SILENT_LOGGER,
+      budget: DEFAULT_TURN_TOKEN_BUDGET,
       maxRounds: 50,
       turnEpoch: () => capturedEpoch,
       requireModel: () => {

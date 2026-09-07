@@ -5,7 +5,11 @@ import {
   MAX_DISCOVERY_EVIDENCE_OBSERVATIONS,
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../../../src/ai/session/session';
-import { discoveryBlockBytes, discoveryEvidenceItemBytes } from '../../../src/ai/support/tokenBudget';
+import {
+  DEFAULT_TURN_TOKEN_BUDGET as BUDGET,
+  discoveryBlockBytes,
+  discoveryEvidenceItemBytes,
+} from '../../../src/ai/support/tokenBudget';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -28,7 +32,7 @@ describe('discovery-memory', () => {
   it('one turn yields its two messages, stored verbatim, in order', () => {
     const sess = new AiSession();
     const turn: ModelMessage[] = [new HumanMessage('q1'), new AIMessage('a1')];
-    sess.appendDiscoveryTurn(turn);
+    sess.appendDiscoveryTurn(BUDGET, turn);
     const h = sess.getDiscoveryHistory();
     expect(h.length, 'one turn yields its two messages').toBe(2);
     expect(h[0].getType(), 'window starts with the user turn').toBe('human');
@@ -46,7 +50,7 @@ describe('discovery-memory', () => {
       new ToolMessage({ content: JSON.stringify({}), tool_call_id: 'c1' }),
       new AIMessage('Found sales objects.'),
     ] as ModelMessage[];
-    sess.appendDiscoveryTurn(turn);
+    sess.appendDiscoveryTurn(BUDGET, turn);
     const h = sess.getDiscoveryHistory();
     expect(h.length, 'only canonical user/final-assistant text is retained').toBe(2);
     expect(!h.some((m) => m.getType() === 'tool'), 'provider-native tool-result messages are excluded').toBe(true);
@@ -59,6 +63,7 @@ describe('discovery-memory', () => {
     const sess = new AiSession();
     const ddl = 'CREATE VIEW [sales].[OrderSummary] AS SELECT OrderId FROM [sales].[Orders]';
     sess.appendDiscoveryTurn(
+      BUDGET,
       [new HumanMessage('What builds OrderSummary?'), new AIMessage('I found the view.')],
       [{ toolName: 'lineage_get_object_detail', result: JSON.stringify({ id: '[sales].[OrderSummary]', ddl }) }],
     );
@@ -73,12 +78,13 @@ describe('discovery-memory', () => {
   it('invalid discovery payloads add no evidence message', () => {
     const sess = new AiSession();
     sess.appendDiscoveryTurn(
+      BUDGET,
       [new HumanMessage('q'), new AIMessage('a')],
       [
         { toolName: 'lineage_get_object_detail', result: '{malformed' },
         { toolName: 'lineage_get_object_detail', result: '"primitive"' },
         { toolName: 'lineage_get_object_detail', result: JSON.stringify({ error: 'invalid_object', message: 'rejected-payload' }) },
-        { toolName: 'lineage_get_object_detail', result: JSON.stringify({ ddl: 'x'.repeat(discoveryEvidenceItemBytes()) }) },
+        { toolName: 'lineage_get_object_detail', result: JSON.stringify({ ddl: 'x'.repeat(discoveryEvidenceItemBytes(BUDGET)) }) },
       ],
     );
     expect(sess.getDiscoveryHistory().length, 'invalid discovery payloads add no evidence message').toBe(2);
@@ -87,20 +93,20 @@ describe('discovery-memory', () => {
   it('evidence count and rendered bytes are strictly bounded newest-first', () => {
     const sess = new AiSession();
     for (let i = 0; i < MAX_DISCOVERY_EVIDENCE_OBSERVATIONS + 5; i++) {
-      sess.appendDiscoveryTurn([], [{ toolName: 'lineage_get_object_detail', result: JSON.stringify({ id: `node-${i}`, ddl: 'x'.repeat(3000) }) }]);
+      sess.appendDiscoveryTurn(BUDGET, [], [{ toolName: 'lineage_get_object_detail', result: JSON.stringify({ id: `node-${i}`, ddl: 'x'.repeat(3000) }) }]);
     }
     const evidence = String(sess.getDiscoveryHistory().at(-1)?.content ?? '');
     const parsed = JSON.parse(evidence) as { observations: Array<{ result: { id: string } }> };
     expect(parsed.observations.length <= MAX_DISCOVERY_EVIDENCE_OBSERVATIONS, 'evidence observation count stays within the hard cap').toBe(true);
-    expect(Buffer.byteLength(evidence, 'utf8') <= discoveryBlockBytes(), 'rendered evidence stays within the hard byte cap').toBe(true);
+    expect(Buffer.byteLength(evidence, 'utf8') <= discoveryBlockBytes(BUDGET), 'rendered evidence stays within the hard byte cap').toBe(true);
     expect(parsed.observations.some(item => item.result.id === `node-${MAX_DISCOVERY_EVIDENCE_OBSERVATIONS + 4}`), 'newest accepted evidence survives eviction').toBe(true);
     expect(!parsed.observations.some(item => item.result.id === 'node-0'), 'oldest evidence is evicted first').toBe(true);
   });
 
   it('turns accumulate in order, oldest first', () => {
     const sess = new AiSession();
-    sess.appendDiscoveryTurn([new HumanMessage('q1'), new AIMessage('a1')]);
-    sess.appendDiscoveryTurn([new HumanMessage('q2'), new AIMessage('a2')]);
+    sess.appendDiscoveryTurn(BUDGET, [new HumanMessage('q1'), new AIMessage('a1')]);
+    sess.appendDiscoveryTurn(BUDGET, [new HumanMessage('q2'), new AIMessage('a2')]);
     const contents = sess.getDiscoveryHistory().map((m) => (typeof m.content === 'string' ? m.content : '·'));
     expect(contents.join('|'), 'turns accumulate in order, oldest first').toBe('q1|a1|q2|a2');
   });
@@ -108,7 +114,7 @@ describe('discovery-memory', () => {
   it('transcript count evicts oldest complete pairs and preserves exact under-bound bytes', () => {
     const sess = new AiSession();
     for (let i = 0; i < MAX_DISCOVERY_TRANSCRIPT_TURNS + 3; i++) {
-      sess.appendDiscoveryTurn([new HumanMessage(`q${i}`), new AIMessage(`a${i}`)]);
+      sess.appendDiscoveryTurn(BUDGET, [new HumanMessage(`q${i}`), new AIMessage(`a${i}`)]);
     }
     const h = sess.getDiscoveryHistory();
     expect(h.length, 'turn-count bound retains exactly the configured number of complete pairs').toBe(MAX_DISCOVERY_TRANSCRIPT_TURNS * 2);
@@ -121,52 +127,52 @@ describe('discovery-memory', () => {
       new HumanMessage('Which object writes café revenue? 💶'),
       new AIMessage('The answer retains UTF-8, "quotes", and \\slashes exactly.'),
     ];
-    underBound.appendDiscoveryTurn(turn);
+    underBound.appendDiscoveryTurn(BUDGET, turn);
     expect(Buffer.from(JSON.stringify(underBound.getDiscoveryHistory()), 'utf8').equals(Buffer.from(JSON.stringify(turn), 'utf8')), 'an under-bound canonical turn is byte-identical after storage').toBe(true);
   });
 
   it('transcript bytes evict whole pairs; one oversized newest pair is bounded but retained', () => {
     const sess = new AiSession();
     for (let i = 0; i < 3; i++) {
-      sess.appendDiscoveryTurn([
+      sess.appendDiscoveryTurn(BUDGET, [
         new HumanMessage(`wide-q${i}`),
         new AIMessage(`wide-a${i}-${'é'.repeat(12_000)}`),
       ]);
     }
     const h = sess.getDiscoveryHistory();
-    expect(Buffer.byteLength(JSON.stringify(plainOf(h)), 'utf8') <= discoveryBlockBytes(), 'rendered transcript stays within the UTF-8 byte cap').toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(plainOf(h)), 'utf8') <= discoveryBlockBytes(BUDGET), 'rendered transcript stays within the UTF-8 byte cap').toBe(true);
     expect(h.length, 'byte eviction retains two complete pairs at this boundary').toBe(4);
     expect(typeof h[0].content === 'string' ? h[0].content : '', 'byte eviction removes the oldest complete pair').toBe('wide-q1');
     const lastContent = h.at(-1)?.content;
     expect(typeof lastContent === 'string' ? lastContent.startsWith('wide-a2-') : false, 'the newest byte-bounded turn survives').toBe(true);
 
     const oversized = new AiSession();
-    oversized.appendDiscoveryTurn([
+    oversized.appendDiscoveryTurn(BUDGET, [
       new HumanMessage('newest oversized question'),
-      new AIMessage('💡'.repeat(discoveryBlockBytes())),
+      new AIMessage('💡'.repeat(discoveryBlockBytes(BUDGET))),
     ]);
     const newest = oversized.getDiscoveryHistory();
     expect(newest.map(message => message.getType()).join(','), 'oversized newest turn remains a complete pair').toBe('human,ai');
-    expect(Buffer.byteLength(JSON.stringify(plainOf(newest)), 'utf8') <= discoveryBlockBytes(), 'oversized newest turn is deterministically text-bounded').toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(plainOf(newest)), 'utf8') <= discoveryBlockBytes(BUDGET), 'oversized newest turn is deterministically text-bounded').toBe(true);
     expect(String(newest[1]?.content).includes('truncated to discovery memory bound'), 'oversized newest answer carries the truncation marker').toBe(true);
   });
 
   it('empty turn delta records nothing', () => {
     const sess = new AiSession();
-    sess.appendDiscoveryTurn([]);
+    sess.appendDiscoveryTurn(BUDGET, []);
     expect(sess.getDiscoveryHistory().length, 'empty turn delta records nothing').toBe(0);
   });
 
   it('returned array is a copy (caller cannot mutate internal state)', () => {
     const sess = new AiSession();
-    sess.appendDiscoveryTurn([new HumanMessage('q1'), new AIMessage('a1')]);
+    sess.appendDiscoveryTurn(BUDGET, [new HumanMessage('q1'), new AIMessage('a1')]);
     sess.getDiscoveryHistory().push(new HumanMessage('injected'));
     expect(sess.getDiscoveryHistory().length, 'mutating the returned array does not affect memory').toBe(2);
   });
 
   it('clearDiscoveryTranscript empties memory', () => {
     const sess = new AiSession();
-    sess.appendDiscoveryTurn([new HumanMessage('q1'), new AIMessage('a1')]);
+    sess.appendDiscoveryTurn(BUDGET, [new HumanMessage('q1'), new AIMessage('a1')]);
     sess.clearDiscoveryTranscript();
     expect(sess.getDiscoveryHistory().length, 'clearDiscoveryTranscript empties memory').toBe(0);
   });

@@ -134,7 +134,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         }
       }
 
-      const result = engine.submitFindings(finding);
+      const result = engine.submitFindings(finding, s.budget);
       if ('error' in result) {
         // Log each rejection reason untruncated — the detail array is buried past the 300-char JSON cap.
         const detail = (result as { detail?: Array<{ id?: string; reason?: string }> }).detail;

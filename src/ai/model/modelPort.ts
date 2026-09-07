@@ -11,6 +11,7 @@ import {
   describeProviderErrorForUser,
   type ProviderErrorDiagnostic,
 } from '../support/text';
+import type { TurnTokenBudget } from '../support/tokenBudget';
 
 /** LangChain's provider-neutral message hierarchy is the graph's sole history type. */
 export type ModelMessage = BaseMessage;
@@ -286,6 +287,15 @@ export interface SingleGenerationModelPort {
   readonly id: string;
   readonly identity: ModelIdentity;
   readonly modelCalls: number;
+  /**
+   * Token budget this request runs under, fixed when the turn built the port.
+   *
+   * @remarks
+   * Rides the port because the port is the object every generation path already receives, and the
+   * window half of the budget is a property of the exact model the port wraps. A superseded turn
+   * still executing therefore keeps measuring against its own model's window and caps.
+   */
+  readonly budget: TurnTokenBudget;
   generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult>;
 }
 

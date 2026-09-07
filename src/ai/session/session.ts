@@ -15,7 +15,7 @@ import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult, SmState } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
-import { discoveryBlockBytes, discoveryEvidenceItemBytes } from '../support/tokenBudget';
+import { discoveryBlockBytes, discoveryEvidenceItemBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError } from '../support/toolErrorEnvelope';
 import { longestPrefixFitting } from '../support/textTruncation';
@@ -131,13 +131,13 @@ function truncateDiscoveryText(text: string, fits: (candidate: string) => boolea
   return `${prefix}${DISCOVERY_TRUNCATION_MARKER}`;
 }
 
-function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn): DiscoveryTranscriptTurn {
+function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn, budget: TurnTokenBudget): DiscoveryTranscriptTurn {
   const build = (user: string, assistant: string): DiscoveryTranscriptTurn => [
     { role: 'user', content: user },
     { role: 'assistant', content: assistant },
   ];
   const fits = (user: string, assistant: string): boolean =>
-    Buffer.byteLength(renderDiscoveryTranscript([build(user, assistant)]), 'utf8') <= discoveryBlockBytes();
+    Buffer.byteLength(renderDiscoveryTranscript([build(user, assistant)]), 'utf8') <= discoveryBlockBytes(budget);
   const user = turn[0].content;
   const assistant = turn[1].content;
   if (fits(user, assistant)) return turn;
@@ -611,10 +611,13 @@ export class AiSession {
    * accepted only when it is valid JSON produced by a successful graph-owned observation. Oldest
    * evidence is evicted first when the session count or rendered-byte bound is reached.
    *
+   * @param budget - Budget of the turn that produced the messages; the session is shared by every
+   *   turn, so the bound comes from the caller rather than from session state.
    * @param turnMessages - Canonical user/final-assistant messages for the completed turn.
    * @param observations - Successful provider-neutral discovery observations from graph state.
    */
   public appendDiscoveryTurn(
+    budget: TurnTokenBudget,
     turnMessages: readonly ModelMessage[],
     observations: readonly DiscoveryEvidenceObservation[] = [],
   ): void {
@@ -636,14 +639,14 @@ export class AiSession {
       this.discoveryTranscript.push(boundDiscoveryTurn([
         { role: 'user', content: user },
         { role: 'assistant', content: assistant },
-      ]));
+      ], budget));
       while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
-        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > discoveryBlockBytes()) {
+        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > discoveryBlockBytes(budget)) {
         this.discoveryTranscript.shift();
       }
     }
     for (const observation of observations) {
-      if (!observation.toolName || Buffer.byteLength(observation.result, 'utf8') > discoveryEvidenceItemBytes()) continue;
+      if (!observation.toolName || Buffer.byteLength(observation.result, 'utf8') > discoveryEvidenceItemBytes(budget)) continue;
       let result: unknown;
       try {
         result = JSON.parse(observation.result);
@@ -653,7 +656,7 @@ export class AiSession {
       if (result === null || typeof result !== 'object' || readToolError(result)) continue;
       this.discoveryEvidence.push({ toolName: observation.toolName, result });
       while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
-        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > discoveryBlockBytes()) {
+        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > discoveryBlockBytes(budget)) {
         this.discoveryEvidence.shift();
       }
     }

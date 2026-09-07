@@ -1,7 +1,7 @@
 import { columnCarryFromRoute, columnCarryOf, DEFAULT_SM_START_DEPTH, EngineAspectMode, INHERIT_CARRY, InvalidRoute, type DepthIntent } from './smTypes';
 import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { buildIncompleteRejection } from './smCompleteness';
-import { checkActiveScopeAdmission } from '../support/tokenBudget';
+import { checkActiveScopeAdmission, DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 /**
  * Unified Navigation Engine — The core state machine for all exploration modes.
  *
@@ -111,9 +111,11 @@ export interface IHopStateMachine {
    * Submits the findings for the current step and calculates the next state.
    *
    * @param params - The details of the hop submission.
+   * @param budget - The submitting turn's budget, which the active-scope admission guard is
+   *   measured against.
    * @returns The result of the submission.
    */
-  submitFindings(params: HopSubmission): SubmitResult;
+  submitFindings(params: HopSubmission, budget?: TurnTokenBudget): SubmitResult;
 
   /**
    * Retrieves the final result of the exploration session.
@@ -2171,9 +2173,13 @@ export class NavigationEngine implements IHopStateMachine {
    * engine does not impose a direct-current-neighbor rule. Hints remain mode-pure.
    *
    * @param params - Submission details including focus, verdict, and routing data.
+   * @param budget - The submitting turn's budget, which the active-scope admission guard is
+   *   measured against. The engine outlives the turn that created it, so the caps arrive with the
+   *   submission rather than being held on the instance; the shipped defaults apply where a caller
+   *   runs outside a turn.
    * @returns Information summarizing the operation's outcome.
    */
-  public submitFindings(params: HopSubmission): SubmitResult {
+  public submitFindings(params: HopSubmission, budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET): SubmitResult {
     if (this._status !== 'awaiting_findings') {
       const hint = this._status === 'complete'
         ? 'The engine already completed this exploration. Produce the synthesis output (chat prose + present_result) now — do not call submit_findings again.'
@@ -2612,7 +2618,7 @@ export class NavigationEngine implements IHopStateMachine {
     // Last fatal guard — runs before any durable mutation so a rejection leaves the hop unstaged.
     if (scopeAddNids.size > 0) {
       const projectedNodes = this.scopeNodeIds.size + scopeAddNids.size;
-      const admission = checkActiveScopeAdmission(projectedNodes, this.estimateScopeDdlChars(scopeAddNids));
+      const admission = checkActiveScopeAdmission(budget, projectedNodes, this.estimateScopeDdlChars(scopeAddNids));
       if (!admission.ok) {
         this.lastRoutedRejected = scopeAddNids.size;
         this.memory.recordRejection(focusId, `over_active_scope_budget: +${scopeAddNids.size} routes would exceed the exploration budget`, this.hopCount);

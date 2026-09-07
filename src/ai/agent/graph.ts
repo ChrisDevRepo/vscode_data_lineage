@@ -332,7 +332,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     res: ToolAttemptResult,
     phaseLabel: string,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res);
+    const nextAttempt = recordToolAttempt(priorAttempt, res, deps.model.budget);
     deps.logger?.debug(
       `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`,
     );
@@ -550,7 +550,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (contextAnswer) {
       const assistantMessage = modelAssistantMessage(contextAnswer);
       deps.sink.stream(contextAnswer);
-      sess.appendDiscoveryTurn([
+      sess.appendDiscoveryTurn(deps.model.budget, [
         modelUserMessage(state.prompt),
         assistantMessage,
       ]);
@@ -573,7 +573,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (remainingProviderCalls < 1) {
       const exhaustedAttempt = priorAttempt.stopReason ? priorAttempt : recordToolAttempt(priorAttempt, {
         stop: 'continue', providerCalls: 0, semanticFailures: 0, observations: [], rejections: [],
-      });
+      }, deps.model.budget);
       const stopped = attemptStop(exhaustedAttempt, undefined, 'Entry detection', 'without a valid route');
       if (!stopped) throw new Error('Entry-detection graph-attempt guard failed to select a stop reason.');
       return { ...failStopped(stopped), ctx, messages, toolAttempt: exhaustedAttempt };
@@ -584,7 +584,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? state.messages
       : [modelUserMessage(state.prompt)];
     const detectorMessages = priorAttempt.providerCalls > 0
-      ? [...base, modelUserMessage(renderToolAttemptContext(priorAttempt))]
+      ? [...base, modelUserMessage(renderToolAttemptContext(priorAttempt, deps.model.budget))]
       : base;
     const callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
@@ -617,7 +617,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           reason: error.reason,
           hint: 'Return exactly one object matching the entry-detection schema.',
         }],
-      });
+      }, deps.model.budget);
       deps.logger?.debug(
         `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} stop=${nextAttempt.stopReason ?? 'continue'}`,
       );
@@ -695,7 +695,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
       : [];
-    sess.appendDiscoveryTurn([
+    sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
     ], nextAttempt.observations);
@@ -749,7 +749,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const confirmation = 'Preview shown in the graph.';
     deps.sink.stream(`\n\n${confirmation}`);
     const assistantMessage = [modelAssistantMessage(confirmation)];
-    sess.appendDiscoveryTurn([
+    sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
     ], nextAttempt.observations);

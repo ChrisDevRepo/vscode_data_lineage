@@ -17,6 +17,7 @@ import { executePresentResult } from '../../../src/ai/tools/handlers/presentResu
 import { rejectionIssuePaths } from '../../../src/ai/support/toolErrorEnvelope';
 import { presentResultBoundarySchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
+import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { DatabaseModel } from '../../../src/engine/types';
 import type { Logger } from '../../../src/utils/log';
@@ -48,6 +49,7 @@ function handlerProbe(session: AiSession, capturedEpoch: number): Probe {
       getSession: () => session,
       getPanel: () => undefined as never,
       logger,
+      budget: DEFAULT_TURN_TOKEN_BUDGET,
       maxRounds: 50,
       turnEpoch: () => capturedEpoch,
       requireModel: () => TEST_MODEL,

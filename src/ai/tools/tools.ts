@@ -31,11 +31,14 @@ import { type GetScopeBundleInput } from './toolSchemas';
 import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepthContract';
 
 
-import { estimateTokens, REGEX_MAX_LENGTH, checkScopeBudget } from '../support/tokenBudget';
+import {
+  checkScopeBudget,
+  estimateTokens,
+  REGEX_MAX_LENGTH,
+  type TurnTokenBudget,
+} from '../support/tokenBudget';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-// Re-exported for the discovery-budget-guard unit test, which drives the caps through this module.
-export { setDiscoveryNodeCap, setDiscoveryTokenBudget } from '../support/tokenBudget';
 
 /** Hard cap on `search_columns` results — prevents unbounded enumeration on wide schemas. */
 const COLUMN_SEARCH_LIMIT = 50;
@@ -461,6 +464,7 @@ export function getObjectDetail(
  * @param model - The database model.
  * @param graph - The graphology instance.
  * @param input - The scope bundle input payload.
+ * @param budget - The calling turn's budget, which the discovery guard is measured against.
  * @param store - Optional column store for high-fidelity metadata.
  * @returns The requested scope bundle.
  */
@@ -468,6 +472,7 @@ export function getScopeBundle(
   model: DatabaseModel,
   graph: Graph,
   input: GetScopeBundleInput,
+  budget: TurnTokenBudget,
   store?: import('../../engine/columnStore').ColumnStore,
 ): object {
   const nodeMap = buildNodeMap(model);
@@ -503,7 +508,7 @@ export function getScopeBundle(
     bfsFromNode(graph, origin, (key, _attr, depth) => {
       if (nodeBudgetExceeded || depth > maxDepth) return true;
       scopeIds.add(String(key).toLowerCase());
-      if (!checkScopeBudget(scopeIds.size, 0).ok) nodeBudgetExceeded = true;
+      if (!checkScopeBudget(budget, scopeIds.size, 0).ok) nodeBudgetExceeded = true;
       return false;
     }, { mode });
   };
@@ -519,7 +524,7 @@ export function getScopeBundle(
 
   if (nodeBudgetExceeded) {
     return {
-      ...checkScopeBudget(scopeIds.size, 0),
+      ...checkScopeBudget(budget, scopeIds.size, 0),
       scope_proposal: {
         origin: originNode.id,
         direction,
@@ -541,8 +546,8 @@ export function getScopeBundle(
   // Auto-attach DDL when it fits the token budget. If the caller explicitly asked for DDL that does
   // not fit, route to SM (their intent needs the bodies). If they did NOT ask and it does not fit,
   // fall through with metadata only — preserves the inline chat path, no forced SM.
-  const ddlFits = checkScopeBudget(0, ddlChars).ok;
-  if (includeDdl && !ddlFits) return checkScopeBudget(scopeIds.size, ddlChars);
+  const ddlFits = checkScopeBudget(budget, 0, ddlChars).ok;
+  if (includeDdl && !ddlFits) return checkScopeBudget(budget, scopeIds.size, ddlChars);
   // Only an omitted value may enable automatic DDL grounding.
   const effectiveIncludeDdl = includeDdl === false
     ? false
@@ -648,6 +653,7 @@ export function getNeighborColumns(
  *
  * @param graph - The graphology instance.
  * @param type - The type of analysis to perform ('hubs', 'islands', 'longest_path', 'cycles').
+ * @param budget - The calling turn's budget, which the discovery guard is measured against.
  * @param minDegree - Minimum degree for a node to be considered a hub.
  * @param maxSize - Maximum size for a connected component to be considered an island.
  * @param longestPathMinNodes - Minimum number of nodes for a path to be considered "long".
@@ -656,6 +662,7 @@ export function getNeighborColumns(
 export function runAnalysis(
   graph: Graph,
   type: AnalysisType,
+  budget: TurnTokenBudget,
   minDegree?: number,
   maxSize?: number,
   longestPathMinNodes?: number,
@@ -674,7 +681,7 @@ export function runAnalysis(
   // Over budget → the counts WITHOUT the group list, never a sliced one: the pattern total stays
   // usable and the AI narrows the query with the knob that type actually has, or a different type.
   const groupChars = JSON.stringify(result.groups).length;
-  if (!checkScopeBudget(0, groupChars).ok) {
+  if (!checkScopeBudget(budget, 0, groupChars).ok) {
     // Only `hubs` takes min_degree and only `islands` takes max_size — naming either knob for a
     // type it does not apply to (orphans, longest-path, cycles, external-refs) is wrong advice.
     const narrowByType: Partial<Record<AnalysisType, string>> = {
@@ -718,6 +725,7 @@ export function runAnalysis(
  *
  * @param model - The database model.
  * @param query - The regex pattern.
+ * @param budget - The calling turn's budget, which the discovery guard is measured against.
  * @param types - Optional filter for scriptable object types.
  * @param store - Optional column store for high-fidelity DDL.
  * @param onDebug - Optional sink for a debug line when `query` is rewritten, or the result is over budget.
@@ -726,6 +734,7 @@ export function runAnalysis(
 export function searchDdl(
   model: DatabaseModel,
   query: string,
+  budget: TurnTokenBudget,
   types?: ('view' | 'procedure' | 'function')[],
   store?: import('../../engine/columnStore').ColumnStore,
   onDebug?: (msg: string) => void,
@@ -780,13 +789,13 @@ export function searchDdl(
   // pattern or the types, and an oversized ask is the hand-off to the approval-gated path.
   const payload = { results, total: results.length, objects, searched };
   const resultChars = JSON.stringify(payload).length;
-  const budget = checkScopeBudget(0, resultChars);
-  if (!budget.ok) {
-    onDebug?.(`searchDdl: ${results.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${budget.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
+  const admission = checkScopeBudget(budget, 0, resultChars);
+  if (!admission.ok) {
+    onDebug?.(`searchDdl: ${results.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${admission.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
     return {
-      reason:          budget.reason,
-      counts:          budget.counts,
-      limits:          budget.limits,
+      reason:          admission.reason,
+      counts:          admission.counts,
+      limits:          admission.limits,
       total:           results.length,
       objects,
       searched,

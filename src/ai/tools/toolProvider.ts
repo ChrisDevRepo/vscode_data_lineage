@@ -43,6 +43,7 @@ import { getToolInvocationLabel } from '../tools/toolLabels';
 import { readToolError, rejectionIssuePaths, isConsentGateRejection } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
+import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import type { StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { resolveModelNodeId } from '../support/inputNormalization';
@@ -71,6 +72,7 @@ class ToolHandler implements ToolServices {
     public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>,
     public readonly signal?: AbortSignal,
     public readonly maxRounds: number = DEFAULT_MAX_ROUNDS,
+    public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
@@ -210,6 +212,7 @@ class ToolHandler implements ToolServices {
         return this.logAndReturn('get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
+          budget: this.budget,
           ids: ids?.map(id => resolveModelNodeId(id, nodeMap) ?? id),
           filter,
           getDdl,
@@ -243,7 +246,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetScopeBundleInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_scope_bundle', parsed.error, input);
       const sess = this.getSession();
-      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, sess.columnStore) as Record<string, unknown>;
+      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore) as Record<string, unknown>;
       // Normalization-with-log: silence on `include_ddl` is filled by a declared default, so the
       // decision the model did not make has to be visible. An explicit `false` is never overridden.
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
@@ -307,7 +310,7 @@ class ToolHandler implements ToolServices {
       const resolvedMinDegree = min_degree ?? anaCfg.get<number>('analysis.hubMinDegree');
       const resolvedMaxSize   = max_size   ?? anaCfg.get<number>('analysis.islandMaxSize');
       const resolvedLongestPath = anaCfg.get<number>('analysis.longestPathMinNodes');
-      return this.logAndReturn('detect_graph_patterns', runAnalysis(this.requireGraph(), type, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
+      return this.logAndReturn('detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
     } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
 
@@ -316,7 +319,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('search_ddl', searchDdl(this.requireModel(), query, types, this.getSession().columnStore, msg => this.logger.debug(msg)), input);
+      return this.logAndReturn('search_ddl', searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg)), input);
     } catch (err) { return this.toolError('search_ddl', err); }
   }
 
@@ -382,7 +385,8 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
  * @param host - Optional host seam; `getStoredRun` resolves the AI run behind an applied bookmark,
  * `model`/`signal` supply the text-completion capability `start_exploration` uses to compose the
- * discovery-handoff memo shown at the bottom of the approval card.
+ * discovery-handoff memo shown at the bottom of the approval card, and `budget` carries the owning
+ * turn's caps so a superseded turn's dispatch keeps measuring against its own model.
  * @returns A ready-to-dispatch canonical registry.
  */
 export function buildAiToolRegistry(
@@ -390,9 +394,9 @@ export function buildAiToolRegistry(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
   turnLease?: TurnLease,
-  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText'>; signal?: AbortSignal; maxRounds?: number },
+  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText'>; signal?: AbortSignal; maxRounds?: number; budget?: TurnTokenBudget },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.maxRounds);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.maxRounds, host?.budget);
 
   // Exhaustive catalog binding: adding or removing a tool requires a matching handler entry.
   const dispatch = {

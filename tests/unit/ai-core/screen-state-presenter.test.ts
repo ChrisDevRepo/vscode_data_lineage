@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { describeScreen, presentRunRecall, presentScreenState, type RunRecallInput } from '../../../src/ai/tools/screenStatePresenter';
 import { aiRunStorageKey, AI_RUN_KEY_PREFIX, hashDdl, type StoredAiRun } from '../../../src/ai/session/runStore';
+import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { GetScreenStateInputSchema, parseToolInput } from '../../../src/ai/tools/toolSchemas';
 import { detectOverBudgetFromResult } from '../../../src/ai/agent/graph';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
@@ -322,6 +323,7 @@ function recallRun(): StoredAiRun {
 function recallInput(overrides: Partial<RunRecallInput> = {}): RunRecallInput {
   return {
     uiState: SEEDED_UI,
+    budget: DEFAULT_TURN_TOKEN_BUDGET,
     getStoredRun: (bookmarkId) => (bookmarkId === 'bm-1' ? recallRun() : undefined),
     getDdl: (id) => RECALL_DDL[id],
     isInModel: (id) => id in RECALL_DDL,

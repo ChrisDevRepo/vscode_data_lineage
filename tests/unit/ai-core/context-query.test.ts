@@ -5,6 +5,7 @@ import { TurnEventSink, type TurnEvent } from '../../../src/ai/runtime/turnEvent
 import { AiSession } from '../../../src/ai/session/session';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
+import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import {
   tryBuildDeterministicContextAnswer,
   type StagePromptContext,
@@ -75,6 +76,7 @@ function rejectingModel(): ModelPort {
   return {
     id: 'must-not-run',
     identity: { id: 'must-not-run', name: 'Must Not Run', vendor: 'test', family: 'test', version: '1' },
+    budget: DEFAULT_TURN_TOKEN_BUDGET,
     get modelCalls() { return calls; },
     async generateStructured<T>(): Promise<T> { calls += 1; throw new Error('provider should not run'); },
     async generateToolTurn() { calls += 1; throw new Error('provider should not run'); },

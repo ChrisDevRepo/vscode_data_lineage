@@ -21,7 +21,7 @@ import {
 import {
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../session/session';
-import { discoveryBlockBytes } from '../support/tokenBudget';
+import { discoveryBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { longestPrefixFitting } from '../support/textTruncation';
 
 /**
@@ -74,11 +74,13 @@ export function applyNativeChatBoundary(
  * Converts the current participant's native chat history into ordered graph messages.
  *
  * @param history - The native VS Code chat history for this participant.
+ * @param budget - The calling turn's budget, which bounds the replayed transcript.
  * @param debug - Optional debug sink; a malformed history value that degrades to an empty
  *   string must be observable, never a silent skip.
  */
 export function chatHistoryToModelMessages(
   history: vscode.ChatContext['history'],
+  budget: TurnTokenBudget,
   debug?: (msg: string) => void,
 ): ModelMessage[] {
   // One group per native request turn (the request plus every response message that follows it),
@@ -130,7 +132,7 @@ export function chatHistoryToModelMessages(
   }
   if (current.length > 0) groups.push(current);
 
-  return boundReplayedHistory(groups, debug);
+  return boundReplayedHistory(groups, budget, debug);
 }
 
 /**
@@ -144,6 +146,7 @@ export function chatHistoryToModelMessages(
  */
 function boundReplayedHistory(
   groups: readonly (readonly ModelMessage[])[],
+  budget: TurnTokenBudget,
   debug?: (msg: string) => void,
 ): ModelMessage[] {
   const kept: (readonly ModelMessage[])[] = [];
@@ -152,7 +155,7 @@ function boundReplayedHistory(
     const size = groupBytes(groups[index]);
     if (
       kept.length > 0
-      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > discoveryBlockBytes())
+      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > discoveryBlockBytes(budget))
     ) break;
     kept.unshift(groups[index]);
     bytes += size;

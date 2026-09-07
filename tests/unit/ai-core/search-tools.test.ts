@@ -20,14 +20,17 @@
  *   (M0-T3: the 3-line context window dropped the enclosing block, and dead SQL read as behaviour);
  * - `package.json` `languageModelTools` is what the generator produces from `TOOL_DEFS`.
  *
- * Cap-setting calls (`setDiscoveryTokenBudget` — process-wide mutable module state) are made
- * inside the it() they apply to and restored afterwards, so no other test observes them.
+ * The caps travel with the call as one immutable per-turn budget, so a case that needs a tight
+ * budget builds its own and no other case observes it.
  */
 
 import { execFileSync } from 'node:child_process';
-import { afterEach, describe, expect, it } from 'vitest';
-import { searchDdl, searchObjects, setDiscoveryTokenBudget } from '../../../src/ai/tools/tools';
-import { DEFAULT_DISCOVERY_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
+import { describe, expect, it } from 'vitest';
+import { searchDdl, searchObjects } from '../../../src/ai/tools/tools';
+import {
+  createTurnTokenBudget,
+  DEFAULT_TURN_TOKEN_BUDGET as BUDGET,
+} from '../../../src/ai/support/tokenBudget';
 import { rootPath } from '../helpers/testUtils';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 
@@ -75,10 +78,8 @@ type DdlResult = {
 describe('search tools — grep contract', () => {
   const model = makeModel();
 
-  afterEach(() => setDiscoveryTokenBudget(DEFAULT_DISCOVERY_TOKEN_BUDGET));
-
   it('reports a hit with its object, 1-based line number, matched line and context', () => {
-    const res = searchDdl(model, 'Archive.*Orders') as DdlResult;
+    const res = searchDdl(model, 'Archive.*Orders', BUDGET) as DdlResult;
     expect(res.total, 'one match for one occurrence').toBe(1);
     expect(res.objects, 'one distinct object').toBe(1);
     const [hit] = res.results ?? [];
@@ -91,40 +92,40 @@ describe('search tools — grep contract', () => {
   });
 
   it('returns every match in a body, not one per object', () => {
-    const res = searchDdl(model, 'OrderId') as DdlResult;
+    const res = searchDdl(model, 'OrderId', BUDGET) as DdlResult;
     expect(res.total, 'OrderId occurs on line 2 and line 4').toBe(2);
     expect(res.objects, 'both are in the same view, reported once each').toBe(1);
     expect((res.results ?? []).map(r => r.line)).toEqual([2, 4]);
     // Two occurrences on one line are two matches, as grep -o reports them.
-    const sameLine = searchDdl(model, 'o\\.') as DdlResult;
+    const sameLine = searchDdl(model, 'o\\.', BUDGET) as DdlResult;
     expect((sameLine.results ?? []).filter(r => r.line === 2)).toHaveLength(2);
   });
 
   it('accepts a redundant "(?i)" group end-to-end and matches case-insensitively', () => {
-    const inline = searchDdl(model, '(?i)archiveorders') as DdlResult;
-    const plain = searchDdl(model, 'ARCHIVEORDERS') as DdlResult;
+    const inline = searchDdl(model, '(?i)archiveorders', BUDGET) as DdlResult;
+    const plain = searchDdl(model, 'ARCHIVEORDERS', BUDGET) as DdlResult;
     expect(inline.error, '(?i) is stripped, not rejected').toBeUndefined();
     expect(inline.total).toBe(1);
     expect(plain.total, 'matching is case-insensitive with or without the group').toBe(1);
   });
 
   it('states an empty result as a fact with no repair advice, distinct from an invalid pattern', () => {
-    const empty = searchDdl(model, 'no_such_token') as DdlResult;
+    const empty = searchDdl(model, 'no_such_token', BUDGET) as DdlResult;
     expect(empty).toEqual({ results: [], total: 0, objects: 0, searched: { bodies: 1, types: ['view', 'procedure', 'function'] } });
     expect('hint' in empty, 'no substring advice on a regex tool — it drove the T3 retry loop').toBe(false);
     expect('error' in empty, 'zero matches is not an error').toBe(false);
 
-    const invalid = searchDdl(model, 'foo(') as DdlResult;
+    const invalid = searchDdl(model, 'foo(', BUDGET) as DdlResult;
     expect(invalid.error, 'an unusable pattern is an error, not an empty result').toBe('invalid_regex');
     expect(invalid.hint).toContain('closing ")"');
     expect('results' in invalid, 'a rejection carries no result list').toBe(false);
   });
 
   it('anchors work per line like grep, and "." never crosses a line break', () => {
-    expect((searchDdl(model, '^CREATE') as DdlResult).total, '^ matches the first line').toBe(1);
-    expect((searchDdl(model, '^SELECT') as DdlResult).total, '^ matches a line start inside the body').toBe(1);
-    expect((searchDdl(model, 'OrderId > 0$') as DdlResult).total, '$ matches a line end').toBe(1);
-    expect((searchDdl(model, 'ai.vwSales AS.SELECT') as DdlResult).total, '. never crosses a line break').toBe(0);
+    expect((searchDdl(model, '^CREATE', BUDGET) as DdlResult).total, '^ matches the first line').toBe(1);
+    expect((searchDdl(model, '^SELECT', BUDGET) as DdlResult).total, '^ matches a line start inside the body').toBe(1);
+    expect((searchDdl(model, 'OrderId > 0$', BUDGET) as DdlResult).total, '$ matches a line end').toBe(1);
+    expect((searchDdl(model, 'ai.vwSales AS.SELECT', BUDGET) as DdlResult).total, '. never crosses a line break').toBe(0);
   });
 
   it('a pattern whose first match is empty still reports the real match later in the body', () => {
@@ -133,7 +134,7 @@ describe('search tools — grep contract', () => {
     const withX = makeModel([
       node({ id: '[ai].[vwx]', name: 'vwX', type: 'view', bodyScript: 'SELECT xId\nFROM ai.ArchiveOrders' }),
     ]);
-    const res = searchDdl(withX, 'x*') as DdlResult;
+    const res = searchDdl(withX, 'x*', BUDGET) as DdlResult;
     const onVwX = (res.results ?? []).filter(r => r.id === '[ai].[vwx]');
     expect(onVwX.length, 'the node is scanned, not skipped').toBeGreaterThan(0);
     expect(onVwX.some(r => r.text.includes('xId')), 'the real match is reported').toBe(true);
@@ -152,7 +153,7 @@ describe('search tools — grep contract', () => {
         '*/',
       ].join('\n'),
     })]);
-    const rows = (searchDdl(commented, 'ai\\.Watermark') as DdlResult).results ?? [];
+    const rows = (searchDdl(commented, 'ai\\.Watermark', BUDGET) as DdlResult).results ?? [];
     expect(rows.map(r => [r.line, r.commented]), 'the live hit is unflagged, the dead one is flagged')
       .toEqual([[2, undefined], [6, true]]);
 
@@ -178,16 +179,15 @@ describe('search tools — grep contract', () => {
         bodyScript: `CREATE VIEW ai.vwBulk${i} AS\nSELECT * FROM ai.ArchiveOrders\nWHERE 1 = 1`,
       })),
     );
-    setDiscoveryTokenBudget(1000);
-    const res = searchDdl(wide, 'ArchiveOrders') as DdlResult;
+    const tight = createTurnTokenBudget({ discoveryTokenBudget: 1000 });
+    const res = searchDdl(wide, 'ArchiveOrders', tight) as DdlResult;
     expect(res.reason, 'reuses the existing discovery over-budget fact').toBe('over_discovery_budget');
     expect(res.results_omitted).toBe(true);
     expect('results' in res, 'never a partial list').toBe(false);
     expect(res.total, 'the count still answers "how much is there"').toBe(201);
     expect(res.hint).toContain('Narrow the pattern');
 
-    setDiscoveryTokenBudget(DEFAULT_DISCOVERY_TOKEN_BUDGET);
-    const inline = searchDdl(wide, 'ArchiveOrders') as DdlResult;
+    const inline = searchDdl(wide, 'ArchiveOrders', BUDGET) as DdlResult;
     expect(inline.results?.length, 'under budget the full list is inlined').toBe(201);
   });
 

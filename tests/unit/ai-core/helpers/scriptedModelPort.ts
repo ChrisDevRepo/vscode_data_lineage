@@ -29,6 +29,10 @@ import type {
   ValidGeneratedToolCall,
 } from '../../../../src/ai/model/modelPort';
 import type { ProviderErrorDiagnostic } from '../../../../src/ai/support/text';
+import {
+  DEFAULT_TURN_TOKEN_BUDGET,
+  type TurnTokenBudget,
+} from '../../../../src/ai/support/tokenBudget';
 
 /** One queued provider generation replayed by {@link ScriptedModelPort} in script order. */
 export interface ScriptedGeneration {
@@ -78,6 +82,8 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     private readonly script: readonly ScriptedGeneration[],
     /** Queued replies for `completeText` — the discovery-summary compose round, not tool-turn generation. */
     private readonly textScript: readonly string[] = [],
+    /** Budget this scripted turn runs under; the shipped defaults unless a case sizes them. */
+    public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
   ) {}
 
   /** {@inheritDoc SingleGenerationModelPort.modelCalls} */

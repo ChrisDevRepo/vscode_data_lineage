@@ -25,6 +25,7 @@ import {
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { rejectionFromZodError } from '../support/toolErrorEnvelope';
 import {
   STRUCTURED_OUTPUT_TOOL,
@@ -74,6 +75,9 @@ export class VscodeModelPort implements ModelPort {
   /** Number of native provider requests attempted through this port. */
   public modelCalls = 0;
 
+  /** {@inheritDoc SingleGenerationModelPort.budget} */
+  public readonly budget: TurnTokenBudget;
+
   public constructor(
     private readonly model: vscode.LanguageModelChat,
     private readonly options: {
@@ -103,8 +107,17 @@ export class VscodeModelPort implements ModelPort {
        * parts, not an HTTP payload — so `provider-raw` has no emitter here.
        */
       readonly traceVerbose?: boolean;
+      /**
+       * Token budget the owning turn resolved from this model's window and the workspace settings.
+       *
+       * @remarks
+       * Absent only where a caller builds a port outside a turn, which leaves the shipped defaults
+       * and the ceilings in force.
+       */
+      readonly budget?: TurnTokenBudget;
     } = {},
   ) {
+    this.budget = options.budget ?? DEFAULT_TURN_TOKEN_BUDGET;
     this.id = `vscode-lm:${model.id}`;
     this.identity = {
       id: model.id,

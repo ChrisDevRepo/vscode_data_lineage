@@ -24,20 +24,14 @@ import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
 import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
 import {
+  createTurnTokenBudget,
   DEFAULT_DISCOVERY_NODE_CAP,
   DEFAULT_DISCOVERY_TOKEN_BUDGET,
   DEFAULT_EXPLORATION_NODE_CAP,
   DEFAULT_EXPLORATION_TOKEN_BUDGET,
   DISCOVERY_WINDOW_SHARE,
   EXPLORATION_WINDOW_SHARE,
-  setExplorationNodeCap,
-  setExplorationTokenBudget,
-  setModelWindowTokens,
 } from '../support/tokenBudget';
-import {
-  setDiscoveryNodeCap,
-  setDiscoveryTokenBudget,
-} from '../tools/tools';
 import {
   applyNativeChatBoundary,
   chatHistoryToModelMessages,
@@ -291,21 +285,19 @@ export class LineageParticipant {
     const modelWindow = request.model.maxInputTokens > 0
       ? request.model.maxInputTokens
       : Number.POSITIVE_INFINITY;
-    setModelWindowTokens(request.model.maxInputTokens);
-    setDiscoveryNodeCap(
-      config.get<number>('ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
-    );
-    setDiscoveryTokenBudget(Math.min(
-      config.get<number>('ai.discoveryTokenBudget', DEFAULT_DISCOVERY_TOKEN_BUDGET),
-      Math.floor(modelWindow * DISCOVERY_WINDOW_SHARE),
-    ));
-    setExplorationNodeCap(
-      config.get<number>('ai.explorationNodeCap', DEFAULT_EXPLORATION_NODE_CAP),
-    );
-    setExplorationTokenBudget(Math.min(
-      config.get<number>('ai.explorationTokenBudget', DEFAULT_EXPLORATION_TOKEN_BUDGET),
-      Math.floor(modelWindow * EXPLORATION_WINDOW_SHARE),
-    ));
+    const turnBudget = createTurnTokenBudget({
+      modelWindowTokens: request.model.maxInputTokens,
+      discoveryNodeCap: config.get<number>('ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
+      discoveryTokenBudget: Math.min(
+        config.get<number>('ai.discoveryTokenBudget', DEFAULT_DISCOVERY_TOKEN_BUDGET),
+        Math.floor(modelWindow * DISCOVERY_WINDOW_SHARE),
+      ),
+      explorationNodeCap: config.get<number>('ai.explorationNodeCap', DEFAULT_EXPLORATION_NODE_CAP),
+      explorationTokenBudget: Math.min(
+        config.get<number>('ai.explorationTokenBudget', DEFAULT_EXPLORATION_TOKEN_BUDGET),
+        Math.floor(modelWindow * EXPLORATION_WINDOW_SHARE),
+      ),
+    });
 
     const requestId = randomUUID();
     const cancellation = tokenToAbortSignal(token);
@@ -320,6 +312,7 @@ export class LineageParticipant {
       }),
       // Read once per turn: the capture level is fixed when the session command enables the trace.
       traceVerbose: traceWriter?.isVerbose(),
+      budget: turnBudget,
     });
     // The pill carries a short sentinel so chat can label it; expansion seeds the deterministic
     // marker the graph routes on, so the re-entry costs no entry-detector call.
@@ -332,7 +325,7 @@ export class LineageParticipant {
     this.logger.info(
       `[${session.id}] native turn start model=${request.model.id} command=${request.command ?? 'none'} history=${chatContext.history.length}`,
     );
-    const priorMessages = chatHistoryToModelMessages(chatContext.history, (msg) => this.logger.debug(msg));
+    const priorMessages = chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) => this.logger.debug(msg));
 
     this.statusBarStart('working…');
     try {

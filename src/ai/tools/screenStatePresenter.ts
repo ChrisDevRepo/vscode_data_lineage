@@ -11,7 +11,7 @@ import type { RenderStateSnapshot, ScreenStateExtras } from '../../bridge/debugD
 import { TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { checkScopeBudget, estimateTokens } from '../support/tokenBudget';
+import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 
 /** Maximum node ids listed per screen-fact list before the remainder is reported as a count. */
 const ID_CAP = 20;
@@ -40,6 +40,8 @@ export interface RunRecallInput {
   readonly uiState: unknown;
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
   readonly getStoredRun?: StoredRunReader;
+  /** The calling turn's budget, which the recall payload is measured against. */
+  readonly budget: TurnTokenBudget;
   /** Canonical object ids to recall; mutually exclusive with {@link RunRecallInput.filter}. */
   readonly ids?: readonly string[];
   /** One class of the stored run to list; mutually exclusive with {@link RunRecallInput.ids}. */
@@ -401,9 +403,9 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
     : input.filter === 'open_leads' ? { ...head, open_leads: recallOpenLeads(run) }
     : { ...head, stale: recallStale(run, input.getDdl) };
   const chars = JSON.stringify(payload).length;
-  const budget = checkScopeBudget(0, chars);
-  if (!budget.ok) {
-    return withEstimate({ ...budget, hint: overBudgetHint(input, chars, budget.limits.token_budget) });
+  const admission = checkScopeBudget(input.budget, 0, chars);
+  if (!admission.ok) {
+    return withEstimate({ ...admission, hint: overBudgetHint(input, chars, admission.limits.token_budget) });
   }
   return withEstimate(payload);
 }

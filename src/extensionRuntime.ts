@@ -168,7 +168,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     lineageRuntime = new LineageRuntime({
       getSession,
       createRegistry: (lease, model) =>
-        buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal }),
+        buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal, budget: model.budget }),
       logger: Logger.create(outputChannel, 'AI'),
       maxRounds,
       traceWriter,

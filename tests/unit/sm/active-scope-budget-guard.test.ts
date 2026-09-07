@@ -5,37 +5,30 @@
  * an over-cap route commit is held (hold-and-amend, same contract as route/CT rejections) and
  * rejected with `over_active_scope_budget` BEFORE any scope mutation, so the model can resend
  * a pruned submission that reuses its held prose.
+ *
+ * Each case builds the caps it exercises as one immutable per-turn budget and passes it to the
+ * call, so no case can observe another's caps.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import {
-  DEFAULT_EXPLORATION_NODE_CAP,
-  DEFAULT_EXPLORATION_TOKEN_BUDGET,
   checkActiveScopeAdmission,
-  setExplorationNodeCap,
-  setExplorationTokenBudget,
+  createTurnTokenBudget,
 } from '../../../src/ai/support/tokenBudget';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
-import { describe, expect, it, afterEach } from 'vitest';
-
-afterEach(() => {
-  setExplorationNodeCap(DEFAULT_EXPLORATION_NODE_CAP);
-  setExplorationTokenBudget(DEFAULT_EXPLORATION_TOKEN_BUDGET);
-});
+import { describe, expect, it } from 'vitest';
 
 describe('checkActiveScopeAdmission (pure)', () => {
   it('admits a projection under both caps', () => {
-    setExplorationNodeCap(10);
-    setExplorationTokenBudget(1000);
-    const res = checkActiveScopeAdmission(10, 4000);
+    const budget = createTurnTokenBudget({ explorationNodeCap: 10, explorationTokenBudget: 1000 });
+    const res = checkActiveScopeAdmission(budget, 10, 4000);
     expect(res.ok, 'at-cap projection admits (caps are inclusive)').toBe(true);
   });
 
   it('rejects over the node cap with counts and limits', () => {
-    setExplorationNodeCap(10);
-    setExplorationTokenBudget(1000);
-    const res = checkActiveScopeAdmission(11, 0);
+    const budget = createTurnTokenBudget({ explorationNodeCap: 10, explorationTokenBudget: 1000 });
+    const res = checkActiveScopeAdmission(budget, 11, 0);
     expect(!res.ok, 'over-node projection rejects').toBe(true);
     if (!res.ok) {
       expect(res.reason === 'over_active_scope_budget', 'stable reason code').toBe(true);
@@ -44,18 +37,16 @@ describe('checkActiveScopeAdmission (pure)', () => {
   });
 
   it('rejects over the token budget using the chars/4 estimate', () => {
-    setExplorationNodeCap(100);
-    setExplorationTokenBudget(1000);
-    const res = checkActiveScopeAdmission(1, 4001);
+    const budget = createTurnTokenBudget({ explorationNodeCap: 100, explorationTokenBudget: 1000 });
+    const res = checkActiveScopeAdmission(budget, 1, 4001);
     expect(!res.ok, '4001 chars estimates to 1001 tokens > 1000 budget').toBe(true);
     if (!res.ok) expect(res.counts.tokens === 1001, 'token estimate is ceil(chars/4)').toBe(true);
   });
 
-  it('setters clamp to their minimums', () => {
-    setExplorationNodeCap(0);
-    setExplorationTokenBudget(1);
-    expect(!checkActiveScopeAdmission(2, 0).ok, 'node cap clamped to 1, so 2 rejects').toBe(true);
-    expect(checkActiveScopeAdmission(1, 4000).ok, 'token budget clamped to 1000, so 1000 tokens admit').toBe(true);
+  it('the budget clamps to its minimums', () => {
+    const budget = createTurnTokenBudget({ explorationNodeCap: 0, explorationTokenBudget: 1 });
+    expect(!checkActiveScopeAdmission(budget, 2, 0).ok, 'node cap clamped to 1, so 2 rejects').toBe(true);
+    expect(checkActiveScopeAdmission(budget, 1, 4000).ok, 'token budget clamped to 1000, so 1000 tokens admit').toBe(true);
   });
 });
 
@@ -75,7 +66,7 @@ describe('NavigationEngine active-phase admission', () => {
 
   it('an over-cap route commit is held and rejected before scope mutates; a pruned amend completes', () => {
     // Default seed is {n0, n1, n2, n3}; cap 4 means any growth past it rejects.
-    setExplorationNodeCap(4);
+    const capFour = createTurnTokenBudget({ explorationNodeCap: 4 });
     const engine = new NavigationEngine(chainModel, chainGraph, () => {}, {});
     engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'default_start' } });
 
@@ -89,7 +80,7 @@ describe('NavigationEngine active-phase admission', () => {
         summary: focus,
         verdict: 'analyze',
         route_requests: [{ nodeId: next, question: 'trace' }],
-      }) as { ok?: boolean };
+      }, capFour) as { ok?: boolean };
       expect(ok.ok === true, `route to in-scope ${next} commits without tripping the guard`).toBe(true);
     }
 
@@ -101,7 +92,7 @@ describe('NavigationEngine active-phase admission', () => {
       summary: 'n3',
       verdict: 'analyze',
       route_requests: [{ nodeId: 'n4', question: 'grow beyond the cap' }],
-    }) as { error?: string; hint?: string; detail?: Record<string, unknown> };
+    }, capFour) as { error?: string; hint?: string; detail?: Record<string, unknown> };
     expect(rejected.error === 'over_active_scope_budget', 'growth beyond the cap rejects with the stable code').toBe(true);
     expect(typeof rejected.hint === 'string' && rejected.hint.includes('held'), 'hint tells the model its analysis is held').toBe(true);
     expect(rejected.detail?.node_cap === 4, 'detail carries the effective cap').toBe(true);
@@ -123,7 +114,7 @@ describe('NavigationEngine active-phase admission', () => {
       summary: '',
       verdict: 'analyze',
       route_requests: [],
-    }) as { ok?: boolean };
+    }, capFour) as { ok?: boolean };
     expect(amended.ok === true, 'pruned amend commits against the held draft').toBe(true);
 
     // Completion is driven by the hop pull: the queue drains inside getHopContext, which flips status.
@@ -140,7 +131,7 @@ describe('NavigationEngine active-phase admission', () => {
     // line carries the same kv shape as [Reject] so evidence_review.facts_host_log buckets it.
     const fanNodes: LineageNode[] = ['f0', 'f1', 'f2', 'f3', 'f4'].map(id => makeNode({ id, schema: 'dbo', name: id, type: 'view' }));
     const fanEdges: Array<[string, string]> = [['f0', 'f1'], ['f1', 'f2'], ['f2', 'f3'], ['f3', 'f4']];
-    setExplorationNodeCap(50);
+    const capFifty = createTurnTokenBudget({ explorationNodeCap: 50 });
     const logs: string[] = [];
     const engine = new NavigationEngine(makeModel(fanNodes, fanEdges, ['dbo']), makeGraph(fanNodes, fanEdges), (_l, m) => logs.push(m), {});
     engine.init({ origin: 'f0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'default_start' } });
@@ -152,7 +143,7 @@ describe('NavigationEngine active-phase admission', () => {
         summary: focus,
         verdict: 'analyze',
         route_requests: [{ nodeId: next, question: 'trace' }],
-      });
+      }, capFifty);
     }
     engine.getHopContext();
     logs.length = 0;
@@ -162,7 +153,7 @@ describe('NavigationEngine active-phase admission', () => {
       summary: 'f3',
       verdict: 'analyze',
       route_requests: [{ nodeId: 'f4', question: 'grow inside the cap' }],
-    }) as { ok?: boolean };
+    }, capFifty) as { ok?: boolean };
     expect(ok.ok === true, 'growth under the cap commits').toBe(true);
     const admit = logs.find(m => m.includes('[Admit] guard=active_scope_budget'));
     expect(admit !== undefined, 'P1-39: the admitted growth is recorded, not only the rejected one').toBe(true);
@@ -179,7 +170,7 @@ describe('NavigationEngine active-phase admission', () => {
     // nothing.
     const fanNodes: LineageNode[] = ['f0', 'f1', 'f2', 'f3', 'f4', 'f5'].map(id => makeNode({ id, schema: 'dbo', name: id, type: 'view' }));
     const fanEdges: Array<[string, string]> = [['f0', 'f1'], ['f1', 'f2'], ['f2', 'f3'], ['f3', 'f4'], ['f3', 'f5']];
-    setExplorationNodeCap(4);
+    const capFour = createTurnTokenBudget({ explorationNodeCap: 4 });
     const engine = new NavigationEngine(makeModel(fanNodes, fanEdges, ['dbo']), makeGraph(fanNodes, fanEdges), () => {}, {});
     engine.init({ origin: 'f0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'default_start' } });
     for (const [focus, next] of [['f0', 'f1'], ['f1', 'f2'], ['f2', 'f3']] as const) {
@@ -190,7 +181,7 @@ describe('NavigationEngine active-phase admission', () => {
         summary: focus,
         verdict: 'analyze',
         route_requests: [{ nodeId: next, question: 'trace' }],
-      }) as { ok?: boolean }).ok === true, `in-scope route to ${next} commits`).toBe(true);
+      }, capFour) as { ok?: boolean }).ok === true, `in-scope route to ${next} commits`).toBe(true);
     }
     engine.getHopContext();
     const rejected = engine.submitFindings({
@@ -202,7 +193,7 @@ describe('NavigationEngine active-phase admission', () => {
         { nodeId: 'f4', question: 'grow beyond the cap' },
         { nodeId: 'f5', question: 'grow beyond the cap' },
       ],
-    }) as { error?: string; hint?: string; detail?: Record<string, unknown> };
+    }, capFour) as { error?: string; hint?: string; detail?: Record<string, unknown> };
     expect(rejected.error === 'over_active_scope_budget', 'two staged routes past the cap reject with the stable code').toBe(true);
     const manyHint = rejected.hint ?? '';
     expect(/keeping only the routes essential/.test(manyHint), 'P1-22: choosing a subset is open here, so it stays the first repair offered').toBe(true);

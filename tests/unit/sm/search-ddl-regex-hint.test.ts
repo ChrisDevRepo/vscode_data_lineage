@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { searchDdl } from '../../../src/ai/tools/tools';
+import { DEFAULT_TURN_TOKEN_BUDGET as BUDGET } from '../../../src/ai/support/tokenBudget';
 import { compileSearchRegex, regexRejectHint } from '../../../src/utils/modelSearch';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 
@@ -39,7 +40,7 @@ describe('search-ddl-regex-hint', () => {
   const model = makeModel();
 
   it('a compile-failing pattern gets a compile-specific repair, not the hardcoded quantifier hint', () => {
-    const res = searchDdl(model, '(?P<name>foo)') as Record<string, unknown>;
+    const res = searchDdl(model, '(?P<name>foo)', BUDGET) as Record<string, unknown>;
     expect(res.error, 'compile failure rejects as invalid_regex').toBe('invalid_regex');
     expect(res.hint, 'named-group syntax gets the JS-syntax repair').toBe(
       'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.',
@@ -60,14 +61,14 @@ describe('search-ddl-regex-hint', () => {
     const pattern = 'foo(bar';
     const rejection = compileSearchRegex(pattern);
     if (rejection.ok) throw new Error(`expected ${pattern} to be rejected`);
-    const res = searchDdl(model, pattern) as Record<string, unknown>;
+    const res = searchDdl(model, pattern, BUDGET) as Record<string, unknown>;
     expect(res.error).toBe('invalid_regex');
     expect(res.hint).toBe(regexRejectHint(pattern, rejection));
     expect(res.hint).toContain('closing ")"');
   });
 
   it('a valid, well-behaved pattern is not rejected', () => {
-    const res = searchDdl(model, 'ArchiveOrders') as Record<string, unknown>;
+    const res = searchDdl(model, 'ArchiveOrders', BUDGET) as Record<string, unknown>;
     expect('error' in res, 'a normal pattern does not reject').toBe(false);
   });
 });
