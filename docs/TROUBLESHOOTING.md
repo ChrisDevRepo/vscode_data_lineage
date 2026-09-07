@@ -50,17 +50,17 @@ UI does not create a separate button for each deferred route.
 
 **Deep analysis stops before the whole scope is covered.** No error is shown: on reaching the hop cap the engine stops exploring and synthesizes what it already has, so the answer is a partial result rather than a failure. Narrow the scope or raise `dataLineageViz.ai.maxRounds`, then reload the window — the runtime reads that setting once at activation.
 
-**Model choice.** Per-hop latency and protocol compliance differ by model. Models running directly on Microsoft infrastructure — Copilot-native Anthropic Claude Sonnet and OpenAI GPT, or an Azure AI Foundry deployment — gave the best results in testing. The figures below are ballparks measured during development on a mid-size sample database. The reasoning level in effect is shown because rows at different levels are not comparable with each other. Where the provider reports reasoning tokens they were about 60k of the total on gpt-5.4-mini and 30k on deepseek-v4-flash. Quality is the scorecard of the same runs against golden answers: *good* means the discovery and object-trace answers were complete and the column-trace answer had minor omissions; *okay* means every answer was usable but each had omissions; *weak* would mean wrong or missing objects, and no listed model scored that.
+**Model choice.** Per-hop latency and protocol compliance differ by model. Models running directly on Microsoft infrastructure — Copilot-native Anthropic Claude Sonnet and OpenAI GPT, or an Azure AI Foundry deployment — gave the best results in testing. The figures below are ballparks measured during development on a mid-size sample database. The reasoning level in effect is shown because rows at different levels are not comparable with each other. Where the provider reports reasoning tokens they were about 60k of the total on gpt-5.4-mini and 40k on deepseek-v4-flash. Quality is the scorecard of the same runs against golden answers: *good* means the discovery and object-trace answers were complete and the column-trace answer had minor omissions; *okay* means every answer was usable but each had omissions; *weak* would mean wrong or missing objects, and no listed model scored that.
 
 | Provider | Model | Reasoning | Quality | Duration¹ | Tokens¹ |
 |---|---|---|---|---|---|
-| GitHub Copilot | claude-sonnet-5 | high | good | ~14 min | not reported by the Copilot API |
-| Azure AI Foundry | gpt-5.4-mini | medium | good | ~8 min | ~300k |
-| Fireworks | deepseek-v4-flash-0731 | low | good | ~10 min | ~345k |
-| Google | gemini-3.8-flash | medium (the model default) | good | ~8 min | ~415k |
-| Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~21 min | ~375k |
+| GitHub Copilot | claude-sonnet-5 | high | good | ~9 min | not reported by the Copilot API |
+| Azure AI Foundry | gpt-5.4-mini | medium | good | ~9 min | ~310k |
+| Fireworks | deepseek-v4-flash-0731 | low | good | ~13 min | ~350k |
+| Google | gemini-3.8-flash | medium (the model default) | good | ~9 min | ~400k |
+| Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~18 min | ~290k |
 
-¹ Total of three questions — one discovery, one object trace (BB) and one column trace (CT) — per run, averaged where several runs exist.
+¹ Total of three questions — one discovery, one object trace (BB) and one column trace (CT) — per run, averaged over completed runs only (10 for gpt-5.4-mini, 9 for gemini-3.8-flash, 3 for deepseek-v4-flash, 2 for Qwen3.6; one UAT session for Claude Sonnet).
 
 These numbers are snapshots of particular days and say nothing about what a given setup will do; they depend on model, region, load, reasoning settings and database size. Models reached through OpenRouter and Z.ai showed high or erratic latency and timeouts during testing and are not in the table. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete — up to the zero-output limit below.
 
