@@ -85,7 +85,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_submit_findings', inputSchema: SubmitFindingsModelSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
     userDescription: 'Submit analysis of the current node and propose next routes in the exploration.',
-    modelDescription: 'Submits current focus-node analysis and next-hop route decisions. BB may prune current-hop neighbors; CT requires `column_flow` and rejects BB prune fields.',
+    modelDescription: 'Submits current focus-node analysis and next-hop route decisions. May prune current-hop neighbors; CT also requires `column_flow`.',
   },
   {
     name: 'lineage_present_result', inputSchema: PresentResultModelSchema, tags: ['lineage-presentation'], effect: 'presentation_commit',
