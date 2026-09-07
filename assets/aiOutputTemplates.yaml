@@ -78,8 +78,7 @@ intro:
     sections. Open with the direct answer to the user's stated question —
     name the origin, the key relationship, or the finding the user asked
     for — then set architectural context. Shared state is named by role
-    ("central scratch-pad table", "terminal publication step"); its columns,
-    types and keys belong in the later sections.
+    ("central scratch-pad table", "terminal publication step").
   example: >
     Read as a business-driven view: NetAmountA is the product of QtyA
     and PriceA — both computed independently before joining at
@@ -141,7 +140,7 @@ notes:
     on a single line: what this node does in this flow. SQL, formulas and
     the deeper logic live in the section body — glancing at graph + notes
     tells the story. A passthrough names what it passes or filters
-    ("Filters to IsValid rows"). In a column trace the caption also names
+    ("Filters to IsActiveA rows"). In a column trace the caption also names
     the traced column here and any rename ("OrderAmt → NetAmountA") —
     column names, not the expression.
     GOOD: "Computes NetAmountA at INSERT"
@@ -174,8 +173,7 @@ business_capture:
     </scope_relevance>
 
     Submit one section: `{ angle: "business", text: "<body>" }`. The archive
-    has no length cap and synthesis lifts the text verbatim; depth follows
-    what the node does, not how central it is.
+    has no length cap and synthesis lifts the text verbatim.
 
     <section_skeleton>
     A detailed business section, in this order:
@@ -203,9 +201,8 @@ business_capture:
        merge, append, purge.
     8. Error handling — what happens when a step fails, and what the rows
        carry afterwards.
-    9. Upstream assumptions and downstream effects.
-    10. Gaps — what the DDL leaves open, as `not established from the
-       available SQL`.
+    9. Upstream assumptions — the object it is about, and its `bb_ddl` reference.
+    10. Gaps — what the DDL leaves open, as `not established from the available SQL`.
 
     The evidence for 3, 4, 7 and 8 is a short ```sql fence of the deciding
     expression.
@@ -492,8 +489,8 @@ loading_pattern:
     otherwise in the section that covers the load, with what it means for
     consumers.
 
-    Nothing at all when the shapes differ, when no shape was captured, when the
-    analysis spans non-bodied origins only, or when classification is `business`.
+    Nothing at all when the shapes differ, when no shape was captured, or when
+    the analysis spans non-bodied origins only.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
     INSERT — each run rebuilds `FactTableA` from scratch with no

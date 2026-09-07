@@ -35,7 +35,7 @@ const ANALYTICAL_ROUTE_QUESTION =
  * set, and reading it is part of the trace, so CT resolves the same list.
  */
 const REQUIRED_NEIGHBOR_RESOLUTION =
-  '- Resolve every ID in `<required_neighbors>` through `route_requests` this hop; they are approved in-scope continuation nodes. Omitting a required ID is never an option.';
+  '- Resolve every ID in `<required_neighbors>` through `route_requests` this hop; they are approved in-scope continuation nodes.';
 
 /**
  * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (same
@@ -89,7 +89,7 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
  */
 export const NEIGHBOR_COLUMNS_TRIGGER = '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone';
 
-const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
+const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about.'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
 
 /**
  * The one prune trigger, byte-shared by the BB and CT verdict blocks and mirrored into the
@@ -135,7 +135,6 @@ const HOP_DECISION_CONTRACT = [
   ...NEIGHBOR_DECISION_CORE,
   '- Derive neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
   `${NEIGHBOR_COLUMNS_TRIGGER}.`,
-  '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
 ] as const;
 
 /**

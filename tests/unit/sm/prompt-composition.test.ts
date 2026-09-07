@@ -202,13 +202,13 @@ describe('prompt composition', () => {
 
   // The preview stage is judged by findDiscoveryPreviewReuseViolations, which compares the joined
   // sections against the cached answer for exact (whitespace-compacted) equality. A contract that
-  // also tells it to compress, adapt depth, or drop items instructs it into a guaranteed rejection,
+  // also tells it to compress or drop items instructs it into a guaranteed rejection,
   // so the depth rules are the one part of the contract that must differ by stage.
   it('licenses depth choices only in the stages that author text', () => {
     const preview = buildPhasePrompt('visual_preview');
     const synthesis = buildPhasePrompt('synthesis');
 
-    for (const authoringRule of ['Adapt depth', 'Compress repeated phrasing', 'drop whole items']) {
+    for (const authoringRule of ['Compress repeated phrasing', 'drop whole items']) {
       expect(preview, `preview omits ${authoringRule}`).not.toContain(authoringRule);
       expect(synthesis, `synthesis states ${authoringRule}`).toContain(authoringRule);
     }

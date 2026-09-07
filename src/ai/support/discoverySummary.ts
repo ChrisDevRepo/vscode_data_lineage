@@ -14,7 +14,7 @@ import { z } from 'zod';
 import type { ModelPort } from '../model/modelPort';
 import { modelUserMessage } from '../model/modelPort';
 import { compileInstructionPlan, executeInstructionPlan, explorationFacts } from '../agent/instructionPlan';
-import { buildDiscoverySummaryComposePrompt } from '../prompting/prompts';
+import { buildDiscoverySummaryComposePrompt, DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT } from '../prompting/prompts';
 import type { NavigationEngine } from '../sm/smBase';
 import type { ClassificationValue } from '../session/classification';
 import { sanitizeForLog, type Logger } from '../../utils/log';
@@ -29,18 +29,6 @@ const DiscoverySummarySchema = z.string().trim().min(1);
 // self-correction convention used at every other Zod boundary in this pipeline. Not a policy cap:
 // a single retry of a one-shot, no-tool text round.
 const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
-
-/**
- * @remarks
- * Compose is otherwise the only model call in the pipeline with no system key on the wire — the
- * memo it produces rides every later hop's stable prefix as established fact, so grounding and
- * formatting instructions belong at the system layer like every other stage.
- */
-export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
-  'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops — no user reads it.',
-  'Every clause must come from the supplied <original_question> and <discovery_answer>, because later hops treat this memo as established fact.',
-  'Plain prose only: no headings, bullets, or diagrams.',
-].join('\n');
 
 /**
  * Composes the memo, or returns `undefined` on an ordinary degrade (rejected output after retry,
@@ -84,19 +72,17 @@ export async function composeDiscoverySummaryText(
       `- passNodeIds: ${filters.passNodeIds.length ? filters.passNodeIds.join(', ') : '(none)'}`,
       `- classification: ${classification}`,
     ].join('\n');
-    const composePrompt = buildDiscoverySummaryComposePrompt(
-      lastDiscoveryQuestion,
-      lastDiscoveryAnswer,
-      contractSummary,
-    );
     let parsed: z.ZodSafeParseResult<string> | undefined;
     let rejectReason = '';
     for (let attempt = 1; attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS; attempt++) {
       // Structural reject-with-hint retry: feeds the exact Zod issue back, same convention as
       // every other self-correcting boundary in this pipeline — not new prompt wording/tuning.
-      const prompt = attempt === 1
-        ? composePrompt
-        : `${composePrompt}\n\n## Retry — previous reply rejected\nReason: ${rejectReason}\nReply again as text only: ONE paragraph, 2-4 sentences.`;
+      const prompt = buildDiscoverySummaryComposePrompt(
+        lastDiscoveryQuestion,
+        lastDiscoveryAnswer,
+        contractSummary,
+        attempt === 1 ? undefined : rejectReason,
+      );
       const composed = await executeInstructionPlan(model, compileInstructionPlan({
         kind: 'text',
         phase: 'compose',

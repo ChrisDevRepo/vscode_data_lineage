@@ -245,7 +245,9 @@ function buildActivePhasePrompt(): string {
  * decision in every stage. Synthesis and follow-up author text and therefore choose how much of the
  * captured evidence survives; preview authors none — it partitions a fixed answer that
  * `findDiscoveryPreviewReuseViolations` re-compares character for character, so telling it to
- * compress, adapt depth, or drop items would be instructing it into a guaranteed rejection.
+ * compress or drop items would be instructing it into a guaranteed rejection. How deep the
+ * surviving text runs is stated once, at the synthesis hop (`buildSynthesisReminder`), where the
+ * captured evidence that sets the depth is in the window.
  *
  * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`. Omitted
  *   for stages whose evidence is described by their own protocol block. Kept as the first parameter
@@ -264,9 +266,8 @@ export function buildPresentationDetailContract(
     ]
     : [
       '- Preserve captured decision triggers and predicates, thresholds, fallback order, lifecycle/status transitions, audit-trail meaning, and downstream business impact. Keep exact node IDs, parameter names, and formulas intact through every compression — drop whole items that do not help answer <original_question>, never fields within a kept item.',
-      '- Every ⚠️ risk or caveat, every formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body or note, verbatim for the predicate. A risk, formula, or predicate that was worth capturing during exploration is answer evidence; losing or paraphrasing it during assembly is a dropped item, not a compression.',
-      '- Regroup for question-first clarity and graph linking. Compress repeated phrasing while retaining each grounded evidence class.',
-      '- Adapt depth to node complexity and mission relevance. Brief text fits trivial logic; complex procedures retain their full rule and flow detail.',
+      '- Every ⚠️ risk or caveat, every formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body or note, verbatim for the predicate.',
+      '- Regroup for question-first clarity and graph linking. Compress repeated phrasing while retaining every grounded evidence item — expressions a switch selects between are one item per branch, not one item per concept.',
       '- Inside section bodies use bold labels for sub-structure, never `#`/`##`/`###` headings, because the engine owns the document title, the numbered section headings, and the object link headers.',
     ];
   return [
@@ -549,18 +550,35 @@ function buildRunTraceTriggerPrompt(
 }
 
 /**
+ * System prompt for the discovery-summary composition round.
+ *
+ * @remarks
+ * Compose is otherwise the only model call in the pipeline with no system key on the wire — the
+ * memo it produces rides every later hop's stable prefix as established fact, so grounding and
+ * formatting instructions belong at the system layer like every other stage.
+ */
+export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
+  'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops — no user reads it.',
+  'Every clause must come from the supplied <original_question> and <discovery_answer>, because later hops treat this memo as established fact.',
+  'Plain prose only: no headings, bullets, or diagrams.',
+].join('\n');
+
+/**
  * Builds the one-shot prompt for the post-approval discovery-summary
  * composition round (fires once per SM session after gate approval).
  *
  * @param question - The user's verbatim discovery question.
  * @param answer - The AI's discovery chat answer (Markdown).
  * @param contractSummary - One-line digest of the approved gate parameters.
+ * @param rejectReason - Zod issue text from a rejected prior reply; appends the reject-with-hint
+ * retry block. Omitted on the first attempt.
  * @returns Effective-prompt text fed into the one-shot composition round.
  */
 export function buildDiscoverySummaryComposePrompt(
   question: string,
   answer: string,
   contractSummary: string,
+  rejectReason?: string,
 ): string {
   return [
     'The user approved the SM exploration. Compose a 2–4 sentence discovery summary that will ride in every hop\'s stable prefix as `<discovery_summary>`.',
@@ -581,6 +599,9 @@ export function buildDiscoverySummaryComposePrompt(
     '<discovery_answer>',
     answer,
     '</discovery_answer>',
+    ...(rejectReason
+      ? ['', '## Retry — previous reply rejected', '', `Reason: ${rejectReason}`]
+      : []),
   ].join('\n');
 }
 
