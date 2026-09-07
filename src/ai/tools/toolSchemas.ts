@@ -6,7 +6,7 @@
  * `toolProvider.ts`, schema unit tests) import directly from this module.
  */
 import { z } from 'zod';
-import { AI_MAX_SCOPE_NODE_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
+import { AI_MAX_SCOPE_NODE_IDS, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
   ExplorationDepthSelectionSchema,
@@ -589,9 +589,6 @@ export const GetNeighborColumnsInputSchema = z.object({
 // handlers still validate mode-specific payloads at the boundary before mutating
 // session or graph state.
 // ──────────────────────────────────────────────────────────────────────────────
-
-/** Maximum object ids one `lineage_get_screen_state` recall may name. */
-const SCREEN_STATE_MAX_IDS = 20;
 
 /** `lineage_get_context` takes no input. */
 export const GetContextInputSchema = z.object({}).strict();

@@ -33,6 +33,15 @@ const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 export const AI_MAX_SCOPE_NODE_IDS = 500;
 
 /**
+ * Maximum object ids one screen-state list carries: the cap the presenter applies when it renders
+ * a screen-fact id list (the overflow is reported as a count) and, identically, the cap on the ids
+ * a `lineage_get_screen_state` recall may name — a recall reads back what the screen card listed,
+ * so one governor sizes both ends. `package.json`'s `maxItems` is generated from the schema by
+ * `scripts/generate-tool-manifest.mjs`, never maintained by hand.
+ */
+export const SCREEN_STATE_MAX_IDS = 20;
+
+/**
  * Sentinel `upstreamLevels`/`downstreamLevels` value meaning "every level", not a literal depth.
  *
  * @remarks

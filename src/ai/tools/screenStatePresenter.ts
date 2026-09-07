@@ -8,13 +8,10 @@
  * model" — the catalog, statistics, and filters stay with `lineage_get_context`.
  */
 import type { RenderStateSnapshot, ScreenStateExtras } from '../../bridge/debugDumpScreenState';
-import { TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
+import { SCREEN_STATE_MAX_IDS, TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
-
-/** Maximum node ids listed per screen-fact list before the remainder is reported as a count. */
-const ID_CAP = 20;
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
 export interface ScreenStateInput {
@@ -77,7 +74,7 @@ function screenStateParts(uiState: unknown): { ui: Record<string, unknown> | nul
 }
 
 /**
- * Caps an id list at {@link ID_CAP}, reporting the overflow as a count beside the ids.
+ * Caps an id list at {@link SCREEN_STATE_MAX_IDS}, reporting the overflow as a count beside the ids.
  *
  * @remarks
  * The count is a sibling field, never an array element: a model copying ids out of this payload
@@ -87,8 +84,8 @@ function screenStateParts(uiState: unknown): { ui: Record<string, unknown> | nul
  * @returns The retained ids and how many were dropped (`0` when nothing was capped).
  */
 function capIds(ids: readonly string[]): { ids: string[]; omitted: number } {
-  if (ids.length <= ID_CAP) return { ids: [...ids], omitted: 0 };
-  return { ids: [...ids.slice(0, ID_CAP)], omitted: ids.length - ID_CAP };
+  if (ids.length <= SCREEN_STATE_MAX_IDS) return { ids: [...ids], omitted: 0 };
+  return { ids: [...ids.slice(0, SCREEN_STATE_MAX_IDS)], omitted: ids.length - SCREEN_STATE_MAX_IDS };
 }
 
 /**
@@ -214,7 +211,7 @@ function presentAnalysis(analytics: ScreenStateExtras['analytics']): Record<stri
     // Islands can yield hundreds of groups. `group_count` keeps the cap visible rather than
     // presenting a truncated list as the whole set.
     group_count: rows.length,
-    groups: rows.slice(0, ID_CAP),
+    groups: rows.slice(0, SCREEN_STATE_MAX_IDS),
   };
 }
 

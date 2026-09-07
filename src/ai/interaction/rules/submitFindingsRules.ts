@@ -3,9 +3,6 @@ import type { CapturedSection, CaptureAngle } from '../../session/memoryManager'
 import type { InteractionRuleResult } from '../types';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 
-/** Active-hop submit_findings rejection categories with phase-valid recovery hints. */
-export type SubmitFindingsActiveRecoveryKind = 'focus' | 'route' | 'prune';
-
 /**
  * Required section angles by locked classification. Off-classification angles are
  * not stored: `filterSectionsForClassification` drops them deterministically at
@@ -124,36 +121,25 @@ export function mapSubmitFindingsEngineGuard(
     return {
       error: REJECTION_CODES.invalidInput,
       message: `focus_node_id \`${got}\` not found in the loaded model.`,
-      hint: activeSubmitFindingsRecoveryHint('focus', expected),
+      hint: activeSubmitFindingsRecoveryHint(expected),
     };
   }
   return null;
 }
 
 /**
- * Returns phase-valid recovery guidance for active-hop `submit_findings` rejections.
+ * Returns phase-valid recovery guidance for an active-hop `submit_findings` focus rejection.
  *
  * @remarks
  * Active SM exposes only `lineage_submit_findings` and `lineage_get_neighbor_columns`.
- * These hints therefore never point at discovery tools; unresolved names must be
- * corrected from the current-hop focus/neighbor IDs already in the worker context.
+ * The hint therefore never points at discovery tools; an unresolved focus must be
+ * corrected from the current-hop focus ID already in the worker context.
  *
- * @param kind - The active rejection category that needs a self-heal hint.
  * @param expectedFocusNodeId - Expected focus id for focus mismatch errors.
  * @returns A model-facing recovery hint that mentions only active-phase tools.
  */
-export function activeSubmitFindingsRecoveryHint(
-  kind: SubmitFindingsActiveRecoveryKind,
-  expectedFocusNodeId?: string,
-): string {
-  switch (kind) {
-    case 'focus':
-      return expectedFocusNodeId
-        ? `Retry lineage_submit_findings with the exact current-hop focus_node.id: \`${expectedFocusNodeId}\`.`
-        : 'Retry lineage_submit_findings with the exact focus_node_id from the current hop focus_node.id.';
-    case 'route':
-      return 'Retry lineage_submit_findings with a route_requests[].nodeId from the current-hop neighbors[] list, or omit the route.';
-    case 'prune':
-      return 'Retry lineage_submit_findings with a prune_neighbors id from the current-hop neighbors[] list, or omit it. Use lineage_get_neighbor_columns only for column names in opaque DDL.';
-  }
+export function activeSubmitFindingsRecoveryHint(expectedFocusNodeId?: string): string {
+  return expectedFocusNodeId
+    ? `Retry lineage_submit_findings with the exact current-hop focus_node.id: \`${expectedFocusNodeId}\`.`
+    : 'Retry lineage_submit_findings with the exact focus_node_id from the current hop focus_node.id.';
 }

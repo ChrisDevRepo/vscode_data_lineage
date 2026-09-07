@@ -19,7 +19,6 @@ import {
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import {
-  activeSubmitFindingsRecoveryHint,
   mapSubmitFindingsEngineGuard,
   filterSectionsForClassification,
   validateSectionsAgainstClassification,
@@ -182,24 +181,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
         const guardEnvelope = mapSubmitFindingsEngineGuard(result);
         if (guardEnvelope) return s.logAndReturn('submit_findings', guardEnvelope, normalizedInput);
-
-        // Inject actionable hints for common engine rejections
-        if (result.error === 'invalid_route') {
-          const routeError = result as { node_id?: string };
-          return s.logAndReturn('submit_findings', {
-            error: 'validation_failed',
-            message: `route_requests invalid: node_id \`${routeError.node_id}\` is not in the current-hop scope.`,
-            hint: activeSubmitFindingsRecoveryHint('route'),
-          }, normalizedInput);
-        }
-        if (result.error === 'invalid_prune') {
-          const pruneError = result as { node_id?: string };
-          return s.logAndReturn('submit_findings', {
-            error: 'validation_failed',
-            message: `prune_neighbors invalid: node_id \`${pruneError.node_id}\` is not a direct neighbor of the focus node.`,
-            hint: activeSubmitFindingsRecoveryHint('prune'),
-          }, normalizedInput);
-        }
 
         return s.logAndReturn('submit_findings', result, normalizedInput);
       }

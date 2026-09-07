@@ -58,9 +58,8 @@ describe("Submit Findings Rules", () => {
 
   it("active recovery hints mention only active tools", () => {
   const hints = [
-    activeSubmitFindingsRecoveryHint('focus', '[dbo].[Current]'),
-    activeSubmitFindingsRecoveryHint('route'),
-    activeSubmitFindingsRecoveryHint('prune'),
+    activeSubmitFindingsRecoveryHint('[dbo].[Current]'),
+    activeSubmitFindingsRecoveryHint(),
   ];
   expect(hints.every(h => h.includes('lineage_submit_findings') || h.includes('lineage_get_neighbor_columns')), 'active recovery hints mention only active tools').toBe(true);
   expect(!hints.some(h => h.includes('lineage_search_objects') || h.includes('search_objects')), 'active recovery hints do not mention discovery search tools').toBe(true);
@@ -76,7 +75,7 @@ describe("Submit Findings Rules", () => {
   expect(unknown?.hint === 'Retry lineage_submit_findings with the exact focus_node_id from the current hop focus_node.id.', 'invalid_focus_node without an expected id falls back to the generic recovery hint').toBe(true);
   const unknownWithExpected = mapSubmitFindingsEngineGuard({ error: 'invalid_focus_node', got: 'missing', expected: '[ai].[vwpricelist]' });
   expect(unknownWithExpected?.hint === 'Retry lineage_submit_findings with the exact current-hop focus_node.id: `[ai].[vwpricelist]`.', 'invalid_focus_node with an expected id names it in the recovery hint so the model does not resubmit the same wrong id').toBe(true);
-  expect(mapSubmitFindingsEngineGuard({ error: 'invalid_route' }) === null, 'non-guard engine failures remain available for their dedicated translators').toBe(true);
+  expect(mapSubmitFindingsEngineGuard({ error: 'budget_exhausted' }) === null, 'engine failures with no guard envelope fall through to the raw result').toBe(true);
 });
 
 });
