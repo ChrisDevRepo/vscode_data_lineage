@@ -2567,7 +2567,9 @@ export class NavigationEngine implements IHopStateMachine {
     // so it runs unconditionally (in both modes a required neighbor is satisfied by a route
     // OR by a prune that passed the don't-orphan check; `prune_neighbors` may carry in-scope
     // neighbors off the answer path, not only out-of-scope ones).
-    const pruneNeighborIds = new Set((finding.prune_neighbors ?? []).map(id => id.toLowerCase()));
+    // `pruneTargets` is the submit's one resolution home; reading its canonical ids keeps the
+    // refused-prune verdict true for any spelling the model sends.
+    const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? t.raw.toLowerCase()));
     for (const reqId of requiredNodeIds) {
       if (acceptedNids.has(reqId) || prunedNeighborNids.has(reqId)) continue;
       const invalidlyPruned = pruneNeighborIds.has(reqId);
