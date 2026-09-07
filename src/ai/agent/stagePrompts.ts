@@ -229,7 +229,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
   const accountFor = required.length > 0
     ? [
         '<required_neighbors>',
-        'Approved in-scope continuation neighbors for this hop; each goes in `route_requests`:',
+        'Approved in-scope continuation neighbors for this hop; each goes in `route_requests`, except a logging/audit/retention sink the question does not ask about, which goes in `prune_neighbors`:',
         required.join(', '),
         '</required_neighbors>',
       ].join('\n')

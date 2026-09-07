@@ -165,12 +165,12 @@ business_capture:
     </purpose>
 
     <scope_relevance>
-    A sink recording who ran what and when — event type, object name, row
-    counts, messages, timestamps — is backend logging: verdict `prune`, with
-    the procedures whose only job is to write it. A sink holding the traced
-    column's own values, before/after or as-of, is a business audit trail: a
-    consumer with a one-line caption. Either is in scope when the question is
-    about logging, errors, auditing or retention.
+    A sink that records the run itself — which procedure ran, when, with
+    what outcome — is backend logging: verdict `prune`, with the procedures
+    whose only job is to write it. A sink holding the traced column's own
+    values, before/after or as-of, is a business audit trail: a consumer
+    with a one-line caption. Either is in scope when the question is about
+    logging, errors, auditing or retention.
     </scope_relevance>
 
     Submit one section: `{ angle: "business", text: "<body>" }`. The archive
