@@ -26,6 +26,35 @@ import {
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
+const COLUMN_FLOW_ENTRY_KEYS = new Set(['out_col', 'writes_to', 'upstream_columns']);
+const COLUMN_FLOW_WRITES_TO_KEYS = new Set(['node', 'col']);
+
+// `declaredKeysOnly` (`inputNormalization.ts`) already strips undeclared `column_flow[].*` keys
+// inside `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
+// permissive registered union `vscodeModelPort` parses before this handler runs, where no logger
+// is reachable. This mirrors that strip here, on the actual submit path, so the drop is named
+// (entry index, dropped keys) before the schema-side strip becomes a no-op on the clean copy.
+function stripUndeclaredColumnFlowKeys(columnFlow: unknown[], logger: ToolServices['logger']): unknown[] {
+  const dropped: string[] = [];
+  const stripKeys = (rec: Record<string, unknown>, declared: Set<string>, label: string) => {
+    const surplus = Object.keys(rec).filter(key => !declared.has(key));
+    if (surplus.length === 0) return rec;
+    dropped.push(`${label}: ${surplus.join(', ')}`);
+    return Object.fromEntries(Object.entries(rec).filter(([key]) => declared.has(key)));
+  };
+  const next = columnFlow.map((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    const result = stripKeys(entry as Record<string, unknown>, COLUMN_FLOW_ENTRY_KEYS, `column_flow[${index}]`);
+    const writesTo = result.writes_to;
+    if (writesTo === null || typeof writesTo !== 'object' || Array.isArray(writesTo)) return result;
+    return { ...result, writes_to: stripKeys(writesTo as Record<string, unknown>, COLUMN_FLOW_WRITES_TO_KEYS, `column_flow[${index}].writes_to`) };
+  });
+  if (dropped.length > 0) {
+    logger.debug(`[submit_findings] dropped undeclared column_flow key(s): ${dropped.join('; ')}`);
+  }
+  return next;
+}
+
 /**
  * Validates and submits findings for the current exploration focus.
  *
@@ -73,6 +102,13 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           stripped = { ...rawInput, route_requests: routes };
           s.logger.debug(`[submit_findings] dropped route_requests[].columns on ${bbColumnRoutes} route(s): BB mode traces no columns`);
         }
+      }
+
+      // `column_flow[].*` entries are `.strict()` (`toolSchemas.ts`) and already stripped silently
+      // by `declaredKeysOnly` there (needed for the pre-handler registered union). Strip here too,
+      // on this local copy, so the actual submit path logs the drop instead of losing it silently.
+      if (Array.isArray(stripped.column_flow)) {
+        stripped = { ...stripped, column_flow: stripUndeclaredColumnFlowKeys(stripped.column_flow, s.logger) };
       }
 
       // Middleware: normalize identifier encodings into a local copy only. The raw model payload

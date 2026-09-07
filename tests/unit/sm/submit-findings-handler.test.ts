@@ -173,6 +173,42 @@ describe("Submit Findings Handler", () => {
   expect(raw.route_requests[0].columns, 'the raw model payload stays immutable').toBe('none');
 });
 
+  it("CT strips an undeclared column_flow key instead of rejecting the hop", () => {
+  // `ColumnFlowEntrySchema` is `.strict()` (`toolSchemas.ts`); a provider surplus key is
+  // absence-equivalent to every reader (`columnTracer.ts`, `smBase.ts` only read the declared
+  // fields), so the handler drops it from a local copy and logs it — same pattern as the BB
+  // `route_requests[].columns` strip above — instead of spending a generation on a rejection.
+  const { engine, services, result } = setupCt();
+  const logs: string[] = [];
+  (services as unknown as { logger: { debug: (line: string) => void } }).logger.debug =
+    (line: string) => { logs.push(line); };
+  const reachedEngine: Array<{ column_flow?: Array<Record<string, unknown>> }> = [];
+  const engineSubmit = engine.submitFindings.bind(engine);
+  (engine as unknown as { submitFindings: (finding: never) => unknown }).submitFindings = (finding: never) => {
+    reachedEngine.push(finding);
+    return engineSubmit(finding);
+  };
+  const raw = {
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Origin reads amount from base_table.' }],
+    summary: 'Origin reads amount from base_table.',
+    verdict: 'analyze',
+    column_flow: [
+      { out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount' }], bogus_field: 'nope' },
+    ],
+    route_requests: engine.requiredNeighborIds('origin').map(id => ({ nodeId: id, question: 'what does this contribute?' })),
+  };
+  executeSubmitFindings(raw, services);
+  const accepted = result() as { error?: string };
+  expect(accepted.error, 'an undeclared column_flow key never costs a generation').toBeUndefined();
+  expect(
+    reachedEngine[0]?.column_flow?.some(entry => 'bogus_field' in entry),
+    'the undeclared key never reaches the engine',
+  ).toBe(false);
+  expect(logs.some(line => /column_flow\[0\]/.test(line) && /bogus_field/.test(line)), 'the drop is logged, never silent').toBe(true);
+  expect((raw.column_flow[0] as Record<string, unknown>).bogus_field, 'the raw model payload stays immutable').toBe('nope');
+});
+
   it("CT accepts prune_neighbors — same decision space as BB (D1 convergence)", () => {
   const { services, result } = setupCt();
   executeSubmitFindings({
