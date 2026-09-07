@@ -229,7 +229,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
   const accountFor = required.length > 0
     ? [
         '<required_neighbors>',
-        'Approved in-scope continuation neighbors for this hop — resolve every ID with one explicit decision (`route_requests` to walk it, or `prune_neighbors` with evidence it is off the answer path):',
+        'Approved in-scope continuation neighbors for this hop; each goes in `route_requests`:',
         required.join(', '),
         '</required_neighbors>',
       ].join('\n')

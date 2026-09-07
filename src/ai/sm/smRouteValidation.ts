@@ -37,7 +37,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_contributor_col:
     'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
   missing_required_route:
-    'Account for each required neighbor listed in detail — add it to `route_requests` to walk it, or keep it in `prune_neighbors` only when the prune was refused for a reason you can fix (it must not orphan committed work and must not target queued work). Omitting a required ID is never an option.',
+    'Account for each required neighbor listed in detail by adding it to `route_requests`. Required neighbors are approved in-scope continuation nodes, so do not place them in `prune_neighbors`.',
   self_loop_column:
     'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (see detail for the offending node.col). Keep the rest of column_flow, sections, and summary as submitted.',
   prune_absent:
@@ -55,7 +55,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_would_orphan:
     "Pruning this node would orphan a committed node from the origin. Keep it and remove it from prune_neighbors; if you meant to skip this focus, use verdict='passthrough'.",
   prune_route_conflict:
-    'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Remove it from one of them.',
+    'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Remove it from prune_neighbors when it is a required neighbor, otherwise from route_requests.',
 };
 
 /**

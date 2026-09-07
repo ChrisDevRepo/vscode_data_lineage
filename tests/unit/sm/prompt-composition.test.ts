@@ -450,11 +450,11 @@ describe('prompt composition', () => {
     expect(bb).toContain('Neighbor Decision Contract (Current Hop Only)');
     expect(bb).toContain('BB is node-first');
     expect(bb).toContain('prune_neighbors');
-    // D-020: a required ID always gets one explicit decision — routed, or pruned with evidence.
-    // (Amended from the pre-D-020 wording, which demanded routing only; the hop-level prune of an
-    // in-scope neighbour is the decision the same-graph contract requires both modes to express —
-    // proven in ct-retention-differential 'hop-level prune'.)
-    const resolution = 'Resolve every ID in `<required_neighbors>` with one explicit decision';
+    // A required ID is resolved through route_requests: the list holds only in-scope continuation
+    // nodes, so the contract names one repair and carries no prune option. The engine's hop-level
+    // prune of a non-required in-scope neighbour is unchanged and stays pinned in
+    // ct-retention-differential 'hop-level prune'.
+    const resolution = 'Resolve every ID in `<required_neighbors>` through `route_requests` this hop';
     expect(bb).toContain(resolution);
     // Full sentence pinned in internal-tests/unit/prompts/prompt-wording.test.ts (W8); this anchor
     // keeps the public claim that the in-scope retention block is present.

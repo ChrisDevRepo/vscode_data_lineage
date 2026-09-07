@@ -35,7 +35,7 @@ const ANALYTICAL_ROUTE_QUESTION =
  * set, and reading it is part of the trace, so CT resolves the same list.
  */
 const REQUIRED_NEIGHBOR_RESOLUTION =
-  '- Resolve every ID in `<required_neighbors>` with one explicit decision this hop: list it in `route_requests` to walk it, or in `prune_neighbors` when current evidence proves it is off the answer path. Omitting a required ID is never an option.';
+  '- Resolve every ID in `<required_neighbors>` through `route_requests` this hop; they are approved in-scope continuation nodes and never belong in `prune_neighbors`. Omitting a required ID is never an option.';
 
 /**
  * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (same
