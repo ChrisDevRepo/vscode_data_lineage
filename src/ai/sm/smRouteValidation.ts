@@ -53,7 +53,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_origin_forbidden:
     'The origin node anchors the lineage and cannot be pruned. Remove it from prune_neighbors.',
   prune_would_orphan:
-    "Pruning this node would orphan a committed node from the origin. Keep it and remove it from prune_neighbors; if you meant to skip this focus, use verdict='passthrough'.",
+    'Pruning this node would orphan a committed node from the origin. Keep it and remove it from prune_neighbors.',
   prune_route_conflict:
     'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Remove it from prune_neighbors when it is a required neighbor, unless it is a logging/audit/retention sink the question does not ask about — then remove it from route_requests instead.',
 };
@@ -111,7 +111,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitRes
   const missingRouteHint = missingRouteErrors.length > 0
     ? [
         invalidlyPruned.length > 0
-          ? `Required neighbors submitted in prune_neighbors were refused: [${invalidlyPruned.join(', ')}]. The node is either already queued for its own hop or pruning it would orphan committed work — add these ids to route_requests, or prune them only once that no longer holds.`
+          ? `Required neighbors submitted in prune_neighbors were refused: [${invalidlyPruned.join(', ')}]. Pruning them would orphan committed work — add these ids to route_requests, or prune them only once that no longer holds.`
           : '',
         missingRoutes.length > 0
           ? `Required neighbors not accounted for: [${missingRoutes.join(', ')}]. Add these ids to route_requests.`
