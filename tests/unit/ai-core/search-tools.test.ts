@@ -18,6 +18,8 @@
  *   list entirely, never a partial one;
  * - a hit inside a SQL comment carries `commented: true` while a live hit's row is unchanged
  *   (M0-T3: the 3-line context window dropped the enclosing block, and dead SQL read as behaviour);
+ * - the same deadness is stated once per object in `commented_spans` and no hit is lost to the
+ *   grouping (M0-T3 bundle 2: a per-row flag does not survive an answer composed by theme);
  * - `package.json` `languageModelTools` is what the generator produces from `TOOL_DEFS`.
  *
  * The caps travel with the call as one immutable per-turn budget, so a case that needs a tight
@@ -73,6 +75,7 @@ type DdlRow = {
 type DdlResult = {
   results?: DdlRow[]; total?: number; objects?: number; hint?: string; error?: string;
   searched?: { bodies: number; types: string[] }; reason?: string; results_omitted?: boolean;
+  commented_spans?: { id: string; name: string; type: string; hits: number; lines: string }[];
 };
 
 describe('search tools — grep contract', () => {
@@ -168,6 +171,65 @@ describe('search tools — grep contract', () => {
       .toBe(true);
     expect(JSON.stringify(rows[1]).length - JSON.stringify({ ...rows[1], commented: undefined }).length)
       .toBe(',"commented":true'.length);
+  });
+
+  it('states each object\'s commented lines once as a group, and loses no hit doing it', () => {
+    const grouped = makeModel([
+      node({
+        id: '[ai].[spimport]', name: 'spImport', type: 'procedure',
+        bodyScript: [
+          'CREATE PROCEDURE ai.spImport AS',   // 1
+          'SELECT x FROM ai.Watermark w',      // 2  live
+          '/* reconciliation, never enabled',  // 3
+          '  SELECT a FROM ai.Watermark',      // 4  commented
+          '  SELECT b FROM ai.Watermark',      // 5  commented
+          '*/',                                // 6
+          'SELECT 1',                          // 7
+          '-- legacy: ai.Watermark snapshot',  // 8  commented
+        ].join('\n'),
+      }),
+      node({
+        id: '[ai].[vwlive]', name: 'vwLive', type: 'view',
+        bodyScript: 'CREATE VIEW ai.vwLive AS\nSELECT * FROM ai.Watermark',
+      }),
+    ]);
+    const res = searchDdl(grouped, 'ai\\.Watermark', BUDGET) as DdlResult;
+    const rows = res.results ?? [];
+
+    // No fact lost: every hit is still its own row, with its own line, text and comment truth.
+    expect(rows.map(r => [r.id, r.line, r.commented ?? false]), 'five hits, unchanged and unmerged')
+      .toEqual([
+        ['[ai].[spimport]', 2, false],
+        ['[ai].[spimport]', 4, true],
+        ['[ai].[spimport]', 5, true],
+        ['[ai].[spimport]', 8, true],
+        ['[ai].[vwlive]', 2, false],
+      ]);
+    expect(rows.every(r => r.text.includes('ai.Watermark')), 'each row keeps its own matched line').toBe(true);
+    expect(res.total).toBe(5);
+    expect(res.objects).toBe(2);
+
+    // Grouped per object: an object with commented hits is named once, an all-live one not at all.
+    const spans = res.commented_spans ?? [];
+    expect(spans.map(g => g.id), 'one group per object with commented hits, no repeat')
+      .toEqual(['[ai].[spimport]']);
+    expect(spans[0].name).toBe('spImport');
+    expect(spans[0].type).toBe('procedure');
+    expect(spans[0].hits, 'the group counts the commented hits it stands for').toBe(3);
+
+    // The span is stated once and covers exactly the commented hit lines — expanding the ranges
+    // round-trips to the set of flagged rows, so grouping neither drops nor invents a line.
+    const expanded = spans[0].lines.split(',').flatMap(part => {
+      const [from, to] = part.trim().split('-').map(Number);
+      return Array.from({ length: (to ?? from) - from + 1 }, (_, i) => from + i);
+    });
+    expect(expanded, 'consecutive lines join, a gap does not')
+      .toEqual(rows.filter(r => r.id === '[ai].[spimport]' && r.commented).map(r => r.line));
+    expect(spans[0].lines, 'one statement, not one per line').toBe('4-5, 8');
+
+    // Nothing commented → the key is absent, so a live-only result is the shape it always was.
+    const live = searchDdl(model, 'OrderId', BUDGET) as DdlResult;
+    expect('commented_spans' in live, 'stated only where there is something to state').toBe(false);
   });
 
   it('an over-budget result hands off with the over_discovery_budget fact and omits the list', () => {

@@ -710,6 +710,28 @@ export function runAnalysis(
 }
 
 /**
+ * Collapses line numbers to a compact ascending range list, e.g. `[4,5,6,9]` → `"4-6, 9"`.
+ *
+ * @param lines - The line numbers, in any order, duplicates allowed.
+ * @returns The ranges as one string; only genuinely consecutive numbers are joined.
+ */
+function toLineRanges(lines: number[]): string {
+  const sorted = [...new Set(lines)].sort((a, b) => a - b);
+  if (sorted.length === 0) return '';
+  const parts: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    const n = sorted[i];
+    if (n === prev + 1) { prev = n; continue; }
+    parts.push(start === prev ? String(start) : `${start}-${prev}`);
+    start = n;
+    prev = n;
+  }
+  return parts.join(', ');
+}
+
+/**
  * Searches the DDL/source code of scriptable objects with a regular expression.
  *
  * @remarks
@@ -723,13 +745,20 @@ export function runAnalysis(
  * nothing extra. Marked, never filtered — a comment can hold the answer, and the few context lines
  * a hit ships with cannot show the block it sits in.
  *
+ * The same deadness is also stated once per object in `commented_spans`, which names the object and
+ * the commented hit lines as ranges. A per-row boolean is read row by row, while an answer composed
+ * by theme merges rows from several places into one statement — grouping makes the commented region
+ * addressable at the level the answer is written at. Additive: every hit stays in `results` with its
+ * own flag, and a result with nothing commented omits the key and serializes exactly as before.
+ *
  * @param model - The database model.
  * @param query - The regex pattern.
  * @param budget - The calling turn's budget, which the discovery guard is measured against.
  * @param types - Optional filter for scriptable object types.
  * @param store - Optional column store for high-fidelity DDL.
  * @param onDebug - Optional sink for a debug line when `query` is rewritten, or the result is over budget.
- * @returns Every matching line with its object metadata, or the empty/invalid/over-budget fact.
+ * @returns Every matching line with its object metadata, plus `commented_spans` where anything is
+ * commented, or the empty/invalid/over-budget fact.
  */
 export function searchDdl(
   model: DatabaseModel,
@@ -784,10 +813,34 @@ export function searchDdl(
 
   if (results.length === 0) return { results, total: 0, objects: 0, searched };
 
+  // Grouped per object, the commented region stated once. Built from the same `commented` bit the
+  // rows carry, so it can only restate what is already there; only genuinely consecutive lines are
+  // joined, so a range never claims a line that produced no hit.
+  const commentedByObject = new Map<string, { id: string; name: string; type: string; hits: number; lines: number[] }>();
+  for (const m of matches) {
+    if (!m.commented) continue;
+    let group = commentedByObject.get(m.node.id);
+    if (!group) {
+      group = { id: m.node.id, name: m.node.name, type: m.node.type, hits: 0, lines: [] };
+      commentedByObject.set(m.node.id, group);
+    }
+    group.hits++;
+    group.lines.push(m.line);
+  }
+  const commentedSpans = [...commentedByObject.values()].map(g => ({
+    id: g.id, name: g.name, type: g.type, hits: g.hits, lines: toLineRanges(g.lines),
+  }));
+
   // Same discovery budget guard as the catalog listing and the pattern report, token axis only.
   // Over budget → the counts WITHOUT the match list, never a sliced one: the model narrows the
   // pattern or the types, and an oversized ask is the hand-off to the approval-gated path.
-  const payload = { results, total: results.length, objects, searched };
+  const payload = {
+    results,
+    total: results.length,
+    objects,
+    ...(commentedSpans.length ? { commented_spans: commentedSpans } : {}),
+    searched,
+  };
   const resultChars = JSON.stringify(payload).length;
   const admission = checkScopeBudget(budget, 0, resultChars);
   if (!admission.ok) {
