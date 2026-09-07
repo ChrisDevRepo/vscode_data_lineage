@@ -3194,6 +3194,13 @@ export class NavigationEngine implements IHopStateMachine {
    * wins, normalized with a log rather than silently, because the alternative is dispatching a node
    * the same hop just proved carries a traced column with no column to ask about.
    *
+   * The assertion outranks the absence claim whichever hop made it. A node two siblings both reach
+   * consumes one hop, so a carrier's committed edge and a filter branch's `none` meet on one agenda
+   * entry; the committed spine is read here and the same normalization applies, or the later route
+   * would subtract the column question the carrier opened and end that chain at a node already
+   * proven to supply the value. A `none` the spine says nothing about stands, so a row gate reached
+   * only as a row gate is still dispatched as a plain whole-object hop.
+   *
    * @param nodeId - The resolved route target.
    * @param stated - The route request's own `columns` field as submitted.
    * @param flowColumns - Columns this hop's `column_flow` attributed to `nodeId`, if any.
@@ -3201,7 +3208,15 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private routeCarryFor(nodeId: string, stated: RouteColumns | undefined, flowColumns: ReadonlySet<string> | undefined): ColumnCarry {
     const carry = columnCarryFromRoute(stated);
-    if (!flowColumns || flowColumns.size === 0) return carry;
+    if (!flowColumns || flowColumns.size === 0) {
+      if (carry.kind !== 'row_role_only') return carry;
+      // `determineActiveColumnsForCandidate` with no requested columns is the node's spine: the
+      // `from_col`s of every committed edge naming it as the upstream supplier.
+      const committed = this.tracer?.determineActiveColumnsForCandidate(nodeId, []) ?? [];
+      if (committed.length === 0) return carry;
+      this.log('debug', `[Normalize] route carry hop=${this.hopCount} id=${nodeId} from=none to=[${committed.join(', ')}] — a committed column_flow edge attributes traced columns to this node`);
+      return { kind: 'carry', columns: committed };
+    }
     if (carry.kind === 'row_role_only') {
       this.log('debug', `[Normalize] route carry hop=${this.hopCount} id=${nodeId} from=none to=[${[...flowColumns].join(', ')}] — column_flow attributes traced columns to this node`);
       return { kind: 'carry', columns: [...flowColumns] };
