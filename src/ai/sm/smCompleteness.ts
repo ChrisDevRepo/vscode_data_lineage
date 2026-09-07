@@ -39,6 +39,10 @@ export function computeUnaccounted(required: readonly string[], accounted: Itera
  * `available` is the valid set of active columns the AI may choose from, surfaced under
  * `available_columns` in `detail`.
  *
+ * The hint carries the entry shape the completeness check accepts — an `out_col` per active column,
+ * with real `upstream_columns` or `upstream_columns: []` where the column originates at the focus —
+ * so a rejected hop repairs without re-deriving it.
+ *
  * Two repairs exist, and only one of them is always open. A focus that declares none of the active
  * columns may end the chain with `verdict:'passthrough'` and `column_flow:[]`; a focus that
  * declares one of them may not, because there the claim is checkably false and the engine refuses
@@ -59,9 +63,10 @@ export function buildIncompleteRejection(
   contradicted: readonly string[] = [],
 ): SubmitResult {
   const held = `Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`;
+  const entryRepair = `Add a column_flow entry for each: out_col is the column, upstream_columns its real upstream columns — or upstream_columns: [] where the column originates here`;
   const repair = contradicted.length > 0
-    ? `Add a column_flow entry for each. ${focusId} declares [${contradicted.join(', ')}], so it carries the column and verdict:'passthrough' with column_flow:[] is not available here.`
-    : `Add a column_flow entry for each, or return verdict:'passthrough' with column_flow:[].`;
+    ? `${entryRepair}. ${focusId} declares [${contradicted.join(', ')}], so it carries the column and verdict:'passthrough' with column_flow:[] is not available here.`
+    : `${entryRepair}, or return verdict:'passthrough' with column_flow:[].`;
   return {
     error: 'column_chain_incomplete',
     hint: `Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. ${repair} ${held}`,

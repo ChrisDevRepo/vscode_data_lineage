@@ -1,5 +1,6 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
+import { buildIncompleteRejection } from '../../../src/ai/sm/smCompleteness';
 import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { activeModeOf } from '../../../src/ai/tools/toolPolicy';
@@ -1749,5 +1750,27 @@ describe("Column transform classification", () => {
     );
     expect(restored.columnAspect?.edges[0]?.transforms, 'the classification survives a checkpoint round-trip')
       .toEqual(['compute', 'combine']);
+  });
+});
+
+describe("column_chain_incomplete names the repair the validator accepts", () => {
+  /** The accepted account for a column with no upstream source, as `unaccountedActiveColumns` reads it. */
+  const TERMINAL_REPAIR = /upstream_columns:\s*\[\]/;
+
+  it('states the terminal entry shape when the empty-flow escape is open', () => {
+    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount']);
+    const hint = ('hint' in rejection && rejection.hint) || '';
+    expect(TERMINAL_REPAIR.test(hint), 'the hint names the field and the value that account for a source column')
+      .toBe(true);
+    expect(/out_col/.test(hint), 'the hint names the field that carries the tracked column').toBe(true);
+  });
+
+  it('states the terminal entry shape when the focus declares the column and the escape is closed', () => {
+    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount'], ['Discount']);
+    const hint = ('hint' in rejection && rejection.hint) || '';
+    expect(TERMINAL_REPAIR.test(hint), 'the one open repair still names the accepted terminal value')
+      .toBe(true);
+    expect(/or return verdict:'passthrough' with column_flow:\[\]/.test(hint),
+      'the closed escape is still not offered').toBe(false);
   });
 });
