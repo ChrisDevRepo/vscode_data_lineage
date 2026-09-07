@@ -53,6 +53,18 @@ const SupplementSchema = z.object({
 }).strict().describe('Completed-session analysis extension; valid only after the prior exploration has completed.');
 
 /**
+ * Single source for the `depth` describe text on both {@link StartExplorationInputSchema} and
+ * every provider branch spread through `StartPatchFields` — one canonical home instead of a
+ * second literal duplicating it. The per-side `0` clause matches
+ * {@link ExplorationDepthSideSchema}'s own contract (`explorationDepthContract.ts`) and
+ * `isReachableInApprovedDirection` (`smBase.ts`): 0 is a permanent border for the rest of the
+ * session, not merely a one-time skip of the initial seed.
+ */
+const StartDepthSchema = coercedStringObject(ExplorationDepthSelectionSchema).nullable().optional().describe(
+  'AI-selected hop-by-hop starting scope: a symmetric positive integer, or per-side {upstream,downstream} (requires direction "bidirectional"). When the request explicitly asks for every upstream/downstream source or the complete chain (for example, "all the way up/down"), set "all"; do not omit depth. In a per-side value, 0 permanently disables that direction for the rest of the session, not just the initial seed. If the user stated no depth, omit the field; omitted/null intent proposes the reviewed default of 3.',
+);
+
+/**
  * Rejects an asymmetric `{upstream,downstream}` depth paired with an explicitly
  * non-bidirectional direction. An omitted direction defaults to bidirectional later in
  * engine init, so it must NOT trip this check — only an explicit `'upstream'`/`'downstream'`
@@ -96,9 +108,7 @@ export const StartExplorationInputSchema = z.object({
     'CT only: user-named columns to trace. BB forbids this property; a raw provider empty BB array may normalize to absence.',
   ),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.'),
-  depth: coercedStringObject(ExplorationDepthSelectionSchema).nullable().optional().describe(
-    'AI-selected hop-by-hop starting scope: a symmetric positive integer, or per-side {upstream,downstream} (requires direction "bidirectional"). When the request explicitly asks for every upstream/downstream source or the complete chain (for example, "all the way up/down"), set "all"; do not omit depth. In a per-side value, 0 means do not seed that direction and must not be replaced by the default. If the user stated no depth, omit the field; omitted/null intent proposes the reviewed default of 3.'
-  ),
+  depth: StartDepthSchema,
   excludeTypes: z.array(z.string()).optional().describe('Object types the user explicitly excluded from the approved scope.'),
   /**
    * Schemas to drop from the BFS scope (case-insensitive). Honored at scope-build time —
@@ -192,9 +202,6 @@ export const StartExplorationInputSchema = z.object({
 const StartOriginSchema = z.string().min(1).describe('Canonical object ID that anchors a fresh exploration.');
 const StartQuestionSchema = z.string().optional().describe('The user question this exploration must answer.');
 const StartDirectionSchema = z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.');
-const StartDepthSchema = coercedStringObject(ExplorationDepthSelectionSchema).nullable().optional().describe(
-  'AI-selected hop-by-hop starting scope: a symmetric positive integer, or per-side {upstream,downstream} (requires direction "bidirectional"). When the request explicitly asks for every upstream/downstream source or the complete chain (for example, "all the way up/down"), set "all"; do not omit depth. In a per-side value, 0 means do not seed that direction and must not be replaced by the default. If the user stated no depth, omit the field; omitted/null intent proposes the reviewed default of 3.',
-);
 const StartExcludeTypesSchema = z.array(z.string()).optional().describe('Object types the user explicitly excluded from the approved scope.');
 const StartExcludeSchemasSchema = z.array(z.string()).optional().describe('Complete replacement list of schema names excluded from the approved scope.');
 const StartExcludeNodeIdsSchema = z.array(z.string()).optional().describe('Resolved object IDs to remove, including dependent branches reachable only through them.');
@@ -448,6 +455,14 @@ export const ROUTE_REQUESTS_DESCRIPTION =
 export const PRUNE_NEIGHBORS_DESCRIPTION =
   'Current-hop neighbor IDs to drop from the session because current evidence proves they are off the answer path — out of the approved scope, or in scope with nothing the answer needs.';
 
+/**
+ * Single source for the `badge_label` describe text, shared by the strict per-mode
+ * `submit_findings` schemas and the permissive registered union so the two never restate the
+ * same fact with different wording.
+ */
+export const BADGE_LABEL_DESCRIPTION =
+  'Short advisory label for this hop; final graph labels are authored by present_result sections. Maximum 50 characters — a 2-4 word label.';
+
 const ColumnRefSchema = z.object({
   node: z.string().describe('Canonical upstream node ID.'),
   col: z.string().describe('Real upstream column name.'),
@@ -523,7 +538,7 @@ const HopFindingBaseSchema = z.object({
   badge_label: z.string().min(1).max(50)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
-    .describe('Short advisory label for this hop; final graph labels are authored by present_result sections. Maximum 50 characters — a 2-4 word label.'),
+    .describe(BADGE_LABEL_DESCRIPTION),
 }).strict();
 
 /**
@@ -708,8 +723,8 @@ export const PresentResultModelSchema = z.object({
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
-  highlight_groups: z.array(HighlightGroupSchema).min(1).describe(
-    'REQUIRED for new renders. Provide at least one group. For zero-trace or single-node results, use color "target" on the origin/result node.'
+  highlight_groups: z.array(HighlightGroupSchema).min(1).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX).describe(
+    'REQUIRED for new renders, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
   sections: coercedStringArray(z.object({
     // Role only, no character target: a tool-parameter description outranks the system prompt, so
@@ -726,7 +741,7 @@ export const PresentResultModelSchema = z.object({
     // they share; each stage's own rule belongs in its prompt, next to the validator that enforces it.
     text: z.string().describe('One-sentence caption, grounded in the evidence supplied for this stage.'),
   }).strict()).optional().describe('One-sentence captions below nodes. Give every node linked in sections[].node_ids one short caption; a node in highlight_groups[].node_ids must be explained by a section link or a note.'),
-  is_update: coercedBoolean().optional().describe('True only when updating an existing presentation or repairing a held draft.'),
+  is_update: coercedBoolean().optional().describe('True only when updating an existing presentation.'),
 }).strict();
 
 /** Preview reuses discovery prose; the model supplies only structure and graph decoration. */
@@ -934,7 +949,7 @@ export const SubmitFindingsModelSchema = z.object({
   badge_label: z.string().min(1).max(50)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
-    .describe('Short advisory label for this hop; final graph labels come from present_result sections. Maximum 50 characters — a 2-4 word label.'),
+    .describe(BADGE_LABEL_DESCRIPTION),
 }).strict();
 
 /**

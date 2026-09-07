@@ -5,11 +5,14 @@ import {
 } from '../../../src/ai/tools/presentResult';
 import {
   PresentResultBoundarySchema,
+  PresentResultModelSchema,
   PRESENT_RESULT_NAME_MAX,
   PRESENT_RESULT_TITLE_MAX,
   PRESENT_RESULT_SECTION_LABEL_MAX,
   PRESENT_RESULT_HIGHLIGHT_LABEL_MAX,
+  PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX,
 } from '../../../src/ai/tools/toolSchemas';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { describe, expect, it } from 'vitest';
 
 describe("present_result hard/soft text limits", () => {
@@ -85,6 +88,45 @@ describe("present_result hard/soft text limits", () => {
   });
 
   it("a 400-char summary is accepted (was truncated at 300 before)", () => { expect(parse({ ...base, name: 'ok', summary: 's'.repeat(400) }).success, 'a 400-char summary is accepted (was truncated at 300 before)').toBe(true); });
+});
+
+// T-1 (tooltext sweep): `highlight_groups` advertised `min(1)` but hid the hard `max` that
+// `validatePresentResult` (presentResult.ts) rejects on, so a model could only learn the ceiling
+// by being rejected. The cap now lives on the model-facing schema itself (`.max()`), asserted here
+// against the exported constant rather than a literal 5 copied into the test — a future change to
+// PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX moves this test with it. `PresentResultBoundarySchema`
+// deliberately keeps no count cap (see its own remarks) so the runtime validator can still produce
+// a repairable hint; this pins the model-facing schema only.
+describe('present_result highlight_groups model-facing cap (T-1)', () => {
+  const buildGroups = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ label: `g${i}`, color: 'source' as const, node_ids: ['a'] }));
+  const base = {
+    name: 'ok',
+    summary: 'One-line purpose.',
+    sections: [{ label: 'Result', text: 'Grounded detail.' }],
+  };
+
+  it('accepts exactly the cap', () => {
+    const result = PresentResultModelSchema.safeParse({ ...base, highlight_groups: buildGroups(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX) });
+    expect(result.success, 'the model-facing schema accepts highlight_groups at the cap').toBe(true);
+  });
+
+  it('rejects one group over the cap at the model-facing schema, not only at validatePresentResult', () => {
+    const result = PresentResultModelSchema.safeParse({ ...base, highlight_groups: buildGroups(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX + 1) });
+    expect(!result.success, 'one group over the cap rejects at the Zod boundary the model is offered').toBe(true);
+    if (result.success) return;
+    expect(result.error.issues.some(issue => issue.path[0] === 'highlight_groups'), 'rejection points at highlight_groups').toBe(true);
+  });
+
+  it('the model-facing JSON Schema carries the enforced ceiling as a typed constraint', () => {
+    const projected = toModelJsonSchema(PresentResultModelSchema) as {
+      properties?: { highlight_groups?: { description?: string; maxItems?: number; minItems?: number } };
+    };
+    const field = projected.properties?.highlight_groups;
+    expect(field?.maxItems, 'JSON Schema maxItems matches the exported constant').toBe(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX);
+    expect(field?.minItems, 'the floor is still advertised').toBe(1);
+    expect(field?.description ?? '', 'the prose also states the range so a model reading only text still learns it').toMatch(/1-5/);
+  });
 });
 
 describe('discovery preview prose reuse', () => {

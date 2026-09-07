@@ -9,6 +9,7 @@ import {
   presentResultSchemaForPhase,
   submitFindingsSchemaForMode,
 } from '../../../src/ai/tools/toolSchemas';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { describe, expect, it } from 'vitest';
 
 describe("Submit Findings Schema", () => {
@@ -306,6 +307,22 @@ describe("Submit Findings Schema", () => {
   expect(completedEdit.success, 'completed schema still accepts add_node_ids for follow-up edits').toBe(true);
 });
 
+// T-4 (tooltext sweep): `PresentResultModelSchema.is_update` used to claim it also covered
+// "repairing a held draft" — a scenario that is never this schema's own offer (a held-draft
+// repair is always the separate `PresentResultRepairPatchSchema`/`presentResultRepairPatchSchemaForFields`
+// surface, selected before `PresentResultModelSchema` is ever offered — see `presentResultSchemaForPhase`).
+// The misapplied clause is removed rather than reworded; the repair-specific meaning stays owned
+// solely by the repair patch schema's own describe.
+it("is_update describes only its own schema's meaning, not the other schema's repair scenario", () => {
+  const modelDescription = toModelJsonSchema(PresentResultModelSchema) as { properties?: Record<string, { description?: string }> };
+  const repairDescription = toModelJsonSchema(PresentResultRepairPatchSchema) as { properties?: Record<string, { description?: string }> };
+  const modelIsUpdate = modelDescription.properties?.is_update?.description ?? '';
+  const repairIsUpdate = repairDescription.properties?.is_update?.description ?? '';
+  expect(modelIsUpdate.includes('repairing a held draft'), 'the non-repair schema no longer claims the repair scenario').toBe(false);
+  expect(modelIsUpdate.includes('updating an existing presentation'), 'the non-repair schema keeps its own meaning').toBe(true);
+  expect(repairIsUpdate.includes('held draft'), 'the repair patch schema keeps sole ownership of the repair scenario').toBe(true);
+});
+
   it("CT column_flow.writes_to: null is accepted as absence (local-mlx T8S breaker repro)", () => {
   // Reproduces the local-mlx T8S stop: the model emitted `writes_to: null` twice, both rejected
   // as `expected object, received null`, and the run died on the semantic-failure breaker. The
@@ -438,5 +455,19 @@ describe("Submit Findings Schema", () => {
   const namedLabel = SubmitFindingsBbInputSchema.safeParse({ ...base, badge_label: 'Price source' });
   expect(namedLabel.success && namedLabel.data.badge_label === 'Price source', 'non-empty badge_label passes through verbatim').toBe(true);
 });
+
+  // T-4 (tooltext sweep): the strict per-mode schemas and the permissive registered union used to
+  // restate the same `badge_label` fact with different wording ("are authored by" vs "come from").
+  // Both now describe from the shared `BADGE_LABEL_DESCRIPTION` constant, the same pattern already
+  // used for `PRUNE_NEIGHBORS_DESCRIPTION` and `ROUTE_REQUESTS_DESCRIPTION`.
+  it("badge_label advertises one describe string across every submit_findings surface", () => {
+    const describeOf = (schema: z.ZodType) => {
+      const projected = toModelJsonSchema(schema) as { properties?: Record<string, { description?: string }> };
+      return projected.properties?.badge_label?.description ?? '';
+    };
+    const descriptions = [SubmitFindingsBbInputSchema, SubmitFindingsCtInputSchema, SubmitFindingsModelSchema].map(describeOf);
+    expect(descriptions.every(d => d.length > 0), 'every surface actually carries a badge_label description').toBe(true);
+    expect(new Set(descriptions).size, 'BB, CT, and the registered union describe badge_label identically').toBe(1);
+  });
 
 });

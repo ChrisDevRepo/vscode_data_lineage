@@ -296,6 +296,24 @@ describe("start-exploration-schema tests", () => {
 
   it("the classification describe names no data-quality selector", () => { expect(!(classificationDescriptions[0] ?? '').includes('data-quality'), 'the classification describe names no data-quality selector').toBe(true); });
 
+  // T-2/T-3 (tooltext sweep): `depth` used to restate its describe as a second literal on the
+  // dispatcher schema, and that copy understated a per-side 0 as a one-time seed skip rather than
+  // the permanent border `ExplorationDepthSideSchema` and `isReachableInApprovedDirection`
+  // (smBase.ts) actually enforce. Consolidated to `StartDepthSchema`, referenced by both surfaces.
+  const depthDescriptions = [
+    StartExplorationInputSchema,
+    StartExplorationFreshProviderInputSchema,
+  ].map(schema => {
+    const projected = toModelJsonSchema(schema) as { properties?: Record<string, { description?: string }> };
+    return projected.properties?.depth?.description ?? '';
+  });
+  it("both depth fields advertise one describe string", () => { expect(new Set(depthDescriptions).size === 1, 'both depth fields advertise one describe string').toBe(true); });
+
+  it("the depth describe states permanence, not a one-time seed skip", () => {
+    expect((depthDescriptions[0] ?? '').includes('permanently disables that direction'), 'the depth describe states permanence, not a one-time seed skip').toBe(true);
+    expect((depthDescriptions[0] ?? '').includes('do not seed'), 'the stale "do not seed" phrasing is gone').toBe(false);
+  });
+
   const missingClassification = StartExplorationInputSchema.safeParse({ origin: '[s].[t]', analysisMode: 'bb' });
   it("omitted required classification maps to missing_field", () => { expect(!missingClassification.success && buildStartExplorationReject(missingClassification.error, { origin: '[s].[t]', analysisMode: 'bb' }).error === 'missing_field', 'omitted required classification maps to missing_field').toBe(true); });
 
