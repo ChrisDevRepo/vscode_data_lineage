@@ -468,7 +468,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (!modelNodeMap.has(nodeId)) return 'not_in_model';
         if (smSnapshot === undefined) smSnapshot = sess.stateMachine?.toJSON() ?? null;
         if (!smSnapshot) return 'out_of_scope';
-        if (smSnapshot.removedSet.includes(nodeId) || (smSnapshot.ctPrunedNodeIds ?? []).includes(nodeId)) return 'pruned';
+        // `ctPrunedNodeIds` needs no second test: the CT focus prune records both sets in one
+        // block (`smBase.ts` `ctPrunedFocusIds.add` immediately followed by `removedSet.add`), so
+        // it is a subset of `removedSet` on every snapshot, live or restored.
+        if (smSnapshot.removedSet.includes(nodeId)) return 'pruned';
         if ((smSnapshot.renderDroppedNodeIds ?? []).includes(nodeId)) return 'render_dropped';
         if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
         return 'out_of_scope';

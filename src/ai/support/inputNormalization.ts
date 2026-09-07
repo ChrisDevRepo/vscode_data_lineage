@@ -180,8 +180,8 @@ function parseStringEncodedObject(value: unknown): Record<string, unknown> | und
  *
  * @remarks
  * Object sibling of {@link coercedStringArray} for the local OpenAI-compatible (Qwen/oMLX)
- * lane, which can emit object-typed tool arguments as JSON strings — observed 2026-08-30
- * (prompt T4, local-mlx): `depth: "{\"upstream\": 1, \"downstream\": 1}"` was rejected three
+ * lane, which can emit object-typed tool arguments as JSON strings — observed 2026-08-30 on
+ * that lane: `depth: "{\"upstream\": 1, \"downstream\": 1}"` was rejected three
  * times as `invalid_tool_input`, stopping the turn on cumulative semantic failures, although
  * every other argument was valid and the provider repeats the identical encoding on every
  * repair attempt (the model cannot see or fix a transport-side re-encoding). Encoding-only

@@ -1081,7 +1081,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (resolved.length > 0) return Math.min(...resolved);
     if (fallbackDepth === undefined) return null;
     // Without a resolved side the node is judged against the tighter of the two ceilings: a border
-    // the user fixed must not be crossed by a node whose side we could not establish.
+    // the user fixed must not be crossed by a node whose side the traversal could not establish.
     const limit = Math.min(this.depthLimits.upstream, this.depthLimits.downstream);
     return fallbackDepth > limit ? fallbackDepth : null;
   }
@@ -1671,7 +1671,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     // [AI] [Contract] — emit a stable hash of the resolved scope contract so downstream hop logs
     // can be cross-referenced against the originating filter snapshot. Replaces the spec's
-    // `getScopeContract().hash` since we don't model that as a separate object.
+    // `getScopeContract().hash`, which has no separate object in this model.
     const contractParts = [
       originNode.id,
       params.direction || 'bidirectional',
@@ -2409,8 +2409,9 @@ export class NavigationEngine implements IHopStateMachine {
       stagedColumnEdges.push(...valResult.stagedEdges);
     }
 
-    // The pure policy selects only out-of-scope prune targets; topology conservation is
-    // the final guard, and all mutations stay staged until completeness also passes.
+    // The pure policy has already selected the accepted prune targets, in scope or out
+    // (`prune_neighbors` may carry in-scope neighbors off the answer path); topology conservation
+    // is the final guard, and all mutations stay staged until completeness also passes.
     if (actionPolicy.acceptedPruneIds.length > 0) {
       const requiredConnectedIds = this.committedConnectedIds();
       requiredConnectedIds.add(focusId);
@@ -2932,8 +2933,8 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * Mirrors `enqueueHop`'s non-bodied contraction branch: when a node is in
-   * {@link passNodeIds} the AI is not asked to analyse it, but we still want its
-   * descendants reachable. Walk in-direction neighbours and re-enqueue each via
+   * {@link passNodeIds} the AI is not asked to analyse it, yet its descendants must stay
+   * reachable. Walk in-direction neighbours and re-enqueue each via
    * `enqueueHop` (which respects scope, visited, and the bipartite rule).
    */
   private contractThroughPassNode(entry: AgendaEntry): void {
@@ -3127,7 +3128,7 @@ export class NavigationEngine implements IHopStateMachine {
       const alreadyQueued = this._agenda.has(targetId);
       // Bodied node — push directly (or merge into existing entry).
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
-      // Only grow the denominator if we expand beyond the approved scope or reactivate a cycle,
+      // Only grow the denominator when the hop expands beyond the approved scope or reactivates a cycle,
       // so that Y matches the approved scope "contract" for normal in-scope exploration.
       if (!alreadyQueued && (freshScopeExpansion || reactivated)) {
         this._totalNodes++;
@@ -3193,21 +3194,6 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Projects the agenda entry's persisted `activeColumns` for one CT hop.
-   *
-   * @remarks
-   * Mirrors {@link ensureExecutableTask}'s task-ledger fallback: when the caller states no column
-   * opinion (a `route_requests` entry with no `columns`), the agenda entry must still carry the tracer's
-   * non-empty {@link ColumnTracer.targetColumns} so the CT checkpoint invariant in
-   * `NavigationSnapshotSchema` (agenda entries require a defined `activeColumns` in CT mode) is
-   * always satisfiable at {@link toJSON}. BB mode passes `activeColumns` through unchanged (always
-   * `undefined` per the guard above).
-   *
-   * The fallback is copied, never handed out by reference: an agenda entry's `activeColumns` is
-   * mutable per hop, and sharing the tracer's `target_columns` array would let one hop's edit
-   * rewrite the frozen target set that the snapshot invariant compares against.
-   */
-  /**
    * Resolves the column decision one accepted route carries to its neighbor.
    *
    * @remarks
@@ -3266,6 +3252,21 @@ export class NavigationEngine implements IHopStateMachine {
     return { columnCarry: carry.kind === 'carry' ? { kind: 'carry', columns: [...carry.columns] } : carry };
   }
 
+  /**
+   * Projects the agenda entry's persisted `activeColumns` for one CT hop.
+   *
+   * @remarks
+   * Mirrors {@link ensureExecutableTask}'s task-ledger fallback: when the caller states no column
+   * opinion (a `route_requests` entry with no `columns`), the agenda entry must still carry the tracer's
+   * non-empty {@link ColumnTracer.targetColumns} so the CT checkpoint invariant in
+   * `NavigationSnapshotSchema` (agenda entries require a defined `activeColumns` in CT mode) is
+   * always satisfiable at {@link toJSON}. BB mode records no column set at all: the `!this.tracer`
+   * early return below yields `undefined`, which the snapshot schema requires of a BB agenda entry.
+   *
+   * The fallback is copied, never handed out by reference: an agenda entry's `activeColumns` is
+   * mutable per hop, and sharing the tracer's `target_columns` array would let one hop's edit
+   * rewrite the frozen target set that the snapshot invariant compares against.
+   */
   private agendaColumnsFor(carry: ColumnCarry, activeColumns: string[] | undefined): string[] | undefined {
     // The enqueue guard upstream throws before a BB entry can reach here with columns.
     if (!this.tracer) return undefined;

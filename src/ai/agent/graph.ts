@@ -507,7 +507,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? { gate: sess.phase.gate, revision: sess.pendingExploration.revision }
       : null;
     // Deterministic re-entries the host owns: the SM-offer pill's seeded trace envelope and the
-    // post-discovery preview action, both matched on our own marker — no entry-detector model call.
+    // post-discovery preview action, both matched on the host's own marker — no entry-detector model call.
     // A follow-up pill stays clickable in the transcript while a later proposal is held, so it
     // reaches this node under the same held state a slash command does.
     const marker: 'trace' | 'preview' | null = state.prompt.startsWith(TRACE_REQUEST_MARKER)
@@ -970,7 +970,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
 
     // Bounded backstop (the user's "no endless loop"): on the global step cap, STOP exploring and
-    // synthesise what we have — never self-error, never loop. getResult() assembles from the archive
+    // synthesise whatever has been gathered — never self-error, never loop. getResult() assembles from the archive
     // even when the engine is incomplete (partial coverage), so the user always gets a result.
     if (state.activeHopCount >= maxRounds) {
       return advanceToSynthesis(sess, engine);

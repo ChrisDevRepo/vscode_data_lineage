@@ -105,6 +105,13 @@ const FIT_VIEW_PADDING = 0.15;
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
 
+/**
+ * Delay in ms before the AI panel's dock/open change triggers a re-fit — one frame budget past the
+ * panel's CSS width/height transition, so the fit reads the settled canvas box, not the mid-animation
+ * one.
+ */
+const AI_PANEL_REFIT_DELAY = 80;
+
 /** Zoom below which AI notes are hidden once they are showing. */
 const NOTES_ZOOM_OUT = 0.45;
 
@@ -629,7 +636,7 @@ export function GraphCanvas({
   // graph re-centers instead of leaving nodes under the docked column.
   useEffect(() => {
     if (!aiDescription) return;
-    const t = setTimeout(() => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); }, 80);
+    const t = setTimeout(() => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); }, AI_PANEL_REFIT_DELAY);
     return () => clearTimeout(t);
   }, [aiPanelOpen, dockPosition, aiDescription, fitView]);
 

@@ -29,7 +29,7 @@ import {
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { applyExclusionFilter } from './modelFilters';
-import { stripBrackets, schemaKey, normalizeColName } from '../utils/sql';
+import { stripBrackets, schemaKey, normalizeColName, splitSqlName } from '../utils/sql';
 import { trunc } from '../utils/log';
 
 interface DacpacExtractionOptions {
@@ -458,7 +458,7 @@ function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources:
   }
 
   const keyOf = (reference: string): string | null => {
-    const parts = reference.match(/\[[^\]]+\]/g)?.map(stripBrackets) ?? reference.split('.');
+    const parts = splitSqlName(reference).map(stripBrackets);
     if (parts.length < 2) return null;
     const column = parts[parts.length - 1];
     const owner = parts.slice(0, -1).map(part => `[${part}]`).join('.');
