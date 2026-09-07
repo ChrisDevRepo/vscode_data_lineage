@@ -586,12 +586,16 @@ function boundStoredRejections(
  * @param attempt - Exactly one completed graph attempt.
  * @param budget - The recording turn's budget, which sizes the retained-correction share; the
  *   shipped defaults apply where a caller runs outside a turn.
+ * @param debugLog - Secret-safe single-line diagnostic sink, same convention as {@link
+ *   ToolGenerationAttemptInput.debugLog}. A correction the budget drops never reaches the model
+ *   again, so the drop is reported here rather than being invisible to a log reader.
  * @returns Updated state with independent semantic and physical-call hard stops.
  */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
   attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'semanticFailures' | 'observations' | 'rejections'>,
   budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
+  debugLog?: (message: string) => void,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const semanticFailures = state.semanticFailures + attempt.semanticFailures;
@@ -599,10 +603,14 @@ export function recordToolAttempt(
   // already held every body to the evidence share, so there is nothing left here to shrink.
   const observations = [...state.observations, ...attempt.observations];
   const repairedTools = new Set(attempt.observations.map((observation) => observation.toolName));
-  const rejections = boundStoredRejections([
+  const carried = [
     ...state.rejections.filter((rejection) => !repairedTools.has(rejection.toolName)),
     ...attempt.rejections,
-  ], budget);
+  ];
+  const rejections = boundStoredRejections(carried, budget);
+  if (rejections.length < carried.length) {
+    debugLog?.(`[AI] [Attempt] phase=${state.phase} stored corrections dropped by budget — dropped=${carried.length - rejections.length} carried=${carried.length} retained=${rejections.length}`);
+  }
   const acceptedTerminal = attempt.stop === 'final'
     || attempt.stop === 'gate'
     || attempt.stop === 'reroute'

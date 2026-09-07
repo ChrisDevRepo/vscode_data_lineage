@@ -25,6 +25,7 @@ import type { ConverseInstructionPlan } from '../../../src/ai/agent/instructionP
 import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFormed';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
+import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import type { IToolRegistry } from '../../../src/ai/tools/registry';
 import {
   ScriptedModelPort,
@@ -361,6 +362,33 @@ describe('executeToolGenerationAttempt — semantic-failure budget', () => {
 
     expect(state.semanticFailures).toBe(MAX_TOOL_SEMANTIC_FAILURES);
     expect(state.stopReason).toBe('semantic_failures');
+  });
+
+  // A correction the stored-rejection budget drops never reaches the model again; the drop is a
+  // logged event, not a silent one.
+  it('reports the count of stored corrections the budget drops', () => {
+    const logged: string[] = [];
+    const rejection = (callId: string) => ({
+      stop: 'continue' as const,
+      providerCalls: 1,
+      semanticFailures: 1,
+      observations: [],
+      rejections: [{ callId, toolName: 'lineage_get_details', code: 'validation', reason: 'bad' }],
+    });
+    // A window this small leaves the stored-rejection share at zero, so only the essential current
+    // correction survives.
+    const budget = createTurnTokenBudget({ modelWindowTokens: 1_000 });
+    let state = recordToolAttempt(initialToolPhaseAttemptState('active'), rejection('c1'), budget, (message) => { logged.push(message); });
+    state = recordToolAttempt(state, rejection('c2'), budget, (message) => { logged.push(message); });
+
+    expect(state.rejections).toHaveLength(1);
+    const drops = logged.filter((message) => message.includes('stored corrections dropped by budget'));
+    // The first record shrinks the single correction in place (nothing is lost, nothing logged);
+    // the second cannot hold both, so one is dropped and said so.
+    expect(drops).toHaveLength(1);
+    expect(drops[0]).toContain('dropped=1');
+    expect(drops[0]).toContain('carried=2');
+    expect(drops[0]).toContain('phase=active');
   });
 
   it('never charges a duplicate_call_id transport artifact against the semantic budget', async () => {

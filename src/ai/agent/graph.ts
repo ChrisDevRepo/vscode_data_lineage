@@ -332,7 +332,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     res: ToolAttemptResult,
     phaseLabel: string,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res, deps.model.budget);
+    const nextAttempt = recordToolAttempt(priorAttempt, res, deps.model.budget, message => deps.logger?.debug(message));
     deps.logger?.debug(
       `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`,
     );
@@ -617,7 +617,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           reason: error.reason,
           hint: 'Return exactly one object matching the entry-detection schema.',
         }],
-      }, deps.model.budget);
+      }, deps.model.budget, message => deps.logger?.debug(message));
       deps.logger?.debug(
         `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} stop=${nextAttempt.stopReason ?? 'continue'}`,
       );
