@@ -7,6 +7,8 @@ import {
   type ModelPort,
   type ModelIdentity,
   ModelPortError,
+  matchProseToolCall,
+  PROSE_PROMOTED_CALL_ID,
   type ModelToolChoice,
   type ModelToolDefinition,
   type ToolGenerationContent,
@@ -429,17 +431,33 @@ export class VscodeModelPort implements ModelPort {
       // as prose seven times in a row; each drew a synthetic `missing_required_tool_call` rejection
       // because the provider never emitted a native tool-call chunk. Promotion recovers that call
       // before it is measured, so a payload the tool's own schema accepts never pays for the miss.
-      const promotion = promoteProseToolCall(parts, definitions);
-      const resolvedParts = promotion.parts;
-      if (resolvedParts !== parts) {
+      // The recognizer is shared with the harness port so a measured lane cannot diverge from it.
+      const promotion = parts.some((part) => part.type === 'tool-call')
+        ? { kind: 'none' as const }
+        : matchProseToolCall(
+            parts
+              .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> => part.type === 'text')
+              .map((part) => part.text)
+              .join(''),
+            definitions,
+          );
+      const resolvedParts: readonly PortGenerationPart[] = promotion.kind === 'promoted'
+        ? [{
+            type: 'tool-call',
+            callId: PROSE_PROMOTED_CALL_ID,
+            toolName: promotion.toolName,
+            input: promotion.input,
+          }]
+        : parts;
+      if (promotion.kind === 'promoted') {
         this.options.debugLog?.(
           `[AI] prose-tool-call-promoted phase=${phase ?? 'unknown'} call=${generation}`
-          + ` tool=${(resolvedParts[0] as { readonly toolName: string }).toolName}`,
+          + ` tool=${promotion.toolName}`,
         );
-      } else if (promotion.ambiguousTools) {
+      } else if (promotion.kind === 'ambiguous') {
         this.options.debugLog?.(
           `[AI] prose-tool-call-ambiguous phase=${phase ?? 'unknown'} call=${generation}`
-          + ` tools=${promotion.ambiguousTools.join(',')}`,
+          + ` tools=${promotion.tools.join(',')}`,
         );
       }
       // One measurement row per completed generation, for all three port entry points. `usage` is
@@ -473,90 +491,6 @@ export class VscodeModelPort implements ModelPort {
       cancellation.dispose();
     }
   }
-}
-
-/** A fenced ```json (or bare ```) code block wrapping exactly one JSON value. */
-const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
-
-/**
- * One `<parameter=name>` pair of the Hermes/XML tool-call envelope — the second recorded spelling
- * of the same miss. Global: a call carries one pair per field, and the closing tag is the bare
- * `</parameter>`, never a named or balanced `</tool_call>` form.
- */
-const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
-
-/**
- * Recovers a tool call a provider described as fenced JSON prose instead of emitting through the
- * native tool-call channel.
- *
- * @remarks
- * Promotion fires only when `parts` carries no real tool-call part already, its concatenated text
- * either contains a fenced JSON block, is itself one JSON value, or carries a Hermes/XML
- * `<parameter=…>` envelope, that text reads as a record, and the record validates against one of
- * `definitions`' own input schemas — the same {@link ModelToolDefinition.inputSchema} the native
- * path validates against, so nothing here relaxes what a tool accepts. Any failure at any step
- * returns `parts` unchanged **by reference**, so a caller can test `resolvedParts !== parts` and a
- * generation that does not qualify is byte-identical to today's rejection path.
- *
- * @param parts - The drained generation, in stream order.
- * @param definitions - Tool definitions offered for this generation, already narrowed to the
- * active tool choice.
- * @returns `parts` unchanged, or a single-element array holding the promoted tool-call part;
- * `ambiguousTools` names every accepting schema when more than one accepted the payload and no
- * promotion was made.
- */
-function promoteProseToolCall(
-  parts: readonly PortGenerationPart[],
-  definitions: readonly ModelToolDefinition[],
-): { readonly parts: readonly PortGenerationPart[]; readonly ambiguousTools?: readonly string[] } {
-  if (definitions.length === 0 || parts.some((part) => part.type === 'tool-call')) return { parts };
-  const text = parts
-    .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('');
-  // The fence is one spelling of the miss, not the miss itself: the recorded shape is far more
-  // often the payload as the entire message body with no fence at all. Falling back to the trimmed
-  // body widens only what is *read*; what is accepted stays the tool's own schema below.
-  const match = FENCED_JSON_BLOCK.exec(text);
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(match ? match[1] : text.trim());
-  } catch {
-    // The other recorded spelling of the same miss: `<function=name>` carrying `<parameter=field>`
-    // pairs, values raw for scalars and JSON text for aggregates. The per-value parse is
-    // best-effort so a bare id like `[ai].[x]` stays the string it is; an empty or truncated read
-    // simply fails the schema below and returns `parts` unchanged, as today. No `<parameter=…>`
-    // pair at all (e.g. a genuinely empty generation) is not this envelope — matching zero pairs
-    // must not manufacture an empty `{}` candidate that a permissive schema could accept.
-    const xmlParameters = [...text.matchAll(XML_TOOL_PARAMETER)];
-    if (xmlParameters.length === 0) return { parts };
-    candidate = Object.fromEntries(
-      xmlParameters.map(([, name, raw]): [string, unknown] => {
-        const value = raw.trim();
-        try {
-          return [name, JSON.parse(value) as unknown];
-        } catch {
-          return [name, value];
-        }
-      }),
-    );
-  }
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return { parts };
-  // A prose payload names no tool, so its identity is the one schema that accepts it. Two accepting
-  // schemas leave the tool undetermined and the generation stays a text finish — the attempt
-  // policy then charges the miss as it would any other text-only answer.
-  const accepting = definitions.filter((entry) => entry.inputSchema.safeParse(candidate).success);
-  if (accepting.length !== 1) {
-    return accepting.length === 0 ? { parts } : { parts, ambiguousTools: accepting.map((entry) => entry.name) };
-  }
-  return {
-    parts: [{
-      type: 'tool-call',
-      callId: 'text-promoted-0',
-      toolName: accepting[0].name,
-      input: candidate,
-    }],
-  };
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
