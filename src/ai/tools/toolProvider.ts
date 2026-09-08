@@ -46,8 +46,9 @@ import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import type { StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
+import { postToWebview } from '../../bridge/host';
 import { resolveModelNodeId } from '../support/inputNormalization';
-import { getModelNodeMap, type ToolServices } from './handlers/toolServices';
+import { getModelNodeMap, type AiViewPreviewMessage, type ToolServices } from './handlers/toolServices';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
@@ -66,7 +67,7 @@ class ToolHandler implements ToolServices {
   constructor(
     public readonly getSession: () => AiSession,
     outputChannel: vscode.LogOutputChannel,
-    public readonly getPanel: () => vscode.WebviewPanel | undefined,
+    private readonly getPanel: () => vscode.WebviewPanel | undefined,
     private readonly turnLease?: TurnLease,
     public readonly getStoredRun?: StoredRunReader,
     public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>,
@@ -79,6 +80,16 @@ class ToolHandler implements ToolServices {
 
   public turnEpoch(sess: AiSession): number {
     return this.turnLease?.epoch ?? sess.turnEpoch;
+  }
+
+  public async deliverPreview(message: AiViewPreviewMessage): Promise<boolean> {
+    const panel = this.getPanel();
+    if (!panel) return false;
+    // Revealed before the send, not after: the webview lays the preview out the moment the message
+    // lands, and a hidden panel measures its canvas at zero — the graph would be framed against a
+    // box that does not exist yet and never re-framed once the tab came forward.
+    panel.reveal();
+    return postToWebview(panel, message, this.logger);
   }
 
   public requireModel(): DatabaseModel {

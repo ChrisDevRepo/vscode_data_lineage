@@ -1,4 +1,3 @@
-import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import { createHash } from 'node:crypto';
 import type { Logger } from '../../utils/log';
 import type { AgentFailureDetail } from '../host/agentRuntime';
@@ -47,7 +46,6 @@ export interface LineageRuntimeDeps {
   readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
   readonly logger?: Logger;
   readonly maxRounds?: number;
-  readonly checkpointer?: BaseCheckpointSaver;
   readonly traceWriter?: AiTraceWriter;
 }
 
@@ -138,7 +136,6 @@ export class LineageRuntime {
       signal: input.signal,
       maxRounds: this.deps.maxRounds,
       turnEpoch,
-      checkpointer: this.deps.checkpointer,
       priorMessages: input.request.priorMessages ?? session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,

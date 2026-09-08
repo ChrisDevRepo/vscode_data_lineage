@@ -34,7 +34,6 @@ import { coercedBoolean, resolveModelNodeId, resolveModelNodeIds } from '../../s
 import { readToolError } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
-import { postToWebview } from '../../../bridge/host';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
@@ -525,24 +524,16 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ...(checkpoint ? { runId, checkpoint } : {}),
       };
 
-      const panel = s.getPanel();
+      // Handed to the host for delivery: reveal-before-send and the validated bridge sink are the
+      // host's, so the render reflection rides the contract and this layer keeps no knowledge of the
+      // panel. The webview normalizes node_ids against its model and ACKs via view-render-result.
       let autoDispatched = false;
-      if (panel) {
-        // Revealed before the send, not after: the webview lays the preview out the moment the
-        // message lands, and a hidden panel measures its canvas at zero — the graph would be framed
-        // against a box that does not exist yet and never re-framed once the tab came forward.
-        panel.reveal();
-        // Validated send through the bridge sink — the render reflection rides the contract, not a raw
-        // side-channel. The webview normalizes node_ids against its model and ACKs via view-render-result.
-        try {
-          autoDispatched = await postToWebview(
-            panel,
-            { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
-            s.logger,
-          );
-        } catch (error) {
-          s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
-        }
+      try {
+        autoDispatched = await s.deliverPreview(
+          { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
+        );
+      } catch (error) {
+        s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
       }
 
       // A second success violates the single-shot presentation contract; retain a diagnostic canary.

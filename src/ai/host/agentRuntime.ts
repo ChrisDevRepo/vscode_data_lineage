@@ -3,12 +3,11 @@
  *
  * @remarks
  * LangGraph owns workflow state, conditional routing, and consent interrupts. Its checkpointing is
- * in-process only: production never supplies a checkpointer (see {@link AgentRuntimeDeps.checkpointer}),
- * so the constructor falls back to a fresh {@link MemorySaver} per turn. That is enough to pause at a
- * consent interrupt and resume through `Command({ resume })` **within a single turn**, and nothing
- * more — the saver dies with the runtime, so no state survives a host restart or even outlives the
- * turn that created it. Durable cross-restart resume would require both a supplied checkpointer and
- * serialized gate state, neither of which exists today.
+ * in-process only: `buildAgentGraph` compiles against a fresh in-memory saver per graph. That is
+ * enough to pause at a consent interrupt and resume through `Command({ resume })` **within a single
+ * turn**, and nothing more — the saver dies with the runtime, so no state survives a host restart or
+ * even outlives the turn that created it. Cross-turn state is `AiSession`, by design:
+ * `docs/ARCHITECTURE.md` §Memory and state ownership.
  *
  * This host wrapper owns only platform-facing turn lifecycle: `thread_id`, native gate event
  * emission, user resume delivery, cancellation, and the single terminal result the
@@ -16,7 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { Command, MemorySaver, INTERRUPT, isInterrupted, type BaseCheckpointSaver } from '@langchain/langgraph';
+import { Command, INTERRUPT, isInterrupted } from '@langchain/langgraph';
 import {
   modelUserMessage,
   isPortCancellation,
@@ -47,7 +46,7 @@ export interface AgentFailureDetail {
 
 /** Construction dependencies for {@link AgentRuntime}. */
 export interface AgentRuntimeDeps {
-  /** Durable LangGraph thread id. */
+  /** LangGraph thread id for this request; a fresh value per turn, never reused across turns. */
   readonly threadId: string;
   /** Session accessor — same singleton the toolProvider reads. */
   readonly getSession: () => AiSession;
@@ -68,8 +67,6 @@ export interface AgentRuntimeDeps {
    * turn cannot force-idle the session a newer turn now owns.
    */
   readonly turnEpoch: number;
-  /** Durable checkpointer. Defaults to in-memory when the host does not supply one. */
-  readonly checkpointer?: BaseCheckpointSaver;
   /**
    * Prior-turn discovery conversation, oldest first, for cross-turn chat memory.
    *
@@ -155,7 +152,6 @@ export class AgentRuntime {
       signal: deps.signal,
       maxRounds: this.maxRounds,
       turnEpoch: deps.turnEpoch,
-      checkpointer: deps.checkpointer ?? new MemorySaver(),
       logger: deps.logger,
       traceSyntheticRejection: deps.traceSyntheticRejection,
     });

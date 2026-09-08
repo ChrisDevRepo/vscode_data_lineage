@@ -47,7 +47,7 @@ function handlerProbe(session: AiSession, capturedEpoch: number): Probe {
     debugLines,
     services: {
       getSession: () => session,
-      getPanel: () => undefined as never,
+      deliverPreview: () => Promise.resolve(false),
       logger,
       budget: DEFAULT_TURN_TOKEN_BUDGET,
       maxRounds: 50,

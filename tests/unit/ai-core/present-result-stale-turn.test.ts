@@ -56,7 +56,7 @@ const TEST_MODEL = {
 interface HandlerProbe {
   readonly services: ToolServices;
   readonly logged: Array<{ toolName: string; data: object }>;
-  panelReads: number;
+  deliveries: number;
   modelReads: number;
 }
 
@@ -65,25 +65,27 @@ interface HandlerProbe {
  *
  * @param session - Session the handler reads and writes.
  * @param capturedEpoch - Epoch the handler captures at entry (the turn's lease).
- * @param onPanelRead - Hook fired at the handler's panel lookup, the last seam before the commit guard.
+ * @param onDeliver - Hook fired at the handler's delivery call, the last seam before the commit guard.
+ * @param sent - Collector the delivery double pushes each message into; delivery ACKs when present.
  */
 function handlerProbe(
   session: AiSession,
   capturedEpoch: number,
-  onPanelRead?: () => void,
-  panel?: unknown,
+  onDeliver?: () => void,
+  sent?: unknown[],
 ): HandlerProbe {
   const logged: Array<{ toolName: string; data: object }> = [];
   const probe: HandlerProbe = {
     logged,
-    panelReads: 0,
+    deliveries: 0,
     modelReads: 0,
     services: {
       getSession: () => session,
-      getPanel: () => {
-        probe.panelReads += 1;
-        onPanelRead?.();
-        return panel as never;
+      deliverPreview: (message) => {
+        probe.deliveries += 1;
+        onDeliver?.();
+        sent?.push(message);
+        return Promise.resolve(sent !== undefined);
       },
       logger: SILENT_LOGGER,
       budget: DEFAULT_TURN_TOKEN_BUDGET,
@@ -223,11 +225,7 @@ describe('executePresentResult — turn-lease enforcement', () => {
     seedResultGraph(session);
     const epoch = session.beginTurn();
     const sent: unknown[] = [];
-    const panel = {
-      webview: { postMessage: (message: unknown) => { sent.push(message); return Promise.resolve(true); } },
-      reveal: () => undefined,
-    };
-    const probe = handlerProbe(session, epoch, undefined, panel);
+    const probe = handlerProbe(session, epoch, undefined, sent);
 
     const result = parseResult(await executePresentResult(validPresentResultInput(), probe.services));
 
@@ -252,8 +250,8 @@ describe('executePresentResult — turn-lease enforcement', () => {
       hint: 'The turn no longer owns this session. Do not render this result.',
     });
 
-    // No panel post: the handler never even reaches the panel lookup.
-    expect(probe.panelReads).toBe(0);
+    // No panel post: the handler never even reaches the delivery seam.
+    expect(probe.deliveries).toBe(0);
     // No model read: assembly never starts.
     expect(probe.modelReads).toBe(0);
     // No session mutation: counters, presentation state, and the result graph are untouched.
@@ -274,7 +272,7 @@ describe('executePresentResult — turn-lease enforcement', () => {
     const resultGraph = seedResultGraph(session);
     const epoch = session.beginTurn();
     const graphBefore = JSON.stringify(resultGraph);
-    // The panel lookup is the last seam before the commit guard; advancing the epoch there
+    // The delivery call is the last seam before the commit guard; advancing the epoch there
     // reproduces a turn superseded after assembly but before the presentation commit.
     const probe = handlerProbe(session, epoch, () => { session.beginTurn(); });
 
@@ -284,7 +282,7 @@ describe('executePresentResult — turn-lease enforcement', () => {
       error: 'stale_turn',
       hint: 'The result was not committed because the turn no longer owns this session.',
     });
-    expect(probe.panelReads).toBe(1);
+    expect(probe.deliveries).toBe(1);
     // The guarded presentation commit is dropped: no success is recorded for the superseding turn.
     expect(session.presentResultCalledThisTurn).toBe(false);
     expect(session.lastPresentResultSummary).toBeNull();

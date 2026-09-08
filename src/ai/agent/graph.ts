@@ -1,4 +1,4 @@
-import { END, START, StateGraph, interrupt, type BaseCheckpointSaver } from '@langchain/langgraph';
+import { END, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
 import {
   modelAssistantMessage,
   modelUserMessage,
@@ -194,17 +194,6 @@ export interface AgentGraphDeps {
    * dropped instead of corrupting the session a newer turn owns.
    */
   readonly turnEpoch: number;
-  /**
-   * Checkpointer backing the consent interrupt's pause/resume.
-   *
-   * @remarks
-   * Always undefined in production — no construction site supplies one — so `AgentRuntime` falls
-   * back to a fresh in-memory saver per turn. Pause/resume therefore works only across a single
-   * turn's consent interrupt, in-process; nothing is durable and nothing survives a host restart.
-   * The parameter exists so a durable saver *could* be injected, but cross-restart resume would
-   * additionally require serialized gate state (out of scope).
-   */
-  readonly checkpointer?: BaseCheckpointSaver;
   /** Optional logger for active-loop diagnostics (host wires it to the AI channel); off when undefined. */
   readonly logger?: Logger;
   /**
@@ -1441,7 +1430,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       END,
     ]);
 
-  return graph.compile(deps.checkpointer ? { checkpointer: deps.checkpointer } : undefined);
+  // A fresh in-memory saver per compiled graph: the consent interrupt pauses and resumes through
+  // `Command({ resume })` within one turn, and nothing outlives it. Cross-turn state is `AiSession`
+  // — `docs/ARCHITECTURE.md` §Memory and state ownership.
+  return graph.compile({ checkpointer: new MemorySaver() });
 }
 
 /**

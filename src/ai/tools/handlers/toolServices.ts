@@ -3,11 +3,10 @@
  *
  * @remarks
  * The interface keeps host dependencies explicit: handlers receive only the
- * session, graph/model accessors, logging, filter materialization, and webview
- * access they need. Session state remains owned by {@link AiSession}; turn-lease
+ * session, graph/model accessors, logging, filter materialization, and result
+ * delivery they need. Session state remains owned by {@link AiSession}; turn-lease
  * validation and effect serialization remain registry concerns.
  */
-import type * as vscode from 'vscode';
 import type Graph from 'graphology';
 import type { AiSession } from '../../session/session';
 import type { Logger } from '../../../utils/log';
@@ -16,13 +15,26 @@ import type { SerializedFilterState } from '../../../engine/projectStore';
 import type { StoredRunReader } from '../../session/runStore';
 import type { ModelPort } from '../../model/modelPort';
 import type { TurnTokenBudget } from '../../support/tokenBudget';
+import type { ExtensionToWebviewMsg } from '../../../engine/shared/bridgeContract';
+
+/** The one webview message a tool handler may hand to the host for delivery. */
+export type AiViewPreviewMessage = Extract<ExtensionToWebviewMsg, { type: 'ai-view-preview' }>;
 
 /** Host capabilities available to mutating lineage-tool handlers. */
 export interface ToolServices {
   /** Accessor for the active AI session — the single owner of all mutable tool state. */
   readonly getSession: () => AiSession;
-  /** Accessor for the active webview panel; `present_result` posts the rendered view to it. */
-  readonly getPanel: () => vscode.WebviewPanel | undefined;
+  /**
+   * Delivers one validated preview message to the result panel.
+   *
+   * @remarks
+   * The host owns the panel and the transport: it reveals before sending — a hidden panel measures
+   * its canvas at zero, and a graph framed against a box that does not exist yet is never re-framed
+   * once the tab comes forward — and it returns the webview's render ACK, which `present_result`
+   * writes into the committed artifact. `false` covers every non-delivery: no panel open, a
+   * rejected send, a transport error.
+   */
+  deliverPreview(message: AiViewPreviewMessage): Promise<boolean>;
   /** Resolves the persisted AI run behind an applied bookmark; absent when the host wires no store. */
   readonly getStoredRun?: StoredRunReader;
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */

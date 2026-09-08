@@ -294,6 +294,13 @@ session writers rather than prompt-inferred state. An empty native
 `ChatContext.history` is the new-chat signal and clears exploration state
 through the normal reset path.
 
+LangGraph checkpointing is deliberately in-process and per turn: `buildAgentGraph`
+compiles against a fresh in-memory saver, which is what lets the consent gate
+pause and resume through `Command({ resume })` inside a single turn, and nothing
+more. No durable saver is injectable and none is wanted — cross-turn state is
+`AiSession`, `thread_id` is a fresh value per request, and cross-restart resume
+would additionally require serialized gate state.
+
 The Detail Archive is the durable semantic store for an exploration.
 `NavigationEngine` separately owns agenda and node lifecycle. Each active hop —
 the first included — sends one stable system prefix plus one bounded hop message
