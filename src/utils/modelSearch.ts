@@ -50,10 +50,33 @@ export interface BodyMatch extends DdlMatch {
    * commented match is reported like any other and the reading is left to the consumer.
    */
   commented?: true;
+  /**
+   * The innermost `IF` / `WHILE` condition that governs the matched line, whitespace-normalized.
+   *
+   * @remarks
+   * Omitted when the line is unconditional, when the match is itself dead, and whenever the block
+   * structure around it does not resolve with certainty — a wrong condition welded onto a
+   * statement is the defect this field exists to remove, so absent is the only other answer it
+   * gives. An `ELSE` branch reports `NOT (<condition>)`, which is what governs it.
+   *
+   * Same reason as {@link commented}: the few context lines a hit ships with cannot show the block
+   * it sits in, so a gated statement and an ungated one arrive identical and the reader attaches
+   * whichever condition the payload happens to contain.
+   */
+  enclosingPredicate?: string;
 }
 
 /** Context lines placed around a match by {@link searchBodyScripts} — the one governor; both callers take it. */
 const DEFAULT_SNIPPET_CONTEXT_LINES = 2;
+
+/**
+ * Longest condition reported as {@link BodyMatch.enclosingPredicate}; past it the field is omitted.
+ *
+ * @remarks
+ * A truncated condition is a wrong condition — `@a = 1 AND @b = 0` cut to `@a = 1` inverts what the
+ * reader concludes — so an over-long one is dropped whole rather than shortened.
+ */
+const PREDICATE_MAX_CHARS = 200;
 
 /** Width, in characters, the detail sidebar can render on one line before a match needs a window. */
 const SIDEBAR_LINE_CAP = 50;
@@ -287,6 +310,7 @@ export function searchBodyScripts(
   types?: Set<ObjectType>,
   contextLines = DEFAULT_SNIPPET_CONTEXT_LINES,
   limit?: number,
+  onDebug?: (msg: string) => void,
 ): BodyMatch[] {
   const regex = typeof query === 'string' ? null : query;
   if (typeof query === 'string' && query.length < 2) return [];
@@ -307,13 +331,13 @@ export function searchBodyScripts(
     const lines = body.split('\n');
     const lineStarts = buildLineStarts(lines);
     // One pass per body, and only once a match exists: a body nobody hits is never scanned.
-    let commentMask: Uint8Array | null = null;
-    const comments = (): Uint8Array => (commentMask ??= scanComments(lines, lineStarts, body.length));
+    let scanned: BodyStructure | null = null;
+    const structure = (): BodyStructure => (scanned ??= readStructure(node, lines, lineStarts, body, onDebug));
 
     if (scanner === null) {
       const idx = body.toLowerCase().indexOf(lower);
       if (idx < 0) continue;
-      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, comments()));
+      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, structure()));
       if (matches.length >= cap) break;
       continue;
     }
@@ -325,7 +349,7 @@ export function searchBodyScripts(
       // A zero-length match (`x*`, `^`) advances nothing on its own: skip the position rather than
       // the node, or the first empty match hides every real match later in the same body.
       if (hit[0].length === 0) { scanner.lastIndex++; continue; }
-      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, comments()));
+      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, structure()));
       if (matches.length >= cap) { capped = true; break; }
     }
     if (capped) break;
@@ -355,6 +379,29 @@ function lineIndexAt(lineStarts: number[], index: number): number {
   return low;
 }
 
+/**
+ * Reads one body's structural facts, naming the object in whatever the derivation could not resolve.
+ *
+ * @param node - The object whose body is being read, so a skip line says which one it was.
+ * @param lines - The body split on newlines.
+ * @param lineStarts - Start offset of each line.
+ * @param body - The body script itself.
+ * @param onDebug - Optional sink; every unresolved region is stated, never silently dropped.
+ * @returns The comment mask and the per-line governing conditions.
+ */
+function readStructure(
+  node: SearchableNode,
+  lines: string[],
+  lineStarts: number[],
+  body: string,
+  onDebug?: (msg: string) => void,
+): BodyStructure {
+  const scan = scanBody(lines, lineStarts, body.length);
+  const predicateOfLine = derivePredicates(body, scan, lineStarts, lines.length,
+    reason => onDebug?.(`searchBodyScripts: ${node.id} — ${reason}`));
+  return { mask: scan.mask, predicateOfLine };
+}
+
 /** Assembles one reported match from its position in the body. */
 function makeMatch(
   node: SearchableNode,
@@ -364,7 +411,7 @@ function makeMatch(
   matchText: string,
   contextLines: number,
   lineCap: number,
-  commentMask: Uint8Array,
+  structure: BodyStructure,
 ): BodyMatch {
   const matchLine = lineIndexAt(lineStarts, index);
   const match: BodyMatch = {
@@ -374,23 +421,71 @@ function makeMatch(
     snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap),
   };
   // Set only when true: an executable match keeps the shape it has always had.
-  if (commentMask[index] === 1) match.commented = true;
+  if (structure.mask[index] === 1) {
+    match.commented = true;
+    // A dead line has no governing condition: the flag is the whole story, and naming the live
+    // block a comment happens to sit in would read as the comment being gated by it.
+    return match;
+  }
+  const predicate = structure.predicateOfLine[matchLine];
+  if (predicate !== null) match.enclosingPredicate = predicate;
   return match;
 }
 
+/** A structural keyword or punctuation mark the body scan reports, in body order. */
+type StructuralWord =
+  'IF' | 'ELSE' | 'WHILE' | 'BEGIN' | 'END' | 'CASE' | 'TRY' | 'CATCH' | 'TRANSACTION' | 'TRAN';
+
+/** What {@link scanBody} emits: a structural word, or one of the three punctuation marks. */
+type StructuralToken = StructuralWord | '(' | ')' | ';';
+
+/** Live occurrence of a structural token: its kind, and the body offsets it spans. */
+interface TokenHit {
+  /** The token kind. */
+  kw: StructuralToken;
+  /** Body offset of the token's first character. */
+  start: number;
+  /** Body offset one past the token's last character. */
+  end: number;
+}
+
+/** The words {@link scanBody} reports; every other identifier is skipped. */
+const STRUCTURAL_WORDS = new Set<string>(
+  ['IF', 'ELSE', 'WHILE', 'BEGIN', 'END', 'CASE', 'TRY', 'CATCH', 'TRANSACTION', 'TRAN'],
+);
+
+/** Body characters that continue a T-SQL identifier, so `@IF` and `IIF` are not the keyword `IF`. */
+function isWordChar(ch: string): boolean {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+    ch === '_' || ch === '@' || ch === '#' || ch === '$';
+}
+
+/** One pass over a body: which characters are dead, and where the live block keywords are. */
+interface BodyScan {
+  /** One byte per body character: `1` inside a comment, `0` outside. */
+  mask: Uint8Array;
+  /** Every live structural token, in body order; nothing inside a comment or a literal appears. */
+  tokens: TokenHit[];
+}
+
 /**
- * Marks every character of a body that lies inside a SQL comment.
+ * Reads a body once: marks every character inside a SQL comment, and collects the live block
+ * keywords the same walk already has the state to recognise.
  *
  * @param lines - The body split on newlines, as {@link searchBodyScripts} already holds it.
  * @param lineStarts - Start offset of each line, so a flag lands at the body offset a match uses.
  * @param length - Length of the body the offsets index into.
- * @returns One byte per body character: `1` inside a comment, `0` outside.
+ * @returns The comment mask and the live structural tokens.
  *
  * @remarks
  * The context window a match is reported with is a few lines wide, so a match deep inside a long
  * comment block arrives indistinguishable from live code — the whole comment structure sits outside
  * the window. This pass restores that one bit, per character rather than per line, so a match after
- * a trailing `--` is marked while live code on the same line is not.
+ * a trailing `--` is marked while live code on the same line is not. The same sentence is true of
+ * control flow, and the same walk answers it: knowing where a comment, a string literal and a
+ * bracketed identifier begin and end is exactly what it takes to know which `IF` and which `BEGIN`
+ * are real, so the keywords are collected here rather than by a second scanner that would have to
+ * rediscover all of it.
  *
  * Enough T-SQL to be right about where a comment starts and ends: block comments nest, a `--` runs
  * to end of line, and a string literal or a bracketed identifier hides both delimiters. Doubled
@@ -399,8 +494,9 @@ function makeMatch(
  * delimiters, but a lone `"` is the more common typo and tracking it would swallow the rest of a
  * body. An unterminated block comment marks the remainder, which is how a reader takes it too.
  */
-function scanComments(lines: string[], lineStarts: number[], length: number): Uint8Array {
+function scanBody(lines: string[], lineStarts: number[], length: number): BodyScan {
   const mask = new Uint8Array(length);
+  const tokens: TokenHit[] = [];
   /** `/*` nesting depth; T-SQL nests block comments and requires them balanced. */
   let depth = 0;
   /** The character that closes the open literal or identifier, or `''` when none is open. */
@@ -408,6 +504,16 @@ function scanComments(lines: string[], lineStarts: number[], length: number): Ui
   for (let l = 0; l < lines.length; l++) {
     const line = lines[l];
     const base = lineStarts[l];
+    /** Index in `line` where the identifier being read began, or `-1` between identifiers. */
+    let wordStart = -1;
+    const endWord = (at: number): void => {
+      if (wordStart < 0) return;
+      const word = line.slice(wordStart, at).toUpperCase();
+      if (STRUCTURAL_WORDS.has(word)) {
+        tokens.push({ kw: word as StructuralWord, start: base + wordStart, end: base + at });
+      }
+      wordStart = -1;
+    };
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       const next = line[i + 1];
@@ -422,20 +528,259 @@ function scanComments(lines: string[], lineStarts: number[], length: number): Ui
         continue;
       }
       if (ch === '-' && next === '-') {
+        endWord(i);
         mask.fill(1, base + i, base + line.length);
         break;
       }
       if (ch === '/' && next === '*') {
+        endWord(i);
         depth = 1;
         mask[base + i] = 1;
         mask[base + ++i] = 1;
         continue;
       }
+      if (isWordChar(ch)) {
+        if (wordStart < 0) wordStart = i;
+        continue;
+      }
+      endWord(i);
       if (ch === '\'') closer = '\'';
       else if (ch === '[') closer = ']';
+      else if (ch === '(' || ch === ')' || ch === ';') {
+        tokens.push({ kw: ch, start: base + i, end: base + i + 1 });
+      }
     }
+    endWord(line.length);
   }
-  return mask;
+  return { mask, tokens };
+}
+
+/** A body's two structural facts, in the shape {@link makeMatch} reads them. */
+interface BodyStructure {
+  /** One byte per body character: `1` inside a comment, `0` outside. */
+  mask: Uint8Array;
+  /** Per zero-based line: the innermost governing condition, or `null` when there is none to state. */
+  predicateOfLine: (string | null)[];
+}
+
+/** An open `BEGIN…END`, `BEGIN TRY/CATCH` or `CASE…END` while the token walk is inside it. */
+interface OpenBlock {
+  /** `case` and `try` frames only keep the stack honest; `block` is the one that can govern lines. */
+  kind: 'block' | 'case' | 'try';
+  /** The condition governing this block, or `null` when the block is not conditional. */
+  predicate: string | null;
+  /** Zero-based line the block's governing keyword sits on — the `IF`, `WHILE` or `ELSE`. */
+  startLine: number;
+  /** Set when the block is governed by a condition that did not resolve, so its lines stay silent. */
+  suppress: boolean;
+}
+
+/** Where a lookahead from `IF` / `WHILE` / `ELSE` landed: the block it opens, or nothing it can claim. */
+type BlockLookahead =
+  /** The keyword governs the `BEGIN…END` block whose `BEGIN` is `tokens[beginIndex]`. */
+  | { ok: true; beginIndex: number }
+  /** Nothing resolved; `throughToken` is the token the search stopped on, or `tokens.length`. */
+  | { ok: false; throughToken: number };
+
+/**
+ * Reports whether `next` is the very next word after `at`, with only whitespace between them.
+ *
+ * @param body - The body script the offsets index into.
+ * @param at - The earlier token.
+ * @param next - The token that may complete it.
+ * @returns `true` when the two are one construct, such as `BEGIN TRY` or `END CATCH`.
+ *
+ * @remarks
+ * Adjacency is the whole test. `BEGIN` followed somewhere later by a `ROLLBACK TRANSACTION` is a
+ * block whose first statement happens to name a transaction, not `BEGIN TRANSACTION`, and reading
+ * it as the latter loses an opening the matching `END` still closes.
+ */
+function isAdjacent(body: string, at: TokenHit, next: TokenHit | undefined): boolean {
+  return next !== undefined && body.slice(at.end, next.start).trim() === '';
+}
+
+/** The words that, immediately after `BEGIN`, mean it does not open a `BEGIN…END` block of its own. */
+function opensNamedConstruct(body: string, tokens: TokenHit[], beginIndex: number): 'try' | 'transaction' | null {
+  const after = tokens[beginIndex + 1];
+  if (!isAdjacent(body, tokens[beginIndex], after)) return null;
+  if (after!.kw === 'TRY' || after!.kw === 'CATCH') return 'try';
+  if (after!.kw === 'TRANSACTION' || after!.kw === 'TRAN') return 'transaction';
+  return null;
+}
+
+/**
+ * Finds the `BEGIN…END` block an `IF`, `WHILE` or `ELSE` at `from` governs.
+ *
+ * @param body - The body script the offsets index into.
+ * @param tokens - The live structural tokens of the body.
+ * @param from - Index of the governing keyword.
+ * @returns The index of the `BEGIN` it governs, or the refusal and where it stopped.
+ *
+ * @remarks
+ * Only the block form resolves. A single-statement `IF` governs a region whose end is a guess, and
+ * `BEGIN TRANSACTION` / `BEGIN TRY` are not blocks this keyword owns, so both stop the search
+ * rather than producing a condition that would be attached to the wrong lines. Parenthesised text
+ * is skipped wholesale: a condition is free to contain `(SELECT …)` and its keywords are not the
+ * statement's structure.
+ */
+function findGovernedBlock(body: string, tokens: TokenHit[], from: number): BlockLookahead {
+  let parens = 0;
+  for (let k = from + 1; k < tokens.length; k++) {
+    const kw = tokens[k].kw;
+    if (kw === '(') { parens++; continue; }
+    if (kw === ')') { parens--; continue; }
+    if (parens > 0) continue;
+    if (kw !== 'BEGIN') return { ok: false, throughToken: k };
+    // `BEGIN TRY` and `BEGIN TRANSACTION` are not the block this keyword governs.
+    if (opensNamedConstruct(body, tokens, k) !== null) return { ok: false, throughToken: k };
+    return { ok: true, beginIndex: k };
+  }
+  return { ok: false, throughToken: tokens.length };
+}
+
+/**
+ * Derives, per line, the innermost condition governing it.
+ *
+ * @param body - The body script the offsets index into.
+ * @param scan - The single-pass comment mask and structural tokens for that body.
+ * @param lineStarts - Start offset of each line.
+ * @param lineCount - Number of lines in the body.
+ * @param onSkip - Sink for what was not resolved; called at most once per body.
+ * @returns The per-line conditions, all `null` when the body's blocks do not balance.
+ *
+ * @remarks
+ * Right or absent, never a guess. `BEGIN…END` blocks are matched on a stack that `CASE…END`,
+ * `BEGIN TRY` / `END TRY` and `BEGIN TRANSACTION` all keep honest; an `END` with nothing open, or
+ * an unclosed block at the body's end, means the reading is wrong somewhere earlier, so the whole
+ * body reports nothing and says so. A construct that resolves to no block — a single-statement
+ * `IF`, an over-long condition — suppresses the lines it might govern instead of handing them the
+ * enclosing block's condition, which would read as the innermost one.
+ *
+ * The governed region runs from the governing keyword's own line through the closing `END`, so a
+ * hit on the `IF` line, on its `BEGIN`, or anywhere between reports the same condition.
+ */
+function derivePredicates(
+  body: string,
+  scan: BodyScan,
+  lineStarts: number[],
+  lineCount: number,
+  onSkip: (reason: string) => void,
+): (string | null)[] {
+  const { tokens, mask } = scan;
+  const predicateOfLine: (string | null)[] = new Array<string | null>(lineCount).fill(null);
+  if (tokens.length === 0) return predicateOfLine;
+
+  const lineOf = (offset: number): number => lineIndexAt(lineStarts, offset);
+  /** The live text between two offsets, comments removed and whitespace collapsed. */
+  const conditionText = (start: number, end: number): string => {
+    let out = '';
+    for (let i = start; i < end; i++) if (mask[i] === 0) out += body[i];
+    return out.replace(/\s+/g, ' ').trim();
+  };
+
+  const stack: OpenBlock[] = [];
+  /** Blocks already closed, with the condition to write over their line range and their nesting. */
+  const closed: { startLine: number; endLine: number; predicate: string; depth: number }[] = [];
+  /** Line ranges whose innermost governing condition is not known, so nothing is reported there. */
+  const suppressed: { from: number; to: number }[] = [];
+  /** Condition to hand to the `BEGIN` at this token index, filled by the keyword that governs it. */
+  const pending = new Map<number, { predicate: string | null; startLine: number }>();
+  /** The condition of the `IF` block that just closed, while an `ELSE` could still follow it. */
+  let closedIf: string | null = null;
+  let skipped = 0;
+
+  /**
+   * Claims the block a governing keyword owns. `predicate` is `null` when the condition itself did
+   * not resolve, and then the block's lines are silenced rather than handed the enclosing block's
+   * condition, which a reader would take for the innermost one.
+   */
+  const govern = (index: number, predicate: string | null): void => {
+    const found = findGovernedBlock(body, tokens, index);
+    const startLine = lineOf(tokens[index].start);
+    if (found.ok) {
+      const usable = predicate !== null && predicate.length > 0 && predicate.length <= PREDICATE_MAX_CHARS;
+      if (!usable) skipped++;
+      pending.set(found.beginIndex, { predicate: usable ? predicate : null, startLine });
+      return;
+    }
+    // No block: the governed region is one statement whose end is a guess, so silence the span up
+    // to whatever stopped the search — through it when that is the statement terminator itself.
+    const boundary = tokens[found.throughToken];
+    const endLine = boundary === undefined
+      ? lineCount - 1
+      : boundary.kw === ';' ? lineOf(boundary.start) : Math.max(startLine, lineOf(boundary.start) - 1);
+    suppressed.push({ from: startLine, to: endLine });
+    skipped++;
+  };
+
+  for (let j = 0; j < tokens.length; j++) {
+    const token = tokens[j];
+    const kw = token.kw;
+    // `closedIf` survives only the statement terminator between an `END` and its `ELSE`.
+    const carriesElse = kw === 'ELSE' || kw === ';';
+
+    if (kw === 'CASE') {
+      stack.push({ kind: 'case', predicate: null, startLine: lineOf(token.start), suppress: false });
+    } else if (kw === 'IF' || kw === 'WHILE') {
+      const found = findGovernedBlock(body, tokens, j);
+      govern(j, found.ok ? conditionText(token.end, tokens[found.beginIndex].start) : null);
+    } else if (kw === 'ELSE') {
+      // An `ELSE` inside a `CASE` expression is part of the expression, not a branch of a statement.
+      if (stack[stack.length - 1]?.kind !== 'case') {
+        govern(j, closedIf === null ? null : `NOT (${closedIf})`);
+      }
+    } else if (kw === 'BEGIN') {
+      const named = opensNamedConstruct(body, tokens, j);
+      if (named === 'try') {
+        stack.push({ kind: 'try', predicate: null, startLine: lineOf(token.start), suppress: false });
+        j++;
+      } else if (named === 'transaction') {
+        j++; // Not a block: no `END` will close it.
+      } else {
+        const owner = pending.get(j);
+        stack.push({
+          kind:      'block',
+          predicate: owner?.predicate ?? null,
+          startLine: owner?.startLine ?? lineOf(token.start),
+          suppress:  owner !== undefined && owner.predicate === null,
+        });
+      }
+    } else if (kw === 'END') {
+      const after = tokens[j + 1];
+      const closesTry = isAdjacent(body, token, after) && (after!.kw === 'TRY' || after!.kw === 'CATCH');
+      const frame = stack.pop();
+      if (frame === undefined || (closesTry && frame.kind !== 'try')) {
+        onSkip(`block structure does not balance at line ${lineOf(token.start) + 1} — no condition reported for this body`);
+        return predicateOfLine;
+      }
+      if (closesTry) j++;
+      const endLine = lineOf(token.start);
+      if (frame.suppress) suppressed.push({ from: frame.startLine, to: endLine });
+      else if (frame.kind === 'block' && frame.predicate !== null) {
+        closed.push({ startLine: frame.startLine, endLine, predicate: frame.predicate, depth: stack.length });
+      }
+      closedIf = frame.kind === 'block' ? frame.predicate : null;
+      continue;
+    }
+    if (!carriesElse) closedIf = null;
+  }
+
+  if (stack.length > 0) {
+    onSkip(`${stack.length} unclosed block(s) at the end of the body — no condition reported for this body`);
+    return new Array<string | null>(lineCount).fill(null);
+  }
+
+  // Shallowest first, so a nested block writes last and the innermost condition is the one left;
+  // between siblings the later one wins the line their `END` and `ELSE BEGIN` may share.
+  closed.sort((a, b) => a.depth - b.depth || a.startLine - b.startLine);
+  for (const region of closed) {
+    for (let l = region.startLine; l <= region.endLine && l < lineCount; l++) predicateOfLine[l] = region.predicate;
+  }
+  for (const region of suppressed) {
+    for (let l = region.from; l <= region.to && l < lineCount; l++) predicateOfLine[l] = null;
+  }
+  if (skipped > 0) onSkip(`${skipped} conditional region(s) without a resolvable block — no condition reported for those lines`);
+  return predicateOfLine;
 }
 
 /**
