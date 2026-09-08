@@ -396,7 +396,7 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
   it('does not let the scope bullet delete a captured ⚠️ on a side branch', () => {
     const scope = renderRuleBullet(general, 'Scope');
 
-    expect(scope).toMatch(/audit, logging, retention, error-handling/);
+    expect(scope).toMatch(/a side branch it did not ask about/);
     expect(scope).toMatch(/⚠️ on such a branch is that one line, never a deletion/i);
     expect(scope).not.toMatch(/a captured ⚠️ on such a branch/);
   });

@@ -450,12 +450,11 @@ general:
       or loaded bodies appears exactly once as a ⚠️ line in its most relevant
       section; significance was settled at capture. A business mission states
       the impact first, the mechanism second.
-    - **Scope**: the sections follow the question. Side branches the question
-      did not ask about (audit, logging, retention, error-handling paths) are
-      one line inside the section they hang off, not a section or highlight of
-      their own — a ⚠️ on such a branch is that one line, never a deletion. A
-      column trace follows the value chain of the traced column and its
-      terminal sources.
+    - **Scope**: the sections follow the question; a side branch it did not
+      ask about is one line inside the section it hangs off, not a section or
+      highlight of its own — a ⚠️ on such a branch is that one line, never a
+      deletion. A column trace follows the value chain of the traced column
+      and its terminal sources.
 
     Each bullet renders what the captured or loaded bodies contain; nothing is
     invented to fill one.
