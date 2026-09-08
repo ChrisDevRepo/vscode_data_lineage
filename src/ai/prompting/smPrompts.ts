@@ -7,7 +7,7 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for precision in reasoning models.
  */
 
-import { buildColumnAspectPrompt } from '../prompting/prompts';
+import { ANALYTICAL_LOGIC_VOCABULARY, buildColumnAspectPrompt } from '../prompting/prompts';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 
 
@@ -26,7 +26,7 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
  * precision and the column-precision regression cannot re-enter.
  */
 const ANALYTICAL_ROUTE_QUESTION =
-  '- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (rules, transformations, thresholds, guards, lifecycle, and material data-quality risks) to produce the traced value — not only which columns or sources feed it. This analytical question persists hop-to-hop and drives the depth of the next hop\'s capture.';
+  `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it. This analytical question persists hop-to-hop and drives the depth of the next hop's capture.`;
 
 /**
  * One resolution rule for `<required_neighbors>`, composed by both hop decision contracts so the

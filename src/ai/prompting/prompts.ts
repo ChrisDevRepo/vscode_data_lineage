@@ -25,6 +25,16 @@ import type { InvestigationTask } from '../sm/smTypes';
 export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis' | 'completed';
 
 /**
+ * The analytical vocabulary a node's logic is read against — shared verbatim between
+ * `ANALYTICAL_ROUTE_QUESTION` (`smPrompts.ts`, BB's route-question requirement) and the CT
+ * row_role_only hop-specific focus line below, so the two homes cannot drift apart. CT is BB plus
+ * columns: a node kept for what it does to the row set is read for the same logic BB reads for,
+ * never a narrower "structure only" subset.
+ */
+export const ANALYTICAL_LOGIC_VOCABULARY =
+  'rules, transformations, thresholds, guards, lifecycle, and material data-quality risks';
+
+/**
  * The three stages that author a `lineage_present_result` payload, as seen by
  * {@link buildPresentationDetailContract}.
  *
@@ -759,7 +769,7 @@ export function buildCurrentTaskBlock(
         : [
             `    Active columns: none — this node declares none of the traced columns.`,
             `    It is on the lineage path for what it does to the rows, not for a value it supplies.`,
-            `    Hop-specific focus: submit column_flow: [] and describe in sections[].text what this node does to the row set — joins, filters, predicates, set operations — then route upstream as usual. The node is kept in the answer.`,
+            `    Hop-specific focus: submit column_flow: [] and describe in sections[].text what this node does to the row set — joins, filters, predicates, set operations, and any ${ANALYTICAL_LOGIC_VOCABULARY} it applies — then route upstream as usual. The node is kept in the answer.`,
           ]),
       `    To inspect upstream column schemas before declaring upstream_columns, call lineage_get_neighbor_columns for current-hop neighbors.`,
       `  </column_trace>`,
