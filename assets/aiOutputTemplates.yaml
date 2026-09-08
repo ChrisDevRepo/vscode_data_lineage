@@ -368,10 +368,6 @@ column_trace_capture:
     Account for EVERY active tracked column — each gets one explicit decision:
       → Continue it:  a column_flow entry mapping it to its upstream source column(s) + route upstream.
       → It ends here: a column_flow entry with upstream_columns: [] (terminal — produced here, no upstream real column).
-
-    A tracked column you leave out of column_flow is rejected as column_chain_incomplete —
-    account for it (continue / terminal). column_flow is engine-validated:
-    omitting the field returns ct_field_required (off-trace nodes submit column_flow: [] — see Verdict).
     </purpose>
 
     ## Before submitting — verify
