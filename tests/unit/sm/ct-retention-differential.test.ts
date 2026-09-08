@@ -12,7 +12,7 @@
  * submitted at each bodied focus.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
-import type { SmResult } from '../../../src/ai/sm/smTypes';
+import type { ColumnEdge, SmResult } from '../../../src/ai/sm/smTypes';
 import { bfsReachable } from '../../../src/engine/graphGuards';
 import type { DatabaseModel, LineageNode, ObjectType } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
@@ -1101,8 +1101,14 @@ const CARRIER_CASE: RetentionCase = {
 /**
  * Runs the walk at a one-level border, so the carrier proc's write target stays outside the render
  * and the proc is left with no render-internal outgoing edge — the measured T8S shape.
+ *
+ * @remarks
+ * Returns the committed chain beside the result because the two are different surfaces: the render
+ * disposition reads every edge the tracer committed, while `SmResult.columnAspect` is the delivered
+ * projection, which withholds an edge whose endpoint the render dispositioned away. A premise about
+ * what the hop recorded is read from the first; the render verdict itself is read from the second.
  */
-function driveCarrierWalk(carrierFlow: FlowEntry[]): SmResult {
+function driveCarrierWalk(carrierFlow: FlowEntry[]): { result: SmResult; committed: readonly ColumnEdge[] } {
   const { model, graph } = buildWorld(CARRIER_CASE);
   const engine = new NavigationEngine(model, graph, () => {}, {});
   const init = engine.init({
@@ -1117,7 +1123,7 @@ function driveCarrierWalk(carrierFlow: FlowEntry[]): SmResult {
 
   for (let hop = 0; hop < 25; hop++) {
     const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
-    if (ctx.done || !ctx.focus_node) return engine.getResult();
+    if (ctx.done || !ctx.focus_node) return { result: engine.getResult(), committed: engine.toJSON().columnAspect?.edges ?? [] };
     const focusId = ctx.focus_node.id;
     const isCarrier = focusId === CARRIER;
     const outcome = engine.submitFindings({
@@ -1134,7 +1140,7 @@ function driveCarrierWalk(carrierFlow: FlowEntry[]): SmResult {
 
 describe('CT render bound — the hop_node of a column edge carried the column', () => {
   it('C13 — keeps a passthrough write sink the tracer recorded as a column edge hop_node', () => {
-    const result = driveCarrierWalk([{
+    const { result, committed } = driveCarrierWalk([{
       out_col: 'Amount',
       upstream_columns: [{ node: '[ct].[vwcarriersrc]', col: 'Amount' }],
       writes_to: { node: '[ct].[carrierreport]', col: 'Amount' },
@@ -1146,7 +1152,7 @@ describe('CT render bound — the hop_node of a column edge carried the column',
       'the premise: the consumer proc was dispatched and returned a passthrough',
     ).toBe('submitted_passthrough');
     expect(
-      result.columnAspect?.edges.some(edge => edge.hop_node === CARRIER
+      committed.some(edge => edge.hop_node === CARRIER
         && edge.from_node !== CARRIER && edge.to_node !== CARRIER),
       'the premise: the proc is the edge hop_node and neither endpoint',
     ).toBe(true);
@@ -1156,13 +1162,13 @@ describe('CT render bound — the hop_node of a column edge carried the column',
   it('C14 — still drops the same passthrough write sink when it carried no column', () => {
     // Same shape as C11: the flow names a node outside the fixture, so the tracer records no edge
     // and the hop leaves nothing behind that says the proc carried the traced column.
-    const result = driveCarrierWalk([
+    const { result, committed } = driveCarrierWalk([
       { out_col: 'Amount', upstream_columns: [{ node: '[ct].[notinthismodel]', col: 'Amount' }] },
     ]);
     const rendered = new Set(result.fullNodes.map(n => n.id));
 
     expect(
-      result.columnAspect?.edges.some(edge => edge.hop_node === CARRIER),
+      committed.some(edge => edge.hop_node === CARRIER),
       'the premise: the hop recorded no column edge at all',
     ).toBe(false);
     expect(rendered.has(CARRIER), 'a passthrough sink that carried nothing is not answer evidence').toBe(false);

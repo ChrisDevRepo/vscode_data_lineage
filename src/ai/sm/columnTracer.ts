@@ -35,6 +35,28 @@ export class ColumnTracer {
     return this.aspect;
   }
 
+  /**
+   * The aspect as delivered, minus the edges whose endpoint the render dispositioned away.
+   *
+   * @remarks
+   * A projection for delivery only, never a mutation of the trace: {@link state} keeps every
+   * committed edge, so a checkpoint resumes on the chain it was dumped with and the engine's own
+   * completeness accounting reads the same edge set it always did. `target_columns` and
+   * `active_columns` carry through untouched — where an endpoint node ended up says nothing about
+   * which columns the trace is following.
+   *
+   * @param droppedEndpointIds - Endpoint node ids the render withheld; empty on almost every call.
+   * @returns The aspect to deliver — the live state itself when nothing was withheld.
+   */
+  deliveredState(droppedEndpointIds: ReadonlySet<string>): ColumnAspect {
+    if (droppedEndpointIds.size === 0) return this.aspect;
+    return {
+      ...this.aspect,
+      edges: this.aspect.edges.filter(
+        e => !droppedEndpointIds.has(e.from_node) && !droppedEndpointIds.has(e.to_node)),
+    };
+  }
+
   /** Columns requested at the start of the trace. */
   get targetColumns(): string[] {
     return this.aspect.target_columns;

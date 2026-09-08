@@ -3361,7 +3361,31 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Selects the render-set members no hop dispositioned that the render reaches only as a write sink.
+   * Collects the column-edge endpoints the render does not hold.
+   *
+   * @remarks
+   * A hop names its read source and its write target by node, and the neighbour one hop past the
+   * border is a correct answer to the question it was asked — the node is simply not a render
+   * member, so the delivered chain names something the panel never draws. Those endpoints are the
+   * one class the sink disposition above never sees, because it iterates the render; handing them
+   * to it is what makes the chain and the render one verdict instead of two. `hop_node` is a render
+   * member by construction (it is the focus the hop ran on), so the two endpoint positions are the
+   * whole set. Empty in BB, where there is no tracer at all.
+   *
+   * @param render - The render set membership is tested against.
+   * @returns Endpoint ids outside the render, usually empty.
+   */
+  private columnEndpointsOutsideRender(render: ReadonlySet<string>): Set<string> {
+    const outside = new Set<string>();
+    for (const edge of this.tracer?.edges ?? []) {
+      if (!render.has(edge.from_node)) outside.add(edge.from_node);
+      if (!render.has(edge.to_node)) outside.add(edge.to_node);
+    }
+    return outside;
+  }
+
+  /**
+   * Selects the nodes no hop dispositioned that the render reaches only as a write sink.
    *
    * @remarks
    * Scope admits a node; only a hop dispositions one. A node with no investigation task, no
@@ -3386,21 +3410,29 @@ export class NavigationEngine implements IHopStateMachine {
    * passthrough, not a sink, and is restored.
    *
    * @param reachable - The reachability-bounded render set to classify.
-   * @returns Ids to drop from the render; empty when every reachable node is accounted for.
+   * @param columnBorder - Column-edge endpoints the render does not hold
+   *   ({@link columnEndpointsOutsideRender}), classified against the same contract with one
+   *   provenance difference: past the border, only a hop's own verdict counts as one. The recorded
+   *   edge is why the node is here at all, and the engine writes `non_bodied_passthrough` for both
+   *   endpoints of that same edge at the instant it commits it (`stagedCtNodeStates`), so the edge
+   *   and that record are one event stated twice — neither is evidence of the other. A verdict the
+   *   AI or the user submitted, and an open task, exempt exactly as inside the render.
+   * @returns Ids to drop; reachable ones leave the render, border ones leave the delivered chain.
    */
-  private undispositionedSinkIds(reachable: ReadonlySet<string>): Set<string> {
+  private undispositionedSinkIds(reachable: ReadonlySet<string>, columnBorder: ReadonlySet<string>): Set<string> {
     const candidates: string[] = [];
-    for (const id of reachable) {
+    for (const id of [...reachable, ...columnBorder]) {
       if (id === this.originNodeId) continue;
       const state = this.nodeStates.get(id);
       const passthrough = state?.reason === 'submitted_passthrough';
-      if (state !== undefined && !passthrough) continue;
+      const engineRecord = columnBorder.has(id) && state?.source === 'engine';
+      if (state !== undefined && !passthrough && !engineRecord) continue;
       // A task the passthrough hop itself resolved says the node was looked at, which the verdict
       // already says; an unresolved one means routed or queued and never reached, which no verdict
       // covers, so it still exempts.
       if (this.taskLedger.investigationTasks.some(task =>
         task.nodeId === id && !(passthrough && task.status === 'resolved'))) continue;
-      if (this.tracer?.edges.some(edge =>
+      if (!columnBorder.has(id) && this.tracer?.edges.some(edge =>
         edge.from_node === id || edge.to_node === id || edge.hop_node === id)) continue;
       candidates.push(id);
     }
@@ -3449,11 +3481,22 @@ export class NavigationEngine implements IHopStateMachine {
     finalNodeIds.add(this.originNodeId!);
 
     // Reachability alone once carried scope-resident write sinks into the answer, where the
-    // synthesis prompt then section-linked them. Drop the sinks no hop dispositioned.
-    const undispositioned = this.undispositionedSinkIds(finalNodeIds);
+    // synthesis prompt then section-linked them. Drop the sinks no hop dispositioned — and classify
+    // the column-edge endpoints one hop past the border by the same contract, so the chain cannot
+    // name a terminal write sink the render already refused to draw.
+    const columnBorder = this.columnEndpointsOutsideRender(finalNodeIds);
+    const undispositioned = this.undispositionedSinkIds(finalNodeIds, columnBorder);
+    // The two inputs are disjoint by construction — a border endpoint is one the render does not
+    // hold — so the verdict splits back apart exactly. The render's record stays the render's: a
+    // node that was never drawn is not a drop from the drawing.
+    const borderSinks = new Set<string>();
+    for (const id of columnBorder) if (undispositioned.delete(id)) borderSinks.add(id);
     // Recorded before the log line and on every call, so a snapshot taken after this one describes
     // this render and not an earlier one.
     this.renderDroppedIds = new Set(undispositioned);
+    if (borderSinks.size > 0) {
+      this.log('debug', `[Disposition] getResult withholds ${borderSinks.size} column-chain endpoint(s) — ${trunc(Array.from(borderSinks).join(', '), 200)} (past the render border, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
+    }
     if (undispositioned.size > 0) {
       for (const id of undispositioned) finalNodeIds.delete(id);
       this.log('debug', `[Disposition] getResult drops ${undispositioned.size} undispositioned sink node(s) — ${trunc(Array.from(undispositioned).join(', '), 200)} (in scope, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
@@ -3511,7 +3554,7 @@ export class NavigationEngine implements IHopStateMachine {
       suggested_sections: sections,
       detail_slots: mem.detail_slots.filter(slot => finalNodeIds.has(slot.nodeId)),
       node_states: Array.from(this.nodeStates.values()),
-      columnAspect: this.tracer?.state ?? null,
+      columnAspect: this.tracer?.deliveredState(borderSinks) ?? null,
       // CT focus nodes the AI pruned (verdict=prune -> no column flow).
       ...(this.tracer ? { ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds) } : {}),
     };
