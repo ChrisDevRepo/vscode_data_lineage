@@ -169,13 +169,13 @@ describe('search tools — grep contract', () => {
     expect(rows.map(r => [r.line, r.commented]), 'the live hit is unflagged, the dead one is flagged')
       .toEqual([[2, undefined], [6, true]]);
 
-    // The wire shape: a live row carries the fields it carried before the flag existed, in the
-    // same order and with no key added; the flag is appended only where it is true.
-    expect(Object.keys(rows[0])).toEqual(['id', 'name', 'type', 'line', 'text', 'context']);
-    expect(rows[0].text, 'the matched line is served as written').toBe('SELECT w.Id FROM ai.Watermark w');
-    // Marking is per line, not per row: the window straddles the opener, so the live statement is
-    // bare and the dead line beside it is not — which is the distinction the window has to carry.
-    expect(rows[0].context.split('\n').map(l => l.startsWith('--'))).toEqual([false, false, true]);
+    // The wire shape: a live row is the exact JSON it was before the field existed, key order
+    // included; the flag is appended only where it is true.
+    expect(JSON.stringify(rows[0])).toBe(JSON.stringify({
+      id: '[ai].[vwdelta]', name: 'vwDelta', type: 'view', line: 2,
+      text: 'SELECT w.Id FROM ai.Watermark w',
+      context: 'CREATE VIEW ai.vwDelta AS\nSELECT w.Id FROM ai.Watermark w\n/* DELTA MODE, deferred to v5.0',
+    }));
     expect(JSON.stringify(rows[1]).endsWith(',"commented":true}'), 'appended, never in place of a field')
       .toBe(true);
     expect(JSON.stringify(rows[1]).length - JSON.stringify({ ...rows[1], commented: undefined }).length)
@@ -462,125 +462,6 @@ describe('search tools — grep contract', () => {
     const rows = ((searchDdl(proc, 'SELECT 1', BUDGET) as DdlResult).results ?? []);
     expect(rows, 'the hit is still reported').toHaveLength(1);
     expect(rows[0].enclosing_predicate, 'without a condition guessed from a broken read').toBeUndefined();
-  });
-
-  it('marks every dead line of the context, including the one that matched nothing', () => {
-    // IB4-T3. `commented` answers for the matched line, and the window is wider than the match:
-    // the abandoned self-join's own `DELETE` produced no hit, so nothing carried its status and it
-    // reached the wire as bare SQL shaped exactly like the live read four lines above — the answer
-    // took it for behaviour and reported the procedure as mutating a table it only reads.
-    const body = [
-      'BEGIN',                                          // 1
-      '    SELECT @DuplicateCount = COUNT(*)',          // 2
-      '    FROM [ai].[RawOrderImport] r',               // 3  — live
-      '    WHERE r.BatchID IS NOT NULL;',               // 4
-      '',                                               // 5
-      '    /* OLD DEDUP APPROACH (pre v2.0):',          // 6
-      '       Used DELETE with a self-join instead.',   // 7
-      '',                                               // 8
-      '       DELETE d1',                               // 9  — matches nothing itself
-      '       FROM [ai].[RawOrderImport] d1',           // 10 — the hit
-      '       INNER JOIN [ai].[RawOrderImport] d2',     // 11
-      '           AND d1.ImportID > d2.ImportID;',      // 12
-      '    */',                                         // 13
-      'END;',                                           // 14
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[spclean]', name: 'spClean', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'RawOrderImport', BUDGET) as DdlResult).results ?? []);
-    const at = (line: number): DdlRow => rows.find(r => r.line === line)!;
-
-    const dead = at(10).context.split('\n');
-    expect(dead, 'the window is the statement, not the matched line').toHaveLength(3);
-    expect(dead.every(l => l.startsWith('--')), 'and no line of it arrives unmarked').toBe(true);
-    expect(dead.some(l => /DELETE/.test(l)), 'the verb the answer read as behaviour is in the window').toBe(true);
-    expect(at(10).context, 'so the abandoned statement is never served as executable SQL')
-      .not.toMatch(/^\s*DELETE/m);
-
-    const live = at(3).context.split('\n');
-    expect(live.some(l => l.startsWith('--')), 'the live read keeps every line it always had').toBe(false);
-    expect(live.some(l => l.includes('[ai].[RawOrderImport] r')), 'byte-for-byte, marker or not').toBe(true);
-  });
-
-  it('marks a dead audit query whose own text carries quotes and a line comment', () => {
-    // The second block of the same procedure: a verification SELECT kept for manual audit, with
-    // string literals and `--` notes inside the block. Neither the literal nor the inner `--`
-    // may end the block, or the live code after `*/` would be reported dead.
-    const body = [
-      'SELECT * FROM [ai].[CleanedOrders];',                              // 1 — live, before
-      '/* DATA LINEAGE VERIFICATION QUERY (for manual audit)',            // 2
-      '   SELECT',
-      "       roi.RawQty     AS 'RawOrderImport.RawQty',",                // 4
-      '   FROM [ai].[RawOrderImport] roi',                                // 5 — the hit
-      '   -- Expected: RawQty should equal OrderQty',                     // 6
-      '*/',                                                               // 7
-      'SELECT SUM(RawQty) FROM [ai].[RawOrderImport];',                   // 8 — live, after
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[spaudit]', name: 'spAudit', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'RawOrderImport', BUDGET) as DdlResult).results ?? []);
-    const at = (line: number): DdlRow => rows.find(r => r.line === line)!;
-
-    expect(at(5).commented, 'the audit query is dead').toBe(true);
-    expect(at(5).context.split('\n').every(l => l.startsWith('--')), 'and reads that way line by line').toBe(true);
-    expect(at(8).commented, 'the block closed, so the statement after it is live').toBeUndefined();
-    // Its window reaches back over the closing `*/`: that line is dead and says so, the live
-    // statement beside it does not, and the two readings sit one line apart without blurring.
-    expect(at(8).context.split('\n').map(l => l.startsWith('--'))).toEqual([true, false]);
-  });
-
-  it('leaves a live line marked-free when only part of it is a comment', () => {
-    // The expensive direction is marking live code: a statement struck out of the payload is
-    // lineage deleted, while an unexplained one is merely unexplained. A line that still executes
-    // therefore keeps its bare form no matter what trails it.
-    const body = [
-      'SELECT 1;',                                                        // 1
-      'FROM [ai].[RawOrderImport] r  -- RawOrderImport was #Staging',     // 2 — live code, dead tail
-      'WHERE r.BatchID IS NOT NULL;',                                     // 3
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[sptail]', name: 'spTail', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'RawOrderImport', BUDGET) as DdlResult).results ?? []);
-    expect(rows.map(r => r.commented), 'the code is live, the note after it is not').toEqual([undefined, true]);
-    for (const row of rows) {
-      expect(row.context.split('\n').some(l => l.startsWith('--')), 'and no line of either window is struck out')
-        .toBe(false);
-    }
-  });
-
-  it('is not fooled into marking live lines by a comment marker inside a literal', () => {
-    const body = [
-      "SELECT '/* not a comment */' AS a;",                // 1
-      'SELECT b FROM [ai].[RawOrderImport];',              // 2 — live
-      "SELECT '-- also not one' AS c;",                    // 3
-      'SELECT d FROM [ai].[RawOrderImport];',              // 4 — live
-      'SELECT [RawOrderImport -- col] FROM [ai].[X];',     // 5 — bracketed identifier, live
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[split]', name: 'spLit', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'RawOrderImport', BUDGET) as DdlResult).results ?? []);
-    expect(rows.map(r => r.line), 'three live hits').toEqual([2, 4, 5]);
-    for (const row of rows) {
-      expect(row.commented, `line ${row.line} executes`).toBeUndefined();
-      expect(row.context.split('\n').some(l => l.startsWith('--')), `no line around ${row.line} is struck out`)
-        .toBe(false);
-    }
-  });
-
-  it('marks the remainder after a block comment nobody closed, and nothing before it', () => {
-    const body = [
-      'SELECT a FROM [ai].[RawOrderImport];',   // 1 — live, before the opener
-      '/* dropped in v3, close was lost',       // 2
-      '   SELECT b FROM [ai].[RawOrderImport];', // 3
-      '   SELECT c FROM [ai].[RawOrderImport];', // 4
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[spopen]', name: 'spOpen', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'RawOrderImport', BUDGET) as DdlResult).results ?? []);
-    const at = (line: number): DdlRow => rows.find(r => r.line === line)!;
-
-    expect(at(1).commented, 'the live statement above the opener is untouched').toBeUndefined();
-    expect(at(1).context.split('\n').map(l => l.startsWith('--')), 'and stays bare where the opener does not')
-      .toEqual([false, true]);
-    expect(at(4).commented, 'an unterminated block runs to the end, as a reader takes it too').toBe(true);
-    expect(at(4).context.split('\n').every(l => l.startsWith('--'))).toBe(true);
-    expect(at(3).context.split('\n')[0], 'the opener line is dead from its own first character')
-      .toMatch(/^--/);
   });
 
   it('package.json languageModelTools is what the generator produces from TOOL_DEFS', () => {

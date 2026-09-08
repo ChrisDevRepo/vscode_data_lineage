@@ -397,49 +397,9 @@ function readStructure(
   onDebug?: (msg: string) => void,
 ): BodyStructure {
   const scan = scanBody(lines, lineStarts, body.length);
-  const say = (reason: string): void => { onDebug?.(`searchBodyScripts: ${node.id} — ${reason}`); };
-  const predicateOfLine = derivePredicates(body, scan, lineStarts, lines.length, say);
-  if (scan.unterminatedAtLine >= 0) {
-    say(`block comment opened on line ${scan.unterminatedAtLine + 1} is never closed — every line from there on is reported as commented`);
-  }
-  return { mask: scan.mask, predicateOfLine, deadLine: markDeadLines(lines, lineStarts, scan.mask) };
-}
-
-/**
- * Projects the per-character comment mask onto whole lines.
- *
- * @param lines - The body split on newlines.
- * @param lineStarts - Start offset of each line.
- * @param mask - The per-character comment mask {@link scanBody} produced for that same body.
- * @returns One byte per line: `1` when the line carries code and none of it executes.
- *
- * @remarks
- * The one direction that must never be wrong is marking live code dead: that deletes real lineage,
- * and losing a statement costs more than leaving one unexplained. So a line is dead only when every
- * one of its non-whitespace characters is masked — a live statement with a trailing `--` note keeps
- * the live reading, and a whitespace-only line inside a block claims nothing either way, since a
- * blank line reads as a separator rather than as behaviour.
- *
- * No second scanner: this reads the mask {@link scanBody} already produced over exactly this text,
- * which is the only place in this module that knows where a comment, a string literal and a
- * bracketed identifier begin and end.
- */
-function markDeadLines(lines: string[], lineStarts: number[], mask: Uint8Array): Uint8Array {
-  const dead = new Uint8Array(lines.length);
-  for (let l = 0; l < lines.length; l++) {
-    const line = lines[l];
-    const base = lineStarts[l];
-    let sawCode = false;
-    let allMasked = true;
-    for (let i = 0; i < line.length && allMasked; i++) {
-      const ch = line[i];
-      if (ch === ' ' || ch === '\t' || ch === '\r') continue;
-      sawCode = true;
-      if (mask[base + i] !== 1) allMasked = false;
-    }
-    if (sawCode && allMasked) dead[l] = 1;
-  }
-  return dead;
+  const predicateOfLine = derivePredicates(body, scan, lineStarts, lines.length,
+    reason => onDebug?.(`searchBodyScripts: ${node.id} — ${reason}`));
+  return { mask: scan.mask, predicateOfLine };
 }
 
 /** Assembles one reported match from its position in the body. */
@@ -458,7 +418,7 @@ function makeMatch(
     node,
     line:    matchLine + 1,
     text:    lines[matchLine].trimEnd(),
-    snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap, structure.deadLine),
+    snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap),
   };
   // Set only when true: an executable match keeps the shape it has always had.
   if (structure.mask[index] === 1) {
@@ -506,8 +466,6 @@ interface BodyScan {
   mask: Uint8Array;
   /** Every live structural token, in body order; nothing inside a comment or a literal appears. */
   tokens: TokenHit[];
-  /** Zero-based line of a block comment the body never closes, or `-1` when every block closes. */
-  unterminatedAtLine: number;
 }
 
 /**
@@ -543,8 +501,6 @@ function scanBody(lines: string[], lineStarts: number[], length: number): BodySc
   let depth = 0;
   /** The character that closes the open literal or identifier, or `''` when none is open. */
   let closer = '';
-  /** Zero-based line the outermost still-open block comment was opened on, or `-1` when none is. */
-  let openedAt = -1;
   for (let l = 0; l < lines.length; l++) {
     const line = lines[l];
     const base = lineStarts[l];
@@ -564,7 +520,7 @@ function scanBody(lines: string[], lineStarts: number[], length: number): BodySc
       if (depth > 0) {
         mask[base + i] = 1;
         if (ch === '/' && next === '*') { depth++; mask[base + ++i] = 1; }
-        else if (ch === '*' && next === '/') { if (--depth === 0) openedAt = -1; mask[base + ++i] = 1; }
+        else if (ch === '*' && next === '/') { depth--; mask[base + ++i] = 1; }
         continue;
       }
       if (closer !== '') {
@@ -579,7 +535,6 @@ function scanBody(lines: string[], lineStarts: number[], length: number): BodySc
       if (ch === '/' && next === '*') {
         endWord(i);
         depth = 1;
-        openedAt = l;
         mask[base + i] = 1;
         mask[base + ++i] = 1;
         continue;
@@ -597,17 +552,15 @@ function scanBody(lines: string[], lineStarts: number[], length: number): BodySc
     }
     endWord(line.length);
   }
-  return { mask, tokens, unterminatedAtLine: depth > 0 ? openedAt : -1 };
+  return { mask, tokens };
 }
 
-/** A body's structural facts, in the shape {@link makeMatch} reads them. */
+/** A body's two structural facts, in the shape {@link makeMatch} reads them. */
 interface BodyStructure {
   /** One byte per body character: `1` inside a comment, `0` outside. */
   mask: Uint8Array;
   /** Per zero-based line: the innermost governing condition, or `null` when there is none to state. */
   predicateOfLine: (string | null)[];
-  /** Per zero-based line: `1` when the line carries code but none of it executes, `0` otherwise. */
-  deadLine: Uint8Array;
 }
 
 /** An open `BEGIN…END`, `BEGIN TRY/CATCH` or `CASE…END` while the token walk is inside it. */
@@ -863,18 +816,6 @@ export function searchColumns(
 const SIDEBAR_WINDOW_LEAD = 10;
 
 /**
- * Prefix placed on a context line that carries no executable code.
- *
- * @remarks
- * T-SQL's own "this does not run" marker, so the snippet states the fact in the language it is
- * already written in and needs no legend to be read. The alternative shapes were a word marker,
- * which a reader can take for a bracketed identifier or an annotation to be trusted or not, and a
- * separate line-number field, which leaves the reader to line ranges up against a window that
- * carries no line numbers.
- */
-const DEAD_LINE_PREFIX = '--';
-
-/**
  * Builds a formatted context snippet for a match found in a body script.
  *
  * @param lines - The body split on newlines.
@@ -882,20 +823,7 @@ const DEAD_LINE_PREFIX = '--';
  * @param matchText - The text that matched, used to place the window on an over-wide line.
  * @param contextLines - The number of lines around the match to include.
  * @param lineCap - Width at which a line is windowed around the match; `Infinity` never windows.
- * @param deadLine - Per-line liveness from {@link markDeadLines}; a dead line is prefixed.
  * @returns A multi-line string containing the match context.
- *
- * @remarks
- * `commented` answers for the matched line only, and the window is wider than the match: an
- * abandoned block reached the wire as bare SQL because the one line that produced a hit was flagged
- * while the statement it belonged to \u2014 `DELETE d1` a line above, which matched nothing itself \u2014 was
- * served identically to the live code two hundred lines up (IB4-T3: the procedure was answered as
- * mutating a table it only reads). Per-line knowledge is what the window needs, and the mask
- * {@link scanBody} already computed over this body is where it comes from.
- *
- * The prefix goes on after windowing, so it is never the part that gets elided, and only where the
- * whole line is dead \u2014 marking live code would delete real lineage, which is the expensive
- * direction.
  */
 function buildSnippet(
   lines: string[],
@@ -903,22 +831,20 @@ function buildSnippet(
   matchText: string,
   contextLines: number,
   lineCap: number,
-  deadLine: Uint8Array,
 ): string {
   const start = Math.max(0, matchLine - (contextLines - 1));
   const end = Math.min(lines.length, matchLine + contextLines);
   const termLower = matchText.toLowerCase();
-  return lines.slice(start, end).map((l, i) => {
+  return lines.slice(start, end).map(l => {
     const trimmed = l.trimEnd();
-    const mark = (text: string): string => (deadLine[start + i] === 1 ? DEAD_LINE_PREFIX + text : text);
-    if (trimmed.length <= lineCap) return mark(trimmed);
+    if (trimmed.length <= lineCap) return trimmed;
     const matchPos = termLower.length > 0 ? trimmed.toLowerCase().indexOf(termLower) : -1;
-    if (matchPos < 0) return mark(trimmed);
+    if (matchPos < 0) return trimmed;
     // Trim long lines so the match stays within the visible panel width.
     const windowStart = Math.max(0, matchPos - SIDEBAR_WINDOW_LEAD);
     const windowEnd = Math.min(trimmed.length, windowStart + lineCap);
-    return mark((windowStart > 0 ? '\u2026' : '') +
+    return (windowStart > 0 ? '\u2026' : '') +
       trimmed.slice(windowStart, windowEnd) +
-      (windowEnd < trimmed.length ? '\u2026' : ''));
+      (windowEnd < trimmed.length ? '\u2026' : '');
   }).join('\n');
 }
