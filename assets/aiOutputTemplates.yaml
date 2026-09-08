@@ -273,9 +273,6 @@ technical_capture:
        excessive DISTINCT, OR in a join predicate, correlated subquery or
        scalar UDF per row, unguarded UPDATE or DELETE, TRUNCATE outside a
        transaction, loading order that reads a target before it is written.
-    9. Comments — read against the statement they annotate; a correct one that
-       answers the question belongs in the body, carrying the comment's own
-       terms.
     </section_skeleton>
 
     Markdown; the engine owns `#`/`##` headings, so a bold label opens the
@@ -317,6 +314,10 @@ structural_callouts:
 
     A value the statement hardcodes is reported as the literal it is, in the
     section it belongs to — never judged as good or bad.
+
+    A comment is a claim about the statement, not evidence for it: where the
+    statement implements the claim, answer in the comment's own terms; where it
+    does not, the gap between them is the finding.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.Region = r.Region` on nullable
     `Region` in `vwOrders`: an order with no region never reaches `FactSales`.
