@@ -788,14 +788,6 @@ function toLineRanges(lines: number[]): string {
  * nothing extra. Marked, never filtered — a comment can hold the answer, and the few context lines
  * a hit ships with cannot show the block it sits in.
  *
- * `enclosing_predicate` is the same shape one level up, for control flow instead of comments: the
- * innermost `IF` / `WHILE` condition governing the hit's line, absent when the line runs
- * unconditionally. A gated statement and an ungated one arrive identical inside a three-line
- * window, so the reader attaches whichever condition the payload happens to contain (IB3-T3: an
- * ungated row-count verification was delivered as gated by the one `@ForceReimport` token in the
- * payload, which gates a dedup two hundred lines earlier). Right or absent, never a guess: a
- * single-statement `IF`, a body whose blocks do not balance, and a dead line all report nothing.
- *
  * `by_object` is the one per-object home: every object that produced a hit, with its `hits` total
  * and — where anything is dead — `commented_hits` and the commented lines as ranges. A per-row
  * value is read row by row, while an answer composed by theme merges rows from several places into
@@ -842,11 +834,10 @@ export function searchDdl(
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
   // No limit argument: a grep result is never sliced. Size is answered by the budget check below.
-  const matches = searchBodyScripts(searchableNodes, compiled.regex, typeSet, undefined, undefined, onDebug);
+  const matches = searchBodyScripts(searchableNodes, compiled.regex, typeSet);
 
-  // `commented` and `enclosing_predicate` are spread in only when they hold, so a live and
-  // unconditional hit serializes exactly as before; a dead or gated one says so instead of reading
-  // as unconditional behaviour.
+  // `commented` is spread in only when the match sits inside a comment, so a live hit serializes
+  // exactly as before; a dead one says so instead of reading as behaviour.
   const results = matches.map(m => ({
     id:      m.node.id,
     name:    m.node.name,
@@ -855,7 +846,6 @@ export function searchDdl(
     text:    m.text,
     context: m.snippet,
     ...(m.commented ? { commented: true as const } : {}),
-    ...(m.enclosingPredicate ? { enclosing_predicate: m.enclosingPredicate } : {}),
   }));
 
   // What was actually read, so a zero-match answer is a fact about the search rather than advice

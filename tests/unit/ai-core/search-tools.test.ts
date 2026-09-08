@@ -21,10 +21,6 @@
  *   list entirely, never a partial one;
  * - a hit inside a SQL comment carries `commented: true` while a live hit's row is unchanged
  *   (M0-T3: the 3-line context window dropped the enclosing block, and dead SQL read as behaviour);
- * - a hit governed by a conditional block carries `enclosing_predicate`, and one that is not
- *   carries nothing — right or absent, never the condition that happens to be nearby (IB3-T3: an
- *   ungated row-count verification was delivered as gated by the single `@ForceReimport` token the
- *   payload contained, which gates a dedup a hundred and fifty lines earlier);
  * - `by_object` states every matching object once with its `hits` total and, where anything is
  *   dead, its `commented_hits` and line ranges, and no hit is lost to the grouping (M0-T3: a
  *   per-row flag does not survive an answer composed by theme, and a per-object count tallied by
@@ -79,7 +75,7 @@ function makeModel(extra: LineageNode[] = []): DatabaseModel {
 
 type DdlRow = {
   id: string; name: string; type: string; line: number; text: string; context: string;
-  commented?: true; enclosing_predicate?: string;
+  commented?: true;
 };
 type DdlResult = {
   results?: DdlRow[]; total?: number; objects?: number; hint?: string; error?: string;
@@ -339,129 +335,6 @@ describe('search tools — grep contract', () => {
     expect(res.ai_hint).not.toContain('try regex mode');
     const substring = searchObjects(model, 'zzz_no_such_object') as { ai_hint?: string };
     expect(substring.ai_hint, 'substring mode still gets the mode suggestion').toContain('try regex mode');
-  });
-
-  it('attaches the condition that governs a hit, and nothing to a hit that is not governed', () => {
-    // IB3-T3. The two statements below are the shape that produced the defect: a dedup gated by
-    // one variable, and an ungated verification reading the same table a few statements later.
-    // Inside a three-line window they arrive identical, so the only condition token in the payload
-    // was welded onto the statement it does not govern. The invariant is per hit: whatever is
-    // served must be the condition over that line, and a line no block governs is served bare.
-    const body = [
-      'BEGIN',                                              // 1
-      '    IF @ForceReimport = 0',                          // 2
-      '    BEGIN',                                          // 3
-      '        DELETE rb FROM #RawBatch rb',                // 4
-      '        JOIN [ai].[RawOrderImport] roi ON 1 = 1;',   // 5
-      '    END;',                                           // 6
-      '',                                                   // 7
-      '    SELECT @VerifyCount = COUNT(*)',                 // 8
-      '    FROM [ai].[RawOrderImport]',                     // 9
-      '    WHERE BatchID = @BatchID;',                      // 10
-      '',                                                   // 11
-      '    IF @VerifyCount <> @ProcessedRows AND @DryRun = 0', // 12
-      '    BEGIN',                                          // 13
-      '        SET @Warnings = @Warnings + 1;',             // 14
-      '    END;',                                           // 15
-      'END;',                                               // 16
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[spimport]', name: 'spImport', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'RawOrderImport|@Warnings', BUDGET) as DdlResult).results ?? []);
-    const at = (line: number): DdlRow => rows.find(r => r.line === line)!;
-
-    expect(at(9).enclosing_predicate, 'the verification reads the table unconditionally').toBeUndefined();
-    expect(at(5).enclosing_predicate, 'the dedup is the statement the flag gates').toContain('@ForceReimport');
-    expect(at(14).enclosing_predicate, 'the warning is gated by its own condition, not the flag')
-      .toMatch(/@VerifyCount.*@DryRun/);
-    expect(at(14).enclosing_predicate).not.toContain('@ForceReimport');
-    // The defect restated as a payload property: the flag is no longer the only condition on the
-    // wire, so it is no longer the only one an answer can reach for.
-    const conditions = rows.map(r => r.enclosing_predicate).filter(Boolean);
-    expect(conditions.filter(c => c!.includes('@ForceReimport')), 'one statement, not the payload')
-      .toHaveLength(1);
-  });
-
-  it('reports the innermost condition, negates an ELSE branch, and carries a loop condition', () => {
-    const body = [
-      'BEGIN',                                    // 1
-      '    WHILE @Retry <= @MaxRetries',          // 2
-      '    BEGIN',                                // 3
-      '        BEGIN TRY',                        // 4
-      '            SELECT 1 AS InLoop;',          // 5
-      '            IF @Retry > 1',                // 6
-      '            BEGIN',                        // 7
-      '                SELECT 2 AS InNested;',    // 8
-      '            END;',                         // 9
-      '        END TRY',                          // 10
-      '        BEGIN CATCH',                      // 11
-      '            SELECT 3 AS InCatch;',         // 12
-      '        END CATCH;',                       // 13
-      '    END;',                                 // 14
-      '',                                         // 15
-      '    IF @DryRun = 1',                       // 16
-      '    BEGIN',                                // 17
-      '        SELECT 4 AS InThen;',              // 18
-      '    END',                                  // 19
-      '    ELSE',                                 // 20
-      '    BEGIN',                                // 21
-      '        SELECT 5 AS InElse;',              // 22
-      '    END;',                                 // 23
-      '    SELECT 6 AS AfterAll;',                // 24
-      'END;',                                     // 25
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[spflow]', name: 'spFlow', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'SELECT [0-9]', BUDGET) as DdlResult).results ?? []);
-    const at = (line: number): string | undefined => rows.find(r => r.line === line)?.enclosing_predicate;
-
-    expect(at(5), 'a loop body is governed by the loop condition').toContain('@Retry <= @MaxRetries');
-    expect(at(12), 'a CATCH inside the loop is still inside the loop').toContain('@Retry <= @MaxRetries');
-    expect(at(8), 'the innermost condition wins over the loop it sits in').toContain('@Retry > 1');
-    expect(at(8), 'and the outer one is not stacked onto it').not.toContain('@MaxRetries');
-    expect(at(18)).toContain('@DryRun = 1');
-    expect(at(22), 'the ELSE branch runs on the negation, never on the condition itself')
-      .toBe('NOT (@DryRun = 1)');
-    expect(at(24), 'past the block, nothing governs the line').toBeUndefined();
-  });
-
-  it('never reads a condition out of a comment, and stays silent where the block does not resolve', () => {
-    const body = [
-      'BEGIN',                                             // 1
-      '    /* Removed Q4 2025:',                           // 2
-      '       IF @Legacy = 1',                             // 3
-      '       BEGIN',                                      // 4
-      '           SELECT 1 AS WasChunked;',                // 5
-      '       END; */',                                    // 6
-      '    SELECT 2 AS Live;',                             // 7
-      '',                                                  // 8
-      '    IF @Trace = 1   -- only when tracing',          // 9
-      '    BEGIN',                                         // 10
-      '        SELECT 3 AS Traced;',                       // 11
-      '    END;',                                          // 12
-      '',                                                  // 13
-      '    IF @Skip = 1',                                  // 14
-      '        SELECT 4 AS Bare;',                         // 15
-      'END;',                                              // 16
-    ].join('\n');
-    const proc = makeModel([node({ id: '[ai].[spcomment]', name: 'spComment', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'SELECT [0-9]', BUDGET) as DdlResult).results ?? []);
-    const at = (line: number): DdlRow => rows.find(r => r.line === line)!;
-
-    expect(at(5).commented, 'the commented-out block is dead').toBe(true);
-    expect(at(5).enclosing_predicate, 'a dead line is governed by nothing; the flag is the fact').toBeUndefined();
-    expect(at(7).enclosing_predicate, 'and the commented BEGIN/END never became live structure').toBeUndefined();
-    expect(at(11).enclosing_predicate, 'a trailing comment is not part of the condition').toBe('@Trace = 1');
-    expect(at(15).enclosing_predicate, 'a single-statement IF has no block to bound, so nothing is claimed')
-      .toBeUndefined();
-  });
-
-  it('reports nothing at all for a body whose blocks do not balance', () => {
-    // Right or absent: an unbalanced read means the nesting is wrong somewhere earlier, so every
-    // condition derived from it is suspect and none of them is served.
-    const body = ['BEGIN', '    IF @A = 1', '    BEGIN', '        SELECT 1 AS Orphan;', 'END;'].join('\n');
-    const proc = makeModel([node({ id: '[ai].[spbroken]', name: 'spBroken', type: 'procedure', bodyScript: body })]);
-    const rows = ((searchDdl(proc, 'SELECT 1', BUDGET) as DdlResult).results ?? []);
-    expect(rows, 'the hit is still reported').toHaveLength(1);
-    expect(rows[0].enclosing_predicate, 'without a condition guessed from a broken read').toBeUndefined();
   });
 
   it('package.json languageModelTools is what the generator produces from TOOL_DEFS', () => {

@@ -654,7 +654,7 @@
         "toolReferenceName": "lineage_search_ddl",
         "displayName": "Search DDL",
         "userDescription": "Search SQL body scripts for a text pattern.",
-        "modelDescription": "Grep over view, procedure and function bodies: a regular expression in, every match out with its object, 1-based line number, matched line and surrounding context, and a hit inside a SQL comment flagged `commented: true`. A hit governed by a conditional block carries `enclosing_predicate`, the innermost `IF`/`WHILE` condition over it (an `ELSE` branch as `NOT (...)`); no field means the line is not gated by anything the search could resolve, so never attribute a condition to a hit that does not carry it. `by_object` states each object once with its `hits` count and its `commented_hits`/`commented_lines` — take a per-object count from there, never by tallying rows. Case-insensitive; `^` and `$` match per line. No matches is `total: 0`; an unusable pattern is `invalid_regex` with the repair.",
+        "modelDescription": "Grep over view, procedure and function bodies: a regular expression in, every match out with its object, 1-based line number, matched line and surrounding context, and a hit inside a SQL comment flagged `commented: true`. `by_object` states each object once with its `hits` count and its `commented_hits`/`commented_lines` — take a per-object count from there, never by tallying rows. Case-insensitive; `^` and `$` match per line. No matches is `total: 0`; an unusable pattern is `invalid_regex` with the repair.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
