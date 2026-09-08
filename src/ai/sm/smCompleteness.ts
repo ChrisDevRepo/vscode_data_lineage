@@ -54,6 +54,9 @@ export function computeUnaccounted(required: readonly string[], accounted: Itera
  * @param unaccounted - Active columns missing from the submitted flow.
  * @param available - Valid active columns exposed for correction.
  * @param contradicted - Active columns the focus itself declares; empty when it declares none.
+ * @param appendHeldOrder - False when the caller merges this envelope with another fault family
+ * (D-048) and states the resubmission order itself once, covering both; true (default) preserves
+ * the standalone envelope's own held-draft order.
  * @returns The narrow held-content retry envelope.
  */
 export function buildIncompleteRejection(
@@ -61,6 +64,7 @@ export function buildIncompleteRejection(
   unaccounted: string[],
   available: string[],
   contradicted: readonly string[] = [],
+  appendHeldOrder = true,
 ): SubmitResult {
   const held = `Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`;
   const entryRepair = `Add a column_flow entry for each: out_col is the column, upstream_columns its real upstream columns — or upstream_columns: [] where the column originates here`;
@@ -69,7 +73,7 @@ export function buildIncompleteRejection(
     : `${entryRepair}, or return verdict:'passthrough' with column_flow:[].`;
   return {
     error: 'column_chain_incomplete',
-    hint: `Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. ${repair} ${held}`,
+    hint: `Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. ${repair}${appendHeldOrder ? ` ${held}` : ''}`,
     detail: contradicted.length > 0
       ? { unaccounted, available_columns: available, declared_here: [...contradicted] }
       : { unaccounted, available_columns: available },

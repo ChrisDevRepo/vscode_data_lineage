@@ -66,7 +66,13 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
  */
 const HELD_RETRY_ORDER =
   'Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.';
-const FULL_RESUBMIT_ORDER =
+/**
+ * Shared "nothing is held" resubmission order — used both here (mixed route-kind rejections) and
+ * by the caller that merges a topology fault with a deferred CT completeness fault into one
+ * envelope (D-048), where the same stricter policy applies for the same reason: another repair is
+ * riding along, so the held-draft shortcut is not offered.
+ */
+export const FULL_RESUBMIT_ORDER =
   'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.';
 
 /**
@@ -100,9 +106,12 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
  * order(s); `detail` carries the facts + the valid column set.
  *
  * @param errors - Field-resolved validation failures accumulated before commit.
+ * @param appendHoldOrder - False when the caller merges this envelope with another fault family
+ * (D-048) and states the resubmission order itself once, covering both; true (default) preserves
+ * the standalone envelope's own order.
  * @returns A stable structured rejection without a second repair protocol.
  */
-export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitResult {
+export function buildRouteValidationRejection(errors: InvalidRoute[], appendHoldOrder = true): SubmitResult {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const error = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : 'route_validation_failed';
   const missingRouteErrors = errors.filter(e => e.kind === 'missing_required_route');
@@ -124,7 +133,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitRes
     ...distinctKinds.filter(k => k !== 'missing_required_route').map(k => ROUTE_REJECTION_DIRECTIVE[k]),
     // Mirrors the engine's hold condition — pure neighbor incompleteness — so the order the model
     // follows is the one the engine will honour.
-    missingRouteErrors.length > 0
+    appendHoldOrder && missingRouteErrors.length > 0
       ? (missingRouteErrors.length === errors.length ? HELD_RETRY_ORDER : FULL_RESUBMIT_ORDER)
       : '',
   ].filter(Boolean).join(' ');

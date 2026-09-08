@@ -1,5 +1,5 @@
 import { columnCarryFromRoute, columnCarryOf, DEFAULT_SM_START_DEPTH, EngineAspectMode, INHERIT_CARRY, InvalidRoute, type DepthIntent } from './smTypes';
-import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
+import { buildRouteValidationRejection, FULL_RESUBMIT_ORDER, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { buildIncompleteRejection, computeUnaccounted } from './smCompleteness';
 import { checkActiveScopeAdmission, DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 /**
@@ -2602,8 +2602,29 @@ export class NavigationEngine implements IHopStateMachine {
     // prose for the established sections:[] retry.
     const pruneRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
     if (pruneRoutes.length > 0) {
-      this.lastRoutedRejected = pruneRoutes.length;
       for (const r of pruneRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
+      if (ctUnaccountedColumns) {
+        // D-048: the deferred CT completeness fault (`ctUnaccountedColumns`, computed above) was
+        // true in the same payload as the topology fault(s) just accumulated. Report both in this
+        // one envelope instead of returning here and re-deriving the CT fault next turn — a
+        // topology fault riding along forces "nothing is held", the same stricter policy already
+        // used for a mixed route rejection.
+        this.lastRoutedRejected = pruneRoutes.length + ctUnaccountedColumns.length;
+        this.memory.recordRejection(focusId, `column_chain_incomplete: ${ctUnaccountedColumns.join(', ')}`, this.hopCount);
+        const routeRejection = buildRouteValidationRejection(pruneRoutes, false);
+        const completenessRejection = buildIncompleteRejection(focusId, ctUnaccountedColumns, [...ctActiveColumns], [], false);
+        // Both builders always return their error-shaped envelope; the narrow-by-construction
+        // `'error' in x` checks satisfy `SubmitResult`'s declared ok/error union without a cast.
+        if (!('error' in routeRejection) || !('error' in completenessRejection)) {
+          return routeRejection;
+        }
+        return {
+          error: routeRejection.error,
+          hint: `${routeRejection.hint} ${completenessRejection.hint} ${FULL_RESUBMIT_ORDER}`,
+          detail: { route: routeRejection.detail, column_chain: completenessRejection.detail },
+        };
+      }
+      this.lastRoutedRejected = pruneRoutes.length;
       if (pruneRoutes.every(r => r.kind === 'missing_required_route')) {
         this.heldFindingDraft.hold(structuredClone(finding));
       }
@@ -2612,7 +2633,8 @@ export class NavigationEngine implements IHopStateMachine {
 
     // CT completeness guard — deferred half: the focus declares none of the active columns, so the
     // incomplete chain reports only after the prune verdict above had its chance, at the same
-    // evaluation point this rejection had before the contradicted half was hoisted.
+    // evaluation point this rejection had before the contradicted half was hoisted. Reached only
+    // when no topology fault rode along — that combination merges into the envelope above.
     if (ctUnaccountedColumns) {
       this.lastRoutedRejected = ctUnaccountedColumns.length;
       this.memory.recordRejection(focusId, `column_chain_incomplete: ${ctUnaccountedColumns.join(', ')}`, this.hopCount);
