@@ -558,7 +558,7 @@
               }
             },
             "schemas": {
-              "description": "Optional schema-name filter; use with an empty query to list objects in those schemas.",
+              "description": "Optional schema-name filter; combine with a zero-length query — not the two quote characters — to list objects in those schemas.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -693,7 +693,7 @@
         "toolReferenceName": "lineage_get_neighbor_columns",
         "displayName": "Get Neighbor Columns",
         "userDescription": "Inspect a neighbor's columns for pruning decisions during active SM exploration.",
-        "modelDescription": "Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. - Use `lineage_get_neighbor_columns({ids:[\"...\"]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor's role from the DDL alone, or the column names are hidden. DDL text is not returned. Pass neighbor ids only, excluding the focus node itself.",
+        "modelDescription": "Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. DDL text is not returned. Pass neighbor ids only, excluding the focus node itself.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"

@@ -22,7 +22,6 @@ import {
   SearchDdlInputSchema,
   GetNeighborColumnsInputSchema,
 } from './toolSchemas';
-import { NEIGHBOR_COLUMNS_TRIGGER } from '../prompting/smPrompts';
 
 /** Lifecycle effect of a tool invocation after successful validation. */
 type ToolEffect = NonNullable<ToolDefinition['effect']>;
@@ -114,7 +113,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_neighbor_columns', inputSchema: GetNeighborColumnsInputSchema, tags: ['lineage'], effect: 'read',
     userDescription: 'Inspect a neighbor\'s columns for pruning decisions during active SM exploration.',
-    modelDescription: `Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. ${NEIGHBOR_COLUMNS_TRIGGER}, or the column names are hidden. DDL text is not returned. Pass neighbor ids only, excluding the focus node itself.`,
+    modelDescription: 'Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. DDL text is not returned. Pass neighbor ids only, excluding the focus node itself.',
     progressLabel: 'Inspecting neighbor columns…',
   },
   {

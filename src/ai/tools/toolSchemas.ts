@@ -624,7 +624,7 @@ export const GetScreenStateInputSchema = z.object({
 export const SearchObjectsInputSchema = z.object({
   query: z.string().describe('In substring mode: an object or column name fragment, at least 2 characters, never \'*\' — e.g. "SalesOrder", without a schema prefix like \'[dbo].\'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas.'),
   types: z.array(z.enum(['table', 'view', 'procedure', 'function', 'external'])).optional().describe('Optional object-type filter.'),
-  schemas: z.array(z.string()).optional().describe('Optional schema-name filter; use with an empty query to list objects in those schemas.'),
+  schemas: z.array(z.string()).optional().describe('Optional schema-name filter; combine with a zero-length query — not the two quote characters — to list objects in those schemas.'),
   mode: z.enum(['substring', 'regex']).optional().describe('Name matching strategy: "substring" (default) or "regex".'),
 }).strict();
 
