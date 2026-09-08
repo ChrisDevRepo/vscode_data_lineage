@@ -1,4 +1,4 @@
-import { findBareNonPrunedNodes } from '../../../src/ai/tools/presentResult';
+import { findBareNonPrunedNodes, findUnrenderedDetailSlotIds } from '../../../src/ai/tools/presentResult';
 import { describe, expect, it } from 'vitest';
 
 describe("findBareNonPrunedNodes — observe bare nodes, never mutate", () => {
@@ -48,4 +48,47 @@ describe("findBareNonPrunedNodes — observe bare nodes, never mutate", () => {
   expect(findBareNonPrunedNodes(resultGraph, input, ['[ai].[a]']).length, 'no sections → no report (update-style call)').toBe(0);
 });
 
+});
+
+describe("findUnrenderedDetailSlotIds — observe unsectioned detail slots, never mutate", () => {
+  it("reports slots absent from every sections[].node_ids[]", () => {
+    const slotNodeIds = ['[ai].[fact]', '[ai].[proc]', '[ai].[view]'];
+    const input: any = {
+      sections: [
+        { label: 'Origin', node_ids: ['[ai].[fact]'], text: 'x' },
+        { label: 'Transform', node_ids: [], text: 'y' },
+      ],
+    };
+    const before = JSON.stringify(input);
+    const unrendered = findUnrenderedDetailSlotIds(slotNodeIds, input);
+    expect(JSON.stringify(input), 'payload is NOT mutated').toBe(before);
+    expect(unrendered.sort().join(','), 'returns exactly the slots absent from sections[].node_ids[]').toBe(['[ai].[proc]', '[ai].[view]'].sort().join(','));
+  });
+
+  it("a slot linked only via highlight_groups still counts as unrendered — this is not findBareNonPrunedNodes", () => {
+    const slotNodeIds = ['[ai].[a]', '[ai].[b]'];
+    const input: any = {
+      sections: [{ label: 'S', node_ids: ['[ai].[a]'], text: 't' }],
+      highlight_groups: [{ label: 'Src', color: 'source', node_ids: ['[ai].[b]'] }],
+    };
+    // findBareNonPrunedNodes would call [b] covered (highlight_groups counts); the detail-slot
+    // check does not, because a highlight color carries no captured detail text.
+    expect(findUnrenderedDetailSlotIds(slotNodeIds, input)).toEqual(['[ai].[b]']);
+  });
+
+  it("nothing reported when every slot is sectioned", () => {
+    const slotNodeIds = ['[ai].[a]', '[ai].[b]'];
+    const input: any = { sections: [{ label: 'S', node_ids: ['[ai].[a]', '[ai].[b]'], text: 't' }] };
+    expect(findUnrenderedDetailSlotIds(slotNodeIds, input).length).toBe(0);
+  });
+
+  it("no sections → no report (update-style call)", () => {
+    const input: any = { sections: [] };
+    expect(findUnrenderedDetailSlotIds(['[ai].[a]'], input).length).toBe(0);
+  });
+
+  it("no slots → no report", () => {
+    const input: any = { sections: [{ label: 'S', node_ids: [], text: 't' }] };
+    expect(findUnrenderedDetailSlotIds([], input).length).toBe(0);
+  });
 });

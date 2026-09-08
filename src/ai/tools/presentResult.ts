@@ -663,6 +663,37 @@ export function findBareNonPrunedNodes(
 }
 
 /**
+ * Reports which delivered `detail_slots[]` reached no rendered section — an observation for the
+ * log, never a payload mutation.
+ *
+ * @remarks
+ * A different question from {@link findBareNonPrunedNodes}: that function walks every rendered
+ * (non-pruned) node and accepts either badge-producing surface, `sections[].node_ids[]` OR
+ * `highlight_groups[].node_ids[]`, because a highlight color is a legitimate way to place a
+ * passthrough node that never had analyzed detail to begin with. A `detail_slots[]` entry is
+ * different: it is the model's own captured technical findings for that node, the richest
+ * material the synthesis call received, and `sections[].text` is the only surface that carries
+ * prose — a highlight color or a bare badge does not carry the slot's content anywhere. Folding
+ * this into `findBareNonPrunedNodes`'s highlight-tolerant, all-rendered-nodes check would hide
+ * exactly the loss this function exists to name, so it stays a second, narrower computation
+ * rather than an extra parameter on the first.
+ *
+ * @param slotNodeIds - `detail_slots[].nodeId` for the whole session (`sess.memory.notedNodeIds`).
+ * @param input - The (already auto-fixed) present payload. Read-only.
+ * @returns The slot ids linked in no `sections[].node_ids[]`, in `slotNodeIds` order; empty when
+ *   there are no authored sections (update-style calls) or every slot was sectioned.
+ */
+export function findUnrenderedDetailSlotIds(
+  slotNodeIds: readonly string[],
+  input: PresentResultInput,
+): string[] {
+  if (slotNodeIds.length === 0 || !input.sections || input.sections.length === 0) return [];
+  const sectionedNodeIds = new Set<string>();
+  for (const sec of input.sections) for (const id of sec.node_ids ?? []) sectionedNodeIds.add(id);
+  return slotNodeIds.filter(id => !sectionedNodeIds.has(id));
+}
+
+/**
  * Validates the full `present_result` input against mechanical contracts only.
  *
  * @remarks

@@ -11,7 +11,7 @@ import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
 import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
-  findBareNonPrunedNodes, buildColumnChainPreface,
+  findBareNonPrunedNodes, findUnrenderedDetailSlotIds, buildColumnChainPreface,
   isRepairablePresentResultFailure,
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
@@ -401,6 +401,15 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         s.logger.debug(`[Presentation] ${bareNodeIds.length} non-pruned node(s) left bare by the AI (rendered unlabeled/uncolored) — ${trunc(bareNodeIds.join(', '), 200)}`);
       }
 
+      // A detail slot is the model's own captured technical findings for that node — the richest
+      // material the synthesis call received for it — and sections[].text is the only surface that
+      // carries prose. A slot this misses is not "bare" in the findBareNonPrunedNodes sense (a
+      // highlight color does not carry the slot's content); observe and log only, same contract.
+      const unrenderedSlotIds = findUnrenderedDetailSlotIds(sess.memory.notedNodeIds, presentInput);
+      if (unrenderedSlotIds.length > 0) {
+        s.logger.debug(`[Presentation] ${unrenderedSlotIds.length} of ${sess.memory.slotCount} detail slot(s) reached no section — ${trunc(unrenderedSlotIds.join(', '), 200)}`);
+      }
+
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       let assembledDescription: string | undefined = undefined;
       if (presentInput.sections?.length) {
@@ -431,7 +440,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       s.logger.info(
-        `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount}`
+        `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
       );
 
       // Checks that need context validatePresentResult does not hold — the cached discovery answer
