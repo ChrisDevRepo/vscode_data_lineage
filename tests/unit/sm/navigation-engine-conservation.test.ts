@@ -43,6 +43,33 @@ describe("Navigation Engine — node conservation", () => {
   expect(rendered.has('c'), 'the deepest analyzed node survives (full-chain conservation)').toBe(true);
 });
 
+  it("On an upstream chain, suggested_sections buckets every rendered node (skeleton is a stage grouping, not the directed BFS spine).", () => {
+  const upNodes: LineageNode[] = [
+    makeNode({ id: 'origin', schema: 'dbo', name: 'origin', type: 'procedure' }),
+    makeNode({ id: 'p1',     schema: 'dbo', name: 'p1',     type: 'view' }),
+    makeNode({ id: 'p2',     schema: 'dbo', name: 'p2',     type: 'view' }),
+    makeNode({ id: 'p3',     schema: 'dbo', name: 'p3',     type: 'view' }),
+  ];
+  const upEdges: Array<[string, string]> = [
+    ['p1', 'origin'],
+    ['p2', 'p1'],
+    ['p3', 'p2'],
+  ];
+  const upModel: DatabaseModel = makeModel(upNodes, upEdges, ['dbo']);
+  const upGraph = makeGraph(upNodes, upEdges);
+  const engine = new NavigationEngine(upModel, upGraph, () => {}, {});
+  engine.init({ origin: 'origin', question: 'upstream skeleton coverage', direction: 'upstream', depthIntent: { kind: 'explicit', levels: 5 } });
+  driveEngine(engine, { routes: { origin: ['p1'], p1: ['p2'], p2: ['p3'] } });
+
+  const result = engine.getResult();
+  const fullIds = new Set(result.fullNodes.map((n) => n.id));
+  const sections = result.suggested_sections ?? [];
+  expect(sections.length, 'the engine emits a skeleton at all').toBeGreaterThan(0);
+  const bucketed = new Set(sections.flatMap((s) => s.node_ids));
+  expect(bucketed.size, 'suggested_sections carries no phantom id beyond fullNodes').toBe(fullIds.size);
+  for (const id of fullIds) expect(bucketed.has(id), `${id} is covered by a suggested_section`).toBe(true);
+});
+
   it("required-connected, so nothing on the live path is lost between the ledger and the render.", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'origin', question: 'committed-set conservation', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 5 } });

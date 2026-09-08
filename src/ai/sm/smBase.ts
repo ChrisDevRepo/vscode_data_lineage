@@ -3633,7 +3633,16 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    const depthMap = bfsDepthMap(finalEdges, this.originNodeId!);
+    // bfsDepthMap walks source->target only. On an upstream trace every retained node sits
+    // behind the origin, so that directed walk reaches depth 1 and stops — the whole ancestor
+    // chain sorts past maxDepth on the `?? 999` fallback and never lands in a bucket (measured:
+    // m0-8-fireworks/run-T6 collapsed 28 retained nodes into 2 buckets). The skeleton groups
+    // render stages, not a flow claim — direction is stated separately by buildDirectionLines
+    // in smPrompts.ts — so the grouping walk is fed both edge directions here; bfsDepthMap's own
+    // directed contract and tests are untouched.
+    const symmetrizedEdges: Array<[string, string, string]> = [];
+    for (const [s, t, ty] of finalEdges) { symmetrizedEdges.push([s, t, ty], [t, s, ty]); }
+    const depthMap = bfsDepthMap(symmetrizedEdges, this.originNodeId!);
     const sortedIds = Array.from(finalNodeIds).sort((a, b) => (depthMap.get(a) ?? 999) - (depthMap.get(b) ?? 999));
 
     const sections: Array<{ label: string; node_ids: string[] }> = [];
@@ -3643,6 +3652,13 @@ export class NavigationEngine implements IHopStateMachine {
       if (idsAtDepth.length > 0) {
         sections.push({ label: i === 0 ? 'Origin' : `Stage ${i}`, node_ids: idsAtDepth });
       }
+    }
+    // A retained node with no edge in finalEdges at all never enters the walk above either;
+    // the skeleton's contract is to bucket every rendered node, so the remainder is appended
+    // rather than silently dropped like it was before this fix.
+    const unbucketed = sortedIds.filter(id => !depthMap.has(id));
+    if (unbucketed.length > 0) {
+      sections.push({ label: 'Unconnected', node_ids: unbucketed });
     }
 
     return {
