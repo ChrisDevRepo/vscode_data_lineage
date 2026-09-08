@@ -67,7 +67,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_objects', inputSchema: SearchObjectsInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search for database objects by name or column.',
-    modelDescription: 'Search database objects by name or column name using substring or regex matching. With `mode:"regex"` the query is a JavaScript regular expression, always case-insensitive, matched against both the object name and `schema.name`, and taken verbatim — no schema prefix is split off it; an unusable pattern returns `invalid_regex` with the repair, never an empty list. Returns object IDs and metadata. Each result carries an `in_user_filter` flag — when an in-filter search returns 0 hits but out-of-filter results exist, include that schema in the next search; the active filter is a display preference, not a boundary.',
+    modelDescription: 'Search database objects by name or column name using substring or regex matching. With `mode:"regex"` the query is a JavaScript regular expression, always case-insensitive, matched against both the object name and `schema.name`, and taken verbatim — no schema prefix is split off it; an unusable pattern returns `invalid_regex` with the repair, never an empty list. Returns object IDs and metadata. `by_type` states how many results each object kind contributed — take a per-kind count from there, never by tallying rows. Each result carries an `in_user_filter` flag — when an in-filter search returns 0 hits but out-of-filter results exist, include that schema in the next search; the active filter is a display preference, not a boundary.',
     progressLabel: 'Searching database objects…',
   },
   {

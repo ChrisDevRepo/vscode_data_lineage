@@ -193,6 +193,17 @@ export function getContext(
 
 
 /**
+ * The one wording for "list a whole schema", shared by both rejections that offer that repair.
+ *
+ * @remarks
+ * "Send an empty query" was read as the two-character literal `""`, which cleared the length check,
+ * matched no name and returned `total: 0` — a wasted hop with nothing in the payload naming the
+ * mistake (IB3-T2). The arguments object is shown rather than described, so there is no value left
+ * to infer from the prose.
+ */
+const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]} — the query value is zero-length, not the two quote characters.';
+
+/**
  * Validates a substring-mode search query for sanity.
  *
  * @remarks
@@ -207,10 +218,14 @@ export function getContext(
 function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
-    return { ok: false, error: 'query_too_short', hint: 'Use at least 2 characters — a real name fragment like "SalesOrder" or a schema name like "ai". To list everything in a schema, send an empty query WITH schemas:["<schema>"].' };
+    return { ok: false, error: 'query_too_short', hint: `Use at least 2 characters — a real name fragment like "SalesOrder" or a schema name like "ai". ${LIST_SCHEMA_REPAIR}` };
   }
-  if (/^[.*?+^$]+$/.test(trimmed)) {
-    return { ok: false, error: 'query_not_a_name', hint: 'Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, set mode:"regex" to use it as a pattern, or send an empty query WITH schemas:["<schema>"] to list a schema.' };
+  // Quote characters sit in the class for the same reason the regex metacharacters do: matched
+  // literally, no object name contains them. It is also what a caller sends after reading "an empty
+  // query" as a value to type out, so the reading is named here instead of answering it with a list
+  // of nothing.
+  if (/^["'`.*?+^$]+$/.test(trimmed)) {
+    return { ok: false, error: 'query_not_a_name', hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` };
   }
   return { ok: true };
 }
@@ -224,13 +239,17 @@ function validateQuery(query: string): { ok: true } | { ok: false; error: string
  * It automatically handles schema mismatches by searching globally if a schema-restricted
  * search yields no results.
  *
+ * `by_type` is the one home for the type breakdown: the same rows `total` counts, tallied on the
+ * pass that tags them. A per-row `t` is read row by row, while an answer grouped by kind states one
+ * number per heading — served, that number cannot drift from the list it heads.
+ *
  * @param model - The database model.
  * @param query - The search query.
  * @param types - Optional filter for object types.
  * @param schemas - Optional filter for schemas.
  * @param mode - Search mode ('substring' or 'regex').
  * @param activeFilter - Current UI filter state to tag results.
- * @returns A list of matches with metadata and AI hints.
+ * @returns A list of matches with metadata, the `by_type` breakdown of that list, and AI hints.
  */
 export function searchObjects(
   model: DatabaseModel,
@@ -319,14 +338,30 @@ export function searchObjects(
       })),
   ];
 
-  // Tag each result with in_user_filter so AI knows what the user currently sees
+  // Tag each result with in_user_filter so AI knows what the user currently sees, and tally the
+  // type breakdown on that same pass: `by_type` is the list `total` summarises, counted once, so
+  // the two cannot disagree and no count is left to be tallied from the rows (IB3-T2: 32 rows
+  // served as 19 table / 8 procedure / 5 view were delivered as "17 tables … 7 views", with only
+  // the served `total` correct). One home, one pass, no second walk over the results.
   const filterSchemaSet = activeFilter?.schemas?.length
     ? new Set(activeFilter.schemas.map(s => s.toLowerCase()))
     : null;
-  const taggedResults = results.map(r => ({
-    ...r,
-    in_user_filter: filterSchemaSet ? filterSchemaSet.has((((r as Record<string, unknown>).s as string) ?? '').toLowerCase()) : true,
-  }));
+  const typeCounts = new Map<string, number>();
+  const taggedResults = results.map(r => {
+    const row = r as Record<string, unknown>;
+    const type = String(row.t);
+    typeCounts.set(type, (typeCounts.get(type) ?? 0) + 1);
+    return {
+      ...r,
+      in_user_filter: filterSchemaSet ? filterSchemaSet.has(((row.s as string) ?? '').toLowerCase()) : true,
+    };
+  });
+  // Bounded by the object-kind union (OBJECT_TYPES, five members), not by the result count, so the
+  // breakdown costs the same on a 32-row answer as on a whole-catalog one. Largest first, so the
+  // heading order an answer writes matches the order it reads.
+  const byType = Object.fromEntries(
+    [...typeCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+  );
 
   const visibleNodeCount = activeFilter
     ? model.nodes.filter(n => {
@@ -348,6 +383,7 @@ export function searchObjects(
   const base = {
     results: taggedResults,
     total: taggedResults.length,
+    by_type: byType,
     filter_context: filterContext,
   };
 

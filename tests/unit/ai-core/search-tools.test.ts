@@ -14,6 +14,9 @@
  * - a pattern whose first match is empty still reports the real match later in the same body;
  * - `search_objects` in regex mode takes the pattern verbatim (no dotted-name splitting) and
  *   names an invalid pattern instead of answering with an empty list;
+ * - `search_objects` serves `by_type` for the same rows `total` counts, and the two quote
+ *   characters are named as a query rather than answered with `total: 0` (IB3-T2: 19/8/5 served
+ *   per row was delivered as "17 tables … 7 views", and "send an empty query" cost a hop);
  * - an over-budget result hands off with the existing `over_discovery_budget` fact and omits the
  *   list entirely, never a partial one;
  * - a hit inside a SQL comment carries `commented: true` while a live hit's row is unchanged
@@ -274,6 +277,47 @@ describe('search tools — grep contract', () => {
     const invalid = searchObjects(model, 'foo(', undefined, undefined, 'regex') as { error?: string; hint?: string };
     expect(invalid.error, 'an unusable pattern is named, never answered with []').toBe('invalid_regex');
     expect(invalid.hint).toContain('closing ")"');
+  });
+
+  it('search_objects serves the type breakdown of the list it counts', () => {
+    // IB3-T2: a 32-row payload carrying 19 table / 8 procedure / 5 view per row, with only `total`
+    // aggregated, was delivered as "17 tables … 7 views" — the rows were tallied by hand. The
+    // breakdown is measured on the same pass as the rows, so it cannot disagree with `total`.
+    const wide = makeModel([
+      node({ id: '[ai].[spload]', name: 'spLoad', type: 'procedure', bodyScript: 'CREATE PROC ai.spLoad AS SELECT 1' }),
+      node({ id: '[ai].[spclean]', name: 'spClean', type: 'procedure', bodyScript: 'CREATE PROC ai.spClean AS SELECT 1' }),
+      node({ id: '[ai].[stage]', name: 'Stage', type: 'table' }),
+    ]);
+    const res = searchObjects(wide, '.', undefined, ['ai'], 'regex') as {
+      total?: number; by_type?: Record<string, number>;
+    };
+    expect(res.by_type, 'largest kind first, so a heading order reads off the payload')
+      .toEqual({ procedure: 2, table: 1, view: 1 });
+    const summed = Object.values(res.by_type ?? {}).reduce((a, b) => a + b, 0);
+    expect(summed, 'the breakdown sums to the served total').toBe(res.total);
+    expect(JSON.stringify(res), 'served next to the total it breaks down, in count order')
+      .toContain('"total":4,"by_type":{"procedure":2,"table":1,"view":1},"filter_context"');
+  });
+
+  it('names the two quote characters as a query, and shows the arguments that list a schema', () => {
+    // IB3-T2, one wasted hop: "send an empty query" was answered with the literal `""`, which
+    // cleared the length check, matched nothing and returned `total: 0` with no diagnosis.
+    const quoted = searchObjects(model, '""', undefined, ['ai']) as { error?: string; hint?: string; total?: number };
+    expect(quoted.error, 'punctuation-only is named, never answered with a list of nothing').toBe('query_not_a_name');
+    expect(quoted.total, 'and the empty list is not what the caller gets').toBeUndefined();
+
+    const short = searchObjects(model, 'a') as { error?: string; hint?: string };
+    expect(short.error).toBe('query_too_short');
+    for (const hint of [quoted.hint ?? '', short.hint ?? '']) {
+      expect(hint, 'the repair shows the arguments object rather than describing it')
+        .toContain('{"query": "", "schemas": ["<schema>"]}');
+      expect(hint, 'and says which reading of it is wrong').toContain('not the two quote characters');
+    }
+
+    // The value the hint names still works.
+    const listed = searchObjects(model, '', undefined, ['ai']) as { total?: number; by_type?: Record<string, number> };
+    expect(listed.total, 'the ai schema holds the view').toBe(1);
+    expect(listed.by_type).toEqual({ view: 1 });
   });
 
   it('never suggests regex mode to a caller already in regex mode', () => {
