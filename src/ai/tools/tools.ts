@@ -278,7 +278,7 @@ export function searchObjects(
       : (normalizedQuery.schemaHint ? [normalizedQuery.schemaHint] : undefined);
 
   if (normalizedQuery.query.length > REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
+    return { error: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   const effectiveQuery = isRegex ? normalizedQuery.query : normalizedQuery.query.trim();
@@ -287,7 +287,7 @@ export function searchObjects(
   if (isRegex) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
-      return { error: 'invalid_regex' as const, hint: regexRejectHint(effectiveQuery, compiled) };
+      return { error: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) };
     }
   }
   const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
@@ -829,13 +829,13 @@ export function searchDdl(
   onDebug?: (msg: string) => void,
 ): object {
   if (query.length > REGEX_MAX_LENGTH) {
-    return { error: 'invalid_regex' as const, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
+    return { error: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
   // Reject invalid / catastrophically slow regex
   const compiled = compileSearchRegex(query, onDebug);
   if (!compiled.ok) {
-    return { error: 'invalid_regex' as const, hint: regexRejectHint(query, compiled) };
+    return { error: REJECTION_CODES.invalidRegex, hint: regexRejectHint(query, compiled) };
   }
 
   const ddlTypes: ObjectType[] = types

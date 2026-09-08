@@ -4,9 +4,10 @@
  * @remarks
  * `REJECTION_CODES` (`src/ai/support/rejectionCodes.ts`) owns any code a second site emits, so a
  * rename cannot drift between the emitting guard, the prompt that teaches the recovery, and the
- * schema that types the envelope. These four each had three or more hand-typed literals. The scan
- * reads the shipped source rather than the module graph: a literal reintroduced in a file this
- * suite never imports is exactly the drift the rule exists to catch.
+ * schema that types the envelope. These five each had three or more hand-typed literals (P1-131
+ * added `invalid_regex`, emitted at four sites in `tools.ts` and named in `toolDefs.ts` prose).
+ * The scan reads the shipped source rather than the module graph: a literal reintroduced in a file
+ * this suite never imports is exactly the drift the rule exists to catch.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +21,7 @@ const MULTI_SITE_CODES = [
   REJECTION_CODES.invalidInput,
   REJECTION_CODES.notFound,
   REJECTION_CODES.supplementRequiresCompleteEngine,
+  REJECTION_CODES.invalidRegex,
 ] as const;
 
 const AI_ROOT = rootPath('src', 'ai');
@@ -58,6 +60,7 @@ describe('rejection codes — one home per multi-site code', () => {
       'invalid_input',
       'not_found',
       'supplement_requires_complete_engine',
+      'invalid_regex',
     ]);
   });
 });

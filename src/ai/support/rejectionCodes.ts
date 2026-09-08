@@ -31,4 +31,6 @@ export const REJECTION_CODES = {
   notFound: 'not_found',
   /** `supplement` was requested without a prior exploration in `complete` status to extend. */
   supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
+  /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
+  invalidRegex: 'invalid_regex',
 } as const;
