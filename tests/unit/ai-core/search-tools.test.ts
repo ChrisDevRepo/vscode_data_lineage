@@ -18,8 +18,10 @@
  *   list entirely, never a partial one;
  * - a hit inside a SQL comment carries `commented: true` while a live hit's row is unchanged
  *   (M0-T3: the 3-line context window dropped the enclosing block, and dead SQL read as behaviour);
- * - the same deadness is stated once per object in `commented_spans` and no hit is lost to the
- *   grouping (M0-T3 bundle 2: a per-row flag does not survive an answer composed by theme);
+ * - `by_object` states every matching object once with its `hits` total and, where anything is
+ *   dead, its `commented_hits` and line ranges, and no hit is lost to the grouping (M0-T3: a
+ *   per-row flag does not survive an answer composed by theme, and a per-object count tallied by
+ *   hand from 33 rows was delivered as 17/16 against 22/11);
  * - `package.json` `languageModelTools` is what the generator produces from `TOOL_DEFS`.
  *
  * The caps travel with the call as one immutable per-turn budget, so a case that needs a tight
@@ -75,7 +77,7 @@ type DdlRow = {
 type DdlResult = {
   results?: DdlRow[]; total?: number; objects?: number; hint?: string; error?: string;
   searched?: { bodies: number; types: string[] }; reason?: string; results_omitted?: boolean;
-  commented_spans?: { id: string; name: string; type: string; hits: number; lines: string }[];
+  by_object?: { id: string; name: string; type: string; hits: number; commented_hits?: number; commented_lines?: string }[];
 };
 
 describe('search tools — grep contract', () => {
@@ -173,7 +175,7 @@ describe('search tools — grep contract', () => {
       .toBe(',"commented":true'.length);
   });
 
-  it('states each object\'s commented lines once as a group, and loses no hit doing it', () => {
+  it('states every object once with its hit count and its commented lines, losing no hit', () => {
     const grouped = makeModel([
       node({
         id: '[ai].[spimport]', name: 'spImport', type: 'procedure',
@@ -209,27 +211,31 @@ describe('search tools — grep contract', () => {
     expect(res.total).toBe(5);
     expect(res.objects).toBe(2);
 
-    // Grouped per object: an object with commented hits is named once, an all-live one not at all.
-    const spans = res.commented_spans ?? [];
-    expect(spans.map(g => g.id), 'one group per object with commented hits, no repeat')
-      .toEqual(['[ai].[spimport]']);
-    expect(spans[0].name).toBe('spImport');
-    expect(spans[0].type).toBe('procedure');
-    expect(spans[0].hits, 'the group counts the commented hits it stands for').toBe(3);
+    // One group per object, every object, in first-hit order — the per-object count is served, so
+    // no answer has to tally it from the rows (M0-T3: 17/16 delivered against an actual 22/11).
+    const groups = res.by_object ?? [];
+    expect(groups.map(g => [g.id, g.hits]), 'every matching object, counted, no repeat')
+      .toEqual([['[ai].[spimport]', 4], ['[ai].[vwlive]', 1]]);
+    expect(groups.reduce((n, g) => n + g.hits, 0), 'the parts sum to the served total').toBe(res.total);
+    expect(res.objects, 'the scalar is the group list\'s length, so the two cannot disagree').toBe(groups.length);
+    expect(groups[0].name).toBe('spImport');
+    expect(groups[0].type).toBe('procedure');
+    expect(groups[0].commented_hits, 'the dead subset is counted apart from the total').toBe(3);
 
     // The span is stated once and covers exactly the commented hit lines — expanding the ranges
     // round-trips to the set of flagged rows, so grouping neither drops nor invents a line.
-    const expanded = spans[0].lines.split(',').flatMap(part => {
+    const expanded = (groups[0].commented_lines ?? '').split(',').flatMap(part => {
       const [from, to] = part.trim().split('-').map(Number);
       return Array.from({ length: (to ?? from) - from + 1 }, (_, i) => from + i);
     });
     expect(expanded, 'consecutive lines join, a gap does not')
       .toEqual(rows.filter(r => r.id === '[ai].[spimport]' && r.commented).map(r => r.line));
-    expect(spans[0].lines, 'one statement, not one per line').toBe('4-5, 8');
+    expect(groups[0].commented_lines, 'one statement, not one per line').toBe('4-5, 8');
 
-    // Nothing commented → the key is absent, so a live-only result is the shape it always was.
-    const live = searchDdl(model, 'OrderId', BUDGET) as DdlResult;
-    expect('commented_spans' in live, 'stated only where there is something to state').toBe(false);
+    // Nothing commented → the object is still counted, and says nothing about deadness.
+    expect(groups[1].name).toBe('vwLive');
+    expect('commented_hits' in groups[1], 'stated only where there is something to state').toBe(false);
+    expect('commented_lines' in groups[1], 'stated only where there is something to state').toBe(false);
   });
 
   it('an over-budget result hands off with the over_discovery_budget fact and omits the list', () => {
@@ -249,8 +255,13 @@ describe('search tools — grep contract', () => {
     expect(res.total, 'the count still answers "how much is there"').toBe(201);
     expect(res.hint).toContain('Narrow the pattern');
 
-    const inline = searchDdl(wide, 'ArchiveOrders', BUDGET) as DdlResult;
+    // The list and the per-object counts are one payload and are measured together, so the
+    // headroom the contract needs is stated here rather than left to the default budget landing
+    // just above the same corpus.
+    const roomy = createTurnTokenBudget({ discoveryTokenBudget: 20_000 });
+    const inline = searchDdl(wide, 'ArchiveOrders', roomy) as DdlResult;
     expect(inline.results?.length, 'under budget the full list is inlined').toBe(201);
+    expect(inline.by_object?.length, 'and every object is counted beside it').toBe(201);
   });
 
   it('search_objects regex mode takes the pattern verbatim and names an invalid one', () => {

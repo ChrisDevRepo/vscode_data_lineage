@@ -745,11 +745,13 @@ function toLineRanges(lines: number[]): string {
  * nothing extra. Marked, never filtered — a comment can hold the answer, and the few context lines
  * a hit ships with cannot show the block it sits in.
  *
- * The same deadness is also stated once per object in `commented_spans`, which names the object and
- * the commented hit lines as ranges. A per-row boolean is read row by row, while an answer composed
- * by theme merges rows from several places into one statement — grouping makes the commented region
- * addressable at the level the answer is written at. Additive: every hit stays in `results` with its
- * own flag, and a result with nothing commented omits the key and serializes exactly as before.
+ * `by_object` is the one per-object home: every object that produced a hit, with its `hits` total
+ * and — where anything is dead — `commented_hits` and the commented lines as ranges. A per-row
+ * value is read row by row, while an answer composed by theme merges rows from several places into
+ * one statement, so the counts an answer states per object are served rather than tallied from the
+ * rows (M0-T3: a hand tally of 33 rows across two procedures was delivered as 17/16 against 22/11,
+ * with only the served `total` correct). `objects` is this list's length, so the count and the
+ * breakdown cannot disagree. Additive: every hit stays in `results` with its own flag.
  *
  * @param model - The database model.
  * @param query - The regex pattern.
@@ -757,8 +759,8 @@ function toLineRanges(lines: number[]): string {
  * @param types - Optional filter for scriptable object types.
  * @param store - Optional column store for high-fidelity DDL.
  * @param onDebug - Optional sink for a debug line when `query` is rewritten, or the result is over budget.
- * @returns Every matching line with its object metadata, plus `commented_spans` where anything is
- * commented, or the empty/invalid/over-budget fact.
+ * @returns Every matching line with its object metadata, plus the per-object `by_object` counts, or
+ * the empty/invalid/over-budget fact.
  */
 export function searchDdl(
   model: DatabaseModel,
@@ -809,27 +811,29 @@ export function searchDdl(
     bodies: searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length,
     types:  ddlTypes,
   };
-  const objects = new Set(results.map(r => r.id)).size;
-
   if (results.length === 0) return { results, total: 0, objects: 0, searched };
 
-  // Grouped per object, the commented region stated once. Built from the same `commented` bit the
-  // rows carry, so it can only restate what is already there; only genuinely consecutive lines are
-  // joined, so a range never claims a line that produced no hit.
-  const commentedByObject = new Map<string, { id: string; name: string; type: string; hits: number; lines: number[] }>();
+  // One group per object, in first-hit order: how many hits it contributed, and which of them are
+  // dead. Built from the same rows and the same `commented` bit, so it can only restate what is
+  // already there; only genuinely consecutive lines are joined, so a range never claims a line that
+  // produced no hit.
+  const hitsByObject = new Map<string, { id: string; name: string; type: string; hits: number; commentedLines: number[] }>();
   for (const m of matches) {
-    if (!m.commented) continue;
-    let group = commentedByObject.get(m.node.id);
+    let group = hitsByObject.get(m.node.id);
     if (!group) {
-      group = { id: m.node.id, name: m.node.name, type: m.node.type, hits: 0, lines: [] };
-      commentedByObject.set(m.node.id, group);
+      group = { id: m.node.id, name: m.node.name, type: m.node.type, hits: 0, commentedLines: [] };
+      hitsByObject.set(m.node.id, group);
     }
     group.hits++;
-    group.lines.push(m.line);
+    if (m.commented) group.commentedLines.push(m.line);
   }
-  const commentedSpans = [...commentedByObject.values()].map(g => ({
-    id: g.id, name: g.name, type: g.type, hits: g.hits, lines: toLineRanges(g.lines),
+  const byObject = [...hitsByObject.values()].map(g => ({
+    id: g.id, name: g.name, type: g.type, hits: g.hits,
+    ...(g.commentedLines.length
+      ? { commented_hits: g.commentedLines.length, commented_lines: toLineRanges(g.commentedLines) }
+      : {}),
   }));
+  const objects = byObject.length;
 
   // Same discovery budget guard as the catalog listing and the pattern report, token axis only.
   // Over budget → the counts WITHOUT the match list, never a sliced one: the model narrows the
@@ -838,7 +842,7 @@ export function searchDdl(
     results,
     total: results.length,
     objects,
-    ...(commentedSpans.length ? { commented_spans: commentedSpans } : {}),
+    by_object: byObject,
     searched,
   };
   const resultChars = JSON.stringify(payload).length;
