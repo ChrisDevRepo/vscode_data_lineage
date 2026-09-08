@@ -378,11 +378,10 @@ function buildDirectionLines(
   direction: ReturnType<typeof computeDirectionGroups>,
 ): string[] {
   return [
-    `Edge direction relative to ${originNodeId} — engine-computed and authoritative. Any list above is in HOP order, which is NOT direction order; never infer direction from a node's position in it:`,
+    `Edge direction relative to ${originNodeId} — engine-computed and authoritative. Any list above is in HOP order, which is NOT direction order:`,
     `- upstream (data flows INTO the origin): ${direction.upstream.join(', ') || '(none)'}`,
     `- downstream (data flows OUT of the origin): ${direction.downstream.join(', ') || '(none)'}`,
-    `- side branches — these READ a traced node and lie on NO path to or from the origin: ${direction.sideBranch.join(', ') || '(none)'}`,
-    '- Never describe a side branch as upstream, as a source, or as feeding the origin; it consumes the same data the origin consumes.',
+    `- side branches — these READ a traced node and lie on NO path to or from the origin, and consume the same data it consumes: ${direction.sideBranch.join(', ') || '(none)'}`,
   ];
 }
 

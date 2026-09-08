@@ -586,9 +586,8 @@ describe('prompt composition', () => {
 
     expect(ct).toContain('- upstream (data flows INTO the origin): raw, stage');
     expect(ct).toContain('- downstream (data flows OUT of the origin): consumer');
-    expect(ct).toContain('and lie on NO path to or from the origin: sibling');
+    expect(ct).toContain('and lie on NO path to or from the origin, and consume the same data it consumes: sibling');
     expect(ct).toContain('HOP order, which is NOT direction order');
-    expect(ct).toContain('Never describe a side branch as upstream');
   });
 
   it('states edge direction identically in BB and CT — no per-mode clone', () => {
@@ -601,7 +600,7 @@ describe('prompt composition', () => {
 
     expect(bb).toContain('- upstream (data flows INTO the origin): raw, stage');
     expect(bb).toContain('- downstream (data flows OUT of the origin): consumer');
-    expect(bb).toContain('and lie on NO path to or from the origin: sibling');
+    expect(bb).toContain('and lie on NO path to or from the origin, and consume the same data it consumes: sibling');
   });
 
   // CT is BB plus columns: a neighbour reached only through a node edge (no validated column edge)
@@ -639,7 +638,7 @@ describe('prompt composition', () => {
     );
 
     expect(ct).toContain('- upstream (data flows INTO the origin): loader, raw, stage');
-    expect(ct).toContain('the origin: (none)');
+    expect(ct).toContain('consumes: (none)');
   });
 
   it('reports empty direction buckets rather than omitting them', () => {
@@ -649,7 +648,7 @@ describe('prompt composition', () => {
 
     expect(ct).toContain('- upstream (data flows INTO the origin): raw');
     expect(ct).toContain('- downstream (data flows OUT of the origin): (none)');
-    expect(ct).toContain('the origin: (none)');
+    expect(ct).toContain('consumes: (none)');
   });
 
   // Impact is an engine-gated bullet, not standing text: it renders only when the trace actually
