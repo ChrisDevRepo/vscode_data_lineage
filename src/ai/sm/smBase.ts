@@ -1619,6 +1619,18 @@ export class NavigationEngine implements IHopStateMachine {
         throw new Error(`unhandled depth intent: ${JSON.stringify(_exhaustive)}`);
       }
     }
+    // The derivation never resolves silently: a stated bound that did not become an enforced
+    // one is otherwise invisible on the log, since the `[BFS]` line reports the INTENT
+    // (`depth=up=2 down=1`) and not what it bound to. Two baselines carried a correct
+    // asymmetric intent with `enforcement=silent` and read as bounded runs (T8S-DEPTH-SILENT).
+    const capSide = (value: number): string => (Number.isFinite(value) ? String(value) : 'all');
+    this.log(
+      'debug',
+      `[Depth] resolved intent=${depthIntent.kind} label=${depthLabel} `
+      + `enforcement=${this.depthEnforcement} `
+      + `cap=up:${capSide(this.depthLimits.upstream)}/down:${capSide(this.depthLimits.downstream)} `
+      + `budget=${this.depthBudget ?? 'none'}`,
+    );
     this.budgetExpansions = [];
     this.scopeNodeIds = this.computeBfsScope(originNode.id, direction, depthIntent);
 
