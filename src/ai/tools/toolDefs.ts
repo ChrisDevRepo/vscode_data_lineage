@@ -72,13 +72,13 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_scope_bundle', inputSchema: GetScopeBundleModelSchema, tags: ['lineage', 'lineage-research'], effect: 'scope_store',
     userDescription: 'Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.',
-    modelDescription: 'Discovery graph-scope retrieval for multi-object lineage questions. Set upstream_depth and downstream_depth (hops each side): equal values give a symmetric scope, "all" a whole chain, 0 excludes that side. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
+    modelDescription: 'Discovery graph-scope retrieval for multi-object lineage questions. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
     progressLabel: 'Gathering object dependencies…',
   },
   {
     name: 'lineage_start_exploration', inputSchema: StartExplorationProviderInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'session_start',
     userDescription: 'Start an autonomous exploration of database objects for data flow, business rules, or investigations.',
-    modelDescription: 'Proposes approval-gated hop-by-hop exploration. Fresh calls require origin, analysisMode, and classification. Choose a symmetric or bidirectional upstream/downstream starting depth, use "all", or omit depth for the reviewed default of 3. When the question asks for every/all upstream sources, a full trace, or all levels, pass depth "all" — the omitted default of 3 truncates deeper chains. BB has no target columns; CT traces named targetColumns. Completed follow-ups use supplement:{nodeIds:[...]}.',
+    modelDescription: 'Proposes approval-gated hop-by-hop exploration. Fresh calls require origin, analysisMode, and classification. BB has no target columns; CT traces named targetColumns. Completed follow-ups use supplement:{nodeIds:[...]}.',
     progressLabel: 'Starting exploration…',
   },
   {

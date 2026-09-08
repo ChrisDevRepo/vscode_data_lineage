@@ -172,8 +172,7 @@ business_capture:
     logging, errors, auditing or retention.
     </scope_relevance>
 
-    Submit one section: `{ angle: "business", text: "<body>" }`. The archive
-    has no length cap and synthesis lifts the text verbatim.
+    Submit one section: `{ angle: "business", text: "<body>" }`.
 
     <section_skeleton>
     A detailed business section, in this order:
