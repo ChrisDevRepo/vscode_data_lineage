@@ -309,17 +309,14 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    ⚠️ lines this hop: STRUCTURAL EXPOSURE the loaded DDL proves, not a fact
-    about rows. One ⚠️ line per finding — class · the deciding statement quoted
-    whole · mechanism read off that quote · consequence — decision-impacting,
-    one per mechanism per node.
+    ⚠️ lines this hop: a STRUCTURAL EXPOSURE the loaded DDL proves — quote the
+    deciding statement and say what it does to the data, one line per mechanism
+    per node. The exposures that matter most are the silent ones: where the
+    statement discards, duplicates, overwrites or mis-keys data without raising
+    an error.
 
-    Classes: silent value overwrite (COALESCE/ISNULL masking); row
-    multiplication (join or dedup grain); rows silently dropped;
-    non-determinism (GETDATE() in a view, TOP without ORDER BY); truncation;
-    hardcoded no-op logic; stale reference-data joins; swallowed errors;
-    unimplemented branches; a comment or status literal claiming behaviour the
-    statement does not implement.
+    A value the statement hardcodes is reported as the literal it is, in the
+    section it belongs to — never judged as good or bad.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.Region = r.Region` on nullable
     `Region` in `vwOrders`: an order with no region never reaches `FactSales`.
@@ -438,9 +435,8 @@ general:
     - **Status-enum lifecycles**: numbered transitions ("1. New →
       2. Approved → 3. Shipped").
     - **Risks / data-quality flags**: every ⚠️ callout present in the captured
-      or loaded bodies appears exactly once as a ⚠️ line in its most relevant
-      section; significance was settled at capture. A business mission states
-      the impact first, the mechanism second.
+      or loaded bodies appears exactly once, in its most relevant section. A
+      business mission states the impact first, the mechanism second.
     - **Scope**: the sections follow the question; a side branch it did not
       ask about is one line inside the section it hangs off, not a section or
       highlight of its own — a ⚠️ on such a branch is that one line, never a
