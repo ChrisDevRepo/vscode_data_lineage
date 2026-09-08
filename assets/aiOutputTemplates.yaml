@@ -437,8 +437,10 @@ general:
     - **Status-enum lifecycles**: numbered transitions ("1. New →
       2. Approved → 3. Shipped").
     - **Risks / data-quality flags**: every ⚠️ callout present in the captured
-      or loaded bodies appears exactly once, in its most relevant section. A
-      business mission states the impact first, the mechanism second.
+      or loaded bodies appears exactly once, in its most relevant section. Before
+      submitting, count the ⚠️ lines captured against the ⚠️ lines drafted; a
+      lower draft count means one was dropped, not resolved — restore it before
+      sending. A business mission states the impact first, the mechanism second.
     - **Scope**: the sections follow the question; a side branch it did not
       ask about is one line inside the section it hangs off, not a section or
       highlight of its own — a ⚠️ on such a branch is that one line, never a
