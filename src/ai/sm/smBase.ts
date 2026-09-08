@@ -1957,38 +1957,41 @@ export class NavigationEngine implements IHopStateMachine {
 
       // CT: recover active columns from accumulated edges; empty sets still dispatch to the AI.
       if (this.tracer) {
-        if (candidate.columnCarry?.kind === 'row_role_only') {
-          // The router stated this neighbor supplies no traced value and only decides which rows
-          // the answer returns, so it is dispatched as a plain whole-object hop. Spine recovery and
-          // the target-set fallback below both exist to find columns the router did not state;
-          // neither may re-state the one it declined.
-          candidate.activeColumns = [];
-        } else {
-          const spineBound = this.tracer.determineActiveColumnsForCandidate(
-            candidate.nodeId,
-            candidate.activeColumns ?? [],
-          );
-          const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
-          // The spine carries a column under the spelling of the node that named it, and a
-          // non-bodied carrier in between is never analysed, so neither can say what the upstream
-          // node calls the same value. When the bind empties the set, re-test the traced targets
-          // against this node's own declared columns before concluding it carries none: a node
-          // declaring a traced column is asked about it by name, and one declaring none of them
-          // still dispatches empty and is analysed for what it does to the row set instead.
-          // A recorded `carry: []` is the engine's OWN determination, made at the contraction in
-          // `enqueueHop`, that the carrier this entry was reached through declares none of the traced
-          // columns. It is a determined answer, not an absent one (the three-facts note at the
-          // contraction says so), so the target-set fallback must not re-pad the seed spelling onto
-          // the node behind that carrier — five hops later the seed spelling is stale as well as
-          // unfounded. `inherit` and an absent carry keep the fallback: those are no opinion.
-          const carryDeterminedNone =
-            candidate.columnCarry?.kind === 'carry' && candidate.columnCarry.columns.length === 0;
-          candidate.activeColumns = bound.length > 0
-            ? bound
-            : carryDeterminedNone
-              ? []
-              : this.resolveActiveColumnsForNode(candidate.nodeId, this.tracer.targetColumns) ?? [];
+        const spineBound = this.tracer.determineActiveColumnsForCandidate(
+          candidate.nodeId,
+          candidate.activeColumns ?? [],
+        );
+        const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
+        // The spine carries a column under the spelling of the node that named it, and a
+        // non-bodied carrier in between is never analysed, so neither can say what the upstream
+        // node calls the same value. When the bind empties the set, re-test the traced targets
+        // against this node's own declared columns before concluding it carries none: a node
+        // declaring a traced column is asked about it by name, and one declaring none of them
+        // still dispatches empty and is analysed for what it does to the row set instead.
+        // A recorded `carry: []` is the engine's OWN determination, made at the contraction in
+        // `enqueueHop`, that the carrier this entry was reached through declares none of the traced
+        // columns. It is a determined answer, not an absent one (the three-facts note at the
+        // contraction says so), so the target-set fallback must not re-pad the seed spelling onto
+        // the node behind that carrier — five hops later the seed spelling is stale as well as
+        // unfounded. `inherit` and an absent carry keep the fallback: those are no opinion.
+        // A stated row role suppresses that same fallback and nothing else. It does not suppress
+        // spine recovery: `routeCarryFor` owns the rule that a committed `column_flow` edge naming
+        // this node as the supplier of a traced column outranks a `none` whichever hop made it, and
+        // the spine is only complete here, at dispatch. A row role stated about a NON-BODIED
+        // carrier travels verbatim to every bodied node behind it, so honouring it unconditionally
+        // erased the column question a committed edge had already opened and ended the chain at a
+        // node the engine itself had proven supplies the value.
+        const carryDeterminedNone =
+          candidate.columnCarry?.kind === 'carry' && candidate.columnCarry.columns.length === 0;
+        const statedRowRole = candidate.columnCarry?.kind === 'row_role_only';
+        if (statedRowRole && bound.length > 0) {
+          this.log('debug', `[Normalize] dispatch carry hop=${this.hopCount} id=${candidate.nodeId} from=none to=[${bound.join(', ')}] — a committed column_flow edge attributes traced columns to this node`);
         }
+        candidate.activeColumns = bound.length > 0
+          ? bound
+          : carryDeterminedNone || statedRowRole
+            ? []
+            : this.resolveActiveColumnsForNode(candidate.nodeId, this.tracer.targetColumns) ?? [];
       }
 
       entry = candidate;
