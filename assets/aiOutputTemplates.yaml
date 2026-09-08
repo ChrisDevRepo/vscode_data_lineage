@@ -202,7 +202,9 @@ business_capture:
     8. Error handling — what happens when a step fails, and what the rows
        carry afterwards.
     9. Upstream assumptions — the object it is about, and its `bb_ddl` reference.
-    10. Gaps — what the DDL leaves open, as `not established from the available SQL`.
+    10. Gaps — what the DDL leaves open, as `not established from the available SQL`;
+        never a verdict an earlier item already reached. An item that disagrees with an
+        earlier one is reconciled against it before submitting, not sent as a second finding.
 
     The evidence for 3, 4, 7 and 8 is a short ```sql fence of the deciding
     expression.
