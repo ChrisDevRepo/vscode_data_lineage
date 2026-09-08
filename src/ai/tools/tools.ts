@@ -781,6 +781,13 @@ function toLineRanges(lines: number[]): string {
  * nothing extra. Marked, never filtered — a comment can hold the answer, and the few context lines
  * a hit ships with cannot show the block it sits in.
  *
+ * That flag answers for the matched line, and the window is wider than the match: a dead line in
+ * the `context` that produced no hit of its own had nothing to carry it, so an abandoned statement
+ * arrived as bare SQL shaped exactly like the live rows above it (IB4-T3: an abandoned `DELETE`
+ * self-join and an audit query kept for reference were delivered as behaviour, and the procedure
+ * was answered as mutating a table it only reads). Every `context` line with no executable code on
+ * it is prefixed `--`, per line rather than per hit, so the two readings are visibly different.
+ *
  * `enclosing_predicate` is the same shape one level up, for control flow instead of comments: the
  * innermost `IF` / `WHILE` condition governing the hit's line, absent when the line runs
  * unconditionally. A gated statement and an ungated one arrive identical inside a three-line
