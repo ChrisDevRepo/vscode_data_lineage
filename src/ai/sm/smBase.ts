@@ -1,6 +1,6 @@
 import { columnCarryFromRoute, columnCarryOf, DEFAULT_SM_START_DEPTH, EngineAspectMode, INHERIT_CARRY, InvalidRoute, type DepthIntent } from './smTypes';
 import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
-import { buildIncompleteRejection } from './smCompleteness';
+import { buildIncompleteRejection, computeUnaccounted } from './smCompleteness';
 import { checkActiveScopeAdmission, DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 /**
  * Unified Navigation Engine — The core state machine for all exploration modes.
@@ -1934,8 +1934,10 @@ export class NavigationEngine implements IHopStateMachine {
         if (!candidate) break;
 
       if (this.visited.has(candidate.nodeId)) {
-        // Sound only because enqueueHop's visited-guard blocks queueing new questions onto an
-        // already-visited node — if that guard is relaxed, this would resolve unanswered questions.
+        // Sound because no path queues a question onto a node that is visited at dequeue time:
+        // enqueueHop either skips such a node or clears the flag in the same call (a supplement
+        // reactivation, or the CT reopen of an open column chain end), and only a dispatch sets it
+        // again — which removes the entry from the agenda.
         this.completeTasks(candidate.taskIds);
         continue;
       }
@@ -2761,13 +2763,18 @@ export class NavigationEngine implements IHopStateMachine {
         const wasAlreadyVisited = this.visited.has(nid);
         const routeColumns = routeColumnsByNode.get(nid);
         const isFreshExpansion = freshlyExpandedIds.delete(nid);
-        // reactivated is always false here: enqueueHop's visited-guard (above) already rejects any
-        // route targeting an already-visited node, so reactivation only ever arises via supplementAgenda.
+        // reactivated is always false here: a `supplementAgenda` re-analysis is the only caller
+        // that resets a visited flag itself. A route whose target this hop's own `column_flow`
+        // left as an open chain end is the one case the visited guard reopens, and it says so with
+        // `openColumnEnd` — the continuation questions are the evidence that an edge, not an
+        // opinion, put the column there.
+        const columnQuestions = lineageQuestionsByNode?.get(nid);
         this.enqueueHop(nid, req.question, 0, 2, {
           carry: this.routeCarryFor(nid, req.columns, routeColumns),
-          lineageQuestions: lineageQuestionsByNode?.get(nid),
+          lineageQuestions: columnQuestions,
           freshScopeExpansion: isFreshExpansion,
           admitContractedBodiedTarget: !targetIsBodied,
+          openColumnEnd: (columnQuestions?.length ?? 0) > 0,
         });
         const added = this._agenda.length - agendaSizeBefore;
         this.lastRoutedNew += Math.max(0, added);
@@ -3049,6 +3056,13 @@ export class NavigationEngine implements IHopStateMachine {
        * `supplementAgenda` re-analysis), so it consumes a brand-new hop despite being in scope.
        */
       readonly reactivated?: boolean;
+      /**
+       * CT: whether this enqueue carries an open column-chain end — a column a committed
+       * `column_flow` edge attributed to `targetId` itself, or to the carrier `targetId` produces,
+       * that no hop has accounted for yet. The one condition under which the visited guard
+       * reopens a node instead of dropping the column ({@link reopensColumnChain}).
+       */
+      readonly openColumnEnd?: boolean;
       /** Existing task to attach instead of creating a new task. */
       readonly existingTaskId?: string;
       /** Parent task assigned when a new task is created. */
@@ -3070,7 +3084,9 @@ export class NavigationEngine implements IHopStateMachine {
       existingTaskId,
       parentTaskId,
       admitContractedBodiedTarget = false,
+      openColumnEnd = false,
     } = opts;
+    let reopened = false;
     if (!this.scopeNodeIds.has(targetId) && priority !== 3) {
       const contractedTarget = this.nodeMap.get(targetId);
       const canAdmitContraction = admitContractedBodiedTarget
@@ -3106,8 +3122,18 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Depth] contraction add beyond initial scope id=${targetId} depth=${admittedDepth} hop=${this.hopCount}`);
     }
     if (this.visited.has(targetId) || this.removedSet.has(targetId)) {
-      this.log('debug', `[Disposition] enqueue skip ${targetId} — already ${this.removedSet.has(targetId) ? 'removed' : 'visited'}`);
-      return;
+      if (!this.reopensColumnChain(targetId, carry, openColumnEnd)) {
+        this.log('debug', `[Disposition] enqueue skip ${targetId} — already ${this.removedSet.has(targetId) ? 'removed' : 'visited'}`);
+        return;
+      }
+      // The earlier visit answered a different question: this node was dispatched without the
+      // column a committed edge has since attributed to it. Reopen through the same reactivation
+      // path `supplementAgenda` uses rather than dropping the column on the floor — a column
+      // committed at one hop stays owed until some hop accounts for it, and the node that produces
+      // it is the only surface that can.
+      this.visited.delete(targetId);
+      reopened = true;
+      this.log('debug', `[CT] reopen ${targetId} — open column chain end via focus=${this.currentFocusNodeId ?? this.originNodeId ?? '(none)'} hop=${this.hopCount}`);
     }
     const node = this.nodeMap.get(targetId);
     if (!node) {
@@ -3133,9 +3159,9 @@ export class NavigationEngine implements IHopStateMachine {
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       // Only grow the denominator when the hop expands beyond the approved scope or reactivates a cycle,
       // so that Y matches the approved scope "contract" for normal in-scope exploration.
-      if (!alreadyQueued && (freshScopeExpansion || reactivated)) {
+      if (!alreadyQueued && (freshScopeExpansion || reactivated || reopened)) {
         this._totalNodes++;
-        const agendaReason = freshScopeExpansion ? 'out-of-scope expansion' : 'reactivated';
+        const agendaReason = freshScopeExpansion ? 'out-of-scope expansion' : reopened ? 'reopened column chain' : 'reactivated';
         this.log('debug', `[Agenda] enqueue ${targetId} — ${agendaReason} (total +1 → ${this._totalNodes})`);
       }
       return;
@@ -3183,6 +3209,10 @@ export class NavigationEngine implements IHopStateMachine {
       viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
       atHop: this.hopCount,
     });
+    // An open column end at a non-bodied carrier is answerable only by what writes into it, so the
+    // reopen offer travels to this carrier's producers and to no other neighbour: a consumer that
+    // reads the same carrier explains nothing about where the value came from.
+    const columnProducers = openColumnEnd ? new Set(this.graph.inNeighbors(targetId)) : null;
     for (const nid of this.directionalNeighbors(targetId, this._direction)) {
       // Re-anchor only when the question lands on a bodied focus — further non-bodied hops forward
       // the plain question and annotate at their own bodied leaves (no compounding). The suffix
@@ -3192,8 +3222,46 @@ export class NavigationEngine implements IHopStateMachine {
         ? buildPassthroughReAnchor(targetId, nid, this.mode.kind)
         : '';
       const forwarded = `${question}${reAnchor}`;
-      this.enqueueHop(nid, forwarded, depth + 1, priority, { carry: forwardedCarry, lineageQuestions, visitedRefs, parentTaskId, admitContractedBodiedTarget });
+      this.enqueueHop(nid, forwarded, depth + 1, priority, { carry: forwardedCarry, lineageQuestions, visitedRefs, parentTaskId, admitContractedBodiedTarget, openColumnEnd: columnProducers?.has(nid) ?? false });
     }
+  }
+
+  /**
+   * Whether an already-visited node must be reopened to account for a column left open on the
+   * chain, rather than skipped.
+   *
+   * @remarks
+   * The visited guard is a BB rule — one node, one question, one hop — and it is right whenever the
+   * question is the same one. In CT a committed `column_flow` edge can name a node the walk has
+   * already passed, and then the question is a new one: the earlier hop was dispatched with a
+   * different active set and its completeness check demanded nothing about this column, so nothing
+   * on the chain ever accounts for it and `active_columns` empties from that point on. Additive by
+   * construction — the aspect's presence is the first condition, and BB carries no columns at all,
+   * so the guard it had is the guard it keeps.
+   *
+   * Four facts must hold together, and each one is also the termination bound:
+   * `openColumnEnd` (a committed edge, not a routing opinion, left the column open here);
+   * the node is not the focus committing right now (it has just answered, and re-asking it with
+   * its own submission's carry is a cycle); it is bodied and not pruned (only a body can answer,
+   * and a removed node stays removed); and the column is one {@link nodeStates} shows it was never
+   * dispatched with — which a reopened hop records on commit, so each node/column pair reopens at
+   * most once and the walk still terminates.
+   *
+   * @param targetId - Canonical id of the already-visited node.
+   * @param carry - The column decision this enqueue carries to it.
+   * @param openColumnEnd - Whether a committed edge left a chain end open at or behind this node.
+   * @returns Whether to clear the visited flag and queue the node for one more hop.
+   */
+  private reopensColumnChain(targetId: string, carry: ColumnCarry, openColumnEnd: boolean): boolean {
+    if (!this.tracer || !openColumnEnd || carry.kind !== 'carry') return false;
+    if (this.removedSet.has(targetId) || targetId === this.currentFocusNodeId) return false;
+    const node = this.nodeMap.get(targetId);
+    if (!node || !SCRIPT_TYPES.has(node.type)) return false;
+    const owed = computeUnaccounted(
+      carry.columns.filter(Boolean),
+      this.nodeStates.get(targetId)?.columns ?? [],
+    );
+    return owed.length > 0;
   }
 
   /**
