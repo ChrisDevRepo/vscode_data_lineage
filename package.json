@@ -541,7 +541,7 @@
           "properties": {
             "query": {
               "type": "string",
-              "description": "In substring mode: an object or column name fragment, at least 2 characters, never '*' — e.g. \"SalesOrder\", without a schema prefix like '[dbo].'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas."
+              "description": "In substring mode: any part of an object or column name, without a schema prefix like '[dbo].'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas."
             },
             "types": {
               "description": "Optional object-type filter.",
@@ -558,7 +558,7 @@
               }
             },
             "schemas": {
-              "description": "Optional schema-name filter; combine with a zero-length query — not the two quote characters — to list objects in those schemas.",
+              "description": "Optional schema-name filter; combine with a zero-length query to list objects in those schemas.",
               "type": "array",
               "items": {
                 "type": "string"

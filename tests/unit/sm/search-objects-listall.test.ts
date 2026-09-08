@@ -4,7 +4,8 @@
  * Guards the fix where an EMPTY query paired with an explicit `schemas[]` scope is a
  * legitimate "list everything in schema X" request — it must enumerate the schema, not
  * reject with `query_too_short` and not hand an empty string to `searchCatalog` (which
- * matches nothing). A short query with NO schema scope must still reject.
+ * matches nothing). An EMPTY query with NO schema scope still rejects; a one-character one is a
+ * servable substring and is not (IB3-T2).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -65,9 +66,14 @@ describe('search-objects-listall', () => {
     expect(res.error, 'empty query with no schema scope still rejects').toBe('query_too_short');
   });
 
-  it('one-char query without schema still rejects', () => {
+  it('one-char query without schema is served, not refused for its length', () => {
+    // IB3-T2: `i` and `.` were both refused as too short, which is a repair the caller cannot make
+    // for a substring that matches. Volume is owned by the evidence share, not by a minimum here.
     const res = searchObjects(model, 'a', undefined, undefined) as Record<string, unknown>;
-    expect(res.error, 'sub-2-char query without schema rejects').toBe('query_too_short');
+    expect('error' in res, 'a one-character substring is served').toBe(false);
+    const results = res.results as Array<Record<string, unknown>>;
+    expect(results.map(r => r.id).sort(), 'every id holding an "a", schema prefix included')
+      .toEqual(['[ai].[activeregions]', '[ai].[archiveorders]', '[ai].[vwsales]']);
   });
 
   it('a real substring query is unaffected', () => {

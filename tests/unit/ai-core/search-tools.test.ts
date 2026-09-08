@@ -303,19 +303,29 @@ describe('search tools — grep contract', () => {
       .toContain('"total":4,"by_type":{"procedure":2,"table":1,"view":1},"filter_context"');
   });
 
-  it('names the two quote characters as a query, and shows the arguments that list a schema', () => {
-    // IB3-T2, one wasted hop: "send an empty query" was answered with the literal `""`, which
-    // cleared the length check, matched nothing and returned `total: 0` with no diagnosis.
+  it('serves a one-character substring and names no repair it will not accept', () => {
+    // IB3-T2 terminated a run: `query:"i"` and `query:"."` were both refused as too short and the
+    // hint's trailing clause named the two quote characters in order to forbid them — which is
+    // what the next call sent. Three refusals in a row hit the breaker, no answer at all.
+    const oneChar = searchObjects(model, 'v', undefined, ['ai']) as { error?: string; total?: number };
+    expect(oneChar.error, 'one character is a substring like any other, and is served').toBeUndefined();
+    expect(oneChar.total, 'vwSales carries a "v"').toBe(1);
+
+    const dot = searchObjects(model, '.', undefined, ['ai']) as { error?: string; hint?: string };
+    expect(dot.error, 'a one-character pattern lands on the rejection that names its mode').toBe('query_not_a_name');
+    expect(dot.hint, 'which is the mode that serves it').toContain('mode:"regex"');
+
     const quoted = searchObjects(model, '""', undefined, ['ai']) as { error?: string; hint?: string; total?: number };
     expect(quoted.error, 'punctuation-only is named, never answered with a list of nothing').toBe('query_not_a_name');
     expect(quoted.total, 'and the empty list is not what the caller gets').toBeUndefined();
 
-    const short = searchObjects(model, 'a') as { error?: string; hint?: string };
-    expect(short.error).toBe('query_too_short');
-    for (const hint of [quoted.hint ?? '', short.hint ?? '']) {
+    const empty = searchObjects(model, '') as { error?: string; hint?: string };
+    expect(empty.error, 'an empty query with no schema scope has nothing to search').toBe('query_too_short');
+    for (const hint of [quoted.hint ?? '', empty.hint ?? '']) {
       expect(hint, 'the repair shows the arguments object rather than describing it')
         .toContain('{"query": "", "schemas": ["<schema>"]}');
-      expect(hint, 'and says which reading of it is wrong').toContain('not the two quote characters');
+      expect(hint, 'and states the accepted input without naming a wrong one to copy')
+        .not.toContain('quote characters');
     }
 
     // The value the hint names still works.

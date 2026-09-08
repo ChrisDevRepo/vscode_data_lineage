@@ -196,12 +196,12 @@ export function getContext(
  * The one wording for "list a whole schema", shared by both rejections that offer that repair.
  *
  * @remarks
- * "Send an empty query" was read as the two-character literal `""`, which cleared the length check,
- * matched no name and returned `total: 0` — a wasted hop with nothing in the payload naming the
- * mistake (IB3-T2). The arguments object is shown rather than described, so there is no value left
- * to infer from the prose.
+ * "Send an empty query" was read as the two-character literal `""` (IB3-T2). Naming that reading in
+ * order to forbid it made it the most salient token in the hint, and the next call sent exactly it:
+ * the repair is therefore the arguments object and nothing else, with no value left to infer from
+ * prose and no wrong value named for a reader to copy.
  */
-const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]} — the query value is zero-length, not the two quote characters.';
+const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]}.';
 
 /**
  * Validates a substring-mode search query for sanity.
@@ -212,13 +212,20 @@ const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "",
  * The wording used to claim the opposite ("matches everything"), which is only true of a pattern
  * in regex mode and sent the model chasing a narrower query instead of the right mode.
  *
+ * Length is the other axis, and one character is a servable substring: `searchCatalog` matches it
+ * like any longer one and this tool hands it no result cap, so volume is owned by the evidence-share
+ * measurement that answers an oversized result with `result_too_large`, never by a minimum here. A
+ * former minimum of two refused `i` and `.` with a length complaint — a repair neither caller
+ * could make — and spent a run’s three semantic failures on it (IB3-T2). Punctuation-only
+ * queries still land on `query_not_a_name` below, which names the mode that serves them.
+ *
  * @param query - The user-provided search string.
  * @returns Success status or an error with a hint.
  */
 function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
   const trimmed = query.trim();
-  if (trimmed.length < 2) {
-    return { ok: false, error: 'query_too_short', hint: `Use at least 2 characters — a real name fragment like "SalesOrder" or a schema name like "ai". ${LIST_SCHEMA_REPAIR}` };
+  if (trimmed.length < 1) {
+    return { ok: false, error: 'query_too_short', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` };
   }
   // Quote characters sit in the class for the same reason the regex metacharacters do: matched
   // literally, no object name contains them. It is also what a caller sends after reading "an empty
