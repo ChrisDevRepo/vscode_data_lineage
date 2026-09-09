@@ -600,11 +600,22 @@ export function getScopeBundle(
     .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
     .map(e => [e.source, e.target, edgeApiType(e.type, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
 
+  // The edge triples above are bare positional [source, target, type] — a consumer that has only
+  // that array cannot tell "which side" without re-deriving direction from position, and two of
+  // three edges starting at the origin makes position a false signal. Serve the origin's own
+  // in/out split explicitly, in the same shape buildHopFocusNode already emits for hop_context, so
+  // direction is never inferred from tuple position. Scoped to the origin only — every other node
+  // keeps the scalar `deg` it always had; this is not a payload grown for the whole scope.
+  const edgeTypeMap = buildEdgeTypeMap(model);
   const nodes = [...scopeIds]
     .map(id => nodeMap.get(id))
     .filter((n): n is LineageNode => !!n)
     .map(n => {
-      const base = presentNode(n, model.neighborIndex);
+      const base = presentNode(
+        n,
+        model.neighborIndex,
+        n.id === origin ? { nodeMap, edgeTypeMap } : undefined,
+      );
       const payload: Record<string, unknown> = { ...base };
       if (effectiveIncludeDdl && SCRIPT_TYPES.has(n.type)) {
         payload.ddl = getNodeDdl(n.id, nodeMap, store) ?? null;

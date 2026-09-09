@@ -53,23 +53,49 @@ type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & {
 };
 
 /**
+ * Optional context that lets {@link presentNode} serve a node's `in`/`out` neighbor split in the
+ * same shape `buildHopFocusNode` uses for the hop_context route, instead of only the scalar `deg`.
+ */
+export type NodeNeighborSplitContext = {
+  /** Full node lookup, needed to resolve each neighbor id to its schema/name/type. */
+  nodeMap: Map<string, LineageNode>;
+  /** `"source→target"` to API edge type, as built by `buildEdgeTypeMap`. */
+  edgeTypeMap: Map<string, string>;
+};
+
+/**
  * Transforms a database node into a compact, token-optimized JSON representation.
  *
  * @remarks
  * Keys are intentionally abbreviated (`s`=schema, `n`=name, `t`=type, `deg`=degree)
  * to minimize the footprint in search results and BFS discovery payloads.
  *
+ * `deg` alone cannot answer "which side" — a caller that also needs the direction of a node's
+ * neighbors (the `get_scope_bundle` origin, so a positional edge triple is never the only way to
+ * read direction) passes `splitContext` to get `in`/`out` arrays in the exact shape
+ * `buildHopFocusNode` already emits for the hop_context route, via the same {@link presentNeighbor}.
+ * Omitted for every other caller/node, so the payload only grows where a split was requested.
+ *
  * @param node - The node to transform.
  * @param neighborIndex - Optional index to calculate connection density (degree).
+ * @param splitContext - Optional; when provided alongside a `neighborIndex` entry, adds `in`/`out`
+ * neighbor-direction arrays instead of leaving direction unrecoverable from `deg` alone.
  * @returns A stripped record suitable for AI consumption.
  */
 export function presentNode(
   node: PresentableNode,
   neighborIndex?: NeighborIndex,
+  splitContext?: NodeNeighborSplitContext,
 ): Record<string, unknown> {
   const entry = neighborIndex?.[node.id];
   const deg = entry !== undefined
     ? entry.in.length + entry.out.length
+    : undefined;
+  const inSplit = entry && splitContext
+    ? entry.in.map(nid => presentNeighbor(nid, node.id, splitContext.nodeMap, splitContext.edgeTypeMap, true))
+    : undefined;
+  const outSplit = entry && splitContext
+    ? entry.out.map(nid => presentNeighbor(nid, node.id, splitContext.nodeMap, splitContext.edgeTypeMap, false))
     : undefined;
   return strip({
     id:  node.id,
@@ -77,6 +103,8 @@ export function presentNode(
     n:   node.name,
     t:   node.type,
     deg,
+    in:  inSplit,
+    out: outSplit,
     ext: node.externalType || undefined,
   });
 }
