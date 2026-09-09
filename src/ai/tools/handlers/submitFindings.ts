@@ -22,7 +22,6 @@ import {
   mapSubmitFindingsEngineGuard,
   filterSectionsForClassification,
   validateSectionsAgainstClassification,
-  describeClassificationLockViolation,
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
@@ -159,7 +158,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       if (violation) {
         return s.logAndReturn('submit_findings', {
           error: 'classification_lock_violation',
-          hint: describeClassificationLockViolation(violation, finding.sections, sess.classification),
+          hint: violation,
         }, normalizedInput);
       }
       if (finding.sections) {

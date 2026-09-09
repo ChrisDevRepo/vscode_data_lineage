@@ -60,44 +60,6 @@ export function validateSectionsAgainstClassification(
 }
 
 /**
- * Expands a `classification_lock_violation` message with the submission's own present/missing
- * angles and the literal edit — an addition, never a replacement.
- *
- * @remarks
- * `validateSectionsAgainstClassification` names the classification and the full required set, but
- * a partial submission under `classification="both"` (one angle present, one missing) leaves the
- * model to diff its own payload against that requirement to find the fix. Observed failure
- * (`test-results/e2e/m0-zai-1-zai/run-T8`, hop 3, `[ai].[sploadsalesstaging]`): a business-only
- * submission was rejected with the bare requirement restated, and the model's very next retry
- * resubmitted the identical business-only content — evidence the hint did not name the repair.
- * The present/missing split below is data `validateSectionsAgainstClassification`'s caller already
- * holds (the submitted `sections[]`), so this names it rather than requiring the model to infer it.
- *
- * @param violation - The non-null string `validateSectionsAgainstClassification` returned.
- * @param sections - The findings' submitted sections (the same array that produced `violation`).
- * @param classification - The locked classification for the session.
- * @returns `violation` unchanged when there is nothing further to name (no classification, or every
- *   required angle already present — the latter should not occur if `violation` came from a real
- *   miss); otherwise `violation` plus one sentence naming what is present, what is missing, and the
- *   add-not-replace edit.
- */
-export function describeClassificationLockViolation(
-  violation: string,
-  sections: CapturedSection[] | undefined,
-  classification: ClassificationValue | undefined,
-): string {
-  if (!classification) return violation;
-  const rule = SECTION_RULES[classification];
-  const present = [...new Set((sections ?? []).map(s => s.angle))];
-  const missing = rule.required.filter(req => !present.includes(req));
-  if (missing.length === 0) return violation;
-  const missingList = missing.map(a => `angle="${a}"`).join(' and ');
-  const presentList = present.length > 0 ? present.map(a => `angle="${a}"`).join(', ') : 'none';
-  const addNoun = missing.length > 1 ? 'sections' : 'a section';
-  return `${violation} This submission included ${presentList}; add ${addNoun} with ${missingList} to the sections array — keep the existing section(s) exactly as sent, do not remove or replace them.`;
-}
-
-/**
  * Drops sections whose angle the locked classification did not request.
  *
  * @remarks
