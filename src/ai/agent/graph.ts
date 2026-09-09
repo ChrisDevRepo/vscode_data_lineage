@@ -1759,12 +1759,29 @@ export function countAbandonedHops(engine: NavigationEngine): number {
  * the coordinator sees a fresh focus — or a drained agenda — on its very next pass instead of
  * re-offering the just-abandoned node.
  *
+ * @remarks
+ * T7-DETAIL-SLOT-STARVATION: when the abandoned focus was the sole live bridge to an unvisited
+ * bodied subtree, draining the agenda here forecloses that subtree — its nodes stay `kept` from
+ * the initial BFS scope but never get hopped, so they never earn a detail slot. The focus's own
+ * {@link NavigationEngine.requiredNeighborIds} (the same directional-neighbor set `submitFindings`
+ * demands an account for) is captured before the forced prune and, only when the prune drains the
+ * agenda to `'complete'`, handed to {@link NavigationEngine.supplementAgenda} — the same
+ * host-initiated re-entry path `startExploration.ts`'s own `supplement` branch already uses — so
+ * the bipartite `enqueueHop` rule gives those successors the same one chance a normal routed hop
+ * would have. No new engine mechanism: both calls are pre-existing public API, and nothing changes
+ * when the agenda still holds other work (the case this repair does not need to touch).
+ *
  * @param engine - The live exploration engine.
  * @param focusId - The engine's current focus (the node that exhausted its semantic budget).
  * @param reason - The attempt-stop reason driving the abandonment, folded into the archived note.
  * @returns Whether the focus was abandoned and the agenda advanced.
  */
 export function tryAbandonStuckFocus(engine: NavigationEngine, focusId: string, reason: string): boolean {
+  // Captured before the prune commits: a directional neighbor's own visited/agenda/removed status
+  // decides membership here, not the focus's, so pre- vs. post-prune capture is equivalent — but
+  // capturing before keeps this read beside the still-current focus, matching every other reader
+  // of `requiredNeighborIds` (the completeness guard inside `submitFindings` itself).
+  const strandedSuccessorIds = engine.requiredNeighborIds(focusId);
   const result = engine.submitFindings({
     focus_node_id: focusId,
     sections: [],
@@ -1773,5 +1790,13 @@ export function tryAbandonStuckFocus(engine: NavigationEngine, focusId: string, 
   });
   if ('error' in result) return false;
   engine.getHopContext();
+  // Only the drained-to-complete case forecloses anything — otherwise the agenda already has
+  // other live work and these successors are no worse off than before this function ran.
+  if (engine.status === 'complete' && strandedSuccessorIds.length > 0) {
+    const supplement = engine.supplementAgenda(strandedSuccessorIds);
+    if ('ok' in supplement && supplement.agendaed + supplement.contracted > 0) {
+      engine.getHopContext();
+    }
+  }
   return true;
 }

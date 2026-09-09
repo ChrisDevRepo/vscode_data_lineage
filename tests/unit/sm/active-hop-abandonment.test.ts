@@ -95,6 +95,55 @@ describe('tryAbandonStuckFocus', () => {
   });
 });
 
+describe('tryAbandonStuckFocus carries forward a stranded bridge (T7-DETAIL-SLOT-STARVATION)', () => {
+  /**
+   * Builds a chain `successor -> focus -> origin` (upstream direction) where `focus` is the ONLY
+   * agenda entry and `successor` is a bodied node no hop has visited or queued yet — the exact
+   * shape of `run-T7`'s `[ai].[vwraworders]`: the sole surviving thread and the sole bridge to an
+   * unvisited bodied subtree.
+   */
+  function buildBridgeEngine(): NavigationEngine {
+    const nodes: LineageNode[] = [
+      makeNode({ id: 'origin', schema: 'dbo', name: 'origin', type: 'view', columns: [col('X')] }),
+      makeNode({ id: 'focus', schema: 'dbo', name: 'focus', type: 'view', columns: [col('X')] }),
+      makeNode({ id: 'successor', schema: 'dbo', name: 'successor', type: 'view', columns: [col('X')] }),
+    ];
+    const edges: Array<[string, string]> = [['focus', 'origin'], ['successor', 'focus']];
+    const model: DatabaseModel = makeModel(nodes, edges, ['dbo']);
+    const graph = makeGraph(nodes, edges);
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const init = engine.init({ origin: 'origin', question: 'trace X upstream', direction: 'upstream', analysisMode: 'bb' });
+    expect('ok' in init, 'engine initializes').toBe(true);
+    engine.getHopContext();
+    expect(engine.currentFocus).toBe('origin');
+
+    const originResult = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'origin analyzed' }],
+      summary: 'origin analyzed',
+      verdict: 'analyze',
+      route_requests: [{ nodeId: 'focus', question: 'where does focus feed origin from?' }],
+    });
+    expect('error' in originResult, 'origin hop commits').toBe(false);
+    engine.getHopContext();
+    expect(engine.currentFocus).toBe('focus');
+    return engine;
+  }
+
+  it('re-enqueues the stranded successor instead of draining the agenda to complete', () => {
+    const engine = buildBridgeEngine();
+
+    const abandoned = tryAbandonStuckFocus(engine, 'focus', 'semantic_failures');
+
+    expect(abandoned).toBe(true);
+    // Before the fix: `successor` was never routed by anyone (the only route to it lived behind
+    // `focus`'s own, never-committed submission), so the drained agenda reports `'complete'` and
+    // `successor` stays kept-but-never-hopped forever — no detail slot, no formula, no label.
+    expect(engine.status).toBe('awaiting_findings');
+    expect(engine.currentFocus).toBe('successor');
+  });
+});
+
 describe('countAbandonedHops', () => {
   it('records the abandoned node in the engine\'s own pruned-detail archive, marker and all', () => {
     const engine = buildFanOutEngine(2);
