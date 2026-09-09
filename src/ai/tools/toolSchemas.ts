@@ -740,7 +740,7 @@ export const PresentResultModelSchema = z.object({
     // contiguous span of the supplied answer. One schema serving both stages can only state what
     // they share; each stage's own rule belongs in its prompt, next to the validator that enforces it.
     text: z.string().describe('One-sentence caption, grounded in the evidence supplied for this stage.'),
-  }).strict()).optional().describe('One-sentence captions below nodes. Give every node linked in sections[].node_ids one short caption; a node in highlight_groups[].node_ids must be explained by a section link or a note.'),
+  }).strict()).optional().describe('One-sentence captions below nodes.'),
   is_update: coercedBoolean().optional().describe('True only when updating an existing presentation.'),
 }).strict();
 
