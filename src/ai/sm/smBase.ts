@@ -2122,20 +2122,30 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * In-scope, unvisited, un-queued directional neighbors of `focusId` — the exact set the
-   * required-nodes guard demands an account for on the next submit, in both modes.
+   * Unvisited, un-queued, un-removed directional neighbors of `focusId` that the router would
+   * currently admit a route to — the exact set the required-nodes guard demands an account for
+   * on the next submit, in both modes.
    *
    * @remarks Single source for that set: the guard callback and the per-hop envelope render
    * ({@link buildActiveHopInstruction}) both read it, so the rendered checklist can never drift
    * from what the engine enforces. CT is BB plus column tracking — the guard runs unconditionally
    * there too, and CT satisfies it the same way BB does, through `route_requests`.
    *
+   * No prior {@link scopeNodeIds} membership: a directional neighbor the model has not yet routed
+   * is, by construction, never in scope yet — gating the demand on scope membership would exempt
+   * every neighbor the walk has not already reached, which is the set this guard exists to reach.
+   * A route the router would accept commits the neighbor into scope itself (see the accept branch
+   * in `submitFindings`), so "in scope" is an outcome of routing here, never a precondition for it.
+   *
    * @param focusId - Current focus node id.
+   * @param budget - The submitting turn's budget; a neighbor already in scope paid this cost when
+   *   it entered, so only a *fresh* addition is checked against it. Defaults to
+   *   {@link DEFAULT_TURN_TOKEN_BUDGET} for callers outside a turn (the per-hop prompt render).
    * @returns Directional neighbor ids that must be routed or accounted for before the walk advances.
    */
-  public requiredNeighborIds(focusId: string): string[] {
+  public requiredNeighborIds(focusId: string, budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET): string[] {
     return Array.from(this.directionalNeighbors(focusId, this._direction))
-      .filter(nid => this.scopeNodeIds.has(nid) && !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
+      .filter(nid => !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
       // No unmeetable demand: the guard may demand an account only for a neighbour the router
       // would admit, and admission is border AND depth — `admitsRoute` states both once, so
       // this filter is the router's own filter and cannot drift from it.
@@ -2148,13 +2158,24 @@ export class NavigationEngine implements IHopStateMachine {
       // other account available, and it removes exactly that gate class or lead. So the demand is
       // dropped here and the deferral carries the node instead.
       //
+      // A third unmeetable case is resource, not topology: a neighbor not yet in scope whose
+      // admission would breach the turn's active-scope budget (`checkActiveScopeAdmission`, the
+      // same guard `submitFindings` runs before committing staged growth) is refused there too —
+      // demanding an account for it would force a prune the model does not mean (the node is not
+      // off the answer path, it is merely over budget this hop) with no route ever able to
+      // satisfy it. A neighbor already in {@link scopeNodeIds} already paid this cost, so only a
+      // fresh addition is checked.
+      //
       // An id absent from `nodeMap` is likewise never demanded: it resolves to nothing, so neither
       // a route (`absent_route`) nor a prune (`prune_absent`) can account for it and the hop could
       // never commit. Unreachable in practice — graph keys are a subset of `nodeMap` keys — and
       // failing closed rather than open is the correct default if it ever were not.
       .filter(nid => {
         const node = this.nodeMap.get(nid);
-        return node !== undefined && this.admitsRoute(nid, node, focusId).admitted;
+        if (node === undefined || !this.admitsRoute(nid, node, focusId).admitted) return false;
+        if (this.scopeNodeIds.has(nid)) return true;
+        const projectedNodes = this.scopeNodeIds.size + 1;
+        return checkActiveScopeAdmission(budget, projectedNodes, this.estimateScopeDdlChars([nid])).ok;
       });
   }
 
@@ -2366,7 +2387,7 @@ export class NavigationEngine implements IHopStateMachine {
       resolved: resolveModelNodeId(raw, this.nodeMap),
       path: `prune_neighbors.${index}`,
     }));
-    const requiredNodeIds = this.requiredNeighborIds(focusId);
+    const requiredNodeIds = this.requiredNeighborIds(focusId, budget);
     const actionPolicy = evaluateCurrentHopActionPolicy({
       originId: this.originNodeId!,
       routeTargets,
