@@ -114,6 +114,23 @@ function isChargeableRejection(code: string): boolean {
 export const MAX_TOOL_PROVIDER_CALLS = 10;
 
 /**
+ * Run-level cap on hops the active phase may force-abandon (via a synthetic `verdict: 'prune'`)
+ * after a single focus exhausts {@link MAX_TOOL_SEMANTIC_FAILURES}, before giving up on the
+ * remaining agenda and salvaging to synthesis instead.
+ *
+ * @remarks
+ * Independent governor from {@link MAX_TOOL_SEMANTIC_FAILURES} (per-hop attempts before that ONE
+ * hop is abandoned) and from `maxRounds` (submitted hops only — an abandoned hop is never
+ * "submitted"). Without this cap a pathologically-failing model could still burn one generation
+ * batch per remaining agenda node before the agenda naturally drained; this bounds that cost to a
+ * handful of forced abandonments and hands the rest to salvage. Sized to absorb a couple of
+ * genuinely unreachable nodes (bad DDL, a malformed neighbor) without mistaking that for a
+ * systemic failure, while stopping well short of walking the whole agenda one abandonment at a
+ * time.
+ */
+export const MAX_ABANDONED_HOPS_PER_RUN = 5;
+
+/**
  * Per-string byte bound on an engine-produced rejection reason/hint re-projected into retry context.
  *
  * @remarks

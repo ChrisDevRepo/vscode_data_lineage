@@ -66,6 +66,7 @@ import {
 import {
   executeToolAttempt,
   initialToolPhaseAttemptState,
+  MAX_ABANDONED_HOPS_PER_RUN,
   MAX_TOOL_PROVIDER_CALLS,
   MAX_TOOL_SEMANTIC_FAILURES,
   recordToolAttempt,
@@ -1119,6 +1120,33 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (deps.signal?.aborted) return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration active hop', 'without submitting findings');
     if (stopped) {
+      // A repeated semantic failure abandons THAT hop and continues the agenda — it does not end
+      // the run — as long as the run-level abandon budget is not exhausted and the engine accepts
+      // dropping this one focus (structural refusals like `prune_origin_forbidden` fall through to
+      // salvage below, same as any other stop this loop cannot recover from).
+      if (stopped.reason === 'semantic_failures' && countAbandonedHops(engine) < MAX_ABANDONED_HOPS_PER_RUN) {
+        if (tryAbandonStuckFocus(engine, focusId, stopped.reason)) {
+          const abandonedCount = countAbandonedHops(engine);
+          deps.logger?.debug(
+            `[AI] [Abandon] phase=active focus=${focusId} reason=${stopped.reason}`
+            + ` abandoned=${abandonedCount}/${MAX_ABANDONED_HOPS_PER_RUN} — exploration continues`,
+          );
+          deps.sink.status('scoping', `_⛔ ${focusLabel} skipped — repeated ${stopped.reason}, exploration continues_`);
+          const hop = safeHopCount(engine);
+          observeWrite(sess.recordMemoryWipeEvent(deps.turnEpoch, {
+            kind: 'sliding',
+            trigger: 'abandoned_hop',
+            hop,
+            messagesBefore: state.messages.length,
+          }));
+          return {
+            engineSnapshot: engine.toJSON(),
+            messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
+            toolAttempt: null,
+            phase: 'active_coordinator',
+          };
+        }
+      }
       if (shouldSalvageActiveStop(stopped.reason, state.activeHopCount)) {
         return salvageSubmittedHops(stopped.reason);
       }
@@ -1688,4 +1716,62 @@ export function shouldSalvageActiveStop(
   submittedHops: number,
 ): boolean {
   return submittedHops > 0 && reason !== 'output_limit';
+}
+
+/**
+ * Sentinel prefix on a force-abandoned focus's archived summary.
+ *
+ * @remarks
+ * {@link countAbandonedHops} greps it back out of the engine's own pruned-detail archive
+ * ({@link NavigationEngine.getPrunedDetails}) so the run-level {@link MAX_ABANDONED_HOPS_PER_RUN}
+ * governor needs no dedicated state channel — the abandonment is already durable, engine-owned
+ * lifecycle data (a `DetailSlot`) the moment {@link tryAbandonStuckFocus} lands it, and it is
+ * carried into the run's own archive exactly like any other pruned node.
+ */
+export const ABANDONED_HOP_SUMMARY_PREFIX = '[engine-abandoned]';
+
+/**
+ * Counts hops this run has already force-abandoned for repeated semantic failure.
+ *
+ * @param engine - The live exploration engine.
+ * @returns The number of previously abandoned hops, read back via {@link ABANDONED_HOP_SUMMARY_PREFIX}.
+ */
+export function countAbandonedHops(engine: NavigationEngine): number {
+  return engine.getPrunedDetails().filter(
+    (detail) => detail.summary.startsWith(ABANDONED_HOP_SUMMARY_PREFIX),
+  ).length;
+}
+
+/**
+ * Force-abandons the engine's current focus after it exhausted {@link MAX_TOOL_SEMANTIC_FAILURES}
+ * within one hop, so a single unreachable node cannot end a run whose agenda still holds other
+ * work.
+ *
+ * @remarks
+ * Dispatches through the SAME `verdict: 'prune'` path the model's own `lineage_submit_findings`
+ * tool call uses ({@link NavigationEngine.submitFindings}) — no new engine mechanism, and no
+ * branch on CT vs. BB (the prune path is already mode-uniform). The engine may refuse
+ * structurally — `prune_origin_forbidden` on the immutable origin, `prune_would_orphan_noted`
+ * when the topology still needs this node reachable — and both are genuine "cannot make progress
+ * here" signals, so the caller falls back to the existing salvage-to-synthesis path on `false`.
+ * On success this also calls {@link NavigationEngine.getHopContext} to dequeue the next agenda
+ * entry immediately, mirroring the tool handler's own post-commit call (`submitFindings.ts`), so
+ * the coordinator sees a fresh focus — or a drained agenda — on its very next pass instead of
+ * re-offering the just-abandoned node.
+ *
+ * @param engine - The live exploration engine.
+ * @param focusId - The engine's current focus (the node that exhausted its semantic budget).
+ * @param reason - The attempt-stop reason driving the abandonment, folded into the archived note.
+ * @returns Whether the focus was abandoned and the agenda advanced.
+ */
+export function tryAbandonStuckFocus(engine: NavigationEngine, focusId: string, reason: string): boolean {
+  const result = engine.submitFindings({
+    focus_node_id: focusId,
+    sections: [],
+    summary: `${ABANDONED_HOP_SUMMARY_PREFIX} ${focusId} — repeated ${reason}, exploration continues without it`,
+    verdict: 'prune',
+  });
+  if ('error' in result) return false;
+  engine.getHopContext();
+  return true;
 }
