@@ -100,7 +100,6 @@ describe('prompt composition', () => {
 
     const detector = buildEntryDetectorSystemPrompt(context);
     expect(detector).toContain("Return 'visual_render'");
-    expect(detector).toContain('approval-gated hop-by-hop exploration');
     expect(detector).toContain("Return 'discovery' for everything else");
     // 'discovery' is the reversible default; naming a column alone must never force column_trace.
     // The qualifying wording (what must be true before column_trace fires, and the fallback

@@ -54,8 +54,9 @@ export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 
  * Structured output for the narrow entry-detector model call.
  *
  * @remarks
- * `visual_render` identifies explicit visual intent. Free text enters approval-gated BB exploration;
- * only the host-owned preview action grants the lightweight bounded-preview route.
+ * `visual_render` identifies explicit visual intent but is not itself an execution trigger: it
+ * enters discovery like `discovery` does, and only the host-owned preview action (or another
+ * explicit trigger) grants a different route.
  */
 export const EntryDetectionSchema = z.object({
   entry: z.enum(['column_trace', 'visual_render', 'discovery'])

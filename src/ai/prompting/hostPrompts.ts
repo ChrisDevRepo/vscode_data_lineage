@@ -135,8 +135,9 @@ export function buildHostStageSystemPrompt(phase: PromptPhase, ctx: StagePromptC
  * System prompt for the code-driven **entry detector** (one structured pre-loop call).
  *
  * @remarks
- * Classifies semantic intent only. `visual_render` selects approval-gated BB exploration; the
- * host-owned preview action remains a separate RuntimeFrame fact for the bounded preview route.
+ * Classifies semantic intent only. `visual_render` enters discovery like any other free-text
+ * request; the host-owned preview action remains a separate RuntimeFrame fact for the bounded
+ * preview route reached afterward.
  *
  * @param ctx - Grounding context (see {@link deriveStagePromptContext}).
  * @returns The detector system-prompt string.
@@ -146,7 +147,7 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
     'You are a routing classifier for a SQL data-lineage tool. Classify the user request into one entry route.',
     '',
     "Return 'column_trace' ONLY when the user explicitly asks to trace, follow, or walk one or more specific named columns as a new lineage request — e.g. \"trace column ColumnX\", \"walk the lineage of [dbo].[t].[col]\". Extract those exact names into targetColumns.",
-    "Return 'visual_render' when the user explicitly asks to see, show, render, draw, preview, or open a lineage graph, diagram, canvas, or panel. This means approval-gated hop-by-hop exploration. Set targetColumns to null.",
+    "Return 'visual_render' when the user explicitly asks to see, show, render, draw, preview, or open a lineage graph, diagram, canvas, or panel. Set targetColumns to null.",
     "Return 'discovery' for everything else, and default to 'discovery' whenever in doubt: broad dependency questions that do not explicitly request a visual or a column trace; a follow-up that merely refers to a column already named earlier in the conversation, or asks how/why something already on screen behaves (e.g. \"what am I looking at\", \"how was ColumnX calculated\" when already named or summarized) — naming a column is not, by itself, a reason to choose 'column_trace'. A bare \"trace\"/\"explore\" verb with no column named also stays 'discovery'. Under-choosing 'column_trace' costs nothing — the user can switch to a column trace at the approval step before anything runs. Set targetColumns to null.",
     '',
     'The conversation may include earlier turns. Classify ONLY the latest user message; use earlier turns solely to resolve what it refers to (e.g. resolving which object a bare column name belongs to).',

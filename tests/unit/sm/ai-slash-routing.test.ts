@@ -69,10 +69,22 @@ describe('ai-slash-routing', () => {
   });
 
   it('semantic verdict and execution trigger stay separate', () => {
-    expect(selectInitialAgentStage('visual_render', 'free_text'), 'free-text visual intent enters approval-gated SM').toBe('sm_entry');
+    // visual_render is a semantic classification, not an execution trigger: free-text render
+    // intent runs the main discovery loop, same as any other free-text request, so the bounded
+    // preview it may offer afterward stays reachable only through the explicit trigger.
+    expect(selectInitialAgentStage('visual_render', 'free_text'), 'free-text visual intent enters discovery, not gated SM').toBe('discover');
     expect(selectInitialAgentStage('visual_render', 'preview_button'), 'explicit preview action retains the bounded preview').toBe('visual_preview');
-    expect(selectInitialAgentStage('discovery', 'slash_trace'), '/trace mechanically enters SM').toBe('sm_entry');
-    expect(selectInitialAgentStage('visual_render', 'discovery_budget'), 'budget overflow mechanically enters SM').toBe('sm_entry');
+    expect(selectInitialAgentStage('discovery', 'free_text'), 'plain discovery intent enters discovery').toBe('discover');
     expect(selectInitialAgentStage('column_trace', 'free_text'), 'named-column trace enters gated CT').toBe('sm_entry');
+
+    // Every explicit mechanical trigger outranks the model's semantic classification, whatever
+    // that classification was — this is the ranking the entry router exists to enforce.
+    expect(selectInitialAgentStage('discovery', 'preview_button'), 'preview_button outranks a discovery verdict').toBe('visual_preview');
+    expect(selectInitialAgentStage('discovery', 'slash_trace'), '/trace mechanically enters SM').toBe('sm_entry');
+    expect(selectInitialAgentStage('visual_render', 'slash_trace'), 'slash_trace outranks a visual_render verdict').toBe('sm_entry');
+    expect(selectInitialAgentStage('discovery', 'run_trace'), 'run_trace mechanically enters SM').toBe('sm_entry');
+    expect(selectInitialAgentStage('visual_render', 'run_trace'), 'run_trace outranks a visual_render verdict').toBe('sm_entry');
+    expect(selectInitialAgentStage('discovery', 'discovery_budget'), 'budget overflow mechanically enters SM').toBe('sm_entry');
+    expect(selectInitialAgentStage('visual_render', 'discovery_budget'), 'budget overflow outranks a visual_render verdict').toBe('sm_entry');
   });
 });
