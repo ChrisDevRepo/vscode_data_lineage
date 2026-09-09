@@ -154,7 +154,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       // sections[] must include the required angle(s); off-classification angles are
       // dropped deterministically below rather than rejected — a surplus section is
       // not a field-scoped defect the held-draft repair flow could patch.
-      const violation = validateSectionsAgainstClassification(finding.sections, sess.classification);
+      const violation = validateSectionsAgainstClassification(finding.sections, sess.classification, finding.verdict);
       if (violation) {
         return s.logAndReturn('submit_findings', {
           error: 'classification_lock_violation',

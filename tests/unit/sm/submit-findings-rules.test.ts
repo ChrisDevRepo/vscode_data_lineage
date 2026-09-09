@@ -12,7 +12,7 @@ describe("Submit Findings Rules", () => {
     { angle: 'business' as const, text: 'required business content' },
     { angle: 'technical' as const, text: 'off-classification technical content' },
   ];
-  expect(validateSectionsAgainstClassification(sections, 'business') === null, 'required business angle present').toBe(true);
+  expect(validateSectionsAgainstClassification(sections, 'business', 'analyze') === null, 'required business angle present').toBe(true);
   const { kept, droppedAngles } = filterSectionsForClassification(sections, 'business');
   expect(kept.length === 1 && kept[0].angle === 'business', 'only the business section is stored').toBe(true);
   expect(droppedAngles.length === 1 && droppedAngles[0] === 'technical', 'the technical section is dropped, not stored').toBe(true);
@@ -23,7 +23,7 @@ describe("Submit Findings Rules", () => {
     { angle: 'technical' as const, text: 'required technical content' },
     { angle: 'business' as const, text: 'off-classification business content' },
   ];
-  expect(validateSectionsAgainstClassification(sections, 'technical') === null, 'required technical angle present').toBe(true);
+  expect(validateSectionsAgainstClassification(sections, 'technical', 'analyze') === null, 'required technical angle present').toBe(true);
   const { kept, droppedAngles } = filterSectionsForClassification(sections, 'technical');
   expect(kept.length === 1 && kept[0].angle === 'technical', 'only the technical section is stored').toBe(true);
   expect(droppedAngles.length === 1 && droppedAngles[0] === 'business', 'the business section is dropped, not stored').toBe(true);
@@ -45,15 +45,34 @@ describe("Submit Findings Rules", () => {
   it("business lock still requires business section", () => {
   const violation = validateSectionsAgainstClassification([
     { angle: 'technical', text: 'technical only' },
-  ], 'business');
+  ], 'business', 'analyze');
   expect(violation === 'classification=business requires at least one section with angle="business".', 'business lock still requires business section').toBe(true);
 });
 
   it("both lock still requires both required angles", () => {
   const violation = validateSectionsAgainstClassification([
     { angle: 'business', text: 'business only' },
-  ], 'both');
+  ], 'both', 'analyze');
   expect(violation === 'classification=both requires sections with angle="business" and angle="technical".', 'both lock still requires both required angles').toBe(true);
+});
+
+  it("a prune verdict is exempt from the angle requirement under a both lock", () => {
+  // A pruned node contributes no analysis to the lineage answer, so it has no angles to
+  // require — `sections: []` must reach the engine's own `prune_sections_conflict` check
+  // instead of being rejected here first.
+  const violation = validateSectionsAgainstClassification([], 'both', 'prune');
+  expect(violation === null, 'a prune verdict with sections:[] is not a classification_lock_violation').toBe(true);
+});
+
+  it("a prune verdict with a single business-only prose section is exempt under a both lock", () => {
+  // The exemption is not conditioned on sections being empty — a prune carrying only one
+  // angle (no captured artifact, so the engine's own prune_sections_conflict does not fire
+  // either) must reach commit without a spurious classification_lock_violation demanding the
+  // technical angle a pruned node was never going to produce.
+  const violation = validateSectionsAgainstClassification([
+    { angle: 'business', text: 'Off the trace — display-only rationale.' },
+  ], 'both', 'prune');
+  expect(violation === null, 'a prune verdict with one business-only section is not a classification_lock_violation').toBe(true);
 });
 
   it("active recovery hints mention only active tools", () => {

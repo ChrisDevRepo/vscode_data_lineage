@@ -1,5 +1,6 @@
 import type { ClassificationValue } from '../../session/classification';
 import type { CapturedSection, CaptureAngle } from '../../session/memoryManager';
+import type { Verdict } from '../../sm/smTypes';
 import type { InteractionRuleResult } from '../types';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 
@@ -29,18 +30,27 @@ const SECTION_RULES: Record<ClassificationValue, {
 /**
  * Validates findings `sections[]` includes the angles required by the locked classification.
  *
+ * @remarks
+ * A `prune` verdict carries no analysis into the lineage answer — its sections are discarded
+ * either way (accepted content is refused separately by `prune_sections_conflict`) — so a prune
+ * is exempt from the angle requirement below, the same way the unlocked branch already exempts
+ * it from the non-empty requirement.
+ *
  * @param sections - The captured sections to validate.
  * @param classification - The locked classification for the session.
+ * @param verdict - The submission's verdict; a `prune` verdict requires no angle.
  * @returns An error message string if invalid, otherwise null.
  */
 export function validateSectionsAgainstClassification(
   sections: CapturedSection[] | undefined,
   classification: ClassificationValue | undefined,
+  verdict: Verdict | undefined,
 ): string | null {
   const list = sections ?? [];
   if (!classification) {
     return list.length === 0 ? 'sections[] must contain at least one section when verdict is analyze or pass.' : null;
   }
+  if (verdict === 'prune') return null;
   const rule = SECTION_RULES[classification];
   const angles = new Set(list.map(s => s.angle));
   for (const req of rule.required) {
