@@ -175,6 +175,10 @@ scope than discovery permits are routed to SM entry. Tool availability for
 these stages is defined only in
 [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 
+A column-trace request always escalates to SM entry, budget irrelevant — the
+escalation is keyed on request kind, not size. Which traversal mode then runs,
+BB or CT, is settled at the consent gate below, never by this routing step.
+
 ### Consent gate
 
 Every fresh SM proposal pauses at `confirm_sm_start`. The engine owns the scope

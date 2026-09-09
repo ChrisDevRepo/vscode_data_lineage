@@ -512,8 +512,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (marker === 'trace') {
       return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, phase: 'detect_entry' };
     }
-    // The explicit post-discovery preview action stays lightweight even though equivalent free-text
-    // visual intent restores origin/main's approval-gated SM route.
+    // The explicit post-discovery preview action carries its own mechanical execution trigger
+    // (preview_button); equivalent free-text visual intent carries none and runs the ordinary
+    // discovery loop instead (D-073) — render is an optional terminal step, never a route to SM.
     if (marker === 'preview') {
       return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, phase: 'detect_entry' };
     }

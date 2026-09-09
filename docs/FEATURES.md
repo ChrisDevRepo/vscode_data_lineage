@@ -243,7 +243,7 @@ The default state. The AI uses read-only catalog tools to inspect loaded scope, 
 - `/search` pins this path deterministically, skipping the entry-detection model call. `/trace` pins the deep-analysis path below.
 - Discovery scope is bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; over-budget requests are redirected to the approval-gated deep-analysis path.
 - During approved deep analysis, total scope growth is bounded by `dataLineageViz.ai.explorationNodeCap` and `dataLineageViz.ai.explorationTokenBudget`; an over-budget hop submission is held and rejected with a hint to prune, defer, or synthesize.
-- An explicit graph/render request routes to approval-gated deep analysis so the rendered result includes the hop-by-hop explanation.
+- An explicit graph/render request is answered by discovery like any other question; the picture itself is the separate bounded preview below, reached by follow-up, not deep analysis.
 
 #### Bounded graph preview
 
@@ -281,9 +281,8 @@ database for compliance-critical claims.
 
 #### Deep analysis
 
-Triggered by an explicit graph/render request, `/trace`, a named-column trace,
-the **Start deeper hop-by-hop analysis** follow-up, or an engine-forced
-over-budget discovery request. It
+Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
+analysis** follow-up, or an engine-forced over-budget discovery request. It
 begins only after the user approves the `confirm_sm_start` consent gate.
 
 - The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal.
