@@ -274,6 +274,21 @@ passthroughs so the agenda stays focused on analyzable SQL bodies. The model is
 never the owner of a completion flag; synthesis starts when the engine reaches
 its terminal condition.
 
+**A column-trace declaration is the engine's to keep, not the model's.** In CT the AI defines the
+origin and then maps, hop by hop, which columns continue from the current node to its neighbors —
+and it only ever sees one hop. So the moment an accepted `route_requests` entry names a neighbor for
+the traced column, that node is protected from `prune_neighbors` for the rest of the run. This is
+the backend's obligation precisely because the model cannot discharge it: per-hop memory resets to
+the anchor, so a later hop reasoning about a different column has no way to recall a relevance the
+run already established. The protection is additive on the tracer and empty in BB.
+
+The contraction above is what makes the rule load-bearing rather than redundant. A non-bodied target
+is contracted the instant it is enqueued, so it acquires no agenda entry and no detail slot — the
+two sources the committed-connected set otherwise reads — and the topology walk cannot cover it
+either, because a node that is itself the removal target orphans nothing behind it. A declared
+dead-end table is therefore invisible to every other keep-rule, and the declaration record is the
+only thing that refuses the prune (D-074).
+
 ### Synthesis and completed follow-ups
 
 Synthesis receives a fresh completion envelope containing the findings archive,
