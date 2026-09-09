@@ -63,4 +63,40 @@ describe('minifyDdlForHop', () => {
     expect(minified).toContain('CLUSTERED');
     expect(minified).toContain('PAD_INDEX');
   });
+
+  // T8-DISCOUNT-NULL-VS-ZERO: the model reads a non-executing CATCH-block comment as if it
+  // described behaviour. The Step-3 UPDATE fails and the column stays NULL — the comment
+  // ("continue with Discount = 0") is dead text, never reached, and must arrive marked as such
+  // rather than indistinguishable from the executing lines around it.
+  it('marks a CATCH-block comment as dead text, leaving the executing line beside it unmarked', () => {
+    const raw = [
+      '    BEGIN TRY',
+      '        UPDATE sb',
+      '        SET sb.Discount = COALESCE(dc.Discount, 0)',
+      '        FROM #SalesBase sb',
+      '        LEFT JOIN ai.vwDiscountCalc dc',
+      '            ON sb.StagingID = dc.StagingID;',
+      '    END TRY',
+      '    BEGIN CATCH',
+      "        INSERT INTO ai.ErrorLog (ProcedureName, ErrorNumber, ErrorMessage, ErrorLine)",
+      "        VALUES ('spBuildSalesReport.Step3', ERROR_NUMBER(), ERROR_MESSAGE(), ERROR_LINE());",
+      '        -- Non-fatal: continue with Discount = 0',
+      '        SET @WarningCount = @WarningCount + 1;',
+      '    END CATCH;',
+    ].join('\n');
+
+    const minified = minifyDdlForHop(raw, false);
+    const lines = minified.split('\n');
+    const commentLine = lines.find(l => l.includes('Non-fatal'));
+    const executingLine = lines.find(l => l.includes('WarningCount'));
+
+    expect(commentLine, 'the dead comment line must survive minification').toBeDefined();
+    expect(executingLine, 'the adjacent executing line must survive minification').toBeDefined();
+    // The dead-line prefix lands at column 0, ahead of the line's own indentation and its own
+    // (already-live) '--'; the executing line beside it carries no such prefix.
+    expect(commentLine!.startsWith('--')).toBe(true);
+    expect(executingLine!.startsWith('--')).toBe(false);
+    // The fact itself is never lost — marking adds context, it does not delete or relocate text.
+    expect(minified).toContain('Non-fatal: continue with Discount = 0');
+  });
 });

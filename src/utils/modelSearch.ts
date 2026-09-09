@@ -413,7 +413,7 @@ function makeMatch(
  * delimiters, but a lone `"` is the more common typo and tracking it would swallow the rest of a
  * body. An unterminated block comment marks the remainder, which is how a reader takes it too.
  */
-function scanComments(lines: string[], lineStarts: number[], length: number): Uint8Array {
+export function scanComments(lines: string[], lineStarts: number[], length: number): Uint8Array {
   const mask = new Uint8Array(length);
   /** `/*` nesting depth; T-SQL nests block comments and requires them balanced. */
   let depth = 0;
@@ -538,7 +538,7 @@ function buildSnippet(
  * T-SQL. A line mixing live code with a trailing `--` is NOT dead: part of it executes, and calling
  * it dead would hide that. A blank line is not dead either; it carries nothing to mislabel.
  */
-function markDeadLines(lines: string[], lineStarts: number[], commentMask: Uint8Array): Uint8Array {
+export function markDeadLines(lines: string[], lineStarts: number[], commentMask: Uint8Array): Uint8Array {
   const dead = new Uint8Array(lines.length);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
