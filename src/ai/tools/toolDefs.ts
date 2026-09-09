@@ -72,7 +72,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_scope_bundle', inputSchema: GetScopeBundleModelSchema, tags: ['lineage', 'lineage-research'], effect: 'scope_store',
     userDescription: 'Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.',
-    modelDescription: 'Discovery graph-scope retrieval for multi-object lineage questions. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
+    modelDescription: 'Discovery graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (writes INTO it) and `out` (reads FROM it); `edges` are positional [source, target, type]. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
     progressLabel: 'Gathering object dependencies…',
   },
   {
@@ -107,7 +107,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_ddl', inputSchema: SearchDdlInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search SQL body scripts for a text pattern.',
-    modelDescription: 'Grep over view, procedure and function bodies: a regular expression in, every match out with its object, 1-based line number, matched line and surrounding context, and a hit inside a SQL comment flagged `commented: true`. `by_object` states each object once with its `hits` count and its `commented_hits`/`commented_lines` — take a per-object count from there, never by tallying rows. Case-insensitive; `^` and `$` match per line. No matches is `total: 0`; an unusable pattern is `invalid_regex` with the repair.',
+    modelDescription: 'Grep over view, procedure and function bodies: a regular expression in, every match out with its object, 1-based line number, matched line and surrounding context, and a hit inside a SQL comment flagged `commented: true`. A context line that is entirely comment is prefixed `--`; an unprefixed line executes. `by_object` states each object once with its `hits` count and its `commented_hits`/`commented_lines` — take a per-object count from there, never by tallying rows. Case-insensitive; `^` and `$` match per line. No matches is `total: 0`; an unusable pattern is `invalid_regex` with the repair.',
     progressLabel: 'Searching SQL bodies…',
   },
   {

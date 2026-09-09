@@ -58,6 +58,17 @@ const DEFAULT_SNIPPET_CONTEXT_LINES = 2;
 /** Width, in characters, the detail sidebar can render on one line before a match needs a window. */
 const SIDEBAR_LINE_CAP = 50;
 
+/**
+ * Prefix a snippet line carries when every non-whitespace character on it sits inside a comment.
+ *
+ * @remarks
+ * The reported `commented` flag answers for the matched line only, and a snippet is a few lines
+ * wide, so a dead line of context arrives byte-indistinguishable from live code — same indentation,
+ * same SQL shape, and the comment's own delimiters outside the window. This states it per line, in
+ * the language the text is already written in.
+ */
+const DEAD_LINE_PREFIX = '--';
+
 /** Heuristic ReDoS guard budget, in milliseconds, applied by {@link compileSearchRegex}. */
 const REDOS_BUDGET_MS = 5;
 
@@ -309,11 +320,13 @@ export function searchBodyScripts(
     // One pass per body, and only once a match exists: a body nobody hits is never scanned.
     let commentMask: Uint8Array | null = null;
     const comments = (): Uint8Array => (commentMask ??= scanComments(lines, lineStarts, body.length));
+    let deadMask: Uint8Array | null = null;
+    const deadLines = (): Uint8Array => (deadMask ??= markDeadLines(lines, lineStarts, comments()));
 
     if (scanner === null) {
       const idx = body.toLowerCase().indexOf(lower);
       if (idx < 0) continue;
-      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, comments()));
+      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, comments(), deadLines()));
       if (matches.length >= cap) break;
       continue;
     }
@@ -325,7 +338,7 @@ export function searchBodyScripts(
       // A zero-length match (`x*`, `^`) advances nothing on its own: skip the position rather than
       // the node, or the first empty match hides every real match later in the same body.
       if (hit[0].length === 0) { scanner.lastIndex++; continue; }
-      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, comments()));
+      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, comments(), deadLines()));
       if (matches.length >= cap) { capped = true; break; }
     }
     if (capped) break;
@@ -365,13 +378,14 @@ function makeMatch(
   contextLines: number,
   lineCap: number,
   commentMask: Uint8Array,
+  deadLine: Uint8Array,
 ): BodyMatch {
   const matchLine = lineIndexAt(lineStarts, index);
   const match: BodyMatch = {
     node,
     line:    matchLine + 1,
     text:    lines[matchLine].trimEnd(),
-    snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap),
+    snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap, deadLine),
   };
   // Set only when true: an executable match keeps the shape it has always had.
   if (commentMask[index] === 1) match.commented = true;
@@ -486,20 +500,58 @@ function buildSnippet(
   matchText: string,
   contextLines: number,
   lineCap: number,
+  deadLine: Uint8Array,
 ): string {
   const start = Math.max(0, matchLine - (contextLines - 1));
   const end = Math.min(lines.length, matchLine + contextLines);
   const termLower = matchText.toLowerCase();
-  return lines.slice(start, end).map(l => {
+  // Applied at every return, after the window is chosen: the prefix states the line's status and
+  // must not enter the cap arithmetic that decides what of the line is shown.
+  const mark = (lineIndex: number, rendered: string): string =>
+    deadLine[lineIndex] === 1 ? `${DEAD_LINE_PREFIX}${rendered}` : rendered;
+  return lines.slice(start, end).map((l, offset) => {
+    const lineIndex = start + offset;
     const trimmed = l.trimEnd();
-    if (trimmed.length <= lineCap) return trimmed;
+    if (trimmed.length <= lineCap) return mark(lineIndex, trimmed);
     const matchPos = termLower.length > 0 ? trimmed.toLowerCase().indexOf(termLower) : -1;
-    if (matchPos < 0) return trimmed;
+    if (matchPos < 0) return mark(lineIndex, trimmed);
     // Trim long lines so the match stays within the visible panel width.
     const windowStart = Math.max(0, matchPos - SIDEBAR_WINDOW_LEAD);
     const windowEnd = Math.min(trimmed.length, windowStart + lineCap);
-    return (windowStart > 0 ? '\u2026' : '') +
+    return mark(lineIndex, (windowStart > 0 ? '\u2026' : '') +
       trimmed.slice(windowStart, windowEnd) +
-      (windowEnd < trimmed.length ? '\u2026' : '');
+      (windowEnd < trimmed.length ? '\u2026' : ''));
   }).join('\n');
+}
+
+/**
+ * Projects the per-character comment mask onto whole lines.
+ *
+ * @param lines - The body split on newlines.
+ * @param lineStarts - Start offset of each line, as {@link buildLineStarts} computes it.
+ * @param commentMask - The per-character mask {@link scanComments} already produced for this body.
+ * @returns One byte per line: `1` when the line carries content and every non-whitespace character
+ *   of it lies inside a comment, `0` otherwise.
+ *
+ * @remarks
+ * Reads a mask it does not create — there is no character classification here and no second view of
+ * T-SQL. A line mixing live code with a trailing `--` is NOT dead: part of it executes, and calling
+ * it dead would hide that. A blank line is not dead either; it carries nothing to mislabel.
+ */
+function markDeadLines(lines: string[], lineStarts: number[], commentMask: Uint8Array): Uint8Array {
+  const dead = new Uint8Array(lines.length);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const base = lineStarts[i];
+    let content = false;
+    let allInComment = true;
+    for (let c = 0; c < line.length; c++) {
+      const ch = line.charCodeAt(c);
+      if (ch === 32 || ch === 9 || ch === 13) continue;
+      content = true;
+      if (commentMask[base + c] !== 1) { allInComment = false; break; }
+    }
+    dead[i] = content && allInComment ? 1 : 0;
+  }
+  return dead;
 }
