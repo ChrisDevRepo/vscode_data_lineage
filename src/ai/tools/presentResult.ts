@@ -663,8 +663,7 @@ export function findBareNonPrunedNodes(
 }
 
 /**
- * Reports which delivered `detail_slots[]` reached no rendered section — an observation for the
- * log, never a payload mutation.
+ * Reports which delivered `detail_slots[]` reached no rendered section.
  *
  * @remarks
  * A different question from {@link findBareNonPrunedNodes}: that function walks every rendered
@@ -672,25 +671,30 @@ export function findBareNonPrunedNodes(
  * `highlight_groups[].node_ids[]`, because a highlight color is a legitimate way to place a
  * passthrough node that never had analyzed detail to begin with. A `detail_slots[]` entry is
  * different: it is the model's own captured technical findings for that node, the richest
- * material the synthesis call received, and `sections[].text` is the only surface that carries
- * prose — a highlight color or a bare badge does not carry the slot's content anywhere. Folding
- * this into `findBareNonPrunedNodes`'s highlight-tolerant, all-rendered-nodes check would hide
- * exactly the loss this function exists to name, so it stays a second, narrower computation
- * rather than an extra parameter on the first.
+ * material the synthesis call received, and only `sections[].text` or a `notes[]` caption carries
+ * prose anywhere in the delivered answer — a highlight color or a bare badge carries none of it.
+ * Folding this into `findBareNonPrunedNodes`'s highlight-tolerant, all-rendered-nodes check would
+ * hide exactly the loss this function exists to name, so it stays a second, narrower computation
+ * rather than an extra parameter on the first. The caller (`executePresentResult`) reports every
+ * returned id as a {@link PresentResultViolation} whose `repairFields`/`paths` name `sections` and
+ * `notes` — the two surfaces this function itself accepts — but never `highlight_groups`, which
+ * never satisfies it.
  *
  * @param slotNodeIds - `detail_slots[].nodeId` for the whole session (`sess.memory.notedNodeIds`).
  * @param input - The (already auto-fixed) present payload. Read-only.
- * @returns The slot ids linked in no `sections[].node_ids[]`, in `slotNodeIds` order; empty when
- *   there are no authored sections (update-style calls) or every slot was sectioned.
+ * @returns The slot ids linked in neither `sections[].node_ids[]` nor `notes[].node_id`, in
+ *   `slotNodeIds` order; empty when there are no authored sections (update-style calls) or every
+ *   slot reached prose.
  */
 export function findUnrenderedDetailSlotIds(
   slotNodeIds: readonly string[],
   input: PresentResultInput,
 ): string[] {
   if (slotNodeIds.length === 0 || !input.sections || input.sections.length === 0) return [];
-  const sectionedNodeIds = new Set<string>();
-  for (const sec of input.sections) for (const id of sec.node_ids ?? []) sectionedNodeIds.add(id);
-  return slotNodeIds.filter(id => !sectionedNodeIds.has(id));
+  const proseNodeIds = new Set<string>();
+  for (const sec of input.sections) for (const id of sec.node_ids ?? []) proseNodeIds.add(id);
+  for (const note of input.notes ?? []) proseNodeIds.add(note.node_id);
+  return slotNodeIds.filter(id => !proseNodeIds.has(id));
 }
 
 /**

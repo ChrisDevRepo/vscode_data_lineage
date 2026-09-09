@@ -183,11 +183,16 @@ describe('executePresentResult — CT column-chain coverage', () => {
     expect(result.view_name).toBe('OrderAmount Trace');
   });
 
-  it('never requires a slotted chain node the presentation leaves unlinked', async () => {
+  it('never requires a slotted chain node in the CT chain check itself', async () => {
+    // LOADER and CONSUMER are slotted, so this CT-chain check exempts them — but the separate
+    // detail-slot coverage check (present-result-detail-slot-coverage.test.ts) still requires
+    // their captured findings reach a section; the two checks compose, neither is redundant.
     const result = await run(ctInput({
       sections: [{ label: 'Chain', node_ids: [RAW, STAGING], text: 'The loader writes the amount forward.' }],
     }));
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(errorText(result)).not.toMatch(/CT column-chain node\(s\) missing/);
+    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section/);
   });
 });
