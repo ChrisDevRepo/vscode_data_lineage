@@ -109,6 +109,16 @@ describe('prompt composition', () => {
     expect(detector).toContain("default to 'discovery'");
     expect(detector).toContain('switch to a column trace');
     expect(detector).not.toContain('even one described as a calculation or metric');
+
+    // D-073 guard: the classifier prompt (`08204f6c`) used to read "Return 'visual_render' when
+    // the user explicitly asks to see, show, render... This means approval-gated hop-by-hop
+    // exploration." — telling the model that wanting a picture means wanting a per-node walk. The
+    // OLD version of THIS test asserted `.toContain('approval-gated hop-by-hop exploration')` and
+    // thereby pinned the bug as correct for the classifier's whole 1.1.0 lifetime. Wanting a
+    // picture is not wanting a per-node walk (docs/ARCHITECTURE.md:154-155,173-174): the sentence
+    // must never return to the entry-detector prompt.
+    expect(detector, 'D-073: entry detector must not equate a render request with hop-by-hop exploration')
+      .not.toContain('approval-gated hop-by-hop');
   });
 
   it('binds scope refinement to the displayed proposal revision and changed fields only', () => {
