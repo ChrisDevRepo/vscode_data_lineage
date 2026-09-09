@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   CONTEXT_BLOCK_ITEM_HEADROOM_BYTES,
   CONTEXT_BLOCK_WINDOW_SHARE,
+  DEFAULT_DISCOVERY_NODE_CAP,
+  DEFAULT_DISCOVERY_TOKEN_BUDGET,
+  DEFAULT_TURN_TOKEN_BUDGET,
   MAX_ATTEMPT_CONTEXT_BYTES,
   MAX_DISCOVERY_BLOCK_BYTES,
   attemptContextBytes,
+  checkScopeBudget,
   createTurnTokenBudget,
   discoveryBlockBytes,
   discoveryEvidenceItemBytes,
@@ -53,5 +57,64 @@ describe('bounded prompt blocks follow the model window', () => {
     expect(attemptContextBytes(wide)).toBe(MAX_ATTEMPT_CONTEXT_BYTES);
     expect(attemptContextBytes(narrow)).toBe(Math.floor(8_192 * CONTEXT_BLOCK_WINDOW_SHARE * 4));
     expect(attemptContextBytes(wide)).toBe(MAX_ATTEMPT_CONTEXT_BYTES);
+  });
+});
+
+/**
+ * `checkScopeBudget` is the one gate between the discovery MAIN LOOP and the `discovery_budget`
+ * trigger that escalates a turn to `sm_entry` (`graph.ts:671`). The boundary is documented
+ * (`DEFAULT_DISCOVERY_NODE_CAP` = 10, `DEFAULT_DISCOVERY_TOKEN_BUDGET` = 10_000 tokens) but was
+ * asserted nowhere: pin it exactly at the cap, one over on each axis independently, and confirm
+ * neither axis leaks into the other.
+ */
+describe('checkScopeBudget escalates at the documented discovery caps', () => {
+  const CHARS_PER_TOKEN_FOR_TEST = 4;
+  const ddlBytesFor = (tokens: number) => tokens * CHARS_PER_TOKEN_FOR_TEST;
+
+  it('admits exactly at both caps', () => {
+    const result = checkScopeBudget(
+      DEFAULT_TURN_TOKEN_BUDGET,
+      DEFAULT_DISCOVERY_NODE_CAP,
+      ddlBytesFor(DEFAULT_DISCOVERY_TOKEN_BUDGET),
+    );
+    expect(result.ok, 'node cap and token budget hit exactly are still within budget').toBe(true);
+  });
+
+  it('rejects one node over the cap, tokens well under', () => {
+    const result = checkScopeBudget(DEFAULT_TURN_TOKEN_BUDGET, DEFAULT_DISCOVERY_NODE_CAP + 1, ddlBytesFor(100));
+    expect(result.ok, 'one node over the cap alone rejects').toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('over_discovery_budget');
+      expect(result.limits).toEqual({ node_cap: DEFAULT_DISCOVERY_NODE_CAP, token_budget: DEFAULT_DISCOVERY_TOKEN_BUDGET });
+    }
+  });
+
+  it('rejects one token over the budget, nodes well under', () => {
+    const result = checkScopeBudget(
+      DEFAULT_TURN_TOKEN_BUDGET,
+      1,
+      ddlBytesFor(DEFAULT_DISCOVERY_TOKEN_BUDGET) + 1,
+    );
+    expect(result.ok, 'one token over the budget alone rejects').toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('over_discovery_budget');
+      expect(result.counts.nodes).toBe(1);
+    }
+  });
+
+  it('the two caps are independent — over on one axis rejects even with headroom on the other', () => {
+    const nodesOverOnly = checkScopeBudget(DEFAULT_TURN_TOKEN_BUDGET, DEFAULT_DISCOVERY_NODE_CAP + 5, ddlBytesFor(1));
+    const tokensOverOnly = checkScopeBudget(DEFAULT_TURN_TOKEN_BUDGET, 1, ddlBytesFor(DEFAULT_DISCOVERY_TOKEN_BUDGET * 2));
+    expect(nodesOverOnly.ok, 'node overflow alone is sufficient to reject').toBe(false);
+    expect(tokensOverOnly.ok, 'token overflow alone is sufficient to reject').toBe(false);
+  });
+
+  it('stays within budget one under each cap', () => {
+    const result = checkScopeBudget(
+      DEFAULT_TURN_TOKEN_BUDGET,
+      DEFAULT_DISCOVERY_NODE_CAP - 1,
+      ddlBytesFor(DEFAULT_DISCOVERY_TOKEN_BUDGET - 1),
+    );
+    expect(result.ok, 'one under both caps admits').toBe(true);
   });
 });
