@@ -22,7 +22,7 @@ import { ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL } from '../../engine/shared/exp
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
-import { buildPassthroughReAnchor } from '../prompting/smPrompts';
+import { buildPassthroughReAnchor, sectionTextHasCapturedArtifact } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
 import { bfsDepthMap, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
@@ -2250,6 +2250,13 @@ export class NavigationEngine implements IHopStateMachine {
         return {
           error: 'prune_would_orphan_noted',
           hint: `Use verdict='passthrough' to keep it without pruning. Marking [${focusId}] prune would orphan committed node [${disconnected}] (already analyzed or still queued).${passthroughColumnClause}`
+        };
+      }
+      const contradictingSections = finding.sections.filter(s => sectionTextHasCapturedArtifact(s.text));
+      if (contradictingSections.length > 0) {
+        return {
+          error: 'prune_sections_conflict',
+          hint: `Resubmit with verdict='analyze' or 'passthrough' to keep the captured formula/predicate evidence, or resubmit 'prune' with sections:[] (or prose with no captured artifact) if [${focusId}] truly contributes nothing. This submission's sections[] carry captured computation (a $$ … $$ formula, or SQL that computes a value or filters rows) while verdict='prune' discards it — a pruned node is not part of the lineage answer, so its analysis cannot also be kept.${passthroughColumnClause}`,
         };
       }
 

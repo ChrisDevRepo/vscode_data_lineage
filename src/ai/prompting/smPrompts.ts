@@ -627,6 +627,33 @@ const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|cr
 const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
 
 /**
+ * True when `text` carries at least one {@link CAPTURED_ARTIFACT} that counts as evidence rather
+ * than prose — the same lexical bound {@link buildCapturedFormulaFacts} enumerates for the answer,
+ * asked as a yes/no question instead of a list. A `$$ … $$` math block always qualifies; a fenced
+ * or inline span qualifies only under the same {@link CALL_TOKEN} / {@link PREDICATE_START} /
+ * {@link STATEMENT_START} filter, so "captured" means the same thing at submission time as it does
+ * at synthesis time — one governor, asked twice.
+ *
+ * @param text - One `sections[].text` body to test.
+ * @returns Whether the text contains a qualifying artifact.
+ */
+export function sectionTextHasCapturedArtifact(text: string): boolean {
+  const collapse = (s: string): string => s.split(/\s+/).filter(Boolean).join(' ');
+  const isEnumerable = (artifact: string): boolean =>
+    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
+  for (const match of text.matchAll(CAPTURED_ARTIFACT)) {
+    const [, math, fenced, inline] = match;
+    if (math !== undefined) return true;
+    if (fenced !== undefined) {
+      if (fenced.split('\n').some(line => isEnumerable(collapse(line)))) return true;
+      continue;
+    }
+    if (isEnumerable(collapse(inline ?? ''))) return true;
+  }
+  return false;
+}
+
+/**
  * Enumerates the value computations and filter conditions the hops captured — `$$ … $$` blocks plus
  * the SQL that computes a value or filters rows — each keyed by the node whose detail slot holds it,
  * in the same self-check shape {@link buildPassthroughFlowFacts} uses for kept node ids.
