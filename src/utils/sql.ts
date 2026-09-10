@@ -1,5 +1,3 @@
-import { scanComments, markDeadLines } from './modelSearch';
-
 /**
  * Internal configuration flag for case-sensitivity mode across the engine.
  *
@@ -233,50 +231,6 @@ function stripPhysicalWithOptions(sql: string): string {
   return result + sql.slice(cursor);
 }
 
-/** Prefix rendered onto a line whose entire content lies inside a SQL comment. */
-const HOP_DEAD_LINE_PREFIX = '--';
-
-/** Start offset of every line, so a per-character mask index resolves to its line. */
-function buildHopLineStarts(lines: string[]): number[] {
-  const starts = new Array<number>(lines.length);
-  let offset = 0;
-  for (let i = 0; i < lines.length; i++) {
-    starts[i] = offset;
-    offset += lines[i].length + 1;
-  }
-  return starts;
-}
-
-/**
- * Prefixes every fully-commented line of `text` with `--`, so a comment describing a fallback that
- * never executes (T8-DISCOUNT-NULL-VS-ZERO: a CATCH block's "continue with Discount = 0", beside a
- * Step-3 UPDATE that actually fails and leaves the column NULL) cannot be read as behaviour.
- *
- * @remarks
- * Runs on the fully-minified text, not the raw body: `minifyDdlForHop`'s own strips (SSMS headers,
- * `WITH(...)` physical options) span multiple lines and can shift line boundaries, so a mask built
- * on the raw input would need to survive that shift to stay aligned. SQL comment syntax is
- * unaffected by which physical-storage tokens were stripped earlier, so lexing the text that is
- * actually about to be delivered is exactly as correct and needs no such tracking. Marking adds
- * text, it never deletes or relocates any — the comment survives verbatim, prefixed.
- *
- * The lexer itself (`scanComments`/`markDeadLines`) is `src/utils/modelSearch.ts`'s — one T-SQL
- * comment/string/bracket algorithm, two call sites: that module's search-panel snippet pass and
- * this hop-DDL marking pass. Only the line-offset bookkeeping and the output framing are local,
- * because this call site lexes `minifyDdlForHop`'s own output text (see above), not a raw body.
- */
-function markDeadCommentLines(text: string): string {
-  const lines = text.split('\n');
-  if (lines.length === 0) return text;
-  const lineStarts = buildHopLineStarts(lines);
-  const length = lineStarts[lineStarts.length - 1] + lines[lines.length - 1].length;
-  const commentMask = scanComments(lines, lineStarts, length);
-  const deadLines = markDeadLines(lines, lineStarts, commentMask);
-  return lines
-    .map((line, i) => (deadLines[i] === 1 ? `${HOP_DEAD_LINE_PREFIX}${line}` : line))
-    .join('\n');
-}
-
 /**
  * Aggressively minifies a raw DDL script specifically for hop-by-hop LLM exploration.
  *
@@ -313,11 +267,9 @@ export function minifyDdlForHop(raw: string, preserveTechContext: boolean): stri
     // ASC/DESC are NOT stripped — removing them silently corrupts ORDER BY / OVER() semantics the analyzer reads.
   }
 
-  const minified = clean
+  return clean
     .split('\n')
     .filter(line => line.trim().length > 0)
     .map(line => line.trimEnd().replace(/\t/g, '  '))
     .join('\n');
-
-  return markDeadCommentLines(minified);
 }
