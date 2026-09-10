@@ -33,7 +33,7 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
   .max(8)
   .describe(
     'Analysis constraints the user stated that no filter field can express — e.g. "ignore filter criteria", '
-    + '"explain the discount logic on [schema].[spBuildReportA] in detail". One short note per instruction, in the '
+    + '"explain the waiver logic on [schema].[spBuildCircA] in detail". One short note per instruction, in the '
     + "user's own terms. These are echoed back at the approval gate for the user to confirm, and are carried to "
     + 'every hop, so record an instruction here rather than dropping it when it maps to no filter.',
   );
@@ -431,8 +431,8 @@ const RouteRequestSchema = z.object({
   question: z.string().describe(
     'Verification sub-question for the routed node, self-contained so a later hop can act on it after ' +
     'older turns are wiped. Name the node being routed to, the specific column or value to resolve there, ' +
-    'and the mission decision it answers — e.g. "Does spCleanOrdersA derive QtyA from RawQtyA or pass it ' +
-    'through? Resolves whether the qty chain continues upstream." Frame it around the routed node, not the ' +
+    'and the mission decision it answers — e.g. "Does spNormalizeLoansA derive DaysA from RawDaysA or pass it ' +
+    'through? Resolves whether the days chain continues upstream." Frame it around the routed node, not the ' +
     'current focus; "analyze this node" carries no decision and is not a usable sub-question.',
   ),
   columns: RouteColumnsSchema.optional().describe(ROUTE_COLUMNS_DESCRIPTION),
@@ -476,7 +476,7 @@ const ColumnRefSchema = z.object({
   ),
   note: z.string().max(200).optional().describe(
     'One short grounded clause naming the rule or expression behind the transforms — e.g. ' +
-    '"SUM of OrderLines Qty * Price" — at most ~12 words. Omit when transforms is omitted or the ' +
+    '"SUM of LoanLines Days * Rate" — at most ~12 words. Omit when transforms is omitted or the ' +
     'DDL gives nothing concrete to quote; never speculate.',
   ),
 }).strict();
@@ -527,7 +527,7 @@ const HopFindingBaseSchema = z.object({
   summary: z.string().describe(
     'One-line digest a later hop reads in isolation after older turns are wiped. Name what this node does ' +
     'to the data — the transform, filter, or pass-through — and what it hands to which downstream node. ' +
-    'Example: "vwPriceA carries ListPriceA through unchanged and feeds spBuildFactA with UnitPriceA." ' +
+    'Example: "vwRateA carries StdRateA through unchanged and feeds spBuildCircA with UnitRateA." ' +
     'Aim for one line; length is never a rejection axis.',
   ),
   /**

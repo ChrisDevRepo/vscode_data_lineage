@@ -61,7 +61,7 @@ summary:
   instruction: >
     One-line graph purpose for the info card — prose, ~120 chars: the subject
     of the analysis and where its data lands.
-  example: "Revenue lineage from raw orders through price calculation to FactTableA."
+  example: "Loan lineage from raw checkouts through fee calculation to FactCircA."
 
 title:
   stages: [synthesis]
@@ -69,7 +69,7 @@ title:
     Optional, ≤80 chars and hard-capped at 120:
     "[Subject] — [key computation, pattern, or finding]", ending on the final
     output object where it fits.
-  example: "NetAmountA — QtyA × PriceA, 6-hop ETL to FactTableA"
+  example: "NetFeeA — DaysA × RateA, 6-hop ETL to FactCircA"
 
 intro:
   stages: [synthesis]
@@ -80,10 +80,10 @@ intro:
     for — then set architectural context. Shared state is named by role
     ("central scratch-pad table", "terminal publication step").
   example: >
-    Read as a business-driven view: NetAmountA is the product of QtyA
-    and PriceA — both computed independently before joining at
-    spBuildFactA. QtyA originates in raw order imports; PriceA is
-    derived from supplier margins with a markup formula.
+    Read as a business-driven view: NetFeeA is the product of DaysA
+    and RateA — both computed independently before joining at
+    spBuildCircA. DaysA originates in raw checkout imports; RateA is
+    derived from branch margins with a markup formula.
 
 # Section assembly (lift + group + label) is governed by buildSynthesisPrompt()
 # in src/ai/prompting/prompts.ts — kept there to avoid duplication with the synthesis cue.
@@ -101,14 +101,14 @@ closing:
     mission states impact and scope; the mechanism stays in the sections.
     Complete sentences, finished cleanly.
   example: |
-    The spBuildFactA pipeline reloads from staging each run, applies a
-    four-stage cascade (order staging → price calculation → discount
-    application → fact write), and lands USD-converted totals in FactTableA.
+    The spBuildCircA pipeline reloads from staging each run, applies a
+    four-stage cascade (loan staging → fee calculation → waiver
+    application → fact write), and lands region-normalized totals in FactCircA.
 
     | Risk | Scope |
     |---|---|
-    | ⚠️ NULL PriceA in OrderDetailA collapses NetAmountA | All revenue rows |
-    | ⚠️ Missing DimCurrency rows produce NULL CurrencyTotal | Final fact load |
+    | ⚠️ NULL RateA in LoanDetailA collapses NetFeeA | All circulation rows |
+    | ⚠️ Missing DimRegion rows produce NULL RegionTotal | Final fact load |
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools/presentResult.ts
 # from title + intro + sections[] + closing) — NOT an AI-writeable field.
@@ -141,9 +141,9 @@ notes:
     the deeper logic live in the section body — glancing at graph + notes
     tells the story. A passthrough names what it passes or filters
     ("Filters to IsActiveA rows"). In a column trace the caption also names
-    the traced column here and any rename ("OrderAmt → NetAmountA") —
+    the traced column here and any rename ("GrossFee → NetFeeA") —
     column names, not the expression.
-    GOOD: "Computes NetAmountA at INSERT"
+    GOOD: "Computes NetFeeA at INSERT"
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
@@ -209,31 +209,31 @@ business_capture:
     expression.
     </section_skeleton>
   example: |
-    `spCalcA` computes `NetAmountA` at the final INSERT into
-    `FactTableA`, only for rows with `Status = 'CONFIRMED'`.
+    `spCalcFeeA` computes `NetFeeA` at the final INSERT into
+    `FactCircA`, only for rows with `Status = 'CONFIRMED'`.
 
     $$
-    NetAmountA = QtyA \times PriceA
+    NetFeeA = DaysA \times RateA
     $$
 
-    1. `QtyA` is line-item quantity sold, renamed from `RawQtyA` in
-       `CTE_Orders`.
-    2. `PriceA` is list price after markup:
+    1. `DaysA` is line-item days checked out, renamed from `RawDaysA` in
+       `CTE_Loans`.
+    2. `RateA` is list rate after markup:
 
        $$
-       PriceA = BaseCostA \times (1 + UpliftPctA)
+       RateA = BaseRateA \times (1 + MarkupPctA)
        $$
-    3. The fact row is INSERTed with `NetAmountA` populated.
+    3. The fact row is INSERTed with `NetFeeA` populated.
 
     | From | To | Business meaning |
     |------|----|------------------|
-    | RawQtyA | QtyA | line-item quantity sold |
-    | ListPriceA | PriceA (pre-markup) | sticker price |
-    | UpliftPctA | PriceA (component) | supplier-specific uplift |
+    | RawDaysA | DaysA | line-item days checked out |
+    | StdRateA | RateA (pre-markup) | published rate |
+    | MarkupPctA | RateA (component) | branch-specific markup |
 
-    ⚠️ Null `UpliftPctA` collapses `PriceA` to `BaseCostA` — verify
-    supplier coverage before each run. Consumer impact: every revenue
-    dashboard reads `NetAmountA` directly; this rule defines the
+    ⚠️ Null `MarkupPctA` collapses `RateA` to `BaseRateA` — verify
+    branch coverage before each run. Consumer impact: every fee
+    dashboard reads `NetFeeA` directly; this rule defines the
     dashboard's accuracy.
 
 technical_capture:
@@ -282,21 +282,21 @@ technical_capture:
     Loading: TRUNCATE + INSERT — full reload, no delta tracking.
 
     ```sql
-    INSERT INTO dbo.FactTableA (NetAmountA, ProductId, QtyA)
-    SELECT o.RawQtyA * p.PriceA, o.ProductId, o.RawQtyA
-    FROM CTE_Orders o
-    INNER HASH JOIN DimProduct p ON o.ProductId = p.ProductId
-    LEFT JOIN vwPriceA pl ON o.ProductId = pl.ProductId
+    INSERT INTO dbo.FactCircA (NetFeeA, BranchId, DaysA)
+    SELECT o.RawDaysA * p.RateA, o.BranchId, o.RawDaysA
+    FROM CTE_Loans o
+    INNER HASH JOIN DimBranch p ON o.BranchId = p.BranchId
+    LEFT JOIN vwRateA pl ON o.BranchId = pl.BranchId
     WHERE o.IsActive = 1
     ```
 
     Filters: `WHERE IsActive = 1` — plain equality predicate; index
     support is unknown from this DDL (schema metadata required).
-    `INNER HASH JOIN` on `ProductId` — explicit hash-join hint in the
+    `INNER HASH JOIN` on `BranchId` — explicit hash-join hint in the
     source; fit for the actual table sizes needs plan evidence.
-    `LEFT JOIN vwPriceA` on `ProductId` — ⚠️ unmatched rows produce NULL
+    `LEFT JOIN vwRateA` on `BranchId` — ⚠️ unmatched rows produce NULL
     downstream; no ISNULL guard before the INSERT.
-    Candidate: an index covering `(ProductId, OrderDate)` may help the
+    Candidate: an index covering `(BranchId, CheckoutDate)` may help the
     downstream aggregation — validate against existing indexes first.
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────
@@ -376,12 +376,12 @@ column_trace_capture:
     □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
     □ When an out_col is produced by a computed expression (arithmetic, CASE, COALESCE, aggregation), sections[].text includes the producing expression as a `$$ … $$` block.
 
-    ## Example — column interacts (Revenue computed at vw_Sales)
+    ## Example — column interacts (LateFee computed at vw_Circ)
     column_flow: [
-      { out_col: "Revenue",
+      { out_col: "LateFee",
         upstream_columns: [
-          { node: "fact_orders", col: "Qty" },
-          { node: "fact_orders", col: "PriceA" }
+          { node: "fact_loans", col: "Days" },
+          { node: "fact_loans", col: "RateA" }
         ]}
     ]
     verdict: "analyze"
@@ -450,20 +450,20 @@ general:
     Each bullet renders what the captured or loaded bodies contain; nothing is
     invented to fill one.
   example: >
-    $$NetAmountA = QtyA \times PriceA \times (1 - DiscountA)$$
+    $$NetFeeA = DaysA \times RateA \times (1 - WaiverPctA)$$
 
     | From | To | Business meaning |
     | --- | --- | --- |
-    | RawQtyA | QtyA | Units sold per order line |
-    | ListPriceA | PriceA | Price after supplier markup |
+    | RawDaysA | DaysA | Days counted per loan line |
+    | StdRateA | RateA | Rate after branch markup |
 
     ```sql
     WHERE o.IsActive = 1 AND o.OrderDate >= DATEADD(YEAR, -2, GETDATE())
     ```
 
-    Status flow: 1. New → 2. Reviewed → 3. Approved → 4. Shipped → 5. Closed.
+    Status flow: 1. Checked Out → 2. Renewed → 3. Overdue → 4. Returned → 5. Closed.
 
-    ⚠️ Null `DiscountA` collapses NetAmountA to QtyA × PriceA — verify input.
+    ⚠️ Null `WaiverPctA` collapses NetFeeA to DaysA × RateA — verify input.
 
 # ── Big-picture ETL closing — TECHNICAL angle only ───────────────────────────
 # Classification-gated to ['technical', 'both'] in templateRenderer.ts.
@@ -483,6 +483,6 @@ loading_pattern:
     the analysis spans non-bodied origins only.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
-    INSERT — each run rebuilds `FactTableA` from scratch with no
+    INSERT — each run rebuilds `FactCircA` from scratch with no
     delta tracking. Downstream consumers must tolerate full-replace
     semantics; there is no incremental-load fallback.

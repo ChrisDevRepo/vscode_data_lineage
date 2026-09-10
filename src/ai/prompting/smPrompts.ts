@@ -256,7 +256,7 @@ function buildSynthesisReminder(question: string): string {
     '- `highlight_groups[]`: the Lineage palette over the flow roles below, at least a `target` group on the origin.',
     '- `summary`: one sentence naming the answer.',
     '- `result.scope.node_ids` is the id set this render accepts; `sections[].node_ids[]`, `notes[].node_id` and `highlight_groups[].node_ids[]` name ids from it, and any other object the evidence names is prose in `sections[].text`.',
-    '- Formulas are LaTeX math: `$...$` inline, `$$…$$` for a standalone block (e.g. `$$ NetAmountA = QtyA \\times PriceA $$`), with `\\times`, `\\text{}`, `\\operatorname{COALESCE}`.',
+    '- Formulas are LaTeX math: `$...$` inline, `$$…$$` for a standalone block (e.g. `$$ NetFeeA = DaysA \\times RateA $$`), with `\\times`, `\\text{}`, `\\operatorname{COALESCE}`.',
     'This is the document beside the graph, not a chat reply: Markdown only, no arbitrary HTML, SQL in fenced ```sql blocks. Length follows the captured evidence, not the question — every kept node keeps its rules, predicates and formulas.',
   ].join('\n');
 }
