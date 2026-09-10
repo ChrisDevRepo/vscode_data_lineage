@@ -965,23 +965,6 @@ export class NavigationEngine implements IHopStateMachine {
     return resolved;
   }
 
-  /**
-   * Whether per-hop DDL minification must retain physical-storage detail (indexes, CLUSTERED,
-   * WITH(...) options) for the focus node.
-   *
-   * @remarks
-   * Driven off {@link classification} — the AI's own `business`/`technical`/`both` verdict, locked
-   * at gate approval before any hop dispatches — never off mission-brief prose: guessing "wants
-   * physical detail" from free text is exactly the intent-guessing the engine must not do.
-   * `technical` and `both` preserve; `business` minifies. `classification` is set by the caller
-   * before the first hop (the gate requires it on every fresh `start_exploration` proposal), so the
-   * unset case is a defensive fallback for a wiring gap — it preserves conservatively rather than
-   * risk stripping detail, never a prose heuristic.
-   */
-  private shouldPreserveTechContext(): boolean {
-    if (!this.classification) return true;
-    return this.classification === 'technical' || this.classification === 'both';
-  }
 
   /**
    * Collapses `this._direction` plus an asymmetric depth's per-side `0` into the single traversal
@@ -2053,21 +2036,9 @@ export class NavigationEngine implements IHopStateMachine {
 
     const node = this.nodeMap.get(entry.nodeId)!;
 
-    const preserveTechContext = this.shouldPreserveTechContext();
-    const rawDdl = (typeof this.store?.getDdl === 'function' ? this.store.getDdl(node.id) : undefined)
-      ?? node.bodyScript;
     const focusNode = buildHopFocusNode(
       node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap, preserveTechContext,
-    );
-    const originalChars = rawDdl?.length ?? 0;
-    const minifiedChars = typeof focusNode.bb_ddl === 'string' ? focusNode.bb_ddl.length : 0;
-    const reducedPct = originalChars > 0
-      ? (Math.max(0, originalChars - minifiedChars) / originalChars) * 100
-      : 0;
-    this.log(
-      'debug',
-      `[DDL] Applying hop-by-hop minification (preserveTechContext=${preserveTechContext}, reduced=${reducedPct.toFixed(1)}%)`,
+      this.model.neighborIndex, this.edgeTypeMap,
     );
 
     if (this.depthBudget !== null) {
@@ -2189,11 +2160,9 @@ export class NavigationEngine implements IHopStateMachine {
     if (!focusId) return null;
     const node = this.nodeMap.get(focusId);
     if (!node) return null;
-    const preserveTechContext = this.shouldPreserveTechContext();
-
     const focusNode = buildHopFocusNode(
       node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap, preserveTechContext,
+      this.model.neighborIndex, this.edgeTypeMap,
     );
     if (this.depthBudget !== null) {
       const d = this.depthFromOrigin.get(focusId);

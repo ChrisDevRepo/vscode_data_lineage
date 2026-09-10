@@ -409,45 +409,22 @@ describe("NavigationEngine Robustness", () => {
   expect('error' in invalid && invalid.error === 'target_columns_required_for_ct', 'CT merge rejection has a stable error code').toBe(true);
 });
 
-  it("must never guess this from mission-brief prose (H2: replaced a regex keyword sniff).", () => {
+  // Served SQL is the SQL as written (PM rulings nn, rr): no classification strips, rewrites or
+  // annotates the body a hop hands to the model.
+  it('serves the focus DDL exactly as stored under every classification', () => {
+  const body = 'CREATE PROCEDURE [dbo].[spProcA] AS\n  PRINT N\'start\';\n  CREATE CLUSTERED INDEX ix_a ON TableA(Col1) WITH (PAD_INDEX = OFF)\n  -- a comment\nGO';
   const ddlNodes: LineageNode[] = [
-    makeNode({ id: 'spProcA', schema: 'dbo', name: 'spProcA', type: 'procedure', bodyScript: 'CREATE PROCEDURE spProcA AS CREATE CLUSTERED INDEX ix_a ON TableA(Col1)' }),
+    makeNode({ id: 'spProcA', schema: 'dbo', name: 'spProcA', type: 'procedure', bodyScript: body }),
   ];
   const ddlModel: DatabaseModel = makeModel(ddlNodes, [], ['dbo']);
   const ddlGraph = makeGraph(ddlNodes, []);
 
-  const businessLogs: string[] = [];
-  const businessEngine = new NavigationEngine(ddlModel, ddlGraph, (_level, message) => businessLogs.push(message), {});
-  businessEngine.classification = 'business';
-  businessEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
-  const businessHop = businessEngine.getHopContext();
-  const businessDdl = String((businessHop.focus_node)?.bb_ddl ?? '');
-  expect(!/CLUSTERED/i.test(businessDdl), "classification 'business' minifies physical-storage detail (CLUSTERED stripped)").toBe(true);
-  const minificationLog = businessLogs.find(line => line.includes('[DDL] Applying hop-by-hop minification')) ?? '';
-  expect(!minificationLog.includes('aggressive'), 'per-hop minification log omits the old aggressive wording').toBe(true);
-  expect(/reduced=\d+\.\d%/.test(minificationLog), 'per-hop minification log reports the character reduction percentage').toBe(true);
-
-  const technicalEngine = new NavigationEngine(ddlModel, ddlGraph, () => {}, {});
-  technicalEngine.classification = 'technical';
-  technicalEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
-  const technicalHop = technicalEngine.getHopContext();
-  const technicalDdl = String((technicalHop.focus_node)?.bb_ddl ?? '');
-  expect(/CLUSTERED/i.test(technicalDdl), "classification 'technical' preserves physical-storage detail (CLUSTERED kept)").toBe(true);
-
-  const bothEngine = new NavigationEngine(ddlModel, ddlGraph, () => {}, {});
-  bothEngine.classification = 'both';
-  bothEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
-  const bothHop = bothEngine.getHopContext();
-  const bothDdl = String((bothHop.focus_node)?.bb_ddl ?? '');
-  expect(/CLUSTERED/i.test(bothDdl), "classification 'both' preserves physical-storage detail (CLUSTERED kept)").toBe(true);
-
-  // Unset classification is a defensive wiring-gap fallback, not an expected path — it must
-  // still never guess from prose, so it preserves conservatively rather than risk stripping.
-  const unsetEngine = new NavigationEngine(ddlModel, ddlGraph, () => {}, {});
-  unsetEngine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
-  const unsetHop = unsetEngine.getHopContext();
-  const unsetDdl = String((unsetHop.focus_node)?.bb_ddl ?? '');
-  expect(/CLUSTERED/i.test(unsetDdl), 'unset classification (wiring gap) preserves conservatively rather than minify').toBe(true);
+  for (const classification of ['business', 'technical', 'both', undefined] as const) {
+    const engine = new NavigationEngine(ddlModel, ddlGraph, () => {}, {});
+    if (classification) engine.classification = classification;
+    engine.init({ origin: 'spProcA', question: 'test', direction: 'downstream' });
+    expect(engine.getHopContext().focus_node?.bb_ddl, `classification ${classification ?? 'unset'}`).toBe(body);
+  }
 });
 
   // The neighbour list is where the model reads what a procedure does to its neighbours.

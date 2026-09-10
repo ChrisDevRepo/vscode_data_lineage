@@ -19,7 +19,6 @@ import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
-import { minifyDdlForHop } from '../../utils/sql';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import {
@@ -103,7 +102,6 @@ function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
  * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
  * @param neighborIndex - Optional pre-computed neighbor index to attach in/out edge metadata.
  * @param edgeTypeMap - Optional map of edge types.
- * @param preserveTechContext - If true, physical layer details are retained in the minified DDL.
  * @returns A record containing the focus node's metadata.
  */
 export function buildHopFocusNode(
@@ -114,15 +112,14 @@ export function buildHopFocusNode(
   ddlKey = 'ddl',
   neighborIndex?: NeighborIndex,
   edgeTypeMap?: Map<string, string>,
-  preserveTechContext = false,
 ): Record<string, unknown> {
   const focusNode: Record<string, unknown> = {
     id: node.id, s: node.schema, n: node.name, t: node.type,
   };
-  const rawDdl = (typeof store?.getDdl === 'function' ? store.getDdl(node.id) : undefined) ?? nodeMap.get(node.id)?.bodyScript;
+  const ddl = getNodeDdl(node.id, nodeMap, store);
   const cols = getNodeColumns(node.id, nodeMap, store);
-  if (SCRIPT_TYPES.has(node.type) && rawDdl) {
-    focusNode[ddlKey] = minifyDdlForHop(rawDdl, preserveTechContext);
+  if (SCRIPT_TYPES.has(node.type) && ddl) {
+    focusNode[ddlKey] = ddl;
   } else if (cols?.length) {
     focusNode.cols = cols.map(c => presentColumnCompact(c));
   }
