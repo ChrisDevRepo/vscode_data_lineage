@@ -268,7 +268,9 @@ export class AiMemoryManager {
    *
    * @remarks
    * Sections are stored verbatim — uniform downstream shape simplifies eval
-   * extraction and the synthesis prompt's carry instruction.
+   * extraction and the synthesis prompt's carry instruction. A revisit (a reopened column chain
+   * re-enqueues a visited node) appends its sections after the earlier visit's, so evidence the
+   * first visit captured stays in the archive; summary and metadata take the latest visit.
    */
   public storeDetail(
     node: LineageNode,
@@ -276,12 +278,13 @@ export class AiMemoryManager {
     summary: string,
     meta?: { badge_label?: string; reason_for_visit?: string },
   ): void {
+    const earlier = this.detailSlots.get(node.id)?.sections ?? [];
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
       name: node.name,
       type: node.type,
-      sections,
+      sections: [...earlier, ...sections],
       summary,
       badge_label: meta?.badge_label,
       reason_for_visit: meta?.reason_for_visit,
