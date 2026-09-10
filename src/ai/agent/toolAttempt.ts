@@ -962,7 +962,7 @@ function rejectionFromInvalid(
   // structural projection the dispatcher path uses ({@link correctionFragments}) is what stands
   // between the model and a blind full-envelope rewrite. Never the raw payload: only flagged
   // structural entries, byte-bounded, prose and result fields excluded.
-  const fragments = correctionFragments(call.input, issuePaths);
+  const fragments = replayFragments(call.input, issuePaths);
   return {
     status: 'rejected',
     code: call.code,
@@ -1062,11 +1062,11 @@ function correctionFragments(input: unknown, issuePaths: readonly string[]): Too
 }
 
 /**
- * Projects a whole schema-valid call for a rejection that names no field path.
+ * Projects a whole call for a rejection whose issue paths flag no list entry.
  *
  * @remarks
- * A pathless rejection (a route or prune refusal) orders a full resend with the untouched fields
- * carried over, so the replay is the model's only view of what it sent: every list root is replayed
+ * A pathless rejection (a route or prune refusal) or one flagging a scalar field (an over-long
+ * `title`) orders a full resend with the untouched fields carried over, so the replay is the model's only view of what it sent: every list root is replayed
  * complete under the whole-list byte policy, every other field bounded as one fragment. Replaying
  * `{}` instead left the model rebuilding the call from memory and reintroducing repaired entries.
  */
@@ -1086,6 +1086,16 @@ function wholeCallFragments(input: unknown): ToolCorrectionFragment[] {
   return fragments;
 }
 
+/**
+ * The fragments a rejected call is replayed with: the flagged list entries when the issue paths
+ * project onto any, otherwise the whole bounded call ({@link wholeCallFragments}) — a replay is
+ * never empty while the repair hint orders every other field kept unchanged.
+ */
+function replayFragments(input: unknown, issuePaths: readonly string[]): ToolCorrectionFragment[] {
+  const flagged = correctionFragments(input, issuePaths);
+  return flagged.length > 0 ? flagged : wholeCallFragments(input);
+}
+
 function rejectionFromResult(
   call: Extract<GeneratedToolCall, { valid: true }>,
   resultText: string,
@@ -1094,9 +1104,7 @@ function rejectionFromResult(
     const rejection = readToolError(JSON.parse(resultText));
     if (!rejection) return null;
     const issuePaths = rejectionIssuePaths(rejection.detail);
-    const fragments = issuePaths.length > 0
-      ? correctionFragments(call.input, issuePaths)
-      : wholeCallFragments(call.input);
+    const fragments = replayFragments(call.input, issuePaths);
     return {
       status: 'rejected',
       code: rejection.code,

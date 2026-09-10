@@ -1080,6 +1080,25 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
   });
 
+  it('replays the whole schema-invalid call when the flagged field is not a list, instead of empty arguments', async () => {
+    // A title over its limit flags `title`, a scalar root no list projection covers; the standing hint
+    // orders "keep every other field unchanged", so a replay of `{}` sent the model into a full
+    // regeneration that overran the limit again (b2-b-fireworks T6: 146, 123, 124 chars, terminal).
+    const input = {
+      title: 'T'.repeat(146),
+      sections: [{ label: 'Overview', text: 'SECTION-CARRIED' }],
+    };
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input,
+      reason: 'title: 146 chars, limit 120',
+      issuePaths: ['title'],
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['title']);
+    expect(replayedToolArgs(replayed)).toEqual(input);
+  });
+
   it('renders the held present_result repair draft as its own labeled message before the correction', async () => {
     const { replayed } = await replayAfterRejection({
       input: { column_flow: [{ from_col: 'A', to_col: 'B' }] },
