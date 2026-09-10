@@ -1061,6 +1061,31 @@ function correctionFragments(input: unknown, issuePaths: readonly string[]): Too
   return fragments;
 }
 
+/**
+ * Projects a whole schema-valid call for a rejection that names no field path.
+ *
+ * @remarks
+ * A pathless rejection (a route or prune refusal) orders a full resend with the untouched fields
+ * carried over, so the replay is the model's only view of what it sent: every list root is replayed
+ * complete under the whole-list byte policy, every other field bounded as one fragment. Replaying
+ * `{}` instead left the model rebuilding the call from memory and reintroducing repaired entries.
+ */
+function wholeCallFragments(input: unknown): ToolCorrectionFragment[] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
+  const fragments: ToolCorrectionFragment[] = [];
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (Array.isArray(value) && value.length > 0) {
+      const elementBytes = Math.floor(WHOLE_LIST_CORRECTION_BYTES / value.length);
+      value.forEach((element, position) => {
+        fragments.push({ path: `${key}.${position}`, value: boundListElementFragment(element, elementBytes) });
+      });
+      continue;
+    }
+    fragments.push({ path: key, value: boundStructuredValue(value, MAX_CORRECTION_FRAGMENT_BYTES) });
+  }
+  return fragments;
+}
+
 function rejectionFromResult(
   call: Extract<GeneratedToolCall, { valid: true }>,
   resultText: string,
@@ -1069,7 +1094,9 @@ function rejectionFromResult(
     const rejection = readToolError(JSON.parse(resultText));
     if (!rejection) return null;
     const issuePaths = rejectionIssuePaths(rejection.detail);
-    const fragments = correctionFragments(call.input, issuePaths);
+    const fragments = issuePaths.length > 0
+      ? correctionFragments(call.input, issuePaths)
+      : wholeCallFragments(call.input);
     return {
       status: 'rejected',
       code: rejection.code,

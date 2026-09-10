@@ -973,6 +973,36 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
   });
 
+  it('replays the whole submit_findings call when the rejection names no path, so a full resend can carry it over', async () => {
+    // A route rejection orders "resend submit_findings whole, carrying your sections and summary over
+    // unchanged" and names no field path; a replay of `{}` leaves the model rebuilding the call from
+    // memory, which reintroduced an already-repaired out_col (m1-n3-b-fireworks T8 gen 21).
+    const columnFlow = Array.from({ length: 6 }, (_, index) => ({
+      out_col: `Col${index}`,
+      upstream_columns: [{ node: '[dbo].[Src]', col: `Src${index}`, transforms: ['direct'] }],
+    }));
+    const input = {
+      focus_node_id: '[dbo].[spClean]',
+      verdict: 'analyze',
+      summary: 'SUMMARY-CARRIED',
+      sections: [{ label: 'Formula', text: 'SECTION-CARRIED' }],
+      column_flow: columnFlow,
+      route_requests: ['[dbo].[Src]'],
+      prune_neighbors: ['[dbo].[Required]'],
+    };
+    const { replayed, first } = await replayAfterRejection({
+      input,
+      envelope: rejectionEnvelope({
+        reason: 'route_validation_failed',
+        hint: 'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.',
+        detail: [{ id: '[dbo].[Required]', reason: 'Pruning `[dbo].[Required]` would orphan committed work.' }],
+      }),
+    });
+
+    expect(first.rejections[0].issuePaths).toBeUndefined();
+    expect(replayedToolArgs(replayed)).toEqual(input);
+  });
+
   it('replays a present_result rejection by name and call id only while the held draft carries the payload', async () => {
     const sections = [
       { label: 'Formula', text: 'HELD-SECTION-0', node_ids: ['[dbo].[Orders]'] },
