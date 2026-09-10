@@ -160,17 +160,11 @@ business_capture:
     `bb_ddl`: the rules, the values they produce, and what changes downstream.
     Quoted SQL is an exact substring of that DDL; a mechanism shown without
     its intent, prevalence or runtime effect reads as `not established from
-    the available SQL`.
+    the available SQL`. Logging, audit, and error-handling objects on the
+    path are stated as evidence under the technical angle; the business
+    angle may summarize or omit them in one line — neither choice is
+    penalized.
     </purpose>
-
-    <scope_relevance>
-    A sink that records the run itself — which procedure ran, when, with
-    what outcome — is backend logging: verdict `prune`, with the procedures
-    whose only job is to write it. A sink holding the traced column's own
-    values, before/after or as-of, is a business audit trail: a consumer
-    with a one-line caption. Either is in scope when the question is about
-    logging, errors, auditing or retention.
-    </scope_relevance>
 
     Submit one section: `{ angle: "business", text: "<body>" }`.
 
@@ -244,7 +238,10 @@ technical_capture:
     which rows survive. Quoted SQL is an exact substring of that DDL; a pattern
     whose runtime effect needs a plan or statistics reads as a candidate, `not
     established from the available SQL`. Columns, datatypes, keys, indexes and
-    FKs are already on the node.
+    FKs are already on the node. Logging, audit, and error-handling objects on
+    the path are stated as evidence under the technical angle; the business
+    angle may summarize or omit them in one line — neither choice is
+    penalized.
     </purpose>
 
     Submit one section: `{ angle: "technical", text: "<body>" }`. The archive
