@@ -25,10 +25,15 @@ import type { LmStage } from '../tools/toolPolicy';
 
 /** Reviewable exploration proposal. It has no active engine authority until approval. */
 export interface PendingExplorationProposal {
+  /** Monotonic revision, incremented on every stored proposal and checked at activation. */
   readonly revision: number;
+  /** Fully resolved exploration parameters the engine initializes from on approval. */
   readonly init: NavigationInitParams;
+  /** Gate-locked mission-type classification carried with the proposal. */
   readonly classification: ClassificationValue;
+  /** Serialized user filter snapshot the proposal's scope was computed against. */
   readonly activeFilter: SerializedFilterState;
+  /** Post-filter scope snapshot rendered at the approval gate. */
   readonly summary: ScopeSummary;
   /** The discovery-to-hop handoff memo composed for this exact revision; absent until attached. */
   readonly discoverySummary?: string;
@@ -48,7 +53,7 @@ export function sameExplorationProposal(
   right: PendingExplorationProposal | Omit<PendingExplorationProposal, 'revision'>,
 ): boolean {
   // `discoverySummary` is excluded on both sides — it is cached after this comparison runs, so a
-  // prior revision's cached memo must never make a genuinely-unchanged refine look "changed".
+  // stale cached memo must never make a genuinely-unchanged refine look "changed".
   const { revision: _revision, discoverySummary: _discoverySummary, ...rightRest } = right as PendingExplorationProposal;
   return canonicalJson(left) === canonicalJson(rightRest);
 }
@@ -105,7 +110,9 @@ export const MAX_DISCOVERY_TRANSCRIPT_TURNS = 20;
 
 /** Provider-neutral accepted discovery result eligible for cross-turn grounding. */
 export interface DiscoveryEvidenceObservation {
+  /** Name of the graph-owned tool that produced the result. */
   readonly toolName: string;
+  /** Serialized JSON result text accepted as evidence. */
   readonly result: string;
 }
 
@@ -265,8 +272,10 @@ export class AiSession {
    * button gate read this flag so a graph is only announced when one was actually built.
    */
   private _presentResultCalledThisTurn = false;
+  /** Whether a `present_result` call succeeded in the current turn. */
   public get presentResultCalledThisTurn(): boolean { return this._presentResultCalledThisTurn; }
   private _presentResultAutoDispatched = false;
+  /** Whether the successful presentation was auto-dispatched to the webview panel this turn. */
   public get presentResultAutoDispatched(): boolean { return this._presentResultAutoDispatched; }
   /**
    * Number of `present_result` tool invocations observed in the current turn.
@@ -275,6 +284,7 @@ export class AiSession {
    * Incremented at tool-handler entry. Reset at turn start.
    */
   private _presentResultAttemptCountThisTurn = 0;
+  /** Count of `present_result` invocations observed in the current turn. */
   public get presentResultAttemptCountThisTurn(): number { return this._presentResultAttemptCountThisTurn; }
   /**
    * Number of failed `present_result` invocations in the current turn.
@@ -284,6 +294,7 @@ export class AiSession {
    * Reset at turn start.
    */
   private _presentResultFailureCountThisTurn = 0;
+  /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
   /**
    * Last `present_result` failure reason captured this turn.
@@ -292,6 +303,7 @@ export class AiSession {
    * Set when `present_result` fails validation this turn; cleared at turn start.
    */
   private _presentResultLastFailureReasonThisTurn: string | null = null;
+  /** Last `present_result` failure reason captured in the current turn; `null` when none failed. */
   public get presentResultLastFailureReasonThisTurn(): string | null { return this._presentResultLastFailureReasonThisTurn; }
   /** Held full `present_result` draft for narrow patch-only synthesis repair. */
   public readonly presentResultRepairDraft = new RepairDraftStore<
@@ -378,6 +390,7 @@ export class AiSession {
    * per-wipe in telemetry, not just as an aggregate count.
    */
   private _memoryWipeEventsThisTurn: MemoryWipeEvent[] = [];
+  /** Read-only per-wipe memory diagnostics recorded in the current turn. */
   public get memoryWipeEventsThisTurn(): ReadonlyArray<MemoryWipeEvent> { return this._memoryWipeEventsThisTurn; }
 
   // ── Telemetry / Log Correlation ──
@@ -935,6 +948,7 @@ export class AiSession {
     this._presentResultAutoDispatched = false;
   }
 
+  /** Counts one `present_result` invocation at tool-handler entry, if the calling turn still owns the session. */
   public beginPresentResultAttempt(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'beginPresentResultAttempt');
     if (guard.kind !== 'accepted') return guard;
@@ -942,6 +956,7 @@ export class AiSession {
     return guard;
   }
 
+  /** Records one failed `present_result` invocation and its reason, if the calling turn still owns the session. */
   public recordPresentResultFailure(token: number, reason: string): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'recordPresentResultFailure');
     if (guard.kind !== 'accepted') return guard;
@@ -950,6 +965,7 @@ export class AiSession {
     return guard;
   }
 
+  /** Commits a validated presentation — artifact plus single-shot success flags — if the calling turn still owns the session. */
   public commitPresentResultSuccess(
     token: number,
     artifact: PresentationArtifact,
@@ -980,7 +996,7 @@ export class AiSession {
   public restoreExplorationFromSnapshot(engine: IHopStateMachine, snapshot: SmState, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'restoreExplorationFromSnapshot');
     if (guard.kind !== 'accepted') return guard;
-    // restoreFromJSON builds a complete temporary manager first, so a malformed projection leaves the session intact.
+    // restoreFromJSON builds a full replacement manager first, so a malformed projection leaves the session intact.
     this.memory.restoreFromJSON(snapshot.memory);
     this.stateMachine = engine;
     this.hopCount = snapshot.hopCount;
@@ -1011,7 +1027,7 @@ export class AiSession {
     if (guard.kind !== 'accepted') return guard;
     const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
 
-    // Carry forward prior synthesized body fields; see @remarks above.
+    // Carry forward synthesized body fields from the existing result graph; see @remarks above.
     const prior = this.resultGraph;
     this.resultGraph = {
       nodeIds: fullResult.fullNodes.map(n => n.id),

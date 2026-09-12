@@ -395,7 +395,7 @@ const ExpandedSchemaViewSchema = z.object({
  * Zod schema defining a saved filter profile snapshot.
  *
  * @remarks
- * Stores layout coordinates, zoom state, filter rules, and optional AI enhancements.
+ * Stores layout coordinates, filter rules, and optional AI enhancements.
  *
  * `graphMode`, `expandedSchemaView` and `showExpandedSchemaClusters` are the view shape — schema
  * clusters, individual objects, or the mixed state where some schemas are expanded. They are

@@ -3,29 +3,21 @@
 ## [1.1.1] - 2026-09-06
 
 ### Added
-- **Column Detail** — column-level findings of an AI analysis, shown as a second rendering of the same objects. Procedures and scalar functions appear as compact hubs the thread crosses.
+- **Column Detail** — column-level findings of an AI analysis, shown as a second rendering of the same objects; procedures and scalar functions appear as compact hubs. Replaces the always-on column-flow tooltip on objects.
 - The assistant reads what is on screen, and can recall a saved AI view's findings and open questions in later chats.
-- SQL comments are checked against the statement they annotate. A contradictory or operational comment is called out; a correct, relevant one is written into the description.
-- Formulas in AI descriptions render as mathematics.
+- AI answers check SQL comments against the statement they annotate, and render formulas as mathematics.
 
 ### Changed
 - An explicit graph/render request is answered in discovery; the picture itself is the **Show graph preview** follow-up, not hop-by-hop analysis.
-- A depth stated in the question is a hard limit per direction. An unbounded "back to its original sources" request is no longer treated as three levels. The approval card reports the depth the engine will enforce.
-- Column trace is the same exploration as object analysis plus columns: an object that only shapes which rows the answer returns stays in the result even when it carries no traced column.
-- The longest-chain report lists up to 25 chains, deepest first, and follows a chain through a circular dependency instead of stopping there.
+- A depth stated in the question is a hard limit per direction; the approval card reports the depth the engine will enforce.
+- Column trace is the same exploration as object analysis plus columns: an object that only shapes which rows the answer returns stays in the result.
+- The longest-chain report follows chains through circular dependencies (up to 25, deepest first).
 - A custom AI output template overlay must be re-scaffolded (`schemaVersion` 3) with **Data Lineage: Create AI Output Templates**.
-- Saved views fit the graph on restore instead of returning to the camera position they were captured at.
-
-### Removed
-- The always-on column-flow tooltip on objects. Column Detail shows the same flows in full.
 
 ### Fixed
-- A formula the model stored only as a column-flow note still reaches the report (it is merged into the node's written section).
-- A bookmark recalls the AI run it was saved from, even after a later exploration in the same chat.
-- A one-direction trace draws every edge between the objects it includes.
-- SQL parsing: bracketed names with a `]]` escape, comments inside identifiers, and wildcard storage paths no longer drop or invent dependencies.
-- Large graphs stay responsive while dragging. A view past the render limit reports it instead of drawing an oversized picture.
-- Tool calls the model writes as XML or unfenced JSON are read as calls. A long turn no longer loops the same read until it stalls.
+- Assistant robustness: tool calls written as XML or unfenced JSON are read as calls without stalling the turn; a bookmark recalls the AI run it was saved from; a formula stored only as a column-flow note still reaches the report.
+- Parser and trace fixes: bracketed names with a `]]` escape, comments inside identifiers, and wildcard storage paths no longer drop or invent dependencies; a one-direction trace draws every edge between the objects it includes.
+- Display: large graphs stay responsive while dragging, a view past the render limit reports it, and saved views fit the graph on restore.
 
 ## [1.1.0] - 2026-08-20
 

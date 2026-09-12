@@ -42,7 +42,7 @@ function isProviderAbortError(error: unknown): boolean {
 
 /**
  * Whether one dispatch attempt should be treated as cancelled: either the caller's own
- * {@link AbortSignal} already fired, or the thrown error structurally classifies as an abort via
+ * `AbortSignal` already fired, or the thrown error structurally classifies as an abort via
  * {@link isProviderAbortError}.
  * @param error - The thrown value from the in-flight call.
  * @param signal - The signal the call was issued under, when the caller tracks one.

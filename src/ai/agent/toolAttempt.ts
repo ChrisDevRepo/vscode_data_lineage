@@ -384,8 +384,8 @@ interface ToolGenerationAttemptInput {
  * Registry-dispatched rejections are captured by the observability decorator wrapping
  * `IToolRegistry.invoke`. A rejection raised here never reaches that decorator, so without this
  * hook the only failures the model was actually charged for would be invisible to a trace consumer.
- * Enumerated code and tool name only — the reason prose stays on {@link
- * ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
+ * Enumerated code and tool name only — the reason prose stays on
+ * {@link ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
  * observability import.
  */
 export type SyntheticRejectionTrace = (rejection: { toolName: string; code: string }) => void;
@@ -603,9 +603,9 @@ function boundStoredRejections(
  * @param attempt - Exactly one completed graph attempt.
  * @param budget - The recording turn's budget, which sizes the retained-correction share; the
  *   shipped defaults apply where a caller runs outside a turn.
- * @param debugLog - Secret-safe single-line diagnostic sink, same convention as {@link
- *   ToolGenerationAttemptInput.debugLog}. A correction the budget drops never reaches the model
- *   again, so the drop is reported here rather than being invisible to a log reader.
+ * @param debugLog - Secret-safe single-line diagnostic sink, same convention as
+ *   {@link ToolGenerationAttemptInput.debugLog}. A correction the budget drops never reaches the
+ *   model again, so the drop is reported here rather than being invisible to a log reader.
  * @returns Updated state with independent semantic and physical-call hard stops.
  */
 export function recordToolAttempt(
@@ -1447,9 +1447,9 @@ export async function executeToolGenerationAttempt(
   let budgetClosedByCallId: string | null = null;
   let chargeableFailures = 0;
   const semanticFailuresRemaining = Math.max(0, input.semanticFailuresRemaining ?? MAX_TOOL_SEMANTIC_FAILURES);
-  // Earlier entries win on a duplicate key, matching the original `[...priorObservations, ...observations].find(...)`
-  // scan order: prior-attempt observations are seeded first, then this batch's own accepted reads are
-  // folded in as they are recorded, and a key already present is never overwritten.
+  // Earlier entries win on a duplicate key, mirroring the `[...priorObservations, ...observations].find(...)`
+  // scan order: earlier-attempt observations seed first, then this batch's own accepted reads fold in
+  // as they are recorded, and a key already present is never overwritten.
   const reusableObservations = new Map<string, ToolAttemptObservation>();
   // Keys already answered by an earlier generation: a resend of one of these is the model asking
   // again for a result it holds, and is answered with a `duplicate_read` envelope instead of a

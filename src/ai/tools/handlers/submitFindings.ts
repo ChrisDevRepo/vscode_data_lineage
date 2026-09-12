@@ -28,11 +28,11 @@ import { type ToolServices, getModelNodeMap } from './toolServices';
 const COLUMN_FLOW_ENTRY_KEYS = new Set(['out_col', 'writes_to', 'upstream_columns']);
 const COLUMN_FLOW_WRITES_TO_KEYS = new Set(['node', 'col']);
 
-// `declaredKeysOnly` (`inputNormalization.ts`) already strips undeclared `column_flow[].*` keys
-// inside `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
-// permissive registered union `vscodeModelPort` parses before this handler runs, where no logger
-// is reachable. This mirrors that strip here, on the actual submit path, so the drop is named
-// (entry index, dropped keys) before the schema-side strip becomes a no-op on the clean copy.
+// `declaredKeysOnly` (`inputNormalization.ts`) strips undeclared `column_flow[].*` keys inside
+// `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
+// permissive registered union `vscodeModelPort` parses first, ahead of this handler, where no logger
+// is reachable. This strip runs on the actual submit path so each drop is named
+// (entry index, dropped keys); the schema-side strip stays silent on the clean copy.
 function stripUndeclaredColumnFlowKeys(columnFlow: unknown[], logger: ToolServices['logger']): unknown[] {
   const dropped: string[] = [];
   const stripKeys = (rec: Record<string, unknown>, declared: Set<string>, label: string) => {

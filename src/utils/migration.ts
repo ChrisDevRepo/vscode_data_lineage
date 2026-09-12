@@ -72,7 +72,7 @@ export async function migrateFromWorkspaceState(
     logger.info(`Migrated legacy connection to project "${name}"`);
   }
 
-  // Clear legacy keys even when their payload is incomplete to avoid repeated migration attempts.
+  // Clear these keys even when their payload is incomplete to avoid repeated migration attempts.
   await Promise.all([
     context.workspaceState.update('lastSourceType', undefined),
     context.workspaceState.update('lastDacpacPath', undefined),

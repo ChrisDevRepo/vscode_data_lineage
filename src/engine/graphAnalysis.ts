@@ -374,7 +374,11 @@ function expandChain(best: Map<number, Map<string, ChainValue>>, root: ChainStat
 }
 
 /**
- * Calculates the longest non-cyclic dependency chains in the graph.
+ * Calculates the longest dependency chains in the graph, walking through circular dependencies.
+ *
+ * @remarks
+ * Strongly connected components condense to single vertices, so a chain crosses a cycle as one
+ * entry-to-exit segment ({@link walkComponent}, {@link walkFromEntry}) instead of stopping at it.
  *
  * @param graph - The graph instance.
  * @param minNodes - Minimum nodes required in a chain to be reported.

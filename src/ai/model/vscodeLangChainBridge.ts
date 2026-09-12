@@ -35,19 +35,25 @@ import { sanitizeProviderError } from '../support/text';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
 export interface VscodeBridgeToolDefinition {
+  /** Tool name the model addresses the call by. */
   readonly name: string;
+  /** Natural-language tool description shown to the model. */
   readonly description: string;
+  /** JSON Schema object describing the tool's input. */
   readonly inputSchema: Record<string, unknown>;
 }
 
 /** LangChain call options projected onto one VS Code Language Model request. */
 export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
+  /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
 }
 
 /** Constructor fields for one request-selected VS Code language model. */
 export interface VscodeLangChainBridgeFields {
+  /** The exact `vscode.LanguageModelChat` selected for this request. */
   readonly model: vscode.LanguageModelChat;
+  /** Cancellation token for the request; firing it surfaces as a port-level cancellation. */
   readonly token: vscode.CancellationToken;
   /**
    * Debug wire capture, present only when session trace logging is enabled.

@@ -25,7 +25,7 @@ const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   // GitHub personal-access, OAuth, user, server and refresh tokens.
   /\bgh[porsu]_[A-Za-z0-9]{20,255}\b/,
   /\bgithub_pat_[A-Za-z0-9_]{20,255}\b/,
-  // Slack bot, user, app-level, refresh and legacy tokens.
+  // Slack bot, user, app-level, refresh and workspace tokens.
   /\bxox[abeprs]-[A-Za-z0-9-]{10,255}\b/,
 ];
 

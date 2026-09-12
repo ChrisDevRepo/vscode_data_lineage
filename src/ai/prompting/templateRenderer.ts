@@ -127,7 +127,7 @@ export interface StagePromptResult {
  * @param templates - The loaded AI output templates (instruction strings).
  * @param phase - The current conversation phase.
  * @param classification - Optional mission-type signal; gates active-phase capture firing.
- * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below {@link CLOSING_MIN_SLOTS}.
+ * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below the `CLOSING_MIN_SLOTS` threshold (3).
  * @param isCtMode - True if column trace mode is active.
  * @param render - The render scope configuration.
  * @returns An object containing the assembled prompt block, shipped keys, and dropped keys.

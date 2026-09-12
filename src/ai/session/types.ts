@@ -3,17 +3,25 @@ import type { AIViewMetadata } from '../../engine/projectStore';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
 export interface DiscoveryScopeArtifact {
+  /** Epoch of the host turn that captured this scope; consumers require it to match the live turn. */
   readonly turnEpoch: number;
+  /** Canonical id of the node the BFS walked from. */
   readonly origin: string;
+  /** Direction the scope was walked in. */
   readonly direction: 'upstream' | 'downstream' | 'bidirectional';
+  /** Ids of every node in the scope, origin included. */
   readonly nodeIds: readonly string[];
+  /** Tuple representation of the scope's edges: [sourceNodeId, targetNodeId, edgeType]. */
   readonly edges: readonly [string, string, string][];
 }
 
 /** Validated presentation committed by either a bounded preview or SM synthesis. */
 export interface PresentationArtifact {
+  /** Display name of the presented view. */
   readonly name: string;
+  /** Canonical node ids rendered in the view. */
   readonly nodeIds: readonly string[];
+  /** Validated AI view metadata; `summary` and `description` are always present. */
   readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
   /** Identifier of the run that authored this presentation. */
   readonly runId?: string;

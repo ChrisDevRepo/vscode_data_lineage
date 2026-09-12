@@ -155,20 +155,31 @@ export function isHostCancellationError(error: unknown): boolean {
 
 /** Model-facing context used to audit which instruction fragments reached a generation. */
 export interface InstructionContext {
+  /** Which generation shape the audit describes — structured, converse (tool-capable), or text. */
   readonly kind: 'structured' | 'converse' | 'text';
+  /** Approved engine analysis mode: `'bb'` whole-object exploration or `'ct'` column trace. */
   readonly analysisMode?: 'bb' | 'ct';
+  /** Locked question classification in force for the turn. */
   readonly classification?: 'business' | 'technical' | 'both';
+  /** Origin columns being traced; present only in `'ct'` mode. */
   readonly targetColumns?: readonly string[];
+  /** Shipped output-template keys rendered into the instruction. */
   readonly templateKeys: readonly string[];
+  /** Memory section identifiers included in the prompt context. */
   readonly memorySections: readonly string[];
+  /** Names of tools offered to this generation; empty for structured and text kinds. */
   readonly toolNames: readonly string[];
+  /** Identifier of the structured-output contract, present for structured generations. */
   readonly schemaId?: string;
 }
 
 /** Provider-neutral tool metadata supplied to a tool-capable generation. */
 export interface ModelToolDefinition {
+  /** Tool name the model must address the call by. */
   readonly name: string;
+  /** Natural-language description of what the tool does. */
   readonly description: string;
+  /** Zod schema validating the call input; also the acceptance test in {@link matchProseToolCall}. */
   readonly inputSchema: ZodType;
 }
 
@@ -181,28 +192,43 @@ export type ModelToolChoice =
 
 /** Input contract for one tool-capable model generation. */
 export interface ToolGenerationInput {
+  /** Provider-neutral conversation history for this generation, oldest first. */
   readonly messages: readonly ModelMessage[];
+  /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
+  /** Tool definitions offered to the model. */
   readonly tools: readonly ModelToolDefinition[];
+  /** Optional policy narrowing which tools the model may call. */
   readonly toolChoice?: ModelToolChoice;
+  /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
+  /** Graph phase label carried into diagnostics and trace records. */
   readonly phase: string;
+  /** Optional audit context naming which instruction fragments reached this generation. */
   readonly instructionContext?: InstructionContext;
+  /** Optional streaming callback invoked with each incremental text fragment. */
   readonly onTextDelta?: (text: string) => void;
 }
 
 /** A provider tool call that passed registry and input-schema validation. */
 export interface ValidGeneratedToolCall {
+  /** Literal `true` discriminator for the valid arm. */
   readonly valid: true;
+  /** Provider call identifier, echoed into the paired tool-result message. */
   readonly callId: string;
+  /** Registry tool name to dispatch. */
   readonly toolName: string;
+  /** Call input as the provider sent it, already accepted by the tool's input schema. */
   readonly input: unknown;
 }
 
 /** A provider tool call rejected before dispatch. */
 export interface InvalidGeneratedToolCall {
+  /** Literal `false` discriminator for the invalid arm. */
   readonly valid: false;
+  /** Provider call identifier exactly as the provider emitted it. */
   readonly callId: string;
+  /** Tool name as the provider spelled it; it may name no registered tool. */
   readonly toolName: string;
   /**
    * The rejected payload exactly as the provider sent it. Kept so retry-budget guards can compare
@@ -211,12 +237,15 @@ export interface InvalidGeneratedToolCall {
    * the same tool would be indistinguishable. Never dispatched, replayed, or logged raw.
    */
   readonly input?: unknown;
+  /** Rejection category — schema-invalid input, unknown tool, or a duplicate call id. */
   readonly code:
     | 'invalid_tool_input'
     | 'unknown_tool'
     // Registry-owned: the value is also taught to the model and drives the non-chargeable set.
     | typeof REJECTION_CODES.duplicateCallId;
+  /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
+  /** Paths of the schema issues that rejected the input, when known. */
   readonly issuePaths?: readonly string[];
 }
 
@@ -232,10 +261,15 @@ export type ToolGenerationContent =
 
 /** Stable metadata copied from the exact model selected for the native request. */
 export interface ModelIdentity {
+  /** Model identifier as the hosting platform reports it. */
   readonly id: string;
+  /** Human-readable model name. */
   readonly name: string;
+  /** Vendor that serves the model. */
   readonly vendor: string;
+  /** Model family the platform groups it under. */
   readonly family: string;
+  /** Model version string. */
   readonly version: string;
 }
 
@@ -265,27 +299,41 @@ export type ToolGenerationResult =
 
 /** Input contract for one schema-constrained generation. */
 export interface GenerateStructuredInput<T> {
+  /** Provider-neutral conversation history for this generation. */
   readonly messages: readonly ModelMessage[];
+  /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
+  /** Zod schema the model output must parse against; the parsed value is the returned result. */
   readonly schema: ZodType<T>;
+  /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
+  /** Optional graph phase label for diagnostics. */
   readonly phase?: string;
+  /** Optional audit context for this generation. */
   readonly instructionContext?: InstructionContext;
 }
 
 /** Input contract for one text-only completion. */
 export interface CompleteTextInput {
+  /** Provider-neutral conversation history for this completion. */
   readonly messages: readonly ModelMessage[];
+  /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
+  /** Optional abort signal cancelling the completion. */
   readonly signal?: AbortSignal;
+  /** Optional graph phase label for diagnostics. */
   readonly phase?: string;
+  /** Optional audit context for this completion. */
   readonly instructionContext?: InstructionContext;
 }
 
 /** Request-scoped model port that permits exactly one tool-capable generation at a time. */
 export interface SingleGenerationModelPort {
+  /** Request-scoped port identifier derived from the wrapped model. */
   readonly id: string;
+  /** Metadata copied from the exact model this port wraps. */
   readonly identity: ModelIdentity;
+  /** Provider requests attempted through this port so far. */
   readonly modelCalls: number;
   /**
    * Token budget this request runs under, fixed when the turn built the port.
@@ -296,12 +344,15 @@ export interface SingleGenerationModelPort {
    * still executing therefore keeps measuring against its own model's window and caps.
    */
   readonly budget: TurnTokenBudget;
+  /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
   generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult>;
 }
 
 /** Full provider-neutral model boundary used by the lineage runtime. */
 export interface ModelPort extends SingleGenerationModelPort {
+  /** Runs one schema-constrained generation and returns the parsed value. */
   generateStructured<T>(input: GenerateStructuredInput<T>): Promise<T>;
+  /** Runs one text-only completion and returns its concatenated text. */
   completeText(input: CompleteTextInput): Promise<string>;
 }
 

@@ -244,8 +244,11 @@ export function discoveryPreviewNarrative(answer: string): {
  * Passing findings in instead keeps every rule on one accumulator and one rejection.
  */
 export interface PresentResultViolation {
+  /** Input field the violation is attributed to. */
   readonly field: PresentResultFailedField;
+  /** Rejection messages reported through the validator's accumulator. */
   readonly messages: readonly string[];
+  /** Fields this violation authorizes for a repair resend. */
   readonly repairFields: readonly PresentResultRepairField[];
   /** Exact offending entry paths, empty when the violation is about the payload as a whole. */
   readonly paths: readonly string[];
@@ -978,9 +981,9 @@ export function validatePresentResult(
   };
 
   if (errors.length > 0) {
-    // The failed-field list was attached structurally at each addError site above.
+    // The failed-field list is attached structurally at each addError site above.
     const fieldList = [...failedFields];
-    // Derive the resend list from the same field set used to narrow the repair schema.
+    // The resend list is the same field set that narrows the repair schema.
     const resendList = [...repairFields];
     let hint = fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`

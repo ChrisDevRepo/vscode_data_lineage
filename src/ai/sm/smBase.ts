@@ -1883,10 +1883,9 @@ export class NavigationEngine implements IHopStateMachine {
         skipped++;
         continue;
       }
-      // A user-excluded or out-of-allowlist node is a hard wall on the supplement write path — the
-      // border only widens for a route this run itself deferred ({@link admitSupplementTargets},
-      // called before this), never through an AI-initiated supplement naming an id no lead offered
-      // or re-adding what the user removed.
+      // A user-excluded or out-of-allowlist node is a hard wall on the supplement write path: the
+      // border widens only for a route this run itself deferred via `admitSupplementTargets`, never
+      // through an AI-initiated supplement naming an id no lead offered or re-adding what the user removed.
       const supNode = this.nodeMap.get(id);
       const supBorder = supNode ? this.checkBorder(id, supNode, 'supplement') : null;
       if (supBorder && supBorder.kind !== 'in_border') {
@@ -2212,7 +2211,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     try {
-      // A prior hold can survive only through applyHeldContent immediately before this call.
+      // A held draft reaches this point only via `applyHeldContent`, called directly above.
       this.heldFindingDraft.clear();
     const invalidRoutes: InvalidRoute[] = [];
     const routeOutcomes: RouteOutcome[] = [];
@@ -3699,9 +3698,9 @@ export class NavigationEngine implements IHopStateMachine {
         sections.push({ label: i === 0 ? 'Origin' : `Stage ${i}`, node_ids: idsAtDepth });
       }
     }
-    // A retained node with no edge in finalEdges at all never enters the walk above either;
-    // the skeleton's contract is to bucket every rendered node, so the remainder is appended
-    // rather than silently dropped like it was before this fix.
+    // A retained node with no edge in finalEdges never enters the walk above; the skeleton's
+    // contract is to bucket every rendered node, so the remainder is appended as "Unconnected"
+    // rather than silently dropped.
     const unbucketed = sortedIds.filter(id => !depthMap.has(id));
     if (unbucketed.length > 0) {
       sections.push({ label: 'Unconnected', node_ids: unbucketed });

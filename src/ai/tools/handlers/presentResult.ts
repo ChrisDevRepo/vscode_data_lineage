@@ -202,7 +202,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           }, { clearDraft: true });
         }
         // L1 encoding-only (Guard Discipline layer 1): a repair-turn model that cannot see its own
-        // held draft tends to blindly re-send the FULL prior envelope rather than a scoped patch.
+        // held draft tends to blindly re-send the FULL held envelope rather than a scoped patch.
         // Drop only the unauthorized keys whose resent value is structurally unchanged; a genuinely
         // differing value stays in place so the strict patch schema below still rejects it.
         const heldDraftForStrip = sess.presentResultRepairDraft.get();

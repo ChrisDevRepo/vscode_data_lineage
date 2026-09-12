@@ -57,10 +57,15 @@ export type SmNodeStateReason =
  * the text/evidence bucket; a node can be `passthrough` without having a detail slot.
  */
 export interface SmNodeState {
+  /** Canonical id of the node this state describes. */
   nodeId: string;
+  /** Lifecycle action taken on the node. */
   action: SmNodeAction;
+  /** Who made the lifecycle decision. */
   source: SmNodeStateSource;
+  /** Why the node received its action. */
   reason: SmNodeStateReason;
+  /** Traced columns bound to the node; absent in BB sessions. */
   columns?: string[];
   /**
    * Column-trace role at the hop that dispatched this node — a carrier of traced columns, or a
@@ -69,7 +74,9 @@ export interface SmNodeState {
    * are both dropped from the record.
    */
   columnRole?: SmNodeColumnRole;
+  /** Focus node this state was recorded from. */
   viaNodeId?: string;
+  /** Hop index at which this state was recorded. */
   atHop?: number;
 }
 
@@ -831,18 +838,29 @@ export const DEFAULT_EXPLORATION_QUESTION = 'Explore lineage';
 
 /** Fully resolved mechanical inputs used to preview or initialize one exploration. */
 export interface NavigationInitParams {
+  /** Canonical user question the exploration answers; the {@link DEFAULT_EXPLORATION_QUESTION} placeholder when no user text is available. */
   question: string;
+  /** Origin node id the BFS root resolves from. */
   origin: string;
+  /** Exploration mode; omitted resolves to `ct` when `targetColumns` is set, `bb` otherwise. */
   analysisMode?: 'bb' | 'ct';
+  /** Columns the column-trace aspect follows; required for `ct`, forbidden in `bb`. */
   targetColumns?: string[];
+  /** Exploration direction; defaults to `bidirectional`. */
   direction?: 'upstream' | 'downstream' | 'bidirectional';
+  /** Depth verdict that seeds the scope; omitted resolves to the engine's default start. */
   depthIntent?: DepthIntent;
+  /** Object types excluded from the scope. */
   excludeTypes?: string[];
+  /** Schemas excluded from the scope. */
   excludeSchemas?: string[];
+  /** Specific node ids excluded from the scope. */
   excludeNodeIds?: string[];
+  /** Node ids kept in scope but skipped for analysis (auto pass-through). */
   passNodeIds?: string[];
   /** Analysis constraints the user stated that no filter field expresses; carried verbatim. */
   scopeNotes?: string[];
+  /** Sanitized mission brief carried verbatim into every hop. */
   mission_brief?: string;
 }
 
@@ -1046,13 +1064,19 @@ export type InvalidRouteKind = | 'absent_route'
  * Represents an invalid route returned during validation.
  */
 export interface InvalidRoute {
+    /** Classification of the route or prune failure. */
     kind: InvalidRouteKind;
+    /** Node id the failure applies to. */
     id: string;
+    /** Human-readable explanation for the failure. */
     reason: string;
     /** Exact submit_findings field path that must be corrected. */
     path?: string;
+    /** On `missing_required_route`: true when the required neighbor was submitted in `prune_neighbors` and that prune was refused. */
     invalidlyPruned?: boolean;
+    /** Valid column set for a column-content failure; emitted in `detail`. */
     available_columns?: string[];
+    /** Full required-neighbor set for `missing_required_route`; emitted in `detail`. */
     available_routes?: string[];
 }
 

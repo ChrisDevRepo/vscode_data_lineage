@@ -1033,15 +1033,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const isCtMode = !!engine.columnAspect;
     const systemInstruction = getActiveInstructionCached(state, sess, getCtx(state), isCtMode, focusId);
 
-    // Status-only: emit the hop-progress counter (Hop X/Y) here, and the prior hop's committed digest
-    // once it lands below. The worker still buffers planning prose, so no worker chatter reaches the
+    // Status-only: emit the hop-progress counter (Hop X/Y) here, and the previous hop's committed digest
+    // once it lands below. The worker buffers planning prose, so no worker chatter reaches the
     // chat — only the model's own already-committed `summary` is ever echoed, and only through the
     // transient progress channel (never persisted into `ChatResponseTurn.response`, so it cannot be
     // replayed back to the model via chat history on a later turn). Y (`hopProgress.total`) shrinks as
     // bodied nodes are pruned, so the denominator reflects the reducing graph. The PER-HOP prune delta
     // (cumulative now − cumulative at the previous hop's start) is surfaced next to the updated Y so a
     // drop in "Hop X/Y" is explained (e.g. "−2 pruned"). Show the bare object name, not the raw
-    // `[schema].[id]`, to match main's chat.
+    // `[schema].[id]`, so a progress line reads as chat prose rather than a raw id.
     const progress = engine.hopProgress;
     const focusLabel = focusId.split('.').pop()?.replace(/[[\]]/g, '') ?? focusId;
     // Per-hop graph deltas from the previous hop's submit, shown so the changing "Hop X/Y" is explained:
@@ -1355,7 +1355,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'completed', {
       stage: { kind: 'completed' },
       toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationSupplementProviderInputSchema]]),
-      // Follow-up context is the retained conversation (which carries the prior rendered result);
+      // Follow-up context is the retained conversation, which carries the rendered result;
       // no separate archive block is assembled into this call.
       facts: { memorySections: ['conversation_history'] },
       messages,
@@ -1785,8 +1785,8 @@ export function tryAbandonStuckFocus(engine: NavigationEngine, focusId: string, 
   });
   if ('error' in result) return false;
   engine.getHopContext();
-  // Only the drained-to-complete case forecloses anything — otherwise the agenda already has
-  // other live work and these successors are no worse off than before this function ran.
+  // Only the drained-to-complete case forecloses anything — otherwise the agenda already holds
+  // other live work and these successors are no worse off for the abandoned hop.
   if (engine.status === 'complete' && strandedSuccessorIds.length > 0) {
     const supplement = engine.supplementAgenda(strandedSuccessorIds);
     if ('ok' in supplement && supplement.agendaed + supplement.contracted > 0) {
