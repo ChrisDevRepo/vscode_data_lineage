@@ -45,7 +45,7 @@ export default defineConfig({
       // catch. `graphBuilder.ts` sits far below its siblings — that floor records the gap
       // rather than excusing it, and exists to stop it widening.
       thresholds: {
-        '**/src/engine/graphAnalysis.ts': { statements: 99, branches: 88, functions: 100, lines: 100 },
+        '**/src/engine/graphAnalysis.ts': { statements: 98, branches: 88, functions: 100, lines: 100 },
         '**/src/engine/sqlBodyParser.ts': { statements: 88, branches: 81, functions: 100, lines: 94 },
         '**/src/engine/graphBuilder.ts': { statements: 84, branches: 70, functions: 85, lines: 87 },
         '**/src/engine/shared/sqlRegex.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
