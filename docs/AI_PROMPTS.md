@@ -72,9 +72,11 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   accumulates engine-side and is replayed once at synthesis rather than per
   hop, and rejection history compacts to a bounded ring of one-line entries.
   A rejected tool call is echoed back into history as a native tool-call and
-  tool-result pair: only the newest rejection is replayed, its arguments are the
-  bounded correction fragments the rejection flagged — never the raw payload —
-  and for `present_result`, whose rejected draft the session holds and renders
+  tool-result pair: only the newest rejection is replayed. When the rejection's
+  issue paths project onto list entries, the replayed arguments are those
+  bounded correction fragments; a pathless rejection (a route or prune refusal)
+  or one flagging a scalar field replays the whole bounded submitted call, never
+  `{}`. For `present_result`, whose rejected draft the session holds and renders
   as its own block, the replayed call carries the name and call id only, so no
   section text is sent twice in one attempt. The replayed exchange closes on a user-role continuation
   note: with history ending on a tool result, the replayed function call stays

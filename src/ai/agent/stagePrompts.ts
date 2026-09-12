@@ -30,7 +30,8 @@ import { SCRIPT_TYPES } from '../support/graphUtils';
 
 /**
  * Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user
- * message — the structured sub-agent has no tools, so it must be handed everything it needs here.
+ * message. The hop is blinkered: the worker sees this payload plus `lineage_submit_findings` and
+ * `lineage_get_neighbor_columns`, not prior hops' tool results.
  */
 export function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
   // `current_task` already rides authoritatively in the <current_task> block of the same message

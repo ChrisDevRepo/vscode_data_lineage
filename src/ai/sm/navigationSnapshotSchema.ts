@@ -262,6 +262,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   engineInternals: EngineInternalsSchema,
   lineageQuestionsLastHop: z.array(NonEmptyString).optional(),
   ctPrunedNodeIds: z.array(NonEmptyString).optional(),
+  ctDeclaredRouteIds: z.array(NonEmptyString).optional(),
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict().superRefine((snapshot, ctx) => {
   const issue = (message: string, path: Array<string | number>) => ctx.addIssue({ code: 'custom', message, path });
@@ -276,6 +277,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   unique(snapshot.visited, ['visited']);
   unique(snapshot.removedSet, ['removedSet']);
   unique(snapshot.renderDroppedNodeIds ?? [], ['renderDroppedNodeIds']);
+  unique(snapshot.ctDeclaredRouteIds ?? [], ['ctDeclaredRouteIds']);
   unique(snapshot.nodeStates.map(state => state.nodeId), ['nodeStates']);
   unique(snapshot.engineInternals.investigationTasks.map(task => task.id), ['engineInternals', 'investigationTasks']);
   unique(snapshot.engineInternals.pendingLeads.map(lead => lead.id), ['engineInternals', 'pendingLeads']);
@@ -341,6 +343,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     if (init?.analysisMode === 'ct') issue('BB snapshot cannot carry CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
     if (snapshot.lineageQuestionsLastHop !== undefined) issue('BB snapshot cannot carry lineage questions', ['lineageQuestionsLastHop']);
     if (snapshot.ctPrunedNodeIds !== undefined) issue('BB snapshot cannot carry CT pruned nodes', ['ctPrunedNodeIds']);
+    if (snapshot.ctDeclaredRouteIds !== undefined) issue('BB snapshot cannot carry CT declared routes', ['ctDeclaredRouteIds']);
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
       if (task.kind === 'column_lineage') issue('BB snapshot cannot carry column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
     });

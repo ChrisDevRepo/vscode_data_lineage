@@ -2346,10 +2346,17 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    const authoredRouteCount = finding.route_requests?.length ?? 0;
     const routeTargets: Array<{ raw: string; resolved: string | null; path: string }> = [];
-    for (let index = 0; index < (finding.route_requests ?? []).length; index++) {
-      const raw = finding.route_requests![index].nodeId;
-      routeTargets.push({ raw, resolved: resolveModelNodeId(raw, this.nodeMap), path: `route_requests.${index}.nodeId` });
+    for (let index = 0; index < routeRequests.length; index++) {
+      const raw = routeRequests[index].nodeId;
+      routeTargets.push({
+        raw,
+        resolved: resolveModelNodeId(raw, this.nodeMap),
+        path: index < authoredRouteCount
+          ? `route_requests.${index}.nodeId`
+          : 'column_flow',
+      });
     }
     const pruneTargets = (finding.prune_neighbors ?? []).map((raw, index) => ({
       raw,
@@ -3748,6 +3755,7 @@ export class NavigationEngine implements IHopStateMachine {
         // not the one a mid-hop resume needs to keep showing.
         lineageQuestionsLastHop: [...this._pendingLineageQuestions],
         ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds),
+        ctDeclaredRouteIds: Array.from(this.ctDeclaredRouteIds),
       } : {}),
     };
     try {
@@ -3912,6 +3920,9 @@ export class NavigationEngine implements IHopStateMachine {
     // session re-dispatches focus nodes the AI already pruned and drops the pending sub-questions.
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
+    // Absent on a checkpoint written before D-074 persisted this set — restores as empty, which is
+    // today's live-engine-only protection rather than inventing declarations.
+    engine.ctDeclaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
     // Absent on a checkpoint written before the field existed, and on one whose last render dropped
     // nothing — both mean "no recorded drop".
     engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);

@@ -146,5 +146,51 @@ describe('D-074 — CT declared-route prune guard', () => {
     expect('ok' in hop2, 'BB: the same route-then-prune shape is accepted — no CT-only protection leaks in').toBe(true);
     const state = engine.toJSON();
     expect(state.removedSet.includes('joinTable'), 'BB behavior is unchanged: joinTable is pruned').toBe(true);
+    expect(state.ctDeclaredRouteIds, 'BB snapshot does not persist a CT-only declaration set').toBeUndefined();
+  });
+
+  it('(3) CT: a toJSON/fromJSON restore still refuses prune of the declared contracted node', () => {
+    const { model, graph } = buildWorld();
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const init = engine.init({
+      origin: 'origin', question: 'trace Total', direction: 'upstream',
+      analysisMode: 'ct', targetColumns: ['Total'],
+      depthIntent: { kind: 'explicit', levels: 5 },
+    });
+    expect('ok' in init, 'CT init succeeds').toBe(true);
+
+    engine.getHopContext();
+    const hop1 = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'origin joins joinTable and reads Total from other' }],
+      summary: 'origin computes Total',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Total', upstream_columns: [{ node: 'other', col: 'Total' }] }],
+      route_requests: [
+        { nodeId: 'joinTable', question: 'is this a join/filter source? route it' },
+        { nodeId: 'other', question: 'what supplies Total?' },
+      ],
+      prune_neighbors: ['neverRouted'],
+    }) as { ok?: unknown; error?: string };
+    expect('ok' in hop1, `hop1 commits: ${JSON.stringify(hop1)}`).toBe(true);
+
+    const snapshot = engine.toJSON();
+    expect(snapshot.ctDeclaredRouteIds?.includes('joinTable'), 'declared id is on the checkpoint').toBe(true);
+
+    const restored = NavigationEngine.fromJSON(snapshot, model, graph, () => {}, {});
+    const focus2 = restored.getHopContext();
+    expect('focus_node' in focus2 && focus2.focus_node?.id === 'other', 'restored second focus is other').toBe(true);
+    const hop2 = restored.submitFindings({
+      focus_node_id: 'other',
+      sections: [{ angle: 'business' as const, text: 'other supplies Total directly' }],
+      summary: 'other supplies Total',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Total', upstream_columns: [] }],
+      prune_neighbors: ['joinTable'],
+    }) as { error?: string; hint?: string };
+
+    expect('error' in hop2, 'the prune of the declared node joinTable is refused after restore').toBe(true);
+    expect(/orphan/i.test(hop2.hint ?? ''), 'the refusal reuses the existing prune_would_orphan hint').toBe(true);
+    expect(!restored.toJSON().removedSet.includes('joinTable'), 'the refused prune leaves joinTable unremoved').toBe(true);
   });
 });

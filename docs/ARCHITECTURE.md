@@ -150,9 +150,11 @@ lineage questions with snapshot tools. Answers lead with the user's question,
 then organize supported business and technical facts by lineage flow rather
 than dumping tool fields or one heading per node. A discovery answer cannot complete until
 the turn has accepted at least one trusted tool observation; tool-less model
-prose is withheld and repaired within the existing bounded attempt policy. An
-explicit graph/render request can commit a bounded transient preview; this path
-does not grant SM authority. The preview reuses the preceding discovery answer
+prose is withheld and repaired within the existing bounded attempt policy.
+`visual_render` is a semantic label only: a free-text graph/render request
+enters this same discovery loop (`selectInitialAgentStage`). The bounded
+transient preview is a later, host-owned action (`preview_button`); it does not
+grant SM authority. The preview reuses the preceding discovery answer
 and retained bounded scope: only `present_result` is exposed, and the model may
 regroup verbatim section bodies, label/link nodes, choose semantic colors, and
 select verbatim captions — each caption one unbroken span of the cached answer,
@@ -445,13 +447,26 @@ set against its own declared columns when it is dispatched. A node that genuinel
 carries none of them is dispatched with an empty set, is told so, and answers with
 `column_flow: []` plus what it does to the row set — it stays in the answer.
 
-CT rejects BB-only neighbor pruning; focus pruning still uses the topology-safe
-engine path. Any other behavioural difference between the two modes is a defect
-in CT, not a design choice.
+Neighbor prune is the same topology-safe engine path in both modes. CT adds
+column-flow verification on top of that path; it does not replace it with a
+second prune policy. Any other behavioural difference between the two modes is a
+defect in CT, not a design choice.
 
 Both modes keep process state separate from detail text. A table can therefore
 be an important source, target, or passthrough in the final graph even when it
 has no analyzed detail slot.
+
+The webview renders that result through engine-owned node types
+(`CustomNodeData`, `ColumnTraceNodeData` in
+[`src/engine/types.ts`](../src/engine/types.ts)); components import them, never
+the reverse. Display mode is derived once in
+[`src/engine/graphDisplayMode.ts`](../src/engine/graphDisplayMode.ts): a scoped
+surface (trace, path, or AI result) outranks Schema View, which outranks Object
+View. Expanded Schema View is schema-membership only
+([`src/engine/schemaProjection.ts`](../src/engine/schemaProjection.ts)) — it
+never becomes a lineage cone. Column Detail is a second rendering of the same
+approved scope ([`src/engine/columnTraceView.ts`](../src/engine/columnTraceView.ts)),
+not a parallel BFS.
 
 ## Result and presentation ownership
 

@@ -9,6 +9,10 @@
   detail description instead of only being captured. An incomplete comment is not a finding.
 
 ### Changed
+- An explicit graph/render request is answered in discovery; the picture itself is the separate
+  **Show graph preview** follow-up, not a hop-by-hop exploration.
+- Each graph node carries at most one AI section badge. Column Detail draws procedures and scalar
+  functions as a compact hub the thread crosses, rather than as a column card.
 - A question that asks for lineage "back to its original sources", with no level count, is no longer
   answered as if it had asked for three levels. The approval card and the assistant's working memory
   now report the depth the engine actually enforces, so an unbounded trace is not silently truncated
@@ -18,6 +22,7 @@
 - The computed-column recipe renders every distinct formula on a branch, not one per column.
 
 ### Fixed
+- A DACPAC `nvarchar(100)` column now renders as `nvarchar(100)`, not `nvarchar(50)`.
 - A long turn no longer stalls and ends without an answer when two large object bodies cannot be
   held at once: evicting a body no longer discards the record that the read already happened, which
   had made the assistant re-request the same object until the turn ran out of tool calls.

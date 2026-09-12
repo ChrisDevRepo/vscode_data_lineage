@@ -84,7 +84,7 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
     // Retry-capable outcome: a normal completed, tool-call-free generation — the same shape the
     // existing missing-required-tool retry path already handles downstream, not an error/cancel.
     expect(result.status).toBe('completed');
-    expect(result).toMatchObject({ finishReason: 'stop', toolCalls: [] });
+    expect(result).toMatchObject({ finishReason: 'length', toolCalls: [] });
     expect(result.text.length).toBeGreaterThan(0);
     expect(result.text.length).toBeGreaterThanOrEqual(STREAM_TEXT_CHAR_CEILING);
     // Bounded: the poison chunk's ~4M-char analog (3,638,544 in the recorded incident) never lands.

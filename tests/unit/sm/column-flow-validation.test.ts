@@ -70,6 +70,19 @@ describe("Column Flow Validation", () => {
   expect('error' in result && result.error === 'column_chain_incomplete', 'CT: empty column_flow with active columns → column_chain_incomplete (no self-prune)').toBe(true);
 });
 
+  it('a column_flow contributor omitted from route_requests still conflicts with prune_neighbors', () => {
+    const engine = ctEngine();
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'amount comes from base_table' }],
+      summary: 'amount from base_table',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount' }] }],
+      prune_neighbors: ['base_table'],
+    });
+    expect('error' in result && result.error === 'prune_route_conflict', 'auto-injected column_flow contributor vs prune is prune_route_conflict').toBe(true);
+  });
+
   it("Test 3b: qualified target columns resolve to the declared bare name (2026-07-03 P3 stall)", () => {
   // Models qualify freely ("dbo.origin_view.amount", "[origin_view].[amount]") — the active spine
   // must still seed, in the DECLARED spelling, or every legitimate column_flow gets rejected as

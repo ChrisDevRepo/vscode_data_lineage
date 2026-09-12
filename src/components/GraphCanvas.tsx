@@ -1185,6 +1185,7 @@ export function GraphCanvas({
     const badges = activeAiMetadata?.badges;
     if (!badges) return m;
     for (const b of badges) {
+      if (m.has(b.nodeId)) continue;
       const emphasis = activeSectionNodeIds ? (activeSectionNodeIds.has(b.nodeId) ? 'lit' : 'dim') : undefined;
       m.set(b.nodeId, emphasis ? { text: b.text, emphasis } : { text: b.text });
     }

@@ -153,7 +153,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const response = await this.collectGeneration(
+      const { parts: response, hitCeiling } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -229,7 +229,7 @@ export class VscodeModelPort implements ModelPort {
         );
       }
 
-      const finishReason = toolCalls.length > 0 ? 'tool-calls' : 'stop';
+      const finishReason = hitCeiling ? 'length' : toolCalls.length > 0 ? 'tool-calls' : 'stop';
       // Every generation leaves one `[AI] usage` line: without it a completed turn is
       // indistinguishable from one that never reached the model. Token counts are structurally
       // unavailable on this lane — `vscode.lm` exposes no usage — hence observed counters plus an
@@ -270,7 +270,7 @@ export class VscodeModelPort implements ModelPort {
       inputSchema: input.schema,
     }];
     this.modelCalls += 1;
-    const response = await this.collectGeneration(
+    const { parts: response } = await this.collectGeneration(
       input.messages,
       input.system,
       definitions,
@@ -303,7 +303,7 @@ export class VscodeModelPort implements ModelPort {
   public async completeText(input: CompleteTextInput): Promise<string> {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
-    const response = await this.collectGeneration(
+    const { parts: response } = await this.collectGeneration(
       input.messages,
       input.system,
       [],
@@ -334,7 +334,7 @@ export class VscodeModelPort implements ModelPort {
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
-  ): Promise<readonly PortGenerationPart[]> {
+  ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
     // Captured now rather than read at emit time: concurrent generations would otherwise all
@@ -390,6 +390,7 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       const parts: PortGenerationPart[] = [];
       let textChars = 0;
+      let hitCeiling = false;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         clearTimeout(watchdog);
@@ -414,10 +415,10 @@ export class VscodeModelPort implements ModelPort {
           });
         }
         // Breaking here (rather than throwing) closes the underlying stream through the normal
-        // async-generator return path and lets the accumulated `parts` fall through as an ordinary
-        // completed, tool-call-free generation — the same shape the retry-capable
-        // missing-required-tool path already handles, so no new failure branch is needed.
+        // async-generator return path. The caller stamps finishReason `length` so the retry layer
+        // classifies this as `output_limit`, not a missing tool call.
         if (textChars >= STREAM_TEXT_CHAR_CEILING) {
+          hitCeiling = true;
           this.options.debugLog?.(
             `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars}`,
           );
@@ -466,10 +467,12 @@ export class VscodeModelPort implements ModelPort {
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
-        finishReason: resolvedParts.some((part) => part.type === 'tool-call') ? 'tool-calls' : 'stop',
+        finishReason: hitCeiling
+          ? 'length'
+          : resolvedParts.some((part) => part.type === 'tool-call') ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
       });
-      return resolvedParts;
+      return { parts: resolvedParts, hitCeiling };
     } catch (error) {
       // The watchdog aborts through the shared cancellation token, so the stream surfaces its
       // expiry as a cancellation — reclassify it here so it reaches callers as a provider timeout

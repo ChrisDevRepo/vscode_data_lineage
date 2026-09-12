@@ -88,7 +88,7 @@ export function getNodeColumns(
 }
 
 /**
- * Retrieves the normalized DDL for a specific node.
+ * Retrieves the stored DDL for a specific node (blank lines dropped, tabs expanded).
  *
  * @param nodeId - The unique identifier of the node.
  * @param nodeMap - The ground-truth map of all nodes.

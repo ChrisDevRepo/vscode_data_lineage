@@ -80,8 +80,9 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
    * Whether rows are ports rather than declared columns.
    *
    * @remarks
-   * True for procedures and scalar functions. Those objects declare no columns, so their rows carry
-   * borrowed names, show no data type, and are never dimmed against a declared set.
+   * True for procedures and for functions that declare no columns (scalar UDFs). A table-valued
+   * function with extracted columns stays a column card. Hub rows carry borrowed names, show no
+   * data type, and are never dimmed against a declared set.
    */
   isTransformNode: boolean;
   /** Rows to render, in declared ordinal order where a declared order is known. */
@@ -477,6 +478,19 @@ function withAnnotationBand(config: ExtensionConfig, direction: 'LR' | 'TB'): Ex
 }
 
 /**
+ * Whether an object draws as a transform hub rather than a column card.
+ *
+ * @remarks
+ * Procedures declare no columns. Functions do only when they are table-valued and the host
+ * extracted those columns — a scalar UDF has an empty or absent map and stays a hub.
+ */
+function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
+  if (object.objectType === 'procedure') return true;
+  if (object.objectType === 'function') return !object.columnTypes || object.columnTypes.size === 0;
+  return false;
+}
+
+/**
  * Builds the column-level rendering of an AI column trace.
  *
  * @remarks
@@ -622,7 +636,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
 
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map((acc) => {
     const rows = buildRows(acc);
-    const isTransform = acc.object.objectType === 'procedure' || acc.object.objectType === 'function';
+    const isTransform = isColumnTraceTransformNode(acc.object);
     return {
       id: acc.object.id,
       label: acc.object.label,

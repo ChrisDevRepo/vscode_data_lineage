@@ -142,7 +142,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           ? `Invalid ${modeLabel} submit_findings input — ${fieldErrors.join('; ')}.`
           : `Invalid ${modeLabel} submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
         return s.logAndReturn('submit_findings', {
-          error: isCtMode ? 'ct_field_required' : REJECTION_CODES.invalidInput,
+          error: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
           hint,
         }, normalizedInput);
       }

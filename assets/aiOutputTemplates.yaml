@@ -9,7 +9,8 @@
 #
 # The three stages, and which blocks fire in each:
 #
-#   discovery   first chat reply, no exploration — trivial questions only
+#   discovery   first chat reply, no exploration — bounded catalog and lineage
+#               questions answered with the discovery read tools
 #               → discovery_chat, general
 #
 #   active      per-hop analysis. Each fired *_capture writes ONE section:

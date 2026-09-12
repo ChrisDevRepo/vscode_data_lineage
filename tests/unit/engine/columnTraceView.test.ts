@@ -105,6 +105,33 @@ describe('columnTraceView', () => {
     expect(tableNode.isTransformNode).toBe(false);
   });
 
+  it('marks a function with declared columns as a column card, not a hub', () => {
+    const tvf: ColumnTraceViewObject = {
+      ...mkObj('dbo.tvf', 'function'),
+      columnTypes: new Map([['amount', 'int']]),
+    };
+    const objects = mkObjects(mkObj('dbo.s'), tvf);
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.tvf', fromNode: 'dbo.s', fromCol: 'Amount', toNode: 'dbo.tvf', toCol: 'Amount' },
+    ];
+
+    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    const tvfNode = findNode(view, 'dbo.tvf');
+    expect(tvfNode.isTransformNode).toBe(false);
+    expect(tvfNode.width).toBe(COLUMN_NODE_WIDTH);
+  });
+
+  it('marks a function with no declared columns as a transform hub', () => {
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.fn', 'function'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.fn', fromNode: 'dbo.s', fromCol: 'Amount', toNode: 'dbo.fn', toCol: 'Amount' },
+    ];
+
+    const node = findNode(buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }), 'dbo.fn');
+    expect(node.isTransformNode).toBe(true);
+    expect(node.width).toBe(COLUMN_TRANSFORM_NODE_WIDTH);
+  });
+
   it('derives renamed when endpoint column names differ', () => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [

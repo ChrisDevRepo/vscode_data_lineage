@@ -28,7 +28,7 @@ export type LmStage =
   | { kind: 'discover' }
   /** Bounded discovery rendering through the shared presentation commit path. */
   | { kind: 'visual_preview' }
-  /** SM entry: resolve the origin and open the consent gate (search_objects + start_exploration only). */
+  /** SM entry: resolve the origin and open the consent gate (`get_screen_state`, `search_objects`, `start_exploration`). */
   | { kind: 'sm_entry' }
   /** Hop loop. `mode` scopes the tool set to SM BB, or SM CT. */
   | { kind: 'active'; mode: ActiveMode }

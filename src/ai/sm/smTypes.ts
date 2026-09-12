@@ -286,8 +286,7 @@ export interface HopFinding {
   badge_label?: string;
   /**
    * Structured attribution of column-level data flow.
-   * Required (and validated) when the column aspect is active and `verdict === 'analyze'`.
-   * Ignored when the column aspect is inactive — submit only in column-trace sessions.
+   * Required (and validated) on every CT hop; ignored when the column aspect is inactive.
    */
   column_flow?: ColumnFlowEntry[];
 }
@@ -965,6 +964,8 @@ export interface SmState {
     activeColumns?: string[];
     /** CT chain-continuation questions opened for this node by an earlier hop, owned by this entry. */
     lineageQuestions?: string[];
+    /** Per-neighbour column-carry decision that survived contraction (`inherit` / `carry` / `row_role_only`). */
+    columnCarry?: ColumnCarry;
   }>;
   /** ID of the node currently under analysis, if any. */
   currentFocusNodeId: string | null;
@@ -985,11 +986,16 @@ export interface SmState {
    */
   lineageQuestionsLastHop?: string[];
   /**
-   * Node IDs visited during CT exploration that contributed no column_flow edges.
-   * Computed at dump time from `columnAspect.edges` vs visited detail slots.
-   * Present only when `columnAspect` is non-null.
+   * Focus node IDs the AI pruned via `verdict=prune` while the column aspect was active
+   * (`ctPrunedFocusIds` on the live engine). Present only when `columnAspect` is non-null.
    */
   ctPrunedNodeIds?: string[];
+  /**
+   * Neighbour ids named in an accepted `route_requests` entry while the column aspect was active
+   * (`ctDeclaredRouteIds` on the live engine). Present only when `columnAspect` is non-null.
+   * Absent on a checkpoint written before the field was persisted; restore treats that as empty.
+   */
+  ctDeclaredRouteIds?: string[];
   /**
    * Node IDs the last `getResult` removed from the render as undispositioned write sinks.
    * Present only when that call dropped something; a drop is a recorded disposition, not a gap

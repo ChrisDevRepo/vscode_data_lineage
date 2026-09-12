@@ -258,15 +258,15 @@ current AI-authored view in the graph panel.
 When the run recorded column findings, the preview banner offers an **Objects / Detail** switch.
 Objects is the default. Detail redraws the same scope with one row per traced column — not every
 declared column, only the ones the trace actually recorded — threads running column to column,
-procedures and scalar functions drawn as ports rather than columns, and a chip on a line carrying a
-hover explanation of the transform where the value changed between its two endpoints; a line with
-no chip passed the value through unchanged.
+procedures and scalar functions drawn as a compact hub (circle and gear, ports on the arc) rather
+than as a column card, and a chip on a line carrying a hover explanation of the transform where the
+value changed between its two endpoints; a line with no chip passed the value through unchanged.
 Hovering a row lights that whole thread and dims the rest; the rows collapse to a summary line when
 you zoom out.
 
 A procedure or function that transformed a value sits in the chain between the columns it reads and
-the columns it writes, with a port for each name the value carries — two ports when it renames one.
-The thread therefore runs source → transform → target rather than past the transform. Structure
+the columns it writes, with a port on the hub for each name the value carries — two ports when it
+renames one. The thread therefore runs source → transform → target rather than past the transform. Structure
 labels stay on the endpoints: a target column fed by two sources still reads `incoming (2)`, one
 column feeding several still reads `outgoing (2)`, whichever object combined or split it. Selecting a
 node highlights and dims exactly as it does in Objects view, and any AI badge or note attached to a

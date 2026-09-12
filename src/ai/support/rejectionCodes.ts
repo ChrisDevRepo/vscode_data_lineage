@@ -27,6 +27,8 @@ export const REJECTION_CODES = {
   staleTurn: 'stale_turn',
   /** Tool input failed its schema or the engine's argument contract; the hint names the offending field. */
   invalidInput: 'invalid_input',
+  /** CT `submit_findings` failed its schema; the hint names the offending field. Same family as `invalidInput`. */
+  ctFieldRequired: 'ct_field_required',
   /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
   notFound: 'not_found',
   /** `supplement` was requested without a prior exploration in `complete` status to extend. */
