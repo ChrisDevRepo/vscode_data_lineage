@@ -163,8 +163,7 @@ business_capture:
     what outcome — is backend logging: verdict `prune`, with the procedures
     whose only job is to write it. A sink holding the traced column's own
     values, before/after or as-of, is a business audit trail: a consumer
-    with a one-line caption. Either is in scope when the question is about
-    logging, errors, auditing or retention.
+    with a one-line caption.
     </scope_relevance>
 
     This recipe is one `sections[]` entry: `{ angle: "business", text: "<body>" }`.
