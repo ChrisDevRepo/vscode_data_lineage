@@ -480,6 +480,13 @@ describe('projectColumnNodes', () => {
     expect(after[1].position).toEqual({ x: 40, y: 80 });
   });
 
+  it('skips a view whose data map has no entry instead of projecting undefined', () => {
+    const nodes = views(2);
+    const data = dataFor(nodes.slice(0, 1));
+    const projected = projectColumnNodes(nodes, data, {}, createColumnNodeCache());
+    expect(projected.map(node => node.id)).toEqual(['n0']);
+  });
+
   it('releases cache entries for nodes a new relation set removed', () => {
     const nodes = views(4);
     const cache = createColumnNodeCache();

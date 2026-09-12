@@ -1399,19 +1399,26 @@ export function GraphCanvas({
       // Report-section focus is not in this channel: it emphasizes the section labels instead, so
       // it cannot overwrite what selection or the column thread is saying about the bodies.
       const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
+      const isTraceOrigin = view.id === trace.selectedNodeId && (
+        trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied'
+      );
+      const removable = isBookmarkMode && canRemoveNodeFromScopedView;
       byNode.set(view.id, {
         view,
-        rowsVisible: notesVisible,
+        rowsVisible: true,
         rowLineStates,
-        highlighted: isHighlighted ? 'yellow' : undefined,
-        dimmed,
+        highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : undefined,
+        dimmed: dimmed && !isTraceOrigin,
         aiHighlight: aiHighlightMap.get(view.id),
         aiBadge: aiBadgeMap.get(view.id),
         aiNote: notesVisible ? aiNoteMap.get(view.id) : undefined,
+        showRemoveButton: removable,
+        onRemoveFromView: removable ? onRemoveFromView : undefined,
+        traceControls: traceControlsByNode.get(view.id),
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {

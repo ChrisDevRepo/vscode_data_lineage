@@ -316,6 +316,27 @@ describe('analyzeLongestPath', () => {
     expect(group.nodeIds).toEqual(['A', 'B', 'C', 'D', 'E']);
     expect(group.meta?.depth).toBe(4);
   });
+
+  // Two bridges between the same pair of components: the first edge in walk order is a short
+  // sink; the second is a longer chain. Keeping only the first bridge would rank the short arm.
+  const twoBridges = () => makeGraph(
+    [
+      { id: 'A1' }, { id: 'A2' },
+      { id: 'Short' },
+      { id: 'L1' }, { id: 'L2' }, { id: 'L3' },
+    ],
+    [
+      ['A1', 'A2'], ['A2', 'A1'],
+      ['A1', 'Short'],
+      ['A2', 'L1'], ['L1', 'L2'], ['L2', 'L3'],
+    ],
+  );
+
+  it('keeps every inter-component bridge, not only the first edge seen', () => {
+    const group = analyzeLongestPath(twoBridges(), 2).groups[0];
+    expect(group.nodeIds).toEqual(['A1', 'A2', 'L1', 'L2', 'L3']);
+    expect(group.meta?.depth).toBe(4);
+  });
 });
 
 // ─── analyzeCycles ───────────────────────────────────────────────────────────

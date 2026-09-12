@@ -315,9 +315,15 @@ export class AiSession {
   /**
    * Number of distinct nodes inspected via `lineage_get_object_detail`
    * in the most recent discovery turn. The SM-offer follow-up pill renders
-   * only when this count is ≥ 2 — a multi-object walk worth deepening.
+   * when this count is ≥ 2, or when {@link lastDiscoveryOverBudget} is set.
    */
   public lastDiscoveryWalkCount = 0;
+
+  /**
+   * True when the last discovery seed came from an oversized scope that stayed in chat.
+   * {@link smOfferAvailable} uses this instead of inventing a walk count of 2.
+   */
+  public lastDiscoveryOverBudget = false;
 
   /**
    * The user's verbatim discovery-turn prompt — stored so the
@@ -514,6 +520,7 @@ export class AiSession {
     this.classification = undefined;
     this.lastDiscoveryOrigin = null;
     this.lastDiscoveryWalkCount = 0;
+    this.lastDiscoveryOverBudget = false;
     this.lastDiscoveryQuestion = null;
     this.lastDiscoveryAnswer = null;
   }
@@ -578,19 +585,21 @@ export class AiSession {
    * @param question - The user's verbatim discovery prompt.
    * @param answer - The AI's final discovery answer (markdown).
    */
-  public recordDiscovery(origin: string, walkCount: number, question: string, answer: string): void {
+  public recordDiscovery(origin: string, walkCount: number, question: string, answer: string, overBudget = false): void {
     this.lastDiscoveryOrigin = origin;
     this.lastDiscoveryWalkCount = walkCount;
     this.lastDiscoveryQuestion = question;
     this.lastDiscoveryAnswer = answer;
+    this.lastDiscoveryOverBudget = overBudget;
   }
 
   /**
    * Seeds the existing post-discovery SM-offer from an oversized scope that stayed in chat.
    *
    * @remarks
-   * Same pill as a completed multi-object walk — not a new offer. `nodeCount` is floored at 2 so
-   * {@link smOfferAvailable} still fires when the rejected envelope omitted a walk count.
+   * Same pill as a completed multi-object walk — not a new offer. Marks the seed as over-budget
+   * so {@link smOfferAvailable} still fires when the envelope omitted a walk count, without
+   * inventing a count of 2.
    *
    * @param origin - Canonical id from the rejected `lineage_get_scope_bundle` call.
    * @param nodeCount - Projected node count that overflowed the discovery cap.
@@ -598,7 +607,7 @@ export class AiSession {
    * @param answer - The AI's discovery chat answer (markdown); empty until the turn finishes.
    */
   public seedSmOfferFromRejectedOrigin(origin: string, nodeCount: number, question: string, answer: string): void {
-    this.recordDiscovery(origin, Math.max(nodeCount, 2), question, answer);
+    this.recordDiscovery(origin, nodeCount, question, answer, true);
   }
 
   /**
@@ -612,7 +621,9 @@ export class AiSession {
    * {@link seedSmOfferFromRejectedOrigin}), so the same pill is the opt-in either way.
    */
   public smOfferAvailable(): boolean {
-    return this.phase.kind === 'idle' && this.lastDiscoveryWalkCount >= 2 && Boolean(this.lastDiscoveryOrigin);
+    return this.phase.kind === 'idle'
+      && Boolean(this.lastDiscoveryOrigin)
+      && (this.lastDiscoveryWalkCount >= 2 || this.lastDiscoveryOverBudget);
   }
 
   /** Whether a completed bounded BFS chat answer can offer a visual-preview action. */

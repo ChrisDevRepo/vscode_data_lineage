@@ -65,7 +65,7 @@ function makeGateSink() {
 }
 
 describe('captureRejectedScopeOffer', () => {
-  it('reads origin from scope_proposal and floors walkCount at 2', () => {
+  it('reads origin from scope_proposal and keeps the projected walkCount', () => {
     const seed = captureRejectedScopeOffer(
       'lineage_get_scope_bundle',
       { origin: ORIGIN },

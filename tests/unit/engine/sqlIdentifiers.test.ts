@@ -24,6 +24,10 @@ describe('stripBrackets', () => {
     expect(stripBrackets('dbo.Table')).toBe('dbo.Table');
   });
 
+  it('unescapes a doubled quote to the single literal character', () => {
+    expect(stripBrackets('"a""b"')).toBe('a"b');
+  });
+
   it('drops stray delimiters from an unbalanced name', () => {
     expect(stripBrackets('dbo].[Table')).toBe('dbo.Table');
   });
@@ -41,5 +45,9 @@ describe('splitSqlName', () => {
   it('splits an ordinary qualified name', () => {
     expect(splitSqlName('[schema].[obj.with.dot]')).toEqual(['[schema]', '[obj.with.dot]']);
     expect(splitSqlName('db.schema.obj')).toEqual(['db', 'schema', 'obj']);
+  });
+
+  it('does not close a quoted identifier at an escaped quote', () => {
+    expect(splitSqlName('"dbo"."a""b"')).toEqual(['"dbo"', '"a""b"']);
   });
 });

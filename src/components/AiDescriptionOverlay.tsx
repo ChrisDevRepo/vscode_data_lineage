@@ -134,12 +134,8 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     onFocusSection?.(sections[nextIdx].n);
   }
 
-  function focusNodeFromEvent(target: EventTarget | null): (() => void) | null {
-    const anchor = (target as HTMLElement | null)?.closest('a');
-    const href = anchor?.getAttribute('href');
-    if (!href?.startsWith(FOCUS_NODE_HREF_PREFIX) || !onFocusNode) {
-      return null;
-    }
+  function focusNodeFromHref(href: string): (() => void) | null {
+    if (!href.startsWith(FOCUS_NODE_HREF_PREFIX) || !onFocusNode) return null;
     const encoded = href.slice(FOCUS_NODE_HREF_PREFIX.length);
     let nodeId = encoded;
     try {
@@ -151,21 +147,30 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     return () => onFocusNode(nodeId);
   }
 
-  function activateFocusNode(e: React.SyntheticEvent<HTMLDivElement>) {
-    const focus = focusNodeFromEvent(e.target);
-    if (!focus) return;
+  /** Intercepts every markdown `<a>`: focus-node, http(s) via the host, everything else dropped. */
+  function activateMarkdownLink(e: React.SyntheticEvent<HTMLDivElement>): void {
+    const anchor = (e.target as HTMLElement | null)?.closest('a');
+    const href = anchor?.getAttribute('href');
+    if (!href) return;
     e.preventDefault();
-    focus();
+    const focus = focusNodeFromHref(href);
+    if (focus) {
+      focus();
+      return;
+    }
+    if (/^https?:\/\//i.test(href)) {
+      window.vscode?.postMessage({ type: 'open-external', url: href });
+    }
   }
 
   function handleMarkdownClick(e: React.MouseEvent<HTMLDivElement>) {
-    activateFocusNode(e);
+    activateMarkdownLink(e);
   }
 
   // Enter reaches the click handler through the anchor's own activation behaviour; Space does not
   // activate a link, so without this the keyboard path is Enter-only.
   function handleMarkdownKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key === ' ') activateFocusNode(e);
+    if (e.key === ' ') activateMarkdownLink(e);
   }
 
   /**

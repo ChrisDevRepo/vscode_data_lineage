@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import {
   columnHandleId,
@@ -18,7 +18,15 @@ import { useColumnHover } from '../contexts/ColumnHoverContext';
 import { TYPE_COLORS, SHORT_TYPE_LABELS, getSchemaColor } from '../utils/schemaColors';
 import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
-import type { ColumnTraceNodeData, ObjectType } from '../engine/types';
+import { Tooltip } from './ui/Tooltip';
+import {
+  TraceActionButton,
+  TraceNeighborPickerToolbar,
+  type TraceNeighborAction,
+  type TraceNeighborPicker,
+} from './CustomNode';
+import type { ColumnTraceNodeData, ObjectType, TraceNeighborOption } from '../engine/types';
+import type { NeighborSide } from '../engine/graphGuards';
 
 function lineStateColor(state: ColumnLineState | undefined): string {
   if (state === 'transformation') return 'var(--ln-ai-bu)';
@@ -261,6 +269,24 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const rowsVisible = data.rowsVisible !== false;
   const { hoveredPath: threadPath, pinnedRow } = useColumnHover();
+  const [picker, setPicker] = useState<TraceNeighborPicker | null>(null);
+
+  useEffect(() => {
+    if (!data.traceControls) setPicker(null);
+  }, [data.traceControls]);
+
+  const applyTraceAction = (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => {
+    if (!data.traceControls || options.length === 0) return;
+    if (options.length === 1) {
+      if (action === 'add') data.traceControls.onAdd(options[0].id);
+      else data.traceControls.onPrune(options[0].id);
+      setPicker(null);
+      return;
+    }
+    setPicker(prev => (
+      prev?.action === action && prev.side === side ? null : { action, side, options }
+    ));
+  };
 
   // Which row currently holds the node's single tab stop. Null until the user moves within the
   // node, so the first row is the default entry point and a re-render never steals the position.
@@ -319,6 +345,17 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   return (
     <>
+      {picker && (
+        <TraceNeighborPickerToolbar
+          picker={picker}
+          onClose={() => setPicker(null)}
+          onSelect={(option) => {
+            if (picker.action === 'add') data.traceControls?.onAdd(option.id);
+            else data.traceControls?.onPrune(option.id);
+            setPicker(null);
+          }}
+        />
+      )}
       {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
       {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
     <div
@@ -346,6 +383,26 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         overflow: 'hidden',
       }}
     >
+      {data.showRemoveButton && (
+        <Tooltip content="Remove from view" placement="top" asChild>
+          <button
+            aria-label="Remove from view"
+            className="absolute flex items-center justify-center text-[9px] rounded-sm ln-node-remove-btn"
+            style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
+            onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
+          >
+            ×
+          </button>
+        </Tooltip>
+      )}
+      {data.traceControls && (
+        <>
+          <TraceActionButton action="add" side="in" options={data.traceControls.in.add} hasContext={data.traceControls.in.neighborCount > 0} disabledReason={data.traceControls.in.addDisabledReason} onAction={applyTraceAction} />
+          <TraceActionButton action="prune" side="in" options={data.traceControls.in.prune} hasContext={data.traceControls.in.visibleNeighborCount > 0} disabledReason={data.traceControls.in.pruneDisabledReason} onAction={applyTraceAction} />
+          <TraceActionButton action="add" side="out" options={data.traceControls.out.add} hasContext={data.traceControls.out.neighborCount > 0} disabledReason={data.traceControls.out.addDisabledReason} onAction={applyTraceAction} />
+          <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} hasContext={data.traceControls.out.visibleNeighborCount > 0} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
+        </>
+      )}
       {view.isTransformNode ? (
         <TransformNodeBody
           view={view}

@@ -17,7 +17,7 @@ interface DiscoveryWalk {
 export interface RejectedScopeOffer {
   /** Canonical origin id from the rejected call or its `scope_proposal`. */
   readonly origin: string;
-  /** Projected node count that overflowed the discovery cap, floored at 2 so the existing SM-offer pill still fires. */
+  /** Projected node count that overflowed the discovery cap (may be 0 when the envelope omitted it). */
   readonly walkCount: number;
 }
 
@@ -98,7 +98,7 @@ export function captureRejectedScopeOffer(
   const fromInput = ScopeBundleOriginView.safeParse(input);
   const origin = (view.data.scope_proposal?.origin ?? (fromInput.success ? fromInput.data.origin : '')).trim();
   if (!origin) return null;
-  return { origin, walkCount: Math.max(view.data.counts?.nodes ?? 0, 2) };
+  return { origin, walkCount: view.data.counts?.nodes ?? 0 };
 }
 
 /**

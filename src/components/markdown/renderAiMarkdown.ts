@@ -40,9 +40,18 @@ const marked = new Marked({ gfm: true, breaks: false })
   });
 
 // KaTeX exposes each expression's source through `data-latex`; `style` is in DOMPurify's default allowlist.
-// `id` is allowed by default too — it is restated here so the section-chip anchors never depend on
-// that default silently changing upstream.
-const SANITIZE_CONFIG = { ADD_ATTR: ['data-latex', 'id'] };
+const SANITIZE_CONFIG = { ADD_ATTR: ['data-latex'] };
+
+// Default DOMPurify allows `id` on every tag. Only numbered section headings need it
+// (`ln-ai-sec-N`); any other id is stripped so a model-supplied attribute cannot clobber
+// `window.vscode` or other globals in the webview.
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (!(node instanceof Element)) return;
+  const id = node.getAttribute('id');
+  if (!id) return;
+  if (node.tagName === 'H2' && id.startsWith(AI_SECTION_ID_PREFIX)) return;
+  node.removeAttribute('id');
+});
 
 /**
  * Renders an engine-assembled AI description to sanitized HTML.

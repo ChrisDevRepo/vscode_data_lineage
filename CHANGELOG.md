@@ -23,6 +23,8 @@
 
 ### Fixed
 - Column Detail edges use the same theme stroke as the object graph, instead of React Flow's default gray.
+- Column Detail keeps object-view bookmark-remove and trace add/prune chrome, and no longer hides column rows when AI notes zoom out.
+- Longest-path analysis ranks every bridge between two cycles, not only the first edge the walk saw.
 - A DACPAC `nvarchar(100)` column now renders as `nvarchar(100)`, not `nvarchar(50)`.
 - A long turn no longer stalls and ends without an answer when two large object bodies cannot be
   held at once: evicting a body no longer discards the record that the read already happened, which

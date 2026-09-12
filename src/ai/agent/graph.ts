@@ -700,7 +700,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     } else if (walk) {
       sess.recordDiscovery(walk.origin, walk.walkCount, state.prompt, walk.answer);
     } else if (sess.lastDiscoveryOrigin) {
-      sess.recordDiscovery(sess.lastDiscoveryOrigin, Math.max(sess.lastDiscoveryWalkCount, 2), state.prompt, res.text);
+      sess.recordDiscovery(
+        sess.lastDiscoveryOrigin,
+        sess.lastDiscoveryWalkCount,
+        state.prompt,
+        res.text,
+        sess.lastDiscoveryOverBudget,
+      );
     }
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
