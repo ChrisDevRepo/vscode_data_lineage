@@ -72,7 +72,7 @@ describe('structural_callouts — one home, rendered once per bodied hop', () =>
   });
 
   it('ships general at synthesis only', () => {
-    const discover = resolveStagePrompt(templates, 'discover');
+    const discover = resolveStagePrompt(templates, 'discover', undefined);
     expect(discover.shippedKeys).not.toContain('general');
     expect(discover.gatedOut).toContainEqual({ key: 'general', reason: 'stage' });
     const synthesis = resolveStagePrompt(templates, 'synthesis', 'business', 5);
