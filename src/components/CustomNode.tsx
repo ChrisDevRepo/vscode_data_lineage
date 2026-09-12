@@ -11,6 +11,7 @@ import type { NeighborSide } from '../engine/graphGuards';
 /** User action supported by the interactive trace node controls. */
 export type TraceNeighborAction = 'add' | 'prune';
 
+/** Picker state for adding or pruning one inbound or outbound neighbor set. */
 export type TraceNeighborPicker = {
   action: TraceNeighborAction;
   side: NeighborSide;
@@ -35,6 +36,7 @@ function traceActionTooltip(
     : `${label}: choose one of ${options.length}`;
 }
 
+/** One add/prune control on a trace node; hidden when that side has no neighbors at all. */
 export function TraceActionButton({
   action,
   side,
@@ -82,6 +84,7 @@ export function TraceActionButton({
   );
 }
 
+/** Bottom toolbar listing neighbor options for the active add/prune picker. */
 export function TraceNeighborPickerToolbar({
   picker,
   onClose,

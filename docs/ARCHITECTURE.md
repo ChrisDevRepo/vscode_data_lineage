@@ -26,7 +26,13 @@ see [`AI_PROMPTS.md`](AI_PROMPTS.md).
   graph closure, and completion.
 - Model tools pass through the local canonical registry, phase policy, and
   strict Zod dispatcher. Production does not route its own calls through
-  `vscode.lm.invokeTool`.
+  `vscode.lm.invokeTool`. `package.json` `languageModelTools` is the
+  read-effect subset of
+  [`src/ai/tools/toolDefs.ts`](../src/ai/tools/toolDefs.ts); mutating tools
+  (`lineage_get_scope_bundle`, `lineage_start_exploration`,
+  `lineage_submit_findings`, `lineage_present_result`) stay on the participant
+  dispatcher and are never `vscode.lm.registerTool`. Phase availability is
+  [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 - Extension-host/webview messages cross the Zod schemas in
   [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)
   before handlers consume them.
@@ -145,8 +151,8 @@ required for a trace and forbidden otherwise.
 execution trigger to pick the first stage, so an explicit trigger always
 outranks the model's classification.
 
-Discovery is the default read-only chat state. It answers bounded catalog or
-lineage questions with snapshot tools. Answers lead with the user's question,
+Discovery is the default chat state: it answers bounded catalog or lineage
+questions with snapshot tools and does not publish a `NavigationEngine`. Answers lead with the user's question,
 then organize supported business and technical facts by lineage flow rather
 than dumping tool fields or one heading per node. A discovery answer cannot complete until
 the turn has accepted at least one trusted tool observation; tool-less model

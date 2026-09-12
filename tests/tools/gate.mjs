@@ -2,9 +2,8 @@
 // One command that answers "which gates are green?" — `npm run gate`.
 //
 // Local deterministic gate. Nothing here pushes, publishes, or runs a real
-// model. The scripted S1-S7 scenario matrix and real-model T1-T7 measurement
-// both launch outside this process (Electron / a live provider) and are
-// internal-only.
+// model. Scripted internal lanes and real-model T1–T8S measurement both launch
+// outside this process (Electron / a live provider) and are internal-only.
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdirSync, writeFileSync } from 'node:fs';

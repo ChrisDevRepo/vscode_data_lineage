@@ -20,7 +20,9 @@ the source of truth for exact wording and provider-visible shapes.
   shapes, phase availability, strict validation, and dispatch.
 - [`src/ai/tools/presentResult.ts`](../src/ai/tools/presentResult.ts) validates
   and deterministically assembles the final presentation.
-- `package.json` owns the contributed tool descriptions and chat commands.
+- [`src/ai/tools/toolDefs.ts`](../src/ai/tools/toolDefs.ts) is the single tool
+  catalog. `package.json` `languageModelTools` is the generated read-effect
+  subset; chat commands stay in `package.json`.
 
 YAML is a customization layer, not the whole prompt. Phase instructions and
 mechanical enforcement remain code-owned.
@@ -34,6 +36,27 @@ operates the mechanism: which tool carries which template, which phase allows
 which call, which field a template lands in. A content rule or threshold never
 moves from the YAML into a prompt builder or a schema description to bypass the
 overlay; a description may point at the template entry, not restate it.
+
+## Tool catalog
+
+Two surfaces consume `TOOL_DEFS`. A name that exists on one does not imply it
+exists on the other.
+
+**Registered with `vscode.lm`** (`effect: 'read'` only — Copilot agent mode and
+`#lineage_*` references): `lineage_get_context`, `lineage_get_screen_state`,
+`lineage_search_objects`, `lineage_get_object_detail`, `lineage_search_ddl`,
+`lineage_detect_graph_patterns`, `lineage_get_neighbor_columns`.
+
+**Participant-internal** (in-process dispatcher only; never
+`vscode.lm.registerTool`): `lineage_get_scope_bundle` (discovery `scope_store`),
+`lineage_start_exploration` (consent gate), `lineage_submit_findings` (hop
+commit), `lineage_present_result` (presentation commit).
+
+Phase availability is [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
+Active exploration exposes `lineage_submit_findings` and
+`lineage_get_neighbor_columns` together; neighbor-column inspection is for
+opaque focus DDL (`SELECT *`, dynamic SQL, ambiguous joins), not a second
+catalog search.
 
 ## Assembly and memory contract
 
@@ -181,11 +204,11 @@ own tool:
   treated as untrusted database content, never as instructions, and the block is
   absent when nothing is applied.
 - **`exploration_scope`** — the node set fixed at the approval gate and owned by
-  `NavigationEngine` for the rest of the run. `lineage_submit_findings` and
-  `lineage_present_result` operate inside it; nothing widens it silently — a
-  follow-up that names an object is the consent that admits exactly that object,
-  never its schema, and a scope-expansion gate is the consent that admits a
-  schema.
+  `NavigationEngine` for the rest of the run. `lineage_submit_findings`,
+  `lineage_present_result`, and `lineage_get_neighbor_columns` operate inside
+  it; nothing widens it silently — a follow-up that names an object is the
+  consent that admits exactly that object, never its schema, and a
+  scope-expansion gate is the consent that admits a schema.
 - **`full_model`** — every parsed object in the loaded snapshot.
   `lineage_get_context`, `lineage_search_objects`, `lineage_search_ddl`,
   `lineage_get_object_detail`, `lineage_get_scope_bundle`, and
@@ -351,10 +374,12 @@ author its report from the completed exploration archive.
 ## Phase policy and completed follow-ups
 
 [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) is the canonical
-phase/tool map. Discovery tools are read-only; visual preview, SM entry, active
-submission, synthesis, and completed follow-ups each receive only their
-phase-valid tools. Production dispatch is direct through the local registry and
-does not call `vscode.lm.invokeTool`.
+phase/tool map. Discovery answers from snapshot tools and does not publish a
+`NavigationEngine`; `lineage_get_scope_bundle` still stores discovery evidence
+and is therefore participant-internal, not a `vscode.lm` tool. Visual preview,
+SM entry, active submission, synthesis, and completed follow-ups each receive
+only their phase-valid tools. Production dispatch is direct through the local
+registry and does not call `vscode.lm.invokeTool`.
 
 After a preview is accepted by the active graph webview, chat emits only a short
 confirmation and does not add a redundant **Show in Graph** action. If automatic

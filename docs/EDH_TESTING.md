@@ -90,8 +90,9 @@ rather than assuming `python3` is the name a given machine exposes.
 
 ## Unit tests
 
-`npm test` runs every `tests/unit/**/*.test.ts` file in one Vitest suite. The
-two unit projects and the focused Core subsets can also run independently:
+`npm test` runs every `tests/unit/**/*.test.ts` and `tests/unit/**/*.test.tsx`
+file in one Vitest suite. The two unit projects and the focused Core subsets
+can also run independently:
 
 ```bash
 npm run test:core

@@ -450,4 +450,11 @@ describe("NavigationEngine Robustness", () => {
   expect(byId.get('read_from')?.edge_direction === 'upstream', 'the source table is upstream of the procedure').toBe(true);
 });
 
+  it('origin_not_found hint names no tool the caller stage does not have', () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: 'no_such_origin', question: 'q', direction: 'downstream' });
+    expect('error' in result && result.error).toBe('origin_not_found');
+    expect('hint' in result ? result.hint : '').not.toContain('get_context');
+  });
+
 });

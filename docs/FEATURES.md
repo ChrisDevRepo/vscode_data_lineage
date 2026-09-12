@@ -28,7 +28,6 @@ global keybindings, so none of these can conflict with your editor bindings.
 | <kbd>h</kbd> | Hide schema clusters in Expanded Schema View |
 | <kbd>Delete</kbd> | Exclude the selected node from the view |
 | <kbd>Esc</kbd> | Close active input, then exit the current mode |
-| <kbd>Enter</kbd> | Select a suggestion or apply the focused action |
 
 Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text,
 and never fire with a Ctrl, Cmd, or Alt modifier. <kbd>Esc</kbd> cascades: it closes
@@ -237,7 +236,7 @@ The user-visible flow has the following paths:
 
 #### Discovery (chat answers, no graph)
 
-The default state. The AI uses read-only catalog tools to inspect loaded scope, DDL, columns, neighbours, and graph patterns, then answers in chat.
+The default state. The AI uses snapshot catalog tools to inspect loaded scope, DDL, columns, neighbours, and graph patterns, then answers in chat.
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
 - `/search` pins this path deterministically, skipping the entry-detection model call. `/trace` pins the deep-analysis path below.

@@ -61,8 +61,12 @@ Lenient intake happens once at the schema edge, not per field: a strict array
 the model sends as a JSON string (`sections`) is decoded and accepted, and a
 prose tool call whose payload body is not fenced is read — a shape the port can
 read is read, and only a shape it cannot is rejected.
-The `package.json` `languageModelTools` manifest is generated from the Zod
-schemas and a drift test guards the pair.
+The `package.json` `languageModelTools` manifest is generated from the
+read-effect subset of `TOOL_DEFS` (`src/ai/tools/toolDefs.ts`); a drift test
+guards the pair. Mutating tools (`lineage_get_scope_bundle`,
+`lineage_start_exploration`, `lineage_submit_findings`,
+`lineage_present_result`) stay on the participant dispatcher and are never
+registered with `vscode.lm`.
 
 An AI-authored view carries its run forward. `present_result` stamps the run id
 onto the view metadata and, once the presentation commits, captures the engine
