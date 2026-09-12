@@ -496,8 +496,6 @@ function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
  * @remarks
  * Row order is first-seen order across `input.relations` — there is no declared ordinal
  * information available at this stage, so rows are never sorted alphabetically or by relevance.
- * Once declared column lists arrive (a later package), that ordinal order must supersede this
- * first-seen order.
  *
  * A relation recorded more than once — the same endpoints and the same hop node — is skipped before
  * any node accumulator is written, so a column re-submitted across hops counts once for the rows a

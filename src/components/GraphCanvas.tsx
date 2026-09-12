@@ -1457,7 +1457,12 @@ export function GraphCanvas({
           target: edge.target,
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
-          markerEnd: { type: MarkerType.ArrowClosed, width: COLUMN_EDGE_MARKER_SIZE, height: COLUMN_EDGE_MARKER_SIZE },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: COLUMN_EDGE_MARKER_SIZE,
+            height: COLUMN_EDGE_MARKER_SIZE,
+            color: lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)',
+          },
           data: {
             state: edge.state,
             lit,

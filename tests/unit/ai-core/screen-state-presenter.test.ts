@@ -3,7 +3,7 @@ import { describeScreen, presentRunRecall, presentScreenState, type RunRecallInp
 import { aiRunStorageKey, AI_RUN_KEY_PREFIX, hashDdl, type StoredAiRun } from '../../../src/ai/session/runStore';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { GetScreenStateInputSchema, parseToolInput } from '../../../src/ai/tools/toolSchemas';
-import { detectOverBudgetFromResult } from '../../../src/ai/agent/graph';
+import { detectOverBudgetFromResult } from '../../../src/ai/agent/discoveryCapture';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
 import type { SmState } from '../../../src/ai/sm/smTypes';
 

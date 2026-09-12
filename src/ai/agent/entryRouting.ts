@@ -18,7 +18,7 @@ export function selectInitialAgentStage(
   trigger: AgentExecutionTrigger,
 ): InitialAgentStage {
   if (trigger === 'preview_button') return 'visual_preview';
-  if (trigger === 'slash_trace' || trigger === 'run_trace' || trigger === 'discovery_budget') return 'sm_entry';
+  if (trigger === 'slash_trace' || trigger === 'run_trace') return 'sm_entry';
   if (entry === 'column_trace') return 'sm_entry';
   return 'discover';
 }

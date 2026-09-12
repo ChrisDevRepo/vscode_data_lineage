@@ -1625,36 +1625,6 @@ function detectGateFromToolResult(toolName: string, resultText: string): unknown
   }
 }
 
-/** The `checkScopeBudget` rejection envelope a discovery tool returns when the scope exceeds the caps. */
-const OverBudgetEnvelopeSchema = z.object({ reason: z.literal('over_discovery_budget') }).loose();
-
-/**
- * The one tool whose over-budget rejection means "this scope is too large to answer inline".
- *
- * @remarks
- * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
- * returns it for an oversized stored-run recall. Only an oversized *scope* request seeds the
- * existing SM-offer pill; matching on the envelope alone turned "what did this run prune?" into a
- * fresh exploration approval gate instead of the narrowing hint the rejection already carries.
- */
-const OVER_BUDGET_SCOPE_TOOL = 'lineage_get_scope_bundle';
-
-/**
- * Whether one tool result is an oversized `lineage_get_scope_bundle` request.
- *
- * @param toolName - Name of the tool that produced `resultText`.
- * @param resultText - The tool's serialized result.
- * @returns True only for an oversized scope-bundle request.
- */
-export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
-  if (toolName !== OVER_BUDGET_SCOPE_TOOL) return false;
-  try {
-    return OverBudgetEnvelopeSchema.safeParse(JSON.parse(resultText)).success;
-  } catch {
-    return false;
-  }
-}
-
 function applyGateClasses(gate: PendingGate, engine: NavigationEngine): void {
   for (const cls of gate.classes) {
     if (cls.startsWith('schema:')) {

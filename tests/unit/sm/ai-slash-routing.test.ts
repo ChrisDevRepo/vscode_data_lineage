@@ -85,8 +85,6 @@ describe('ai-slash-routing', () => {
     expect(selectInitialAgentStage('visual_render', 'slash_trace'), 'slash_trace outranks a visual_render verdict').toBe('sm_entry');
     expect(selectInitialAgentStage('discovery', 'run_trace'), 'run_trace mechanically enters SM').toBe('sm_entry');
     expect(selectInitialAgentStage('visual_render', 'run_trace'), 'run_trace outranks a visual_render verdict').toBe('sm_entry');
-    expect(selectInitialAgentStage('discovery', 'discovery_budget'), 'budget overflow mechanically enters SM').toBe('sm_entry');
-    expect(selectInitialAgentStage('visual_render', 'discovery_budget'), 'budget overflow outranks a visual_render verdict').toBe('sm_entry');
   });
 
   /**
@@ -113,7 +111,6 @@ describe('ai-slash-routing', () => {
         free_text: 'sm_entry',
         slash_trace: 'sm_entry',
         run_trace: 'sm_entry',
-        discovery_budget: 'sm_entry',
         preview_button: 'visual_preview',
       },
       // D-073 "TARGET ARCHITECTURE" ruling / "Net routing contract after the repair":
@@ -125,7 +122,6 @@ describe('ai-slash-routing', () => {
         free_text: 'discover',
         slash_trace: 'sm_entry',
         run_trace: 'sm_entry',
-        discovery_budget: 'sm_entry',
         preview_button: 'visual_preview',
       },
       // docs/ARCHITECTURE.md:148 — "Discovery is the default read-only chat state."
@@ -133,7 +129,6 @@ describe('ai-slash-routing', () => {
         free_text: 'discover',
         slash_trace: 'sm_entry',
         run_trace: 'sm_entry',
-        discovery_budget: 'sm_entry',
         preview_button: 'visual_preview',
       },
     };

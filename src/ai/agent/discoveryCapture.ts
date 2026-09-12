@@ -100,3 +100,24 @@ export function captureRejectedScopeOffer(
   if (!origin) return null;
   return { origin, walkCount: Math.max(view.data.counts?.nodes ?? 0, 2) };
 }
+
+/**
+ * Whether one tool result is an oversized `lineage_get_scope_bundle` request.
+ *
+ * @remarks
+ * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
+ * returns it for an oversized stored-run recall. Only an oversized *scope* request seeds the
+ * SM-offer pill; matching on the envelope alone is not a routing trigger.
+ *
+ * @param toolName - Name of the tool that produced `resultText`.
+ * @param resultText - The tool's serialized result.
+ * @returns True only for an oversized scope-bundle request.
+ */
+export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
+  if (toolName !== SCOPE_BUNDLE_TOOL) return false;
+  try {
+    return OverBudgetResultView.safeParse(JSON.parse(resultText)).success;
+  } catch {
+    return false;
+  }
+}

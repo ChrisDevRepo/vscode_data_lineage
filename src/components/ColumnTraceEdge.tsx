@@ -258,6 +258,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const showChip = !identityOnly && (state === 'transformation' || classes.length > 0);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
+  const stroke = lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)';
 
   return (
     <>
@@ -265,6 +266,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
         path={edgePath}
         markerEnd={markerEnd}
         style={{
+          stroke,
           strokeWidth: lit ? LIT_STROKE_WIDTH : DIM_STROKE_WIDTH,
           opacity,
           ...(indirect ? { strokeDasharray: INDIRECT_DASH_PATTERN } : {}),

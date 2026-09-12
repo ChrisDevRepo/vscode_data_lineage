@@ -22,6 +22,7 @@
 - The computed-column recipe renders every distinct formula on a branch, not one per column.
 
 ### Fixed
+- Column Detail edges use the same theme stroke as the object graph, instead of React Flow's default gray.
 - A DACPAC `nvarchar(100)` column now renders as `nvarchar(100)`, not `nvarchar(50)`.
 - A long turn no longer stalls and ends without an answer when two large object bodies cannot be
   held at once: evicting a body no longer discards the record that the read already happened, which

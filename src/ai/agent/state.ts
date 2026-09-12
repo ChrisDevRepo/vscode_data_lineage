@@ -48,7 +48,7 @@ function messagesReducer(left: ModelMessage[], right: ModelMessage[]): ModelMess
 export type AgentEntryRoute = 'column_trace' | 'visual_render' | 'discovery';
 
 /** Mechanical source that can select SM without reinterpreting natural-language intent. */
-export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 'preview_button' | 'discovery_budget';
+export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 'preview_button';
 
 /**
  * Structured output for the narrow entry-detector model call.
