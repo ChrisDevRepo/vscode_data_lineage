@@ -528,7 +528,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name or column.",
-        "modelDescription": "Search database objects by name or column name using substring or regex matching. With `mode:\"regex\"` the query is a JavaScript regular expression, always case-insensitive, matched against both the object name and `schema.name`, and taken verbatim — no schema prefix is split off it; an unusable pattern returns `invalid_regex` with the repair, never an empty list. Returns object IDs and metadata. `by_type` states how many results each object kind contributed — take a per-kind count from there, never by tallying rows. Each result carries an `in_user_filter` flag — when an in-filter search returns 0 hits but out-of-filter results exist, include that schema in the next search; the active filter is a display preference, not a boundary.",
+        "modelDescription": "Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, and `in_user_filter`. When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -565,7 +565,7 @@
               }
             },
             "mode": {
-              "description": "Name matching strategy: \"substring\" (default) or \"regex\".",
+              "description": "Name matching strategy: \"substring\" (default) or \"regex\" (case-insensitive, matched against name and schema.name).",
               "type": "string",
               "enum": [
                 "substring",
@@ -654,7 +654,7 @@
         "toolReferenceName": "lineage_search_ddl",
         "displayName": "Search DDL",
         "userDescription": "Search SQL body scripts for a text pattern.",
-        "modelDescription": "Grep over view, procedure and function bodies: a regular expression in, every match out with its object, 1-based line number, matched line and surrounding context, and a hit inside a SQL comment flagged `commented: true`. A context line that is entirely comment is prefixed `--`; an unprefixed line executes. `by_object` states each object once with its `hits` count and its `commented_hits`/`commented_lines` — take a per-object count from there, never by tallying rows. Case-insensitive; `^` and `$` match per line. No matches is `total: 0`; an unusable pattern is `invalid_regex` with the repair.",
+        "modelDescription": "Grep view, procedure and function bodies. Each hit has object, line, matched line, context, and `commented: true` when the match sits in a SQL comment. `by_object` is the per-object hit count. No matches is `total: 0`; a bad pattern is `invalid_regex` with the repair. Use lineage_search_objects for names.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -667,7 +667,7 @@
           "properties": {
             "query": {
               "type": "string",
-              "description": "The regular expression to match against SQL body text."
+              "description": "Regular expression against SQL body text; case-insensitive; `^` and `$` match per line."
             },
             "types": {
               "description": "Optional body-type filter; omit to search all three.",
@@ -724,7 +724,7 @@
         "toolReferenceName": "lineageView",
         "displayName": "Get Screen State",
         "userDescription": "Shows what is currently on screen: active trace, analysis, or applied bookmark.",
-        "modelDescription": "Returns what the user currently sees in the lineage graph: the active trace (origin, depth, nodes added or pruned by hand), the active graph analysis (type, selected group), the applied bookmark (name, source; for an AI-authored bookmark also the original run question, start object, scope and open questions), and the view level. Without input it returns the screen card. When an AI-authored bookmark is applied, the run that produced it is stored with the bookmark: ids recall what that run found about specific objects (summary, decision with its reason, and whether the object's definition changed since); filter lists one class — \"pruned\" (objects removed, with the reason), \"open_leads\" (questions the run left open), \"stale\" (objects whose definition changed since the run).",
+        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. Omit input for the screen card.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
