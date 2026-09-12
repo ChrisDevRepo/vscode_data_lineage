@@ -47,7 +47,7 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     const instruction = parseAiOutputTemplatesYaml(text).discovery_chat?.instruction ?? '';
     expect(instruction).toContain("Lead with the direct answer to the user's question");
     expect(instruction).toContain('transformations and column mappings');
-    expect(instruction).toContain('error and audit paths');
+    expect(instruction).not.toContain('error and audit paths');
     expect(instruction).toContain('Keep internal tool names, call syntax, and payload fields out');
     expect(instruction).toContain('raw node/edge inventory only');
   });

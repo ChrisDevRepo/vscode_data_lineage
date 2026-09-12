@@ -28,11 +28,9 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * this map with no warning.
  *
  * Capture keys (`business_capture`, `technical_capture`, `structural_callouts`) fire at active phase;
- * render keys fire at synthesis. The slot body is the canonical surface, but not
- * the only one: the `general` render key states its own rule over what capture
- * produced — every captured ⚠️ callout carried through exactly once, its
- * significance settled at capture and not re-judged — so callout wording changed
- * in a capture key is checked against `general` as well.
+ * render keys fire at synthesis. The slot body is the canonical surface; `general`
+ * is placement-only at synthesis — a captured ⚠️ sits once in the section it
+ * belongs to.
  *
  * `description` is intentionally absent — it is engine output (built by
  * `orderAndAssemble` in `presentResult.ts` from title + intro + sections[] + closing),
@@ -56,7 +54,7 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   technical_capture:    ['active'],
   structural_callouts:  ['active'],
   structural_summary:   ['active'],
-  general:              ['discover', 'synthesis'],
+  general:              ['synthesis'],
   loading_pattern:      ['synthesis'],
   column_trace_capture: ['active'],
 };

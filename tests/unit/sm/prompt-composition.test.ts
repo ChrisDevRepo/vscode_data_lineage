@@ -737,10 +737,10 @@ describe('prompt composition', () => {
     expect(active).toContain('route_requests[].question');
   });
 
-  // The ⚠️ placement rule has two homes, both pinned in tests/unit/ai-core/rule-gates.test.ts: the
-  // `general` risks bullet and the `closing` block. The synthesis reminder rides the completion
-  // tool_result at the highest-attention slot, so anything it says about ⚠️ callouts is the last
-  // word and outranks those two — it therefore states nothing about them.
+  // ⚠️ placement is `general` at synthesis only (pinned in tests/unit/ai-core/rule-gates.test.ts).
+  // Closing is wrap-up prose. The synthesis reminder rides the completion tool_result at the
+  // highest-attention slot, so anything it says about ⚠️ callouts is the last word and outranks
+  // that home — it therefore states nothing about them.
   it('leaves ⚠️ significance to the templates, opening no gate at the highest-attention slot', () => {
     const result: SmResult = {
       status: 'complete',

@@ -31,7 +31,7 @@ export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis'
  * never a narrower "structure only" subset.
  */
 export const ANALYTICAL_LOGIC_VOCABULARY =
-  'rules, transformations, thresholds, guards, lifecycle, and material data-quality risks';
+  'rules, transformations, thresholds, guards, and lifecycle';
 
 /**
  * The three stages that author a `lineage_present_result` payload, as seen by
