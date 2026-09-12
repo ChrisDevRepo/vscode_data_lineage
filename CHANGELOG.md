@@ -20,6 +20,7 @@
 - The always-on column-flow tooltip on objects. Column Detail shows the same flows in full.
 
 ### Fixed
+- A formula the model stored only as a column-flow note still reaches the report (it is merged into the node's written section).
 - A bookmark recalls the AI run it was saved from, even after a later exploration in the same chat.
 - A one-direction trace draws every edge between the objects it includes.
 - SQL parsing: bracketed names with a `]]` escape, comments inside identifiers, and wildcard storage paths no longer drop or invent dependencies.
