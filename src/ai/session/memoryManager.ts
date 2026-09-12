@@ -160,6 +160,34 @@ export interface MemoryStateSnapshot {
 
 
 /**
+ * Appends texts that no existing section already contains.
+ *
+ * @remarks
+ * `submit_findings` may put a grounded clause on `column_flow[].upstream_columns[].note`
+ * while synthesis lifts only `detail_slots[].sections[].text`. The commit site merges those
+ * notes into the sections it stores so the archive does not drop them. A note that is already
+ * a substring of a section is left out — merge, never duplicate.
+ */
+export function appendUniqueSectionText(
+  sections: CapturedSection[],
+  extras: readonly string[],
+): CapturedSection[] {
+  if (sections.length === 0) return sections;
+  const seen = sections.map(s => s.text).join('\n');
+  const unique: string[] = [];
+  for (const raw of extras) {
+    const text = raw.trim();
+    if (!text) continue;
+    if (seen.includes(text) || unique.includes(text)) continue;
+    unique.push(text);
+  }
+  if (unique.length === 0) return sections;
+  const last = sections[sections.length - 1]!;
+  return [...sections.slice(0, -1), { ...last, text: `${last.text}\n${unique.join('\n')}` }];
+}
+
+
+/**
  * In-session store for the per-hop working memory and full detail archive.
  *
  * @remarks
@@ -271,6 +299,8 @@ export class AiMemoryManager {
    * extraction and the synthesis prompt's carry instruction. A revisit (a reopened column chain
    * re-enqueues a visited node) appends its sections after the earlier visit's, so evidence the
    * first visit captured stays in the archive; summary and metadata take the latest visit.
+   * The caller merges `column_flow` notes into `sections` via {@link appendUniqueSectionText}
+   * before this write, so a single-accept hop does not lose clauses that sat only on the flow.
    */
   public storeDetail(
     node: LineageNode,

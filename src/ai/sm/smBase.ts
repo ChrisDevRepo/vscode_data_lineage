@@ -27,7 +27,7 @@ import { edgeApiType } from '../support/aiPresenter';
 import { bfsDepthMap, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import { normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
-import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
+import { AiMemoryManager, appendUniqueSectionText, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
@@ -2521,7 +2521,10 @@ export class NavigationEngine implements IHopStateMachine {
 
     // analyze/pass path: commit the detail slot + CT edges (prune exits early above) — stage its sections + CT passthrough roles.
     {
-      stagedSections = finding.sections ?? [];
+      const flowNotes = (finding.column_flow ?? []).flatMap(entry =>
+        (entry.upstream_columns ?? []).map(ref => ref.note ?? ''),
+      );
+      stagedSections = appendUniqueSectionText(finding.sections ?? [], flowNotes);
       stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       stagedSummaryChars = finding.summary?.length ?? 0;
 

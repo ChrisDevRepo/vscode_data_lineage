@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AiMemoryManager } from '../../../src/ai/session/memoryManager';
+import { AiMemoryManager, appendUniqueSectionText } from '../../../src/ai/session/memoryManager';
 import type { LineageNode } from '../../../src/engine/types';
 
 /**
@@ -37,5 +37,59 @@ describe('AiMemoryManager — revisit keeps first-visit detail', () => {
     const sections = [{ angle: 'technical' as const, text: 'Passes the column through.' }];
     mem.storeDetail(node, sections, 'only summary');
     expect(mem.toJSON().detailSlots[node.id].sections).toEqual(sections);
+  });
+});
+
+describe('appendUniqueSectionText — column_flow notes reach the slot', () => {
+  it('merges a note that is not already in sections', () => {
+    const sections = [{ angle: 'business' as const, text: 'Derives Discount from OrderAmount.' }];
+    const merged = appendUniqueSectionText(sections, [
+      'BaseAmt * COALESCE(DiscountPct,0)',
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].text).toContain('Derives Discount from OrderAmount.');
+    expect(merged[0].text).toContain('BaseAmt * COALESCE(DiscountPct,0)');
+  });
+
+  it('does not duplicate a note already present in sections[].text', () => {
+    const sections = [{
+      angle: 'business' as const,
+      text: 'DiscountVal = BaseAmt * COALESCE(DiscountPct,0) per StagingID.',
+    }];
+    const merged = appendUniqueSectionText(sections, [
+      'BaseAmt * COALESCE(DiscountPct,0)',
+      '  BaseAmt * COALESCE(DiscountPct,0)  ',
+    ]);
+    expect(merged).toEqual(sections);
+  });
+
+  it('drops blank extras and de-duplicates identical notes', () => {
+    const sections = [{ angle: 'technical' as const, text: 'Pass-through rename.' }];
+    const merged = appendUniqueSectionText(sections, [
+      '',
+      '  ',
+      'ListPrice AS BasePrice, BasePrice * 1.0 AS AdjPrice',
+      'ListPrice AS BasePrice, BasePrice * 1.0 AS AdjPrice',
+    ]);
+    expect(merged[0].text).toBe(
+      'Pass-through rename.\nListPrice AS BasePrice, BasePrice * 1.0 AS AdjPrice',
+    );
+  });
+
+  it('is a no-op when there are no sections to merge into', () => {
+    expect(appendUniqueSectionText([], ['COALESCE(MarkupPct, 0.15)'])).toEqual([]);
+  });
+
+  it('storeDetail keeps the merged note on a single-accept hop', () => {
+    const mem = new AiMemoryManager();
+    const node = makeNode('spRefresh');
+    const sections = [{ angle: 'business' as const, text: 'Computes ListPrice from cost and markup.' }];
+    const merged = appendUniqueSectionText(sections, [
+      'CostPrice * (1 + COALESCE(MarkupPct,0.15))',
+    ]);
+    mem.storeDetail(node, merged, 'Computes ListPrice from cost and markup.');
+    const text = mem.toJSON().detailSlots[node.id].sections.map(s => s.text).join('\n');
+    expect(text).toContain('CostPrice * (1 + COALESCE(MarkupPct,0.15))');
+    expect(text).toContain('Computes ListPrice from cost and markup.');
   });
 });
