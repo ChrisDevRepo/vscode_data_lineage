@@ -406,7 +406,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // the only surfaces that carry prose. A slot this misses is not "bare" in the
       // findBareNonPrunedNodes sense (a highlight color carries none of the slot's content);
       // reported below as a real violation (see findUnrenderedDetailSlotIds).
-      const unrenderedSlotIds = findUnrenderedDetailSlotIds(sess.memory.notedNodeIds, presentInput);
+      const renderedNodeIds = new Set(resolvedNodeIds);
+      const unrenderedSlotIds = findUnrenderedDetailSlotIds(
+        sess.memory.notedNodeIds.filter(id => renderedNodeIds.has(id)),
+        presentInput,
+      );
       if (unrenderedSlotIds.length > 0) {
         s.logger.debug(`[Presentation] ${unrenderedSlotIds.length} of ${sess.memory.slotCount} detail slot(s) reached no section — ${trunc(unrenderedSlotIds.join(', '), 200)}`);
       }

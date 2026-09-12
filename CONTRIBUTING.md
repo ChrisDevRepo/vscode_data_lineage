@@ -38,9 +38,11 @@ proof that output is unchanged when the changed syntax has no test case.
 ## 4. Coding Standards
 - **TypeScript**: Strict typing is mandatory. Avoid `any` at architectural boundaries.
 - **Zod**: Use Zod for all IPC and tool-call validation.
-- **JSDoc**: Document exported contracts where the intent is not evident from
-  types and names. Focus on architectural constraints and the "why"; avoid
-  narrating implementation that is already clear from the code.
+- **TSDoc**: Document exported TypeScript contracts with `/** */` where the
+  intent is not evident from types and names. Focus on architectural
+  constraints and the "why"; do not restate types, and do not use JSDoc
+  `{Type}` braces. Plain `.mjs` scripts keep type-bearing JSDoc because that
+  is the only place the type can be stated.
 - **Logging**: Use the standard logger (`src/utils/log.ts`) with category tags (e.g., `[AI]`, `[Parse]`).
 
 ## 5. Dependency Overrides

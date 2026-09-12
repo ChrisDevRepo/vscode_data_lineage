@@ -464,4 +464,35 @@ describe("Navigation Engine — node conservation", () => {
   expect(logLines.some((l) => l.includes('[Disposition]') && l.includes('c')), 'a [Disposition] log line names the orphaned c').toBe(true);
 });
 
+  it("a BB hop that submitted passthrough on a write-sink keeps the node in the render.", () => {
+    // origin EXEC's logger, which writes audit one hop past a depth-1 border. The logging proc
+    // is the approved one-level-down neighbour; a submitted_passthrough there is a real BB visit,
+    // not the CT "no column carriage" sink-trim candidate.
+    const sinkNodes: LineageNode[] = [
+      makeNode({ id: 'origin', schema: 'dbo', name: 'origin', type: 'procedure' }),
+      makeNode({ id: 'logger', schema: 'dbo', name: 'logger', type: 'procedure' }),
+      makeNode({ id: 'audit', schema: 'dbo', name: 'audit', type: 'table' }),
+      makeNode({ id: 'stage', schema: 'dbo', name: 'stage', type: 'table' }),
+    ];
+    const sinkEdges: Array<[string, string]> = [
+      ['origin', 'stage'],
+      ['origin', 'logger'],
+      ['logger', 'audit'],
+    ];
+    const sinkModel = makeModel(sinkNodes, sinkEdges, ['dbo']);
+    const sinkGraph = makeGraph(sinkNodes, sinkEdges);
+    const engine = new NavigationEngine(sinkModel, sinkGraph, () => {}, {});
+    engine.init({
+      origin: 'origin', question: 'one level down', direction: 'downstream',
+      depthIntent: { kind: 'explicit', levels: 1 },
+    });
+    driveEngine(engine, { routes: { origin: ['logger'] }, passthrough: new Set(['logger']) });
+
+    const result = engine.getResult();
+    const rendered = new Set(result.fullNodes.map((n) => n.id));
+    expect(rendered.has('logger'), 'a visited BB passthrough write-sink stays in the render').toBe(true);
+    expect(result.detail_slots.some((slot) => slot.nodeId === 'logger'), 'its captured slot survives into the envelope').toBe(true);
+    expect(rendered.has('audit'), 'the table past the depth border is not rendered').toBe(false);
+  });
+
 });

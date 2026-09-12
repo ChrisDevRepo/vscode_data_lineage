@@ -236,12 +236,13 @@ a render-limit or node-cap is capacity guidance at `info`.
 
 ## Conventions
 
-Doc comments follow TSDoc: `/** */` contracts on exported API, with
-`@param name - description`, `@returns`, `@throws`, `@remarks` for invariants,
-and `@internal` for non-public exports. In `.ts`/`.tsx` types live in signatures
-and are not repeated in comments; plain `.mjs` scripts keep type-bearing JSDoc
-because that is the only place the type can be stated. Comments carry contracts,
-not narration, decision history, or notes to a reviewer.
+Doc comments follow [TSDoc](https://tsdoc.org/), not JSDoc. Exported `.ts`/`.tsx`
+API uses `/** */` with `@remarks` for invariants, `{@link}` for symbols, and
+`@param` / `@returns` / `@throws` only when they add purpose or conditions the
+signature does not already state. Types live in TypeScript; never write JSDoc
+`{Type}` braces. Plain `.mjs` scripts keep type-bearing JSDoc because that is
+the only place the type can be stated. Comments carry contracts, not narration,
+decision history, or notes to a reviewer.
 
 Commands and settings use the `dataLineageViz.*` prefix, and the schema
 expansion view is named `Expanded Schema View`. Changelog notes go under the

@@ -335,18 +335,24 @@ export class LineageParticipant {
         sink,
         signal: cancellation.signal,
       });
-      this.logger.info(
-        `[${session.id}] native turn terminal status=${result.outcome} modelCalls=${result.modelCalls}`,
-      );
       const metadata = {
         requestId,
         status: result.outcome,
         modelCalls: result.modelCalls,
       };
-      if (result.outcome !== 'error') return { metadata };
+      if (result.outcome !== 'error') {
+        this.logger.info(
+          `[${session.id}] native turn terminal status=${result.outcome} modelCalls=${result.modelCalls}`,
+        );
+        return { metadata };
+      }
 
       const message = sanitizeProviderError(result.failure?.message ?? '')
         || 'Data Lineage could not complete this request.';
+      this.logger.error(
+        `[${session.id}] native turn terminal status=error modelCalls=${result.modelCalls}`,
+        message,
+      );
       return { metadata, errorDetails: { message } };
     } finally {
       this.statusBarStop();

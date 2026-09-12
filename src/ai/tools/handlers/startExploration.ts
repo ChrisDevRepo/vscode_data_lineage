@@ -212,8 +212,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const engineLog = toEngineLog(s.logger);
       // Proposal preview uses an unpublished engine with isolated memory. It is discarded after
       // computing the scope summary; approval is the sole site that creates active engine state.
-      // `classification` is assigned once resolved below so the approval card's "Reporting on"
-      // line can read it through getScopeSummary(); it never reaches a hop dispatch here (the
+      // `classification` is assigned once resolved below so the gate's `_Analysis:` stamp and the
+      // later hop-commit filter can read it; it never reaches a hop dispatch here (the
       // getHopContext() fall-through is unreachable for this path — phase/refine guards route
       // here first).
       const engine = new NavigationEngine(m, g, engineLog, { activeFilter }, sess.columnStore);

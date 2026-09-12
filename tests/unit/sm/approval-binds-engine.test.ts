@@ -62,7 +62,8 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
     expect(!md.includes('≈'), `a stated depth must not render as an estimate:\n${md}`).toBe(true);
-    expect(md.includes('fixed; the engine will not go past it'), `a stated depth must render as fixed:\n${md}`).toBe(true);
+    expect(md.includes('**From your question**'), `a stated depth sits under the user's words:\n${md}`).toBe(true);
+    expect(md.includes('2 levels downstream'), `a stated depth keeps its ceiling:\n${md}`).toBe(true);
     expect(engine.currentDepthEnforcement === 'strict', 'a stated depth enforces strictly').toBe(true);
     drain(engine);
     expect(analyzed(engine).has('n2'), 'the node at the approved border is still analysed').toBe(true);
@@ -77,11 +78,11 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
     expect(md.includes('≈'), `an inferred depth must render as an estimate:\n${md}`).toBe(true);
-    expect(md.includes('engine starting point'), `an inferred depth must render as the engine's starting point:\n${md}`).toBe(true);
+    expect(md.includes('**My plan**'), `an inferred depth sits under the assistant's plan:\n${md}`).toBe(true);
     expect(engine.currentDepthEnforcement === 'silent', 'an inferred depth stays growable').toBe(true);
   });
 
-  it('A2b: an unbounded plan states that it has no depth limit', () => {
+  it('A2b: an unbounded plan states all levels', () => {
     const engine = newEngine();
     engine.init({
       origin: 'n0', question: 'trace every level downstream', direction: 'downstream',
@@ -89,7 +90,7 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     });
     const md = renderScopeSummaryMd(engine.getScopeSummary());
     expect(md.includes('Depth:'), `an unbounded plan must still state a depth:\n${md}`).toBe(true);
-    expect(md.includes('no depth limit'), `an unbounded plan must say it has no limit:\n${md}`).toBe(true);
+    expect(md.includes('all levels'), `an unbounded plan names all levels:\n${md}`).toBe(true);
   });
 
   it('A2c: an unbounded side is never summarised as the other side\'s ceiling', () => {
@@ -101,7 +102,7 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     const summary = engine.getScopeSummary();
     expect(summary.depth === null, `a scalar cap must not be claimed while a side is unbounded, got ${String(summary.depth)}`).toBe(true);
     const md = renderScopeSummaryMd(summary);
-    expect(md.includes('no depth limit'), `the unbounded side must say so:\n${md}`).toBe(true);
+    expect(md.includes('all levels upstream'), `the unbounded side must say so:\n${md}`).toBe(true);
     expect(md.includes('2 levels downstream'), `the capped side must keep its ceiling:\n${md}`).toBe(true);
   });
 

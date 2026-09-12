@@ -1029,10 +1029,11 @@ function drivePassthroughWalk(archiveFlow: FlowEntry[]): SmResult {
   throw new Error('passthrough walk did not terminate within 25 hops');
 }
 
-describe('CT render bound — a submitted passthrough is a verdict, not evidence', () => {
-  it('C11 — drops a passthrough proc whose only render edge is its log writer', () => {
-    // The flow names a node outside the fixture, so the tracer places the focus on no column edge:
-    // the hop asserted it carries nothing and left nothing behind that says otherwise.
+describe('CT render bound — a submitted passthrough is a hop verdict, same as BB', () => {
+  it('C11 — keeps a passthrough proc whose only render edge is its log writer', () => {
+    // The flow names a node outside the fixture, so the tracer places the focus on no column edge.
+    // Column edges never bound the result: a hop verdict is BB retention, and CT does not drop a
+    // visited write-sink BB would keep.
     const result = drivePassthroughWalk([
       { out_col: 'Amount', upstream_columns: [{ node: '[ct].[notinthismodel]', col: 'Amount' }] },
     ]);
@@ -1042,10 +1043,9 @@ describe('CT render bound — a submitted passthrough is a verdict, not evidence
       result.node_states.find(state => state.nodeId === ARCHIVE)?.reason,
       'the premise: the archive proc was dispatched and returned a passthrough',
     ).toBe('submitted_passthrough');
-    expect(
-      [ARCHIVE, ARCHIVE_LOG].filter(id => rendered.has(id)),
-      'a passthrough focus carrying no column edge and supplying only its log writer is not answer evidence',
-    ).toEqual([]);
+    expect(rendered.has(ARCHIVE), 'a submitted passthrough stays; CT does not subtract from BB retention').toBe(true);
+    expect(result.detail_slots.some(slot => slot.nodeId === ARCHIVE), 'its captured slot survives into the envelope').toBe(true);
+    expect(rendered.has(ARCHIVE_LOG), 'the log writer pruned at its own focus is gone').toBe(false);
     expect(rendered.has('[ct].[src]'), 'the value supplier stays').toBe(true);
   });
 
@@ -1059,7 +1059,7 @@ describe('CT render bound — a submitted passthrough is a verdict, not evidence
       result.node_states.find(state => state.nodeId === ARCHIVE)?.reason,
       'the same verdict as C11',
     ).toBe('submitted_passthrough');
-    expect(rendered.has(ARCHIVE), 'a column-edge endpoint survives the trim whatever its verdict').toBe(true);
+    expect(rendered.has(ARCHIVE), 'a hop verdict keeps the node; a column edge is additive, not the retention reason').toBe(true);
   });
 });
 
@@ -1159,9 +1159,9 @@ describe('CT render bound — the hop_node of a column edge carried the column',
     expect(rendered.has(CARRIER), 'the carrier of the traced column into its consumer stays').toBe(true);
   });
 
-  it('C14 — still drops the same passthrough write sink when it carried no column', () => {
-    // Same shape as C11: the flow names a node outside the fixture, so the tracer records no edge
-    // and the hop leaves nothing behind that says the proc carried the traced column.
+  it('C14 — keeps the same passthrough write sink when it carried no column', () => {
+    // Same shape as C11: the flow names a node outside the fixture, so the tracer records no edge.
+    // Column edges never bound the result — a hop verdict is BB retention in both modes.
     const { result, committed } = driveCarrierWalk([
       { out_col: 'Amount', upstream_columns: [{ node: '[ct].[notinthismodel]', col: 'Amount' }] },
     ]);
@@ -1171,7 +1171,7 @@ describe('CT render bound — the hop_node of a column edge carried the column',
       committed.some(edge => edge.hop_node === CARRIER),
       'the premise: the hop recorded no column edge at all',
     ).toBe(false);
-    expect(rendered.has(CARRIER), 'a passthrough sink that carried nothing is not answer evidence').toBe(false);
+    expect(rendered.has(CARRIER), 'a hop verdict keeps the node; missing column carriage does not subtract it').toBe(true);
     expect(rendered.has('[ct].[carrierbase]'), 'the value supplier stays either way').toBe(true);
   });
 });

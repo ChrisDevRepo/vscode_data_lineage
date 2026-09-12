@@ -44,7 +44,7 @@ import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations } from './discoveryCapture';
 import { discoveryPreviewNarrative } from '../tools/presentResult';
-import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, type Logger } from '../../utils/log';
+import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
 import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, trunc as truncStatusLabel, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
@@ -275,7 +275,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    */
   const failStopped = (
     stopped: { readonly reason: string; readonly message: string; readonly errorCode?: AgentErrorCode },
-  ): AgentStateUpdate => ({ ...fail(stopped.message, stopped.errorCode), activeStop: stopped.reason });
+    attempt: Pick<ToolPhaseAttemptState, 'phase' | 'providerCalls' | 'semanticFailures' | 'rejections'>,
+  ): AgentStateUpdate => {
+    const last = attempt.rejections[attempt.rejections.length - 1];
+    const lastPart = last
+      ? ` last=${last.toolName}:${last.code} reason=${trunc(sanitizeForLog(last.reason), LOG_TRUNC_REJECTION)}`
+      : '';
+    deps.logger?.error(
+      stopped.message,
+      `phase=${attempt.phase} reason=${stopped.reason} providerCalls=${attempt.providerCalls} semanticFailures=${attempt.semanticFailures}${lastPart}`,
+    );
+    return { ...fail(stopped.message, stopped.errorCode), activeStop: stopped.reason };
+  };
 
   /**
    * The one provider-failure exit every phase funnels through.
@@ -347,7 +358,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, subject, incompleteSuffix);
     if (stopped) {
       onStop?.();
-      return { ...failStopped(stopped), toolAttempt: nextAttempt };
+      return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     }
     return null;
   };
@@ -567,7 +578,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       }, deps.model.budget);
       const stopped = attemptStop(exhaustedAttempt, undefined, 'Entry detection', 'without a valid route');
       if (!stopped) throw new Error('Entry-detection graph-attempt guard failed to select a stop reason.');
-      return { ...failStopped(stopped), ctx, messages, toolAttempt: exhaustedAttempt };
+      return { ...failStopped(stopped, exhaustedAttempt), ctx, messages, toolAttempt: exhaustedAttempt };
     }
     // The structured entry-detector runs through executeInstructionPlan (generateStructured), not
     // executeToolAttempt, so graph-owned semantic repair remains explicit in this node.
@@ -622,13 +633,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
               ...stopped,
               message: 'The selected model/provider returned empty arguments for a required tool call. Choose a model/provider with compatible JSON tool calling.',
               errorCode: 'incompatible_tool_call_format',
-            }),
+            }, nextAttempt),
             ctx,
             messages,
             toolAttempt: nextAttempt,
           };
         }
-        return { ...failStopped(stopped), ctx, messages, toolAttempt: nextAttempt };
+        return { ...failStopped(stopped, nextAttempt), ctx, messages, toolAttempt: nextAttempt };
       }
       return { ctx, messages, toolAttempt: nextAttempt, phase: 'detect_entry' };
     }
@@ -777,7 +788,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     }
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration entry', 'without reaching the consent gate');
-    if (stopped) return { ...failStopped(stopped), toolAttempt: nextAttempt };
+    if (stopped) return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     if (res.stop !== 'continue') return fail('Exploration did not reach the consent gate.');
     return { toolAttempt: nextAttempt, phase: 'sm_entry' };
   };
@@ -1216,6 +1227,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.resetExploration();
     observeWrite(sess.setHopCount(deps.turnEpoch, hopCount));
     sess.hopLog = hopLog;
+    deps.logger?.error(message, `phase=active reason=${stop} hop=${hopCount}`);
     return {
       outcome: 'error',
       error: message,

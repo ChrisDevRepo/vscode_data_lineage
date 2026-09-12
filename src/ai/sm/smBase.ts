@@ -3539,25 +3539,22 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * Scope admits a node; only a hop dispositions one. A node with no investigation task, no
-   * column-aspect edge endpoint, and either no {@link nodeStates} entry or a bare
-   * `submitted_passthrough` one, was never analyzed, routed, contracted through or pruned — it is in
-   * the render because BFS reachability walked into it, nothing more. `submitted_passthrough` is the
-   * hop's own word for "this focus transforms nothing on the traced path"; when the tracer also
-   * placed the node on no column edge at all, the hop asserted no carriage, so its entry is not
-   * evidence of any, and neither is the investigation task that same hop resolved. A recorded edge
-   * exempts the node at any of its three positions: a procedure moves a column between two other
-   * nodes and is therefore only ever the `hop_node`, never an endpoint, so reading endpoints alone
-   * drops the carrier proc a column trace exists to name — the question's own direct consumer,
-   * exempted only because its write target lay past the depth border. Every other reason
-   * (`submitted_analyze`, a contraction's `non_bodied_passthrough`, a user filter) exempts the node
-   * outright, as does a task still open — routed or queued and never reached is not a verdict. Such
-   * a node that also supplies nothing the render keeps (every edge joining it to the render set
-   * points into it: written to, or EXEC'd) is a side-effect sink, not answer evidence. Peeling is
-   * iterative, so a sink chain — a logging proc whose only reader is its own log table — goes as a
-   * unit. An undispositioned node that *supplies* a rendered node stays: at this layer a filter
-   * join and a sibling-column feed are the same shape, and the value-carrying one is required
-   * (`ct-retention-differential` C8). A candidate carrying the only path to a kept node is a
-   * passthrough, not a sink, and is restored.
+   * column-aspect edge endpoint, and no {@link nodeStates} entry was never analyzed, routed,
+   * contracted through or pruned — it is in the render because BFS reachability walked into it,
+   * nothing more. A hop verdict is BB retention in both modes: `submitted_passthrough` and
+   * `submitted_analyze` alike. CT adds column edges on top of that walk (`if (this.tracer)` is
+   * additive); it does not drop a visited write-sink BB would keep just because the tracer placed
+   * no column carriage. A recorded edge still exempts a node at any of its three positions, so a
+   * carrier proc that is only ever the `hop_node` stays when the tracer named it. Every other
+   * reason (`submitted_analyze`, a contraction's `non_bodied_passthrough`, a user filter) exempts
+   * the node outright, as does a task still open — routed or queued and never reached is not a
+   * verdict. Such a node that also supplies nothing the render keeps (every edge joining it to the
+   * render set points into it: written to, or EXEC'd) is a side-effect sink, not answer evidence.
+   * Peeling is iterative, so a sink chain — a logging proc whose only reader is its own log table
+   * — goes as a unit. An undispositioned node that *supplies* a rendered node stays: at this layer
+   * a filter join and a sibling-column feed are the same shape, and the value-carrying one is
+   * required (`ct-retention-differential` C8). A candidate carrying the only path to a kept node
+   * is a passthrough, not a sink, and is restored.
    *
    * @param reachable - The reachability-bounded render set to classify.
    * @param columnBorder - Column-edge endpoints the render does not hold
@@ -3574,14 +3571,12 @@ export class NavigationEngine implements IHopStateMachine {
     for (const id of [...reachable, ...columnBorder]) {
       if (id === this.originNodeId) continue;
       const state = this.nodeStates.get(id);
-      const passthrough = state?.reason === 'submitted_passthrough';
       const engineRecord = columnBorder.has(id) && state?.source === 'engine';
-      if (state !== undefined && !passthrough && !engineRecord) continue;
-      // A task the passthrough hop itself resolved says the node was looked at, which the verdict
-      // already says; an unresolved one means routed or queued and never reached, which no verdict
-      // covers, so it still exempts.
-      if (this.taskLedger.investigationTasks.some(task =>
-        task.nodeId === id && !(passthrough && task.status === 'resolved'))) continue;
+      // Any hop verdict (analyze or passthrough) is BB retention. `engineRecord` is the CT add:
+      // a column-border endpoint the engine auto-wrote, never hopped, classified by the same sink
+      // rule so the delivered chain cannot name a write sink the render refused to draw.
+      if (state !== undefined && !engineRecord) continue;
+      if (this.taskLedger.investigationTasks.some(task => task.nodeId === id)) continue;
       if (!columnBorder.has(id) && this.tracer?.edges.some(edge =>
         edge.from_node === id || edge.to_node === id || edge.hop_node === id)) continue;
       candidates.push(id);

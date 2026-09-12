@@ -137,7 +137,7 @@ describe('native gate commands', () => {
   it('projects an exploration proposal through three native participant buttons', async () => {
     const { emitGate } = await registeredParticipant();
     const summary = [
-      '### Exploration plan (proposed)',
+      '### Exploration plan',
       '',
       '- **2 hops** · **3 nodes in scope** · depth 2, downstream',
       '- **Tracing:** Blackboard',

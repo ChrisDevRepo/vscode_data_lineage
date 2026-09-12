@@ -224,4 +224,23 @@ describe('executePresentResult — detail-slot section coverage', () => {
 
     expect(result.success).toBe(true);
   });
+
+  it('does not require coverage of a detail slot whose node the render dropped', async () => {
+    // Memory still holds the hop's slot; getResult already removed the node from the result
+    // graph. Requiring a section/note link then forbidding that same id is the synthesis trap
+    // that burned three semantic failures on `[ai].[splogaudit]`.
+    const DROPPED = '[ai].[splogaudit]';
+    const session = seedBbSession();
+    session.memory.storeDetail(node(DROPPED, 'spLogAudit', 'procedure'), [], 'Writes one audit row.');
+
+    const result = await run(session, {
+      name: 'Order Load',
+      summary: 'Raw orders load into staging and feed the consolidated view.',
+      sections: [{ label: 'Chain', node_ids: [RAW, LOADER, CONSUMER], text: 'Raw orders load into staging and feed the view.' }],
+      highlight_groups: [{ label: 'Feeds', color: 'source', node_ids: [RAW] }],
+    });
+
+    expect(result.success).toBe(true);
+    expect(errorText(result)).not.toContain(DROPPED);
+  });
 });

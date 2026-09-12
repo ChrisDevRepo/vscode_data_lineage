@@ -1,14 +1,14 @@
 /**
- * Classification contract: the one scope field that discards captured analysis must be both
- * stated to the model that picks it and shown to the user who approves it.
+ * Classification contract: the one scope field that discards captured analysis must be stated
+ * to the model that picks it. Hop-by-hop filtering is `filterSectionsForClassification` at commit
+ * and the gated capture keys — not the approval-card markdown, which is user-facing plan copy and
+ * is not replayed into later hops.
  *
- * `filterSectionsForClassification` drops, at commit, every section whose angle the locked
- * classification did not request, and `buildSectionsShape` narrows the per-hop capture to a single
- * angle before that. A wrong value therefore deletes work rather than reshaping it. Three surfaces
- * have to carry the field for that to be correctable: the sm-entry directive, which names it as a
- * required argument; the field schema, which owns how the value is chosen; and the approval gate,
- * the last point a human can change it. These tests forbid any of them going silent, and drive the
- * handler so the value on the card is the value the tool payload carried.
+ * `buildSectionsShape` narrows the per-hop capture to a single angle before commit. A wrong value
+ * therefore deletes work rather than reshaping it. Two surfaces have to carry the field for that
+ * to be correctable: the sm-entry directive, which names it as a required argument, and the field
+ * schema, which owns how the value is chosen. The gate stamps `_Analysis:` from the payload so the
+ * reviewed run matches what the tool carried; it does not explain hop-commit filtering.
  */
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
@@ -38,46 +38,13 @@ function summaryFor(classification?: ClassificationValue): string {
   return renderScopeSummaryMd(engine.getScopeSummary());
 }
 
-function reportingLine(classification?: ClassificationValue): string {
-  return summaryFor(classification).split('\n').find(line => line.includes('Reporting on:')) ?? '';
-}
-
-describe('classification is visible where it is chosen and where it is approved', () => {
-  it('states the locked classification at the approval gate', () => {
-    // Depth, direction and tracing mode are all shown. Before this contract the only field that
-    // deletes analysis was the only one the user could not see, so it could not be corrected.
-    expect(summaryFor('both')).toContain('- **Reporting on:**');
-  });
-
-  it.each([
-    { classification: 'technical' as const, dropped: 'business' },
-    { classification: 'business' as const, dropped: 'technical' },
-  ])('names the angle $classification drops', ({ classification, dropped }) => {
-    // A bare enum label reads as a superset to a non-expert. The consequence is what makes the
-    // value correctable, so the gate states the loss rather than the label alone.
-    const line = reportingLine(classification);
-    expect(line).toContain('dropped');
-    expect(line).toContain(dropped);
-  });
-
-  it('reports "both" as lossless', () => {
-    expect(reportingLine('both')).not.toContain('dropped');
-  });
-
-  it.each(['business' as const, 'technical' as const])(
-    'bounds the loss on %s: a structural correctness finding survives either angle',
-    (classification) => {
-      // `structural_callouts` sits outside CLASSIFICATION_GATED, so it fires under every angle.
-      // A label naming only the drop overstates it, and the gate exists so the user can correct
-      // the value on what it actually costs.
-      const line = reportingLine(classification);
-      expect(line).toContain('structural correctness findings are kept either way');
-    },
-  );
-
-  it('renders no line when the AI has not locked a classification', () => {
-    // An absent verdict is not a value to render — an invented default would misreport the run.
-    expect(summaryFor(undefined)).not.toContain('Reporting on:');
+describe('the approval card is plan copy, not hop-commit instruction', () => {
+  it('does not put classification-filter copy on the plan the user reviews', () => {
+    // Classification is applied hop-by-hop at commit. The card is not that filter and is not
+    // replayed into later hops, so it must not carry the drop/keep parenthetical.
+    expect(summaryFor('technical')).not.toContain('Reporting on:');
+    expect(summaryFor('business')).not.toContain('dropped');
+    expect(summaryFor('both')).not.toContain('Reporting on:');
   });
 });
 
@@ -102,10 +69,8 @@ describe('the sm-entry directive names the field and the schema owns the rule', 
     expect(classificationDescription).toMatch(/business.*unless.*technical lens/is);
   });
 
-  it('states the consequence where the user can still correct it', () => {
-    // The consequence belongs to the approval gate, the last point a human changes the value —
-    // not to the model that already made the choice.
-    expect(reportingLine('technical')).toContain('dropped');
+  it('does not put hop-commit filter copy on the plan renderer', () => {
+    expect(summaryFor('technical')).not.toContain('dropped');
   });
 });
 
@@ -159,13 +124,14 @@ describe('classification travels from the tool payload to the approval card', ()
     return String(returned.detail ?? '');
   }
 
-  it('renders the "Reporting on" line from the classification the payload carried', async () => {
+  it('stamps _Analysis_ from the classification the payload carried', async () => {
     // The contract above is proved on a hand-set field; this drives the production path, so a
     // handler that stopped forwarding the payload value would fail here and nowhere else.
-    expect(await gateDetail('technical')).toContain('- **Reporting on:** technical mechanics (business findings are dropped; structural correctness findings are kept either way)');
+    expect(await gateDetail('technical')).toContain('_Analysis: technical-driven_');
+    expect(await gateDetail('technical')).not.toContain('Reporting on:');
   });
 
   it('follows the payload rather than a default', async () => {
-    expect(await gateDetail('both')).toContain('- **Reporting on:** business logic and technical mechanics');
+    expect(await gateDetail('both')).toContain('_Analysis: business + technical driven_');
   });
 });

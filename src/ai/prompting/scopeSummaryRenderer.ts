@@ -6,23 +6,8 @@
  * the VS Code module surface. Single source of truth for the native gate markdown.
  */
 
-import type { ClassificationValue } from '../session/classification';
 import type { ScopeSummary } from '../sm/smTypes';
 import { pluralize } from '../support/text';
-
-/**
- * User-facing wording for the locked classification.
- *
- * @remarks
- * Named for its consequence rather than its enum value: the classification decides which capture
- * angles survive commit, so the gate states what the answer will and will not cover. Without this
- * line the one scope field that discards analysis is the only one the user cannot correct.
- */
-const CLASSIFICATION_LABELS: Record<ClassificationValue, string> = {
-  business: 'business logic (technical-only findings are dropped; structural correctness findings are kept either way)',
-  technical: 'technical mechanics (business findings are dropped; structural correctness findings are kept either way)',
-  both: 'business logic and technical mechanics',
-};
 
 /** Formats a count with its noun; the suffix rule itself lives in the shared `pluralize`. */
 function plural(n: number, noun: string): string {
@@ -39,19 +24,14 @@ function typeLabel(type: string, count: number): string {
  * Renders the depth line for one side of the ask.
  *
  * @remarks
- * Wording carries the consequence, not a label: a border the user fixed says the trace stops,
- * a depth the assistant chose says it may move, and an unbounded side says there is no stop at all.
- * The caller decides which block it lands in.
+ * Placement already says who bound the value (`From your question` vs `My plan`). An assistant-
+ * chosen depth is marked `≈`; a user-stated one is exact. No parenthetical about engine behaviour
+ * — that copy is not hop context and is not served after approval.
  */
 function depthLine(levels: number | 'all', side: string, binding: boolean): string {
-  if (levels === 'all') return `- Depth: all levels ${side} — no depth limit`;
+  if (levels === 'all') return `- Depth: all levels ${side}`;
   const value = binding ? plural(levels, 'level') : `≈${plural(levels, 'level')}`;
-  // Pure facts about how the engine treats the depth — never first person. A user-stated depth
-  // binds the run; an assistant-chosen one is only the engine's starting point and may grow.
-  const suffix = binding
-    ? ' — fixed; the engine will not go past it'
-    : ' — engine starting point, extended if the trace needs it';
-  return `- Depth: ${value} ${side}${suffix}`;
+  return `- Depth: ${value} ${side}`;
 }
 
 /**
@@ -111,8 +91,8 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
   }
 
   const heading = revision && revision > 1
-    ? `### Exploration plan (proposed · revision ${revision})`
-    : '### Exploration plan (proposed)';
+    ? `### Exploration plan · revision ${revision}`
+    : '### Exploration plan';
   lines.push(heading);
   lines.push('');
   if (stated.length > 0) {
@@ -129,7 +109,6 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
   lines.push(...chosen);
   lines.push(`- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${direction}`);
   lines.push(`- **Tracing:** ${tracing}`);
-  if (summary.classification) lines.push(`- **Reporting on:** ${CLASSIFICATION_LABELS[summary.classification]}`);
   lines.push('');
 
   const passSet = new Set(summary.activeFilters.passNodeIds.map(nodeId => nodeId.toLowerCase()));

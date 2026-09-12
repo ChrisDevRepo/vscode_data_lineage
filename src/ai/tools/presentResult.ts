@@ -680,7 +680,10 @@ export function findBareNonPrunedNodes(
  * `notes` — the two surfaces this function itself accepts — but never `highlight_groups`, which
  * never satisfies it.
  *
- * @param slotNodeIds - `detail_slots[].nodeId` for the whole session (`sess.memory.notedNodeIds`).
+ * @param slotNodeIds - Delivered `detail_slots[].nodeId` values — slots whose node is in the
+ *   current result graph. The caller intersects `sess.memory.notedNodeIds` with the rendered id
+ *   set; a slot whose node the render dropped cannot be linked, so requiring coverage of it
+ *   contradicts the node-id check.
  * @param input - The (already auto-fixed) present payload. Read-only.
  * @returns The slot ids linked in neither `sections[].node_ids[]` nor `notes[].node_id`, in
  *   `slotNodeIds` order; empty when there are no authored sections (update-style calls) or every
