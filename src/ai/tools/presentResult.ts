@@ -12,7 +12,7 @@ import {
   type PresentResultRepairField,
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
-import { quoteIds, unescapeProseNewlines } from '../support/text';
+import { quoteIds } from '../support/text';
 import type { z } from 'zod';
 
 /**
@@ -32,8 +32,68 @@ type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closin
  */
 export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
 
-/** Offender-list rendering for unknown-node-id rejections; see {@link quoteIds}. */
-const renderUnknownNodeIds = (ids: readonly string[]): string => quoteIds(ids, 3);
+/** Offenders named inline in a node-id rejection; the complete list rides in `detail`. */
+const NODE_ID_OFFENDERS_SHOWN = 3;
+
+/** Accepted result-graph ids named inline in a node-id rejection; the complete set rides in `detail`. */
+const NODE_ID_ACCEPTED_SHOWN = 5;
+
+/**
+ * The state the engine already records for a node id the current result graph cannot link.
+ *
+ * @remarks
+ * The id check runs over the whole loaded model before this contract sees it (the dispatcher
+ * normalizes every `node_ids` entry with `resolveModelNodeId`), so exactly one member of this union
+ * is a hallucination and the rest are real objects the render does not carry. A real object rejected
+ * as "unknown" tells the model to invent a replacement instead of moving the fact into prose, which
+ * is what has run a synthesis into the semantic-failure breaker. The classification itself belongs
+ * to the caller — only the session holds the engine snapshot — so it arrives as
+ * {@link PresentNodeIdStateLookup}.
+ */
+export type PresentNodeIdState =
+  | 'not_in_model'
+  | 'pruned'
+  | 'render_dropped'
+  | 'in_scope_undispositioned'
+  | 'out_of_scope';
+
+/**
+ * Wording per {@link PresentNodeIdState}, in the vocabulary the engine already rejects with
+ * (`ROUTE_REJECTION_DIRECTIVE`, the `getResult` disposition lines) — no second dialect for the same
+ * facts.
+ */
+export const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> = {
+  not_in_model: 'not in the loaded model',
+  pruned: 'already pruned on an earlier hop',
+  render_dropped: 'in scope, dropped from the render',
+  in_scope_undispositioned: 'in scope but never dispositioned',
+  out_of_scope: 'outside the approved exploration scope',
+};
+
+/**
+ * Classifies one unlinkable node id against the engine state the session holds.
+ *
+ * @remarks
+ * Invoked only for ids the result graph rejects, so a passing call pays nothing for it. A caller
+ * that holds no engine state omits it and every offender is reported as `not_in_model` — the
+ * pre-existing behaviour.
+ */
+export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
+
+/**
+ * The route back for a real id the render does not carry, per stage — only what the tool accepts.
+ *
+ * @remarks
+ * `notes[].node_id` is deliberately absent: it is validated against the same result-graph set, so
+ * offering it would send the model into an identical rejection. `add_node_ids` is accepted in
+ * Completed Phase only (the dispatcher forbids it during a preview or a synthesis render), so every
+ * other stage is left with prose.
+ */
+const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
+  completed: 'A real id outside the result graph can be brought into the view with add_node_ids; otherwise state it in sections[].text.',
+  synthesis: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
+  visual_preview: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
+};
 
 /**
  * Builds the unknown-node-id repair hint for the calling stage.
@@ -109,7 +169,8 @@ type PresentResultRequest = {
   node_ids: string[];
   summary: string;
   description: string;
-  layout_direction: 'LR' | 'TB';
+  /** Absent when the model omitted it — the view then follows the user's configured direction. */
+  layout_direction?: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
   badges: Array<{ node_id: string; text: string }>;
   notes: Array<{ node_id: string; text: string }>;
@@ -136,11 +197,27 @@ export type PresentResultError = {
    * model has to guess which of N captions or sections failed. `rejectionIssuePaths` already mines
    * this exact shape out of any tool's `detail`, so emitting it here reaches both the model's
    * correction envelope and the diagnostic trace without a second channel.
+   *
+   * A node-id entry additionally carries every offending id at that path with its recorded state,
+   * and the first such entry carries the uncapped accepted set — the message states both, capped, so
+   * they survive the rejection replay; `detail` is where the full lists live.
    */
-  detail?: ReadonlyArray<{ readonly path: string }>;
+  detail?: ReadonlyArray<{
+    readonly path: string;
+    /** Offending ids at this path, each with its {@link PRESENT_NODE_ID_STATE_TEXT} wording. */
+    readonly unlinkable_node_ids?: ReadonlyArray<{ readonly node_id: string; readonly state: string }>;
+    /** The complete current result-graph id set, stated once per rejection. */
+    readonly accepted_node_ids?: readonly string[];
+  }>;
 };
 
-/** Splits the cached discovery answer into engine-owned title/summary and verbatim section source. */
+/**
+ * Splits the cached discovery answer into engine-owned title/summary and verbatim section source.
+ *
+ * @param answer - The cached discovery chat answer (Markdown), title already inline if present.
+ * @returns The split-off `title` (absent when the answer has no leading heading), the remaining
+ *   `body`, and a one-line `summary` derived from the title or first non-empty body line.
+ */
 export function discoveryPreviewNarrative(answer: string): {
   title?: string;
   body: string;
@@ -253,6 +330,12 @@ export function isRepairablePresentResultFailure(failure: PresentResultError): b
  * Patch fields replace whole presentation collections by design. The model does not send partial
  * array operations; it sends the corrected sections/notes/highlight_groups collection, and the
  * normal validation/assembly path checks the merged full draft.
+ *
+ * @param draft - The held full `present_result` draft the patch amends.
+ * @param patch - The repair patch fields sent by the model.
+ * @param allowedFields - The fields this rejection authorized for repair.
+ * @returns The draft with `allowedFields` keys from `patch` merged in.
+ * @throws When `patch` names a key outside `allowedFields`.
  */
 export function mergePresentResultRepairPatch(
   draft: PresentResultInput,
@@ -345,6 +428,24 @@ function normalizePresentSectionLabel(label: string): string {
 }
 
 /**
+ * Encodes a node id for the `#focus-node:` destination of an engine-assembled object link.
+ *
+ * @remarks
+ * A bracketed SQL identifier may legally contain characters that break the link on either side of
+ * the wire. `encodeURIComponent` covers `%`, which raw would make the overlay's `decodeURIComponent`
+ * throw a `URIError` in the click handler (`Discount%`) or silently resolve to a different id
+ * (`Rate%20Card`). It deliberately leaves `(` and `)` alone, so those are escaped after it: an
+ * unbalanced `)` terminates a markdown link destination and truncates the href. Both escapes are
+ * ordinary percent sequences, so the overlay's existing single `decodeURIComponent` reverses them.
+ *
+ * @param id - Canonical node id from the model.
+ * @returns The id as a markdown-safe, `decodeURIComponent`-reversible link destination.
+ */
+function encodeFocusNodeId(id: string): string {
+  return encodeURIComponent(id).replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+/**
  * Builds the rendered description markdown from the AI's structured input parts.
  *
  * @remarks
@@ -352,7 +453,7 @@ function normalizePresentSectionLabel(label: string): string {
  * `AiDescriptionOverlay`. The AI never writes the blob directly — it writes the
  * parts (title, intro, sections[], closing) and the engine assembles them
  * deterministically here. Section numbering (`## N {label}`), badge chips, and
- * the `### Objects [name](#focus-node:id)` link header are all engine-owned;
+ * the `### Objects [name](#focus-node:id)` footnote are all engine-owned;
  * they are not AI-authored fields.
  *
  * Numbered badges are emitted only for AI-provided `sections[].node_ids[]`, in
@@ -360,20 +461,36 @@ function normalizePresentSectionLabel(label: string): string {
  * description. Nodes not linked by the AI get no badge. Leading numbers in
  * AI-supplied labels are stripped to keep numbering deterministic.
  *
+ * A node the AI links from more than one section is normalized here, not rejected: the first
+ * section wins the badge and the object link, the later links are returned in
+ * `droppedSectionLinks` for the caller to log, and no section text changes.
+ *
+ * The object links render as a footnote at the END of each section body, not a
+ * heading under the section title: the renderer restyles the `### Objects`
+ * transport line into a small muted paragraph, so the link list reads as a
+ * side note at body-small size instead of competing with the section heading.
+ *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
- * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
+ * @returns The numbered badges for the graph, the fully assembled markdown description, and any
+ *   duplicate section links first-wins dropped while assembling them.
  */
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
   opts?: {
     title?: string;
     intro?: string;
+    /** Engine-owned block (e.g. the CT column chain) inserted between the intro and the first section. */
+    preface?: string;
     closing?: string;
-    /** Optional node lookup for injecting clickable H3 object-name headings per section. */
+    /** Optional node lookup for injecting clickable object-link footnotes per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
   },
-): { badges: Array<{ node_id: string; text: string }>; description: string } {
+): {
+  badges: Array<{ node_id: string; text: string }>;
+  description: string;
+  droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }>;
+} {
   // Strip leading "N " or "N. " so AI numbers don't interfere with label matching.
   const stripLeadingNumber = (s: string) => (typeof s === 'string' ? s : '').replace(/^\d+[\.]?\s+/, '').trim();
 
@@ -392,11 +509,28 @@ export function orderAndAssemble(
   const labelToNumber = new Map<string, number>();
   uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
 
-  // Build (node_id → label) map from sections[].node_ids
+  // One badge per node is a rendering constraint, so the engine resolves it here rather than
+  // charging the model a repair turn for a section split that is factually right. First-wins: the
+  // first section claiming a node owns its badge chip and its object link; a later claim is
+  // dropped from BOTH surfaces, so the chip and the section footnote can never disagree. The
+  // later section's TEXT is untouched — a node participating in several steps stays described in
+  // each of them, it just carries one badge.
   const nodeToLabel = new Map<string, string>();
+  const labelToNodeIds = new Map<string, string[]>();
+  const droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }> = [];
   for (const sec of sections) {
     const label = stripLeadingNumber(sec.label);
-    for (const id of sec.node_ids ?? []) nodeToLabel.set(id, label);
+    let kept = labelToNodeIds.get(label);
+    if (!kept) { kept = []; labelToNodeIds.set(label, kept); }
+    for (const id of sec.node_ids ?? []) {
+      const owner = nodeToLabel.get(id);
+      if (owner !== undefined) {
+        if (owner !== label) droppedSectionLinks.push({ node_id: id, dropped_from: label, kept_in: owner });
+        continue;
+      }
+      nodeToLabel.set(id, label);
+      kept.push(id);
+    }
   }
 
   // Emit numbered badge chips, dropping any node whose label has no matching section.
@@ -411,48 +545,96 @@ export function orderAndAssemble(
 
   // Assemble markdown: title → intro → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
-  // First-occurrence node_ids list per unique label (AI-authored order preserved).
-  const labelToNodeIds = new Map<string, string[]>();
-  for (const sec of sections) {
-    const label = stripLeadingNumber(sec.label);
-    if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, sec.node_ids ?? []);
-  }
 
   const parts: string[] = [];
   if (opts?.title)        parts.push(`# ${opts.title}`);
   if (opts?.intro)        parts.push(opts.intro);
+  if (opts?.preface)      parts.push(opts.preface);
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
     const nodeIds = labelToNodeIds.get(label) ?? [];
-    let objectHeadings = '';
+    let objectFootnote = '';
     if (opts?.nodeMap && nodeIds.length > 0) {
       const links = nodeIds
         .map(id => opts.nodeMap!.get(id))
         .filter((node): node is { id: string; name: string } => !!node)
-        .map(node => `[${node.name}](#focus-node:${node.id})`);
-      if (links.length > 0) objectHeadings = `### Objects ${links.join(', ')}\n\n`;
+        .map(node => `[${node.name}](#focus-node:${encodeFocusNodeId(node.id)})`);
+      if (links.length > 0) objectFootnote = `### Objects ${links.join(', ')}`;
     }
-    parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);
+    let section = `## ${n} ${label}`;
+    if (text)          section += `\n\n${text}`;
+    if (objectFootnote) section += `\n\n${objectFootnote}`;
+    parts.push(section);
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
-  return { badges: numberedBadges, description: parts.join('\n\n') };
+  return { badges: numberedBadges, description: parts.join('\n\n'), droppedSectionLinks };
 }
 
 /**
- * Reports which non-pruned nodes the AI left bare (linked in neither preview surface) — an
- * observation for the log, never a payload mutation.
+ * One validated CT column-flow edge, reduced to the structural fields the chain table reads.
+ *
+ * @remarks Structural on purpose: the sm-side `ColumnEdge` satisfies it without an import, so
+ * this assembler stays a pure document builder with no dependency on navigation state.
+ */
+export type ColumnChainEdge = {
+  /** 1-based hop index the edge was traced at. */
+  hop: number;
+  /** Source node id. */
+  from_node: string;
+  /** Source column name. */
+  from_col: string;
+  /** Destination node id. */
+  to_node: string;
+  /** Destination column name. */
+  to_col: string;
+};
+
+/**
+ * Builds the engine-owned "Column Chain" preface for a CT result from validated column-flow edges.
  *
  * @remarks
- * The prompt contract permits bare nodes: "nodes left out of both preview surfaces stay bare" —
- * they still render in the graph via the engine-owned resolved scope, just without a badge or
- * color. The engine therefore has no authority to re-link them: a tool boundary accepts, rejects
- * with a structural hint, or mechanically normalizes with a log — it never silently rewrites an
- * AI presentation decision (the predecessor of this function injected bare nodes into
- * `sections[].node_ids`, which badge-labeled every non-pruned node in the rendered view).
- * Only `prune` removes a node from the view; bare-by-choice is a permitted verdict-respecting
- * outcome for `analyze`/`passthrough` nodes.
+ * CT answers differ from BB by a proven column chain, and that chain already exists in validated
+ * form (`column_flow` per hop) — this renders it as a deterministic table at the top of the
+ * document instead of leaving the distinction to prose. Like badges and section numbering, the
+ * table is engine output: the model never writes it, so it can never drift from the recorded
+ * edges. Rows are ordered by hop; the unnumbered `## Column Chain` heading is deliberately not a
+ * `## N` section, so it takes no section number and no navigation chip.
+ *
+ * @param edges - Validated column-flow edges accumulated by the engine.
+ * @returns The preface markdown, or `undefined` when no edge was recorded (nothing to show).
+ */
+export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): string | undefined {
+  if (edges.length === 0) return undefined;
+  const rows = [...edges]
+    .sort((a, b) => a.hop - b.hop)
+    .map(e => `| ${e.hop} | \`${e.to_node}\` | \`${e.to_col}\` | \`${e.from_node}.${e.from_col}\` |`);
+  return [
+    '## Column Chain',
+    '',
+    '| Hop | Produces | Column | Reads from |',
+    '| --- | --- | --- | --- |',
+    ...rows,
+  ].join('\n');
+}
+
+/**
+ * Reports which non-pruned nodes the AI left unlinked in both badge-producing surfaces
+ * (`sections[].node_ids` and `highlight_groups[].node_ids`) — an observation for the log,
+ * never a payload mutation.
+ *
+ * @remarks
+ * The `notes` schema requires a caption for every kept node the engine lists with no detail slot
+ * (`toolSchemas.ts` notes description; the checklist is rendered by `smPrompts.ts`), so a node this
+ * function flags is not a licensed "stays bare" outcome — it is either covered by a `notes[]` entry
+ * this function does not inspect, or a gap that note-coverage contract was meant to close. Either
+ * way the engine has no authority to re-link it: a tool boundary accepts, rejects with a structural
+ * hint, or mechanically normalizes with a log — it never silently rewrites an AI presentation
+ * decision (the predecessor of this function injected these ids into `sections[].node_ids`, which
+ * badge-labeled every non-pruned node in the rendered view). Only `prune` removes a node from the
+ * view; an unlinked node still renders via `resolvedNodeIds`, just without a badge or highlight
+ * color.
  *
  * @param resultGraph - The engine result carrying the locked `node_states` verdicts.
  * @param input - The (already auto-fixed) present payload. Read-only.
@@ -481,32 +663,41 @@ export function findBareNonPrunedNodes(
 }
 
 /**
- * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
+ * Reports which delivered `detail_slots[]` reached no rendered section.
  *
  * @remarks
- * Handles only mechanical normalization the model cannot self-correct: double-escaped newlines.
- * Skips fenced code blocks and `$$...$$` math (see {@link unescapeProseNewlines}) so a KaTeX macro
- * like `\not`/`\neq` is never split by this correction. It does NOT touch content length —
- * GUI-label bounds are enforced by the Zod boundary caps (which reject-and-self-heal past the
- * tolerance), never by silently truncating authored text.
+ * A different question from {@link findBareNonPrunedNodes}: that function walks every rendered
+ * (non-pruned) node and accepts either badge-producing surface, `sections[].node_ids[]` OR
+ * `highlight_groups[].node_ids[]`, because a highlight color is a legitimate way to place a
+ * passthrough node that never had analyzed detail to begin with. A `detail_slots[]` entry is
+ * different: it is the model's own captured technical findings for that node, the richest
+ * material the synthesis call received, and only `sections[].text` or a `notes[]` caption carries
+ * prose anywhere in the delivered answer — a highlight color or a bare badge carries none of it.
+ * Folding this into `findBareNonPrunedNodes`'s highlight-tolerant, all-rendered-nodes check would
+ * hide exactly the loss this function exists to name, so it stays a second, narrower computation
+ * rather than an extra parameter on the first. The caller (`executePresentResult`) reports every
+ * returned id as a {@link PresentResultViolation} whose `repairFields`/`paths` name `sections` and
+ * `notes` — the two surfaces this function itself accepts — but never `highlight_groups`, which
+ * never satisfies it.
  *
- * @param input - The raw input from the AI.
- * @returns The normalized input.
+ * @param slotNodeIds - Delivered `detail_slots[].nodeId` values — slots whose node is in the
+ *   current result graph. The caller intersects `sess.memory.notedNodeIds` with the rendered id
+ *   set; a slot whose node the render dropped cannot be linked, so requiring coverage of it
+ *   contradicts the node-id check.
+ * @param input - The (already auto-fixed) present payload. Read-only.
+ * @returns The slot ids linked in neither `sections[].node_ids[]` nor `notes[].node_id`, in
+ *   `slotNodeIds` order; empty when there are no authored sections (update-style calls) or every
+ *   slot reached prose.
  */
-export function autoFixPresentResult(input: PresentResultInput): PresentResultInput {
-  let fixed = { ...input };
-
-  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args).
-  // Tolerate a mistyped (non-string) field: pass it through untouched so the downstream
-  // validator reports a clean field error instead of throwing on `.replace` (→ swallowed internal_error).
-  const unescapeNewlines = (s: string): string =>
-    typeof s === 'string' ? unescapeProseNewlines(s) : s;
-  if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
-  if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
-  if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
-  if (fixed.sections) fixed = { ...fixed, sections: fixed.sections.map(s => ({ ...s, text: s.text ? unescapeNewlines(s.text) : s.text })) };
-
-  return fixed;
+export function findUnrenderedDetailSlotIds(
+  slotNodeIds: readonly string[],
+  input: PresentResultInput,
+): string[] {
+  if (slotNodeIds.length === 0 || !input.sections || input.sections.length === 0) return [];
+  const proseNodeIds = new Set<string>();
+  for (const sec of input.sections) for (const id of sec.node_ids ?? []) proseNodeIds.add(id);
+  for (const note of input.notes ?? []) proseNodeIds.add(note.node_id);
+  return slotNodeIds.filter(id => !proseNodeIds.has(id));
 }
 
 /**
@@ -526,7 +717,7 @@ export function autoFixPresentResult(input: PresentResultInput): PresentResultIn
  * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
  * never read from `input`. The AI does not write the assembled document.
  *
- * @param input - The (possibly auto-fixed) AI input.
+ * @param input - The raw AI input.
  * @param resolvedNodeIds - The canonical set of node IDs.
  * @param assembledBadges - Pre-assembled numbered badges for consistency.
  * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
@@ -534,10 +725,16 @@ export function autoFixPresentResult(input: PresentResultInput): PresentResultIn
  *   Completed Phase, so `highlight_groups` may be inherited from that prior render. A held synthesis
  *   draft is not an amendment and must still pass the complete new-render contract. Computed by the
  *   dispatcher — never the model's raw `is_update` flag.
+ * @param externalViolations - Findings from checks that need context this function does not hold
+ *   (the cached discovery answer, the result graph), reported through this accumulator alongside the
+ *   structural rules below — see {@link PresentResultViolation}.
  * @param stage - The calling stage (engine-derived), used to keep the unknown-node-id repair hint
  *   caller-possible — see {@link presentNodeIdHint}. Defaults to `'completed'`, the only stage whose
  *   tool policy includes `lineage_search_objects`, so existing callers that do not pass a stage keep
  *   today's hint wording unchanged.
+ * @param nodeIdState - Classifies an id the result graph cannot link against the engine state the
+ *   caller holds — see {@link PresentNodeIdStateLookup}. Omitted, every offender is reported as
+ *   `not_in_model`, which is the only classification a caller without engine state can make.
  * @returns A successful request object or a structured error with correction hints.
  */
 export function validatePresentResult(
@@ -545,9 +742,10 @@ export function validatePresentResult(
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
   assembledDescription?: string,
-  isAmendment: boolean = false,
+  isAmendment = false,
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
+  nodeIdState?: PresentNodeIdStateLookup,
 ): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
   // Structural classification — the failed field AND repairability are set once per addError call
@@ -560,17 +758,24 @@ export function validatePresentResult(
   // Offending entry paths, collected at the same call sites for the same reason the field list is:
   // a rejection that names a rule but not the offender costs a repair round to locate.
   const issuePaths = new Set<string>();
+  // Offending node ids per path — the same reason the paths are collected, one level finer, so
+  // `detail` states which id failed where instead of leaving the model to intersect two lists.
+  const pathUnlinkableIds = new Map<string, readonly string[]>();
   const addError = (
     field: PresentResultFailedField,
     message: string,
     authorizedFields: readonly PresentResultRepairField[] = [],
     paths: readonly string[] = [],
+    unlinkableIdsAtPath: readonly string[] = [],
   ): void => {
     errors.push(message);
     failedFields.add(field);
     if (authorizedFields.length === 0) allRepairable = false;
     for (const f of authorizedFields) repairFields.add(f);
-    for (const path of paths) issuePaths.add(path);
+    for (const path of paths) {
+      issuePaths.add(path);
+      if (unlinkableIdsAtPath.length > 0) pathUnlinkableIds.set(path, unlinkableIdsAtPath);
+    }
   };
   // Set only at the unexplained-highlight addError call below — drives a bespoke hint override
   // instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
@@ -607,6 +812,53 @@ export function validatePresentResult(
   const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
   const sectionLinkedNodeIds = new Set<string>();
 
+  // The node-id contract, computed once for the whole call.
+  //
+  // Every `node_ids` entry was already normalized against the whole loaded model by the dispatcher,
+  // so an id the result graph rejects is either a hallucination or a real object in a state the
+  // engine records — and calling the second one "unknown" tells the model to invent a replacement
+  // instead of moving the fact into prose. The census is call-level, not per-site, because the model
+  // sees only the first reason line: the replay caps it and drops `detail`, so an offender named
+  // solely in the third message never reaches it.
+  const resolvedSet = new Set(resolvedNodeIds);
+  const nodeIdStateCache = new Map<string, PresentNodeIdState>();
+  const stateOf = (nodeId: string): PresentNodeIdState => {
+    let state = nodeIdStateCache.get(nodeId);
+    if (state === undefined) {
+      state = nodeIdState?.(nodeId) ?? 'not_in_model';
+      nodeIdStateCache.set(nodeId, state);
+    }
+    return state;
+  };
+  const unlinkableNodeIds = [...new Set([
+    ...(input.sections ?? []).flatMap(section => section.node_ids ?? []),
+    ...(input.notes ?? []).map(note => note.node_id),
+    ...(input.highlight_groups ?? []).flatMap(group => group.node_ids ?? []),
+  ].filter(id => !resolvedSet.has(id)))];
+  // A call whose every offender is unresolvable keeps the wording it always had; one real offender
+  // is enough to stop describing the whole set as unknown.
+  const allHallucinated = unlinkableNodeIds.every(id => stateOf(id) === 'not_in_model');
+  const nodeIdNoun = allHallucinated
+    ? 'contains unknown IDs'
+    : 'names IDs the result graph cannot link';
+  const renderNodeIdStates = (ids: readonly string[]): string =>
+    ids.slice(0, NODE_ID_OFFENDERS_SHOWN)
+      .map(id => `\`${id}\` — ${PRESENT_NODE_ID_STATE_TEXT[stateOf(id)]}`)
+      .join('; ')
+    + (ids.length > NODE_ID_OFFENDERS_SHOWN ? ' ...' : '');
+  /**
+   * Offenders elsewhere in the call, the accepted set, and the route back — appended to each site,
+   * in that order: the rejection replay hard-slices this string, so the least recoverable fact (which
+   * id failed and why) is stated before the ones the completion envelope also carries.
+   */
+  const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
+    const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
+    return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
+      + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds, NODE_ID_ACCEPTED_SHOWN)}.`
+      + (allHallucinated ? '' : ` ${PRESENT_REAL_ID_ROUTE[stage]}`)
+      + ` ${presentNodeIdHint(stage)}`;
+  };
+
   // Either AI submitted sections[] (which the engine assembles into a description before
   // validation) OR an engine-assembled description is supplied. Without one, there's no body.
   if (!hasSections && !hasAssembled) {
@@ -614,15 +866,13 @@ export function validatePresentResult(
   }
 
   // Markdown/KaTeX formatting is never validated here: a formatting flaw must not reject a call
-  // or kill a session. The webview renderer degrades invalid math to red source text
-  // (rehype-katex fallback) and formatting quality is checked by the offline test harness only.
+  // or kill a session. The webview renderer degrades invalid math to its original source text
+  // and formatting quality is checked by the offline test harness only.
 
   // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
   if (hasSections) {
-    const resolvedSet = new Set(resolvedNodeIds);
     const labels = new Set<string>();
-    const nodeToSectionLabel = new Map<string, string>();
-    for (const [sectionIndex, sec] of input.sections!.entries()) {
+    for (const [sectionIndex, sec] of input.sections.entries()) {
       const label = (sec.label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
       const normalizedLabel = normalizePresentSectionLabel(sec.label);
       if (!label) {
@@ -637,18 +887,15 @@ export function validatePresentResult(
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
-          // Repair authorization deliberately left empty (unchanged): only the offending entry path
-          // is added, so `rejectionCode` alone no longer has to identify which rule fired.
-          addError('sections', `Section "${sec.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, [], [`sections.${sectionIndex}`]);
+          // Scoped repair: an unknown node_ids entry taints only this section's linking, never the
+          // section text or any other section/note/highlight content the model already got right.
+          addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
         }
+        // One badge per node is a rendering constraint with a deterministic resolution, so
+        // `orderAndAssemble` applies first-wins and logs the dropped links. Rejecting here charged
+        // the model a repair turn for a byte-identical resend it had no way to improve.
         for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
           sectionLinkedNodeIds.add(nodeId);
-          const existingLabel = nodeToSectionLabel.get(nodeId);
-          if (existingLabel && existingLabel !== normalizedLabel) {
-            addError('sections', `Node "${nodeId}" already appears in section "${existingLabel}" — remove it from section "${normalizedLabel}" (sections[${sectionIndex}].node_ids) and keep it only in "${existingLabel}".`, ['sections'], [`sections.${sectionIndex}`]);
-          } else {
-            nodeToSectionLabel.set(nodeId, normalizedLabel);
-          }
         }
       }
       if (typeof sec.text !== 'string' || sec.text.trim().length === 0) {
@@ -659,12 +906,13 @@ export function validatePresentResult(
 
   const noteNodeIds = new Set<string>();
   if (input.notes?.length) {
-    const resolvedSet = new Set(resolvedNodeIds);
     for (const [noteIndex, note] of input.notes.entries()) {
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
-        addError('notes', `notes[].node_id contains unknown ID: ${renderUnknownNodeIds([note.node_id])} — ${presentNodeIdHint(stage)}`, [], [`notes.${noteIndex}`]);
+        // Scoped repair: an unknown note node_id taints only the notes[] collection, never
+        // sections or highlight_groups the model already got right.
+        addError('notes', `notes[].node_id ${nodeIdNoun}: ${renderNodeIdStates([note.node_id])}.${nodeIdRejectionTail([note.node_id])}`, ['notes'], [`notes.${noteIndex}`], [note.node_id]);
       }
       if (typeof note.text !== 'string' || note.text.trim().length === 0) {
         addError('notes', `Note for "${note.node_id}" is missing text`);
@@ -683,13 +931,14 @@ export function validatePresentResult(
     if (input.highlight_groups.length > PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX) {
       addError('highlight_groups', `highlight_groups exceeds maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`, ['highlight_groups']);
     }
-    const resolvedSet = new Set(resolvedNodeIds);
     for (const [groupIndex, g] of input.highlight_groups.entries()) {
       if (!g.label) addError('highlight_groups', 'Group label is required');
       if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
       const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
       if (unknownIds.length > 0) {
-        addError('highlight_groups', `highlight_groups "${g.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, [], [`highlight_groups.${groupIndex}`]);
+        // Scoped repair: an unknown highlight node_ids entry taints only highlight_groups, never
+        // the sections/notes content the model already got right.
+        addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
       }
       for (const nodeId of g.node_ids ?? []) {
         if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
@@ -708,6 +957,25 @@ export function validatePresentResult(
       ['sections', 'notes', 'highlight_groups'],
     );
   }
+
+  // Offending paths, plus — where the offence was a node id — that path's ids with their recorded
+  // state and, once per rejection, the uncapped accepted set. The message states capped versions of
+  // both because `detail` is dropped from the rejection replay; this is the full record for the
+  // first delivery and the diagnostic trace.
+  const buildRejectionDetail = (): PresentResultError['detail'] => {
+    let acceptedStated = false;
+    return [...issuePaths].map(path => {
+      const ids = pathUnlinkableIds.get(path);
+      if (!ids) return { path };
+      const entry = {
+        path,
+        unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })),
+        ...(acceptedStated ? {} : { accepted_node_ids: [...resolvedNodeIds] }),
+      };
+      acceptedStated = true;
+      return entry;
+    });
+  };
 
   if (errors.length > 0) {
     // The failed-field list was attached structurally at each addError site above.
@@ -738,7 +1006,7 @@ export function validatePresentResult(
       hint,
       repairable: allRepairable,
       repairFields: [...repairFields],
-      ...(issuePaths.size > 0 ? { detail: [...issuePaths].map(path => ({ path })) } : {}),
+      ...(issuePaths.size > 0 ? { detail: buildRejectionDetail() } : {}),
     };
   }
 
@@ -748,7 +1016,11 @@ export function validatePresentResult(
     node_ids: resolvedNodeIds,
     summary: input.summary,
     description: assembledDescription!,
-    layout_direction: input.layout_direction ?? 'TB',
+    // No default: an omitted direction must stay omitted so the renderer falls through to
+    // `config.layout.direction`, the same owner the object view reads. Substituting a literal here
+    // made every AI view top-to-bottom against the shipped left-to-right setting, and the column
+    // node's Left/Right handles and Top/Bottom annotation toolbars are laid out for that setting.
+    layout_direction: input.layout_direction,
     highlight_groups: input.highlight_groups ?? [],
     badges: assembledBadges ?? [],
     notes: input.notes ?? [],

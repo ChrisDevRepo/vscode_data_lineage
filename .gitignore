@@ -29,38 +29,49 @@ debug*.txt
 .DS_Store
 Thumbs.db
 
-# AI assistant config — NEVER commit to public repo
-# These folders contain local context, prompts, credentials, and internal instructions.
-AGENTS.md
-.AGENTS.md
-CLAUDE.md
-.CLAUDE.md
+# AI assistant files — NEVER commit to this public repo.
+# Local agent context, prompts, credentials, and internal instructions. Patterns match in any
+# directory. A glob never matches a leading dot, so every name carries its dotted twin.
+AGENTS*
+.AGENTS*
+CLAUDE*
+.CLAUDE*
 .claude/
-**/.claude/**
-GEMINI.md
-.GEMINI.md
+GEMINI*
+.GEMINI*
 .gemini/
-**/.gemini/**
+GLM*
+.GLM*
+.glm-skills/
+CODEX*
+.CODEX*
+codex.md
+.codex/
 .cursor/
-**/.cursor/**
+.cursorrules
 .aider*
 .continue/
-**/.continue/**
 .agents/
-**/.agents/**
 
 # Internal Developer Docs
 *internal*/
 **/*internal*/**
+internal-tests/**
 
 # Verification scripts and artifacts (contents-pattern so tracked build tooling can be re-included:
 # git cannot negate below an excluded directory)
 scripts/*
 # The gate's manifest step runs this — it must be committable.
 !scripts/generate-tool-manifest.mjs
+# The postinstall hook runs this — it must be committable or fresh clones break.
+!scripts/repair-langsmith-stub.mjs
 
 # Code-audit workspace (tool output, inventories, classification artifacts)
 .audit/
+
+# Package-verification scratch trees (.verify-tmp, .verify2, …). Each holds a full copy of the
+# repository, so an unignored one is picked up by `vsce ls` and would ship source in the VSIX.
+.verify*/
 
 # Python venv for the analysis scripts (stdlib-only; never bundled).
 .venv/
@@ -71,3 +82,7 @@ tests/fixtures/kill-switch-user-data/*
 !tests/fixtures/kill-switch-user-data/User/
 tests/fixtures/kill-switch-user-data/User/*
 !tests/fixtures/kill-switch-user-data/User/settings.json
+
+# A dacpac at the repo root is an internal model staged for a lane run, never product
+# content; the tracked fixtures live under tests/fixtures/ and assets/ and are unaffected.
+/*.dacpac

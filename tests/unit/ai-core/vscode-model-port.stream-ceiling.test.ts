@@ -70,8 +70,9 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
     const prefix = turn24Prefix();
     const filler = 'f'.repeat(50_000);
     // prefix + 4 filler chunks crosses STREAM_TEXT_CHAR_CEILING (200,000) on the 4th filler chunk;
-    // a 5th "poison" chunk must never be fetched if the drain is actually aborted.
-    const chunks = [prefix, filler, filler, filler, filler, 'POISON-SHOULD-NOT-STREAM'];
+    // a 5th benign filler absorbs the bridge's one-chunk read-ahead, so the POISON chunk after it
+    // is never fetched if the drain is actually aborted.
+    const chunks = [prefix, filler, filler, filler, filler, filler, 'POISON-SHOULD-NOT-STREAM'];
     const { port, script } = portOver(chunks);
 
     const result = await port.generateToolTurn({
@@ -83,7 +84,7 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
     // Retry-capable outcome: a normal completed, tool-call-free generation — the same shape the
     // existing missing-required-tool retry path already handles downstream, not an error/cancel.
     expect(result.status).toBe('completed');
-    expect(result).toMatchObject({ finishReason: 'stop', toolCalls: [] });
+    expect(result).toMatchObject({ finishReason: 'length', toolCalls: [] });
     expect(result.text.length).toBeGreaterThan(0);
     expect(result.text.length).toBeGreaterThanOrEqual(STREAM_TEXT_CHAR_CEILING);
     // Bounded: the poison chunk's ~4M-char analog (3,638,544 in the recorded incident) never lands.
@@ -96,7 +97,13 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
 
     // The drain actually stopped early (not merely truncated by luck): the poison chunk was never
     // pulled, and the underlying stream was closed exactly once through the normal return path.
-    expect(script.nextCalls()).toBe(5);
+    // Contract: `IterableReadableStream.fromAsyncGenerator`'s WHATWG ReadableStream (default
+    // highWaterMark 1) may read one chunk ahead of the consumer, so the ceiling breaks on the 5th
+    // `next()` call and the read-ahead — when the runtime schedules it (older Node did, current
+    // Node 22.x does not) — consumes the 6th (a benign filler). Either way the poison chunk is
+    // never pulled: 5 consumer pulls to reach the ceiling, at most 1 scheduler read-ahead.
+    expect(script.nextCalls()).toBeGreaterThanOrEqual(5);
+    expect(script.nextCalls()).toBeLessThanOrEqual(6);
     expect(script.returnCalls()).toBe(1);
   });
 

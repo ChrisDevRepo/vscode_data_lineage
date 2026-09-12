@@ -1,7 +1,7 @@
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { resolveModelNodeId } from '../support/inputNormalization';
-import { getNodeColumns } from '../tools/tools';
+import { getNodeColumns } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName } from '../../utils/sql';
@@ -35,6 +35,28 @@ export class ColumnTracer {
     return this.aspect;
   }
 
+  /**
+   * The aspect as delivered, minus the edges whose endpoint the render dispositioned away.
+   *
+   * @remarks
+   * A projection for delivery only, never a mutation of the trace: {@link state} keeps every
+   * committed edge, so a checkpoint resumes on the chain it was dumped with and the engine's own
+   * completeness accounting reads the same edge set it always did. `target_columns` and
+   * `active_columns` carry through untouched — where an endpoint node ended up says nothing about
+   * which columns the trace is following.
+   *
+   * @param droppedEndpointIds - Endpoint node ids the render withheld; empty on almost every call.
+   * @returns The aspect to deliver — the live state itself when nothing was withheld.
+   */
+  deliveredState(droppedEndpointIds: ReadonlySet<string>): ColumnAspect {
+    if (droppedEndpointIds.size === 0) return this.aspect;
+    return {
+      ...this.aspect,
+      edges: this.aspect.edges.filter(
+        e => !droppedEndpointIds.has(e.from_node) && !droppedEndpointIds.has(e.to_node)),
+    };
+  }
+
   /** Columns requested at the start of the trace. */
   get targetColumns(): string[] {
     return this.aspect.target_columns;
@@ -66,7 +88,8 @@ export class ColumnTracer {
    * The structural completeness guard for the column chain: every active
    * column must be resolved — continued (an entry with upstream real columns) or produced here
    * (an entry with `upstream_columns: []`). A node producing none of the tracked columns
-   * submits `column_flow:[]` and is excluded as off-trace (it never prunes itself).
+   * submits `column_flow:[]` and is retained: only its column chain is empty, and it is kept in
+   * the answer for what it does to the row set (it never prunes itself).
    * An entry's `out_col` is how the AI accounts for that column, so
    * the result is the pure set-difference `active_columns − {out_col}`. A non-empty
    * result means the chain was left incomplete; the engine rejects and the worker
@@ -117,24 +140,27 @@ export class ColumnTracer {
   }
 
   /**
-   * Generates chain-continuation questions for the real upstream column edges staged at the given hop.
-   * Injected as `<lineage_questions>` in the next hop's `<current_task>`.
+   * Generates chain-continuation questions for the real upstream column edges staged at the given
+   * hop, grouped by the upstream node that must next answer each one. Injected as
+   * `<lineage_questions>` in that node's own `<current_task>` — never a different, unrelated hop.
    *
    * @remarks
    * Terminal/current-node production is represented by a flow entry with `upstream_columns: []`, which
-   * stages no edge and therefore spawns no continuation question.
+   * stages no edge and therefore spawns no continuation question. Each question is labelled by
+   * `edge.from_col` — the column that is actually active once the named node is traced — not
+   * `edge.to_col`, so the wording matches that hop's own `<column_trace>` active-column label.
    *
    * @param focusId - The id of the focus node.
    * @param hopCount - The hop count matching the edges to query.
-   * @returns An array of continuation questions for unaccounted upstream columns.
+   * @returns Continuation questions keyed by the upstream node id that must answer each one.
    */
-  getColumnLineageQuestions(focusId: string, hopCount: number): string[] {
+  getColumnLineageQuestionsByNode(focusId: string, hopCount: number): Map<string, string[]> {
     const hopEdges = this.aspect.edges.filter(
       e => e.hop_node === focusId && e.hop === hopCount,
     );
-    if (hopEdges.length === 0) return [];
+    const byNode = new Map<string, string[]>();
+    if (hopEdges.length === 0) return byNode;
 
-    const questions: string[] = [];
     const seen = new Set<string>();
 
     for (const edge of hopEdges) {
@@ -142,11 +168,12 @@ export class ColumnTracer {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      questions.push(
-        `Column \`${edge.to_col}\`: flows from \`${edge.from_node}.${edge.from_col}\` — trace its origin at \`${edge.from_node}\`.`,
-      );
+      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into \`${edge.to_col}\` at \`${edge.hop_node}\` — determine its origin here.`;
+      const existing = byNode.get(edge.from_node);
+      if (existing) existing.push(question);
+      else byNode.set(edge.from_node, [question]);
     }
-    return questions;
+    return byNode;
   }
 
   /**
@@ -163,6 +190,8 @@ export class ColumnTracer {
    * @param nodeMap - Map of all available lineage nodes.
    * @param model - The underlying database model.
    * @param store - Optional column store for checking declared column lists.
+   * @param log - Optional logger; a neighbour with zero declared columns cannot be verified, so
+   * the acceptance is logged at `debug` instead of passing silently.
    * @returns Validation result containing any error, invalid routes, or successfully staged edges.
    */
   validateColumnFlow(
@@ -170,7 +199,8 @@ export class ColumnTracer {
     finding: HopFinding,
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
-    store: ColumnStore | null
+    store: ColumnStore | null,
+    log?: (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
@@ -189,10 +219,16 @@ export class ColumnTracer {
     for (let entryIndex = 0; entryIndex < columnFlow.length; entryIndex++) {
       const entry = columnFlow[entryIndex];
       if (!activeNorm.includes(normalizeColName(entry.out_col))) {
-        const availableColumns = this.aspect.active_columns.length > 0
-          ? [...this.aspect.active_columns]
-          : Array.from(validFocusCols).sort();
-        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: availableColumns });
+        // `available_columns` names the tracked set and nothing else. Falling back to the node's
+        // own DDL columns listed the rejected value itself as a valid one, so the envelope
+        // contradicted its own reason and no rewrite of it could succeed. A column that is on the
+        // node yet off the tracked spine gets its own kind so the repair (pick a tracked column)
+        // stays distinguishable from naming a column the node does not carry at all; when the node
+        // declares no columns, existence is unverifiable and the not-on-node code stands.
+        const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(normalizeColName(entry.out_col));
+        invalidRoutes.push(existsOnNode
+          ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, available_columns: [...this.aspect.active_columns] }
+          : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns] });
         continue;
       }
 
@@ -241,7 +277,9 @@ export class ColumnTracer {
           }
         } else {
           const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
-          if (validNeighborCols.size > 0 && !validNeighborCols.has(normalizeColName(cont.col))) {
+          if (validNeighborCols.size === 0) {
+            log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — neighbour declares no columns, accepting unverified`);
+          } else if (!validNeighborCols.has(normalizeColName(cont.col))) {
             invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });
             continue;
           }
@@ -267,6 +305,10 @@ export class ColumnTracer {
           to_col: toCol,
           from_node: fromNode,
           from_col: cont.col,
+          // Carried verbatim per contributor, or omitted. The value set is already enforced by the
+          // tool schema, so there is nothing left to check and nothing to substitute when absent.
+          ...(cont.transforms ? { transforms: [...cont.transforms] } : {}),
+          ...(cont.note ? { note: cont.note } : {}),
         });
       }
     }

@@ -22,11 +22,11 @@ import { announceLaneTier } from './laneTier';
 suite('Participant turn — public API, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
-  suiteSetup(() => announceLaneTier(
+  suiteSetup(() => { announceLaneTier(
     'participant-turn',
     'scripted',
     'a real handleChatRequest turn streams progress and settles with a terminal ChatResult',
-  ));
+  ); });
   const FIXTURE_ID = 'data-lineage-test.data-lineage-test-model-provider';
   const TEST_VENDOR = 'lineage-test';
   const TEST_MODEL_ID = 'lineage-deterministic-v1';
@@ -56,7 +56,7 @@ suite('Participant turn — public API, no CDP', () => {
       toolReferences: [],
       toolInvocationToken: undefined as never,
       model,
-    } as unknown as vscode.ChatRequest;
+    };
   }
 
   async function fixtureModel(): Promise<vscode.LanguageModelChat> {
@@ -122,7 +122,7 @@ suite('Participant turn — public API, no CDP', () => {
     try {
       await exports.participant.handleChatRequest(
         chatRequest('trace Sales', undefined as unknown as vscode.LanguageModelChat),
-        { history: [] } as unknown as vscode.ChatContext,
+        { history: [] },
         stream,
         source.token,
       );
@@ -147,7 +147,7 @@ suite('Participant turn — public API, no CDP', () => {
     try {
       const result = await exports.participant.handleChatRequest(
         chatRequest('Which tables feed Sales?', await fixtureModel()),
-        { history: [] } as unknown as vscode.ChatContext,
+        { history: [] },
         stream,
         source.token,
       );

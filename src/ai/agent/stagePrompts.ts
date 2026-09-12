@@ -26,11 +26,12 @@ import {
 import { buildSmProtocol } from '../prompting/smPrompts';
 import { resolveStagePrompt, type StagePromptResult, type StageRenderScope } from '../prompting/templateRenderer';
 import { escapeDelimitedJson } from '../support/text';
-import { SCRIPT_TYPES } from '../tools/tools';
+import { SCRIPT_TYPES } from '../support/graphUtils';
 
 /**
  * Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user
- * message — the structured sub-agent has no tools, so it must be handed everything it needs here.
+ * message. The hop is blinkered: the worker sees this payload plus `lineage_submit_findings` and
+ * `lineage_get_neighbor_columns`, not prior hops' tool results.
  */
 export function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
   // `current_task` already rides authoritatively in the <current_task> block of the same message
@@ -84,6 +85,20 @@ function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, re
   );
 }
 
+/**
+ * The template keys a render dropped because the locked classification did not request them.
+ *
+ * @remarks
+ * The drop is deterministic and by design, but it is the one filter in the chain that leaves no
+ * trace of its own: `gatedOut` was computed for diagnostics and had no consumer, so a run in which
+ * `business_capture` — sole owner of the decision-impacting data-quality capture instruction — was
+ * never issued reads identically to one in which the model was asked and found nothing. Lifted onto
+ * the builder result so the graph can log it.
+ */
+function classificationGatedKeys(result: StagePromptResult): string[] {
+  return result.gatedOut.filter(entry => entry.reason === 'classification').map(entry => entry.key);
+}
+
 /** Assembles a phase system prompt: the grounded stage base followed by the ordered non-empty blocks. */
 function assemblePhaseSystem(stage: AgentStage, ctx: StagePromptContext, blocks: ReadonlyArray<string | null | undefined>): string {
   return [buildHostStageSystemPrompt(stage, ctx), ...blocks].filter(Boolean).join('\n');
@@ -97,6 +112,8 @@ export interface StageSystemInstruction {
   readonly templateKeys: readonly string[];
   /** Memory/context blocks this builder assembled non-empty into {@link system}. */
   readonly memorySections: readonly string[];
+  /** YAML keys the locked classification excluded from this render; empty when nothing was gated. */
+  readonly classificationGatedKeys: readonly string[];
 }
 
 /**
@@ -108,7 +125,12 @@ export interface StageSystemInstruction {
  */
 export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptContext): StageSystemInstruction {
   const stage = resolveStage(sess, 'discover');
-  return { system: assemblePhaseSystem('discover', ctx, [stage.prompt]), templateKeys: stage.shippedKeys, memorySections: [] };
+  return {
+    system: assemblePhaseSystem('discover', ctx, [stage.prompt]),
+    templateKeys: stage.shippedKeys,
+    memorySections: [],
+    classificationGatedKeys: classificationGatedKeys(stage),
+  };
 }
 
 /**
@@ -136,6 +158,7 @@ export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext,
     system: assemblePhaseSystem('active', ctx, [smProtocol, stageBlock.prompt, ...stableContext.blocks]),
     templateKeys: stageBlock.shippedKeys,
     memorySections: stableContext.memorySections,
+    classificationGatedKeys: classificationGatedKeys(stageBlock),
   };
 }
 
@@ -153,6 +176,7 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
   const missionBrief = buildMissionBriefBlock(
     sess.memory.getMissionBrief(),
     sess.memory.getUserQuestion() ?? '',
+    sess.memory.getScopeNotes(),
   );
   // Session-constant (resolved once at start_exploration), so stable-prefix-safe.
   const originalQuestion = buildOriginalQuestionBlock(sess.memory.getUserQuestion());
@@ -175,13 +199,15 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
  * Blinkered-worker scope: what to analyse, the node + its neighbours, and continuity/self-correction
  * memory (short-term summaries + `recent_rejections`). No progress chrome, no user-interaction framing.
  */
-export interface ActiveHopInstruction {
+interface ActiveHopInstruction {
   /** Per-focus user message shipped to the active worker. */
   readonly message: string;
   /** Focus-sensitive YAML capture keys shipped in that message. */
   readonly templateKeys: readonly string[];
   /** Memory/context blocks this builder assembled non-empty into {@link message}. */
   readonly memorySections: readonly string[];
+  /** YAML capture keys the locked classification excluded from this hop; empty when nothing was gated. */
+  readonly classificationGatedKeys: readonly string[];
 }
 
 /**
@@ -197,13 +223,14 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     engine.columnAspect?.active_columns,
     engine.pendingLineageQuestions,
   );
-  // BB only (mode-pure): render the exact set the required-nodes guard will enforce, next to the
-  // data it governs — CT routing is column-driven and its guard is a no-op.
-  const required = engine.columnAspect ? [] : engine.requiredNeighborIds(focusId);
+  // Both modes: render the exact set the required-nodes guard will enforce, next to the data it
+  // governs. Neighbor visibility is identical in BB and CT — a neighbor carrying none of the traced
+  // columns still decides which rows survive, so CT is shown and held to the same checklist.
+  const required = engine.requiredNeighborIds(focusId);
   const accountFor = required.length > 0
     ? [
         '<required_neighbors>',
-        'Approved in-scope continuation neighbors for this hop:',
+        'Approved in-scope continuation neighbors for this hop; each goes in `route_requests`, except a logging/audit/retention sink the question does not ask about, which goes in `prune_neighbors`:',
         required.join(', '),
         '</required_neighbors>',
       ].join('\n')
@@ -231,6 +258,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     message: [currentTask, accountFor, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
     templateKeys: captureRecipe.shippedKeys,
     memorySections,
+    classificationGatedKeys: classificationGatedKeys(captureRecipe),
   };
 }
 
@@ -259,5 +287,6 @@ export function buildSynthesisInstruction(sess: AiSession, ctx: StagePromptConte
     system: assemblePhaseSystem('synthesis', ctx, [stage.prompt, ...stableContext.blocks]),
     templateKeys: stage.shippedKeys,
     memorySections: stableContext.memorySections,
+    classificationGatedKeys: classificationGatedKeys(stage),
   };
 }

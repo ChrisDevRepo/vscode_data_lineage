@@ -1,3 +1,0 @@
-<current_task>
-  <sub_question>What business rule sets NetAmountA when PriceA is null?</sub_question>
-</current_task>

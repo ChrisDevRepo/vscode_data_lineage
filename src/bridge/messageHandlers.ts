@@ -33,6 +33,7 @@ import {
   type ProjectStore,
 } from '../engine/projectStore';
 import { buildBareGraph } from '../ai/support/graphUtils';
+import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
 import { formatRenderConnectivity, type RenderConnectivity } from '../engine/renderConnectivity';
@@ -56,6 +57,51 @@ export type WebviewMessageHandlers = {
     msg: Extract<MainPanelToExtensionMsg, { type: K }>,
   ) => Promise<void> | void;
 };
+
+/**
+ * Panel-lived connection state for table profiling.
+ *
+ * @remarks
+ * `pending` holds the connection negotiation currently in flight, so concurrent stats requests
+ * join it rather than each opening their own connection.
+ */
+export type StatsConnState = {
+  /** Negotiated connection uri, or `undefined` before the first successful negotiation. */
+  uri: string | undefined;
+  /** The in-flight negotiation, joined by concurrent requests instead of starting a second one. */
+  pending: Promise<string | undefined> | null;
+};
+
+/**
+ * Resolves the connection uri table profiling runs against, negotiating at most one connection.
+ *
+ * @remarks
+ * A request arriving while a negotiation is in flight joins it instead of opening a second
+ * connection — and instead of putting a second connection prompt in front of the user. The
+ * in-flight promise is cleared however it settles, so a cancelled or failed negotiation leaves the
+ * state ready for the next request rather than latched onto a dead promise.
+ *
+ * @param state - Panel-lived connection state, mutated in place.
+ * @param negotiate - Opens or prompts for a connection and yields its uri, or `undefined` when the
+ *   user cancelled.
+ * @returns The connection uri, or `undefined` when the negotiation yielded none.
+ */
+export async function resolveStatsConnectionUri(
+  state: StatsConnState,
+  negotiate: () => Promise<string | undefined>,
+): Promise<string | undefined> {
+  if (state.uri) return state.uri;
+  state.pending ??= negotiate();
+  let negotiated: string | undefined;
+  try {
+    negotiated = await state.pending;
+  } finally {
+    state.pending = null;
+  }
+  if (!negotiated) return undefined;
+  state.uri ??= negotiated;
+  return state.uri;
+}
 
 declare const __BUILD_TIMESTAMP__: string;
 
@@ -177,6 +223,18 @@ export function isMssqlAvailable(): boolean {
 }
 
 /**
+ * Rewrites `[label](#focus-node:<id>)` to plain `label`.
+ *
+ * @remarks
+ * The scheme (`FOCUS_NODE_HREF_PREFIX` in `components/markdown/renderAiMarkdown.ts`, restated
+ * rather than imported across the webview/host bundle boundary) only resolves inside the lineage
+ * webview's own click handler — dead elsewhere.
+ */
+export function stripFocusNodeLinks(markdown: string): string {
+  return markdown.replace(/\[([^\]]*)\]\(#focus-node:[^)]*\)/g, '$1');
+}
+
+/**
  * Represents a bundle of message handlers and their associated cleanup logic.
  */
 export interface MessageHandlerBundle {
@@ -279,7 +337,10 @@ export function createMessageHandlers(
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
-  const statsConnState: { uri: string | undefined } = { uri: undefined };
+  // `pending` single-flights the connection negotiation. The detail panel's message listener is
+  // async and VS Code does not serialize it, so two table-stats requests can both observe an
+  // empty `uri` and each negotiate their own connection — the second overwriting the first.
+  const statsConnState: StatsConnState = { uri: undefined, pending: null };
   async function cleanupStatsConnection(): Promise<void> {
     if (statsConnState.uri) {
       await disconnectDatabase(statsConnState.uri, outputChannel).catch(err =>
@@ -291,6 +352,15 @@ export function createMessageHandlers(
 
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
+  }
+
+  /** Clears a filter view's stored AI run record, logging rather than throwing on failure. */
+  async function clearStoredRunLogged(profileId: string): Promise<void> {
+    try {
+      await clearStoredRun(context.globalState, profileId);
+    } catch (err) {
+      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   async function getDetailConfig() {
@@ -371,7 +441,7 @@ export function createMessageHandlers(
             notifyError(
               bridgeLogger,
               'Bridge protocol mismatch (detail panel)',
-              `Data Lineage: the detail panel is speaking bridge protocol v${String(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
+              `Data Lineage: the detail panel is speaking bridge protocol v${safeStringifyForLog(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
             );
             return;
           }
@@ -400,9 +470,9 @@ export function createMessageHandlers(
             } else if (m.type === 'close-detail') {
               detailPanel?.dispose();
             } else if (m.type === 'error') {
-              handlers.error(m);
+              await handlers.error(m);
             } else if (m.type === 'show-warning') {
-              handlers['show-warning'](m);
+              await handlers['show-warning'](m);
             }
           } catch (err) {
             host.log('error', 'Bridge', 'Detail panel handler threw unexpectedly', err instanceof Error ? err : new Error(String(err)));
@@ -569,9 +639,14 @@ export function createMessageHandlers(
     'delete-project': async (msg) => {
       host.log('debug', 'Bridge', `Deleting project: ${msg.id}`);
       const store = loadProjectStore(context);
+      // Captured before the delete: the profiles vanish with the project, and each may file an AI run record.
+      const profileIds = (store.projects.find(p => p.id === msg.id)?.filterProfiles ?? []).map(fp => fp.id);
       const updated = deleteProject(store, msg.id);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
+      for (const profileId of profileIds) {
+        await clearStoredRunLogged(profileId);
+      }
     },
     'load-demo': async () => {
       host.log('debug', 'Bridge', 'Loading demo');
@@ -667,8 +742,11 @@ export function createMessageHandlers(
       }
     },
     'render-state': (msg) => {
-      const state = getUiDiagnostics(getSession());
-      state.renderState = msg.renderState ?? null;
+      const sess = getSession();
+      const state = getUiDiagnostics(sess);
+      const renderState = msg.renderState ?? null;
+      state.renderState = renderState;
+      sess.renderState = renderState;
       state.lastUiSyncAt = Date.now();
     },
     'db-connect': () => {
@@ -690,6 +768,22 @@ export function createMessageHandlers(
         await saveProjectStore(context, updated);
         logger.info(`Successfully saved filter view: "${msg.profile?.name}"`);
         postProjectsList(host, updated);
+        try {
+          const sess = getSession();
+          const run = buildStoredRun(msg.profile, sess.presentationArtifact, id => sess.columnStore.getDdl(id));
+          if (run) {
+            const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
+            logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
+          } else {
+            // A save under an existing id replaces that profile in place, so a record filed under it
+            // by an earlier run would survive and be recalled against a scope it no longer describes.
+            // Writing and clearing are the two halves of one decision. A no-op for a profile that
+            // never had a record.
+            await clearStoredRun(context.globalState, msg.profile.id);
+          }
+        } catch (runErr) {
+          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);
+        }
       } catch (err) {
         logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
         throw err;
@@ -705,10 +799,15 @@ export function createMessageHandlers(
       const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
+      await clearStoredRunLogged(msg.profileId);
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
-      getSession().columnStore.clear();
+      // The column store is a pure projection of `sess.model` (`populateColumnStore` is its only
+      // writer), and a rebuild only re-reads configuration — the model is untouched. Clearing here
+      // emptied the store with nothing to refill it, which blanked the detail panel's columns and
+      // made every stored run report `stale` (an absent DDL hashes to `unknown`, never matching the
+      // saved digest). Reset belongs to `applyModelToSession`, the actual model-load path.
       const config = await readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },
@@ -738,6 +837,14 @@ export function createMessageHandlers(
         await host.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
         host.executeCommand('revealFileInOS', uri);
       }
+    },
+    'ai-open-in-editor': async (msg) => {
+      host.log('debug', 'Bridge', 'Opening AI description in editor');
+      const doc = await vscode.workspace.openTextDocument({
+        content: stripFocusNodeLinks(msg.markdown),
+        language: 'markdown',
+      });
+      await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
     },
     'log': (msg) => {
       const level = msg.level ?? 'debug';
@@ -1031,7 +1138,7 @@ async function withDbProgressHost(host: BridgeHost, title: string, connectFn: ()
 async function handleTableStatsRequestHost(
   host: BridgeHost,
   storedConnectionInfo: IConnectionInfo | undefined,
-  statsConnState: { uri: string | undefined },
+  statsConnState: StatsConnState,
   panel: vscode.WebviewPanel,
   schema: string,
   objectName: string,
@@ -1059,15 +1166,14 @@ async function handleTableStatsRequestHost(
 
   logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
   try {
-    if (!statsConnState.uri) {
+    const connectionUri = await resolveStatsConnectionUri(statsConnState, async () => {
       const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
-      if (!result) {
-        void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
-        return;
-      }
-      statsConnState.uri = result.connectionUri;
+      return result?.connectionUri;
+    });
+    if (!connectionUri) {
+      void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
+      return;
     }
-    const connectionUri = statsConnState.uri!;
     const serverInfo = await getServerInfo(connectionUri);
     const engineEdition = serverInfo.engineEditionId;
 

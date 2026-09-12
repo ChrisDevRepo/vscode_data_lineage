@@ -1,15 +1,31 @@
 import type { InvestigationTask, PendingLead } from './smTypes';
 
-type InvestigationTaskInput = {
+/**
+ * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state.
+ *
+ * @remarks
+ * The `kind` arm decides whether traced columns ride along: a column-lineage task always names at
+ * least one, a root or analytical task never does.
+ */
+export type InvestigationTaskInput = {
+  /** Who raised the task — the user's question, the engine, or the model. */
   source: InvestigationTask['source'];
+  /** The question this task exists to answer, compared by normalized identity. */
   question: string;
+  /** Object the task is pinned to, when it concerns one node rather than the walk. */
   nodeId?: string;
+  /** Task this one was split from, so a resolved child rolls up to its parent. */
   parentTaskId?: string;
+  /** Initial status; defaults to open. */
   status?: InvestigationTask['status'];
+  /** Hop at which the task was raised. */
   createdHop: number;
+  /** Hop at which the task was closed, when it is opened already resolved. */
   resolvedHop?: number;
 } & (
+  /** Root or analytical task: no traced column rides along. */
   | { kind: 'root' | 'analytical'; activeColumns?: never }
+  /** Column-lineage task: the traced columns it must follow, at least one. */
   | { kind: 'column_lineage'; activeColumns: [string, ...string[]] }
 );
 

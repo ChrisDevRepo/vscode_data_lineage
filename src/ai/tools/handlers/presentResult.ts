@@ -10,8 +10,8 @@
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
 import {
-  autoFixPresentResult, validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
-  findBareNonPrunedNodes,
+  validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
+  findBareNonPrunedNodes, findUnrenderedDetailSlotIds, buildColumnChainPreface,
   isRepairablePresentResultFailure,
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
@@ -20,9 +20,11 @@ import {
   type PresentResultViolation,
   type PresentResultInput,
   type PresentResultStage,
+  type PresentNodeIdState,
+  type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
 import {
-  PresentResultBoundarySchema,
+  presentResultBoundarySchemaForPhase,
   PRESENT_RESULT_NAME_MAX,
   presentResultRepairPatchSchemaForFields,
 } from '../../tools/toolSchemas';
@@ -32,31 +34,40 @@ import { coercedBoolean, resolveModelNodeId, resolveModelNodeIds } from '../../s
 import { readToolError } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
-import { postToWebview } from '../../../bridge/host';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
+import type { SmState } from '../../sm/smTypes';
+import { REJECTION_CODES } from '../../support/rejectionCodes';
 
-function findMissingCtTerminalSources(
+// Required set mirrors buildPassthroughFlowFacts' qualifying filter (kept, minus slotted, minus
+// pruned) narrowed to the traced column chain, not to edge-terminal sources: a staging table that is
+// both a from_node and a to_node was excluded by the terminal seed and could never be flagged.
+// Off-chain scope nodes stay out — the CT prompt keeps them out of the column-chain narrative.
+// Accepted surfaces are the three the synthesis self-check names, highlight colour immaterial.
+function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
   input: PresentResultInput,
   resolvedNodeIds: string[],
+  slottedNodeIds: readonly string[],
 ): string[] {
   const edges = resultGraph?.columnAspect?.edges ?? [];
   if (edges.length === 0) return [];
-  const toNodes = new Set(edges.map(e => e.to_node));
-  const terminalSources = Array.from(new Set(edges.map(e => e.from_node)))
-    .filter(id => !toNodes.has(id) && resolvedNodeIds.includes(id));
-  if (terminalSources.length === 0) return [];
+  const lc = (id: string): string => id.toLowerCase();
+  const exempt = new Set<string>(slottedNodeIds.map(lc));
+  for (const st of resultGraph?.node_states ?? []) if (st.action === 'prune') exempt.add(lc(st.nodeId));
+  const chain = new Set(edges.flatMap(e => [lc(e.from_node), lc(e.to_node), lc(e.hop_node)]));
+  const required = resolvedNodeIds.filter(id => chain.has(lc(id)) && !exempt.has(lc(id)));
+  if (required.length === 0) return [];
 
   const linked = new Set<string>();
   for (const sec of input.sections ?? []) {
-    for (const id of sec.node_ids ?? []) linked.add(id);
+    for (const id of sec.node_ids ?? []) linked.add(lc(id));
   }
   for (const group of input.highlight_groups ?? []) {
-    if (group.color !== 'source') continue;
-    for (const id of group.node_ids ?? []) linked.add(id);
+    for (const id of group.node_ids ?? []) linked.add(lc(id));
   }
-  return terminalSources.filter(id => !linked.has(id));
+  for (const note of input.notes ?? []) linked.add(lc(note.node_id));
+  return required.filter(id => !linked.has(lc(id)));
 }
 
 function notePresentResultFailure(sess: AiSession, token: number, data: object): void {
@@ -66,6 +77,33 @@ function notePresentResultFailure(sess: AiSession, token: number, data: object):
     ? `${rejection.reason} (${rejection.hint})`
     : rejection.reason;
   sess.recordPresentResultFailure(token, trunc(sanitizeForLog(reason), 240));
+}
+
+// Every node the column edges reference needs a verdict, hop nodes included — a hop that is not
+// itself an answer node still decides whether its lines read as a transformation. Compared
+// case-insensitively: node ids reach these two lists from different sources.
+function buildColumnAspectNodeVerdicts(
+  nodeIds: readonly string[],
+  columnAspect: NonNullable<ResultGraph['columnAspect']>,
+  nodeStates: ResultGraph['node_states'],
+) {
+  const referenced = new Set(nodeIds.map(id => id.toLowerCase()));
+  for (const e of columnAspect.edges) referenced.add(e.hop_node.toLowerCase());
+  return (nodeStates ?? [])
+    .filter(ns => referenced.has(ns.nodeId.toLowerCase()))
+    .map(ns => ({ nodeId: ns.nodeId, verdict: ns.action }));
+}
+
+// The engine checkpoint rides the artifact so a bookmark saved from this view can recall the run;
+// captured here so the single guarded commit below is the only write of the artifact.
+function captureCheckpoint(sess: AiSession, logger: ToolServices['logger']): PresentationArtifact['checkpoint'] {
+  if (!sess.stateMachine) return undefined;
+  try {
+    return sess.stateMachine.toJSON();
+  } catch (error) {
+    logger.debug(`presentResult checkpoint capture skipped: ${error instanceof Error ? error.name : 'Error'}`);
+    return undefined;
+  }
 }
 
 /**
@@ -83,7 +121,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
       if (attemptWrite.kind !== 'accepted') {
         return s.logAndReturn('present_result', {
-          error: 'stale_turn',
+          error: REJECTION_CODES.staleTurn,
           hint: 'The turn no longer owns this session. Do not render this result.',
         }, rawInput);
       }
@@ -94,8 +132,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         : null;
 
       // One reject funnel for every uniform failure exit: session-note + logged return, optionally
-      // dropping the held repair draft first. The two draft-HOLDING rejects below (CT terminal
-      // sources, repairable validation) intentionally bypass this — they preserve the draft.
+      // dropping the held repair draft first. The two draft-HOLDING rejects below (CT chain
+      // coverage, repairable validation) intentionally bypass this — they preserve the draft.
       const reject = (failure: object, opts: { clearDraft?: boolean } = {}): string => {
         if (opts.clearDraft) sess.presentResultRepairDraft.clear();
         notePresentResultFailure(sess, turnEpoch, failure);
@@ -112,7 +150,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         input = { ...(input as Record<string, unknown>), is_update: coercedIsUpdate.data };
         s.logger.debug(`presentResult normalization: is_update "${rawIsUpdate}" → ${coercedIsUpdate.data} (string-encoded boolean unwrapped)`);
       }
-      const requestedRepair = coercedIsUpdate.success && coercedIsUpdate.data === true;
+      const requestedRepair = coercedIsUpdate.success && coercedIsUpdate.data;
 
       if (isVisualPreview && !sess.presentResultRepairDraft.hasRepairableDraft()) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
@@ -124,12 +162,26 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: 'Run the discovery question again, then request its graph preview.',
           }, { clearDraft: true });
         }
-        input = {
-          ...(input && typeof input === 'object' && !Array.isArray(input) ? input : {}),
+        const supplied = input && typeof input === 'object' && !Array.isArray(input)
+          ? input as Record<string, unknown>
+          : {};
+        const previewProse: Record<string, string | undefined> = {
           name: `${scope.origin} graph preview`.slice(0, PRESENT_RESULT_NAME_MAX),
           summary: previewNarrative.summary,
           title: previewNarrative.title,
         };
+        // Normalize-with-log: preview prose is engine-owned, but a model that sent its own copy of
+        // one of these fields anyway had that value replaced, and a silent replacement is invisible
+        // in the trace. Only a field whose value actually changed is logged.
+        for (const [field, value] of Object.entries(previewProse)) {
+          const prior = supplied[field];
+          if (typeof prior === 'string' && prior !== value) {
+            s.logger.debug(
+              `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(prior)} to=${value === undefined ? '(absent)' : sanitizeForLog(value)}`,
+            );
+          }
+        }
+        input = { ...supplied, ...previewProse };
       }
 
       if (sess.presentResultRepairDraft.hasRepairableDraft()) {
@@ -189,22 +241,42 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         input = merged;
       } else if (sess.phase.kind === 'exploring' && requestedRepair) {
         return reject({
-          error: 'invalid_input',
+          error: REJECTION_CODES.invalidInput,
           hint: 'is_update:true is accepted during synthesis only for a session-authorized held repair draft. Send the full new-render payload without is_update.',
         }, { clearDraft: true });
       }
 
-      // Zod at the boundary: the advertised structural contract IS the runtime contract.
+      // Mirrors the toolPolicy.ts stage gate this same handler already branches on above
+      // (isVisualPreview / sess.phase.kind === 'completed'). Two consumers: the boundary schema
+      // selection below — the stage decides which fields were offered — and the unknown-node-id
+      // repair hint, which must not name lineage_search_objects on a stage that cannot call it.
+      const presentResultStage: PresentResultStage = isVisualPreview
+        ? 'visual_preview'
+        : sess.phase.kind === 'completed'
+        ? 'completed'
+        : 'synthesis';
+
+      // Zod at the boundary: the advertised structural contract IS the runtime contract, so the
+      // parse runs against the same stage projection the model was offered — a field that stage
+      // omits rejects here as a schema violation, not through a check after a permissive parse.
       // A type/enum/cap violation rejects with field paths the model can self-heal from —
       // never silently nulled fields. Conditional rules stay in validatePresentResult.
-      const boundary = PresentResultBoundarySchema.safeParse(input);
+      const boundary = presentResultBoundarySchemaForPhase(presentResultStage).safeParse(input);
       if (!boundary.success) {
         const fieldErrors = boundary.error.issues.slice(0, 3)
           .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
+        // Offenders ride as `{ path }` entries so the shared rejectionIssuePaths reader reaches the
+        // correction envelope and the trace. A strict-schema key violation names its offenders on
+        // the issue's `keys`, not on a path — the root path would otherwise name nothing.
+        const issuePaths = [...new Set(boundary.error.issues.flatMap(issue =>
+          issue.code === 'unrecognized_keys'
+            ? [...issue.keys]
+            : issue.path.length > 0 ? [issue.path.join('.')] : []))];
         return reject({
           success: false,
           errors: fieldErrors,
-          hint: 'Fix the listed fields and call lineage_present_result again with the same content.',
+          hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
+          ...(issuePaths.length > 0 ? { detail: issuePaths.map(path => ({ path })) } : {}),
         }, { clearDraft: true });
       }
       const presentInput = boundary.data as PresentResultInput;
@@ -213,17 +285,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // never committed, so its merged repair must pass the complete fresh-render validation contract
       // (including non-empty highlight_groups) before the one atomic commit.
       const isAmendment = !isVisualPreview && sess.phase.kind === 'completed' && presentInput.is_update === true;
-
-      if (isVisualPreview || sess.phase.kind !== 'completed') {
-        const hasAdd = presentInput.add_node_ids && presentInput.add_node_ids.length > 0;
-        const hasPrune = presentInput.prune_node_ids && presentInput.prune_node_ids.length > 0;
-        if (hasAdd || hasPrune) {
-          return reject({
-            error: 'invalid_input',
-            hint: 'Graph structure is locked during an initial presentation. add_node_ids and prune_node_ids are strictly forbidden. Only provide sections, notes, and highlights.',
-          }, { clearDraft: true });
-        }
-      }
 
       const previewScope = isVisualPreview && sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
         ? sess.discoveryScopeArtifact
@@ -244,23 +305,37 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const graphSource = resultGraph.source;
       const modelNodeMap = getModelNodeMap(model);
 
+      // Normalize-with-log, the same contract submit_findings holds: an AI decision may be
+      // canonicalised, never rewritten silently. Only a value that actually changed is logged, so a
+      // clean payload costs no output-channel line.
+      const canonicalNodeId = (id: string, field: string): string => {
+        const resolved = resolveModelNodeId(id, modelNodeMap) ?? id;
+        if (resolved !== id) {
+          s.logger.debug(
+            `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(id)} to=${sanitizeForLog(resolved)}`,
+          );
+        }
+        return resolved;
+      };
       if (Array.isArray(presentInput.sections) && presentInput.sections.length > 0) {
-        presentInput.sections = presentInput.sections.map((sec) => {
+        presentInput.sections = presentInput.sections.map((sec, secIndex) => {
           if (!Array.isArray(sec.node_ids) || sec.node_ids.length === 0) return sec;
-          const normalizedNodeIds = sec.node_ids.map((id) => resolveModelNodeId(id, modelNodeMap) ?? id);
+          const normalizedNodeIds = sec.node_ids.map((id, idIndex) =>
+            canonicalNodeId(id, `sections.${secIndex}.node_ids.${idIndex}`));
           return { ...sec, node_ids: normalizedNodeIds };
         });
       }
       if (Array.isArray(presentInput.notes) && presentInput.notes.length > 0) {
-        presentInput.notes = presentInput.notes.map(note => ({
+        presentInput.notes = presentInput.notes.map((note, noteIndex) => ({
           ...note,
-          node_id: resolveModelNodeId(note.node_id, modelNodeMap) ?? note.node_id,
+          node_id: canonicalNodeId(note.node_id, `notes.${noteIndex}.node_id`),
         }));
       }
       if (Array.isArray(presentInput.highlight_groups) && presentInput.highlight_groups.length > 0) {
-        presentInput.highlight_groups = presentInput.highlight_groups.map(group => ({
+        presentInput.highlight_groups = presentInput.highlight_groups.map((group, groupIndex) => ({
           ...group,
-          node_ids: group.node_ids.map(id => resolveModelNodeId(id, modelNodeMap) ?? id),
+          node_ids: group.node_ids.map((id, idIndex) =>
+            canonicalNodeId(id, `highlight_groups.${groupIndex}.node_ids.${idIndex}`)),
         }));
       }
 
@@ -281,7 +356,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const newSet = new Set(resolvedNodeIds);
         resolvedEdges = model.edges
           .filter(e => newSet.has(e.source) && newSet.has(e.target))
-          .map(e => [e.source, e.target, edgeApiType(e.type)] as [string, string, string]);
+          .map(e => [e.source, e.target, edgeApiType(e.type, modelNodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
       }
 
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
@@ -317,28 +392,60 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       s.logger.debug(`presentResult section[0] preview: ${trunc(presentInput.sections?.[0]?.text ?? '(empty)', 200)}`);
 
-      // Normalize documented provider encoding artifacts before assembly.
-      // Markdown math rendering happens in the webview after deterministic assembly.
-      const fixedInput = autoFixPresentResult(presentInput);
-
-      // Bare-by-choice is a permitted AI decision (prompt contract: nodes left out of both preview
-      // surfaces stay bare) — observe and log, never re-link. Bare nodes still render via resolvedNodeIds.
-      const bareNodeIds = findBareNonPrunedNodes(resultGraph, fixedInput, resolvedNodeIds);
+      // The notes schema requires a caption for every kept node the engine lists with no detail
+      // slot, so a node unlinked in both badge surfaces is not a licensed "stays bare" outcome —
+      // it may still carry a notes[] entry this check does not inspect. Observe and log only,
+      // never re-link; unlinked nodes still render via resolvedNodeIds.
+      const bareNodeIds = findBareNonPrunedNodes(resultGraph, presentInput, resolvedNodeIds);
       if (bareNodeIds.length > 0) {
         s.logger.debug(`[Presentation] ${bareNodeIds.length} non-pruned node(s) left bare by the AI (rendered unlabeled/uncolored) — ${trunc(bareNodeIds.join(', '), 200)}`);
       }
 
+      // A detail slot is the model's own captured technical findings for that node — the richest
+      // material the synthesis call received for it — and sections[].text or a notes[] caption are
+      // the only surfaces that carry prose. A slot this misses is not "bare" in the
+      // findBareNonPrunedNodes sense (a highlight color carries none of the slot's content);
+      // reported below as a real violation (see findUnrenderedDetailSlotIds).
+      const renderedNodeIds = new Set(resolvedNodeIds);
+      const unrenderedSlotIds = findUnrenderedDetailSlotIds(
+        sess.memory.notedNodeIds.filter(id => renderedNodeIds.has(id)),
+        presentInput,
+      );
+      if (unrenderedSlotIds.length > 0) {
+        s.logger.debug(`[Presentation] ${unrenderedSlotIds.length} of ${sess.memory.slotCount} detail slot(s) reached no section — ${trunc(unrenderedSlotIds.join(', '), 200)}`);
+      }
+
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       let assembledDescription: string | undefined = undefined;
-      if (fixedInput.sections?.length) {
+      if (presentInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
-        const assembled = orderAndAssemble(fixedInput.sections, { title: fixedInput.title, intro: fixedInput.intro, closing: fixedInput.closing, nodeMap });
+        // CT results carry a validated column chain the BB contract has no counterpart for; the
+        // engine renders it as a deterministic table so the CT document is visibly a column trace,
+        // not a BB narrative with formulas. No edges — no preface (undefined keeps BB output unchanged).
+        const columnChainPreface = resultGraph.columnAspect
+          ? buildColumnChainPreface(resultGraph.columnAspect.edges)
+          : undefined;
+        const assembled = orderAndAssemble(
+          presentInput.sections,
+          {
+            title: presentInput.title,
+            intro: presentInput.intro,
+            closing: presentInput.closing,
+            nodeMap,
+            ...(columnChainPreface ? { preface: columnChainPreface } : {}),
+          },
+        );
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
+        // One badge per node is a rendering constraint the assembler resolves first-wins; the
+        // node stays described in every section's text, so nothing the model authored is lost.
+        if (assembled.droppedSectionLinks.length > 0) {
+          s.logger.debug(`[Presentation] ${assembled.droppedSectionLinks.length} duplicate section link(s) dropped (first section keeps the badge) — ${trunc(assembled.droppedSectionLinks.map(d => `${d.node_id}: "${d.dropped_from}" → kept in "${d.kept_in}"`).join(', '), 300)}`);
+        }
       }
 
       s.logger.info(
-        `[Presentation] Output assembled — title="${trunc(fixedInput.title ?? '(none)', 60)}" sections=${fixedInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount}`
+        `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
       );
 
       // Checks that need context validatePresentResult does not hold — the cached discovery answer
@@ -348,35 +455,62 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // charge, and three charges end the phase.
       const externalViolations: PresentResultViolation[] = [];
       if (isVisualPreview && previewNarrative) {
-        externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, fixedInput));
+        externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, presentInput));
       }
-      const missingTerminalSources = findMissingCtTerminalSources(resultGraph, fixedInput, resolvedNodeIds);
-      if (missingTerminalSources.length > 0) {
+      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, presentInput, resolvedNodeIds, sess.memory.notedNodeIds);
+      if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
           field: 'sections',
           messages: [
-            `CT terminal source node(s) missing from final presentation: ${quoteIds(missingTerminalSources, 5)}.`,
-            'Link them in sections[].node_ids or include them in highlight_groups[] with color:"source". Tables can be source nodes even when they have no detail slot.',
+            `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes, 5)}.`,
+            'For each one: add its id to a sections[].node_ids, or to any highlight_groups[].node_ids, or give it one grounded notes[].node_id caption. Tables carry the traced column even when they have no detail slot.',
           ],
-          repairFields: ['sections', 'highlight_groups'],
-          paths: ['sections', 'highlight_groups'],
-          soleHint: 'Fix CT source presentation only. Keep existing section text where possible; add the terminal source table(s) to the source section or source highlight group.',
+          repairFields: ['sections', 'highlight_groups', 'notes'],
+          paths: ['sections', 'highlight_groups', 'notes'],
+          soleHint: 'Fix CT node coverage only. Keep existing section text where possible; add each named node to a section, a highlight group, or notes[].',
+        });
+      }
+      // A detail slot's captured prose lives in sections[].text or a notes[] caption, in either
+      // mode — the aspect this repairs is "a slot was captured", never "the trace is CT", so it
+      // runs unconditionally alongside the CT chain check above rather than branching on
+      // resultGraph source/columnAspect. A highlight color never satisfies it (it carries no
+      // prose); repair may add the missing id to either surface.
+      if (unrenderedSlotIds.length > 0) {
+        externalViolations.push({
+          field: 'sections',
+          messages: [
+            `Detail slot(s) reached no section or note: ${quoteIds(unrenderedSlotIds, 5)}.`,
+            'For each one, add its id to a sections[].node_ids or give it a grounded notes[].node_id caption so the captured findings render — a highlight color alone does not carry a detail slot\'s prose.',
+          ],
+          repairFields: ['sections', 'notes'],
+          paths: ['sections', 'notes'],
+          soleHint: 'Fix detail-slot coverage only. Keep existing section text where possible; add each named node to a sections[].node_ids or a notes[].node_id caption.',
         });
       }
 
-      // Mirrors the toolPolicy.ts stage gate this same handler already branches on above
-      // (isVisualPreview / sess.phase.kind === 'completed'): visual_preview and synthesis never
-      // expose lineage_search_objects, so the unknown-node-id repair hint must not name it there.
-      const presentResultStage: PresentResultStage = isVisualPreview
-        ? 'visual_preview'
-        : sess.phase.kind === 'completed'
-        ? 'completed'
-        : 'synthesis';
-      const validation = validatePresentResult(fixedInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage);
+      // A real object is never rejected as "unknown". The ids above were resolved against the WHOLE
+      // loaded model; when the result graph still cannot link one, the engine already records why —
+      // pruned, dropped by the render bound, in scope with no verdict, or outside the approved
+      // scope. Read lazily from the snapshot the engine already serializes, so a clean call pays
+      // nothing and no second projection of the same state exists.
+      let smSnapshot: SmState | null | undefined;
+      const nodeIdState: PresentNodeIdStateLookup = (nodeId): PresentNodeIdState => {
+        if (!modelNodeMap.has(nodeId)) return 'not_in_model';
+        if (smSnapshot === undefined) smSnapshot = sess.stateMachine?.toJSON() ?? null;
+        if (!smSnapshot) return 'out_of_scope';
+        // `ctPrunedNodeIds` needs no second test: the CT focus prune records both sets in one
+        // block (`smBase.ts` `ctPrunedFocusIds.add` immediately followed by `removedSet.add`), so
+        // it is a subset of `removedSet` on every snapshot, live or restored.
+        if (smSnapshot.removedSet.includes(nodeId)) return 'pruned';
+        if ((smSnapshot.renderDroppedNodeIds ?? []).includes(nodeId)) return 'render_dropped';
+        if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
+        return 'out_of_scope';
+      };
+      const validation = validatePresentResult(presentInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage, nodeIdState);
 
       if (!validation.success) {
         if (isRepairablePresentResultFailure(validation)) {
-          sess.presentResultRepairDraft.hold(fixedInput, validation.repairFields);
+          sess.presentResultRepairDraft.hold(presentInput, validation.repairFields);
           validation.hint = `${validation.hint} You may repair the held draft by calling lineage_present_result with is_update:true and only these corrected fields: ${validation.repairFields.join(', ')}.`;
         } else {
           sess.presentResultRepairDraft.clear();
@@ -385,11 +519,15 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         return s.logAndReturn('present_result', validation, rawInput);
       }
 
+      // The approved exploration this render belongs to; a discovery-turn render, which never
+      // passed an approval gate, has none and is stamped with the chat session instead.
+      const runId = sess.explorationRunId ?? sess.id;
       const aiMetadata: PresentationArtifact['aiMetadata'] = {
         summary: validation.summary,
         description: validation.description,
         createdAt: new Date().toISOString(),
         modelName: sess.modelName ?? 'unknown',
+        runId,
         highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
         badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
         notes: validation.notes.map(n => ({ nodeId: n.node_id, text: n.text })),
@@ -402,31 +540,31 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               toNode:   e.to_node,
               fromCol:  e.from_col,
               toCol:    e.to_col,
+              ...(e.transforms ? { transforms: e.transforms } : {}),
+              ...(e.note ? { note: e.note } : {}),
             })),
           },
+          nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states),
         } : {}),
       };
+      const checkpoint = captureCheckpoint(sess, s.logger);
       const artifact: PresentationArtifact = {
         name: validation.name,
         nodeIds: [...validation.node_ids],
         aiMetadata,
+        ...(checkpoint ? { runId, checkpoint } : {}),
       };
 
-      const panel = s.getPanel();
+      // Handed to the host for delivery: reveal-before-send and the validated bridge sink are the
+      // host's, so the render reflection rides the contract and this layer keeps no knowledge of the
+      // panel. The webview normalizes node_ids against its model and ACKs via view-render-result.
       let autoDispatched = false;
-      if (panel) {
-        // Validated send through the bridge sink — the render reflection rides the contract, not a raw
-        // side-channel. The webview normalizes node_ids against its model and ACKs via view-render-result.
-        try {
-          autoDispatched = await postToWebview(
-            panel,
-            { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
-            s.logger,
-          );
-        } catch (error) {
-          s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
-        }
-        if (autoDispatched) panel.reveal();
+      try {
+        autoDispatched = await s.deliverPreview(
+          { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
+        );
+      } catch (error) {
+        s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
       }
 
       // A second success violates the single-shot presentation contract; retain a diagnostic canary.
@@ -434,7 +572,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
       if (successWrite.kind !== 'accepted') {
         return s.logAndReturn('present_result', {
-          error: 'stale_turn',
+          error: REJECTION_CODES.staleTurn,
           hint: 'The result was not committed because the turn no longer owns this session.',
         }, rawInput);
       }
@@ -454,13 +592,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       {
         resultGraph.description = validation.description ?? undefined;
         resultGraph.summary = validation.summary ?? undefined;
-        // Persist the autoFixed parts — the raw input may still carry literal \n artifacts
-        // the fixer already corrected in the rendered description.
-        resultGraph.title = fixedInput.title ?? undefined;
-        resultGraph.intro = fixedInput.intro ?? undefined;
-        resultGraph.closing = fixedInput.closing ?? undefined;
-        if (Array.isArray(fixedInput.sections)) {
-          resultGraph.sections = fixedInput.sections.map(sec => ({
+        resultGraph.title = presentInput.title ?? undefined;
+        resultGraph.intro = presentInput.intro ?? undefined;
+        resultGraph.closing = presentInput.closing ?? undefined;
+        if (Array.isArray(presentInput.sections)) {
+          resultGraph.sections = presentInput.sections.map(sec => ({
             label: sec.label,
             node_ids: sec.node_ids,
             text: sec.text,
@@ -472,7 +608,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         s.logger.debug(`[Presentation] repeated present_result in one turn (success #${sess.presentResultAttemptCountThisTurn}) — single-shot guard may have regressed`);
       }
 
-      s.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${fixedInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
+      s.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
     } catch (err) { return s.toolError('present_result', err); }
 }

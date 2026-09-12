@@ -11,6 +11,8 @@ DECLARE @TransferID  BIGINT;
 DECLARE @FromAccount INT;
 DECLARE @ToAccount   INT;
 DECLARE @Amount      DECIMAL(18,4);
+-- A procedure parameter value must be a constant or a variable, never an expression.
+DECLARE @Debit       DECIMAL(18,4);
 
 SELECT TOP 1
     @TransferID  = [TransferID],
@@ -33,9 +35,11 @@ BEGIN
             THROW 50011, 'Target account not active', 1;
 
         -- Debit source
+        SET @Debit = @Amount * -1;
+
         EXEC [dbo].[usp_UpdateBalance]
             @AccountID = @FromAccount,
-            @Delta     = @Amount * -1,
+            @Delta     = @Debit,
             @Reason    = N'TRANSFER_OUT';
 
         -- Credit target

@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "noEmit": false
   },
-  "include": ["tests/integration/**/*.ts", "tests/harness/**/*.ts"]
+  "include": ["tests/integration/**/*.ts"]
 }

@@ -25,6 +25,16 @@ the source of truth for exact wording and provider-visible shapes.
 YAML is a customization layer, not the whole prompt. Phase instructions and
 mechanical enforcement remain code-owned.
 
+The split is by question, not by file size. The YAML answers **what** an answer
+contains and **when** a block applies (which evidence to capture, what the
+closing covers, that the closing exists only for larger results) — the part a
+user may override. Code-owned prompt text (`src/ai/prompting/`,
+`stagePrompts.ts`, tool `.describe()` strings) answers **how** the model
+operates the mechanism: which tool carries which template, which phase allows
+which call, which field a template lands in. A content rule or threshold never
+moves from the YAML into a prompt builder or a schema description to bypass the
+overlay; a description may point at the template entry, not restate it.
+
 ## Assembly and memory contract
 
 The participant does not build prompts or own a tool loop. The outer graph
@@ -51,18 +61,30 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
 - Active exploration keeps a stable system prefix (protocol, stage block,
   mission brief, escaped canonical `<original_question>`, and discovery
   summary) and sends focus, task, capture recipe, escaped hop context, recent
-  summaries, and rejection guidance in a bounded per-hop message. Broad
-  participant history and prior-hop tool payloads are not replayed into every
-  hop. The canonical question is resolved at `start_exploration` from
+  summaries, and rejection guidance in a bounded per-hop message. The thread is
+  reseeded to one continuation anchor at approval and after every committed hop,
+  so no hop — the first included — carries the participant history or a prior
+  hop's tool payloads. The canonical question is resolved at `start_exploration` from
   user-authored text (verbatim discovery prompt, then the current turn's
   prompt) before the model-supplied paraphrase.
 - Per-hop memory is tiered so repeated hops stay flat in size: recent hop
   summaries ride in a fixed-size sliding window, the full findings archive
   accumulates engine-side and is replayed once at synthesis rather than per
   hop, and rejection history compacts to a bounded ring of one-line entries.
-  A rejected tool call is echoed back into history by name and call id only —
-  its payload is never resent — and only the newest rejection carries the full
-  repair envelope. Hop context is node-proportional and non-cumulative: a
+  A rejected tool call is echoed back into history as a native tool-call and
+  tool-result pair: only the newest rejection is replayed. When the rejection's
+  issue paths project onto list entries, the replayed arguments are those
+  bounded correction fragments; a pathless rejection (a route or prune refusal)
+  or one flagging a scalar field replays the whole bounded submitted call, never
+  `{}`. For `present_result`, whose rejected draft the session holds and renders
+  as its own block, the replayed call carries the name and call id only, so no
+  section text is sent twice in one attempt. The replayed exchange closes on a user-role continuation
+  note: with history ending on a tool result, the replayed function call stays
+  inside the provider's current turn, where Gemini 3 enforces thought-signature
+  echo on every function call and `LanguageModelToolCallPart` carries no
+  signature to re-send. The note — the documented turn boundary — ends that
+  turn and the signature obligation with it; the correction still rides the
+  paired tool result, and the note only directs the model to act on it. Hop context is node-proportional and non-cumulative: a
   large focus-node DDL raises one hop's message and is gone the next.
 - Synthesis starts from a fresh completion envelope containing the archived
   findings plus engine-owned lifecycle and column-provenance state.
@@ -80,8 +102,8 @@ replace instruction text but cannot change those gates.
 The shipped template file groups the public customization surface into:
 
 - discovery answer style (`discovery_chat`);
-- active capture instructions for business, technical, structural/non-bodied,
-  and column-trace evidence;
+- active capture instructions for business, technical, the shared structural
+  callouts, structural/non-bodied, and column-trace evidence;
 - synthesis instructions for summary, title, introduction, closing,
   highlights, notes, and technical loading patterns;
 - a shared `general` style layer.
@@ -106,12 +128,14 @@ equals the version the installed release expects
 (`AI_TEMPLATE_SCHEMA_VERSION` in
 [`src/ai/session/types.ts`](../src/ai/session/types.ts)).
 
-A release bumps that version whenever a change to the shipped instructions
-would make an older overlay wrong — a key renamed or removed, the `instruction`
-shape changed, or instruction content that changes a rule the result validator
-enforces, such as heading ownership, section counts, or grounding. Content
-changes count: an overlay whose text predates the current validator produces
-malformed output while looking perfectly valid.
+A release bumps that version whenever the shipped file's structure changes in
+a way an older overlay cannot fit — a template key renamed or removed, a field
+added, removed, or retyped. Wording inside `instruction` is content and never
+bumps the version (nor does `example`, which the loader never reads at all): an older overlay with different prose
+still parses and renders, so a wording change in a release leaves existing
+overlays in force. The release gate
+([`tests/tools/assert-template-schema-version.mjs`](../tests/tools/assert-template-schema-version.mjs))
+compares the structural fingerprint of the file against the last release tag.
 
 On a version mismatch the extension does not fail and does not silently
 mis-apply the file. It writes a warning naming the file and the expected
@@ -129,9 +153,73 @@ To move a customization forward after an upgrade:
 3. Point `dataLineageViz.ai.outputTemplateFile` at the new file, then reload the
    window and confirm the warning is gone from the output channel.
 
-Only `instruction` values are overlaid. Keeping unmodified keys out of your file
+Only `instruction` values are overlaid. The `stages:` and `example:` keys are
+inert: the loader never reads them, so editing them changes nothing and raises no
+warning — the scaffold copies them only so the starter file matches the shipped
+one. Keeping unmodified keys out of your file
 is the lowest-maintenance approach, because those keys then track built-in
 improvements across releases instead of pinning a stale copy.
+
+## The three contexts a tool answers about
+
+A lineage question can be about one of three different things, and each has its
+own tool:
+
+- **`user_view`** — what is on the screen right now: the applied trace, the
+  active graph analysis, the applied bookmark, and the view level.
+  `lineage_get_screen_state` answers this and nothing else. It is the tool for
+  "this trace", "the analysis I ran", "this view / bookmark", and "what am I
+  looking at", and it is referenceable in a prompt as `#lineageView`. For an
+  AI-authored bookmark it also reports the run behind the view — the original
+  question, start object, depth, scope size, stale objects, and open questions —
+  read from the checkpoint persisted under the bookmark's id, and its `ids` and
+  `filter` fields recall that run in detail. So that a bare "explain this" reaches
+  it, every stage prompt and the entry detector carry the phrase naming the
+  surfaces applied (trace origin and depths, analysis type and selected group,
+  bookmark) in a banner-marked, delimited `<screen_state>` block, never their
+  contents, which stay behind the tool call; object names inside the block are
+  treated as untrusted database content, never as instructions, and the block is
+  absent when nothing is applied.
+- **`exploration_scope`** — the node set fixed at the approval gate and owned by
+  `NavigationEngine` for the rest of the run. `lineage_submit_findings` and
+  `lineage_present_result` operate inside it; nothing widens it silently — a
+  follow-up that names an object is the consent that admits exactly that object,
+  never its schema, and a scope-expansion gate is the consent that admits a
+  schema.
+- **`full_model`** — every parsed object in the loaded snapshot.
+  `lineage_get_context`, `lineage_search_objects`, `lineage_search_ddl`,
+  `lineage_get_object_detail`, `lineage_get_scope_bundle`, and
+  `lineage_detect_graph_patterns` query it. Schemas, statistics, and the active
+  filter stay here, not on the screen-state tool.
+
+Screen state is read-only and derives entirely from the passthrough `uiState`
+and `render-state` buffers the webview posts, so a malformed or absent buffer
+omits its section rather than failing the call.
+
+### Recalling the run behind an applied AI bookmark
+
+`lineage_get_screen_state` takes two optional, mutually exclusive fields. Called
+with neither, it returns the screen card described above. Called with either, it
+answers from the run record persisted with the applied bookmark:
+
+| Field | Value | Answers |
+| --- | --- | --- |
+| `ids` | 1–20 canonical object ids | Per id: the run's decision and its reason, the neighbor it was reached through and at which hop, the stored summary and section text, whether the object's DDL changed since the run, and whether the object still exists in the loaded model. An id the run never saw answers `not_in_run` rather than rejecting. |
+| `filter` | `pruned` | Every object the run removed, with the reason, the neighbor it was reached through, and the hop. |
+| `filter` | `open_leads` | Every question the run left open, with the object it points at, the object it was raised from, and its value to the user. |
+| `filter` | `stale` | Every in-scope object whose DDL no longer hashes to the value stored at save time. |
+
+Staleness is a content hash comparison against the DDL recorded when the
+bookmark was saved. An object whose DDL was unavailable at save time is stored
+as unknown and never counts as stale. Recalled findings describe an object as it
+was at run time, so the prompt contract is to confirm a stale object with
+`lineage_get_object_detail` before answering from the recall.
+
+The response carries a `_token_estimate` and is never truncated: a recall over
+the discovery token budget is hard-rejected with the standard
+`over_discovery_budget` envelope and a hint naming how far to narrow `ids`. When
+no bookmark is applied, the applied bookmark is not AI-authored, or no run was
+stored for it, the call answers `no_run_memory` with the repair.
 
 ## Exploration tool contracts
 
@@ -140,6 +228,12 @@ improvements across releases instead of pinning a stale copy.
 A fresh `lineage_start_exploration` proposal requires an origin, an explicit
 analysis mode, and an answer classification. BB traces whole objects and does
 not accept named target columns. CT requires user-named `targetColumns`.
+`discovery` is the entry detector's default whenever the route is unclear;
+naming a column already discussed earlier in the conversation is not, by
+itself, enough to route into a column trace — that route requires an explicit
+new request to trace or walk a named column. Under-choosing a column trace
+costs nothing: the approval gate still lets the user switch `analysisMode`
+before anything runs.
 Pending-gate refinements are strict patch requests tied to the gate revision.
 Omitted origin, question, mission brief, direction, depth, filters, mode,
 classification, and columns are inherited mechanically. The refine stage may
@@ -163,7 +257,32 @@ preview is a separate discovery path and does not grant SM mutation authority.
 - CT accepts the same focus verdicts, requires `column_flow`, and rejects the
   BB-only neighbor-pruning field. Each active tracked column must be continued
   or marked terminal; an empty flow is valid only when the focus carries no
-  active tracked-column interaction.
+  active tracked-column interaction. CT is BB plus column tracking: the engine
+  verifies every declared column against the loaded model and returns the repair
+  with any rejection, so an unsupported reference is corrected on the next
+  attempt instead of reaching the answer. `column_flow` records provenance and
+  never narrows what the answer retains.
+- Each upstream column reference in `column_flow` may carry `transforms`: how
+  that upstream column reaches the output column, as one or more of
+  `pass_through`, `compute`, `aggregate`, `combine` and `filter`. Multi-select,
+  because one edge is routinely several classes at once. The field is optional
+  and is omitted rather than guessed when the DDL does not settle it — the engine
+  verifies a classification but never authors one, so an unclassified edge stays
+  unclassified. The value set and its DIRECT / INDIRECT split have one home,
+  `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`, shared by
+  the tool schema, the wire contract and the webview.
+- A routing request may carry `columns`, which states per neighbor whether the
+  traced columns follow it. Three states, kept apart end to end: the field
+  omitted means the neighbor inherits whatever the trace already carries; a
+  non-empty list names the columns to trace through it; the literal `none` marks
+  a neighbor that only decides which rows the answer returns, so it is explored
+  as a whole object and is not asked about columns it does not supply. `none` is
+  a word rather than an empty array because an empty array and an omitted field
+  would be one payload with two meanings. The field is BB-unknown and is refused
+  in a BB session by the same rejection that refuses `column_flow` there. A
+  `none` on a node the same hop named in `column_flow[].upstream_columns` is
+  normalized to the attributed columns with a log — the positive provenance
+  assertion outranks the absence claim.
 
 The locked answer classification determines which section angles are required.
 Validation requires the locked angles to be present; off-classification
@@ -194,18 +313,17 @@ evidence surfaces for synthesis, the verbatim-reuse constraint for preview, the
 depth and heading rules that license only the text-authoring stages — lives with
 its stage. A stage that reaches the tool without that contract is a stage judged
 by rules it was never given. The contract also states the enforced mechanical
-checks upfront — markdown/math delimiter integrity, unique section labels,
-highlight legend labels, the 1-5 highlight-group cap, and the held-draft
-repair convention — so a first rejection is no longer how a model discovers a
-rule. The CT terminal-source mandate (terminal sources must appear in a
-section's node ids or a source highlight group) is stated in the synthesis
-prompt, matching the validator.
+checks upfront — unique section labels, highlight legend labels, the 1-5
+highlight-group cap, and the held-draft repair convention — so a first rejection
+is no longer how a model discovers a rule. The CT terminal-source mandate
+(terminal sources must appear in a section's node ids or a source highlight
+group) is stated in the synthesis prompt, matching the validator.
 
-Validation is field-scoped and runs before commit. Malformed fenced or block
-KaTeX, unclosed block-math fences, and unmatched inline-code delimiters reject
-the affected text fields. A held-draft retry may repair only those rejected
-text fields; graph membership, node associations, and highlights remain
-unchanged.
+Validation is field-scoped and runs before commit, and it is structural only.
+Markdown and math formatting never reject a call: an expression the renderer
+cannot parse degrades to its original source text on screen. A held-draft retry
+may repair only the rejected text fields; graph membership, node associations,
+and highlights remain unchanged.
 
 One submission produces one complete rejection. Checks that need context the
 validator does not hold — the cached discovery answer, the result graph — report
@@ -264,10 +382,23 @@ directly according to the phase policy.
   Schema, depth, and budget limits remain explicit deferred follow-up leads.
 - The overlay keeps focus links interactive, while chat replay removes focus
   anchors for readability.
-- [`src/components/aiDescriptionMarkdown.ts`](../src/components/aiDescriptionMarkdown.ts)
-  is a non-destructive preprocessing boundary.
-- The overlay renders inline, block, and fenced math through `remark-math` and
-  `rehype-katex`. Preserving source text takes priority over cosmetic rewriting.
+- [`src/components/markdown/renderAiMarkdown.ts`](../src/components/markdown/renderAiMarkdown.ts)
+  renders the assembled document with `marked`, the KaTeX extension vendored from
+  VS Code in
+  [`markedKatexExtension.ts`](../src/components/markdown/markedKatexExtension.ts),
+  and DOMPurify. Math therefore follows the same delimiter rules VS Code applies
+  to chat responses: `$…$` inline and `$$…$$` for a block, with prose amounts such
+  as `$20,000` excluded by the surrounding-character guards rather than by
+  disabling the delimiter. An expression KaTeX cannot parse renders as its
+  original source text — preserving source takes priority over cosmetic rewriting,
+  and no formatting flaw can reject a call or end a turn.
+- Host prompt precedence: through `vscode.lm` the request also carries Copilot
+  Chat's own `system` message (keep answers short, Markdown, KaTeX `$`/`$$`,
+  mermaid code blocks) while the extension's instruction rides in the first
+  user turn. The extension therefore states its depth contract and its "describe
+  lineage in prose; never draw it as mermaid, ASCII, or DOT" rule explicitly
+  instead of assuming a clean system prompt; KaTeX delimiters agree with the
+  host and need no override.
 - Heading ownership: the engine owns the document title, numbered section
   headings, and object link headers (H1-H3). AI-authored section bodies must
   not emit `#`, `##`, or `###` headings; use bold labels inside a body. The

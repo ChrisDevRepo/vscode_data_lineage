@@ -164,7 +164,7 @@ export const LOG_TRUNC_REJECTION = 1_000;
  */
 export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): string {
   try {
-    const seen = new WeakSet<object>();
+    const seen = new WeakSet();
     const serialized = JSON.stringify(value, (_key, candidate: unknown) => {
       if (typeof candidate === 'bigint') return `${candidate.toString()}n`;
       if (typeof candidate === 'string') {

@@ -7,7 +7,7 @@ import {
 } from '../model/modelPort';
 import type { DatabaseModel } from '../../engine/types';
 import { getGlobalSingleton } from '../../utils/globalSingleton';
-import type { SerializedFilterState, FilterProfile } from '../../engine/projectStore';
+import type { SerializedFilterState } from '../../engine/projectStore';
 import { ColumnStore } from '../../engine/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
 import { type ResultGraph, type AiOutputTemplates, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES } from '../session/types';
@@ -15,6 +15,7 @@ import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult, SmState } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
+import { discoveryBlockBytes, discoveryEvidenceItemBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError } from '../support/toolErrorEnvelope';
 import { longestPrefixFitting } from '../support/textTruncation';
@@ -29,6 +30,8 @@ export interface PendingExplorationProposal {
   readonly classification: ClassificationValue;
   readonly activeFilter: SerializedFilterState;
   readonly summary: ScopeSummary;
+  /** The discovery-to-hop handoff memo composed for this exact revision; absent until attached. */
+  readonly discoverySummary?: string;
 }
 
 /** Serializes a JSON value with object keys sorted at every level, so key insertion order cannot affect equality. */
@@ -41,11 +44,13 @@ function canonicalJson(value: unknown): string {
 
 /** Structural equality for two fully merged, validated exploration proposals. */
 export function sameExplorationProposal(
-  left: Omit<PendingExplorationProposal, 'revision'>,
+  left: Omit<PendingExplorationProposal, 'revision' | 'discoverySummary'>,
   right: PendingExplorationProposal | Omit<PendingExplorationProposal, 'revision'>,
 ): boolean {
-  const { revision: _revision, ...rightWithoutRevision } = right as PendingExplorationProposal;
-  return canonicalJson(left) === canonicalJson(rightWithoutRevision);
+  // `discoverySummary` is excluded on both sides — it is cached after this comparison runs, so a
+  // prior revision's cached memo must never make a genuinely-unchanged refine look "changed".
+  const { revision: _revision, discoverySummary: _discoverySummary, ...rightRest } = right as PendingExplorationProposal;
+  return canonicalJson(left) === canonicalJson(rightRest);
 }
 
 /**
@@ -86,26 +91,17 @@ export type ExplorationActivationOutcome =
  * discovery walk cannot grow the retained set even when every result is individually small.
  */
 export const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
-/**
- * Maximum UTF-8 bytes retained for one canonical discovery result — held below
- * {@link MAX_DISCOVERY_EVIDENCE_BYTES} so one oversized result cannot consume the whole projection.
+/*
+ * The byte bounds on the discovery-evidence message, on one evidence item, and on the replayed
+ * discovery transcript are governed by `support/tokenBudget.ts` (`discoveryBlockBytes()`,
+ * `discoveryEvidenceItemBytes()`): one 64 KiB ceiling per block, scaled down with the selected
+ * model's input window.
  */
-export const MAX_DISCOVERY_EVIDENCE_ITEM_BYTES = 61_440;
-/**
- * Maximum UTF-8 bytes projected by the complete discovery-evidence message — the 64 KiB prompt-budget
- * ceiling the per-item and per-count bounds exist to keep.
- */
-export const MAX_DISCOVERY_EVIDENCE_BYTES = 65_536;
 /**
  * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn history
  * by turn count, independently of how large any single turn is.
  */
 export const MAX_DISCOVERY_TRANSCRIPT_TURNS = 20;
-/**
- * Maximum UTF-8 bytes in the rendered canonical discovery transcript — the same 64 KiB ceiling as
- * evidence, applied to replayed history so the two cannot compound.
- */
-export const MAX_DISCOVERY_TRANSCRIPT_BYTES = 65_536;
 
 /** Provider-neutral accepted discovery result eligible for cross-turn grounding. */
 export interface DiscoveryEvidenceObservation {
@@ -135,13 +131,13 @@ function truncateDiscoveryText(text: string, fits: (candidate: string) => boolea
   return `${prefix}${DISCOVERY_TRUNCATION_MARKER}`;
 }
 
-function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn): DiscoveryTranscriptTurn {
+function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn, budget: TurnTokenBudget): DiscoveryTranscriptTurn {
   const build = (user: string, assistant: string): DiscoveryTranscriptTurn => [
     { role: 'user', content: user },
     { role: 'assistant', content: assistant },
   ];
   const fits = (user: string, assistant: string): boolean =>
-    Buffer.byteLength(renderDiscoveryTranscript([build(user, assistant)]), 'utf8') <= MAX_DISCOVERY_TRANSCRIPT_BYTES;
+    Buffer.byteLength(renderDiscoveryTranscript([build(user, assistant)]), 'utf8') <= discoveryBlockBytes(budget);
   const user = turn[0].content;
   const assistant = turn[1].content;
   if (fits(user, assistant)) return turn;
@@ -164,6 +160,19 @@ function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn): DiscoveryTranscriptT
 export class AiSession {
   /** Unique session identifier for log correlation and telemetry. */
   public id: string;
+  /**
+   * Identifier of the exploration approved in this chat, or `null` before the first approval.
+   *
+   * @remarks
+   * A presented run is what a bookmark recalls, and a chat can hold several: two explorations
+   * sharing the chat session id made a bookmark saved from the first resolve against the second.
+   * Minted at {@link activatePendingExploration} — the sole publisher of an engine, so exactly one
+   * id exists per approved run — and cleared by {@link resetExploration}. A presentation with no
+   * approved exploration behind it (a discovery-turn render) falls back to {@link id}.
+   */
+  public explorationRunId: string | null = null;
+  /** Count of explorations approved in this chat; the suffix that makes each run id unique. */
+  private explorationCounter = 0;
   /** Orchestrates short-term narrative and long-term technical memory. */
   public readonly memory: AiMemoryManager;
 
@@ -174,9 +183,6 @@ export class AiSession {
   public graph: Graph | null = null;
   /** Active schema/object filters applied by the user. */
   public filter: SerializedFilterState | null = null;
-  /** List of saved filter profiles (views) for the current project. */
-  public views: FilterProfile[] = [];
-
   /** The name or ID of the language model active for the current turn. */
   public modelName?: string;
   /**
@@ -192,6 +198,11 @@ export class AiSession {
    * webview's responsibility before it posts.
    */
   public traceState: unknown = null;
+  /**
+   * Render-state snapshot — passthrough buffer from the webview's `render-state` message,
+   * consumed by the screen-state presenter.
+   */
+  public renderState: unknown = null;
   /** Current graph rendering mode: 'full' or 'overview'. */
   public graphMode: 'full' | 'overview' = 'full';
   /** Total count of nodes after all active filters are applied (from webview). */
@@ -488,6 +499,7 @@ export class AiSession {
   public resetExploration(): void {
     this.memory.reset();
     this.stateMachine = null;
+    this.explorationRunId = null;
     this.pendingExploration = null;
     this.resultGraph = null;
     this.discoveryScopeArtifact = null;
@@ -574,11 +586,30 @@ export class AiSession {
   }
 
   /**
+   * Seeds the existing post-discovery SM-offer from an oversized scope that stayed in chat.
+   *
+   * @remarks
+   * Same pill as a completed multi-object walk — not a new offer. `nodeCount` is floored at 2 so
+   * {@link smOfferAvailable} still fires when the rejected envelope omitted a walk count.
+   *
+   * @param origin - Canonical id from the rejected `lineage_get_scope_bundle` call.
+   * @param nodeCount - Projected node count that overflowed the discovery cap.
+   * @param question - The user's verbatim discovery prompt.
+   * @param answer - The AI's discovery chat answer (markdown); empty until the turn finishes.
+   */
+  public seedSmOfferFromRejectedOrigin(origin: string, nodeCount: number, question: string, answer: string): void {
+    this.recordDiscovery(origin, Math.max(nodeCount, 2), question, answer);
+  }
+
+  /**
    * Whether the post-discovery SM-offer may render (idle phase, multi-object walk with an origin).
    *
    * @remarks
    * The single predicate for every surface that renders the offer, so their trigger conditions
-   * cannot drift. Call it — never re-state the three conditions at a render site.
+   * cannot drift. Call it — never re-state the three conditions at a render site. A completed
+   * walk of ≥2 objects and an oversized scope that stayed in chat both seed
+   * {@link lastDiscoveryOrigin} through {@link recordDiscovery} (the latter via
+   * {@link seedSmOfferFromRejectedOrigin}), so the same pill is the opt-in either way.
    */
   public smOfferAvailable(): boolean {
     return this.phase.kind === 'idle' && this.lastDiscoveryWalkCount >= 2 && Boolean(this.lastDiscoveryOrigin);
@@ -599,10 +630,13 @@ export class AiSession {
    * accepted only when it is valid JSON produced by a successful graph-owned observation. Oldest
    * evidence is evicted first when the session count or rendered-byte bound is reached.
    *
+   * @param budget - Budget of the turn that produced the messages; the session is shared by every
+   *   turn, so the bound comes from the caller rather than from session state.
    * @param turnMessages - Canonical user/final-assistant messages for the completed turn.
    * @param observations - Successful provider-neutral discovery observations from graph state.
    */
   public appendDiscoveryTurn(
+    budget: TurnTokenBudget,
     turnMessages: readonly ModelMessage[],
     observations: readonly DiscoveryEvidenceObservation[] = [],
   ): void {
@@ -624,14 +658,14 @@ export class AiSession {
       this.discoveryTranscript.push(boundDiscoveryTurn([
         { role: 'user', content: user },
         { role: 'assistant', content: assistant },
-      ]));
+      ], budget));
       while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
-        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > MAX_DISCOVERY_TRANSCRIPT_BYTES) {
+        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > discoveryBlockBytes(budget)) {
         this.discoveryTranscript.shift();
       }
     }
     for (const observation of observations) {
-      if (!observation.toolName || Buffer.byteLength(observation.result, 'utf8') > MAX_DISCOVERY_EVIDENCE_ITEM_BYTES) continue;
+      if (!observation.toolName || Buffer.byteLength(observation.result, 'utf8') > discoveryEvidenceItemBytes(budget)) continue;
       let result: unknown;
       try {
         result = JSON.parse(observation.result);
@@ -641,7 +675,7 @@ export class AiSession {
       if (result === null || typeof result !== 'object' || readToolError(result)) continue;
       this.discoveryEvidence.push({ toolName: observation.toolName, result });
       while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
-        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > MAX_DISCOVERY_EVIDENCE_BYTES) {
+        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > discoveryBlockBytes(budget)) {
         this.discoveryEvidence.shift();
       }
     }
@@ -741,6 +775,24 @@ export class AiSession {
     return guard;
   }
 
+  /**
+   * Attaches the composed discovery-handoff memo to the pending proposal at `revision`.
+   *
+   * @remarks
+   * Runs after {@link storePendingExploration} so the memo is never mutated onto a proposal whose
+   * revision isn't known yet. Silently a no-op when the proposal has since moved past `revision`
+   * (superseded by a newer refine while composition was in flight) — the caller degrades by
+   * omitting the memo rather than treating this as a failure.
+   */
+  public attachDiscoverySummary(revision: number, text: string, token: number): SessionWriteOutcome {
+    const guard = this.guardTurnWrite(token, 'attachDiscoverySummary');
+    if (guard.kind !== 'accepted') return guard;
+    if (this.pendingExploration && this.pendingExploration.revision === revision) {
+      this.pendingExploration = { ...this.pendingExploration, discoverySummary: text };
+    }
+    return guard;
+  }
+
   /** Cancels proposal review without discarding a completed engine/result already on the session. */
   public cancelPendingExploration(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'cancelPendingExploration');
@@ -775,6 +827,9 @@ export class AiSession {
       const classification = ClassificationSchema.parse(proposal.classification);
       built.publishMemoryTo(this.memory);
       this.stateMachine = built;
+      // Minted with the engine, so the run a presentation stamps is the run that produced it.
+      this.explorationCounter += 1;
+      this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
       this.classification = classification;
       this.pendingExploration = null;
       this.enterExploring(token);

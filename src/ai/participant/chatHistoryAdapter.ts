@@ -7,7 +7,7 @@
  *
  * The projection is bounded: replayed history is capped to the same turn-count and byte ceilings
  * as the session's canonical discovery transcript ({@link MAX_DISCOVERY_TRANSCRIPT_TURNS} /
- * {@link MAX_DISCOVERY_TRANSCRIPT_BYTES}), evicting oldest whole turns first, so native history —
+ * {@link discoveryBlockBytes}), evicting oldest whole turns first, so native history —
  * which only grows — can never push the assembled request past a model's input window.
  */
 import type * as vscode from 'vscode';
@@ -19,14 +19,14 @@ import {
   type ModelMessage,
 } from '../model/modelPort';
 import {
-  MAX_DISCOVERY_TRANSCRIPT_BYTES,
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../session/session';
+import { discoveryBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { longestPrefixFitting } from '../support/textTruncation';
 
 /**
  * Maximum UTF-8 bytes replayed from one historical tool result — a single 60 KB DDL payload in an
- * old round must not consume the whole {@link MAX_DISCOVERY_TRANSCRIPT_BYTES} history budget.
+ * old round must not consume the whole {@link discoveryBlockBytes} history budget.
  */
 const MAX_HISTORY_TOOL_RESULT_BYTES = 8_192;
 
@@ -74,11 +74,13 @@ export function applyNativeChatBoundary(
  * Converts the current participant's native chat history into ordered graph messages.
  *
  * @param history - The native VS Code chat history for this participant.
+ * @param budget - The calling turn's budget, which bounds the replayed transcript.
  * @param debug - Optional debug sink; a malformed history value that degrades to an empty
  *   string must be observable, never a silent skip.
  */
 export function chatHistoryToModelMessages(
   history: vscode.ChatContext['history'],
+  budget: TurnTokenBudget,
   debug?: (msg: string) => void,
 ): ModelMessage[] {
   // One group per native request turn (the request plus every response message that follows it),
@@ -130,7 +132,7 @@ export function chatHistoryToModelMessages(
   }
   if (current.length > 0) groups.push(current);
 
-  return boundReplayedHistory(groups, debug);
+  return boundReplayedHistory(groups, budget, debug);
 }
 
 /**
@@ -144,6 +146,7 @@ export function chatHistoryToModelMessages(
  */
 function boundReplayedHistory(
   groups: readonly (readonly ModelMessage[])[],
+  budget: TurnTokenBudget,
   debug?: (msg: string) => void,
 ): ModelMessage[] {
   const kept: (readonly ModelMessage[])[] = [];
@@ -152,7 +155,7 @@ function boundReplayedHistory(
     const size = groupBytes(groups[index]);
     if (
       kept.length > 0
-      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > MAX_DISCOVERY_TRANSCRIPT_BYTES)
+      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > discoveryBlockBytes(budget))
     ) break;
     kept.unshift(groups[index]);
     bytes += size;
@@ -180,10 +183,10 @@ function groupBytes(group: readonly ModelMessage[]): number {
   return group.reduce((total, message) => {
     const content = message.content;
     const contentBytes = utf8Bytes(typeof content === 'string' ? content : JSON.stringify(content) ?? '');
-    const calls = (message as { tool_calls?: readonly { args?: unknown }[] }).tool_calls;
-    const callBytes = Array.isArray(calls)
-      ? calls.reduce((sum, call) => sum + utf8Bytes(JSON.stringify(call.args) ?? ''), 0)
-      : 0;
+    const rawCalls: unknown = (message as { tool_calls?: unknown }).tool_calls;
+    // Provider-shaped data: a truthy non-array `tool_calls` counts as nothing rather than throwing.
+    const calls: readonly { args?: unknown }[] = Array.isArray(rawCalls) ? rawCalls : [];
+    const callBytes = calls.reduce((sum, call) => sum + utf8Bytes(JSON.stringify(call.args) ?? ''), 0);
     return total + contentBytes + callBytes;
   }, 0);
 }

@@ -19,12 +19,40 @@ import {
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import {
-  activeSubmitFindingsRecoveryHint,
   mapSubmitFindingsEngineGuard,
   filterSectionsForClassification,
   validateSectionsAgainstClassification,
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
+
+const COLUMN_FLOW_ENTRY_KEYS = new Set(['out_col', 'writes_to', 'upstream_columns']);
+const COLUMN_FLOW_WRITES_TO_KEYS = new Set(['node', 'col']);
+
+// `declaredKeysOnly` (`inputNormalization.ts`) already strips undeclared `column_flow[].*` keys
+// inside `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
+// permissive registered union `vscodeModelPort` parses before this handler runs, where no logger
+// is reachable. This mirrors that strip here, on the actual submit path, so the drop is named
+// (entry index, dropped keys) before the schema-side strip becomes a no-op on the clean copy.
+function stripUndeclaredColumnFlowKeys(columnFlow: unknown[], logger: ToolServices['logger']): unknown[] {
+  const dropped: string[] = [];
+  const stripKeys = (rec: Record<string, unknown>, declared: Set<string>, label: string) => {
+    const surplus = Object.keys(rec).filter(key => !declared.has(key));
+    if (surplus.length === 0) return rec;
+    dropped.push(`${label}: ${surplus.join(', ')}`);
+    return Object.fromEntries(Object.entries(rec).filter(([key]) => declared.has(key)));
+  };
+  const next = columnFlow.map((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    const result = stripKeys(entry as Record<string, unknown>, COLUMN_FLOW_ENTRY_KEYS, `column_flow[${index}]`);
+    const writesTo = result.writes_to;
+    if (writesTo === null || typeof writesTo !== 'object' || Array.isArray(writesTo)) return result;
+    return { ...result, writes_to: stripKeys(writesTo as Record<string, unknown>, COLUMN_FLOW_WRITES_TO_KEYS, `column_flow[${index}].writes_to`) };
+  });
+  if (dropped.length > 0) {
+    logger.debug(`[submit_findings] dropped undeclared column_flow key(s): ${dropped.join('; ')}`);
+  }
+  return next;
+}
 
 /**
  * Validates and submits findings for the current exploration focus.
@@ -39,7 +67,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) return s.logAndReturn('submit_findings', {
         error: 'no_active_session',
-        hint: 'No active state machine. Call start_exploration first to begin an investigation.',
+        hint: 'No active exploration. Call lineage_start_exploration first.',
         next_action: 'start_exploration',
       }, input);
 
@@ -56,11 +84,36 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
         }, rawInput);
       }
+      // `route_requests[].columns` rides on the shared route schema BB also advertises, so a BB hop
+      // can fill a field its own mode cannot read. The engine serves that hop perfectly by ignoring
+      // the field, so it is dropped from a local copy and logged — never rejected. A rejection here
+      // would spend a generation on a field that carries no meaning in the mode.
+      let bbColumnRoutes = 0;
+      let stripped: SubmitFindingsInputObject = rawInput;
+      if (!engine.columnAspect && Array.isArray(rawInput.route_requests)) {
+        const routes = rawInput.route_requests.map(req => {
+          if (req === null || typeof req !== 'object' || Array.isArray(req) || !('columns' in req)) return req;
+          bbColumnRoutes++;
+          const { columns: _bbHasNoTracedColumns, ...rest } = req as Record<string, unknown>;
+          return rest;
+        });
+        if (bbColumnRoutes > 0) {
+          stripped = { ...rawInput, route_requests: routes };
+          s.logger.debug(`[submit_findings] dropped route_requests[].columns on ${bbColumnRoutes} route(s): BB mode traces no columns`);
+        }
+      }
+
+      // `column_flow[].*` entries are `.strict()` (`toolSchemas.ts`) and already stripped silently
+      // by `declaredKeysOnly` there (needed for the pre-handler registered union). Strip here too,
+      // on this local copy, so the actual submit path logs the drop instead of losing it silently.
+      if (Array.isArray(stripped.column_flow)) {
+        stripped = { ...stripped, column_flow: stripUndeclaredColumnFlowKeys(stripped.column_flow, s.logger) };
+      }
 
       // Middleware: normalize identifier encodings into a local copy only. The raw model payload
       // stays immutable; strict mode-specific Zod parses the normalized copy below.
       const modelNodeMap = getModelNodeMap(s.requireModel());
-      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
+      const normalized = normalizeSubmitFindingsInputIds(stripped, modelNodeMap);
       const normalizedInput = normalized.input;
       for (const event of normalized.normalizations) {
         s.logger.debug(
@@ -73,12 +126,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         : SubmitFindingsBbInputSchema.safeParse(normalizedInput);
       if (!parsed.success) {
         const isCtMode = !!engine.columnAspect;
-        if (isCtMode && normalizedInput.prune_neighbors !== undefined) {
-          return s.logAndReturn('submit_findings', {
-            error: 'bb_field_forbidden_in_ct',
-            hint: 'CT mode forbids `prune_neighbors`. Submit `column_flow` with real `upstream_columns`, or `column_flow: []` when this node carries none of the active columns.',
-          }, normalizedInput);
-        }
         // Surface specific field paths so the model can correct the right field on retry.
         const seen = new Set<string>();
         const fieldErrors: string[] = [];
@@ -95,7 +142,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           ? `Invalid ${modeLabel} submit_findings input — ${fieldErrors.join('; ')}.`
           : `Invalid ${modeLabel} submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
         return s.logAndReturn('submit_findings', {
-          error: isCtMode ? 'ct_field_required' : 'invalid_input',
+          error: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
           hint,
         }, normalizedInput);
       }
@@ -107,7 +154,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       // sections[] must include the required angle(s); off-classification angles are
       // dropped deterministically below rather than rejected — a surplus section is
       // not a field-scoped defect the held-draft repair flow could patch.
-      const violation = validateSectionsAgainstClassification(finding.sections, sess.classification);
+      const violation = validateSectionsAgainstClassification(finding.sections, sess.classification, finding.verdict);
       if (violation) {
         return s.logAndReturn('submit_findings', {
           error: 'classification_lock_violation',
@@ -122,7 +169,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         }
       }
 
-      const result = engine.submitFindings(finding);
+      const result = engine.submitFindings(finding, s.budget);
       if ('error' in result) {
         // Log each rejection reason untruncated — the detail array is buried past the 300-char JSON cap.
         const detail = (result as { detail?: Array<{ id?: string; reason?: string }> }).detail;
@@ -134,24 +181,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
         const guardEnvelope = mapSubmitFindingsEngineGuard(result);
         if (guardEnvelope) return s.logAndReturn('submit_findings', guardEnvelope, normalizedInput);
-
-        // Inject actionable hints for common engine rejections
-        if (result.error === 'invalid_route') {
-          const routeError = result as { node_id?: string };
-          return s.logAndReturn('submit_findings', {
-            error: 'validation_failed',
-            message: `route_requests invalid: node_id \`${routeError.node_id}\` is not in the current-hop scope.`,
-            hint: activeSubmitFindingsRecoveryHint('route'),
-          }, normalizedInput);
-        }
-        if (result.error === 'invalid_prune') {
-          const pruneError = result as { node_id?: string };
-          return s.logAndReturn('submit_findings', {
-            error: 'validation_failed',
-            message: `prune_neighbors invalid: node_id \`${pruneError.node_id}\` is not a direct neighbor of the focus node.`,
-            hint: activeSubmitFindingsRecoveryHint('prune'),
-          }, normalizedInput);
-        }
 
         return s.logAndReturn('submit_findings', result, normalizedInput);
       }

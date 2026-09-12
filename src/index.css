@@ -269,6 +269,25 @@ body {
   font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
+/* `workbench.reduceMotion` — VS Code sets this class on the body. Transitions here are
+   decorative and are dropped; the loading spinner keeps its animation, because a frozen
+   spinner reads as a hung view rather than as reduced motion. */
+body.vscode-reduce-motion *,
+body.vscode-reduce-motion *::before,
+body.vscode-reduce-motion *::after {
+  transition: none !important;
+}
+
+/* The same rule for the OS preference, which VS Code does not mirror into the class above: a user
+   who asked the system for reduced motion gets it whether or not `workbench.reduceMotion` is set. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
+}
+
 /* #endregion */
 
 /* #region Tooltips */
@@ -287,6 +306,37 @@ body {
   color: var(--ln-fg);
   border: 1px solid var(--ln-border-light);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* Report-section focus, on the labels only: the focused section's badges read lit and every other
+   badge steps back. Node bodies are untouched — selection and the column thread own that channel. */
+.ln-ai-badge-lit {
+  background: var(--ln-ai-bg);
+  border-color: var(--ln-ai-border);
+  box-shadow: 0 0 0 1px var(--ln-ai-border), 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+.ln-ai-badge-dim {
+  opacity: 0.35;
+}
+
+/* Column-edge marker — chip centred on a column-view edge that carries a transformation */
+.ln-column-edge-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--ln-bg-elevated);
+  color: var(--ln-ai-or);
+  border: 1px solid var(--ln-border-light);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  cursor: help;
+}
+
+.ln-column-edge-chip:hover,
+.ln-column-edge-chip:focus-visible {
+  border-color: var(--ln-ai-or);
+  outline: none;
 }
 
 /* AI note — title line visible below node, full text on hover */
@@ -311,57 +361,100 @@ body {
 
 /* #region AI Description Overlay */
 
-/* Anchor — positioned at top-center of the graph canvas */
+/* Anchor — docked column of the graph canvas. `resize: horizontal` gives a native drag handle at
+   the box's own edge, no hand-rolled drag code. */
 .ln-ai-description-anchor {
   position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 55vw);
+  min-width: 260px;
+  max-width: 75vw;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
   z-index: 10;
   pointer-events: auto;
+  resize: horizontal;
+  overflow: hidden;
 }
+/* Dock variants — GraphCanvas subtracts the matching edge from the React Flow wrapper */
+.ln-ai-description-anchor-left {
+  left: 0;
+  right: auto;
+}
+.ln-ai-description-anchor-bottom {
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: min(360px, 45vh);
+  min-height: 160px;
+  max-height: 75vh;
+  resize: vertical;
+}
+/* Maximized keeps its historic full-window overlay form — it covers the dock, not the layout */
 .ln-ai-description-anchor-maximized {
   position: fixed;
   inset: 0;
   top: 0;
   left: 0;
   transform: none;
+  width: auto;
+  height: auto;
+  padding: 0;
   z-index: 80;
   pointer-events: none;
+  resize: none;
 }
 
-/* Collapsed bar — clickable chip */
-.ln-ai-description-bar {
+/* Collapsed rail — slim vertical tab on the right edge; expands back into the docked column */
+.ln-ai-description-railwrap {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 10;
+}
+.ln-ai-description-rail {
+  writing-mode: vertical-rl;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 14px;
-  border-radius: 16px;
+  gap: 6px;
+  padding: 14px 5px;
   border: 1px solid var(--ln-border-light);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
   background: var(--ln-widget-bg);
   box-shadow: var(--ln-node-shadow);
   cursor: pointer;
   white-space: nowrap;
+  max-height: 45vh;
+  overflow: hidden;
 }
-.ln-ai-description-bar:hover {
+.ln-ai-description-rail:hover {
   background: var(--ln-hover-bg);
 }
-.ln-ai-description-bar-name {
+.ln-ai-description-rail-name {
   font-size: 10px;
   font-weight: 600;
   color: var(--ln-fg);
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
-.ln-ai-description-bar-toggle {
+.ln-ai-description-rail-toggle {
   font-size: 9px;
   color: var(--ln-fg-muted);
 }
 
-/* Expanded overlay */
+/* Expanded report column */
 .ln-ai-description-overlay {
-  width: 90vw;
-  max-width: 1400px;
-  min-width: 320px;
-  max-height: 60vh;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--ln-widget-bg);
@@ -372,6 +465,7 @@ body {
 .ln-ai-description-overlay-maximized {
   position: fixed;
   inset: 12px;
+  flex: none;
   width: auto;
   max-width: none;
   min-width: 0;
@@ -422,6 +516,19 @@ body {
 .ln-ai-description-action:disabled:hover {
   background: none;
   opacity: 0.35;
+}
+
+/* Dock segmented control — three exclusive positions, the current one pressed */
+.ln-ai-dock-group {
+  display: inline-flex;
+  gap: 1px;
+  margin-right: 4px;
+}
+.ln-ai-description-action.ln-active {
+  opacity: 1;
+  background: var(--ln-ai-bg);
+  color: var(--ln-fg);
+  border-color: var(--ln-ai-border);
 }
 .ln-ai-description-text-action {
   min-width: 24px;
@@ -480,6 +587,38 @@ body {
   color: var(--vscode-button-foreground);
 }
 
+/* Section chips — sticky navigation strip under the report header; a chip scrolls to its
+   `## N` heading and highlights that section's nodes on the graph */
+.ln-ai-section-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--ln-border-light);
+}
+.ln-ai-section-chip {
+  font-size: 10px;
+  padding: 2px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--ln-border-light);
+  background: var(--ln-input-bg);
+  color: var(--ln-fg-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ln-ai-section-chip:hover {
+  background: var(--ln-hover-bg);
+  color: var(--ln-fg);
+}
+.ln-ai-section-chip.ln-active {
+  background: var(--ln-button-bg);
+  color: var(--ln-button-fg);
+  border-color: transparent;
+}
+
 /* Markdown content styling */
 .ln-ai-description-md {
   font-size: var(--ln-ai-description-font-size, 12px);
@@ -508,17 +647,21 @@ body {
   --ln-ai-description-h2-font-size: 18px;
   --ln-ai-description-h3-font-size: 17px;
 }
+/* Wrapper the KaTeX extension emits around every expression; carries the original LaTeX in
+   `data-latex`. Kept inline so an expression flows with the sentence around it. */
+.ln-ai-description-md .vscode-katex-container {
+  display: inline;
+  max-width: 100%;
+}
 .ln-ai-description-md .katex {
   overflow-wrap: normal;
   overflow-x: auto;
 }
-/* KaTeX parse errors — show as readable red text (matches VS Code behavior) */
-.ln-ai-description-md .katex-error {
-  color: var(--vscode-errorForeground, #f44747);
-  font-size: 0.85em;
-  font-family: var(--vscode-editor-font-family, monospace);
-  white-space: pre-wrap;
-  word-break: break-word;
+/* Display math renders as its own centred block, matching VS Code chat. */
+.ln-ai-description-md .katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .ln-ai-description-md h1,
 .ln-ai-description-md h2,
@@ -581,12 +724,19 @@ body {
 .ln-ai-description-md a {
   color: var(--ln-text-link);
 }
-.ln-ai-description-md .ln-ai-objects-label {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--ln-text-muted);
+/* Engine-assembled Objects footnote — one small muted line at section end; label and links
+   share the same small size */
+.ln-ai-description-md .ln-ai-objects {
+  font-size: var(--ln-ai-description-code-font-size, 11px);
+  color: var(--ln-fg-muted);
+  border-top: 1px solid var(--ln-border-light);
+  margin: 12px 0 2px;
+  padding-top: 6px;
+}
+.ln-ai-description-md .ln-ai-objects .ln-ai-objects-label {
+  font-weight: 600;
   margin-right: 6px;
-  vertical-align: middle;
+  color: var(--ln-fg-muted);
 }
 
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,

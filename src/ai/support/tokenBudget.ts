@@ -1,18 +1,17 @@
 /**
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
- * Two discovery caps control SM escalation:
+ * Two discovery caps control whether a catalog request stays inline:
  *   1. ai.discoveryNodeCap (default 10) — max projected scope nodes allowed in
- *      discovery before the engine forces SM via the gate.
+ *      discovery. Over cap → hard-rejected with `over_discovery_budget`; discovery stays in
+ *      chat and the existing SM-offer pill is the opt-in for a detailed analysis.
  *   2. ai.discoveryTokenBudget (default 10000) — max projected DDL token estimate
- *      for that same scope. Either cap exceeded → request rejected at the tool boundary with
- *      a structured `over_discovery_budget` envelope pointing the AI at
- *      `lineage_start_exploration`.
+ *      for that same scope. Either cap exceeded → the same envelope. `/trace` and
+ *      column-trace still enter SM via entryRouting, not this overflow.
  *
  * ZERO-TRUNCATION GUARANTEE:
  *   No tool response is ever truncated, capped, or sliced.
- *   No data is ever lost. Over-budget requests are HARD-REJECTED with a hint;
- *   the AI escalates to SM via the gate.
+ *   No data is ever lost. Over-budget requests are HARD-REJECTED with a hint.
  *
  * Zero VS Code imports — pure functions for testability.
  */
@@ -33,27 +32,7 @@ export function estimateTokens(chars: number): number {
 /** The heuristic ratio behind {@link estimateTokens} — exported so char caps derived from token caps stay in sync. */
 const CHARS_PER_TOKEN = 4;
 
-// ─── Shared budget-guard state ───────────────────────────────────────────────
-
-/**
- * One (nodeCap, tokenBudget) pair with clamped setters and the shared threshold test.
- * Both phase guards instantiate this; the rejection envelopes stay with their phase
- * because their shapes are distinct contracts (`over_discovery_budget` carries a hint
- * and byte counts, the active guard token counts).
- */
-function createBudgetState(defaultNodeCap: number, defaultTokenBudget: number) {
-  let nodeCap = defaultNodeCap;
-  let tokenBudget = defaultTokenBudget;
-  return {
-    get nodeCap() { return nodeCap; },
-    get tokenBudget() { return tokenBudget; },
-    setNodeCap(value: number): void { nodeCap = Math.max(1, value | 0); },
-    setTokenBudget(value: number): void { tokenBudget = Math.max(1000, value | 0); },
-    exceeds(nodes: number, tokens: number): boolean { return nodes > nodeCap || tokens > tokenBudget; },
-  };
-}
-
-// ─── Discovery-phase budget guard ────────────────────────────────────────────
+// ─── The turn's budget ───────────────────────────────────────────────────────
 
 /** Default node cap for discovery-phase catalog requests — overridden via VS Code `ai.discoveryNodeCap`. */
 export const DEFAULT_DISCOVERY_NODE_CAP = 10;
@@ -61,73 +40,182 @@ export const DEFAULT_DISCOVERY_NODE_CAP = 10;
 /** Default DDL-token budget for discovery-phase catalog requests — overridden via `ai.discoveryTokenBudget`. */
 export const DEFAULT_DISCOVERY_TOKEN_BUDGET = 10_000;
 
-const discoveryBudget = createBudgetState(DEFAULT_DISCOVERY_NODE_CAP, DEFAULT_DISCOVERY_TOKEN_BUDGET);
-
-/** Configures the runtime discovery node cap from VS Code settings. */
-export function setDiscoveryNodeCap(value: number): void {
-  discoveryBudget.setNodeCap(value);
-}
-
-/** Configures the runtime discovery token budget from VS Code settings. */
-export function setDiscoveryTokenBudget(value: number): void {
-  discoveryBudget.setTokenBudget(value);
-}
-
-/**
- * Discovery scope budget check — fires per scope-expanding catalog request.
- *
- * @remarks
- * Run BEFORE executing the underlying catalog handler. On overflow, the caller
- * returns the structured rejection envelope (with `hint` pointing at
- * `lineage_start_exploration`) instead of running the handler. No fallback —
- * over-budget requests are hard rejections per the project's "no fallback paths"
- * rule.
- *
- * @param requestedNodes - Number of nodes the request would load (e.g. BFS result size).
- * @param requestedDdlBytes - Total DDL bytes that would be returned.
- * @returns `{ ok: true }` when the request fits both caps; otherwise `{ ok: false, ... }`
- *          with the counts, limits, and AI-facing hint.
- */
-export function checkScopeBudget(
-  requestedNodes: number,
-  requestedDdlBytes: number,
-): { ok: true } | { ok: false; reason: 'over_discovery_budget'; counts: { nodes: number; ddl_bytes: number }; limits: { node_cap: number; token_budget: number }; hint: string } {
-  const tokens = estimateTokens(requestedDdlBytes);
-  if (!discoveryBudget.exceeds(requestedNodes, tokens)) return { ok: true };
-  return {
-    ok: false,
-    reason: 'over_discovery_budget',
-    counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
-    limits: { node_cap: discoveryBudget.nodeCap, token_budget: discoveryBudget.tokenBudget },
-    hint: 'Scope exceeds the discovery budget. Stop this tool loop; the host will route the validated request to the consent-gated exploration path.',
-  };
-}
-
-// ─── Active-phase (exploration) admission guard ──────────────────────────────
-
 /** Default total-scope node cap during active exploration — overridden via `ai.explorationNodeCap`. Sized well above the discovery cap (hop loop legitimately grows scope) but far below the 500-item DoS ceiling. */
 export const DEFAULT_EXPLORATION_NODE_CAP = 150;
 
 /** Default cumulative DDL-token budget for the active scope — overridden via `ai.explorationTokenBudget`. */
 export const DEFAULT_EXPLORATION_TOKEN_BUDGET = 80_000;
 
+/**
+ * One phase's (nodeCap, tokenBudget) pair, clamped at construction.
+ * Both phase guards read one of these; the rejection envelopes stay with their phase
+ * because their shapes are distinct contracts (`over_discovery_budget` carries a hint
+ * and byte counts, the active guard token counts).
+ */
+export interface PhaseScopeBudget {
+  /** Maximum scope nodes the phase admits. */
+  readonly nodeCap: number;
+  /** Maximum estimated DDL tokens the phase admits. */
+  readonly tokenBudget: number;
+}
+
+/**
+ * Every token budget one turn runs under, fixed when the turn starts.
+ *
+ * @remarks
+ * The value is immutable and carried by the turn's own objects — the request-scoped model port and
+ * the lease-bound tool services — so two turns in flight at once, each on its own model, read
+ * their own window and caps. Nothing here is process state.
+ */
+export interface TurnTokenBudget {
+  /** Input window of the model the turn selected; `Infinity` when the provider reports none. */
+  readonly modelWindowTokens: number;
+  /** Pre-consent catalog-request caps. */
+  readonly discovery: PhaseScopeBudget;
+  /** Active hop-loop scope caps. */
+  readonly exploration: PhaseScopeBudget;
+}
+
+/** Clamps one phase pair: at least one node, at least a thousand tokens. */
+function phaseScopeBudget(nodeCap: number, tokenBudget: number): PhaseScopeBudget {
+  return Object.freeze({
+    nodeCap: Math.max(1, nodeCap | 0),
+    tokenBudget: Math.max(1000, tokenBudget | 0),
+  });
+}
+
+/** True when either axis of `budget` is exceeded. */
+function exceedsPhaseBudget(budget: PhaseScopeBudget, nodes: number, tokens: number): boolean {
+  return nodes > budget.nodeCap || tokens > budget.tokenBudget;
+}
+
+/**
+ * Builds one turn's immutable budget from the selected model's window and the workspace settings.
+ *
+ * @param settings - Resolved per-turn values; each omitted field falls back to its shipped default,
+ *   and a non-positive `modelWindowTokens` means the window is unknown so the ceilings apply.
+ * @returns The frozen budget the turn's objects carry.
+ */
+export function createTurnTokenBudget(settings: {
+  readonly modelWindowTokens?: number;
+  readonly discoveryNodeCap?: number;
+  readonly discoveryTokenBudget?: number;
+  readonly explorationNodeCap?: number;
+  readonly explorationTokenBudget?: number;
+} = {}): TurnTokenBudget {
+  const window = settings.modelWindowTokens ?? 0;
+  return Object.freeze({
+    modelWindowTokens: window > 0 ? window : Number.POSITIVE_INFINITY,
+    discovery: phaseScopeBudget(
+      settings.discoveryNodeCap ?? DEFAULT_DISCOVERY_NODE_CAP,
+      settings.discoveryTokenBudget ?? DEFAULT_DISCOVERY_TOKEN_BUDGET,
+    ),
+    exploration: phaseScopeBudget(
+      settings.explorationNodeCap ?? DEFAULT_EXPLORATION_NODE_CAP,
+      settings.explorationTokenBudget ?? DEFAULT_EXPLORATION_TOKEN_BUDGET,
+    ),
+  });
+}
+
+/**
+ * The budget in force where no turn selected one — the shipped defaults with no model window.
+ *
+ * @remarks
+ * Read by the `vscode.lm` tool registration, which serves external callers outside any `@lineage`
+ * turn and therefore has no model window or turn-scoped settings to calibrate against.
+ */
+export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget();
+
+// ─── Discovery-phase budget guard ────────────────────────────────────────────
+
+/**
+ * Discovery scope budget check — fires per scope-expanding catalog request.
+ *
+ * @remarks
+ * Run BEFORE executing the underlying catalog handler. On overflow, the caller
+ * returns the structured rejection envelope (with `hint` that a detailed analysis
+ * would be needed) instead of running the handler. No fallback — over-budget
+ * requests are hard rejections per the project's "no fallback paths" rule. The
+ * existing post-discovery SM-offer pill is the opt-in; this hint must not name
+ * hop-by-hop or a consent-gated path.
+ *
+ * @param budget - The calling turn's budget.
+ * @param requestedNodes - Number of nodes the request would load (e.g. BFS result size).
+ * @param requestedDdlBytes - Total DDL bytes that would be returned.
+ * @returns `{ ok: true }` when the request fits both caps; otherwise `{ ok: false, ... }`
+ *          with the counts, limits, and AI-facing hint.
+ */
+export function checkScopeBudget(
+  budget: TurnTokenBudget,
+  requestedNodes: number,
+  requestedDdlBytes: number,
+): { ok: true } | { ok: false; reason: 'over_discovery_budget'; counts: { nodes: number; ddl_bytes: number }; limits: { node_cap: number; token_budget: number }; hint: string } {
+  const tokens = estimateTokens(requestedDdlBytes);
+  if (!exceedsPhaseBudget(budget.discovery, requestedNodes, tokens)) return { ok: true };
+  return {
+    ok: false,
+    reason: 'over_discovery_budget',
+    counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
+    limits: { node_cap: budget.discovery.nodeCap, token_budget: budget.discovery.tokenBudget },
+    hint: 'Scope exceeds the discovery budget. Summarize what is already known; a detailed analysis would be needed.',
+  };
+}
+
+// ─── Bounded prompt blocks ───────────────────────────────────────────────────
+
+/**
+ * Fraction of the selected model's input window one bounded prompt block may claim — the retry
+ * context, the discovery evidence projection, the replayed discovery transcript.
+ *
+ * @remarks
+ * The byte ceilings below were sized for a 128Ki-token window, where this share equals them; on a
+ * smaller BYOK window the same share scales every block down together, so a retry block can never
+ * exceed the window it is appended to. Each ceiling is the block's own home; this share is theirs.
+ */
+export const CONTEXT_BLOCK_WINDOW_SHARE = 0.125;
+
+/** Ceiling for the rendered `<runtime_tool_context>` retry payload — three quarters of the 64 KiB discovery ceiling, leaving a quarter for the instruction and question the payload is appended to. */
+export const MAX_ATTEMPT_CONTEXT_BYTES = 49_152;
+
+/** Ceiling for the complete discovery-evidence message and for the replayed discovery transcript — one 64 KiB prompt budget, applied to each so the two cannot compound. */
+export const MAX_DISCOVERY_BLOCK_BYTES = 65_536;
+
+/** Headroom reserved inside a block for identity fields, so one bounded item never fills the whole block. */
+export const CONTEXT_BLOCK_ITEM_HEADROOM_BYTES = 4_096;
+
+/** Bytes one bounded prompt block may hold on the turn's model: its ceiling, or the window share when that is smaller. */
+function contextBlockBytes(budget: TurnTokenBudget, ceiling: number): number {
+  const share = Math.floor(budget.modelWindowTokens * CONTEXT_BLOCK_WINDOW_SHARE * CHARS_PER_TOKEN);
+  return Number.isFinite(share) ? Math.max(CONTEXT_BLOCK_ITEM_HEADROOM_BYTES, Math.min(ceiling, share)) : ceiling;
+}
+
+/** Byte budget for the rendered retry context on the turn's model. */
+export function attemptContextBytes(budget: TurnTokenBudget): number {
+  return contextBlockBytes(budget, MAX_ATTEMPT_CONTEXT_BYTES);
+}
+
+/** Byte budget for one stored evidence kind (observations or rejections) on the turn's model. */
+export function storedEvidenceKindBytes(budget: TurnTokenBudget): number {
+  return attemptContextBytes(budget) - CONTEXT_BLOCK_ITEM_HEADROOM_BYTES;
+}
+
+/** Byte budget for the complete discovery-evidence message, and for the replayed discovery transcript, on the turn's model. */
+export function discoveryBlockBytes(budget: TurnTokenBudget): number {
+  return contextBlockBytes(budget, MAX_DISCOVERY_BLOCK_BYTES);
+}
+
+/** Byte budget for one canonical discovery result, held below {@link discoveryBlockBytes} so one result cannot fill the block. */
+export function discoveryEvidenceItemBytes(budget: TurnTokenBudget): number {
+  return discoveryBlockBytes(budget) - CONTEXT_BLOCK_ITEM_HEADROOM_BYTES;
+}
+
+// ─── Active-phase (exploration) admission guard ──────────────────────────────
+
 /** Fraction of the selected model's input window the discovery budget may claim — the setting is a ceiling, the window share the floor for small BYOK models. */
 export const DISCOVERY_WINDOW_SHARE = 0.125;
 
 /** Fraction of the selected model's input window the exploration budget may claim. */
 export const EXPLORATION_WINDOW_SHARE = 0.5;
-
-const explorationBudget = createBudgetState(DEFAULT_EXPLORATION_NODE_CAP, DEFAULT_EXPLORATION_TOKEN_BUDGET);
-
-/** Configures the runtime exploration node cap from VS Code settings. */
-export function setExplorationNodeCap(value: number): void {
-  explorationBudget.setNodeCap(value);
-}
-
-/** Configures the runtime exploration token budget from VS Code settings. */
-export function setExplorationTokenBudget(value: number): void {
-  explorationBudget.setTokenBudget(value);
-}
 
 /**
  * Active-phase scope admission check — fires per hop before staged scope growth commits.
@@ -139,22 +227,25 @@ export function setExplorationTokenBudget(value: number): void {
  * returns a structured rejection so the model prunes, defers, or synthesizes — no fallback,
  * no truncation, per the zero-truncation guarantee above.
  *
+ * @param budget - The calling turn's budget.
  * @param projectedNodes - Scope size if the staged additions were committed.
  * @param projectedDdlChars - Cumulative DDL characters of the projected scope.
  * @returns `{ ok: true }` when the projection fits both caps; otherwise the counts and limits.
  */
 export function checkActiveScopeAdmission(
+  budget: TurnTokenBudget,
   projectedNodes: number,
   projectedDdlChars: number,
-): { ok: true } | { ok: false; reason: 'over_active_scope_budget'; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } } {
+): { ok: true; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } }
+  | { ok: false; reason: 'over_active_scope_budget'; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } } {
   const tokens = estimateTokens(projectedDdlChars);
-  if (!explorationBudget.exceeds(projectedNodes, tokens)) return { ok: true };
-  return {
-    ok: false,
-    reason: 'over_active_scope_budget',
-    counts: { nodes: projectedNodes, tokens },
-    limits: { node_cap: explorationBudget.nodeCap, token_budget: explorationBudget.tokenBudget },
-  };
+  // Both arms carry the same counts and limits. The rejection always recorded the budget it broke
+  // and the admission recorded nothing, so a run that grew the scope comfortably and a run that
+  // never grew it at all read identically in the log.
+  const counts = { nodes: projectedNodes, tokens };
+  const limits = { node_cap: budget.exploration.nodeCap, token_budget: budget.exploration.tokenBudget };
+  if (!exceedsPhaseBudget(budget.exploration, projectedNodes, tokens)) return { ok: true, counts, limits };
+  return { ok: false, reason: 'over_active_scope_budget', counts, limits };
 }
 
 /**

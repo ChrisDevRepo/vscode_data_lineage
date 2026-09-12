@@ -10,7 +10,7 @@ choice is protecting.
 - `docs/ARCHITECTURE.md`: runtime architecture, graph contracts, `NavigationEngine`
 - `docs/DEVELOPER_GUIDE.md`: extension, ingestion, and runtime-evidence workflows
 - `docs/AI_PROMPTS.md`: `@lineage` prompt/tool/template lifecycle
-- `docs/E2E_TESTING.md`: model tiers, unit gate, Electron lanes, headless live-provider harness
+- `docs/EDH_TESTING.md`: unit gate, Electron smoke lanes
 - `docs/PARSE_RULES.md` and `docs/DMV_QUERIES.md`: parser and DMV customization
 - `docs/PROFILING_PATTERNS.md`: generated profiling SQL, its settings, and its limits
 - `docs/FEATURES.md` and `docs/TROUBLESHOOTING.md`: user-facing behaviour and diagnostics
@@ -46,15 +46,35 @@ model would break that inheritance rather than extend it.
 
 `vscode.lm` has no system role, so `VscodeLangChainBridge` downgrades a
 `SystemMessage` to a User turn. Anything that depends on system-role semantics
-has to survive that mapping.
+has to survive that mapping. Copilot Chat also prepends its own `system`
+message to every request (content policy, "keep answers short", Markdown,
+KaTeX `$`/`$$`, mermaid code blocks); the extension's depth and "never draw
+diagrams" rules must therefore be explicit in its own instruction text — they
+cannot rely on being the only instructions the model sees.
 
 Tool calls run through the local strict-Zod dispatcher, not
 `vscode.lm.invokeTool`. The bridge preserves tool-selection semantics across the
 two type systems: LangChain `any` is VS Code `Required`, `none` sends no tools,
 and a named choice exposes only that tool. Unsupported choices and missing
 tool-call IDs fail before model dispatch, where the diagnosis is still cheap.
+Lenient intake happens once at the schema edge, not per field: a strict array
+the model sends as a JSON string (`sections`) is decoded and accepted, and a
+prose tool call whose payload body is not fenced is read — a shape the port can
+read is read, and only a shape it cannot is rejected.
 The `package.json` `languageModelTools` manifest is generated from the Zod
 schemas and a drift test guards the pair.
+
+An AI-authored view carries its run forward. `present_result` stamps the run id
+onto the view metadata and, once the presentation commits, captures the engine
+checkpoint onto the session artifact; the capture is try/catch-guarded and
+observed at debug, so it can never fail an answer the model already earned. The
+user's bookmark save is what persists it: the record is written to `globalState`
+under `dataLineageViz.aiRun.<bookmarkId>` only when the profile is AI-authored
+and its run id matches the captured presentation, and a failed or oversized
+write logs a warning while the bookmark save itself stays successful. Deleting
+the bookmark clears the record. `lineage_get_screen_state` is the only reader
+and is read-only; the record is read tolerantly, so an absent, older, or
+foreign-shaped one answers `no_run_memory` rather than failing the call.
 
 ## How a turn runs
 
@@ -72,13 +92,60 @@ gate, rotates the session ID, and runs `AiSession.resetExploration()`.
 Active exploration begins only through the approve-gate path, and
 `activatePendingExploration` is the single site that publishes a navigation
 engine. Every mutating or panel-presenting tool call runs under the active turn
-lease — including calls arriving through externally registered `vscode.lm` tools
-from Copilot agent mode, not only through the internal dispatcher.
+lease. Only read-effect tools are registered with `vscode.lm`, so an external
+caller in Copilot agent mode cannot reach a mutating tool at all.
+
+Within one phase the retry context re-projects accepted observations and the
+newest rejection. An accepted call retires every earlier rejection of the same
+tool, and a resend byte-identical to a read accepted in an earlier attempt is
+answered with a `duplicate_read` envelope naming the accepted call — a silent
+replay left the model with no response to act on and it repeated the call until
+the provider-call stop. The envelope is free while the model may still act on the
+answer it holds; past the shared unproductive-resend allowance each further
+identical resend charges a semantic strike, so a model that keeps replaying the
+read closes the phase instead of spinning to the provider-call cap.
+
+A replayed rejection exchange always closes on a user-role continuation note,
+and that is provider contract, not prose. A request whose history ends on a
+tool result keeps the replayed function call inside the provider's current
+turn, and Gemini 3 enforces thought-signature echo on every function call in
+the current turn; `LanguageModelToolCallPart` carries no signature field, so
+the signature can be neither stored nor re-sent and the turn dies on an
+unrecoverable provider 400. The documented turn boundary is the most recent
+user text message — the note ends that turn, so the replayed call is no longer
+signature-validated. Every provider accepts user content after a tool
+result, so the note is unconditional and carries no correction itself: the
+repair keeps riding the paired tool result, and the note only directs the
+model to act on it.
 
 `NavigationEngine` owns BFS scope, agenda, gates, route validation, pruning,
 closure, and termination. Bounding traversal in the engine rather than in the
 prompt is deliberate: a schema, state machine, or code guard holds where a
 prompt-only constraint drifts.
+
+Depth follows that rule and splits on who chose it. A level count the model
+reports as stated by the user (`depthIntent.kind` of `explicit` or `asymmetric`)
+is a **hard border**: the engine refuses admission past it, per direction, and
+records the frontier through the same `deferQuestion` path a schema breach uses.
+A node reachable on both sides of the origin is judged against each side's own
+ceiling — admitted when either side's distance fits, refused only when neither
+does. A depth the model inferred (`default_start`) stays a **soft seed** the model may
+grow, exactly as before. Which of the two applies is the model's semantic call,
+carried as Zod-validated `depth` — the host never parses the user's text for it —
+and the engine, never the prompt, enforces the result.
+
+That split generalizes past depth. Every scope rule reaching the engine is either **hard** —
+the user stated it — or **soft** — the model chose it as a starting point; the model
+classifies which, as a typed field, and the host never reads the user's sentence to decide.
+The approval card is grouped by that classification, so a limit the user set and one the
+model estimated are never rendered as the same kind of fact, and an estimate carries `≈`
+— facts only: the depth line states what the engine will do with the depth (a
+default start the engine can extend), never the assistant's intent, so no
+first person appears on the card.
+Once approved, the plan is what runs: the engine is constructed from the approved `init`
+object itself, and `checkBorder` enforces the result at every admission purpose. The one
+thing the engine cannot bind is an instruction that maps to no filter field — it rides along
+as `scopeNotes` for the model to honour, with nothing to reject a breach.
 
 ## Prompts, presentation, and rejection
 
@@ -89,6 +156,14 @@ alike, so a rule given to one stage and not the other surfaces as a rejection
 the model could not have avoided — a prompt-composition defect, not a model
 defect. Stage-specific text stays with its stage; everything else belongs in the
 shared builder.
+
+`assets/aiOutputTemplates.yaml` owns *what* an answer contains and *when* a
+template block applies — the user-overridable layer. Code-owned prompt text and
+tool `.describe()` strings own *how* the model operates the mechanism (which
+field carries which template, which phase allows which call). Never move a
+content rule or threshold out of the YAML into `prompts.ts` or a schema
+description; a description may reference the template entry, never restate it.
+Contract: `docs/AI_PROMPTS.md` §Source of truth.
 
 `validatePresentResult` is the single rejection point. Checks that need context
 the validator does not hold — a cached discovery answer, the result graph — pass
@@ -132,18 +207,15 @@ dependency. Four layers keep it inert: an npm `overrides` entry redirecting
 guard that trips before any graph or model call, the `assert-no-langsmith` gate
 step, and a pin on `@langchain/core`.
 
-The pin exists for a specific reason. From 1.2.8 that package vendors
-`src/utils/gateway.ts`, which rewrites a model call's `baseURL` to a LangSmith
-gateway when `LANGSMITH_GATEWAY` or `LANGSMITH_GATEWAY_API_KEY` is set. The npm
+The pin exists for a specific reason. From 1.2.5 that package vendors
+`src/utils/gateway.ts`, which supplies a model call's `baseURL` from a LangSmith
+gateway when the call sets none and `LANGSMITH_GATEWAY` is set; an explicit
+`baseURL` is returned unchanged. The npm
 override cannot reach that code — it lives inside `@langchain/core`, not in the
 `langsmith` package — and the runtime guard watches different variables than the
 gateway reads, so only the bundle-signature gate catches it. An outdated-
 dependency report is not a reason to unpin. `@langchain/langgraph` is unaffected
 and may advance on its own.
-
-Trace export is Langfuse-only. The test-only REST exporter
-`tests/harness/langfuseExport.ts` is the sanctioned exception: plain HTTP from
-dev-box test tooling, no vendor SDK, no tracing flags, never bundled.
 
 ## Diagnostics and logging
 
@@ -164,12 +236,13 @@ a render-limit or node-cap is capacity guidance at `info`.
 
 ## Conventions
 
-Doc comments follow TSDoc: `/** */` contracts on exported API, with
-`@param name - description`, `@returns`, `@throws`, `@remarks` for invariants,
-and `@internal` for non-public exports. In `.ts`/`.tsx` types live in signatures
-and are not repeated in comments; plain `.mjs` scripts keep type-bearing JSDoc
-because that is the only place the type can be stated. Comments carry contracts,
-not narration, decision history, or notes to a reviewer.
+Doc comments follow [TSDoc](https://tsdoc.org/), not JSDoc. Exported `.ts`/`.tsx`
+API uses `/** */` with `@remarks` for invariants, `{@link}` for symbols, and
+`@param` / `@returns` / `@throws` only when they add purpose or conditions the
+signature does not already state. Types live in TypeScript; never write JSDoc
+`{Type}` braces. Plain `.mjs` scripts keep type-bearing JSDoc because that is
+the only place the type can be stated. Comments carry contracts, not narration,
+decision history, or notes to a reviewer.
 
 Commands and settings use the `dataLineageViz.*` prefix, and the schema
 expansion view is named `Expanded Schema View`. Changelog notes go under the
@@ -183,31 +256,32 @@ source and tests are the implementation baseline.
 
 `npm run gate` is the deterministic pre-merge check; `CONTRIBUTING.md` and the
 `package.json` scripts list the command set. Beyond type-checking, builds, and the
-unit suites it enforces five derived contracts: the
-`contributes.languageModelTools` manifest drift check, the AI template
-schema-version gate, the honest-test-label scan, the packaged-VSIX contents check,
-and the `assert-no-langsmith` bundle check.
+unit suites it enforces eight derived contracts: the
+`contributes.languageModelTools` manifest drift check, the output template
+schema-version gate, the honest-test-label scan, the core-case-completeness
+check, the unit-project coverage check that makes the two unit steps add up to
+the whole suite, the `src/engine` → `src/components` layer-direction guard, the
+packaged-VSIX contents check, and the `assert-no-langsmith` bundle check.
 
-`npm run test:e2e-electron` runs the extended VS Code Electron lanes outside the gate,
+`npm run test:edh` runs the extended VS Code Electron lanes outside the gate,
 against a scripted provider registered through the real `vscode.lm` API — it
 proves extension wiring, not model behaviour. The lanes are serial: they share
 one Electron profile and one `out/` build, so exactly one host runs at a time and
 `.vscode-test.mjs` is never edited to parallelize them. The failure modes that
 edit produces, and why the serial cost is not worth engineering around, are in
-`docs/E2E_TESTING.md` §One host at a time.
+`docs/EDH_TESTING.md` §One host at a time.
 
 The host and the model are tested on separate surfaces, and that separation is a
 decision rather than a gap. A host is the only place `activate()`, contribution
 points, command registration, and `vscode.lm.invokeTool` exist, so it is the only
 place their defects can surface; everything it adds beyond that is deterministic
 translation that does not care whether the text came from inference. Model
-behaviour is therefore measured headless by `npm run test:live-provider`, and the
-Electron fixture stays scripted-only — it must not grow a live-provider mode.
-The seam that separation would otherwise leave — the harness's
-`openAiCompatiblePort` drifting from `VscodeModelPort`, two implementations that
-share no code — is closed by one port-agnostic acceptance suite
-(`tests/unit/ai-core/helpers/portContract.ts`) run against both. A new guarantee
-about the model boundary belongs in that suite, never in a credentialed host lane.
+behaviour is measured internally, headless, never through this repository's
+tracked suite, and the Electron fixture stays scripted-only — it must not grow a
+live-provider mode. `tests/unit/ai-core/helpers/portContract.ts` is a
+port-agnostic acceptance suite proving the real `vscode.lm` transport
+(`VscodeModelPort`) satisfies the model-port contract; a new guarantee about that
+boundary belongs in that suite, never in a credentialed host lane.
 
 The suites prove the deterministic core: SQL parsing and dependency extraction,
 graph construction and traversal, schemas, and state transitions. How good a
@@ -237,9 +311,10 @@ enabled, may contain prompts, customer data, tool payloads, and provider
 responses — they stay in ignored storage and are reviewed before sharing, and
 credentials and authorization headers are never recorded.
 
-Dynamic prompt slots — hop context, tool observations, the user question —
-escape `<`/`>` and carry an untrusted-data banner; `src/ai/agent/toolAttempt.ts`
-and `stagePrompts.ts` hold the established idiom for a new slot.
+Dynamic prompt slots — hop context, tool observations, the user question, the
+host-computed on-screen phrase — escape `<`/`>` through one shared helper and
+carry an untrusted-data banner; `src/ai/agent/toolAttempt.ts` and
+`stagePrompts.ts` hold the established idiom for a new slot.
 
 Third-party prompt sources contribute concepts, not prose. Copying licensed
 prompt or template text near-verbatim requires a tracked third-party-notices

@@ -6,11 +6,19 @@
  * that direction would invert the intended layering. Provider-pure by construction: no `vscode` and
  * no model-SDK import.
  *
- * NOT the single cancellation classifier in the tree: `model/vscodeModelPort.ts` keeps a private
- * `isCancellation` with deliberately different coverage — it recognizes its own `ModelPortError`
- * (`code: 'cancelled'`) and VS Code's `Canceled`/`Cancelled` error names, which this one does not,
- * while this one recognizes the `ABORT_ERR`/`20` code forms, which that one does not. They are not
- * interchangeable; do not "consolidate" them without first reconciling both sets.
+ * NOT the single cancellation classifier in the tree; four sites classify, with deliberately
+ * different coverage, and they are not interchangeable:
+ * - here, `isCancellationOutcome` — the caller's `AbortSignal`, a `DOMException`/`Error` named
+ *   `AbortError`, and the `ABORT_ERR`/`20` code forms, which no other site recognizes;
+ * - `model/modelPort.ts`, `isPortCancellation` — an already-normalized `ModelPortError`
+ *   (`code: 'cancelled'`), and `isHostCancellationError` — the host's `AbortError`/`Canceled`/
+ *   `Cancelled` error names, the one home for that list;
+ * - `model/vscodeLangChainBridge.ts`, `normalizeBridgeError` — the request's
+ *   `CancellationToken`/`AbortSignal` plus `isHostCancellationError`;
+ * - `model/vscodeModelPort.ts`, the private `isCancellation` — `isPortCancellation` or
+ *   `isHostCancellationError`, since the port sees both raw and normalized errors.
+ *
+ * Do not "consolidate" them without first reconciling every set.
  */
 
 /**

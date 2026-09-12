@@ -1,108 +1,21 @@
-import { memo, useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, SHORT_TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
+import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { Tooltip } from './ui/Tooltip';
+import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { CloseIcon } from './ui/CloseIcon';
-import type { ObjectType } from '../engine/types';
+import type { CustomNodeData, TraceNeighborOption } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
-
-/** One column-level flow row shown in a node tooltip. */
-export type CtTooltipFlow = {
-  /** Neighbor node that contributes or receives the traced column value. */
-  neighborNode: string;
-  /** Lineage side where the neighbor participates in the column trace. */
-  direction: 'in' | 'out';
-  /** Source-side column shown in the tooltip flow row. */
-  fromCol: string;
-  /** Target-side column shown in the tooltip flow row. */
-  toCol: string;
-};
-
-/** One selectable direct neighbor for interactive trace add/prune controls. */
-export type TraceNeighborOption = {
-  /** Stable node ID passed back to trace edit handlers. */
-  id: string;
-  /** Display name shown in the neighbor picker. */
-  label: string;
-  /** Schema displayed with the neighbor label. */
-  schema: string;
-  /** Object kind used for compact type badges in the picker. */
-  objectType: ObjectType;
-};
 
 /** User action supported by the interactive trace node controls. */
 type TraceNeighborAction = 'add' | 'prune';
-
-/** Per-node callbacks and candidate lists for interactive trace editing. */
-export type TraceNodeControls = {
-  /** Controls for upstream direct-neighbor trace edits. */
-  in: TraceSideControls;
-  /** Controls for downstream direct-neighbor trace edits. */
-  out: TraceSideControls;
-  /** Adds the selected direct neighbor to the current trace scope. */
-  onAdd: (nodeId: string) => void;
-  /** Removes the selected node from the current trace scope when safe. */
-  onPrune: (nodeId: string) => void;
-};
-
-/** Add/prune candidates and disabled-copy for one lineage side of a node. */
-export type TraceSideControls = {
-  /** Direct neighbors that can be added on this side. */
-  add: TraceNeighborOption[];
-  /** Visible trace nodes that can be pruned on this side. */
-  prune: TraceNeighborOption[];
-  /** Reason add controls are disabled, or an empty string when enabled. */
-  addDisabledReason: string;
-  /** Reason prune controls are disabled, or an empty string when enabled. */
-  pruneDisabledReason: string;
-  /** Total direct neighbors on this side (drives hide-vs-disable for add). */
-  neighborCount: number;
-  /** Direct neighbors on this side already in the trace (drives hide-vs-disable for prune). */
-  visibleNeighborCount: number;
-};
 
 type TraceNeighborPicker = {
   action: TraceNeighborAction;
   side: NeighborSide;
   options: TraceNeighborOption[];
 };
-
-/**
- * Returns sorted unique columns for table-style CT tooltip display.
- *
- * @param flows - Column-flow entries to transform.
- *
- * @returns Sorted unique column names across all from/to flow endpoints.
- */
-export function buildTableTraceColumns(flows: CtTooltipFlow[]): string[] {
-  const cols = new Set<string>();
-  for (const f of flows) {
-    if (f.fromCol) cols.add(f.fromCol);
-    if (f.toCol) cols.add(f.toCol);
-  }
-  return Array.from(cols).sort((a, b) => a.localeCompare(b));
-}
-
-/**
- * Groups CT flows by neighbor with deterministic ordering and de-duplication.
- *
- * @param flows - Column-flow entries to transform.
- *
- * @returns One group per neighbor node with its de-duplicated flow rows, sorted by neighbor.
- */
-export function groupCtFlowsByNeighbor(flows: CtTooltipFlow[]): Array<{ neighborNode: string; rows: CtTooltipFlow[] }> {
-  const groups = new Map<string, CtTooltipFlow[]>();
-  for (const f of flows) {
-    if (!groups.has(f.neighborNode)) groups.set(f.neighborNode, []);
-    const arr = groups.get(f.neighborNode)!;
-    if (!arr.some(x => x.direction === f.direction && x.fromCol === f.fromCol && x.toCol === f.toCol)) {
-      arr.push(f);
-    }
-  }
-  return Array.from(groups.keys())
-    .sort((a, b) => a.localeCompare(b))
-    .map((neighborNode) => ({ neighborNode, rows: groups.get(neighborNode) ?? [] }));
-}
 
 function traceActionLabel(action: TraceNeighborAction, side: NeighborSide): string {
   return `${action === 'add' ? 'Add' : 'Prune'} ${side === 'in' ? 'inbound' : 'outbound'} neighbor`;
@@ -208,49 +121,6 @@ function TraceNeighborPickerToolbar({
   );
 }
 
-/**
- * The business data associated with a single node in the React Flow canvas.
- */
-export type CustomNodeData = {
-  /** Display label rendered inside the node. */
-  label: string;
-  /** Schema name used for grouping, color selection, and tooltips. */
-  schema: string;
-  /** Fully qualified object name used by detail and debug surfaces. */
-  fullName: string;
-  /** Object kind that drives icon, color, and tooltip behavior. */
-  objectType: ObjectType;
-  /** Count of upstream dependencies shown in node metadata. */
-  inDegree: number;
-  /** Count of downstream dependents shown in node metadata. */
-  outDegree: number;
-  /** Whether the node is de-emphasized in the current scoped view. */
-  dimmed?: boolean;
-  /** Highlight state applied by search, trace, or AI presentation. */
-  highlighted?: boolean | 'yellow';
-  /** External reference subtype for file, database, or external-table nodes. */
-  externalType?: 'et' | 'file' | 'db';
-  /** File or URL target displayed for file-based external references. */
-  externalUrl?: string;
-  /** Database name displayed for cross-database external references. */
-  externalDatabase?: string;
-  /** Resolved schema color supplied by the parent graph projection. */
-  schemaColor?: string;
-  /** AI-authored badge rendered above the node. */
-  aiBadge?: { text: string };
-  /** AI-authored note rendered below the node. */
-  aiNote?: { text: string };
-  /** AI-authored highlight styling applied to the node border and glow. */
-  aiHighlight?: { color: string; glow: string; shadow: string };
-  /** Column-trace rows rendered in the node tooltip. */
-  ctColumnFlows?: CtTooltipFlow[];
-  /** Whether the scoped-view remove control is shown. */
-  showRemoveButton?: boolean;
-  /** Removes the node from the active allowlist-backed view. */
-  onRemoveFromView?: (nodeId: string) => void;
-  /** Interactive trace controls for adding or pruning direct neighbors. */
-  traceControls?: TraceNodeControls;
-};
 
 function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
@@ -258,13 +128,8 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const isVirtual = data.externalType === 'file' || data.externalType === 'db';
   const displayIcon = isVirtual ? '⬡' : data.externalType === 'et' ? '⬢' : style.icon;
   const schemaColor = isExternal ? getExternalNodeColor() : (data.schemaColor ?? getSchemaColor(data.schema));
-  const dimmed = data.dimmed === true;
-  const highlighted = data.highlighted === true || data.highlighted === 'yellow';
-  const isYellowHighlight = data.highlighted === 'yellow';
-
-  const highlightColor = data.aiHighlight
-    ? data.aiHighlight.color
-    : isYellowHighlight ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
+  const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, transform, zIndex } =
+    resolveNodeHighlightStyle(data.highlighted, data.aiHighlight, data.dimmed);
 
   const tooltipLines: string[] = [];
   if (data.externalType === 'file' && data.externalUrl) tooltipLines.push(data.externalUrl);
@@ -273,44 +138,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   tooltipLines.push(`Object Type: ${TYPE_LABELS[data.objectType]}${isVirtual ? (data.externalType === 'file' ? ' (File Source)' : ' (Cross-Database)') : ''}`);
   tooltipLines.push(`In: ${data.inDegree} | Out: ${data.outDegree}`);
 
-  const buildCtTooltipContent = (): ReactNode => {
-    if (!data.ctColumnFlows?.length) return tooltipLines.join('\n');
-
-    if (data.objectType === 'table') {
-      const cols = buildTableTraceColumns(data.ctColumnFlows);
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {tooltipLines.map((line, i) => <div key={i}>{line}</div>)}
-          <div style={{ borderTop: '1px solid var(--vscode-widget-border, #555)', margin: '3px 0' }} />
-          <div style={{ fontWeight: 600, fontSize: '0.85em', color: 'var(--ln-fg-muted)' }}>Trace columns:</div>
-          {cols.map((c) => (
-            <div key={c} style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>{c}</div>
-          ))}
-        </div>
-      );
-    }
-
-    const grouped = groupCtFlowsByNeighbor(data.ctColumnFlows);
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {tooltipLines.map((line, i) => <div key={i}>{line}</div>)}
-        <div style={{ borderTop: '1px solid var(--vscode-widget-border, #555)', margin: '3px 0' }} />
-        <div style={{ fontWeight: 600, fontSize: '0.85em', color: 'var(--ln-fg-muted)' }}>Column trace:</div>
-        {grouped.map(({ neighborNode, rows }) => (
-          <div key={neighborNode} style={{ marginTop: 3 }}>
-            <div style={{ fontWeight: 600, fontSize: '0.8em', color: 'var(--ln-fg-muted)' }}>{neighborNode}</div>
-            {rows.map((r, i) => (
-              <div key={`${neighborNode}-${r.direction}-${r.fromCol}-${r.toCol}-${i}`} style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>
-                {r.direction === 'in' ? `${r.fromCol} → ${r.toCol}` : `${r.toCol} ← ${r.fromCol}`}
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  const tooltipContent: string | ReactNode = buildCtTooltipContent();
+  const tooltipContent: string = tooltipLines.join('\n');
 
   const [picker, setPicker] = useState<TraceNeighborPicker | null>(null);
 
@@ -344,20 +172,8 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           }}
         />
       )}
-      {data.aiBadge && (
-        <NodeToolbar position={Position.Top} align="center" offset={2} isVisible>
-          <Tooltip content={data.aiBadge.text} placement="top">
-            <div className="ln-ai-badge">{data.aiBadge.text}</div>
-          </Tooltip>
-        </NodeToolbar>
-      )}
-      {data.aiNote && (
-        <NodeToolbar position={Position.Bottom} align="center" offset={2} isVisible>
-          <Tooltip content={data.aiNote.text} placement="bottom" multiline maxWidth={400} delay={300}>
-            <div className="ln-ai-note-label">{data.aiNote.text.split('\n')[0]}</div>
-          </Tooltip>
-        </NodeToolbar>
-      )}
+      {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
+      {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
       <Tooltip content={tooltipContent} placement="top" multiline maxWidth={300} asChild>
         <div
           className="rounded-lg border-2 transition-all duration-300 ease-in-out ln-node-card"
@@ -367,22 +183,12 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             borderLeftColor: highlighted ? highlightColor : schemaColor,
             borderLeftWidth: 6,
             backgroundColor: 'var(--ln-node-bg)',
-            opacity: dimmed ? 0.25 : 1,
+            opacity,
             width: 180,
             height: 70,
-            boxShadow: highlighted
-              ? (isYellowHighlight
-                ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
-                : data.aiHighlight
-                  ? `0 0 0 5px ${data.aiHighlight.glow}, 0 8px 20px ${data.aiHighlight.shadow}`
-                  : '0 0 0 4px var(--ln-highlight-blue-glow), 0 8px 20px var(--ln-highlight-blue-shadow)')
-              : data.aiHighlight
-                ? `0 0 0 5px ${data.aiHighlight.glow}, 0 8px 20px ${data.aiHighlight.shadow}`
-                : dimmed
-                  ? 'var(--ln-node-shadow-dimmed)'
-                  : 'var(--ln-node-shadow)',
-            transform: highlighted ? 'scale(1.05)' : 'scale(1)',
-            zIndex: highlighted ? 1000 : 1,
+            boxShadow,
+            transform,
+            zIndex,
           }}
         >
           {data.showRemoveButton && (

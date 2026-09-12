@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AIMessage, BaseMessage } from '@langchain/core/messages';
 import {
+  MAX_TOOL_PROVIDER_CALLS,
   MAX_TOOL_SEMANTIC_FAILURES,
   executeToolAttempt,
   executeToolGenerationAttempt,
@@ -21,8 +22,10 @@ import {
   type ToolPhaseAttemptState,
 } from '../../../src/ai/agent/toolAttempt';
 import type { ConverseInstructionPlan } from '../../../src/ai/agent/instructionPlan';
+import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFormed';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
+import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import type { IToolRegistry } from '../../../src/ai/tools/registry';
 import {
   ScriptedModelPort,
@@ -146,11 +149,14 @@ describe('executeToolGenerationAttempt — mixed valid/invalid tool batch', () =
       reason: 'column_flow.0.to_col: Required',
       // Schema-invalid calls carry the standing repair directive: the rejected call is replayed
       // without arguments, so the model must be told to edit-and-resend rather than regenerate.
-      hint: 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged.',
+      hint: 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.',
       issuePaths: ['column_flow.0.to_col'],
+      // Only a fingerprint of the rejected input survives — enough to bound unproductive resends
+      // across attempts, never the payload itself.
+      inputHash: expect.any(String),
     });
-    // The rejected input is absent by type — the envelope has no payload-bearing key at all.
-    expect(Object.keys(rejection).sort()).toEqual(['callId', 'code', 'hint', 'issuePaths', 'reason', 'toolName']);
+    // The rejected input is absent by type — no key carries the raw payload, only its hash.
+    expect(Object.keys(rejection).sort()).toEqual(['callId', 'code', 'hint', 'inputHash', 'issuePaths', 'reason', 'toolName']);
   });
 
   it('attaches repair guidance to an unknown_tool prevalidation reject, naming the phase\'s valid tools as data', async () => {
@@ -244,6 +250,31 @@ describe('executeToolGenerationAttempt — mixed valid/invalid tool batch', () =
     expect(rejected.invocations).toHaveLength(2);
     expect(rejected.result.calls.map(call => call.status)).toEqual(['rejected', 'executed']);
   });
+
+  it('gives two reads the handler cannot tell apart one dedupe key', async () => {
+    // The key follows the handler's own normalizers: `[ai].[SpImportOrders]` and
+    // `ai.spimportorders` are the same object lookup, and a bracketed query with the same explicit
+    // schema is the same search. Keyed on the raw payload each pair dispatched twice.
+    const detail = await runAttempt(
+      [{ toolCalls: [
+        validCall('call-1', 'lineage_get_object_detail', { id: '[ai].[SpImportOrders]' }),
+        validCall('call-2', 'lineage_get_object_detail', { id: 'ai.spimportorders' }),
+      ] }],
+      [{ name: 'lineage_get_object_detail', result: '{"id":"[ai].[spimportorders]"}', effect: 'read' }],
+    );
+    expect(detail.invocations).toHaveLength(1);
+    expect(detail.result.observations).toHaveLength(1);
+
+    const search = await runAttempt(
+      [{ toolCalls: [
+        validCall('call-3', 'lineage_search_objects', { query: '[ai].[Orders]' }),
+        validCall('call-4', 'lineage_search_objects', { query: 'Orders', schemas: ['ai'], mode: 'substring' }),
+      ] }],
+      [{ name: 'lineage_search_objects', result: '{"matches":[]}', effect: 'read' }],
+    );
+    expect(search.invocations).toHaveLength(1);
+    expect(search.result.observations).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -331,6 +362,33 @@ describe('executeToolGenerationAttempt — semantic-failure budget', () => {
 
     expect(state.semanticFailures).toBe(MAX_TOOL_SEMANTIC_FAILURES);
     expect(state.stopReason).toBe('semantic_failures');
+  });
+
+  // A correction the stored-rejection budget drops never reaches the model again; the drop is a
+  // logged event, not a silent one.
+  it('reports the count of stored corrections the budget drops', () => {
+    const logged: string[] = [];
+    const rejection = (callId: string) => ({
+      stop: 'continue' as const,
+      providerCalls: 1,
+      semanticFailures: 1,
+      observations: [],
+      rejections: [{ callId, toolName: 'lineage_get_details', code: 'validation', reason: 'bad' }],
+    });
+    // A window this small leaves the stored-rejection share at zero, so only the essential current
+    // correction survives.
+    const budget = createTurnTokenBudget({ modelWindowTokens: 1_000 });
+    let state = recordToolAttempt(initialToolPhaseAttemptState('active'), rejection('c1'), budget, (message) => { logged.push(message); });
+    state = recordToolAttempt(state, rejection('c2'), budget, (message) => { logged.push(message); });
+
+    expect(state.rejections).toHaveLength(1);
+    const drops = logged.filter((message) => message.includes('stored corrections dropped by budget'));
+    // The first record shrinks the single correction in place (nothing is lost, nothing logged);
+    // the second cannot hold both, so one is dropped and said so.
+    expect(drops).toHaveLength(1);
+    expect(drops[0]).toContain('dropped=1');
+    expect(drops[0]).toContain('carried=2');
+    expect(drops[0]).toContain('phase=active');
   });
 
   it('never charges a duplicate_call_id transport artifact against the semantic budget', async () => {
@@ -518,10 +576,10 @@ describe('executeToolGenerationAttempt — truncated generation classification',
 });
 
 // ---------------------------------------------------------------------------
-// (d) 48KB shrink ladder with explicit, non-silent omission accounting
+// (d) 48KB attempt context: held observations render whole, rejection text shrinks
 // ---------------------------------------------------------------------------
 
-describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () => {
+describe('renderToolAttemptContext — held observations render whole', () => {
   function stateWithObservations(bodies: readonly string[]): ToolPhaseAttemptState {
     return {
       phase: 'active',
@@ -545,40 +603,22 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
     expect(rendered).not.toContain('omitted');
   });
 
-  it('truncates then collapses oversized observations with exact byte accounting', () => {
-    const body = 'D'.repeat(40_000);
-    const rendered = renderToolAttemptContext(stateWithObservations([body, body]));
+  it('renders every held observation body verbatim — the re-projection is the delivery', () => {
+    // Each attempt is a fresh request: a body shrunk here is a body the model never receives. The
+    // store already refused anything that does not fit, so rendering has nothing left to shrink.
+    const first = `{"definition":"CREATE VIEW dbo.A AS ${'A'.repeat(20_000)}"}`;
+    const second = `{"definition":"CREATE VIEW dbo.B AS ${'B'.repeat(20_000)}"}`;
+    const rendered = renderToolAttemptContext(stateWithObservations([first, second]));
 
-    expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
-
-    // Ladder step 1: equal-share truncation at floor(49152 / 2) = 24576 bytes per observation,
-    // so the reported drop is exactly 40000 - 24576. Nothing is dropped silently.
-    const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / 2);
-    const dropped = body.length - fairShare;
-    expect(rendered).toContain(`+${dropped} bytes omitted from retry context`);
-    expect(rendered).toContain('the full result was delivered when this call first ran');
-
-    // Ladder step 2: the oldest observation collapses to an identity+size stub whose byte count is
-    // the ORIGINAL body size, so the model still learns exactly how much evidence exists.
-    expect(rendered).toContain('\\"omitted\\":true,\\"bytes\\":40000');
+    expect(rendered).toContain('A'.repeat(20_000));
+    expect(rendered).toContain('B'.repeat(20_000));
+    expect(rendered).not.toContain('omitted');
+    expect(rendered).not.toContain('collapsed');
   });
 
-  it('reduces every oversized body under a wide batch, each reduction explicitly accounted', () => {
-    const rendered = renderToolAttemptContext(stateWithObservations(Array.from({ length: 12 }, () => 'X'.repeat(30_000))));
-
-    expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
-    // Equal-share truncation at floor(49152 / 12) = 4096 bytes, then oldest-first collapse until
-    // the rendered payload fits. Both reductions state their exact byte cost.
-    const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / 12);
-    expect(rendered).toContain(`+${30_000 - fairShare} bytes omitted from retry context`);
-    expect(rendered).toContain('\\"omitted\\":true,\\"bytes\\":30000');
-    // No body survives at anything approaching its original size.
-    expect(rendered).not.toContain('X'.repeat(fairShare + 1));
-  });
-
-  it('falls back to a single counted observation summary when rejections alone exceed the budget', () => {
+  it('drops bulk rejection detail while every held observation body survives', () => {
     const state: ToolPhaseAttemptState = {
-      ...stateWithObservations(Array.from({ length: 12 }, () => 'X'.repeat(30_000))),
+      ...stateWithObservations(Array.from({ length: 3 }, () => 'X'.repeat(10_000))),
       semanticFailures: 2,
       rejections: [
         {
@@ -603,13 +643,12 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
     const rendered = renderToolAttemptContext(state);
 
     expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
-    // Terminal observation step: one count+bytes summary standing in for all 12 observations.
-    expect(rendered).toContain('"collapsed":true,"count":12,"bytes":360000');
-    expect(rendered).not.toContain('XXXXXXXXXX');
-    // Terminal rejection step: bulk detail dropped, the actionable correction retained in full.
+    // Engine correction text is the only shrink axis left: bulk detail goes, the actionable
+    // correction stays in full, and the accepted evidence is untouched by either step.
     expect(rendered).not.toContain('TERMINAL-BULK-');
     expect(rendered).toContain('NEWEST-HINT: resend column_flow entry 3.');
     expect(rendered).toContain('column_flow.3');
+    expect(rendered).toContain('X'.repeat(10_000));
   });
 
   it('preserves the newest correction in full while collapsing older rejection envelopes', () => {
@@ -663,25 +702,9 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
     expect(rendered).toContain('column_flow.3');
   });
 
-  it('bounds a stored observation to the checkpoint share with a total-size marker', () => {
-    const body = 'B'.repeat(60_000);
-    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), {
-      stop: 'continue',
-      providerCalls: 1,
-      semanticFailures: 0,
-      observations: [{ callId: 'call-0', toolName: 'lineage_get_details', result: body }],
-      rejections: [],
-    });
-
-    const [stored] = state.observations;
-    expect(Buffer.byteLength(stored.result)).toBeLessThanOrEqual(MAX_STORED_EVIDENCE_KIND_BYTES);
-    expect(stored.result).toContain('[+60000 bytes total; remainder omitted]');
-  });
-
-  it('keeps the read-dedupe identity on a truncated observation', () => {
+  it('stores an accepted body whole and keeps its read-dedupe identity', () => {
     // `acceptedCallKey` is what a later attempt reuses instead of re-dispatching an identical read.
-    // Dropping it while truncating disables the dedupe on exactly the over-budget hops that caused
-    // the truncation, so the next attempt pays for the same read again.
+    const body = 'B'.repeat(40_000);
     const state = recordToolAttempt(initialToolPhaseAttemptState('active'), {
       stop: 'continue',
       providerCalls: 1,
@@ -689,14 +712,17 @@ describe('renderToolAttemptContext — 48KB attempt-context shrink ladder', () =
       observations: [{
         callId: 'call-0',
         toolName: 'lineage_get_object_detail',
-        result: 'B'.repeat(60_000),
+        result: body,
         acceptedCallKey: 'accepted-key-0',
       }],
       rejections: [],
     });
 
+    expect(state.observations[0].result).toBe(body);
     expect(state.observations[0].acceptedCallKey).toBe('accepted-key-0');
+    expect(Buffer.byteLength(state.observations[0].result)).toBeLessThanOrEqual(MAX_STORED_EVIDENCE_KIND_BYTES);
   });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -733,14 +759,16 @@ describe('executeToolAttempt — bounded rejection replay', () => {
   async function replayAfterRejection(options: {
     input: unknown;
     envelope: string;
+    toolName?: string;
     presentResultRepairDraftHeld?: boolean;
-    presentResultRepairDraftContext?: () => { sections?: unknown; highlight_groups?: unknown } | null;
+    presentResultRepairDraftContext?: () => { sections?: unknown; notes?: unknown; highlight_groups?: unknown } | null;
   }): Promise<{ replayed: readonly BaseMessage[]; state: ToolPhaseAttemptState; first: ToolAttemptResult }> {
-    const { registry } = scriptedRegistry([{ name: 'lineage_submit_findings', result: options.envelope }]);
+    const toolName = options.toolName ?? 'lineage_submit_findings';
+    const { registry } = scriptedRegistry([{ name: toolName, result: options.envelope }]);
     const plan = conversePlan(registry);
 
     const firstPort = new ScriptedModelPort([{
-      toolCalls: [validCall('call-1', 'lineage_submit_findings', options.input)],
+      toolCalls: [validCall('call-1', toolName, options.input)],
     }]);
     const first = await executeToolAttempt(firstPort, plan);
     const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
@@ -759,16 +787,61 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     return { replayed: secondPort.requests[0].messages, state, first };
   }
 
+  // The replay ends with the exchange-closing continuation note, so the pair sits one further back.
   function replayedToolArgs(messages: readonly BaseMessage[]): Record<string, unknown> {
-    const toolCallMessage = messages[messages.length - 2] as AIMessage;
+    const toolCallMessage = messages[messages.length - 3] as AIMessage;
     const call = toolCallMessage.tool_calls?.[0];
     expect(call).toBeDefined();
     return (call?.args ?? {}) as Record<string, unknown>;
   }
 
   function replayedToolResult(messages: readonly BaseMessage[]): Record<string, unknown> {
-    return JSON.parse(String(messages[messages.length - 1].content)) as Record<string, unknown>;
+    return JSON.parse(String(messages[messages.length - 2].content)) as Record<string, unknown>;
   }
+
+  /**
+   * Runs one schema-invalid (pre-dispatch) rejection, then the follow-up attempt that replays it —
+   * the port-level path, where no held draft exists and the replayed args are the model's only view
+   * of what it sent.
+   */
+  async function replayAfterInvalidCall(options: {
+    toolName: string;
+    input: unknown;
+    reason: string;
+    issuePaths: readonly string[];
+  }): Promise<{ replayed: readonly BaseMessage[]; first: ToolAttemptResult }> {
+    const { registry } = scriptedRegistry([{ name: options.toolName, result: '{"ok":true}' }]);
+    const plan = conversePlan(registry);
+
+    const firstPort = new ScriptedModelPort([{
+      toolCalls: [invalidCall('call-1', options.toolName, 'invalid_tool_input', options.reason, options.issuePaths, options.input)],
+    }]);
+    const first = await executeToolAttempt(firstPort, plan);
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
+
+    const secondPort = new ScriptedModelPort([{ text: 'Acknowledged.' }]);
+    await executeToolAttempt(secondPort, plan, { priorState: state });
+
+    return { replayed: secondPort.requests[0].messages, first };
+  }
+
+  it('never ends a retry history on a tool result — the exchange closes with a user-role note', async () => {
+    // Provider contract, not style: Gemini 3 signature-validates every function call in the turn
+    // opened by the newest user text message, and the VS Code LM API cannot carry a thought
+    // signature — so a request ending on the tool result fails the whole turn with an
+    // unrecoverable 400. The trailing user note ends that turn before the provider sees it.
+    const { replayed } = await replayAfterRejection({
+      input: { column_flow: [] },
+      envelope: rejectionEnvelope({ reason: 'Required neighbors not accounted for.', hint: 'Add them to route_requests.' }),
+    });
+
+    const last = replayed[replayed.length - 1];
+    expect(last.getType()).toBe('human');
+    expect(String(last.content)).toContain('Continue the current task');
+    // The correction itself still rides the paired tool result, and the pair stays well formed.
+    expect(replayedToolResult(replayed).code).toBe('validation');
+    expect(() => assertToolPairingWellFormed(replayed)).not.toThrow();
+  });
 
   it('replays only the flagged correction fragment, never the original payload', async () => {
     const { replayed, first } = await replayAfterRejection({
@@ -788,8 +861,8 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     });
 
     expect(first.rejections[0].issuePaths).toEqual(['column_flow.1']);
-    // messages: [original user message, assistant tool-call replay, paired tool result]
-    expect(replayed).toHaveLength(3);
+    // messages: [original user message, assistant tool-call replay, paired tool result, continuation note]
+    expect(replayed).toHaveLength(4);
 
     const args = replayedToolArgs(replayed);
     expect(Object.keys(args)).toEqual(['column_flow']);
@@ -872,6 +945,160 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(wire).not.toContain('DROP-5');
   });
 
+  it('replays every present_result section when only one is flagged, so an unflagged section is never rewritten', async () => {
+    const { replayed, first } = await replayAfterRejection({
+      toolName: 'lineage_present_result',
+      input: {
+        sections: [
+          { label: 'Formula', text: 'SECTION-0-TEXT', node_ids: ['[dbo].[Orders]'] },
+          { label: 'Risk', text: 'SECTION-1-TEXT', node_ids: ['[dbo].[Ghost]'] },
+        ],
+        narrative: RAW_PROSE_MARKER,
+      },
+      envelope: rejectionEnvelope({
+        reason: 'sections entry 1 names an unknown node id.',
+        detail: [{ path: 'sections.1.node_ids', expected: 'known node id' }],
+      }),
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['sections.1.node_ids']);
+    const args = replayedToolArgs(replayed);
+    // A resent list replaces the whole list, so the error-free section rides along verbatim; two
+    // entries stay inside MAX_CORRECTION_FRAGMENTS.
+    expect(Object.keys(args)).toEqual(['sections']);
+    expect(args.sections).toEqual([
+      { label: 'Formula', text: 'SECTION-0-TEXT', node_ids: ['[dbo].[Orders]'] },
+      { label: 'Risk', text: 'SECTION-1-TEXT', node_ids: ['[dbo].[Ghost]'] },
+    ]);
+    expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
+  });
+
+  it('replays the whole submit_findings call when the rejection names no path, so a full resend can carry it over', async () => {
+    // A route rejection orders "resend submit_findings whole, carrying your sections and summary over
+    // unchanged" and names no field path; a replay of `{}` leaves the model rebuilding the call from
+    // memory, which reintroduced an already-repaired out_col (m1-n3-b-fireworks T8 gen 21).
+    const columnFlow = Array.from({ length: 6 }, (_, index) => ({
+      out_col: `Col${index}`,
+      upstream_columns: [{ node: '[dbo].[Src]', col: `Src${index}`, transforms: ['direct'] }],
+    }));
+    const input = {
+      focus_node_id: '[dbo].[spClean]',
+      verdict: 'analyze',
+      summary: 'SUMMARY-CARRIED',
+      sections: [{ label: 'Formula', text: 'SECTION-CARRIED' }],
+      column_flow: columnFlow,
+      route_requests: ['[dbo].[Src]'],
+      prune_neighbors: ['[dbo].[Required]'],
+    };
+    const { replayed, first } = await replayAfterRejection({
+      input,
+      envelope: rejectionEnvelope({
+        reason: 'route_validation_failed',
+        hint: 'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.',
+        detail: [{ id: '[dbo].[Required]', reason: 'Pruning `[dbo].[Required]` would orphan committed work.' }],
+      }),
+    });
+
+    expect(first.rejections[0].issuePaths).toBeUndefined();
+    expect(replayedToolArgs(replayed)).toEqual(input);
+  });
+
+  it('replays a present_result rejection by name and call id only while the held draft carries the payload', async () => {
+    const sections = [
+      { label: 'Formula', text: 'HELD-SECTION-0', node_ids: ['[dbo].[Orders]'] },
+      { label: 'Risk', text: 'HELD-SECTION-1', node_ids: ['[dbo].[Ghost]'] },
+    ];
+    const { replayed } = await replayAfterRejection({
+      toolName: 'lineage_present_result',
+      input: { sections, narrative: RAW_PROSE_MARKER },
+      envelope: rejectionEnvelope({
+        reason: 'sections entry 1 names an unknown node id.',
+        detail: [{ path: 'sections.1.node_ids', expected: 'known node id' }],
+      }),
+      presentResultRepairDraftHeld: true,
+      presentResultRepairDraftContext: () => ({ sections, notes: [], highlight_groups: [] }),
+    });
+
+    // The draft block is the one carrier of the section text; the replayed call adds no second copy.
+    expect(replayedToolArgs(replayed)).toEqual({});
+    const wire = JSON.stringify(replayed);
+    expect(wire.split('HELD-SECTION-0').length - 1).toBe(1);
+    expect(wire.split('HELD-SECTION-1').length - 1).toBe(1);
+    expect(wire).not.toContain(RAW_PROSE_MARKER);
+  });
+
+  it('replays a long present_result list complete, bounded by bytes rather than skipped past four entries', async () => {
+    const sections = Array.from({ length: 6 }, (_unused, index) => ({
+      label: `Section ${index}`,
+      text: index === 0 ? `LONG-${'s'.repeat(9_000)}` : `SHORT-SECTION-${index}`,
+    }));
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input: { sections, narrative: RAW_PROSE_MARKER },
+      reason: 'sections.5: Unrecognized key: "notes"',
+      issuePaths: ['sections.5.notes'],
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['sections.5.notes']);
+    const args = replayedToolArgs(replayed);
+    const replayedSections = args.sections as unknown[];
+    expect(replayedSections).toHaveLength(6);
+    expect(replayedSections.every((entry) => entry !== undefined)).toBe(true);
+    const wire = JSON.stringify(replayed);
+    for (let index = 1; index < 6; index += 1) expect(wire).toContain(`SHORT-SECTION-${index}`);
+    // The oversized element is truncated to its share of the list budget, never carried whole.
+    expect(wire).not.toContain('s'.repeat(9_000));
+    expect(Buffer.byteLength(JSON.stringify(replayedSections))).toBeLessThanOrEqual(MAX_CORRECTION_FRAGMENTS * MAX_BOUNDED_STRUCTURED_BYTES + 512);
+    expect(wire).not.toContain(RAW_PROSE_MARKER);
+  });
+
+  it('replays every section of a schema-invalid present_result call instead of empty arguments', async () => {
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input: {
+        sections: [
+          { label: 'Overview', text: 'INVALID-SECTION-0', notes: ['nested-note'] },
+          { label: 'Formula', text: 'INVALID-SECTION-1' },
+          { label: 'Risk', text: 'INVALID-SECTION-2' },
+        ],
+        narrative: RAW_PROSE_MARKER,
+      },
+      reason: 'sections.0: Unrecognized key: "notes"',
+      issuePaths: ['sections.0.notes'],
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['sections.0.notes']);
+    const args = replayedToolArgs(replayed);
+    expect(Object.keys(args)).toEqual(['sections']);
+    expect(args.sections).toEqual([
+      { label: 'Overview', text: 'INVALID-SECTION-0', notes: ['nested-note'] },
+      { label: 'Formula', text: 'INVALID-SECTION-1' },
+      { label: 'Risk', text: 'INVALID-SECTION-2' },
+    ]);
+    // The standing repair sentence must also bind the unflagged elements of a resent list.
+    expect(String(first.rejections[0].hint)).toContain('repeating the unflagged elements exactly as first sent');
+    expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
+  });
+
+  it('replays the whole schema-invalid call when the flagged field is not a list, instead of empty arguments', async () => {
+    // A title over its limit flags `title`, a scalar root no list projection covers; the standing hint
+    // orders "keep every other field unchanged", so a replay of `{}` sent the model into a full
+    // regeneration that overran the limit again (b2-b-fireworks T6: 146, 123, 124 chars, terminal).
+    const input = {
+      title: 'T'.repeat(146),
+      sections: [{ label: 'Overview', text: 'SECTION-CARRIED' }],
+    };
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input,
+      reason: 'title: 146 chars, limit 120',
+      issuePaths: ['title'],
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['title']);
+    expect(replayedToolArgs(replayed)).toEqual(input);
+  });
+
   it('renders the held present_result repair draft as its own labeled message before the correction', async () => {
     const { replayed } = await replayAfterRejection({
       input: { column_flow: [{ from_col: 'A', to_col: 'B' }] },
@@ -882,12 +1109,33 @@ describe('executeToolAttempt — bounded rejection replay', () => {
       }),
     });
 
-    // [user prompt, held-draft repair state, assistant tool-call replay, paired tool result]
-    expect(replayed).toHaveLength(4);
+    // [user prompt, held-draft repair state, assistant tool-call replay, paired tool result, continuation note]
+    expect(replayed).toHaveLength(5);
     const heldDraft = String(replayed[1].content);
     expect(heldDraft).toContain('held_draft_repair_state');
     expect(heldDraft).toContain('HELD-DRAFT-SECTION-TEXT');
     expect(heldDraft).toContain('This is your own currently held draft for this repair turn');
+  });
+
+  it('surfaces the held notes and names all three held fields in the banner', async () => {
+    const { replayed } = await replayAfterRejection({
+      input: { column_flow: [{ from_col: 'A', to_col: 'B' }] },
+      envelope: rejectionEnvelope({ reason: 'Flow entry 0 is incomplete.', detail: [{ path: 'column_flow.0' }] }),
+      presentResultRepairDraftContext: () => ({
+        sections: [{ label: 'Source', text: 'HELD-DRAFT-SECTION-TEXT' }],
+        notes: [{ node_id: '[dbo].[Orders]', text: 'HELD-DRAFT-NOTE-TEXT' }],
+        highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['[dbo].[Orders]'] }],
+      }),
+    });
+
+    expect(replayed).toHaveLength(5);
+    const heldDraft = String(replayed[1].content);
+    // The rendered block must expose the held notes verbatim, including the node_id they attach to
+    // — otherwise a repair-turn model cannot see the note it is asked to patch.
+    expect(heldDraft).toContain('HELD-DRAFT-NOTE-TEXT');
+    expect(heldDraft).toContain('[dbo].[Orders]');
+    // The banner must name all three held fields, not just the two the model can currently see.
+    expect(heldDraft).toContain('sections, notes, and highlight_groups');
   });
 
   it('omits the held-draft message entirely when no repairable draft is on hold', async () => {
@@ -897,7 +1145,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
       presentResultRepairDraftContext: () => null,
     });
 
-    expect(replayed).toHaveLength(3);
+    expect(replayed).toHaveLength(4);
     expect(JSON.stringify(replayed)).not.toContain('held_draft_repair_state');
   });
 });
@@ -1060,6 +1308,236 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     return { state, results };
   }
 
+  it('answers a cross-attempt resend of an accepted read with an uncharged duplicate_read envelope instead of a silent replay', async () => {
+    const { registry, invocations } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { text: 'Two objects changed.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 3; index++) {
+      const result = await executeToolAttempt(port, plan, { priorState: state });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    expect(invocations).toHaveLength(1);
+    expect(results[1].calls.map((call) => call.status)).toEqual(['rejected']);
+    expect(results[1].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
+    expect(results[1].semanticFailures).toBe(0);
+    expect(state.semanticFailures).toBe(0);
+    expect(state.stopReason).toBeNull();
+    const replayed = port.requests[2].messages;
+    const resultEnvelope = JSON.parse(String(replayed[replayed.length - 2].content)) as Record<string, unknown>;
+    expect(resultEnvelope.code).toBe(REJECTION_CODES.duplicateRead);
+    expect(String(resultEnvelope.reason)).toContain('call-1');
+    expect(replayed.map((message) => String(message.content)).join(' ')).toContain('[ai].[vwpricelist]');
+  });
+
+  it('bounds the duplicate_read exemption: identical resends past the free allowance charge a strike until the phase closes', async () => {
+    const { registry, invocations } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const resend = (index: number) => ({ toolCalls: [validCall(`call-${index}`, 'lineage_get_screen_state', { filter: 'stale' })] });
+    const port = new ScriptedModelPort(Array.from({ length: 8 }, (_, index) => resend(index + 1)));
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const failuresPerAttempt: number[] = [];
+    while (state.stopReason === null && failuresPerAttempt.length < 8) {
+      const result = await executeToolAttempt(port, plan, { priorState: state });
+      failuresPerAttempt.push(result.semanticFailures);
+      state = recordToolAttempt(state, result);
+    }
+
+    // One dispatch; every later call is the same read. The first duplicate and the two absorbed
+    // resends after it are free; from the third consecutive identical resend each one charges.
+    expect(invocations).toHaveLength(1);
+    expect(failuresPerAttempt).toEqual([0, 0, 0, 0, 1, 1, 1]);
+    expect(state.rejections.every((rejection) => rejection.code === REJECTION_CODES.duplicateRead)).toBe(true);
+    expect(state.rejections.at(-1)?.unproductiveStreak).toBe(5);
+    expect(state.semanticFailures).toBe(3);
+    expect(state.stopReason).toBe('semantic_failures');
+  });
+
+  it('logs a [Reject] line for every rejection it raises without a dispatch, so the log and the trace count the same rejections', async () => {
+    const { registry } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { text: 'Two objects changed.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    const logged: string[] = [];
+    const traced: string[] = [];
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < 3; index++) {
+      state = recordToolAttempt(state, await executeToolAttempt(port, plan, {
+        priorState: state,
+        debugLog: (message) => { logged.push(message); },
+        traceSyntheticRejection: (rejection) => { traced.push(rejection.code); },
+      }));
+    }
+
+    expect(traced).toEqual([REJECTION_CODES.duplicateRead]);
+    const rejectLines = logged.filter((message) => message.startsWith('[Reject]'));
+    expect(rejectLines).toHaveLength(traced.length);
+    expect(rejectLines[0]).toContain(`code=${REJECTION_CODES.duplicateRead}`);
+    expect(rejectLines[0]).toContain('tool=lineage_get_screen_state');
+    expect(rejectLines[0]).toContain('callId=call-2');
+  });
+
+  it('retires a rejection once the same tool is accepted, so the repaired call is not replayed as a standing correction', async () => {
+    const { registry } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [invalidCall('call-1', 'lineage_get_screen_state', 'invalid_tool_input', 'filter: Send either ids or filter, never both.', ['filter'])] },
+      { toolCalls: [validCall('call-2', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { toolCalls: [validCall('call-3', 'lineage_get_screen_state', { filter: 'stale' })] },
+      { text: 'Two objects changed.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < 4; index++) {
+      state = recordToolAttempt(state, await executeToolAttempt(port, plan, { priorState: state }));
+    }
+
+    expect(state.rejections.map((rejection) => rejection.code)).toEqual([REJECTION_CODES.duplicateRead]);
+    expect(state.observations.map((observation) => observation.callId)).toEqual(['call-2']);
+    const rendered = (index: number) => port.requests[index].messages.map((message) => String(message.content)).join(' ');
+    expect(rendered(1)).toContain('invalid_tool_input');
+    expect(rendered(2)).not.toContain('invalid_tool_input');
+    expect(rendered(3)).not.toContain('invalid_tool_input');
+    expect(rendered(3)).toContain('[ai].[vwpricelist]');
+  });
+
+  it('stores the first body whole, answers the second that does not fit with a result_too_large reply, and still dedupes the repeat of the first', async () => {
+    // 2026-09-06 ruling: a body too large for the hop is not truncated and not silently dropped —
+    // the reply says so and hands the read to the hop-by-hop path. Held bodies are never touched.
+    const bodies: Record<string, string> = {
+      spimportorders: JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(28_000) }),
+      spcleanorders: JSON.stringify({ id: 'spcleanorders', body: 'B'.repeat(21_000) }),
+    };
+    const { registry, invocations } = scriptedRegistry([{
+      name: 'lineage_get_object_detail',
+      effect: 'read',
+      result: (input) => bodies[String((input as { id: string }).id)],
+    }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_object_detail', { id: 'spcleanorders' })] },
+      { toolCalls: [validCall('call-3', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { text: 'Both procedures write the staging table.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_object_detail'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('What do these procedures do?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    const logged: string[] = [];
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 4; index++) {
+      const result = await executeToolAttempt(port, plan, {
+        priorState: state,
+        debugLog: (message) => { logged.push(message); },
+      });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    // The first body is stored whole and is still whole after the second call.
+    expect(state.observations[0].result).toBe(bodies.spimportorders);
+    // The second does not fit alongside it: the stored observation is the too-big reply, in the
+    // tool-error shape, naming the sizes and the hand-off.
+    expect(JSON.parse(state.observations[1].result)).toEqual({
+      error: 'result_too_large',
+      tool: 'lineage_get_object_detail',
+      bytes: Buffer.byteLength(bodies.spcleanorders),
+      held_bytes: Buffer.byteLength(bodies.spimportorders),
+      budget: MAX_STORED_EVIDENCE_KIND_BYTES,
+      hint: 'This result is larger than the evidence one hop can hold, so none of it was stored. Stop this tool loop; narrow the request with lineage_get_scope_bundle, or take the consent-gated hop-by-hop path with lineage_start_exploration, which reads one object per hop.',
+    });
+    const tooBig = logged.filter((message) => message.startsWith('[Observation] result too big'));
+    expect(tooBig).toHaveLength(1);
+    expect(tooBig[0]).toContain('callId=call-2');
+    expect(tooBig[0]).toContain(`bytes=${Buffer.byteLength(bodies.spcleanorders)}`);
+    // The repeat of the still-held first read is a duplicate, not a second dispatch.
+    expect(invocations.map((invocation) => (invocation.input as { id: string }).id))
+      .toEqual(['spimportorders', 'spcleanorders']);
+    expect(results[2].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
+    expect(state.semanticFailures).toBe(0);
+    // The held body reaches the model on the next request; nothing was shrunk to make room.
+    expect(port.requests[3].messages.map((message) => String(message.content)).join(' ')).toContain('A'.repeat(1_000));
+  });
+
+  it('keeps duplicate_read, hint unchanged, for a repeat whose stored body is still present', async () => {
+    const body = JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(1_000) });
+    const { registry, invocations } = scriptedRegistry([{ name: 'lineage_get_object_detail', effect: 'read', result: body }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { text: 'It writes the staging table.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_object_detail'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('What does this procedure do?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    const logged: string[] = [];
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 3; index++) {
+      const result = await executeToolAttempt(port, plan, {
+        priorState: state,
+        debugLog: (message) => { logged.push(message); },
+      });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    expect(invocations).toHaveLength(1);
+    expect(results[1].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
+    // Mirrors the module-private `DUPLICATE_READ_HINT`: with the evicted case now re-served, this
+    // sentence is true in every state it reaches the model in.
+    expect(results[1].rejections[0]?.hint)
+      .toBe('You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.');
+    expect(state.observations[0].result).toBe(body);
+  });
+
   it('replays turn 23: two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {
     const envelope = presentResultRejectionEnvelope({
       reason: 'highlight_groups node_ids must be explained by sections[].node_ids or notes[]: [dbo].[Orders]',
@@ -1194,6 +1672,121 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     );
 
     expect(result.semanticFailures).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (h) repair-turn prevalidation exemption is bounded — the free channel must not spin
+// ---------------------------------------------------------------------------
+
+describe('executeToolAttempt — repair-turn prevalidation exemption is bounded', () => {
+  /**
+   * Replays a fixed generation queue through `executeToolAttempt` + `recordToolAttempt` with a
+   * held `present_result` repair draft — the state the graph holds between a rejected submission
+   * and its repair — exactly as the graph replays attempts across one repair turn.
+   */
+  async function runRepairTurnSequence(
+    generations: readonly ScriptedGeneration[],
+    tools: readonly ScriptedTool[],
+  ): Promise<{ state: ToolPhaseAttemptState; results: readonly ToolAttemptResult[] }> {
+    const { registry } = scriptedRegistry(tools);
+    const port = new ScriptedModelPort(generations);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: registry.getTools().map((tool) => tool.name) };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: {
+        messages: [modelUserMessage('Present the final result.')],
+        registry,
+        sink,
+        phase: 'active',
+        instructionContext: context,
+      },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < generations.length; index++) {
+      const result = await executeToolAttempt(port, plan, { priorState: state, presentResultRepairDraftHeld: true });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+    return { state, results };
+  }
+
+  /** One schema-invalid `present_result` call as SDK prevalidation rejects it, payload attached. */
+  function invalidPresentResult(callId: string, input: unknown) {
+    return invalidCall(
+      callId,
+      'lineage_present_result',
+      'invalid_tool_input',
+      'sections: at least one section is required',
+      ['sections'],
+      input,
+    );
+  }
+
+  it('charges identical repair-turn prevalidation resends past the absorbed grace, closing the semantic budget instead of spinning to the provider-call cap', async () => {
+    const resend = { sections: [] };
+    const { state, results } = await runRepairTurnSequence(
+      [1, 2, 3, 4, 5, 6].map((attempt) => ({
+        toolCalls: [invalidPresentResult(`call-${attempt}`, resend)],
+      })),
+      [{ name: 'lineage_present_result', result: '{"success":true}' }],
+    );
+
+    // The first reject is the exemption working (genuine mid-correction); the next two identical
+    // resends ride the shared absorption grace; every identical resend past it charges like any
+    // other invalid call. Without the bound, this exact pattern once looped free until only the
+    // provider-call cap stopped it — a phase that never terminates on its own evidence.
+    expect(results.map((result) => result.semanticFailures)).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(state.semanticFailures).toBe(MAX_TOOL_SEMANTIC_FAILURES);
+    expect(state.stopReason).toBe('semantic_failures');
+    expect(state.providerCalls).toBe(6);
+    expect(state.providerCalls).toBeLessThan(MAX_TOOL_PROVIDER_CALLS);
+  });
+
+  it('never charges a genuine prevalidation repair attempt whose input differs from the just-rejected one', async () => {
+    const repairs = [
+      { sections: [] },
+      { sections: [{ label: 'Source', text: 'One section.' }] },
+      { notes: [{ text: 'A note.' }] },
+      { is_update: true, sections: [{ label: 'Source', text: 'One corrected section.' }] },
+    ];
+    const { state, results } = await runRepairTurnSequence(
+      repairs.map((input, index) => ({ toolCalls: [invalidPresentResult(`call-${index + 1}`, input)] })),
+      [{ name: 'lineage_present_result', result: '{"success":true}' }],
+    );
+
+    // Each attempt is a different payload — a real repair in progress — so the bound from the
+    // previous test must not fire: the streak never grows and nothing charges.
+    expect(results.map((result) => result.semanticFailures)).toEqual([0, 0, 0, 0]);
+    expect(state.semanticFailures).toBe(0);
+    expect(state.stopReason).toBeNull();
+  });
+
+  it('keeps the unproductive-resend streak across a dispatched rejection interleaved between identical prevalidation rejects', async () => {
+    const resend = { sections: [] };
+    const { state, results } = await runRepairTurnSequence(
+      [
+        { toolCalls: [invalidPresentResult('call-1', resend)] },
+        { toolCalls: [invalidPresentResult('call-2', resend)] },
+        // A dispatched rejection of the same payload between prevalidation rejects is itself an
+        // absorbed resend of the identical streak, not a new correction that resets it.
+        { toolCalls: [validCall('call-3', 'lineage_present_result', resend)] },
+        { toolCalls: [invalidPresentResult('call-4', resend)] },
+        { toolCalls: [invalidPresentResult('call-5', resend)] },
+        { toolCalls: [invalidPresentResult('call-6', resend)] },
+      ],
+      [{ name: 'lineage_present_result', result: rejectionEnvelope({ reason: 'sections: at least one section is required' }) }],
+    );
+
+    // If the interleaved dispatched rejection reset the streak, the charge would only land on the
+    // last attempt and the phase would stay open. The streak must survive both channels.
+    expect(results.map((result) => result.semanticFailures)).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(state.semanticFailures).toBe(MAX_TOOL_SEMANTIC_FAILURES);
+    expect(state.stopReason).toBe('semantic_failures');
   });
 });
 

@@ -5,7 +5,7 @@ import { getActivePanel } from './panelProvider';
 import { postToWebview } from './bridge/host';
 import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
-import { searchCatalog, type SearchableNode } from './utils/modelSearch';
+import { searchCatalog } from './utils/modelSearch';
 import { applyModelToSession, buildExtensionConfig } from './bridge/messageHandlers';
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 
@@ -38,13 +38,17 @@ export function registerCommands(
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 
     /**
-     * Pushes fresh extension settings to the active panel and clears the column
-     * metadata cache, bringing the view into sync without reloading data.
+     * Pushes fresh extension settings to the active panel, bringing the view into
+     * sync without reloading data.
      *
      * @remarks
      * Equivalent to clicking the toolbar Refresh button, but without the full
      * filter reset — suitable for programmatic callers and keyboard shortcuts.
      * Does not exit active trace, analysis, or AI preview modes.
+     *
+     * The column store is deliberately left intact: it is a pure projection of the
+     * session model, which a settings push does not touch. Clearing it emptied the
+     * detail panel's columns and made every stored run report `stale`.
      */
     vscode.commands.registerCommand('dataLineageViz.refresh', () => {
       const panel = getActivePanel();
@@ -52,7 +56,6 @@ export function registerCommands(
         notifyInfo(configLogger, 'Refresh', 'Open a Data Lineage view first.', { command: 'dataLineageViz.refresh' });
         return;
       }
-      getSession().columnStore.clear();
       const config = buildExtensionConfig(vscode.workspace.getConfiguration('dataLineageViz'));
       void postToWebview(panel, { type: 'rebuild-config', config }, configLogger);
       configLogger.debug('dataLineageViz.refresh — pushed rebuild-config');
@@ -176,13 +179,14 @@ export function registerCommands(
       const panel = getActivePanel();
       if (sess.presentationArtifact && panel) {
         const preview = sess.presentationArtifact;
+        // Revealed first, so the webview lays the preview out against a canvas that has a size.
+        panel.reveal(vscode.ViewColumn.One);
         void postToWebview(panel, {
           type: 'ai-view-preview',
           name: preview.name,
           nodeIds: [...preview.nodeIds],
           aiMetadata: preview.aiMetadata,
         }, aiLogger);
-        panel.reveal(vscode.ViewColumn.One);
         return;
       }
       notifyInfo(aiLogger, 'AI create view', 'No validated AI lineage preview is available for this session.', {
@@ -210,7 +214,7 @@ export function registerCommands(
 
       qp.onDidChangeValue(value => {
         if (!value.trim()) { qp.items = []; return; }
-        const results = searchCatalog(model.nodes as SearchableNode[], value, undefined, undefined, 20);
+        const results = searchCatalog(model.nodes, value, undefined, undefined, 20);
         qp.items = results.map(n => ({
           label:       n.name,
           description: `[${n.schema}]`,

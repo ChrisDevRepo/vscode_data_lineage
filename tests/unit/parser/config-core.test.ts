@@ -62,6 +62,20 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     expect(instruction).toContain('one section per angle');
   });
 
+  // BOTH-TWO-FILES: each recipe is one sections[] entry for its angle. "Submit one section"
+  // was read as one body for the hop under classification `both`.
+  it('treats each capture recipe as one of two sections[] entries under classification=both', () => {
+    const parsed = parseAiOutputTemplatesYaml(text);
+    const business = parsed.business_capture?.instruction ?? '';
+    const technical = parsed.technical_capture?.instruction ?? '';
+    expect(business).not.toContain('Submit one section');
+    expect(technical).not.toContain('Submit one section');
+    expect(business).toContain('one of two required');
+    expect(technical).toContain('one of two required');
+    expect(business).toContain('angle: "business"');
+    expect(technical).toContain('angle: "technical"');
+  });
+
   // The renderer gates `closing` on captured slot count (CLOSING_MIN_SLOTS), never on authored
   // section count — a "5+ sections" claim describes a quantity the code does not measure.
   it('keeps the closing template free of section-count claims', () => {
@@ -86,6 +100,18 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     expect(instruction).not.toContain('business/technical capture');
     expect(instruction).toContain("this hop's narrative body");
   });
+
+  // Formulas already live in the BB capture recipes; CT owns column_flow, not a second $$ home.
+  it('does not restate $$ producing expressions in column_trace_capture', () => {
+    const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
+    expect(instruction).not.toContain('$$');
+  });
+
+  it('treats a columns:"none" filter/join neighbor as a BB-shaped hop with empty column_flow', () => {
+    const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
+    expect(instruction).toContain('columns: "none"');
+    expect(instruction).toContain('BB-shaped hop, column_flow: []');
+  });
 });
 
 describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
@@ -95,10 +121,38 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
     expect(() => parseParseRulesYaml(text)).not.toThrow();
   });
 
-  it('yields a non-empty rules array', () => {
+  // The shipped rule set is the extraction contract. A non-empty check would still pass if a rule
+  // were dropped or renamed, silently removing a whole class of dependency edge from every model.
+  it('yields the full shipped rule inventory', () => {
     const parsed = parseParseRulesYaml(text);
-    expect(Array.isArray(parsed.rules)).toBe(true);
-    expect(parsed.rules?.length ?? 0).toBeGreaterThan(0);
+    expect(parsed.rules?.map(rule => rule.name).sort()).toEqual([
+      'clean_sql',
+      'extract_bulk_from',
+      'extract_bulk_insert',
+      'extract_cetas',
+      'extract_copy_from',
+      'extract_copy_into',
+      'extract_ctas',
+      'extract_merge_using',
+      'extract_openrowset',
+      'extract_output_into',
+      'extract_select_into',
+      'extract_sources_ansi',
+      'extract_sources_tsql_apply',
+      'extract_sp_calls',
+      'extract_targets_dml',
+      'extract_udf_calls',
+      'extract_update_alias_target',
+    ]);
+  });
+
+  // Documented in PARSE_RULES.md as a hard termination contract, not a style choice: a rule whose
+  // flags omit `g` either hangs the scan or silently under-matches.
+  it('gives every shipped rule a global regex flag', () => {
+    const parsed = parseParseRulesYaml(text);
+    for (const rule of parsed.rules ?? []) {
+      expect(rule.flags, `${rule.name} flags`).toContain('g');
+    }
   });
 });
 

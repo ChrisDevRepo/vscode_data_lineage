@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { type AiSession } from './ai/session/session';
-import { Logger } from './utils/log';
+import { Logger, safeStringifyForLog } from './utils/log';
 import { notifyError } from './utils/notifications';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
@@ -148,7 +148,7 @@ export function openPanel(
       notifyError(
         bridgeLogger,
         'Bridge protocol mismatch',
-        `Data Lineage: the webview is speaking bridge protocol v${String(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
+        `Data Lineage: the webview is speaking bridge protocol v${safeStringifyForLog(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
       );
       return;
     }

@@ -347,3 +347,106 @@ describe('rule-gate scan primitives', () => {
     ]);
   });
 });
+
+/**
+ * Extracts one `- **Label**: …` bullet from a `general`-style YAML instruction block.
+ *
+ * @param instruction - The raw block-scalar text of the template instruction.
+ * @param label - The bold bullet label to pull, without asterisks.
+ * @returns The bullet text with line breaks folded to single spaces.
+ */
+function renderRuleBullet(instruction: string, label: string): string {
+  const start = instruction.indexOf(`- **${label}**`);
+  if (start < 0) return '';
+  const rest = instruction.slice(start + 1);
+  const next = rest.search(/\n\s*- \*\*|\n[ \t]*\n/);
+  return (next < 0 ? rest : rest.slice(0, next)).replace(/\s+/g, ' ').trim();
+}
+
+describe('output-template rendering rules — captured ⚠️ callouts are delivered, not re-judged', () => {
+  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
+  const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
+
+  /** Placement shape the risk bullet carries: mandatory carry-through, one occurrence, best section. */
+  const placementRule = /every .*present in the captured.*bodies.*appears exactly once.*in its most relevant section/i;
+
+  it('states the risk bullet as a placement rule, never as a permission gate', () => {
+    const risks = renderRuleBullet(general, 'Risks / data-quality flags');
+
+    expect(general).toContain('- **Risks / data-quality flags**');
+    expect(general).toMatch(/stages: \[discovery, synthesis\]/);
+    expect(risks).toMatch(placementRule);
+    expect(risks).toMatch(/captured or loaded bodies/);
+    expect(risks).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
+  });
+
+  // The `closing` block is the second synthesis surface that renders ⚠️ lines (its example is a
+  // Risk/Scope table), so a surviving permission gate here re-opens the significance question the
+  // general risks bullet already closed.
+  it('states the closing risk block as a placement rule, never as a permission gate', () => {
+    const closing = asset
+      .slice(asset.indexOf('\nclosing:'), asset.indexOf('\nhighlights:'))
+      .replace(/\s+/g, ' ');
+
+    expect(closing).toMatch(/significance was settled at capture/i);
+    expect(closing).not.toMatch(/only when there is a significant/i);
+    expect(closing).not.toMatch(/omit risk callouts/i);
+  });
+
+  it('does not let the scope bullet delete a captured ⚠️ on a side branch', () => {
+    const scope = renderRuleBullet(general, 'Scope');
+
+    expect(scope).toMatch(/a side branch it did not ask about/);
+    expect(scope).toMatch(/⚠️ on such a branch is that one line, never a deletion/i);
+    expect(scope).not.toMatch(/a captured ⚠️ on such a branch/);
+  });
+});
+
+// local-mlx T5/T6: the exact DDL expression was present at the hop and re-rendered into a
+// `$$ … $$` block with corrupted terms (DATEADD operands swapped). `business_capture` bound
+// fidelity only to "Quoted SQL witnesses" — the formula bullet ordered every derived expression
+// rendered as LaTeX with no term-for-term fidelity clause. This pins that the gap is closed.
+describe('business_capture — a $$ … $$ block preserves the DDL expression term for term', () => {
+  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
+  const businessCapture = asset.slice(asset.indexOf('\nbusiness_capture:'), asset.indexOf('\ntechnical_capture:'));
+
+  it('states the fidelity rule on the MATHEMATICS bullet that orders $$ … $$ rendering', () => {
+    const mathBullet = businessCapture.replace(/\s+/g, ' ');
+
+    expect(mathBullet).toMatch(/write the formula as a `\$\$ … \$\$` block/i);
+    expect(mathBullet).toMatch(
+      /a `\$\$ … \$\$` block must preserve the ddl expression term for term/i,
+    );
+    expect(mathBullet).toMatch(/no operator added, dropped, or reordered/i);
+    expect(mathBullet).toMatch(/when a faithful rendering is not possible, quote the sql instead/i);
+  });
+});
+
+// BOTH-TWO-FILES: error/CATCH, loading-shape names, and $$ each have one home. Dual-lens
+// grain/CASE stays on both recipes; add/prune stays in HOP_DECISION_CONTRACT, not YAML.
+describe('capture recipes — one home per overlapping topic', () => {
+  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
+  const businessCapture = asset.slice(asset.indexOf('\nbusiness_capture:'), asset.indexOf('\ntechnical_capture:'));
+  const technicalCapture = asset.slice(asset.indexOf('\ntechnical_capture:'), asset.indexOf('\nstructural_callouts:'));
+  const columnTrace = asset.slice(asset.indexOf('\ncolumn_trace_capture:'), asset.indexOf('\n# Per-angle section assembly'));
+
+  it('gives post-failure row value to business and TRY/CATCH mechanics to technical', () => {
+    expect(businessCapture).toMatch(/what the rows\s+carry afterwards/);
+    expect(businessCapture).not.toMatch(/TRY\/CATCH/);
+    expect(technicalCapture).toMatch(/TRY\/CATCH, retry and lock behaviour/);
+    expect(technicalCapture).not.toMatch(/rows carry after/);
+  });
+
+  it('gives loading-shape names one home on the technical recipe', () => {
+    expect(technicalCapture).toMatch(/`reload`/);
+    expect(technicalCapture).toMatch(/`append`/);
+    expect(technicalCapture).toMatch(/`upsert`/);
+    expect(businessCapture).toMatch(/what the DML does to the target/);
+    expect(businessCapture).not.toMatch(/`reload`|`append`|`upsert`|truncate\+insert/);
+  });
+
+  it('does not restate $$ producing expressions in column_trace_capture', () => {
+    expect(columnTrace).not.toMatch(/\$\$ … \$\$/);
+    expect(businessCapture).toMatch(/`\$\$ … \$\$` block/);
+  });
+});

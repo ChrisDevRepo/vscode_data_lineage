@@ -249,6 +249,36 @@ export function describePortContract(harness: PortContractHarness): void {
       });
     });
 
+    it('promotes a schema-valid tool call the provider wrote as prose instead of emitting it', async () => {
+      // A payload the tool's own schema accepts is recovered on both lanes, so a provider that
+      // describes a call instead of emitting one is not charged a missing-tool-call rejection.
+      const built = harness.createPort({
+        parts: [{ type: 'text', text: '```json\n{"id":"promoted"}\n```' }],
+      });
+      const promoted = await built.port.generateToolTurn({
+        messages: [new HumanMessage('present')],
+        tools: [toolDefinition(PRESENT, presentSchema)],
+        toolChoice: 'required',
+        phase: 'synthesis',
+      });
+
+      expect(promoted).toMatchObject({ status: 'completed', finishReason: 'tool-calls', text: '' });
+      // `mode` is absent from the prose payload: seeing it proves the promoted call went through
+      // the port's own schema parse rather than around it.
+      expect(promoted.toolCalls[0]).toMatchObject({
+        valid: true, toolName: PRESENT, input: { id: 'promoted', mode: 'bb' },
+      });
+
+      // Read as a record, refused by the tool's own schema, so the generation stays a text finish.
+      const held = harness.createPort({ parts: [{ type: 'text', text: '{"mode":"ct"}' }] });
+      await expect(held.port.generateToolTurn({
+        messages: [new HumanMessage('present')],
+        tools: [toolDefinition(PRESENT, presentSchema)],
+        toolChoice: 'required',
+        phase: 'synthesis',
+      })).resolves.toMatchObject({ status: 'completed', finishReason: 'stop', toolCalls: [] });
+    });
+
     it('classifies empty, schema-valid-empty, and repeated structured payloads', async () => {
       const empty = harness.createPort({
         parts: [{ type: 'tool-call', callId: 'call-empty', toolName: 'structured_output', input: {} }],

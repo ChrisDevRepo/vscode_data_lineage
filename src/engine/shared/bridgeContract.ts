@@ -32,6 +32,25 @@ const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 /** Upper bound on scope arrays carried across the bridge (DoS / payload guard). */
 export const AI_MAX_SCOPE_NODE_IDS = 500;
 
+/**
+ * Maximum object ids one screen-state list carries: the cap the presenter applies when it renders
+ * a screen-fact id list (the overflow is reported as a count) and, identically, the cap on the ids
+ * a `lineage_get_screen_state` recall may name — a recall reads back what the screen card listed,
+ * so one governor sizes both ends. `package.json`'s `maxItems` is generated from the schema by
+ * `scripts/generate-tool-manifest.mjs`, never maintained by hand.
+ */
+export const SCREEN_STATE_MAX_IDS = 20;
+
+/**
+ * Sentinel `upstreamLevels`/`downstreamLevels` value meaning "every level", not a literal depth.
+ *
+ * @remarks
+ * The trace controls encode an unbounded side as this value and the banner decodes it back to
+ * "All", so it crosses the bridge as an ordinary number. Every producer and consumer must use
+ * this constant: a surface that treats it as a depth reports nine quadrillion levels.
+ */
+export const TRACE_ALL_LEVELS = Number.MAX_SAFE_INTEGER;
+
 const AiScopeListSchema = z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS);
 
 /** Typed structural and free-text edits accepted when revising a pending exploration gate. */
@@ -60,7 +79,7 @@ export const AiGateRefineSchema = z.object({
 export type AiGateRefine = z.infer<typeof AiGateRefineSchema>;
 
 /**
- * Zod schema mirroring the runtime {@link import('../types').ColumnDef} shape.
+ * Zod schema mirroring the runtime `ColumnDef` shape (`src/engine/types.ts`).
  *
  * @remarks
  * Field names and types must stay aligned with `engine/types.ts#ColumnDef`.
@@ -258,10 +277,8 @@ const SerializedFilterStateSchema = z.object({
 /** Serialized visual filter configuration state, persisted and restored across sessions. */
 export type SerializedFilterState = z.infer<typeof SerializedFilterStateSchema>;
 
-const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
-
 /** Semantic highlight color applied to an AI-flagged node or edge. */
-export type AIHighlightColor = z.infer<typeof AIHighlightColorSchema>;
+const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 const AIHighlightGroupSchema = z.object({
   label: z.string(),
@@ -274,16 +291,71 @@ const AINodeTextSchema = z.object({
   text: z.string(),
 }).strict();
 
+/**
+ * Column-transform classes carried on a column-lineage edge.
+ *
+ * @remarks
+ * Aligned to OpenLineage's `ColumnLineageDatasetFacet` transformation types so an exported facet
+ * needs no translation table: `pass_through`→IDENTITY, `compute`→TRANSFORMATION/CONDITIONAL,
+ * `aggregate`→AGGREGATION/GROUP_BY/WINDOW, `combine`→JOIN, `filter`→FILTER. Multi-select, because
+ * one edge is routinely several at once (an aggregate over a computed expression) and the facet
+ * models `transformations` as an array for exactly that reason.
+ *
+ * The single home for the value set: ai, engine and webview all read it here, so no surface can
+ * carry a value the others reject.
+ */
+export const COLUMN_TRANSFORM_CLASSES = ['pass_through', 'compute', 'aggregate', 'combine', 'filter'] as const;
+
+/** One column-transform class from {@link COLUMN_TRANSFORM_CLASSES}. */
+export type ColumnTransformClass = typeof COLUMN_TRANSFORM_CLASSES[number];
+
+/**
+ * Whether a transform class carries the upstream value into the output (DIRECT) or only shaped
+ * which rows appear (INDIRECT), in OpenLineage's own terms.
+ *
+ * @remarks
+ * Load-bearing and exhaustive: no class is both, so a renderer can key a distinct edge treatment
+ * off this map alone. Adding a class to {@link COLUMN_TRANSFORM_CLASSES} without an entry here
+ * fails to typecheck.
+ */
+export const COLUMN_TRANSFORM_DIRECTION: Readonly<Record<ColumnTransformClass, 'DIRECT' | 'INDIRECT'>> = {
+  pass_through: 'DIRECT',
+  compute:      'DIRECT',
+  aggregate:    'DIRECT',
+  combine:      'INDIRECT',
+  filter:       'INDIRECT',
+};
+
+/** Zod form of {@link COLUMN_TRANSFORM_CLASSES}, shared by every schema that carries the field. */
+export const ColumnTransformClassSchema = z.enum(COLUMN_TRANSFORM_CLASSES);
+
 const ColumnAspectEdgeSchema = z.object({
   hopNode:  z.string(),
   fromNode: z.string(),
   toNode:   z.string(),
   fromCol:  z.string(),
   toCol:    z.string(),
+  /**
+   * Optional: absent whenever the model did not classify the edge, and absent on every edge
+   * written before the field existed. The engine never fills it in — an unclassified edge stays
+   * unclassified rather than acquiring a guessed class.
+   */
+  transforms: z.array(ColumnTransformClassSchema).optional(),
+  /**
+   * Optional one-clause model note for the edge ("SUM of line totals"), absent whenever the model
+   * offered none. Surface text only: the webview prints it in the edge tooltip and nothing parses
+   * it, so an old edge without one reads the structural description instead.
+   */
+  note: z.string().optional(),
 }).strict();
 
 const ColumnAspectSchema = z.object({
   edges: z.array(ColumnAspectEdgeSchema),
+}).strict();
+
+const NodeVerdictSchema = z.object({
+  nodeId: z.string(),
+  verdict: z.enum(['analyze', 'passthrough', 'prune']),
 }).strict();
 
 /**
@@ -297,20 +369,22 @@ const AIViewMetadataSchema = z.object({
   description: z.string().optional(),
   createdAt: z.string(),
   modelName: z.string(),
+  /** Identifier of the AI run that authored the view; pairs the bookmark with its persisted run record. */
+  runId: z.string().optional(),
   highlightGroups: z.array(AIHighlightGroupSchema),
   badges: z.array(AINodeTextSchema),
   notes: z.array(AINodeTextSchema).optional(),
   layoutDirection: z.enum(['LR', 'TB']).optional(),
   /** Column trace edges. Each edge carries the analyzing hop node plus source/destination so every result node can show column flow data. Only present during CT sessions. */
   columnAspect: ColumnAspectSchema.optional(),
+  /** Per-node CT verdict, so the webview can mark column lines without an AI-contract change. Only present during CT sessions. */
+  nodeVerdicts: z.array(NodeVerdictSchema).optional(),
 }).strict();
 
 /** AI-generated metadata layered onto the lineage graph UI: grouping, badges, highlights, and descriptive text. */
 export type AIViewMetadata = z.infer<typeof AIViewMetadataSchema>;
 
 const NodePositionSchema = z.object({ x: z.number(), y: z.number() }).strict();
-
-const ViewportSchema = z.object({ x: z.number(), y: z.number(), zoom: z.number() }).strict();
 
 const ExpandedSchemaViewSchema = z.object({
   focusNodeId: z.string().nullable(),
@@ -335,14 +409,13 @@ const FilterProfileSchema = z.object({
   filter: SerializedFilterStateSchema,
   source: z.enum(['user', 'trace', 'analysis', 'ai']).optional(),
   positions: z.record(z.string(), NodePositionSchema).optional(),
-  viewport: ViewportSchema.optional(),
   aiMetadata: AIViewMetadataSchema.optional(),
   graphMode: z.enum(['overview', 'full']).optional(),
   expandedSchemaView: ExpandedSchemaViewSchema.optional(),
   showExpandedSchemaClusters: z.boolean().optional(),
 }).strict();
 
-/** A saved filter profile snapshot: layout, zoom, filter rules, and optional AI metadata. */
+/** A saved filter profile snapshot: layout, filter rules, and optional AI metadata. */
 export type FilterProfile = z.infer<typeof FilterProfileSchema>;
 
 /**
@@ -447,13 +520,13 @@ const AIViewMetadataReadSchema = z.object({
     ...ColumnAspectSchema.shape,
     edges: z.array(z.object(ColumnAspectEdgeSchema.shape)),
   }).optional(),
+  nodeVerdicts: z.array(z.object(NodeVerdictSchema.shape)).optional(),
 });
 
 const FilterProfileReadSchema = z.object({
   ...FilterProfileSchema.shape,
   filter: z.object(SerializedFilterStateSchema.shape),
   positions: z.record(z.string(), z.object(NodePositionSchema.shape)).optional(),
-  viewport: z.object(ViewportSchema.shape).optional(),
   aiMetadata: AIViewMetadataReadSchema.optional(),
   expandedSchemaView: z.object(ExpandedSchemaViewSchema.shape).optional(),
 });
@@ -574,6 +647,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
+  z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string() }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string() }),
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,

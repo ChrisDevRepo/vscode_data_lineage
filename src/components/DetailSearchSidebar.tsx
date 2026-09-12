@@ -76,6 +76,15 @@ const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
 /** Set of object types that typically contain a SQL body script. */
 const BODY_TYPES = new Set<ObjectType>(['procedure', 'view']);
 
+/**
+ * Body matches this panel renders for one term.
+ *
+ * @remarks
+ * A display cap belonging to this panel, stated here rather than defaulted inside
+ * `searchBodyScripts` — the AI's grep tool shares that function and must never be capped.
+ */
+const BODY_RESULT_LIMIT = 100;
+
 /** Groups search results by display label, preserving insertion order. */
 function groupByType(items: SearchResult[]): Map<string, SearchResult[]> {
   const map = new Map<string, SearchResult[]>();
@@ -177,7 +186,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
 
   const results = useMemo<SearchResult[]>(() => {
     const q = term;
-    const bodyResults = searchBodyScripts(allNodes, q, BODY_TYPES);
+    const bodyResults = searchBodyScripts(allNodes, q, BODY_TYPES, undefined, BODY_RESULT_LIMIT);
     const colResults = searchColumns(allNodes, q);
     return [...bodyResults, ...colResults];
   }, [term, allNodes]);

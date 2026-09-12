@@ -15,7 +15,7 @@ import type { InvalidRouteKind, InvalidRoute, SubmitResult } from './smTypes';
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
   return kind === 'absent_route' || kind === 'absent_contributor'
     || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
-    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_in_scope';
+    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued';
 }
 
 /**
@@ -31,11 +31,13 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   absent_contributor:
     'Record it as an unresolved upstream source in your analysis and keep the upstream columns that resolve — it is not in the loaded model.',
   bad_out_col:
-    'Declare column_flow only for an active tracked column this node carries, or submit column_flow: [] if it carries none.',
+    'Declare column_flow only for an active tracked column this node carries. Every active tracked column still needs its own entry — continued with its upstream sources, or ended here with upstream_columns: []. Submit column_flow: [] only where this node declares none of them.',
+  untracked_out_col:
+    'Set column_flow[].out_col to a tracked column from detail.available_columns - the named column exists on this node but the trace does not follow it - or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
     'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
   missing_required_route:
-    'Account for each required neighbor listed in detail by adding it to `route_requests`. Required neighbors are approved in-scope continuation nodes, so do not place them in `prune_neighbors`. Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.',
+    'Account for each required neighbor listed in detail by adding it to `route_requests`.',
   self_loop_column:
     'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (see detail for the offending node.col). Keep the rest of column_flow, sections, and summary as submitted.',
   prune_absent:
@@ -46,15 +48,32 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'This node was already analyzed on an earlier hop and is retained; a prune cannot remove committed analysis. Remove it from prune_neighbors.',
   prune_noop_analyzed:
     'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
-  prune_noop_in_scope:
-    'This node belongs to the approved exploration scope and is retained. Remove it from prune_neighbors.',
+  prune_noop_queued:
+    'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_origin_forbidden:
     'The origin node anchors the lineage and cannot be pruned. Remove it from prune_neighbors.',
   prune_would_orphan:
-    "Pruning this node would orphan a committed node from the origin. Keep it and remove it from prune_neighbors; if you meant to skip this focus, use verdict='passthrough'.",
+    'Pruning this node would orphan a committed node from the origin. Keep it and remove it from prune_neighbors.',
   prune_route_conflict:
-    'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Remove it from one of them.',
+    'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Remove it from prune_neighbors when it is a required neighbor, unless it is a logging/audit/retention sink the question does not ask about — then remove it from route_requests instead.',
 };
+
+/**
+ * Resubmission order for a rejection that carries `missing_required_route`. The engine holds the
+ * draft only when neighbor incompleteness is the whole rejection, so the promise is emitted per
+ * set composition: the held retry for a pure set, the full envelope when another repair rides
+ * along and the sections have to come back with it.
+ */
+const HELD_RETRY_ORDER =
+  'Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.';
+/**
+ * Shared "nothing is held" resubmission order — used both here (mixed route-kind rejections) and
+ * by the caller that merges a topology fault with a deferred CT completeness fault into one
+ * envelope (D-048), where the same stricter policy applies for the same reason: another repair is
+ * riding along, so the held-draft shortcut is not offered.
+ */
+export const FULL_RESUBMIT_ORDER =
+  'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.';
 
 /**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the
@@ -64,6 +83,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   absent_route: 'route_validation_failed',
   absent_contributor: 'route_validation_failed',
   bad_out_col: 'out_col_not_on_node',
+  untracked_out_col: 'out_col_not_tracked',
   bad_contributor_col: 'contributor_col_not_on_source',
   missing_required_route: 'missing_required_route',
   self_loop_column: 'column_self_loop',
@@ -71,7 +91,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_removed: 'route_validation_failed',
   prune_noop_visited: 'route_validation_failed',
   prune_noop_analyzed: 'route_validation_failed',
-  prune_noop_in_scope: 'route_validation_failed',
+  prune_noop_queued: 'route_validation_failed',
   prune_origin_forbidden: 'prune_origin_forbidden',
   prune_would_orphan: 'prune_would_orphan_noted',
   prune_route_conflict: 'prune_route_conflict',
@@ -86,9 +106,12 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
  * order(s); `detail` carries the facts + the valid column set.
  *
  * @param errors - Field-resolved validation failures accumulated before commit.
+ * @param appendHoldOrder - False when the caller merges this envelope with another fault family
+ * (D-048) and states the resubmission order itself once, covering both; true (default) preserves
+ * the standalone envelope's own order.
  * @returns A stable structured rejection without a second repair protocol.
  */
-export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitResult {
+export function buildRouteValidationRejection(errors: InvalidRoute[], appendHoldOrder = true): SubmitResult {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const error = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : 'route_validation_failed';
   const missingRouteErrors = errors.filter(e => e.kind === 'missing_required_route');
@@ -97,7 +120,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitRes
   const missingRouteHint = missingRouteErrors.length > 0
     ? [
         invalidlyPruned.length > 0
-          ? `Required neighbors submitted in prune_neighbors: [${invalidlyPruned.join(', ')}]. Remove these ids from prune_neighbors and add them to route_requests.`
+          ? `Required neighbors submitted in prune_neighbors were refused: [${invalidlyPruned.join(', ')}]. Pruning them would orphan committed work — add these ids to route_requests, or prune them only once that no longer holds.`
           : '',
         missingRoutes.length > 0
           ? `Required neighbors not accounted for: [${missingRoutes.join(', ')}]. Add these ids to route_requests.`
@@ -108,6 +131,11 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): SubmitRes
   const hint = [
     missingRouteHint,
     ...distinctKinds.filter(k => k !== 'missing_required_route').map(k => ROUTE_REJECTION_DIRECTIVE[k]),
+    // Mirrors the engine's hold condition — pure neighbor incompleteness — so the order the model
+    // follows is the one the engine will honour.
+    appendHoldOrder && missingRouteErrors.length > 0
+      ? (missingRouteErrors.length === errors.length ? HELD_RETRY_ORDER : FULL_RESUBMIT_ORDER)
+      : '',
   ].filter(Boolean).join(' ');
   // available_routes is the identical full required set on every missing_required_route entry, so
   // the envelope states it once — on the first such entry — instead of once per missing id.

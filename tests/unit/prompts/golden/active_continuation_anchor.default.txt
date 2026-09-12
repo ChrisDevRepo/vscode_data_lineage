@@ -1,1 +1,0 @@
-Continue the hop-by-hop analysis: address the next node on the agenda per the protocol above.

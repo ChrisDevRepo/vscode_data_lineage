@@ -14,8 +14,8 @@ import { announceLaneTier } from './laneTier';
  * not use.
  *
  * That rule carries a proof obligation: the absent case must be *demonstrated*, not argued. This
- * lane is that demonstration. It launches with `--disable-extensions` and — unlike the `scripted-provider`
- * and `participant` lanes — deliberately supplies **no** `--extensionDevelopmentPath` for the
+ * lane is that demonstration. It launches with `--disable-extensions` and — unlike the `tools`
+ * and `participant-turn` lanes — deliberately supplies **no** `--extensionDevelopmentPath` for the
  * language-model provider fixture, so the host genuinely has no chat model, no Copilot and no
  * mssql. The first two assertions verify that emptiness rather than assuming it, because an
  * assertion that the extension works "without Copilot" is worthless if Copilot was quietly present.
@@ -29,11 +29,11 @@ import { announceLaneTier } from './laneTier';
 suite('Bare environment — no Copilot, no chat model, no mssql', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
-  suiteSetup(() => announceLaneTier(
+  suiteSetup(() => { announceLaneTier(
     'bare-environment',
     'none',
     'activation completes and the core command surface registers with every optional integration absent',
-  ));
+  ); });
 
   test('the host really is bare — no optional integration is installed', () => {
     assert.strictEqual(

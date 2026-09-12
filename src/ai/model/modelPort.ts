@@ -11,6 +11,7 @@ import {
   describeProviderErrorForUser,
   type ProviderErrorDiagnostic,
 } from '../support/text';
+import type { TurnTokenBudget } from '../support/tokenBudget';
 
 /** LangChain's provider-neutral message hierarchy is the graph's sole history type. */
 export type ModelMessage = BaseMessage;
@@ -122,6 +123,36 @@ export function isPortCancellation(error: unknown): boolean {
   return error instanceof ModelPortError && error.code === 'cancelled';
 }
 
+/**
+ * Error names the VS Code language-model host raises when a request is cancelled.
+ *
+ * @remarks
+ * `Canceled` is the platform spelling (`vscode.CancellationError`), `Cancelled` appears from
+ * providers that spell it with two `l`s, and `AbortError` is the fetch-level abort surfaced
+ * through the same call. Declared once here because the bridge and the port both classify the
+ * raw transport error and a byte-for-byte copy of the list drifts silently.
+ */
+const HOST_CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'AbortError',
+  'Canceled',
+  'Cancelled',
+]);
+
+/**
+ * Whether a thrown value carries one of the host's cancellation error names.
+ *
+ * @remarks
+ * Name-based by necessity: the host raises a plain `Error` with no code for this case. Pair it
+ * with {@link isPortCancellation} for an already-normalized port error, and with
+ * `support/cancellation.ts`'s `isCancellationOutcome` for the `ABORT_ERR`/`20` code forms.
+ *
+ * @param error - The thrown value to classify.
+ * @returns `true` when the error name is one the host uses for cancellation.
+ */
+export function isHostCancellationError(error: unknown): boolean {
+  return error instanceof Error && HOST_CANCELLATION_ERROR_NAMES.has(error.name);
+}
+
 /** Model-facing context used to audit which instruction fragments reached a generation. */
 export interface InstructionContext {
   readonly kind: 'structured' | 'converse' | 'text';
@@ -173,6 +204,13 @@ export interface InvalidGeneratedToolCall {
   readonly valid: false;
   readonly callId: string;
   readonly toolName: string;
+  /**
+   * The rejected payload exactly as the provider sent it. Kept so retry-budget guards can compare
+   * a follow-up call against the just-rejected one (by fingerprint, never by retaining it) and
+   * distinguish a genuine repair attempt from an unproductive resend; without it every reject of
+   * the same tool would be indistinguishable. Never dispatched, replayed, or logged raw.
+   */
+  readonly input?: unknown;
   readonly code:
     | 'invalid_tool_input'
     | 'unknown_tool'
@@ -249,6 +287,15 @@ export interface SingleGenerationModelPort {
   readonly id: string;
   readonly identity: ModelIdentity;
   readonly modelCalls: number;
+  /**
+   * Token budget this request runs under, fixed when the turn built the port.
+   *
+   * @remarks
+   * Rides the port because the port is the object every generation path already receives, and the
+   * window half of the budget is a property of the exact model the port wraps. A superseded turn
+   * still executing therefore keeps measuring against its own model's window and caps.
+   */
+  readonly budget: TurnTokenBudget;
   generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult>;
 }
 
@@ -286,4 +333,93 @@ export function errorToolTurnResult(
     error: userMessage ?? describeProviderErrorForUser(diagnostic),
     providerError: diagnostic,
   };
+}
+
+/** A fenced ```json (or bare ```) code block wrapping exactly one JSON value. */
+const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
+
+/**
+ * One `<parameter=name>` pair of the Hermes/XML tool-call envelope — the second recorded spelling
+ * of the same miss. Global: a call carries one pair per field, and the closing tag is the bare
+ * `</parameter>`, never a named or balanced `</tool_call>` form.
+ */
+const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
+
+/** Synthetic call identifier every promoted prose tool call carries, on every lane. */
+export const PROSE_PROMOTED_CALL_ID = 'text-promoted-0';
+
+/** Outcome of reading a text-only generation as a tool call. */
+export type ProseToolCallMatch =
+  | { readonly kind: 'promoted'; readonly toolName: string; readonly input: Record<string, unknown> }
+  | { readonly kind: 'ambiguous'; readonly tools: readonly string[] }
+  | { readonly kind: 'none' };
+
+/**
+ * Reads a text-only generation as the record a tool call would carry, without judging it.
+ *
+ * @remarks
+ * Three recorded spellings of one miss: a fenced JSON block, the payload as the entire message body
+ * with no fence at all, and the Hermes/XML `<parameter=…>` envelope. The per-value parse of the
+ * envelope is best-effort so a bare id like `[ai].[x]` stays the string it is. Zero
+ * `<parameter=…>` pairs is not this envelope — matching none must not manufacture an empty `{}` a
+ * permissive schema could accept. Reading is not acceptance: what a tool accepts is decided by its
+ * own schema in {@link matchProseToolCall}.
+ *
+ * @param text - The generation's concatenated text.
+ * @returns The record read from `text`, or `null` when `text` carries none of the three shapes.
+ */
+export function readProseToolCandidate(text: string): Record<string, unknown> | null {
+  const match = FENCED_JSON_BLOCK.exec(text);
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(match ? match[1] : text.trim());
+  } catch {
+    const xmlParameters = [...text.matchAll(XML_TOOL_PARAMETER)];
+    if (xmlParameters.length === 0) return null;
+    candidate = Object.fromEntries(
+      xmlParameters.map(([, name, raw]): [string, unknown] => {
+        const value = raw.trim();
+        try {
+          return [name, JSON.parse(value) as unknown];
+        } catch {
+          return [name, value];
+        }
+      }),
+    );
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  return candidate as Record<string, unknown>;
+}
+
+/**
+ * Recovers a tool call a provider described in prose instead of emitting through the native
+ * tool-call channel.
+ *
+ * @remarks
+ * The single recognizer both ports call, so the harness measures what production would have done.
+ * Callers apply it only to a generation that carries no native tool-call part — a real call is
+ * never second-guessed. Acceptance is the tool's own {@link ModelToolDefinition.inputSchema}, the
+ * same schema the native path validates against, so nothing here relaxes what a tool accepts. A
+ * prose payload names no tool, so its identity is the one schema that accepts it; two accepting
+ * schemas leave the tool undetermined and the generation stays a text finish, which the attempt
+ * policy then charges as it would any other text-only answer.
+ *
+ * @param text - The generation's concatenated text.
+ * @param definitions - Tool definitions offered for this generation, already narrowed to the active
+ * tool choice.
+ * @returns The promoted call, the ambiguous tool names, or `none`.
+ */
+export function matchProseToolCall(
+  text: string,
+  definitions: readonly ModelToolDefinition[],
+): ProseToolCallMatch {
+  if (definitions.length === 0) return { kind: 'none' };
+  const candidate = readProseToolCandidate(text);
+  if (!candidate) return { kind: 'none' };
+  const accepting = definitions.filter((entry) => entry.inputSchema.safeParse(candidate).success);
+  if (accepting.length === 0) return { kind: 'none' };
+  if (accepting.length > 1) {
+    return { kind: 'ambiguous', tools: accepting.map((entry) => entry.name) };
+  }
+  return { kind: 'promoted', toolName: accepting[0].name, input: candidate };
 }

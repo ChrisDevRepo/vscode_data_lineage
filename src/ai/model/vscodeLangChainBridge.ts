@@ -27,8 +27,8 @@ import {
 } from '@langchain/core/messages';
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
-import { toJsonSchema, type JSONSchema } from '@langchain/core/utils/json_schema';
-import { ModelPortError, type ModelPortErrorCode } from './modelPort';
+import { toJsonSchema } from '@langchain/core/utils/json_schema';
+import { isHostCancellationError, ModelPortError, type ModelPortErrorCode } from './modelPort';
 import type { WireEvent } from '../observability/wireLog';
 import { toWireMessage } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
@@ -65,8 +65,7 @@ export interface VscodeLangChainBridgeFields {
  * The instance is request-scoped and has no model-selection or provider-fallback behavior.
  */
 export class VscodeLangChainBridge extends BaseChatModel<
-  VscodeLangChainCallOptions,
-  AIMessageChunk
+  VscodeLangChainCallOptions
 > {
   private readonly model: vscode.LanguageModelChat;
   private readonly token: vscode.CancellationToken;
@@ -324,7 +323,7 @@ function readInputSchema(tool: Record<string, unknown>): Record<string, unknown>
   if (isRecord(tool.inputSchema)) return tool.inputSchema;
   if (isRecord(tool.function) && isRecord(tool.function.parameters)) return tool.function.parameters;
   if (!('schema' in tool) || !tool.schema) return null;
-  const schema = toJsonSchema(tool.schema as Parameters<typeof toJsonSchema>[0]) as JSONSchema;
+  const schema = toJsonSchema(tool.schema as Parameters<typeof toJsonSchema>[0]);
   return isRecord(schema) ? schema : null;
 }
 
@@ -393,8 +392,7 @@ function normalizeBridgeError(
   signal?: AbortSignal,
 ): ModelPortError {
   if (error instanceof ModelPortError) return error;
-  if (token.isCancellationRequested || signal?.aborted
-    || (error instanceof Error && ['AbortError', 'Canceled', 'Cancelled'].includes(error.name))) {
+  if (token.isCancellationRequested || signal?.aborted || isHostCancellationError(error)) {
     return cancelledError();
   }
   const rawCode = isRecord(error) && 'code' in error ? String(error.code) : '';

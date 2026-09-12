@@ -13,8 +13,13 @@ SQL-body dependencies are extracted by a multi-pass regex engine driven by metad
 
 The parser neutralises non-code text, applies YAML rules in priority order,
 normalises captures, and resolves ordinary references against the loaded
-catalog before creating graph edges. File and URL rules can inspect raw SQL
-because their values live in string literals. See
+catalog before creating graph edges. Block-comment removal treats a bracketed
+identifier as opaque the same way it already treats a quoted string: an
+apostrophe or a `/*` inside `[Bob's Table]` cannot open a string literal or a
+comment, and a doubled `]]` inside the brackets reads as an escaped `]`, not
+the end of the name — so a commented-out object placed after such a name is
+still removed and does not surface as a dependency. File and URL rules can
+inspect raw SQL because their values live in string literals. See
 [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts) for the current
 preprocessing implementation.
 
@@ -40,7 +45,7 @@ Categories drive edge direction:
 - `target` — adds an outbound edge (focus SP → referenced object).
 - `exec` — adds an outbound execution edge (`EXEC SomeProc`).
 - `external_ref` — captures non-catalog references (file paths, URLs); rendered as virtual external-ref nodes when `dataLineageViz.externalRefs.enabled = true`.
-- `preprocessing` — applied during Pass 2 as additional cleansing; not an extractor.
+- `preprocessing` — applied after the built-in cleansing passes and before extraction; not an extractor.
 
 ## Built-in coverage
 
@@ -49,6 +54,28 @@ CTAS-style targets, procedure calls, and file references from `OPENROWSET`,
 `COPY INTO`, and `BULK INSERT`. Read
 [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml) for the
 current names and regex bodies; that file is the source of truth.
+
+Not supported: temp tables (`#local`, `##global`), table variables (`@name`), and CTE names are
+never lineage nodes — a captured name starting with `#` or `@`, or carrying no schema
+qualifier, is discarded before edge extraction. A data flow that crosses procedures through a global temp table (one procedure
+writes `##t`, another reads it) therefore produces no edge between the two procedures, and the
+AI column trace ends at that boundary.
+
+### Known boundaries
+
+Constructs a regex set cannot reach, or reaches only partially. Each is a silent under-capture —
+the object is a real dependency and no edge is emitted — and each is left as is because the
+construct is rare on the supported platforms. Scoped by platform where that matters.
+
+| Construct | Behaviour | Where it applies |
+|---|---|---|
+| `FREETEXTTABLE(dbo.T, col, 'terms')` | the table is not captured | SQL Server, Azure SQL. Full-text search does not exist on Synapse dedicated or Fabric Warehouse |
+| `OPENDATASOURCE(...)...` | nothing is captured, including the four-part table name | SQL Server, Azure SQL only |
+| `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | neither table is captured | partition switching is DDL, not DML; no edge is modelled either way |
+| ANSI-89 comma list followed by `UNION`, `OPTION`, `PIVOT` or `TABLESAMPLE`, or containing a table variable | the whole list fails to normalise, so tables after the first are lost | legacy bodies on any platform |
+
+`CONTAINSTABLE`, `WITH XMLNAMESPACES`, and `CROSS APPLY x.Doc.nodes(...)` were checked and are
+handled correctly — the base table is captured and no phantom reference is produced.
 
 ## XML fallback direction
 

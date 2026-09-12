@@ -22,6 +22,8 @@
  *   - `model.catalog` is not read anywhere in the NavigationEngine/ColumnTracer code
  *     paths these tests exercise.
  */
+import type { NavigationEngine } from '../../../../src/ai/sm/smBase';
+import type { SerializedFilterState } from '../../../../src/engine/shared/bridgeContract';
 import type {
   DatabaseModel,
   LineageEdge,
@@ -45,6 +47,24 @@ export function makeNode(
  * is tagged `'body'`; see the module doc for why this is behaviorally inert versus a
  * non-member `'SELECT'` literal.
  */
+/**
+ * Build the engine's `activeFilter` config — the GUI filter state the NavigationEngine reads at
+ * construction. Every required field is defaulted to "no filter", so a test names only the axis
+ * it exercises (`makeActiveFilter({ schemas: ['dbo'] })`) and still hands over a complete
+ * {@link SerializedFilterState} rather than an `as any` partial that hides a contract change.
+ */
+export function makeActiveFilter(overrides: Partial<SerializedFilterState> = {}): SerializedFilterState {
+  return {
+    schemas: [],
+    types: [],
+    hideIsolated: false,
+    focusSchemas: [],
+    showExternalRefs: false,
+    externalRefTypes: [],
+    ...overrides,
+  };
+}
+
 export function makeEdges(pairs: ReadonlyArray<readonly [string, string]>): LineageEdge[] {
   return pairs.map(([source, target]) => ({ source, target, type: 'body' }));
 }
@@ -83,4 +103,81 @@ export function makeModel(
     neighborIndex: {},
     dbPlatform,
   };
+}
+
+// ─── Engine walking ───────────────────────────────────────────────────────────
+
+/**
+ * How `driveEngine` answers each hop it is handed.
+ *
+ * @remarks
+ * Exactly one routing strategy applies per walk. `routes` wins over `succ`, and both win
+ * over `followDownstream`; with none set the walk routes nothing and the engine advances
+ * on its own seeded agenda.
+ */
+export interface DriveOptions {
+  /** Focus id → the single successor to route on to. */
+  succ?: Record<string, string | undefined>;
+  /** Focus id → every successor to route on to. */
+  routes?: Record<string, string[]>;
+  /** Route every downstream neighbour the hop context offers. */
+  followDownstream?: boolean;
+  /** Ids to submit as `passthrough` rather than `analyze`. */
+  passthrough?: ReadonlySet<string>;
+  /** Prefixes the section text and summary, to tell two walks of one graph apart. */
+  tag?: string;
+  /** Hop ceiling, so a routing bug fails the test instead of hanging it. */
+  limit?: number;
+}
+
+/**
+ * Drives a NavigationEngine to completion, analyzing each dispatched focus in turn.
+ *
+ * @param engine - An initialized engine; `init` must already have been called.
+ * @param options - Routing strategy and submission shape. See {@link DriveOptions}.
+ * @returns The focus ids visited, in dispatch order.
+ *
+ * @remarks
+ * Replaces the near-identical `drain` / `driveWalk` / `drainChain` / `driveRoutes` loops
+ * that each nav-engine suite carried its own copy of. Tests that assert on submitted prose
+ * author their own `submitFindings` call rather than routing it through here.
+ */
+export function driveEngine(
+  engine: Pick<NavigationEngine, 'getHopContext' | 'submitFindings'>,
+  options: DriveOptions = {},
+): string[] {
+  const { succ, routes, followDownstream, passthrough, tag, limit = 50 } = options;
+  const visited: string[] = [];
+
+  for (let hop = 0; hop < limit; hop++) {
+    const ctx = engine.getHopContext() as {
+      done?: boolean;
+      focus_node?: { id: string };
+      neighbors?: Array<{ id: string; edge_direction?: string }>;
+    };
+    if (ctx.done || !ctx.focus_node) break;
+
+    const id = ctx.focus_node.id;
+    visited.push(id);
+
+    let targets: string[];
+    if (routes) targets = routes[id] ?? [];
+    else if (succ) targets = succ[id] ? [succ[id] as string] : [];
+    else if (followDownstream) {
+      targets = (ctx.neighbors ?? [])
+        .filter((neighbor) => neighbor.edge_direction === 'downstream')
+        .map((neighbor) => neighbor.id);
+    } else targets = [];
+
+    const label = tag ? `${tag}: ${id}` : id;
+    engine.submitFindings({
+      focus_node_id: id,
+      sections: [{ angle: 'business', text: `analysis for ${label}` }],
+      summary: label,
+      verdict: passthrough?.has(id) ? 'passthrough' : 'analyze',
+      route_requests: targets.map((target) => ({ nodeId: target, question: 'trace downstream' })),
+    });
+  }
+
+  return visited;
 }

@@ -1,7 +1,6 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import type { CustomNodeData } from '../components/CustomNode';
-import type { SchemaNodeData } from '../engine/types';
+import type { CustomNodeData, SchemaNodeData } from '../engine/types';
 import { TYPE_COLORS, createSchemaColorMap, getSchemaColorFromMap, getExternalNodeColor, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
@@ -209,12 +208,12 @@ export function exportToDrawio(
   const offsetY = 20 - Math.min(0, minY);
 
   const realNodeSchemas = nodes
-    .map(n => n.data as CustomNodeData)
+    .map(n => n.data)
     .filter(d => d.objectType !== 'external')
     .map(d => d.schema);
   const realSchemaSet = new Set(realNodeSchemas);
   const externalSchemas = new Set(nodes
-    .map(n => n.data as CustomNodeData)
+    .map(n => n.data)
     .filter(d => d.objectType === 'external' && d.schema && !realSchemaSet.has(d.schema))
     .map(d => d.schema));
   const exportSchemas = Array.from(new Set([...schemas, ...realNodeSchemas]))
@@ -228,7 +227,7 @@ export function exportToDrawio(
   const nodeObjects: MxObject[] = [];
   const colorBandCells: MxCell[] = [];
   for (const node of nodes) {
-    const d = node.data as CustomNodeData;
+    const d = node.data;
     const nodeId = String(nextId++);
     idMap.set(node.id, nodeId);
 
