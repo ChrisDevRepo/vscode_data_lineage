@@ -42,7 +42,7 @@ import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
-import { captureDiscoveryWalkFromObservations } from './discoveryCapture';
+import { captureDiscoveryWalkFromObservations, captureRejectedScopeOffer } from './discoveryCapture';
 import { discoveryPreviewNarrative } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
 import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, trunc as truncStatusLabel, type ProviderErrorDiagnostic } from '../support/text';
@@ -671,7 +671,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messages,
       system: discoveryInstruction.system,
       detectGate: detectGateFromToolResult,
-      detectReroute: detectOverBudgetFromResult,
+      // Oversized `get_scope_bundle` stays on this path: the envelope is an observation the model
+      // summarizes. `/trace` and column-trace still enter SM via entryRouting, not this overflow.
+      onToolResult: (toolName, input, _isError, resultText) => {
+        const seed = captureRejectedScopeOffer(toolName, input, resultText);
+        if (seed) {
+          deps.getSession().seedSmOfferFromRejectedOrigin(seed.origin, seed.walkCount, state.prompt, '');
+        }
+      },
       requiresToolEvidence: priorAttempt.observations.length === 0,
       proseGate: 'buffer-until-tool',
     }, ['Discovery failed', 'Discovery', 'without an answer']);
@@ -680,11 +687,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') {
       return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     }
-    if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'discover' };
     if (res.stop !== 'final') return { ...fail('Discovery ended without an accepted answer.'), toolAttempt: nextAttempt };
 
-    // A multi-object discovery walk enables the deeper-analysis suggestion.
+    // A multi-object discovery walk — or an oversized scope that stayed in chat — enables the SM-offer pill.
     const sess = deps.getSession();
     const scope = sess.discoveryScopeArtifact;
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
@@ -693,6 +699,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       sess.recordDiscovery(scope.origin, scope.nodeIds.length, state.prompt, res.text);
     } else if (walk) {
       sess.recordDiscovery(walk.origin, walk.walkCount, state.prompt, walk.answer);
+    } else if (sess.lastDiscoveryOrigin) {
+      sess.recordDiscovery(sess.lastDiscoveryOrigin, Math.max(sess.lastDiscoveryWalkCount, 2), state.prompt, res.text);
     }
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
@@ -1625,22 +1633,21 @@ const OverBudgetEnvelopeSchema = z.object({ reason: z.literal('over_discovery_bu
  *
  * @remarks
  * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
- * returns it for an oversized stored-run recall. Only an oversized *scope* request carries the
- * routing meaning: the user asked for a neighbourhood that has to be walked hop-by-hop. Matching on
- * the envelope alone turned "what did this run prune?" into a fresh exploration approval gate
- * instead of the narrowing hint the rejection already carries.
+ * returns it for an oversized stored-run recall. Only an oversized *scope* request seeds the
+ * existing SM-offer pill; matching on the envelope alone turned "what did this run prune?" into a
+ * fresh exploration approval gate instead of the narrowing hint the rejection already carries.
  */
-const OVER_BUDGET_REROUTE_TOOL = 'lineage_get_scope_bundle';
+const OVER_BUDGET_SCOPE_TOOL = 'lineage_get_scope_bundle';
 
 /**
- * Whether one tool result means "this scope is too large to answer inline — reroute to SM".
+ * Whether one tool result is an oversized `lineage_get_scope_bundle` request.
  *
  * @param toolName - Name of the tool that produced `resultText`.
  * @param resultText - The tool's serialized result.
  * @returns True only for an oversized scope-bundle request.
  */
 export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
-  if (toolName !== OVER_BUDGET_REROUTE_TOOL) return false;
+  if (toolName !== OVER_BUDGET_SCOPE_TOOL) return false;
   try {
     return OverBudgetEnvelopeSchema.safeParse(JSON.parse(resultText)).success;
   } catch {

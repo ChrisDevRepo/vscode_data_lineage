@@ -1,18 +1,17 @@
 /**
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
- * Two discovery caps control SM escalation:
+ * Two discovery caps control whether a catalog request stays inline:
  *   1. ai.discoveryNodeCap (default 10) — max projected scope nodes allowed in
- *      discovery before the engine forces SM via the gate.
+ *      discovery. Over cap → hard-rejected with `over_discovery_budget`; discovery stays in
+ *      chat and the existing SM-offer pill is the opt-in for a detailed analysis.
  *   2. ai.discoveryTokenBudget (default 10000) — max projected DDL token estimate
- *      for that same scope. Either cap exceeded → request rejected at the tool boundary with
- *      a structured `over_discovery_budget` envelope pointing the AI at
- *      `lineage_start_exploration`.
+ *      for that same scope. Either cap exceeded → the same envelope. `/trace` and
+ *      column-trace still enter SM via entryRouting, not this overflow.
  *
  * ZERO-TRUNCATION GUARANTEE:
  *   No tool response is ever truncated, capped, or sliced.
- *   No data is ever lost. Over-budget requests are HARD-REJECTED with a hint;
- *   the AI escalates to SM via the gate.
+ *   No data is ever lost. Over-budget requests are HARD-REJECTED with a hint.
  *
  * Zero VS Code imports — pure functions for testability.
  */
@@ -134,10 +133,11 @@ export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget(
  *
  * @remarks
  * Run BEFORE executing the underlying catalog handler. On overflow, the caller
- * returns the structured rejection envelope (with `hint` pointing at
- * `lineage_start_exploration`) instead of running the handler. No fallback —
- * over-budget requests are hard rejections per the project's "no fallback paths"
- * rule.
+ * returns the structured rejection envelope (with `hint` that a detailed analysis
+ * would be needed) instead of running the handler. No fallback — over-budget
+ * requests are hard rejections per the project's "no fallback paths" rule. The
+ * existing post-discovery SM-offer pill is the opt-in; this hint must not name
+ * hop-by-hop or a consent-gated path.
  *
  * @param budget - The calling turn's budget.
  * @param requestedNodes - Number of nodes the request would load (e.g. BFS result size).
@@ -157,7 +157,7 @@ export function checkScopeBudget(
     reason: 'over_discovery_budget',
     counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
     limits: { node_cap: budget.discovery.nodeCap, token_budget: budget.discovery.tokenBudget },
-    hint: 'Scope exceeds the discovery budget. Stop this tool loop; the host will route the validated request to the consent-gated exploration path.',
+    hint: 'Scope exceeds the discovery budget. Summarize what is already known; a detailed analysis would be needed.',
   };
 }
 

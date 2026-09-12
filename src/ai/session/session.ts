@@ -586,11 +586,30 @@ export class AiSession {
   }
 
   /**
+   * Seeds the existing post-discovery SM-offer from an oversized scope that stayed in chat.
+   *
+   * @remarks
+   * Same pill as a completed multi-object walk — not a new offer. `nodeCount` is floored at 2 so
+   * {@link smOfferAvailable} still fires when the rejected envelope omitted a walk count.
+   *
+   * @param origin - Canonical id from the rejected `lineage_get_scope_bundle` call.
+   * @param nodeCount - Projected node count that overflowed the discovery cap.
+   * @param question - The user's verbatim discovery prompt.
+   * @param answer - The AI's discovery chat answer (markdown); empty until the turn finishes.
+   */
+  public seedSmOfferFromRejectedOrigin(origin: string, nodeCount: number, question: string, answer: string): void {
+    this.recordDiscovery(origin, Math.max(nodeCount, 2), question, answer);
+  }
+
+  /**
    * Whether the post-discovery SM-offer may render (idle phase, multi-object walk with an origin).
    *
    * @remarks
    * The single predicate for every surface that renders the offer, so their trigger conditions
-   * cannot drift. Call it — never re-state the three conditions at a render site.
+   * cannot drift. Call it — never re-state the three conditions at a render site. A completed
+   * walk of ≥2 objects and an oversized scope that stayed in chat both seed
+   * {@link lastDiscoveryOrigin} through {@link recordDiscovery} (the latter via
+   * {@link seedSmOfferFromRejectedOrigin}), so the same pill is the opt-in either way.
    */
   public smOfferAvailable(): boolean {
     return this.phase.kind === 'idle' && this.lastDiscoveryWalkCount >= 2 && Boolean(this.lastDiscoveryOrigin);

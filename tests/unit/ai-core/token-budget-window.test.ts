@@ -61,11 +61,11 @@ describe('bounded prompt blocks follow the model window', () => {
 });
 
 /**
- * `checkScopeBudget` is the one gate between the discovery MAIN LOOP and the `discovery_budget`
- * trigger that escalates a turn to `sm_entry` (`graph.ts:671`). The boundary is documented
- * (`DEFAULT_DISCOVERY_NODE_CAP` = 10, `DEFAULT_DISCOVERY_TOKEN_BUDGET` = 10_000 tokens) but was
- * asserted nowhere: pin it exactly at the cap, one over on each axis independently, and confirm
- * neither axis leaks into the other.
+ * `checkScopeBudget` is the one gate that rejects an oversized discovery catalog request with
+ * `over_discovery_budget`. Discovery stays in chat; the existing SM-offer pill is the opt-in.
+ * The boundary is documented (`DEFAULT_DISCOVERY_NODE_CAP` = 10, `DEFAULT_DISCOVERY_TOKEN_BUDGET`
+ * = 10_000 tokens) but was asserted nowhere: pin it exactly at the cap, one over on each axis
+ * independently, and confirm neither axis leaks into the other.
  */
 describe('checkScopeBudget escalates at the documented discovery caps', () => {
   const CHARS_PER_TOKEN_FOR_TEST = 4;
@@ -86,6 +86,9 @@ describe('checkScopeBudget escalates at the documented discovery caps', () => {
     if (!result.ok) {
       expect(result.reason).toBe('over_discovery_budget');
       expect(result.limits).toEqual({ node_cap: DEFAULT_DISCOVERY_NODE_CAP, token_budget: DEFAULT_DISCOVERY_TOKEN_BUDGET });
+      expect(result.hint).toMatch(/detailed analysis would be needed/i);
+      expect(result.hint).not.toMatch(/hop-by-hop/i);
+      expect(result.hint).not.toMatch(/consent-gated/i);
     }
   });
 

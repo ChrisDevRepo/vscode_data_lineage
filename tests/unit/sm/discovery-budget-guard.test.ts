@@ -3,8 +3,7 @@
  *
  * Guards the routing fix: the node-cap now fires for a PLAIN scope bundle (no `include_ddl`),
  * not only when DDL is requested — so an over-cap discovery walk reliably trips
- * `over_discovery_budget`, which the host turns into the SM reroute. See
- * docs/ai-concept/routing-old-vs-new.md (Part B5).
+ * `over_discovery_budget`. Discovery stays in chat; the existing SM-offer pill is the opt-in.
  *
  * The caps travel with the call as one immutable per-turn budget, so each scenario passes the
  * caps it means to exercise and no scenario can observe another's. `loadDemoModel()` is awaited in
@@ -87,6 +86,8 @@ describe('discovery-budget-guard', () => {
     const oneNode = createTurnTokenBudget({ discoveryNodeCap: 1, discoveryTokenBudget: 10_000 });
     const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', depth: 2 }, oneNode) as Record<string, unknown>;
     expect(res.reason, 'plain scope bundle over node-cap → over_discovery_budget (no include_ddl)').toBe('over_discovery_budget');
+    expect(typeof res.hint === 'string' && /detailed analysis would be needed/i.test(res.hint), 'over-budget hint names a detailed analysis').toBe(true);
+    expect(typeof res.hint === 'string' && !/hop-by-hop/i.test(res.hint), 'over-budget hint must not say hop-by-hop').toBe(true);
   });
 
   // ── under the cap → normal bundle, no budget rejection ──

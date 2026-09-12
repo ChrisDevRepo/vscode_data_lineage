@@ -296,6 +296,13 @@ describe("start-exploration-schema tests", () => {
 
   it("the classification describe names no data-quality selector", () => { expect(!(classificationDescriptions[0] ?? '').includes('data-quality'), 'the classification describe names no data-quality selector').toBe(true); });
 
+  it("the scopeNotes describe names no fixture object", () => {
+    const projected = toModelJsonSchema(StartExplorationInputSchema) as { properties?: Record<string, { description?: string }> };
+    const description = projected.properties?.scopeNotes?.description ?? '';
+    expect(description.includes('spBuildCircA'), 'the scopeNotes describe names no fixture object').toBe(false);
+    expect(/named object/.test(description), 'the scopeNotes describe keeps an agnostic object example').toBe(true);
+  });
+
   // T-2/T-3 (tooltext sweep): `depth` used to restate its describe as a second literal on the
   // dispatcher schema, and that copy understated a per-side 0 as a one-time seed skip rather than
   // the permanent border `ExplorationDepthSideSchema` and `isReachableInApprovedDirection`

@@ -74,7 +74,7 @@ describe('prompt composition', () => {
     expect(discover).toContain('Applied AI bookmark');
     expect(discover.indexOf('Applied AI bookmark')).toBeLessThan(discover.indexOf('lineage_get_scope_bundle'));
     expect(active).toContain('Active Exploration Protocol');
-    expect(active).toContain('DECISION SOURCE');
+    expect(active).toContain('capture-recipe shape');
     expect(active).not.toContain('User-facing chat text: Markdown only');
     expect(synthesis).toContain('## sections[] — REQUIRED');
     expect(synthesis).toContain('`highlight_groups[]` (REQUIRED');
@@ -225,8 +225,14 @@ describe('prompt composition', () => {
     // verbatim from the cached answer, so a never-## rule there is unsatisfiable whenever the
     // answer itself contains one — the model cannot edit a span and stay byte-identical.
     expect(synthesis).toContain('never `#`/`##`/`###` headings');
-    expect(buildPhasePrompt('completed')).toContain('never `#`/`##`/`###` headings');
+    const completed = buildPhasePrompt('completed');
+    expect(completed).toContain('never `#`/`##`/`###` headings');
     expect(preview).not.toContain('never `#`/`##`/`###` headings');
+    // Completed authors text but has no archive in the window, so it does not share
+    // synthesis's lift/compress depth — only the heading-ownership rule.
+    expect(completed).not.toContain('Compress repeated phrasing');
+    expect(completed).not.toContain('drop whole items');
+    expect(completed).toContain('not an archive lift');
     // Full sentence pinned in internal-tests/unit/prompts/prompt-wording.test.ts (W8); this anchor
     // keeps the public claim that preview states a depth-is-fixed block (the licensing triple
     // above already proves synthesis/preview differ on the depth-choice rule itself).
@@ -253,6 +259,22 @@ describe('prompt composition', () => {
     expect(completed).toContain('lineage_get_object_detail');
     expect(completed).toContain('replaces the whole list');
     expect(completed).toContain('omitted section is a deleted section');
+  });
+
+  // FOLLOW-UP-CONTRACT (row aac): completed keeps labels/colors/is_update and drops
+  // synthesis's archive-lift (`detail_slots[]` / every ⚠️/formula must reappear).
+  it('gives completed a depth distinct from synthesis archive-lift', () => {
+    const completed = buildPhasePrompt('completed');
+    const synthesis = buildPhasePrompt('synthesis');
+
+    expect(synthesis).toContain('detail_slots[]');
+    expect(synthesis).toContain('must reappear');
+    expect(completed).not.toContain('detail_slots[]');
+    expect(completed).not.toContain('must reappear');
+    expect(completed).toContain('not an archive lift');
+    expect(completed).toContain('sections[].label');
+    expect(completed).toContain('highlight_groups[]');
+    expect(completed).toContain('is_update: true');
   });
 
   it('keeps archive-only synthesis material out of the preview stage', () => {
@@ -711,7 +733,8 @@ describe('prompt composition', () => {
     expect(active).not.toContain('synthesis/completed');
     expect(active).not.toContain('already_started');
     expect(active).not.toContain('ACTIVE-PHASE TOOL BOUNDARY');
-    expect(active).toContain('REJECTION SELF-REPAIR');
+    expect(active).not.toContain('REJECTION SELF-REPAIR');
+    expect(active).toContain('route_requests[].question');
   });
 
   // The ⚠️ placement rule has two homes, both pinned in tests/unit/ai-core/rule-gates.test.ts: the

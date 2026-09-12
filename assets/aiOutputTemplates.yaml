@@ -148,10 +148,11 @@ notes:
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
-# Each fired *_capture template produces ONE section into submit_findings.sections[].
-# Submit shape: { angle: 'business' | 'technical', text: '<body>' }.
-# Independent specs — no cross-references between templates. Each section is
-# self-contained; synthesis groups across nodes at the next phase.
+# Each fired *_capture template produces ONE sections[] entry for its angle.
+# Under classification `both` both recipes fire (two entries); a single-angle
+# lock fires one recipe (one body). Shape: { angle, text }. Independent specs —
+# no cross-references between templates. Each section is self-contained;
+# synthesis groups across nodes at the next phase.
 
 business_capture:
   stages: [active]
@@ -173,7 +174,9 @@ business_capture:
     logging, errors, auditing or retention.
     </scope_relevance>
 
-    Submit one section: `{ angle: "business", text: "<body>" }`.
+    This recipe is one `sections[]` entry: `{ angle: "business", text: "<body>" }`.
+    Under classification `both` it is one of two required entries; under a
+    business lock it is the only body.
 
     <section_skeleton>
     A detailed business section, in this order:
@@ -197,8 +200,8 @@ business_capture:
        2. Approved → 3. Shipped"), the business state change rather than the
        UPDATE or CASE that effects it; the ladder renders as those steps, not
        as a $$ block.
-    7. Loading step — what the DML does to the target: truncate+insert,
-       merge, append, purge.
+    7. Loading step — what the DML does to the target: whether existing
+       contents are replaced, extended, or removed.
     8. Error handling — what happens when a step fails, and what the rows
        carry afterwards.
     9. Upstream assumptions — the object it is about, and its `bb_ddl` reference.
@@ -248,8 +251,9 @@ technical_capture:
     FKs are already on the node.
     </purpose>
 
-    Submit one section: `{ angle: "technical", text: "<body>" }`. The archive
-    has no length cap.
+    This recipe is one `sections[]` entry: `{ angle: "technical", text: "<body>" }`.
+    Under classification `both` it is one of two required entries; under a
+    technical lock it is the only body. The archive has no length cap.
 
     <section_skeleton>
     A detailed technical section, in this order:
@@ -269,8 +273,7 @@ technical_capture:
        `upsert` (MERGE or UPDATE + conditional INSERT), `historization`,
        `purge`, `orchestration` (EXECs other procedures); coarse, SCD/CDC in
        prose. Absent, or a view/UDF focus: no shape.
-    7. Error handling — TRY/CATCH, retry and lock behaviour, and the value the
-       rows carry after a failure.
+    7. Error handling — TRY/CATCH, retry and lock behaviour.
     8. Antipatterns — non-sargable or implicitly converting predicate,
        excessive DISTINCT, OR in a join predicate, correlated subquery or
        scalar UDF per row, unguarded UPDATE or DELETE, TRUNCATE outside a
@@ -375,7 +378,6 @@ column_trace_capture:
     □ Each upstream_columns entry is a real INPUT to `out_col`'s value — it appears in `out_col`'s producing expression (the formula / CASE / SELECT clause that computes it). A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
     □ sections[].text — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
     □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
-    □ When an out_col is produced by a computed expression (arithmetic, CASE, COALESCE, aggregation), sections[].text includes the producing expression as a `$$ … $$` block.
 
     ## Example — column interacts (LateFee computed at vw_Circ)
     column_flow: [
@@ -395,6 +397,7 @@ column_trace_capture:
     resolves.
     Off-trace (no tracked column here): column_flow: [] — the node stays for what it
     does to the rows, stated in sections[].text.
+    Filter or join neighbor (`columns: "none"`): BB-shaped hop, column_flow: [].
 
     ## Non-bodied table focus (TABLE written by a procedure)
     When the focus node is a TABLE (no DDL — only schema metadata), the procedure that

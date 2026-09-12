@@ -122,4 +122,30 @@ describe('AiSession lifecycle ownership', () => {
     session.clearPresentResultFlag();
     expect(session.presentResultAutoDispatched).toBe(false);
   });
+
+  it('seeds the existing SM-offer from a rejected oversized origin', () => {
+    const session = new AiSession();
+    session.beginTurn();
+    expect(session.smOfferAvailable()).toBe(false);
+
+    session.seedSmOfferFromRejectedOrigin(
+      '[ai].[FactSalesReport]',
+      48,
+      'What feeds FactSalesReport?',
+      'A detailed analysis would be needed.',
+    );
+
+    expect(session.smOfferAvailable()).toBe(true);
+    expect(session.lastDiscoveryOrigin).toBe('[ai].[FactSalesReport]');
+    expect(session.lastDiscoveryWalkCount).toBe(48);
+    expect(session.lastDiscoveryAnswer).toBe('A detailed analysis would be needed.');
+  });
+
+  it('floors a missing rejected walk count at 2 so the existing pill still fires', () => {
+    const session = new AiSession();
+    session.beginTurn();
+    session.seedSmOfferFromRejectedOrigin('[ai].[FactSalesReport]', 0, 'What feeds FactSalesReport?', 'Summary.');
+    expect(session.lastDiscoveryWalkCount).toBe(2);
+    expect(session.smOfferAvailable()).toBe(true);
+  });
 });

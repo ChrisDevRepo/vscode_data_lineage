@@ -33,7 +33,7 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
   .max(8)
   .describe(
     'Analysis constraints the user stated that no filter field can express — e.g. "ignore filter criteria", '
-    + '"explain the waiver logic on [schema].[spBuildCircA] in detail". One short note per instruction, in the '
+    + '"explain the waiver logic on a named object in detail". One short note per instruction, in the '
     + "user's own terms. These are echoed back at the approval gate for the user to confirm, and are carried to "
     + 'every hop, so record an instruction here rather than dropping it when it maps to no filter.',
   );

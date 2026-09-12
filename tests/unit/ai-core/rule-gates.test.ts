@@ -421,3 +421,32 @@ describe('business_capture — a $$ … $$ block preserves the DDL expression te
     expect(mathBullet).toMatch(/when a faithful rendering is not possible, quote the sql instead/i);
   });
 });
+
+// BOTH-TWO-FILES: error/CATCH, loading-shape names, and $$ each have one home. Dual-lens
+// grain/CASE stays on both recipes; add/prune stays in HOP_DECISION_CONTRACT, not YAML.
+describe('capture recipes — one home per overlapping topic', () => {
+  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
+  const businessCapture = asset.slice(asset.indexOf('\nbusiness_capture:'), asset.indexOf('\ntechnical_capture:'));
+  const technicalCapture = asset.slice(asset.indexOf('\ntechnical_capture:'), asset.indexOf('\nstructural_callouts:'));
+  const columnTrace = asset.slice(asset.indexOf('\ncolumn_trace_capture:'), asset.indexOf('\n# Per-angle section assembly'));
+
+  it('gives post-failure row value to business and TRY/CATCH mechanics to technical', () => {
+    expect(businessCapture).toMatch(/what the rows\s+carry afterwards/);
+    expect(businessCapture).not.toMatch(/TRY\/CATCH/);
+    expect(technicalCapture).toMatch(/TRY\/CATCH, retry and lock behaviour/);
+    expect(technicalCapture).not.toMatch(/rows carry after/);
+  });
+
+  it('gives loading-shape names one home on the technical recipe', () => {
+    expect(technicalCapture).toMatch(/`reload`/);
+    expect(technicalCapture).toMatch(/`append`/);
+    expect(technicalCapture).toMatch(/`upsert`/);
+    expect(businessCapture).toMatch(/what the DML does to the target/);
+    expect(businessCapture).not.toMatch(/`reload`|`append`|`upsert`|truncate\+insert/);
+  });
+
+  it('does not restate $$ producing expressions in column_trace_capture', () => {
+    expect(columnTrace).not.toMatch(/\$\$ … \$\$/);
+    expect(businessCapture).toMatch(/`\$\$ … \$\$` block/);
+  });
+});

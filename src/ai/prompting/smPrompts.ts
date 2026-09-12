@@ -15,18 +15,17 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
  * Shared route-question requirement (DRY across BB and CT).
  *
  * @remarks
- * The per-hop sub-question drives capture depth. Its structural A→B part is
- * engine-derivable (CT auto-generates it via `getColumnLineageQuestionsByNode`, the per-node
- * source of record); the analytical
+ * The structural A→B part is engine-derivable (CT auto-generates it via
+ * `getColumnLineageQuestionsByNode`, the per-node source of record); the analytical
  * part — what business/technical logic a node applies — is NOT derivable from metadata and
- * must be authored by the AI and carried hop-to-hop. This bullet is the single source for
+ * must be authored by the AI. This bullet is the single source for
  * that requirement, rendered in both the BB and CT decision contracts. In CT it feeds the
  * capture narration only; `column_flow[].upstream_columns` stays structural (see the CT-safety
  * bullet in {@link BLOCK.hopDecisionContractCt}) so it stays the sole structural channel for column
  * precision and the column-precision regression cannot re-enter.
  */
 const ANALYTICAL_ROUTE_QUESTION =
-  `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it. This analytical question persists hop-to-hop and drives the depth of the next hop's capture.`;
+  `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it.`;
 
 /**
  * One resolution rule for `<required_neighbors>`, composed by both hop decision contracts so the
@@ -49,9 +48,9 @@ const NEIGHBOR_DECISION_CORE = [
   REQUIRED_NEIGHBOR_RESOLUTION,
   '- Retain-by-omission applies only to neighbors that are not in `<required_neighbors>`; a required ID always gets an explicit decision.',
   '- For each other current-hop neighbor:',
-  '  - Route it when mission-relevant, using a concrete verification question. The engine defers routes outside the approved schema/depth scope.',
-  '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays; if later scheduled as focus, use its focus verdict.',
-  '  - Add it to `prune_neighbors` when current evidence proves it is off the answer path — outside the approved exploration scope, or inside it with nothing the answer needs. A neighbor that supplies no value but decides which rows the answer returns — a join, filter or predicate source — is not \"nothing the answer needs\": route or retain it. An executed prune must never orphan committed work; the engine refuses such a prune.',
+  '  - Route it when mission-relevant, using a concrete verification question.',
+  '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays.',
+  '  - Add it to `prune_neighbors` when current evidence proves it is off the answer path — outside the approved exploration scope, or inside it with nothing the answer needs. A neighbor that supplies no value but decides which rows the answer returns — a join, filter or predicate source — is not \"nothing the answer needs\": route or retain it. An executed prune must never orphan committed work.',
   '- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.',
   '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
   ANALYTICAL_ROUTE_QUESTION,
@@ -182,7 +181,6 @@ const BLOCK = {
   badgeAndNote: [
     '## Current Hop Metadata',
     'Analyze the current `focus_node` for the current task only. Prior memory is context, not a final report plan.',
-    '- `badge_label`: optional hop-time grouping hint only; it is synthesis evidence, not rendered directly. Final graph labels and node captions are authored only in `lineage_present_result`.',
   ].join('\n'),
 
   /** Canonical hop-local routing/pruning contract (single source, no duplicates across surfaces). */

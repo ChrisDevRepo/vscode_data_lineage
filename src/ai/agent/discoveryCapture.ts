@@ -13,7 +13,23 @@ interface DiscoveryWalk {
   readonly answer: string;
 }
 
+/** Origin captured from an oversized `lineage_get_scope_bundle` so the existing SM-offer pill can still fire. */
+export interface RejectedScopeOffer {
+  /** Canonical origin id from the rejected call or its `scope_proposal`. */
+  readonly origin: string;
+  /** Projected node count that overflowed the discovery cap, floored at 2 so the existing SM-offer pill still fires. */
+  readonly walkCount: number;
+}
+
 const OBJECT_DETAIL_TOOL = 'lineage_get_object_detail';
+const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
+
+const ScopeBundleOriginView = z.object({ origin: z.string().trim().min(1) }).loose();
+const OverBudgetResultView = z.object({
+  reason: z.literal('over_discovery_budget'),
+  counts: z.object({ nodes: z.number() }).loose().optional(),
+  scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
+}).loose();
 
 // Canonical object-detail output always carries a nonblank id; anything else is malformed engine
 // output and must surface observably instead of being skipped in silence.
@@ -55,4 +71,32 @@ export function captureDiscoveryWalkFromObservations(
   const distinct = new Set(inspected.map(id => id.toLowerCase()));
   if (distinct.size < 2) return null;
   return { walkCount: distinct.size, origin: inspected[0], answer };
+}
+
+/**
+ * Extracts the SM-offer origin from an oversized `lineage_get_scope_bundle` result.
+ *
+ * @param toolName - Tool that produced `resultText`.
+ * @param input - Provider-emitted tool arguments (origin lives here when the envelope omitted `scope_proposal`).
+ * @param resultText - Serialized tool result.
+ * @returns The rejected origin and walk count, or `null` when this is not an oversized scope bundle.
+ */
+export function captureRejectedScopeOffer(
+  toolName: string,
+  input: unknown,
+  resultText: string,
+): RejectedScopeOffer | null {
+  if (toolName !== SCOPE_BUNDLE_TOOL) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(resultText);
+  } catch {
+    return null;
+  }
+  const view = OverBudgetResultView.safeParse(raw);
+  if (!view.success) return null;
+  const fromInput = ScopeBundleOriginView.safeParse(input);
+  const origin = (view.data.scope_proposal?.origin ?? (fromInput.success ? fromInput.data.origin : '')).trim();
+  if (!origin) return null;
+  return { origin, walkCount: Math.max(view.data.counts?.nodes ?? 0, 2) };
 }

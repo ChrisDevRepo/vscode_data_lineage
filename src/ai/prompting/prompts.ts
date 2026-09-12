@@ -8,7 +8,6 @@
  * Navigation-mode prompts live in `smPrompts.ts` (Universal Markdown blocks).
  */
 
-import { REJECTION_CODES } from '../support/rejectionCodes';
 import { escapePromptText } from '../support/text';
 import type { InvestigationTask } from '../sm/smTypes';
 
@@ -103,6 +102,7 @@ export function buildGeneralSystemPrompt(phase: PromptPhase, ctx: GeneralPromptC
     'You are the @lineage assistant inside the Data Lineage Viz extension for Visual Studio Code.',
     'The extension parses SQL objects — tables, views, stored procedures, and functions — into a',
     'dependency graph and renders it as an interactive diagram in the editor.',
+    'The user sees that graph and can open each object\'s full SQL in the editor.',
     '',
     `Current phase: ${phaseLabel}.`,
     '',
@@ -180,14 +180,13 @@ export const CHAT_MARKDOWN_FORMAT = [
  * line leads the list because it selects the evidence source before the kind of ask picks a tool:
  * a question about a bookmarked graph is a read of a run already stored, and answering it with a
  * scope walk is what turned "what do I see here" into a fresh approval gate. No restated
- * phase/state framing, no routing taxonomy. The `over_discovery_budget` guard is deliberately
- * unmentioned — `lineage_get_scope_bundle` is the only place it can fire, that call site always
- * wires the mechanical `detectReroute` detector (`detectOverBudgetFromResult`, `agent/graph.ts`),
- * and graph dispatch treats the tool result as a reroute terminal, so the model does not receive
- * another discovery attempt to act on it — therefore no prose describing
- * that path is ever reachable. Tool parameter routing and filter-boundary semantics live in
- * each tool's modelDescription — including the scope-depth mechanics this list used to restate,
- * which now have one home in `lineage_get_scope_bundle`'s description and its `.describe()` texts.
+ * phase/state framing, no routing taxonomy. The `over_discovery_budget` envelope is returned by
+ * `lineage_get_scope_bundle` and stays on the discovery path: the hint on that envelope is the one
+ * instruction (summarize what is already known; a detailed analysis would be needed). The existing
+ * SM-offer pill is the opt-in. `/trace` and column-trace still enter SM via entryRouting, not this
+ * overflow. Tool parameter routing and filter-boundary semantics live in each tool's
+ * modelDescription — including the scope-depth mechanics this list used to restate, which now have
+ * one home in `lineage_get_scope_bundle`'s description and its `.describe()` texts.
  *
  * @returns The assembled discovery-phase prompt string.
  */
@@ -210,24 +209,23 @@ function buildDiscoveryPrompt(): string {
 
 
 /**
- * Constructs the prompt for the Active hop-by-hop phase.
+ * Constructs the hop job card for the Active phase.
  *
  * @remarks
- * Active execution is always strict sliding memory. Full-catalog inline delivery is
- * a discovery-tool payload decision and is intentionally not an execution mode here.
+ * This hop sees one focus node. Full-catalog inline delivery is a discovery-tool
+ * payload decision and is intentionally not an execution mode here.
  *
  * @returns A formatted system instruction for the active phase.
  */
 function buildActivePhasePrompt(): string {
   return [
     '# Active Exploration Protocol',
-    'Mode: SLIDING MEMORY: Analyze nodes sequentially as presented.',
+    'This hop is the current focus node.',
     '',
-    '1. ANCHORING: Align every verdict with the `<mission_brief>` and `<current_task>`.',
-    '2. MATHEMATICS: Write formulas as LaTeX math — `$...$` inline, `$$...$$` for a standalone block.',
-    '3. TOOL CONSTRAINTS: Use `lineage_submit_findings` for focus-node analysis. Submit `sections[]` per locked classification (one entry per fired `*_capture`) with full-depth text.',
-    '4. DECISION SOURCE: Use the SM Neighbor Decision Contract for all route/prune choices.',
-    `5. REJECTION SELF-REPAIR: On \`${REJECTION_CODES.bbFieldUnknown}\` or \`${REJECTION_CODES.offPolicy}\`, retry once with a corrected same-intent payload.`,
+    '1. THINK: Read the node DDL against `<current_task>`.',
+    '2. ANALYZE: Issue a verdict for this node against that task.',
+    '3. FILE: Submit `sections[]` in capture-recipe shape (long memory) and a one-sentence `summary` (short-term memory).',
+    '4. OPEN: For each routed neighbor, write a self-contained `route_requests[].question` — it becomes that node\'s `<current_task>`.',
   ].join('\n');
 }
 
@@ -252,12 +250,14 @@ function buildActivePhasePrompt(): string {
  * fights the `max()` in `toolSchemas.ts` rather than reinforcing it.
  *
  * The depth rules are the one stage-dependent part, because the depth *decision* is not the same
- * decision in every stage. Synthesis and follow-up author text and therefore choose how much of the
- * captured evidence survives; preview authors none — it partitions a fixed answer that
+ * decision in every stage. Synthesis authors text from the captured archive and therefore chooses
+ * how much of that evidence survives. Follow-up authors text without that archive in the window —
+ * re-derive via `lineage_get_object_detail` is the owner, so the completed depth does not lift
+ * `detail_slots[]`. Preview authors none — it partitions a fixed answer that
  * `findDiscoveryPreviewReuseViolations` re-compares character for character, so telling it to
  * compress or drop items would be instructing it into a guaranteed rejection. How deep the
- * surviving text runs is stated once, at the synthesis hop (`buildSynthesisReminder`), where the
- * captured evidence that sets the depth is in the window.
+ * surviving synthesis text runs is stated once, at the synthesis hop (`buildSynthesisReminder`),
+ * where the captured evidence that sets the depth is in the window.
  *
  * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`. Omitted
  *   for stages whose evidence is described by their own protocol block. Kept as the first parameter
@@ -270,16 +270,23 @@ export function buildPresentationDetailContract(
   evidence?: string,
   mode: PresentationStage = 'synthesis',
 ): string {
+  const headingRule =
+    '- Inside section bodies use bold labels for sub-structure, never `#`/`##`/`###` headings, because the engine owns the document title, the numbered section headings, and the object link headers.';
   const depthRules = mode === 'preview'
     ? [
       '- Depth is already fixed by the supplied answer: copy each span whole and choose only where to cut, because the engine compares your joined sections against that answer character for character.',
     ]
-    : [
-      '- Preserve captured decision triggers and predicates, thresholds, fallback order, lifecycle/status transitions, audit-trail meaning, and downstream business impact. Keep exact node IDs, parameter names, and formulas intact through every compression — drop whole items that do not help answer <original_question>, never fields within a kept item.',
-      '- Every ⚠️ risk or caveat, every formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body, verbatim for the predicate.',
-      '- Regroup for question-first clarity and graph linking. Compress repeated phrasing while retaining every grounded evidence item — expressions a switch selects between are one item per branch, not one item per concept.',
-      '- Inside section bodies use bold labels for sub-structure, never `#`/`##`/`###` headings, because the engine owns the document title, the numbered section headings, and the object link headers.',
-    ];
+    : mode === 'completed'
+      ? [
+        '- Depth is the follow-up ask, not an archive lift. Keep exact node IDs, parameter names, and formulas intact in text you do author.',
+        headingRule,
+      ]
+      : [
+        '- Preserve captured decision triggers and predicates, thresholds, fallback order, lifecycle/status transitions, audit-trail meaning, and downstream business impact. Keep exact node IDs, parameter names, and formulas intact through every compression — drop whole items that do not help answer <original_question>, never fields within a kept item.',
+        '- Every ⚠️ risk or caveat, every formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body, verbatim for the predicate.',
+        '- Regroup for question-first clarity and graph linking. Compress repeated phrasing while retaining every grounded evidence item — expressions a switch selects between are one item per branch, not one item per concept.',
+        headingRule,
+      ];
   return [
     '## Presentation contract',
     '- `sections[].label`: becomes the section heading and the graph badge on every linked node. Write a semantic pointer — "Source Tables", "Revenue Calc", "Report Output" — never a sentence or a question. Give each section a different label, because one label can point at only one body.',
@@ -384,8 +391,9 @@ function buildSynthesisPrompt(): string {
  * explicit-node supplements — without starting a fresh exploration.
  *
  * Receives {@link buildPresentationDetailContract} like every other stage that authors a
- * `present_result` payload: a follow-up re-render is judged by the same `validatePresentResult`
- * synthesis is, so it has to be given the same rules.
+ * `present_result` payload: linking, labels, colors, and `is_update` are the same rules
+ * `validatePresentResult` enforces. Depth is not — follow-up has no archive in the window, so the
+ * completed depth does not lift captured warnings, formulas, or predicates.
  *
  * @returns A string containing the follow-up-phase protocol.
  */
@@ -544,7 +552,7 @@ function buildRunTraceTriggerPrompt(
     '',
     `- **origin**: ${JSON.stringify(origin)} (the node walked during discovery).`,
     '- **direction**: "upstream" | "downstream" | "bidirectional". Rule: Select based on <original_question>. Use "upstream" for source/input questions, "downstream" for usage/impact questions, "bidirectional" when the intent is broad or asks different depths per side.',
-    '- **classification**: "business" (the user did not name a technical lens).',
+    '- **classification**: "business" | "technical" | "both". Use "business" unless the discovery question named a technical lens (performance, indexes, execution plan, query shape, load pattern); use "technical" when that lens is the whole request; use "both" when the request spans both.',
     '- **depth**: copy an explicit level or "all" from <original_question>, or a per-side ask as {upstream,downstream}; otherwise omit it so the engine applies its default.',
     '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. If none, pass `[]`.',
     '- **mission_brief**: a 1-sentence placeholder citing the user\'s original question.',
@@ -568,18 +576,18 @@ function buildRunTraceTriggerPrompt(
  * formatting instructions belong at the system layer like every other stage.
  */
 export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
-  'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops — no user reads it.',
+  'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops.',
   'Every clause must come from the supplied <original_question> and <discovery_answer>, because later hops treat this memo as established fact.',
   'Plain prose only: no headings, bullets, or diagrams.',
 ].join('\n');
 
 /**
- * Builds the one-shot prompt for the post-approval discovery-summary
- * composition round (fires once per SM session after gate approval).
+ * Builds the one-shot prompt for the proposal-build discovery-summary
+ * composition round (fires once per shown SM proposal).
  *
  * @param question - The user's verbatim discovery question.
  * @param answer - The AI's discovery chat answer (Markdown).
- * @param contractSummary - One-line digest of the approved gate parameters.
+ * @param contractSummary - One-line digest of the proposed gate parameters.
  * @param rejectReason - Zod issue text from a rejected prior reply; appends the reject-with-hint
  * retry block. Omitted on the first attempt.
  * @returns Effective-prompt text fed into the one-shot composition round.
@@ -591,14 +599,14 @@ export function buildDiscoverySummaryComposePrompt(
   rejectReason?: string,
 ): string {
   return [
-    'The user approved the SM exploration. Compose a 2–4 sentence discovery summary that will ride in every hop\'s stable prefix as `<discovery_summary>`.',
+    'Compose a 2–4 sentence discovery summary for this pending SM exploration proposal; it will ride in every hop\'s stable prefix as `<discovery_summary>`.',
     'Reply with text only this turn. Output the memo as a single paragraph, 2–4 sentences total.',
     '',
     '## Composition contract',
     '',
     'Include: (1) the user\'s original question, close to verbatim; (2) the headline finding from the discovery answer; (3) any user-stated semantic constraint the structural fields cannot capture.',
     '',
-    '## Approved SM contract (already locked — do not re-state)',
+    '## Pending SM contract (do not re-state)',
     '',
     contractSummary,
     '',

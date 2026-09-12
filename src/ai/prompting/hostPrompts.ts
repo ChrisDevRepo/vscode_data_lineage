@@ -268,5 +268,5 @@ export function buildGateRefinePrompt(
  * @returns The anchor user-message text.
  */
 export function buildActiveContinuationAnchor(): string {
-  return 'Continue the hop-by-hop analysis: address the next node on the agenda per the protocol above.';
+  return 'Analyze `<current_task>` on the next agenda node.';
 }

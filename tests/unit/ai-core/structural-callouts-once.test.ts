@@ -40,6 +40,15 @@ describe('structural_callouts — one home, rendered once per bodied hop', () =>
     expect(templates.technical_capture).not.toContain('<structural_callouts>');
   });
 
+  // BOTH-TWO-FILES: a `both` hop writes two sections[] bodies. Neither recipe may say
+  // "Submit one section", which was read as one body for the hop.
+  it('does not tell a both hop to submit one section from either capture recipe', () => {
+    expect(templates.business_capture).not.toContain('Submit one section');
+    expect(templates.technical_capture).not.toContain('Submit one section');
+    expect(templates.business_capture).toContain('one of two required');
+    expect(templates.technical_capture).toContain('one of two required');
+  });
+
   it.each<[ClassificationValue, string[]]>([
     ['both', ['business_capture', 'technical_capture', 'structural_callouts']],
     ['business', ['business_capture', 'structural_callouts']],
