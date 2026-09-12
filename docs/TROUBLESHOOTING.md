@@ -56,11 +56,11 @@ UI does not create a separate button for each deferred route.
 |---|---|---|---|---|---|
 | GitHub Copilot | claude-sonnet-5 | high | good | ~9 min | not reported by the Copilot API |
 | Azure AI Foundry | gpt-5.4-mini | medium | good | ~9 min | ~310k |
-| Fireworks | deepseek-v4-flash-0731 | low | good | ~13 min | ~350k |
+| Fireworks | deepseek-v4p1-flash (live pin; table figures are from deepseek-v4-flash-0731) | low | good | ~13 min | ~350k |
 | Google | gemini-3.8-flash | medium (the model default) | good | ~9 min | ~400k |
 | Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~18 min | ~290k |
 
-¹ Total of three questions — one discovery, one object trace (BB) and one column trace (CT) — per run, averaged over completed runs only (10 for gpt-5.4-mini, 9 for gemini-3.8-flash, 3 for deepseek-v4-flash, 2 for Qwen3.6; one UAT session for Claude Sonnet).
+¹ Total of three questions — one discovery, one object trace (BB) and one column trace (CT) — per run, averaged over completed runs only (10 for gpt-5.4-mini, 9 for gemini-3.8-flash, 3 for deepseek-v4-flash-0731, 2 for Qwen3.6; one UAT session for Claude Sonnet). The live Fireworks pin is `deepseek-v4p1-flash` from `.env` (`accounts/fireworks/models/deepseek-v4p1-flash`). T19–T29 CT cases load `internal-tests/fixtures/ct-conditions.dacpac`; T2–T8S stay on `tests/fixtures/AdventureWorks2025_AI.dacpac`.
 
 These numbers are snapshots of particular days and say nothing about what a given setup will do; they depend on model, region, load, reasoning settings and database size. Models reached through OpenRouter and Z.ai showed high or erratic latency and timeouts during testing and are not in the table. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete — up to the zero-output limit below.
 
