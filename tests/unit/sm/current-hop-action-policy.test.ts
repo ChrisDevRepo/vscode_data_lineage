@@ -26,7 +26,7 @@ describe('current-hop action policy', () => {
     })]);
   });
 
-  it('accepts the hop-level prune of an untouched in-scope neighbour (D-020)', () => {
+  it('accepts the hop-level prune of an untouched in-scope neighbour', () => {
     const result = evaluateCurrentHopActionPolicy({
       originId: 'origin',
       routeTargets: [],

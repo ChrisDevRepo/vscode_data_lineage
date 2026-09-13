@@ -1,5 +1,5 @@
 /**
- * Unit tests for the discovery search tools' grep contract (P1-92.b).
+ * Unit tests for the discovery search tools' grep contract.
  *
  * `lineage_search_ddl` and `lineage_search_objects` follow the shape models are trained on: a
  * regex in, every match out with its location and line text, an empty result stated as a plain

@@ -1,5 +1,5 @@
 /**
- * A real object is never rejected as "unknown" (P1-16).
+ * A real object is never rejected as "unknown".
  *
  * The id check already runs over the whole loaded model before this validator sees it, so an id the
  * result graph cannot link is either a hallucination — "not in the loaded model" — or a real node in

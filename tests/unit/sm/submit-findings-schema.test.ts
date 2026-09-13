@@ -81,7 +81,7 @@ describe("Submit Findings Schema", () => {
   expect(parsed.success, 'CT accepts self-prune verdict (analyze|passthrough|prune)').toBe(true);
 });
 
-  it("CT carries the shared prune_neighbors — same decision space as BB (D1 convergence)", () => {
+  it("CT carries the shared prune_neighbors — same decision space as BB", () => {
   const parsed = SubmitFindingsCtInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
     sections: [{ angle: 'business', text: 'ok' }],
@@ -226,7 +226,7 @@ describe("Submit Findings Schema", () => {
     focus_node_id: '[dbo].[vSales]', sections: [], summary: 'ok', verdict: 'analyze',
     column_flow: [], prune_neighbors: ['[dbo].[vStaging]'],
   });
-  // D1 convergence: the advertised CT form accepts the shared BB field — the model can prune or
+  // Convergence: the advertised CT form accepts the shared BB field — the model can prune or
   // route a neighbour in either mode.
   expect(withPruneNeighbors.success, 'host-advertised CT form accepts the shared prune_neighbors').toBe(true);
   const repairCt = ct.safeParse({ repair: true, focus_node_id: '[dbo].[vSales]', column_flow: [] });

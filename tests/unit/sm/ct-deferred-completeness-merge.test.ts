@@ -1,5 +1,5 @@
 /**
- * P1-104 / D-048 — the deferred CT completeness fault reaches the second-pass envelope.
+ * The deferred CT completeness fault reaches the second-pass envelope.
  *
  * `submitFindings` computes two independent faults from one payload at a script-type (no
  * declared-column) focus: a topology fault (a required neighbor left unrouted, unpruned —
@@ -8,7 +8,7 @@
  * `contradicted` is empty and the hoisted/contradicted branch never fires). Before the repair,
  * the second pass returned only the topology fault and discarded the already-computed CT fault,
  * so the model spent turn 5 on the topology repair and turn 6 re-deriving the CT fault from
- * scratch — one payload, two turns, exactly the D-048 T8S shape that ends a run `hollow` once a
+ * scratch — one payload, two turns, exactly the T8S shape that ends a run `hollow` once a
  * third payload spends the last breaker trip. This test submits that one payload and asserts both
  * faults are named in the single envelope it produces.
  */
@@ -78,7 +78,7 @@ function walkToConsumer(engine: NavigationEngine): void {
   throw new Error('the walk did not reach the consumer within 10 hops');
 }
 
-describe('CT deferred completeness fault merges with a topology fault (P1-104 / D-048)', () => {
+describe('CT deferred completeness fault merges with a topology fault', () => {
   it('one payload carrying both faults is rejected once, naming both — not a topology-only envelope', () => {
     const { model, graph } = buildWorld();
     const engine = new NavigationEngine(model, graph, () => {}, {});

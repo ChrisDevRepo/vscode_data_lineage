@@ -143,10 +143,10 @@ export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget(
  * partial data the result carries, say the full question needs a detailed
  * analysis, and offer to continue with `lineage_start_exploration` once the
  * user confirms, never starting it. Naming `lineage_start_exploration` in a
- * tool hint is precedented (`RESULT_TOO_LARGE_HINT`); the earlier rule that a
- * hint must not name hop-by-hop or a consent-gated path was revised for this
- * hint by PM ruling uuu + register row www — the consent gate itself stays
- * untouched and the post-discovery SM-offer pill remains the trigger. No
+ * tool hint is precedented (`RESULT_TOO_LARGE_HINT`); the rule that a
+ * hint must not name hop-by-hop or a consent-gated path does not apply to this
+ * hint — the consent gate itself stays untouched and the post-discovery
+ * SM-offer pill remains the trigger. No
  * fallback, and nothing is ever truncated: the partial payload the caller
  * attaches is a different bounded payload, not a slice of the rejected request.
  *

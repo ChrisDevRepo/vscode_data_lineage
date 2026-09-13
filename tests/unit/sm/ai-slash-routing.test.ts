@@ -95,8 +95,8 @@ describe('ai-slash-routing', () => {
    * that pinned the bug (`ai-slash-routing.test.ts`, `prompt-composition.test.ts`, both added in
    * `08204f6c`) were written by reading `entryRouting.ts`, not `docs/ARCHITECTURE.md` — a test
    * authored from the implementation can only ever confirm the implementation. This table is
-   * authored from the spec instead: every cell cites the `docs/ARCHITECTURE.md` line or the D-073
-   * ruling (`test-results/prompt-stabilization/proofs/D-073.md`) it implements, and the table is
+   * authored from the spec instead: every cell cites the `docs/ARCHITECTURE.md` line it
+   * implements, and the table is
    * typed against the FULL `AgentEntryRoute` x `AgentExecutionTrigger` union
    * (`src/ai/agent/state.ts:48,51`) so an added route or trigger fails to compile here rather than
    * silently defaulting through the router's fallthrough `return 'discover'`.
@@ -104,8 +104,8 @@ describe('ai-slash-routing', () => {
   it('routes every AgentEntryRoute x AgentExecutionTrigger pair per docs/ARCHITECTURE.md §Discovery and visual preview', () => {
     const ROUTING_TABLE: Record<AgentEntryRoute, Record<AgentExecutionTrigger, InitialAgentStage>> = {
       // docs/ARCHITECTURE.md:178 — "A column-trace request always escalates to SM entry, budget
-      // irrelevant — the escalation is keyed on request kind, not size." D-073 "CT escalation"
-      // ruling confirms entryRouting.ts:22 is correct and is NOT touched by the visual_render
+      // irrelevant — the escalation is keyed on request kind, not size." That contract confirms
+      // entryRouting.ts:22 is correct and is NOT touched by the visual_render
       // repair: kind-based, never size-based, in every trigger column.
       column_trace: {
         free_text: 'sm_entry',
@@ -113,7 +113,7 @@ describe('ai-slash-routing', () => {
         run_trace: 'sm_entry',
         preview_button: 'visual_preview',
       },
-      // D-073 "TARGET ARCHITECTURE" ruling / "Net routing contract after the repair":
+      // Net routing contract after the repair:
       // `visual_render -> discover (main loop), then the bounded preview renders the discovery
       // answer` on a LATER turn via the explicit preview_button trigger only. docs/ARCHITECTURE.md
       // :154-155 states the same boundary: the render request "does not grant SM authority".
@@ -141,7 +141,7 @@ describe('ai-slash-routing', () => {
         const expected = triggers[trigger];
         expect(
           selectInitialAgentStage(entry, trigger),
-          `docs/ARCHITECTURE.md §Discovery and visual preview / D-073: (entry=${entry}, trigger=${trigger}) must route to '${expected}'`,
+          `docs/ARCHITECTURE.md §Discovery and visual preview: (entry=${entry}, trigger=${trigger}) must route to '${expected}'`,
         ).toBe(expected);
       }
     }

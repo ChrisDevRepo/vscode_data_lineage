@@ -209,7 +209,7 @@ describe("Submit Findings Handler", () => {
   expect((raw.column_flow[0] as Record<string, unknown>).bogus_field, 'the raw model payload stays immutable').toBe('nope');
 });
 
-  it("CT accepts prune_neighbors — same decision space as BB (D1 convergence)", () => {
+  it("CT accepts prune_neighbors — same decision space as BB", () => {
   const { services, result } = setupCt();
   executeSubmitFindings({
     focus_node_id: 'origin',

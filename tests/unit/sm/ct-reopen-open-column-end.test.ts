@@ -2,7 +2,7 @@
  * A column committed at one hop stays owed until some hop accounts for it — the T8 chain
  * termination, reproduced offline.
  *
- * On the recorded run (`test-results/e2e/ib-4-fireworks/run-T8`) the walk reached
+ * On the recorded run the walk reached
  * `[ai].[spcleanorders]` early, carrying only the display column the hop that routed it named. The
  * amount column arrived three hops later, when `[ai].[vwraworders]` committed
  * `cleanedorders.OrderAmount` and routed the table it came from: that table is non-bodied, so the

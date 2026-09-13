@@ -99,13 +99,13 @@ describe("Scope Extension + Hold-and-Amend", () => {
   expect(engine.heldFindingFocus === null, 'hold cleared after a committed submit').toBe(true);
 });
 
-  it("Test 3b: a required neighbor is satisfied by a route OR a topology-safe hop-level prune (D-020).", () => {
+  it("Test 3b: a required neighbor is satisfied by a route OR a topology-safe hop-level prune.", () => {
   const engine = new NavigationEngine(fanModel, fanGraph, () => {}, {});
   engine.init({ origin: 'p', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   advanceToM(engine);
 
   // Account for both required neighbors of m: route `a`, prune the (topology-safe) `b`.
-  // Amended from the pre-D-020 pin (pruning a required neighbor was missing routing): the
+  // Amended from the earlier pin (pruning a required neighbor was missing routing): the
   // hop-level prune of an in-scope neighbour is the decision the same-graph contract requires
   // both modes to express, and the don't-orphan guard — not a routing mandate — governs it.
   const committed = engine.submitFindings({
@@ -125,7 +125,7 @@ describe("Scope Extension + Hold-and-Amend", () => {
   expect(!resultIds.has('b'), 'b never renders').toBe(true);
 });
 
-  it("Test 3c: an untouched in-scope prune target executes; only queued work is protected (D-020).", () => {
+  it("Test 3c: an untouched in-scope prune target executes; only queued work is protected.", () => {
   const engine = new NavigationEngine(chainModel, chainGraph, () => {}, {});
   engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
 
@@ -142,7 +142,7 @@ describe("Scope Extension + Hold-and-Amend", () => {
     route_requests: [{ nodeId: 'n1', question: 'trace n1' }],
     prune_neighbors: ['n2'],
   });
-  // Amended from the pre-D-020 pin (the in-scope prune was a refused notice): an in-scope
+  // Amended from the earlier pin (the in-scope prune was a refused notice): an in-scope
   // prune target the walk has not yet touched is exactly the hop-level prune decision, so it
   // executes subject to don't-orphan; the protected notice survives only for queued work.
   expect('ok' in result, 'the in-scope prune commits — no repair loop either way').toBe(true);
@@ -229,7 +229,7 @@ describe("Scope Extension + Hold-and-Amend", () => {
     verdict: 'analyze',
     prune_neighbors: ['rb'],
   }) as any;
-  // Amended from the pre-D-020 pin (the orphaning prune died as missing_required_route): the
+  // Amended from the earlier pin (the orphaning prune died as missing_required_route): the
   // hop-level prune is now expressible, so the don't-orphan guard is what refuses it. The refused
   // prune also leaves the required id unaccounted, so the rejection mixes both facts — the
   // generic code with the orphan reason carried in hint and detail (repair-sufficient form).
@@ -273,7 +273,7 @@ describe("Scope Extension + Hold-and-Amend", () => {
     verdict: 'analyze',
     prune_neighbors: ['tbl'],
   }) as any;
-  // Amended from the pre-D-020 pin (the in-scope prune of tbl was a refused notice): the
+  // Amended from the earlier pin (the in-scope prune of tbl was a refused notice): the
   // target is untouched in-scope work, so the hop-level prune executes once the don't-orphan
   // guard clears it — h stays reachable through its direct h→v edge without tbl.
   expect(!('error' in ok), 'the in-scope prune commits once don\u2019t-orphan clears it').toBe(true);

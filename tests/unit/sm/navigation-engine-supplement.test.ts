@@ -414,7 +414,7 @@ describe("Supplement Agenda", () => {
   expect(engine.admitSupplementTargets(['far', 'ext1']).join(','), 'only the offered id is admitted').toBe('ext1');
 });
 
-  it("P1-40: supplement_empty names the input the model owns, and the exit for having no node to name", () => {
+  it("supplement_empty names the input the model owns, and the exit for having no node to name", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'sp', question: 'test', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
   drain(engine, 'initial');
@@ -428,7 +428,7 @@ describe("Supplement Agenda", () => {
   expect(hint !== 'supplementAgenda requires at least one node id or pending lead id.', 'the lead id is no longer offered as an alternative input').toBe(true);
 });
 
-  it("P1-40: supplement_target_pruned reports every pruned id at once and names the empty-list exit", () => {
+  it("supplement_target_pruned reports every pruned id at once and names the empty-list exit", () => {
   // Prune both leaf views so a two-id supplement has two invalid targets: reporting only the first
   // charged one rejection per pruned id, and dropping the only target lands on supplement_empty.
   const engine = new NavigationEngine(model, graph, () => {}, {});

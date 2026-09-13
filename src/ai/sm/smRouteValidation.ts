@@ -69,7 +69,7 @@ const HELD_RETRY_ORDER =
 /**
  * Shared "nothing is held" resubmission order — used both here (mixed route-kind rejections) and
  * by the caller that merges a topology fault with a deferred CT completeness fault into one
- * envelope (D-048), where the same stricter policy applies for the same reason: another repair is
+ * envelope, where the same stricter policy applies for the same reason: another repair is
  * riding along, so the held-draft shortcut is not offered.
  */
 export const FULL_RESUBMIT_ORDER =
@@ -107,7 +107,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
  *
  * @param errors - Field-resolved validation failures accumulated before commit.
  * @param appendHoldOrder - False when the caller merges this envelope with another fault family
- * (D-048) and states the resubmission order itself once, covering both; true (default) preserves
+ * and states the resubmission order itself once, covering both; true (default) preserves
  * the standalone envelope's own order.
  * @returns A stable structured rejection without a second repair protocol.
  */

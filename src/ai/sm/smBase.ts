@@ -294,8 +294,8 @@ export class NavigationEngine implements IHopStateMachine {
    * part of the traced-column continuation. A non-bodied target is *contracted* by the bipartite
    * agenda rule (`enqueueHop`, `smBase.ts:3048+`) the instant it is enqueued, so it gets no agenda
    * entry and no detail slot — the two sources {@link committedConnectedIds} otherwise reads — and
-   * an unrelated later hop's `prune_neighbors` can remove it with nothing left to refuse the prune
-   * (D-074). The AI sees one hop at a time and cannot itself keep a contracted declaration
+   * an unrelated later hop's `prune_neighbors` can remove it with nothing left to refuse the prune.
+   * The AI sees one hop at a time and cannot itself keep a contracted declaration
    * reachable past it; this set is the backend's record of the declaration, consulted both by
    * {@link committedConnectedIds} (indirect orphan protection for anything committed behind the
    * declared node) and directly by `submitFindings`'s `prune_neighbors` admission (direct
@@ -2447,7 +2447,7 @@ export class NavigationEngine implements IHopStateMachine {
     // The pure policy has already selected the accepted prune targets, in scope or out
     // (`prune_neighbors` may carry in-scope neighbors off the answer path); topology conservation
     // is the final guard, and all mutations stay staged until completeness also passes.
-    // D-074: a node the tracer declared via an accepted route_request is refused as a prune
+    // A node the tracer declared via an accepted route_request is refused as a prune
     // candidate outright, split out ahead of the topology walk below — a declared dead end (no
     // further bodied neighbor to contract to, the CustomerMaster shape) orphans nothing else, so it
     // never trips `firstDisconnectedAfterPrune`'s reachability check on its own. CT only; empty in
@@ -2656,7 +2656,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (pruneRoutes.length > 0) {
       for (const r of pruneRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
       if (ctUnaccountedColumns) {
-        // D-048: the deferred CT completeness fault (`ctUnaccountedColumns`, computed above) was
+        // The deferred CT completeness fault (`ctUnaccountedColumns`, computed above) was
         // true in the same payload as the topology fault(s) just accumulated. Report both in this
         // one envelope instead of returning here and re-deriving the CT fault next turn — a
         // topology fault riding along forces "nothing is held", the same stricter policy already
@@ -2835,7 +2835,7 @@ export class NavigationEngine implements IHopStateMachine {
         const targetNode = this.nodeMap.get(nid);
         const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
         const wasAlreadyVisited = this.visited.has(nid);
-        // D-074: the tracer declares nid part of the traced-column continuation the moment this
+        // The tracer declares nid part of the traced-column continuation the moment this
         // route is admitted — before `enqueueHop` runs, since a non-bodied target ends that call
         // contracted, with no agenda entry left for anything downstream to protect it.
         if (this.tracer) this.ctDeclaredRouteIds.add(nid);
@@ -3062,7 +3062,7 @@ export class NavigationEngine implements IHopStateMachine {
   private committedConnectedIds(): Set<string> {
     const ids = new Set<string>(this.memory.notedNodeIds);
     for (const e of this._agenda.entries) ids.add(e.nodeId);
-    // D-074: a CT route declaration the bipartite rule contracted away (no agenda entry, no detail
+    // A CT route declaration the bipartite rule contracted away (no agenda entry, no detail
     // slot) still counts as committed, protecting anything reachable only behind it. Empty in BB,
     // so this widening is additive-only.
     if (this.tracer) {
@@ -3917,7 +3917,7 @@ export class NavigationEngine implements IHopStateMachine {
     // session re-dispatches focus nodes the AI already pruned and drops the pending sub-questions.
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
-    // Absent on a checkpoint written before D-074 persisted this set — restores as empty, which is
+    // Absent on a checkpoint written before this set was persisted — restores as empty, which is
     // today's live-engine-only protection rather than inventing declarations.
     engine.ctDeclaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
     // Absent on a checkpoint written before the field existed, and on one whose last render dropped

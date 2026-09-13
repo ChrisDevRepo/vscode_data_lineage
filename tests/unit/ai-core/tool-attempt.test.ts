@@ -976,7 +976,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
   it('replays the whole submit_findings call when the rejection names no path, so a full resend can carry it over', async () => {
     // A route rejection orders "resend submit_findings whole, carrying your sections and summary over
     // unchanged" and names no field path; a replay of `{}` leaves the model rebuilding the call from
-    // memory, which reintroduced an already-repaired out_col (m1-n3-b-fireworks T8 gen 21).
+    // memory, which reintroduced an already-repaired out_col (a recorded T8 generation).
     const columnFlow = Array.from({ length: 6 }, (_, index) => ({
       out_col: `Col${index}`,
       upstream_columns: [{ node: '[dbo].[Src]', col: `Src${index}`, transforms: ['direct'] }],

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// Pure-logic cover for the two pieces P1-91.1 added to `GraphCanvas`: the reverse map a node click
+// Pure-logic cover for the two pieces added to `GraphCanvas`: the reverse map a node click
 // uses to land the AI report on its section, and the cache key that lets a re-run of the same view
 // restore its pane layout instead of resetting it. Both are plain functions exported alongside the
 // component specifically so they can be exercised without mounting the 107-prop canvas.

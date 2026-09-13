@@ -409,7 +409,7 @@ describe("NavigationEngine Robustness", () => {
   expect('error' in invalid && invalid.error === 'target_columns_required_for_ct', 'CT merge rejection has a stable error code').toBe(true);
 });
 
-  // Served SQL is the SQL as written (PM rulings nn, rr): no classification strips, rewrites or
+  // Served SQL is the SQL as written: no classification strips, rewrites or
   // annotates the body a hop hands to the model.
   it('serves the focus DDL exactly as stored under every classification', () => {
   const body = 'CREATE PROCEDURE [dbo].[spProcA] AS\n  PRINT N\'start\';\n  CREATE CLUSTERED INDEX ix_a ON TableA(Col1) WITH (PAD_INDEX = OFF)\n  -- a comment\nGO';

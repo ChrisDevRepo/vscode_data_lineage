@@ -605,7 +605,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     // The explicit post-discovery preview action carries its own mechanical execution trigger
     // (preview_button); equivalent free-text visual intent carries none and runs the ordinary
-    // discovery loop instead (D-073) — render is an optional terminal step, never a route to SM.
+    // discovery loop instead — render is an optional terminal step, never a route to SM.
     if (marker === 'preview') {
       return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, phase: 'detect_entry' };
     }

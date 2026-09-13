@@ -1,5 +1,5 @@
 /**
- * `formatColumnType` unit-conflation regression (P1-113): a dacpac `TypeSpecifier.Length` is
+ * `formatColumnType` unit-conflation regression: a dacpac `TypeSpecifier.Length` is
  * already a character count, while a DMV `max_length` is a byte count that nvarchar/nchar must
  * still be halved to read as characters. `lengthInChars` tells the shared formatter which unit it
  * received; both paths must keep rendering their declared length correctly.

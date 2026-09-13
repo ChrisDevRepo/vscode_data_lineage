@@ -149,7 +149,7 @@ export function resolveStagePrompt(
 ): StagePromptResult {
   // `closing` wraps up an analysis with named detail; below this many captured slots the
   // wrap-up has nothing to summarize and the tokens buy no content. Replay evidence
-  // (test-results/replay/p1-89d-closing-min-slots-n8, 8 pairs on a 3-slot case): admitting
+  // (8 prompt-replay pairs on a 3-slot case): admitting
   // `closing` at slotCount 3 raised its presence from 4/8 to 7/8 and dropped no node, section
   // or highlight-group member on any pair — the one variant run that omitted the column table
   // is matched by the same omission on the pair where both arms rendered identically.

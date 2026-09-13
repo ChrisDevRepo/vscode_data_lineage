@@ -7,8 +7,7 @@ import { loadToolPayloadFixture, replayToolPayload } from './helpers/toolPayload
  *
  * @remarks
  * `submit-findings-badge-label-overflow.json` is shaped from an archived UAT payload
- * (`test-results/archive/2026-08-17-uat-solved/trace-2026-08-17T13-27-30-205Z.ndjson`, n15
- * spLoadSalesStaging, requestId `8216d38d…`) that fails only on `badge_label` exceeding the
+ * (the archived UAT trace, n15 spLoadSalesStaging) that fails only on `badge_label` exceeding the
  * schema's 50-character cap — the same rejection class the tracked C2 suite
  * (`vscode-model-port.prose-tool-call.test.ts`) pins for the fenced-prose-promotion path. This
  * file replays it without a provider, session, or graph: `replayToolPayload` runs the identical
