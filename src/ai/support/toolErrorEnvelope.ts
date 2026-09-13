@@ -2,13 +2,16 @@
  * Single typed channel for tool-result error envelopes.
  *
  * @remarks
- * A tool result crosses the graph dispatch boundary as a JSON string. Two legitimate error shapes
- * exist, and this module is the one place that normalizes both:
+ * A tool result crosses the graph dispatch boundary as a JSON string. Three legitimate error shapes
+ * exist, and this module is the one place that normalizes all three:
  *
  * - **Engine-rejection shape** `{ error: <code>, hint?, message?, detail?, … }` — emitted by the
  *   state-machine tools; the graph-owned attempt executor interprets it.
  * - **Validation-failure shape** `{ success: false, errors: […], hint? }` — emitted by
  *   `present_result`; counted as a semantic failure, never a provider failure.
+ * - **Budget-guard shape** `{ ok: false, reason: <code>, counts, limits, hint? }` — emitted by the
+ *   turn budget guards; the code is read from `reason` (fallback `ok_false`), while `counts` /
+ *   `limits` ride `detail` as extra facts.
  *
  * Provider-pure: no `vscode` imports, so it stays usable from any model lane.
  */
@@ -16,7 +19,7 @@ import { z } from 'zod';
 
 /** Normalized, typed read of either error envelope. A `null` reader result means "not an error". */
 export interface ToolRejection {
-  /** Stable machine code — the engine `error` code, or `'validation'` for the `success:false` shape. */
+  /** Stable machine code — the engine `error` code, `'validation'` for the `success:false` shape, or the `reason` code (fallback `ok_false`) for the budget-guard shape. */
   code: string;
   /** First human-readable reason line (resolved `errors[0]` → `message` → `detail` → `code`). */
   reason: string;
@@ -57,6 +60,8 @@ const ToolResultEnvelope = z
     error: z.unknown().optional(),
     success: z.unknown().optional(),
     errors: z.unknown().optional(),
+    ok: z.unknown().optional(),
+    reason: z.unknown().optional(),
     hint: z.unknown().optional(),
     message: z.unknown().optional(),
     detail: z.unknown().optional(),
@@ -76,19 +81,21 @@ export function buildToolExecutionError(toolName: string): string {
   });
 }
 
-/** Well-known envelope keys already surfaced as first-class `ToolRejection` fields or resolved into `reason`. */
-const RECOGNIZED_ENVELOPE_KEYS = new Set(['error', 'success', 'errors', 'hint', 'message', 'detail']);
+/** Well-known envelope keys already surfaced as first-class `ToolRejection` fields or resolved into `reason`/`code`. */
+const RECOGNIZED_ENVELOPE_KEYS = new Set(['error', 'success', 'errors', 'ok', 'reason', 'hint', 'message', 'detail']);
 
 /**
- * Rich reader: normalize either error shape into `{ code, reason, hint }`, or `null` when the payload
+ * Rich reader: normalize any error shape into `{ code, reason, hint }`, or `null` when the payload
  * is not an error. Recognizes the engine-rejection shape (`{ error }`), an explicit `{ success:false }`,
- * and a non-empty `{ errors[] }` list. Used for rejection logging and per-turn failure counting.
+ * a non-empty `{ errors[] }` list, and the budget-guard `{ ok: false }` marker. Used for rejection
+ * logging and per-turn failure counting.
  *
  * @remarks
  * `detail` folds in every offender the emit site attached: any existing `env.detail`, the full
  * `errors[]` array when it has more than one entry (so a multi-issue reject surfaces every offender
  * in one round instead of one-per-retry), and any unrecognized top-level sibling key the emit site
- * set alongside `error`/`success`/`errors`/`hint`/`message`/`detail` (e.g. `offending_values`).
+ * set alongside the recognized envelope keys (`error`/`success`/`errors`/`ok`/`reason`/`hint`/
+ * `message`/`detail`, e.g. a budget guard's `counts`/`limits`).
  * @param data - Parsed untrusted tool result.
  * @returns Normalized rejection, or `null` for a successful/non-envelope result.
  */
@@ -101,14 +108,20 @@ export function readToolError(data: unknown): ToolRejection | null {
   const hasFailedSuccess = env.success === false;
   const errorsArray = Array.isArray(env.errors) ? env.errors as unknown[] : undefined;
   const hasErrors = !!errorsArray && errorsArray.length > 0;
-  if (!hasError && !hasFailedSuccess && !hasErrors) return null;
+  const okFalse = env.ok === false;
+  if (!hasError && !hasFailedSuccess && !hasErrors && !okFalse) return null;
 
-  const code = hasError ? String(env.error) : 'validation';
+  const code = hasError
+    ? String(env.error)
+    : okFalse
+      ? (typeof env.reason === 'string' && env.reason.trim() ? env.reason.trim() : 'ok_false')
+      : 'validation';
   let reason = '';
   if (hasErrors) reason = String((errorsArray)[0] ?? '');
   if (!reason && typeof env.message === 'string') reason = env.message;
   if (!reason && typeof env.detail === 'string') reason = env.detail;
   if (!reason && hasError) reason = String(env.error);
+  if (!reason && okFalse) reason = code;
   if (!reason) reason = 'tool returned failure envelope';
   const hint = typeof env.hint === 'string' ? env.hint : undefined;
 

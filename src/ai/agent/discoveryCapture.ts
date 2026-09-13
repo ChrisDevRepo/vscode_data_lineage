@@ -134,7 +134,7 @@ export interface OverBudgetNotice {
   readonly hint: string;
 }
 
-const DEFAULT_OVER_BUDGET_HINT = 'Scope exceeds the discovery budget. Summarize what is already known; a detailed analysis would be needed.';
+const DEFAULT_OVER_BUDGET_HINT = 'Scope exceeds the discovery budget, so only partial data could be loaded. Answer the user briefly from the partial data this result carries, say the full question needs a detailed analysis, and offer to continue with lineage_start_exploration once the user confirms — do not start it yourself.';
 
 /**
  * Reads an `over_discovery_budget` rejection from any tool result.
@@ -182,6 +182,6 @@ export function emitDiscoveryBudgetNotice(sink: TurnEventSink, toolName: string,
   budgetNoticeShown.add(sink);
   const scope = notice.nodes !== null && notice.nodes > 0 ? ` (${notice.nodes} projected nodes)` : '';
   sink.error(
-    `**Discovery budget reached** — \`${notice.toolName}\` was rejected${scope}: the requested scope exceeds what one turn can load. The assistant will continue with what is already loaded; ask about a narrower part of the lineage, or start a detailed analysis, to cover the rest.`,
+    `**Discovery budget reached** — \`${notice.toolName}\` could not load the full result${scope}: the requested scope exceeds what one turn can load. The assistant will answer from what was returned; ask about a narrower part of the lineage, or start a detailed analysis, to cover the rest.`,
   );
 }

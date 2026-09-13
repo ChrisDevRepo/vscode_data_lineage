@@ -678,8 +678,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messages,
       system: discoveryInstruction.system,
       detectGate: detectGateFromToolResult,
-      // Oversized `get_scope_bundle` stays on this path: the envelope is an observation the model
-      // summarizes. `/trace` and column-trace still enter SM via entryRouting, not this overflow.
+      // Oversized `get_scope_bundle` stays on this path: the envelope is a rejection (never
+      // charged) the model recovers from with a narrower read. `/trace` and column-trace still
+      // enter SM via entryRouting, not this overflow.
       onToolResult: (toolName, input, _isError, resultText) => {
         const seed = captureRejectedScopeOffer(toolName, input, resultText);
         if (seed) {

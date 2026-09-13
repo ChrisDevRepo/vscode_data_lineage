@@ -242,7 +242,12 @@ was at run time, so the prompt contract is to confirm a stale object with
 
 The response carries a `_token_estimate` and is never truncated: a recall over
 the discovery token budget is hard-rejected with the standard
-`over_discovery_budget` envelope and a hint naming how far to narrow `ids`. When
+`over_discovery_budget` envelope. Under that envelope's referral contract the
+reply carries partial data and a hint directing the model to answer briefly
+from what was returned and offer a detailed analysis
+(`lineage_start_exploration` is the named continuation — offered, never
+started); on this recall path the hint stays the narrowing one naming how far
+to narrow `ids`, and no partial bundle is attached. When
 no bookmark is applied, the applied bookmark is not AI-authored, or no run was
 stored for it, the call answers `no_run_memory` with the repair.
 

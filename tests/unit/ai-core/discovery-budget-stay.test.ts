@@ -1,8 +1,9 @@
 /**
  * BUDGET-STAY-DISCOVERY: an oversized `lineage_get_scope_bundle` stays in discovery.
  *
- * The envelope is an observation the model summarizes; the existing SM-offer pill is the opt-in.
- * `/trace` and column-trace still open SM-entry immediately via entryRouting.
+ * The envelope is a rejection (never charged) the model recovers from with a narrower read; the
+ * existing SM-offer pill is the opt-in. `/trace` and column-trace still open SM-entry immediately
+ * via entryRouting.
  */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
@@ -105,7 +106,7 @@ describe('readOverBudgetNotice', () => {
     if (admission.ok) throw new Error('test fixture must overflow');
     const notice = readOverBudgetNotice('lineage_get_object_detail', JSON.stringify({ ...admission, scope_proposal: undefined }));
     expect(notice?.nodes).toBe(11);
-    expect(notice?.hint).toContain('a detailed analysis would be needed');
+    expect(notice?.hint).toContain('a detailed analysis');
   });
 
   it('returns null for non-budget envelopes and malformed JSON', () => {
@@ -154,10 +155,16 @@ describe('oversized discovery stays in chat', () => {
           downstream_depth: 'all',
         })],
       },
+      // The budget envelope is a rejection, not held evidence: the recovery the layer teaches is a
+      // narrower per-object read, which lands the observation a text-only summary needs.
+      {
+        toolCalls: [validCall('detail-1', 'lineage_get_object_detail', { id: ORIGIN })],
+      },
       { text: SUMMARY },
     ]);
     const { registry, invocations } = scriptedRegistry([
       { name: 'lineage_get_scope_bundle', result: overBudgetEnvelope() },
+      { name: 'lineage_get_object_detail', result: JSON.stringify({ id: ORIGIN, definition: 'CREATE VIEW ai.FactSalesReport AS SELECT 1;' }) },
       { name: 'lineage_start_exploration', result: GATE_RESULT },
     ]);
     const { sink, events } = collectingSink();
@@ -173,7 +180,7 @@ describe('oversized discovery stays in chat', () => {
 
     await expect(runtime.run(`/search What feeds ${ORIGIN}?`)).resolves.toBe('ok');
 
-    expect(invocations.map(call => call.toolName)).toEqual(['lineage_get_scope_bundle']);
+    expect(invocations.map(call => call.toolName)).toEqual(['lineage_get_scope_bundle', 'lineage_get_object_detail']);
     expect(events.some(event => event.type === 'gate'), 'oversized discovery must not open SM-entry').toBe(false);
     expect(session.phase.kind).toBe('idle');
     expect(session.pendingExploration).toBeNull();

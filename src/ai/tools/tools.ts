@@ -562,9 +562,30 @@ export function getScopeBundle(
     walkWithCap('outbound', downstreamDepth!);
   }
 
-  if (nodeBudgetExceeded) {
+  // The origin's in/out split needs the edge-type map here already (hoisted from the node loop
+  // below) because the over-budget reply presents the origin node too.
+  const edgeTypeMap = buildEdgeTypeMap(model);
+
+  // The over-budget reply is a partial bundle, not a bare rejection: the unchanged checkScopeBudget
+  // envelope (wire value `over_discovery_budget`) carries the origin node — metadata plus its DDL
+  // served whole when that body alone fits the discovery budget, metadata-only when it does not —
+  // the origin's full in/out counts, and the scope_proposal. Never a slice: a different bounded
+  // payload, per the zero-truncation guarantee in tokenBudget.ts.
+  const overBudgetScopeReply = (
+    admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
+  ): Record<string, unknown> => {
+    const originDdl = getNodeDdl(origin, nodeMap, store);
+    const neighbors = model.neighborIndex[origin];
     return {
-      ...checkScopeBudget(budget, scopeIds.size, 0),
+      ...admission,
+      partial: true,
+      message: 'Partial answer: the requested scope exceeded the discovery budget, so this is not a complete answer.',
+      origin: {
+        ...presentNode(originNode, model.neighborIndex, { nodeMap, edgeTypeMap }),
+        ...(originDdl && checkScopeBudget(budget, 0, originDdl.length).ok ? { ddl: originDdl } : {}),
+      },
+      up: neighbors?.in.length ?? 0,
+      dn: neighbors?.out.length ?? 0,
       scope_proposal: {
         origin: originNode.id,
         direction,
@@ -573,6 +594,13 @@ export function getScopeBundle(
         downstream_depth: downstreamDepth,
       },
     };
+  };
+
+  if (nodeBudgetExceeded) {
+    const admission = checkScopeBudget(budget, scopeIds.size, 0);
+    // The walk measured this exact request as over cap, so the ok arm is unreachable; falling
+    // through to the full bundle is the correct reply for a request that fits.
+    if (!admission.ok) return overBudgetScopeReply(admission);
   }
 
   // Always measure DDL so the engine can auto-attach it when it fits the budget. Edge direction and
@@ -587,7 +615,12 @@ export function getScopeBundle(
   // not fit, route to SM (their intent needs the bodies). If they did NOT ask and it does not fit,
   // fall through with metadata only — preserves the inline chat path, no forced SM.
   const ddlFits = checkScopeBudget(budget, 0, ddlChars).ok;
-  if (includeDdl && !ddlFits) return checkScopeBudget(budget, scopeIds.size, ddlChars);
+  if (includeDdl && !ddlFits) {
+    const admission = checkScopeBudget(budget, scopeIds.size, ddlChars);
+    // ddlFits false means the token axis is already over, so the ok arm is unreachable; falling
+    // through serves the metadata-only bundle — the correct reply for a request that fits.
+    if (!admission.ok) return overBudgetScopeReply(admission);
+  }
   // Only an omitted value may enable automatic DDL grounding.
   const effectiveIncludeDdl = includeDdl === false
     ? false
@@ -603,7 +636,6 @@ export function getScopeBundle(
   // in/out split explicitly, in the same shape buildHopFocusNode already emits for hop_context, so
   // direction is never inferred from tuple position. Scoped to the origin only — every other node
   // keeps the scalar `deg` it always had; this is not a payload grown for the whole scope.
-  const edgeTypeMap = buildEdgeTypeMap(model);
   const nodes = [...scopeIds]
     .map(id => nodeMap.get(id))
     .filter((n): n is LineageNode => !!n)

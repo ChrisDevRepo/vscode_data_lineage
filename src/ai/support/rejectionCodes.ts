@@ -37,4 +37,6 @@ export const REJECTION_CODES = {
   invalidRegex: 'invalid_regex',
   /** A discovery-phase scope-expanding catalog request exceeded the turn's node/token budget. */
   overDiscoveryBudget: 'over_discovery_budget',
+  /** An active-phase scope admission exceeded the exploration node/token budget. */
+  overActiveScopeBudget: 'over_active_scope_budget',
 } as const;

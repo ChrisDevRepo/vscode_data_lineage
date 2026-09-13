@@ -59,24 +59,48 @@ export const MAX_TOOL_SEMANTIC_FAILURES = 3;
 
 /**
  * Rejection codes exempt from the model's semantic budget: provider/transport artifacts
- * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration}) plus
+ * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration});
  * {@link REJECTION_CODES.duplicateRead}, a deliberate policy exemption for a model resending a
- * call it already has the answer to — not a transport artifact. The exemption is bounded by the
- * shared unproductive-resend absorption: past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive
- * identical resends the duplicate charges a strike.
+ * call it already has the answer to — not a transport artifact, bounded by the shared
+ * unproductive-resend absorption (past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive identical
+ * resends the duplicate charges a strike); and the budget guards
+ * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}) —
+ * valid-but-oversized requests under the PM not-too-strict ruling, never charged to the model's
+ * semantic budget.
  */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
   REJECTION_CODES.emptyGeneration,
   REJECTION_CODES.duplicateRead,
+  REJECTION_CODES.overDiscoveryBudget,
+  REJECTION_CODES.overActiveScopeBudget,
 ]);
 
 /**
  * Hint paired with a `duplicate_read` rejection: the answer material is already in the observations.
  * Raised only while that body is still stored — an evicted body is re-served instead, so the hint
- * is a true statement in every state it reaches the model in.
+ * is a true statement in every state it reaches the model in, except when the held body is itself an
+ * error envelope (e.g. a `result_too_large` reply), where
+ * {@link heldErrorEnvelopeDuplicateHint} restates that error instead — "answer from it" is false
+ * when the stored observation carries no answer material.
  */
 const DUPLICATE_READ_HINT = 'You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.';
+
+/**
+ * Correction hint for a `duplicate_read` whose held observation is itself an error envelope: restates
+ * that held error (its code, then its hint or reason line) instead of {@link DUPLICATE_READ_HINT}.
+ * @param held - The observation the duplicate read would reuse.
+ * @returns The restatement hint, or `undefined` when the held body is not an error envelope.
+ */
+function heldErrorEnvelopeDuplicateHint(held: ToolAttemptObservation): string | undefined {
+  try {
+    const rejection = readToolError(JSON.parse(held.result));
+    if (!rejection) return undefined;
+    return `The held result for callId ${held.callId} is an error envelope (${rejection.code}): ${rejection.hint ?? rejection.reason}`;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Hand-off carried by a `result_too_large` reply — the same route `over_discovery_budget` names for
@@ -1562,7 +1586,7 @@ export async function executeToolGenerationAttempt(
           status: 'rejected',
           code: REJECTION_CODES.duplicateRead,
           message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
-          correction: { hint: DUPLICATE_READ_HINT },
+          correction: { hint: heldErrorEnvelopeDuplicateHint(reused) ?? DUPLICATE_READ_HINT },
           detail: { acceptedCallId: reused.callId },
         }, calls, observations, rejections, input.traceSyntheticRejection)!;
         // Free while the model may still act on the answer it already holds; past

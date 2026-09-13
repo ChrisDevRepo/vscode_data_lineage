@@ -1538,6 +1538,57 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(state.observations[0].result).toBe(body);
   });
 
+  it('restates the held error envelope instead of DUPLICATE_READ_HINT for a repeat whose stored body is a result_too_large reply', async () => {
+    // The held body of the repeated read is the too-big stand-in stored for it (2026-09-06 ruling) —
+    // an error envelope, so "Answer from it" would be false; the correction restates the held error.
+    const bodies: Record<string, string> = {
+      spimportorders: JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(40_000) }),
+      spcleanorders: JSON.stringify({ id: 'spcleanorders', body: 'B'.repeat(10_000) }),
+    };
+    const { registry, invocations } = scriptedRegistry([{
+      name: 'lineage_get_object_detail',
+      effect: 'read',
+      result: (input) => bodies[String((input as { id: string }).id)],
+    }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_object_detail', { id: 'spcleanorders' })] },
+      { toolCalls: [validCall('call-3', 'lineage_get_object_detail', { id: 'spcleanorders' })] },
+      { text: 'The second procedure was refused storage for size.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_object_detail'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('What do these procedures do?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 4; index++) {
+      const result = await executeToolAttempt(port, plan, { priorState: state });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    // Two dispatches only; the repeat of the second read is a duplicate, not a third dispatch.
+    expect(invocations.map((invocation) => (invocation.input as { id: string }).id))
+      .toEqual(['spimportorders', 'spcleanorders']);
+    expect(results[2].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
+    // The stored body of the repeated read is the error envelope, and the hint restates it —
+    // code, then the held hint — instead of DUPLICATE_READ_HINT.
+    expect(JSON.parse(state.observations[1].result)).toMatchObject({ error: 'result_too_large' });
+    expect(results[2].rejections[0]?.hint).toBe(
+      'The held result for callId call-2 is an error envelope (result_too_large): '
+      + 'This result is larger than the evidence one hop can hold, so none of it was stored. Stop this tool loop; narrow the request with lineage_get_scope_bundle, or take the consent-gated hop-by-hop path with lineage_start_exploration, which reads one object per hop.',
+    );
+    expect(results[2].rejections[0]?.hint).not.toContain('Answer from it');
+    // Charging and streak semantics are unchanged: the duplicate stays free on its first appearance.
+    expect(results[2].semanticFailures).toBe(0);
+    expect(state.semanticFailures).toBe(0);
+  });
+
   it('replays turn 23: two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {
     const envelope = presentResultRejectionEnvelope({
       reason: 'highlight_groups node_ids must be explained by sections[].node_ids or notes[]: [dbo].[Orders]',

@@ -40,6 +40,25 @@ function makeDdlModel(bodyScript: string): DatabaseModel {
   };
 }
 
+/** Two bodied nodes so the ORIGIN's DDL can fit alone while the scope total does not. */
+function makeTwoViewModel(originBody: string, neighborBody: string): DatabaseModel {
+  const nodes: LineageNode[] = [
+    { id: '[dbo].[viewo]', schema: 'dbo', name: 'ViewO', fullName: '[dbo].[ViewO]', type: 'view', columns: [], bodyScript: originBody },
+    { id: '[dbo].[viewn]', schema: 'dbo', name: 'ViewN', fullName: '[dbo].[ViewN]', type: 'view', columns: [], bodyScript: neighborBody },
+  ];
+  return {
+    nodes,
+    edges: [{ source: '[dbo].[viewo]', target: '[dbo].[viewn]', type: 'body' }],
+    schemas: [{ name: 'dbo', nodeCount: 2, types: { table: 0, view: 2, procedure: 0, function: 0, external: 0 } }],
+    catalog: {},
+    neighborIndex: {
+      '[dbo].[viewo]': { in: [], out: ['[dbo].[viewn]'] },
+      '[dbo].[viewn]': { in: ['[dbo].[viewo]'], out: [] },
+    },
+    dbPlatform: 'SQL Server',
+  };
+}
+
 describe('discovery-budget-guard', () => {
   let model: DatabaseModel;
   let graph: ReturnType<typeof buildBareGraph>;
@@ -81,13 +100,57 @@ describe('discovery-budget-guard', () => {
     expect(res.depth, 'directional omission applies backend depth=3').toBe(3);
   });
 
-  // ── node-cap fires WITHOUT include_ddl (the strengthened guard) ──
-  it('plain scope bundle over node-cap → over_discovery_budget (no include_ddl)', () => {
+  // ── node-cap fires WITHOUT include_ddl (the strengthened guard); the reply is a partial bundle ──
+  it('plain scope bundle over node-cap → over_discovery_budget partial bundle (no include_ddl)', () => {
     const oneNode = createTurnTokenBudget({ discoveryNodeCap: 1, discoveryTokenBudget: 10_000 });
-    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', depth: 2 }, oneNode) as Record<string, unknown>;
+    const res = getScopeBundle(model, graph, { origin, direction: 'bidirectional', depth: 2 }, oneNode) as Record<string, any>;
     expect(res.reason, 'plain scope bundle over node-cap → over_discovery_budget (no include_ddl)').toBe('over_discovery_budget');
-    expect(typeof res.hint === 'string' && /detailed analysis would be needed/i.test(res.hint), 'over-budget hint names a detailed analysis').toBe(true);
+    expect(res.partial, 'over-budget reply is a partial bundle').toBe(true);
+    expect(typeof res.message === 'string' && res.message.includes('not a complete answer'), 'partial bundle says it is not a complete answer').toBe(true);
+    expect(res.origin?.id, 'partial bundle carries the canonical origin').toBe(origin);
+    expect(typeof res.up === 'number' && typeof res.dn === 'number', 'partial bundle carries numeric up/dn counts').toBe(true);
+    expect(!!res.scope_proposal?.origin, 'partial bundle keeps the scope_proposal origin').toBe(true);
+    expect(typeof res.hint === 'string' && /detailed analysis/i.test(res.hint), 'over-budget hint names a detailed analysis').toBe(true);
     expect(typeof res.hint === 'string' && !/hop-by-hop/i.test(res.hint), 'over-budget hint must not say hop-by-hop').toBe(true);
+  });
+
+  // ── explicit include_ddl over the token budget → same partial bundle (site 2), origin DDL
+  //    omitted — never sliced — when the origin body alone busts the budget ──
+  it('explicit include_ddl over the token budget → partial bundle, metadata-only origin when its body alone busts the budget', () => {
+    const tightTokens = createTurnTokenBudget({ discoveryTokenBudget: 1_000 });
+    const ddlModel = makeDdlModel('x'.repeat(20_000));
+    const res = getScopeBundle(ddlModel, buildBareGraph(ddlModel), {
+      origin: '[dbo].[viewa]',
+      direction: 'upstream',
+      depth: 1,
+      include_ddl: true,
+    }, tightTokens) as Record<string, any>;
+    expect(res.reason, 'explicit include_ddl over budget keeps the shared wire value').toBe('over_discovery_budget');
+    expect(res.partial, 'site-2 overflow is a partial bundle too').toBe(true);
+    expect(typeof res.message === 'string' && res.message.includes('not a complete answer'), 'partial bundle says it is not a complete answer').toBe(true);
+    expect(res.origin?.id, 'metadata-only fallback still carries the origin').toBe('[dbo].[viewa]');
+    expect(res.origin?.ddl, 'origin DDL is omitted, never sliced, when it alone busts the budget').toBeUndefined();
+    expect(typeof res.up === 'number' && typeof res.dn === 'number', 'partial bundle carries numeric up/dn counts').toBe(true);
+    expect(!!res.scope_proposal?.origin, 'partial bundle keeps the scope_proposal origin').toBe(true);
+  });
+
+  // ── same site, origin body fits alone → the origin DDL rides the partial bundle whole ──
+  it('explicit include_ddl over the token budget serves the origin DDL whole when it alone fits', () => {
+    const tightTokens = createTurnTokenBudget({ discoveryTokenBudget: 1_000 });
+    const ddlModel = makeTwoViewModel('CREATE VIEW dbo.ViewO AS SELECT 1;', 'x'.repeat(20_000));
+    const res = getScopeBundle(ddlModel, buildBareGraph(ddlModel), {
+      origin: '[dbo].[viewo]',
+      direction: 'downstream',
+      depth: 1,
+      include_ddl: true,
+    }, tightTokens) as Record<string, any>;
+    expect(res.reason, 'explicit include_ddl over budget keeps the shared wire value').toBe('over_discovery_budget');
+    expect(res.partial, 'site-2 overflow is a partial bundle too').toBe(true);
+    expect(typeof res.message === 'string' && res.message.includes('not a complete answer'), 'partial bundle says it is not a complete answer').toBe(true);
+    expect(res.origin?.id, 'partial bundle carries the canonical origin').toBe('[dbo].[viewo]');
+    expect(res.origin?.ddl, 'origin DDL is served whole, never sliced, when it alone fits').toBe('CREATE VIEW dbo.ViewO AS SELECT 1;');
+    expect(typeof res.up === 'number' && typeof res.dn === 'number', 'partial bundle carries numeric up/dn counts').toBe(true);
+    expect(!!res.scope_proposal?.origin, 'partial bundle keeps the scope_proposal origin').toBe(true);
   });
 
   // ── under the cap → normal bundle, no budget rejection ──

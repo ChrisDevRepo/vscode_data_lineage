@@ -182,7 +182,8 @@ export const CHAT_MARKDOWN_FORMAT = [
  * scope walk is what turned "what do I see here" into a fresh approval gate. No restated
  * phase/state framing, no routing taxonomy. The `over_discovery_budget` envelope is returned by
  * `lineage_get_scope_bundle` and stays on the discovery path: the hint on that envelope is the one
- * instruction (summarize what is already known; a detailed analysis would be needed). The existing
+ * instruction (answer briefly from the partial data the envelope carries; say the full question
+ * needs a detailed analysis and offer it — never start it). The existing
  * SM-offer pill is the opt-in. `/trace` and column-trace still enter SM via entryRouting, not this
  * overflow. Tool parameter routing and filter-boundary semantics live in each tool's
  * modelDescription — including the scope-depth mechanics this list used to restate, which now have
