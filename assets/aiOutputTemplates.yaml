@@ -31,7 +31,7 @@
 # Per-key reference: docs/AI_PROMPTS.md
 # ──────────────────────────────────────────────────────────────────────────────
 
-schemaVersion: 3
+schemaVersion: 2
 
 # ── Discovery (chat-only) — editable via overlay ─────────────────────────────
 

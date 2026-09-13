@@ -78,18 +78,20 @@ export interface ResultGraph {
  * Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure).
  *
  * @remarks
- * The single source of truth for template-structure compatibility. The built-in YAML carries a
- * matching `schemaVersion`; a user's custom overlay (`ai.outputTemplateFile`) is honoured only when
- * its `schemaVersion` equals this. **Bump this whenever a released change to the built-in YAML's
- * structure would make a previous release's overlay unreadable** — a template key renamed or
- * removed, a field added, removed, or retyped. The gate exists for crash-avoidance only: the
- * mismatch skips the overlay, falls back to the built-in templates, and warns in the Output channel.
- * Wording inside `instruction` / `example` is content, never a reason to bump — an older overlay
- * with different prose still parses and renders. `tests/tools/assert-template-schema-version.mjs`
- * compares the structural fingerprint against the last release tag and fails the gate when the
- * structure changes without a bump.
+ * The single source of truth for overlay compatibility. The built-in YAML carries a matching
+ * `schemaVersion`; a user's custom overlay (`ai.outputTemplateFile`) is honoured only when its
+ * `schemaVersion` equals this. **Bump this only when a released change would make a previous
+ * release's overlay stop fitting** — a template key removed or renamed, a field removed or
+ * retyped: the changes where a still-matching old overlay is silently mis-applied. An added
+ * template key or field is backward compatible (the overlay merges over the built-in file, which
+ * fills everything the overlay lacks) and never bumps; wording inside `instruction` / `example`
+ * is content and never bumps. No migration code — on mismatch the overlay is skipped, the
+ * built-in templates are used, and a warning goes to the Output channel.
+ * `tests/tools/assert-template-schema-version.mjs` compares the structural fingerprint against
+ * the last release tag (or `origin/main` when no tag exists) and fails the gate when a breaking
+ * change ships without a bump — or the version moves without one.
  */
-export const AI_TEMPLATE_SCHEMA_VERSION = 3;
+export const AI_TEMPLATE_SCHEMA_VERSION = 2;
 
 /**
  * Collection of Markdown-formatted instructions for AI report generation.

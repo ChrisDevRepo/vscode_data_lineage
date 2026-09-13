@@ -147,14 +147,20 @@ equals the version the installed release expects
 (`AI_TEMPLATE_SCHEMA_VERSION` in
 [`src/ai/session/types.ts`](../src/ai/session/types.ts)).
 
-A release bumps that version whenever the shipped file's structure changes in
-a way an older overlay cannot fit — a template key renamed or removed, a field
-added, removed, or retyped. Wording inside `instruction` is content and never
+A release bumps that version only when the shipped file changes in a way an
+older overlay can no longer fit — a template key removed or renamed, or a
+field removed or retyped: with those, an overlay that still clears the
+version gate would be silently mis-applied. An added template key or field
+never bumps — the overlay merges over the built-in file, which fills
+everything the overlay lacks, so a previous overlay keeps working unchanged.
+Wording inside `instruction` is content and never
 bumps the version (nor does `example`, which the loader never reads at all): an older overlay with different prose
 still parses and renders, so a wording change in a release leaves existing
 overlays in force. The release gate
 ([`tests/tools/assert-template-schema-version.mjs`](../tests/tools/assert-template-schema-version.mjs))
-compares the structural fingerprint of the file against the last release tag.
+compares the structural fingerprint of the file against the last release tag
+(or `origin/main` when the repository has no release tag) and fails when a
+breaking change ships without a bump — or the version moves without one.
 
 On a version mismatch the extension does not fail and does not silently
 mis-apply the file. It writes a warning naming the file and the expected

@@ -13,7 +13,6 @@
 - A depth stated in the question is a hard limit per direction; the approval card reports the depth the engine will enforce.
 - Column trace is the same exploration as object analysis plus columns: an object that only shapes which rows the answer returns stays in the result.
 - The longest-chain report follows chains through circular dependencies (up to 25, deepest first).
-- A custom AI output template overlay must be re-scaffolded (`schemaVersion` 3) with **Data Lineage: Create AI Output Templates**.
 
 ### Fixed
 - Assistant robustness: tool calls written as XML or unfenced JSON are read as calls without stalling the turn; a bookmark recalls the AI run it was saved from; a formula stored only as a column-flow note still reaches the report.
