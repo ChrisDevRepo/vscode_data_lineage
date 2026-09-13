@@ -19,6 +19,7 @@ import {
   isHostCancellationError,
   isPortCancellation,
 } from './modelPort';
+import type { InstructionPhase } from '../agent/instructionPlan';
 import { VscodeLangChainBridge } from './vscodeLangChainBridge';
 import { systemPromptHash, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
@@ -48,7 +49,64 @@ type PortGenerationPart =
 // Backstop against an unbounded drain when a provider streams prose (e.g. pseudo-tool-call markup)
 // instead of a real tool call: UAT recorded a 3,638,544-char runaway against a ~33.6 KB legitimate
 // maximum, so 200,000 sits far above any real answer while stopping a runaway drain early.
+//
+// Per-phase calibration (issue runaway-text-toolcall): on the customendpoint/Ornith lane three
+// generations streamed 134,141-139,669 chars of tool-free chain-of-thought and slipped UNDER this
+// outer bound, each burning ~7 min until the provider's own token cap cut them mid-sentence.
+// Tool-bearing phases therefore carry a tighter text ceiling derived from the per-phase legitimate
+// maxima observed on the wire traces plus the documented ~33.6 KB global legitimate maximum. Every
+// cap sits at or above ~1.5x that documented maximum, so no generation inside the documented
+// legitimate envelope can ever be cut, while every recorded runaway (132,125-146,163 chars)
+// exceeds its phase cap by at least ~1.3x. Phases without a smaller cap keep the outer bound; an
+// unrecognized phase label always resolves to the outer bound, never to a smaller cap.
 const STREAM_TEXT_CHAR_CEILING = 200_000;
+
+/**
+ * Streamed-text ceiling per {@link InstructionPhase}, calibrating
+ * {@link STREAM_TEXT_CHAR_CEILING} instead of adding a second guard site.
+ *
+ * Evidence (issue `runaway-text-toolcall`; traces 2026-09-12/13 plus the Ornith e2e batch):
+ * observed legitimate text maxima are tiny against the 132K-146K runaway cluster — `discover`
+ * 3,197 chars, `active` 4,699 chars (the accepted repair generation), `compose` 734, `sm_entry`
+ * 190, `detect_entry`/`synthesis` 3 — while `visual_preview` has no legitimate sample at all (its
+ * only record is the 139,669-char runaway). Derivation per phase:
+ *
+ * - `detect_entry` 100,000 — legitimate sample of 3 chars is far too thin to tighten below the
+ *   documented legitimate envelope, so the anchor is 3x the documented ~33.6 KB global maximum.
+ * - `discover` 50,000 — ~15x its 3,197-char legitimate max, and ~1.5x the documented global
+ *   maximum.
+ * - `visual_preview` 100,000 — no legitimate sample, so anchored at 3x the documented ~33.6 KB
+ *   global maximum; catches its recorded 139,669-char runaway.
+ * - `sm_entry` 100,000 — legitimate sample of 190 chars, same documented-maximum anchor.
+ * - `active` 50,000 — ~10x its 4,699-char legitimate max, same global floor; the phase with the
+ *   most recorded runaways (five, 132,125-146,163 chars).
+ * - `compose` 200,000 — the text channel IS the deliverable there (`completeText` discards
+ *   `hitCeiling`), so a cut would be delivered silently with no retry behind it; no runaway has
+ *   ever been observed in the phase, so it keeps the outer bound.
+ * - `synthesis` 100,000 — legitimate sample of 3 chars, same documented-maximum anchor.
+ * - `completed` 200,000 — no model call ever recorded for the label; outer bound.
+ *
+ * Total over {@link InstructionPhase} by construction: a new phase member fails to compile until
+ * it is mapped here. An unrecognized phase string resolves through {@link streamTextCharCeiling}
+ * to the outer bound, never to a smaller cap.
+ */
+const PHASE_STREAM_TEXT_CHAR_CEILINGS: Readonly<Record<InstructionPhase, number>> = {
+  detect_entry: 100_000,
+  discover: 50_000,
+  visual_preview: 100_000,
+  sm_entry: 100_000,
+  active: 50_000,
+  compose: STREAM_TEXT_CHAR_CEILING,
+  synthesis: 100_000,
+  completed: STREAM_TEXT_CHAR_CEILING,
+};
+
+/** Resolves the streamed-text ceiling for one call: its phase cap, or the outer bound when unknown. */
+function streamTextCharCeiling(phase: string | undefined): number {
+  if (phase === undefined) return STREAM_TEXT_CHAR_CEILING;
+  const mapped = PHASE_STREAM_TEXT_CHAR_CEILINGS[phase as InstructionPhase];
+  return typeof mapped === 'number' ? mapped : STREAM_TEXT_CHAR_CEILING;
+}
 
 // A provider that streams nothing at all is indistinguishable from a hung connection: UAT recorded
 // a generation that produced zero chunks for 16m42s until manually cancelled, and neither
@@ -391,6 +449,12 @@ export class VscodeModelPort implements ModelPort {
       const parts: PortGenerationPart[] = [];
       let textChars = 0;
       let hitCeiling = false;
+      // The phase cap breaks only a tool-free text drain: a chunk that finally delivers a tool
+      // call must never be discarded because earlier prose crossed the cap. The outer bound keeps
+      // today's unconditional behavior. Unknown phase labels resolve to the outer bound, which
+      // makes the phase term inert for them.
+      let sawToolCallDelta = false;
+      const textCeiling = streamTextCharCeiling(phase);
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         clearTimeout(watchdog);
@@ -401,6 +465,7 @@ export class VscodeModelPort implements ModelPort {
           textChars += chunk.content.length;
         }
         for (const call of chunk.tool_call_chunks ?? []) {
+          sawToolCallDelta = true;
           if (!call.id || !call.name || typeof call.args !== 'string') {
             throw new ModelPortError(
               'unsupported_response',
@@ -417,10 +482,13 @@ export class VscodeModelPort implements ModelPort {
         // Breaking here (rather than throwing) closes the underlying stream through the normal
         // async-generator return path. The caller stamps finishReason `length` so the retry layer
         // classifies this as `output_limit`, not a missing tool call.
-        if (textChars >= STREAM_TEXT_CHAR_CEILING) {
+        if (
+          textChars >= STREAM_TEXT_CHAR_CEILING
+          || (textChars >= textCeiling && !sawToolCallDelta)
+        ) {
           hitCeiling = true;
           this.options.debugLog?.(
-            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars}`,
+            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} cap=${textCeiling}`,
           );
           break;
         }

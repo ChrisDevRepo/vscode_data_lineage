@@ -2,8 +2,8 @@
 
 Memory/orientation file for GLM-family coding agents (ZCode, GLM Coding Plan, Claude Code with
 GLM). **ZCode reads `AGENTS.md` natively** — that file is the canonical policy; this map summarizes
-the repo so an agent can orient in one read and never overrides it. This file is gitignored
-(internal assistant artifact, like `AGENTS.md` / `CLAUDE.md`).
+the repo so an agent can orient in one read and never overrides it. (Internal assistant artifact;
+tracked by explicit PM order 2026-09-13.)
 
 ## What This Repo Is
 `data-lineage-viz` — VS Code extension (TypeScript, strict mode) that visualizes SQL object
@@ -34,7 +34,7 @@ provider-neutral and always uses `ChatRequest.model`.
 | Testing (internal) | `.claude/INTERNAL_TESTING.md` | AI moat: scripted scenarios, real-model lanes, scoring |
 | Parser/DMV extension | `docs/PARSE_RULES.md`, `docs/DMV_QUERIES.md` | YAML customization contracts |
 | AI prompts/templates | `docs/AI_PROMPTS.md`, `assets/aiOutputTemplates.yaml` | Prompt/template lifecycle |
-| Improvement loop | `.claude/skills/improvement-loop/SKILL.md`, `test-results/prompt-stabilization/`, `.claude/hooks/` | Stabilization-loop skill (orchestrator + dispatched task packages, bundles of 2–4 stack items, COMMIT/PUSH verdicts), cycle state, TASKLIST/DECISIONS/HANDOVER, guard + measurement hooks |
+| Improvement loop | `.claude/skills/improvement-loop/SKILL.md`, `test-results/prompt-stabilization/` | Stabilization loop (orchestrator + dispatched packages). **ALL open tasks live in `test-results/prompt-stabilization/TASKLIST.md` §"Open stack — COMPLETE single source"** — list every open task from there, never from memory; a bare "?" or "status" reports that list. Instrument: `internal-tests/tools/factcheck.py` (`run/agg/compare/baseline/tasks`); captures via `capture_wt.py` (baseline set T2–T8S; CT cases by `--prompts`); hooks retired 2026-09-09 (archive: `test-results/archive/2026-09-09-bigbang/`) |
 | Agent skills | `#skills-available-in-this-repo` below | When to invoke which skill |
 
 ## Layout (one screen)
@@ -93,7 +93,7 @@ under its own trigger rules — several are explicit-invocation-only.
 
 | Skill | Trigger | What it does |
 | --- | --- | --- |
-| `improvement-loop` | "continue", "resume", "next", "work the list", "status?"/bare "?", or a session opens with no other explicit task | The mastermind stabilization loop — an orchestrator session, never a worker: bundles of 2–4 TASKLIST §Open items, dispatched task packages (six-field block), state via `cycle.py`/`attempt.py`/`baseline.py`, per task GATE 1 deterministic + one capture, then `verdict_gate.py` with COMMIT/PUSH verdicts recorded in `test-results/GATE.txt`. State lives in `test-results/prompt-stabilization/`. Not for a single named bug fix — that is `fix-bug`. |
+| `improvement-loop` | "continue", "resume", "next", "work the list", "status?"/bare "?", or a session opens with no other explicit task | The mastermind stabilization loop — an orchestrator session, never a worker: bundle open facts, fan out (≤3 live agents), review returns, act. Open work = `TASKLIST.md` §"Open stack" (ruling xxx 2026-09-13: continuous loop, no per-item PM yes/no; PM informed via six-line reports). Fact check via `factcheck.py` (`tasks` = the open GATE list; `compare` vs `BASELINE.json` + last agg decides COMMIT/PUSH). State lives in `test-results/prompt-stabilization/`. Not for a single named bug fix — that is `fix-bug`. |
 | `code-review` | Before any merge to main | Full quality gate: multi-persona review (mechanical grep, stale code, logging API, Zod boundaries, theming) + operational gate (build, tsc, tests, VSIX) + auto-fix after approval. Writes `tmp/review-findings.md` with GO/NO-GO. |
 | `regression-review` | Broad feature/refactor/AI/graph/parser/UI branches vs main | Branch-vs-main review with a strict no-regression standard: impact map by behavior, invariant list, regression-guard check per changed contract. |
 | `documentation-review` | Fact-check docs vs code, TSDoc coverage, noisy/historical comments | Bidirectional docs↔code review: `node .agents/skills/documentation-review/scripts/doc_audit.mjs`, then manual verification of high-severity findings. Review-first; fixes only on explicit ask. |
