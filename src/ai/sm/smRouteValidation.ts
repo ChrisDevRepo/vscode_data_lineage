@@ -55,7 +55,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_would_orphan:
     'Pruning this node would orphan a committed node from the origin. Keep it and remove it from prune_neighbors.',
   prune_route_conflict:
-    'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Remove it from prune_neighbors when it is a required neighbor, unless it is a logging/audit/retention sink the question does not ask about — then remove it from route_requests instead.',
+    'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Keep one verdict: remove it from prune_neighbors to route it (a required neighbor resolves by route), or remove it from route_requests when the prune verdict applies to this node.',
 };
 
 /**
