@@ -5,9 +5,8 @@ The extension separates semantic reasoning from deterministic process state.
 for exploration: the selected language model proposes semantic actions, while
 `NavigationEngine` owns topology, validation, mutation, and termination.
 
-For build, ingestion, and host/webview details, see
-[`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md). For prompt and template behavior,
-see [`AI_PROMPTS.md`](AI_PROMPTS.md).
+Build, ingestion, and host/webview details: [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md).
+Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 ## Architectural boundaries
 
@@ -37,43 +36,22 @@ see [`AI_PROMPTS.md`](AI_PROMPTS.md).
   [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)
   before handlers consume them.
 
-Model input crosses three layers, in this order, and nothing behind them guards
-it again:
+Model input crosses three layers, in this order:
 
-- **Normalization** — the shared coercion and id-resolution helpers in
+- **Normalization** — helpers in
   [`src/ai/support/inputNormalization.ts`](../src/ai/support/inputNormalization.ts)
-  put a tool argument into its declared shape and resolve a model-written object
-  reference against the loaded snapshot. Every normalization that changes a
-  model-written value is logged as `[Normalize] tool=… field=… from=… to=…`;
-  a silent rewrite is a defect.
+  coerce a tool argument into its declared shape and resolve a model-written
+  object reference against the loaded snapshot. Every rewrite is logged as
+  `[Normalize] tool=… field=… from=… to=…`.
 - **Schema parse** — the tool's Zod schema is the structural contract; a payload
   that does not parse never reaches a handler.
-- **Policy rejection** — the small set of phase- and state-dependent checks a
-  schema cannot express ([`src/ai/interaction/`](../src/ai/interaction/)),
-  returned to the model through one shared error envelope. A code that a second
-  surface or a second emission site names is one entry in
-  [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts), so
-  the emitting check and the instruction that teaches the recovery cannot drift
-  apart; a code with one emitter and no instruction lives where it is emitted.
+- **Policy rejection** — phase- and state-dependent checks a schema cannot
+  express ([`src/ai/interaction/`](../src/ai/interaction/)), returned through
+  one shared error envelope. A code named from more than one site is one entry
+  in [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts).
 
-The layering is the containment strategy. Model nondeterminism — a hallucinated
-id, an invented column, an out-of-contract argument — is absorbed at the boundary
-where it enters, so everything behind it is written as ordinary deterministic
-code: a handler may assume a parsed payload and a resolved id, and does not
-repeat a check the boundary already made. A defensive re-check further in points
-at a defect in the layer that owns the contract, not at a missing guard.
-
-Evaluated and rejected alternatives (2026-08 AI SQL documentation review; do
-not re-open without new evidence):
-
-- No generic wiki/documentation-platform replacement for the SQL walk.
-- No Deep Agents or recursive subagents for the normal per-hop exploration,
-  including LangChain's 2026-06 Dynamic Subagents mode — code-owned graph
-  routing already provides deterministic control the model must not own.
-- No model-controlled routing, instruction selection, or termination.
-- No complete object inventory unless the question asks for it.
-- No stakeholder, ownership, roadmap, or governance sections in SQL-object
-  documentation output.
+Handlers assume a parsed payload and a resolved id. A defensive re-check
+further in points at a defect in the layer that owns the contract.
 
 ## Component map
 
@@ -115,7 +93,7 @@ flowchart LR
 | Turn contracts | [`src/ai/core/`](../src/ai/core/) | Terminal turn outcome and round-limit constants shared by every runner |
 | Runtime host | [`src/ai/host/`](../src/ai/host/) | Thread identity, gate emission, resume delivery, cancellation around the LangGraph runtime |
 | Process rules | [`src/ai/interaction/`](../src/ai/interaction/) | Phase- and state-dependent tool checks that Zod schemas cannot express |
-| Diagnostic trace | [`src/ai/observability/`](../src/ai/observability/) | `wireLog` `wire-request` / `wire-response` / `wire-error` / `generation` / `provider-raw` records and the `aiTraceWriter` session NDJSON sink. `wireLog.ts` is `vscode`-free so every model port emits the same record surface; the VS Code message projection lives in `vscodeWireLog.ts`. |
+| Diagnostic trace | [`src/ai/observability/`](../src/ai/observability/) | `wireLog` records and the `aiTraceWriter` session NDJSON sink |
 | Provider policy | [`src/ai/providers/`](../src/ai/providers/) | Cancellation classification, structured-output validation, `traceSecurity` redaction |
 | Shared helpers | [`src/ai/support/`](../src/ai/support/) | Presentation, normalization, truncation, token budget, and rejection-envelope utilities |
 | UI bridge | [`src/panelProvider.ts`](../src/panelProvider.ts) | Result delivery and main webview routing |
@@ -142,130 +120,104 @@ flowchart LR
 
 Every turn first passes a `detect_entry` hop. Host-owned aggregate questions
 about the loaded platform, schema count, or current-schema object count are
-answered there directly from the snapshot with no provider call. Unless that
-narrow fast path, a slash command, or a UI trigger fixes the route, entry
-detection is a model call whose answer must satisfy `EntryDetectionSchema` — one
-of `column_trace`, `visual_render`, or `discovery`, with explicitly named columns
-required for a trace and forbidden otherwise.
-`selectInitialAgentStage` then combines that semantic route with the mechanical
-execution trigger to pick the first stage, so an explicit trigger always
-outranks the model's classification.
+answered there from the snapshot with no provider call. Unless that fast path,
+a slash command, or a UI trigger fixes the route, entry detection is a model
+call whose answer must satisfy `EntryDetectionSchema` — one of `column_trace`,
+`visual_render`, or `discovery`, with explicitly named columns required for a
+trace and forbidden otherwise. `selectInitialAgentStage` then combines that
+semantic route with the mechanical execution trigger; an explicit trigger
+always outranks the model's classification.
 
 Discovery is the default chat state: it answers bounded catalog or lineage
-questions with snapshot tools and does not publish a `NavigationEngine`. Answers lead with the user's question,
-then organize supported business and technical facts by lineage flow rather
-than dumping tool fields or one heading per node. A discovery answer cannot complete until
-the turn has accepted at least one trusted tool observation; tool-less model
-prose is withheld and repaired within the existing bounded attempt policy.
-`visual_render` is a semantic label only: a free-text graph/render request
-enters this same discovery loop (`selectInitialAgentStage`). The bounded
-transient preview is a later, host-owned action (`preview_button`); it does not
-grant SM authority. The preview reuses the preceding discovery answer
-and retained bounded scope: only `present_result` is exposed, and the model may
-regroup verbatim section bodies, label/link nodes, choose semantic colors, and
-select verbatim captions — each caption one unbroken span of the cached answer,
-never phrases joined across it. The existing presentation validator, held-draft
-repair store, description assembler, and webview commit remain the single shared
-path; there is no preview-specific renderer or retry subsystem. Preview composes
-its system prompt through the same phase dispatcher as every other stage, so the
-shared presentation contract cannot detach from one caller while the shared
-validator still enforces it.
+questions with snapshot tools and does not publish a `NavigationEngine`.
+Answers lead with the user's question, then organize supported facts by
+lineage flow. A discovery answer cannot complete until the turn has accepted
+at least one trusted tool observation.
 
-A completed discovery answer can also offer to continue as an exploration. The
-offer is a mechanical read of what the turn actually did, not a second model
-judgement: when accepted observations show at least two distinct objects
-inspected through `lineage_get_object_detail`, the walk is treated as
-multi-object and the SM-offer pill is seeded from its first object and final
-answer.
+`visual_render` is a semantic label only: a free-text graph/render request
+enters this same discovery loop. The bounded transient preview is a later,
+host-owned action (`preview_button`); it does not grant SM authority. The
+preview reuses the preceding discovery answer and retained bounded scope: only
+`present_result` is exposed, and the model may regroup verbatim section
+bodies, label/link nodes, choose semantic colors, and select verbatim
+captions. The existing presentation validator, held-draft repair store,
+description assembler, and webview commit remain the shared path.
+
+A completed discovery answer can also offer to continue as an exploration.
+When accepted observations show at least two distinct objects inspected
+through `lineage_get_object_detail`, the walk is treated as multi-object and
+the SM-offer pill is seeded from its first object and final answer.
 
 Requests that need hop-by-hop analysis, explicit named-column tracing, or more
-scope than discovery permits are routed to SM entry. Tool availability for
-these stages is defined only in
+scope than discovery permits are routed to SM entry. Tool availability is
+defined only in
 [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 
-A column-trace request always escalates to SM entry, budget irrelevant — the
-escalation is keyed on request kind, not size. Which traversal mode then runs,
-BB or CT, is settled at the consent gate below, never by this routing step.
+A column-trace request always escalates to SM entry, budget irrelevant. Which
+traversal mode then runs, BB or CT, is settled at the consent gate, never by
+this routing step.
 
 ### Consent gate
 
-Every fresh SM proposal pauses at `confirm_sm_start`. The engine owns the scope
-summary and renders every in-scope object for approval or cancellation. The
-native chat gate exposes three participant buttons and no notifications:
-**Approve & Proceed** resumes the gate with the proposed classes, **Cancel**
-clears the pending proposal without creating an engine, and **Change scope**
-resumes with a `hold` decision. Scope-expansion gates omit **Change scope**;
-their scope is a yes/no on what the running exploration already needs.
+Every fresh SM proposal pauses at `confirm_sm_start`. The engine owns the
+scope summary and renders every in-scope object for approval or cancellation.
+The native chat gate exposes three participant buttons and no notifications:
+**Approve & Proceed** resumes with the proposed classes, **Cancel** clears the
+pending proposal without creating an engine, and **Change scope** resumes with
+a `hold` decision. Scope-expansion gates omit **Change scope**.
 
 `hold` routes to `hold_gate`, which ends the turn with `outcome: 'ok'` while
-leaving the session in `awaiting_gate` with `pendingExploration` intact. Ending
-the turn is what releases the Copilot chat input — VS Code offers a parked turn
-only *Add to Queue* (which never fires) or *Stop and Send* (which aborts the
-gate). The host then prefills the input with the participant mention through
-`workbench.action.chat.open` and `isPartialQuery`, so the user types the change
-as an ordinary chat message.
+leaving the session in `awaiting_gate` with `pendingExploration` intact.
+Ending the turn releases the Copilot chat input. The host then prefills the
+input with the participant mention, so the user types the change as an
+ordinary chat message.
 
 `detect_entry` claims that next free-text prompt for the held proposal and
-routes it straight to `gate_refine`, carrying the pending gate and its revision.
-A stated slash command outranks the hold: it clears the pending proposal and
-runs fresh. A new chat still cancels the gate at the history boundary.
+routes it to `gate_refine`. A stated slash command outranks the hold: it
+clears the pending proposal and runs fresh. A new chat still cancels the gate
+at the history boundary.
 
-A refinement — delivered across turns from a held gate, or in-turn by a
-`refine` decision — runs the revision-bound `gate_refine` phase.
-That phase may use `lineage_search_objects`
-when the edit needs name, typo, pattern, or newly named-object resolution, but it
-does not rerun entry detection, discovery, scope-bundle retrieval, or the
-unchanged origin search. The model submits a strict patch through the refine-only
-`lineage_start_exploration` schema. The handler mechanically preserves omitted
-proposal fields and the original GUI filter snapshot, computes the candidate on
-an unpublished preview engine, and re-emits the approval gate at the next
-revision. A failed or no-op patch leaves the previous revision pending. Every
-gate emission mints a new gate id, so a superseded card's buttons resolve
-nothing; they are ignored with a debug log and no notification, because the
-replaced card stays visible in the transcript. No `NavigationEngine` is
+A refinement — from a held gate, or in-turn by a `refine` decision — runs the
+revision-bound `gate_refine` phase. That phase may use `lineage_search_objects`
+to resolve a name, typo, pattern, or newly named object, but it does not rerun
+entry detection, discovery, or the unchanged origin search. The model submits
+a strict patch through the refine-only `lineage_start_exploration` schema.
+The handler preserves omitted proposal fields and the original GUI filter
+snapshot, computes the candidate on an unpublished preview engine, and
+re-emits the approval gate at the next revision. A failed or no-op patch
+leaves the previous revision pending. Every gate emission mints a new gate
+id, so a superseded card's buttons resolve nothing. No `NavigationEngine` is
 published as active until approval succeeds.
 
-#### What the approval binds
+The gate card splits rules by source: **From your question** is what the user
+stated; **How I read it** is the assistant's mechanization (exclusions,
+passthroughs, schema/type filters); **My plan** is what the assistant chose
+(hop and scope counts, tracing mode, an estimated depth). Which strength a
+rule carries is a typed field — the host enforces it and never guesses from
+prose.
 
-The gate is where a rule becomes binding, so the card is split by *whose* rule each line
-is. **From your question** carries what the user stated — a depth they fixed, and their own
-words verbatim as `Noted: "…"`. **How I read it** carries the assistant's mechanization of
-that request: excluded objects, kept-but-skipped objects, excluded schemas, excluded types.
-**My plan** carries what the assistant chose — hop and scope counts, tracing mode, and a
-depth it estimated, written `≈3 levels` with the consequence spelled out in words. A
-re-approval is stamped `· revision N`, and a type group holding no bodied node is marked
-`· kept, not analysed`, because such a node is passed through by the engine whether or not
-anyone asked.
+`approveGateNode` builds the engine with `init(proposal.init)` — the same
+object that produced the summary the user read. `activatePendingExploration`
+is the sole site that publishes a navigation engine: it refuses a stale
+revision before construction and restores session memory on any failure.
+Afterwards one predicate, `checkBorder`, is consulted at every admission
+purpose (seed BFS, routing, supplement, column-trace contraction, display),
+with the sole scope-add write site behind it. Naming an object in a follow-up
+admits that object, never its schema siblings.
 
-Which strength a rule carries is the model's semantic call, delivered as a typed field —
-never a sentence the host parses. The host enforces, monitors, and rejects; it never guesses
-what the user meant.
-
-What the user approves is then what runs, by construction: `approveGateNode` builds the
-engine with `init(proposal.init)` — the same object that produced the summary the user read.
-`activatePendingExploration` refuses a stale revision before the engine is constructed and
-restores session memory on any failure, so no partially-approved plan goes live. Afterwards
-one predicate, `checkBorder`, is consulted at every admission purpose the engine has — seed
-BFS, routing, supplement, column-trace contraction, display — with the sole scope-add write
-site behind it. Approved exclusions, passthroughs, schema and type filters, and a hard depth
-border are therefore the same fact everywhere the engine looks. The allowlist half of that
-border has two grants: a schema the user filtered on, or a single object a follow-up named —
-naming an object admits that object, never its schema siblings. A column-trace contraction is
-held to the same depth border as every other admission: one that lands past a stated ceiling
-defers as a lead instead of being admitted silently through the carrier that reached it.
-
-One class of instruction cannot be bound this way. An instruction that maps to no filter
-field is carried as `scopeNotes` to the gate and into every hop, but it is prose addressed to
-the model: nothing rejects a violation of it, because the engine has no field to test.
+An instruction that maps to no filter field is carried as `scopeNotes` into
+every hop, but it is prose addressed to the model: the engine has no field to
+test, so nothing rejects a violation of it.
 
 ### Active exploration
 
-After approval, the engine drains an agenda one focus at a time. The model sees
-the current focus, immediate routing facts, the current task, and bounded recent
-context. It returns one structured finding proposal. The engine validates the
-proposal and either commits it atomically or returns a structured correction.
+After approval, the engine drains an agenda one focus at a time. The model
+sees the current focus, immediate routing facts, the current task, and bounded
+recent context. It returns one structured finding proposal. The engine
+validates the proposal and either commits it atomically or returns a
+structured correction.
 
-The engine records lifecycle separately from prose:
+Lifecycle is recorded separately from prose:
 
 - `analyze` keeps the node and stores classified findings;
 - `passthrough` keeps topology without treating the node as a key transform;
@@ -274,77 +226,64 @@ The engine records lifecycle separately from prose:
 BB neighbor pruning is narrower than a focus-node `prune`: it can remove only
 an adjacent, topology-safe object outside the approved exploration scope.
 Approved in-scope neighbors remain protected. Repeated attempts against an
-object already removed are accepted as explicit already-pruned no-ops so the
-diagnostic record does not misclassify them as analyzed and retained.
+object already removed are accepted as already-pruned no-ops.
 
 Tables and other non-bodied nodes can be contracted as topology-only
-passthroughs so the agenda stays focused on analyzable SQL bodies. The model is
-never the owner of a completion flag; synthesis starts when the engine reaches
-its terminal condition.
+passthroughs so the agenda stays focused on analyzable SQL bodies. The model
+is never the owner of a completion flag; synthesis starts when the engine
+reaches its terminal condition.
 
-**A column-trace declaration is the engine's to keep, not the model's.** In CT the AI defines the
-origin and then maps, hop by hop, which columns continue from the current node to its neighbors —
-and it only ever sees one hop. So the moment an accepted `route_requests` entry names a neighbor for
-the traced column, that node is protected from `prune_neighbors` for the rest of the run. This is
-the backend's obligation precisely because the model cannot discharge it: per-hop memory resets to
-the anchor, so a later hop reasoning about a different column has no way to recall a relevance the
-run already established. The protection is additive on the tracer and empty in BB.
-
-The contraction above is what makes the rule load-bearing rather than redundant. A non-bodied target
-is contracted the instant it is enqueued, so it acquires no agenda entry and no detail slot — the
-two sources the committed-connected set otherwise reads — and the topology walk cannot cover it
-either, because a node that is itself the removal target orphans nothing behind it. A declared
-dead-end table is therefore invisible to every other keep-rule, and the declaration record is the
-only thing that refuses the prune (D-074).
+In CT, once an accepted `route_requests` entry names a neighbor for the
+traced column, that node is protected from `prune_neighbors` for the rest of
+the run. Per-hop memory resets to the anchor, so a later hop cannot recall a
+relevance the run already established. The protection is additive on the
+tracer and empty in BB. A non-bodied target is contracted the instant it is
+enqueued, so the declaration record is what refuses a later prune of a
+declared dead-end table.
 
 ### Synthesis and completed follow-ups
 
-Synthesis receives a fresh completion envelope containing the findings archive,
-node lifecycle, deferred questions, and CT provenance when present. The AI
-authors structured presentation fields; the engine validates them, assembles
-the Markdown, derives badges, and commits the result graph. Contracted in-scope
-objects remain part of that graph and are labeled as retained supporting
-objects; only schema, depth, or budget boundaries are presented as deferred
-follow-up work.
+Synthesis receives a fresh completion envelope containing the findings
+archive, node lifecycle, deferred questions, and CT provenance when present.
+The AI authors structured presentation fields; the engine validates them,
+assembles the Markdown, derives badges, and commits the result graph.
+Contracted in-scope objects remain part of that graph and are labeled as
+retained supporting objects; only schema, depth, or budget boundaries are
+presented as deferred follow-up work.
 
 Completed follow-ups can update presentation, supplement the existing
-exploration with explicit nodes — naming an object admits that object, never
-its whole schema — begin a fresh exploration, or answer directly.
-Supplements retain the existing archive and return through the active loop.
-Fresh exploration follows the consent path and establishes new state.
+exploration with explicit nodes, begin a fresh exploration, or answer
+directly. Supplements retain the existing archive and return through the
+active loop. Fresh exploration follows the consent path and establishes new
+state.
 
 ## Memory and state ownership
 
 `AiSession` persists the current conversation phase and the engine/result
 handles required across native chat turns. Phase transitions use guarded
-session writers rather than prompt-inferred state. An empty native
-`ChatContext.history` is the new-chat signal and clears exploration state
-through the normal reset path.
+session writers. An empty native `ChatContext.history` is the new-chat signal
+and clears exploration state through the normal reset path.
 
-LangGraph checkpointing is deliberately in-process and per turn: `buildAgentGraph`
-compiles against a fresh in-memory saver, which is what lets the consent gate
-pause and resume through `Command({ resume })` inside a single turn, and nothing
-more. No durable saver is injectable and none is wanted — cross-turn state is
-`AiSession`, `thread_id` is a fresh value per request, and cross-restart resume
-would additionally require serialized gate state.
+LangGraph checkpointing is in-process and per turn: `buildAgentGraph`
+compiles against a fresh in-memory saver so the consent gate can pause and
+resume through `Command({ resume })` inside a single turn. Cross-turn state
+is `AiSession`; `thread_id` is a fresh value per request.
 
 The Detail Archive is the durable semantic store for an exploration.
-`NavigationEngine` separately owns agenda and node lifecycle. Each active hop —
-the first included — sends one stable system prefix plus one bounded hop message
-carrying the current task, the focus context, a fixed-size window of recent hop
-summaries (`<short_term_memory>`) and the bounded rejection ring
-(`<recent_rejections>`); the thread is reseeded to a single continuation anchor
-at approval and after every committed hop, so active requests never carry the
-participant history or earlier hops' payloads. Synthesis receives the complete
-archived result surface.
+`NavigationEngine` separately owns agenda and node lifecycle. Each active hop
+sends one stable system prefix plus one bounded hop message carrying the
+current task, the focus context, a fixed-size window of recent hop summaries
+(`<short_term_memory>`) and the bounded rejection ring
+(`<recent_rejections>`). The thread is reseeded to a single continuation
+anchor at approval and after every committed hop. Synthesis receives the
+complete archived result surface.
 
-`submit_findings` is atomic. Route, column, required-neighbor, and prune checks
-complete before findings or topology are committed. Unresolvable references
-that are safe to skip become structured notices; unsafe or malformed mutations
-reject with correction data. Any phase that declares a required terminal tool
-never streams model prose to the chat: a text-only finish there is a rejected
-attempt (`missing_required_tool_call`) and its buffered prose is withheld, so
-only synthesis-stage output reaches the user.
+`submit_findings` is atomic. Route, column, required-neighbor, and prune
+checks complete before findings or topology are committed. Unresolvable
+references that are safe to skip become structured notices; unsafe or
+malformed mutations reject with correction data. Any phase that declares a
+required terminal tool never streams model prose to the chat: a text-only
+finish there is a rejected attempt (`missing_required_tool_call`).
 
 ## BB and column-trace modes
 
@@ -352,68 +291,40 @@ BB is whole-object analysis. It supports focus verdicts, semantic route
 requests, and engine-validated neighbor pruning.
 
 CT is BB plus column tracking, never a parallel traversal. It runs the same
-agenda, the same approved scope, the same retention, and the same lifecycle;
-what it adds is that the AI records in `column_flow` which upstream columns feed
-each output column, and that the engine tracks and verifies those records. CT is
-activated only for explicitly named target columns and requires structured
-`column_flow` at every active submission.
+agenda, the same approved scope, the same retention, and the same lifecycle.
+What it adds is that the AI records in `column_flow` which upstream columns
+feed each output column, and that the engine tracks and verifies those
+records. CT is activated only for explicitly named target columns and
+requires structured `column_flow` at every active submission.
 
-The engine's role over `column_flow` is verification, not authorship. It checks
-every declared column against the loaded model, rejects a reference the model
-cannot support, and returns the repair with the rejection, so the AI fails early
-and corrects itself on the next attempt instead of carrying an unsupported chain
-into the answer. Validated upstream column edges drive continuation, are
-preserved for synthesis, and drive emphasis and flow-role grouping. They never
-bound the result: the result scope is the approved BFS scope in both modes, so an
-object that restricts the row set, sets the grain, or feeds a sibling column is
-retained exactly as BB retains it even though it carries no column edge.
+The engine's role over `column_flow` is verification, not authorship. It
+checks every declared column against the loaded model and rejects a reference
+the model cannot support. Validated upstream column edges drive continuation
+and emphasis; they never bound the result. The result scope is the approved
+BFS scope in both modes, so an object that restricts the row set, sets the
+grain, or feeds a sibling column is retained even though it carries no column
+edge.
 
-CT reuses BB rather than restating it. A behaviour both modes share has one
-implementation and one instruction, composed by both; CT contributes only the
-column-tracking additions on top. A mode-specific copy of a shared rule is the
-defect pattern this design exists to prevent — two copies drift, and the drift
-is invisible until a run diverges. Where a shared guard leaves a single
-implementation behind, the abstraction that carried the two variants is deleted
-with it.
+A behaviour both modes share has one implementation and one instruction. At
+the AI preview / synthesis surface, the column-trace presentation block
+replaces the whole-object block (same graph, presented differently). At the
+per-hop instruction surface, the whole-object instruction always ships, and a
+neighbor that carries traced columns earns the column-trace rider on top; a
+neighbor that only shapes rows gets the whole-object instruction alone.
 
-Composition is surface-dependent, and the two surfaces compose differently on
-purpose. At the AI preview / synthesis surface, composition is exclusive: the
-column-trace presentation block replaces the whole-object block rather than
-sitting beside it. Same graph, presented and focused differently — this is the
-XOR surface. At the per-hop instruction surface, composition is additive: the
-whole-object instruction always ships to a dispatched neighbor, and a neighbor
-that carries traced columns earns the column-trace rider on top of it; a
-neighbor that only shapes rows — a filter, a join — gets the whole-object
-instruction alone. This is the AND surface. Naming both surfaces here is
-deliberate: composition on one does not imply the same composition on the
-other, and re-deriving one from the other is the recurring error this
-paragraph exists to stop.
-
-The route path carries that fork. `route_requests[].columns` states the
-per-neighbor decision in three distinguishable states, and the type keeps them
-apart end to end (`ColumnCarry`, `smTypes.ts`): the field omitted is `inherit`,
-a non-empty list is `carry`, and the word `none` is `row_role_only`. The word is
-deliberate — an empty array and an omitted field would be one payload with two
-meanings, and the re-pad this replaced was exactly that confusion. Only
-`row_role_only` suppresses the target-set fallback, at `agendaColumnsFor` and
-again at dispatch, so a neighbor the router sent on as a plain object is not
-handed the columns it declined. The decision persists on the agenda entry
-(`columnCarry`), surviving a checkpoint and a contraction through a non-bodied
-carrier; the realized role persists on the node state
-(`SmNodeState.columnRole`), which is orthogonal to the verdict, since a node can
-be analyzed, passed through, or pruned under either role. Provenance still beats
+`route_requests[].columns` states the per-neighbor decision in three
+distinguishable states (`ColumnCarry` in `smTypes.ts`): the field omitted is
+`inherit`, a non-empty list is `carry`, and the word `none` is
+`row_role_only`. Only `row_role_only` suppresses the target-set fallback, so
+a neighbor sent on as a plain object is not handed the columns it declined.
+The decision persists on the agenda entry (`columnCarry`). Provenance beats
 an absence claim: a `none` on a node the same hop named in
-`column_flow[].upstream_columns` is normalized to the attributed columns with a
-log, because that hop just proved the node carries them.
+`column_flow[].upstream_columns` is normalized to the attributed columns.
 
-A column edge carries a transform classification, and the classification is
-multi-select. `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`
-is the single home for the five values, and every layer — the model-facing tool
-schema, the wire contract, the webview — reads them from there, so no surface can
-accept a value another rejects. The values align to OpenLineage's
-`ColumnLineageDatasetFacet` transformation types, which is also why the field is
-an array: one edge is routinely several classes at once, and that facet models
-`transformations` the same way.
+A column edge carries an optional multi-select transform classification.
+`COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts` is the
+single home for the five values. They align to OpenLineage's
+`ColumnLineageDatasetFacet` transformation types.
 
 | class | direction | covers |
 |---|---|---|
@@ -423,52 +334,25 @@ an array: one edge is routinely several classes at once, and that facet models
 | `combine` | INDIRECT | `JOIN`, `UNION`/`EXCEPT`/`INTERSECT`, `APPLY`, `UNPIVOT` |
 | `filter` | INDIRECT | `WHERE`, `HAVING`, a join `ON` predicate, `TOP`, `DISTINCT` |
 
-The DIRECT / INDIRECT split carried by `COLUMN_TRANSFORM_DIRECTION` is the
-load-bearing half. DIRECT means the upstream value reaches the output; INDIRECT
-means no value crosses the edge at all and the node only decided which rows
-appear. That is what licenses drawing the two differently, and it is the same
-distinction the AND surface makes one level up — an INDIRECT-only neighbor is
-precisely the row-role-only node that earns the whole-object instruction alone.
-
-The field is optional on both contracts, and the engine never fills it in. An
-edge recorded before the field existed, or one the model declined to classify,
-stays unclassified rather than acquiring a guessed class — the engine's role over
-`column_flow` is verification, not authorship, and inventing a classification
-would be authorship.
+DIRECT means the upstream value reaches the output; INDIRECT means no value
+crosses the edge and the node only decided which rows appear. The field is
+optional on both contracts, and the engine never fills it in.
 
 Neighbor visibility is the same in both modes. CT presents the focus node's
-neighbors, and permits routing to them, exactly as BB does — including a neighbor
-that carries none of the traced columns. A view joined with `INNER JOIN`
-restricts the row set through that join, and whether it filters is answerable
-only by reading the view; that reading is part of the trace, not a side branch.
-Withholding such a neighbor from CT would ask the model to describe a column's
-provenance while hiding what decides which rows survive.
+neighbors, and permits routing to them, exactly as BB does — including a
+neighbor that carries none of the traced columns. Column state annotates a
+hop; it never gates one. For the same question, origin, direction and depth
+the two modes walk the same node set. Neighbor prune is the same
+topology-safe engine path in both modes; CT adds column-flow verification on
+top of that path.
 
-Column state annotates a hop; it never gates one. For the same question, origin,
-direction and depth the two modes walk the same node set, so a node reachable in
-BB is reachable in CT whether or not it carries a traced column. A non-bodied
-carrier declaring none of the traced columns is walked through, not stopped at:
-it is recorded as carrying none, and the node behind it re-derives its own column
-set against its own declared columns when it is dispatched. A node that genuinely
-carries none of them is dispatched with an empty set, is told so, and answers with
-`column_flow: []` plus what it does to the row set — it stays in the answer.
-
-Neighbor prune is the same topology-safe engine path in both modes. CT adds
-column-flow verification on top of that path; it does not replace it with a
-second prune policy. Any other behavioural difference between the two modes is a
-defect in CT, not a design choice.
-
-Both modes keep process state separate from detail text. A table can therefore
-be an important source, target, or passthrough in the final graph even when it
-has no analyzed detail slot.
-
-The webview renders that result through engine-owned node types
+The webview renders the result through engine-owned node types
 (`CustomNodeData`, `ColumnTraceNodeData` in
 [`src/engine/types.ts`](../src/engine/types.ts)); components import them, never
 the reverse. Display mode is derived once in
 [`src/engine/graphDisplayMode.ts`](../src/engine/graphDisplayMode.ts): a scoped
-surface (trace, path, or AI result) outranks Schema View, which outranks Object
-View. Expanded Schema View is schema-membership only
+surface (trace, path, or AI result) outranks Schema View, which outranks
+Object View. Expanded Schema View is schema-membership only
 ([`src/engine/schemaProjection.ts`](../src/engine/schemaProjection.ts)) — it
 never becomes a lineage cone. Column Detail is a second rendering of the same
 approved scope ([`src/engine/columnTraceView.ts`](../src/engine/columnTraceView.ts)),
@@ -476,21 +360,21 @@ not a parallel BFS.
 
 ## Result and presentation ownership
 
-The final view must remain connected to its origin. Closure is checked on prune
-and follow-up edit paths and again when the result is read.
+The final view must remain connected to its origin. Closure is checked on
+prune and follow-up edit paths and again when the result is read.
 
 The AI owns summary text, report sections, section-to-node associations,
 captions, and semantic highlights. The engine owns node-ID resolution,
 structural validation, section numbering, badge derivation, object links,
 assembly, and commit. Markdown and KaTeX formatting is never validated and
-never rejects a commit: an expression the renderer cannot parse degrades to its
-original source text on screen. Nodes may remain visible without a badge or
+never rejects a commit: an expression the renderer cannot parse degrades to
+its original source text. Nodes may remain visible without a badge or
 highlight; pruning is the only operation that removes them from the answer
 graph.
 
-In CT, validated terminal source nodes must remain visible in the final source
-presentation surface so the rendered answer cannot silently drop the root of a
-column chain.
+In CT, validated terminal source nodes must remain visible in the final
+source presentation surface so the rendered answer cannot silently drop the
+root of a column chain.
 
 ## History, privacy, and no-egress boundary
 
@@ -500,36 +384,16 @@ projects ordered user/assistant text and preserves only complete native
 tool-call/result pairs. It does not select a model or own exploration memory.
 
 The local LangChain bridge is a translation boundary, not a provider
-abstraction. The root npm override resolves LangChain's transitive `langsmith`
-dependency to the inert local stub in `stubs/langsmith/`; ambient tracing flags
-fail closed before graph/model invocation. The bundle gate checks that the real
-client is not shipped.
+abstraction. An npm override resolves LangChain's transitive `langsmith`
+dependency to the inert local stub in `stubs/langsmith/`; ambient tracing
+flags fail closed before graph/model invocation. The bundle gate checks that
+the real client is not shipped.
 
 Each model-port operation makes exactly one `vscode.lm.sendRequest` call. The
-extension does not add a transport retry, model fallback, or duplicate retry UI:
-VS Code owns Stop/cancellation and the native whole-request Retry action. The one
-bound it does add is a zero-output watchdog — a generation that streams nothing
-at all is cancelled rather than left to hold the turn open indefinitely, and the
-first streamed chunk disarms it for the rest of that generation. Provider
-failures settle once through `ChatResult.errorDetails`; graph loops remain
-limited to semantic repair with fresh model generations.
-
-## Verification
-
-Use focused tests while changing an owner, then run the local gate before
-push:
-
-```bash
-npm run typecheck
-npm run typecheck:tests
-npm test
-npm run test:bfs
-npm run test:runtime
-npm run gate
-```
-
-Prompt or tool-policy changes require matching prompt/schema/registry tests.
-Navigation changes require success, rejection, cancellation, malformed-input,
-and closure coverage as applicable. The complete extension can optionally be
-checked with `npm run test:edh` in the Extension Development Host; see
-[`EDH_TESTING.md`](EDH_TESTING.md).
+extension does not add a transport retry, model fallback, or duplicate retry
+UI: VS Code owns Stop/cancellation and the native whole-request Retry action.
+A generation that streams nothing at all is cancelled rather than left to
+hold the turn open indefinitely; the first streamed chunk disarms that
+watchdog for the rest of that generation. Provider failures settle once
+through `ChatResult.errorDetails`; graph loops remain limited to semantic
+repair with fresh model generations.

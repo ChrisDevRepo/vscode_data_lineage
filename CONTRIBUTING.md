@@ -24,9 +24,9 @@ This project prioritizes stability, logical accuracy, and high-performance SQL p
 ## 3. Testing Protocol
 All changes must pass the applicable maintained checks locally before push.
 GitHub does not run the test suite; its workflow is limited to repository
-security checks. `npm run gate` is the complete client-side pre-push gate —
-run it before opening a PR. Full command set and scope: the `package.json`
-scripts and [`docs/EDH_TESTING.md`](docs/EDH_TESTING.md).
+security checks. `npm run gate` is the complete client-side pre-push gate.
+Full command set and scope: the `package.json` scripts and
+[`docs/EDH_TESTING.md`](docs/EDH_TESTING.md).
 
 ### Parser rule verification
 
@@ -53,7 +53,7 @@ rather than inherit it.
 
 | Entry | Purpose | Removable when |
 | --- | --- | --- |
-| `langsmith` | Redirects the package to the empty shell in `stubs/langsmith/`. One of the four LangSmith containment layers. | Never — containment is permanent. |
+| `langsmith` | Redirects LangChain's transitive dependency to the empty shell in `stubs/langsmith/` so the real client is never resolved. | Never — the stub is permanent. |
 | `esbuild` | Lifts transitive copies to the patched release the build already uses. | Every dependent requests a patched range. |
 | `dompurify` | `monaco-editor` pins a range with known advisories. `$dompurify` points the override at our direct dependency so the version is stated once. | `monaco-editor` ships a patched DOMPurify. |
 | `serialize-javascript` | Lifts a transitive copy past a known advisory. | Dependents update. |
@@ -61,12 +61,6 @@ rather than inherit it.
 
 Vendored third-party source is registered in `THIRD_PARTY_NOTICES.md` with its
 source, license, destination, and the modifications applied.
-
-## 6. Pull Request Guidelines
-1. **Bug Fixes**: Include a reproduction test case in `tests/unit/`.
-2. **Features**: Ensure new features are covered by unit and/or integration tests.
-3. **Documentation**: Update the relevant `.md` files in `docs/` if architecture or rules change.
-4. **Consistency**: Follow existing naming conventions and architectural patterns, especially the Map & Router contract where `NavigationEngine` owns process state.
 
 ---
 

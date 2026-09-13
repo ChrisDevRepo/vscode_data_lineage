@@ -281,8 +281,8 @@ database for compliance-critical claims.
 #### Deep analysis
 
 Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
-analysis** follow-up, or an engine-forced over-budget discovery request. It
-begins only after the user approves the `confirm_sm_start` consent gate.
+analysis** follow-up, or a discovery request that exceeds the configured
+budget. It begins only after the user approves the consent gate.
 
 - The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal.
 - The extension walks the approved graph scope one object at a time and validates every requested route against the loaded catalog before visiting it.
@@ -290,12 +290,6 @@ begins only after the user approves the `confirm_sm_start` consent gate.
 - Below the `Hop X/Y` counter, the chat echoes each completed hop's one-line finding as it lands — a
   transient progress trail, not part of the saved transcript, so it never reaches the model again on
   a later turn.
-
-### Why it matters
-
-In complex ETL pipelines a column often changes name several times. Deep
-analysis preserves recent context while retaining per-object findings for the
-final synthesis.
 
 ### Mission types
 

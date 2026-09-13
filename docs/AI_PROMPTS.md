@@ -101,14 +101,10 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   or one flagging a scalar field replays the whole bounded submitted call, never
   `{}`. For `present_result`, whose rejected draft the session holds and renders
   as its own block, the replayed call carries the name and call id only, so no
-  section text is sent twice in one attempt. The replayed exchange closes on a user-role continuation
-  note: with history ending on a tool result, the replayed function call stays
-  inside the provider's current turn, where Gemini 3 enforces thought-signature
-  echo on every function call and `LanguageModelToolCallPart` carries no
-  signature to re-send. The note — the documented turn boundary — ends that
-  turn and the signature obligation with it; the correction still rides the
-  paired tool result, and the note only directs the model to act on it. Hop context is node-proportional and non-cumulative: a
-  large focus-node DDL raises one hop's message and is gone the next.
+  section text is sent twice in one attempt. The replayed exchange closes on a
+  user-role continuation note so the next generation is a new turn. Hop context
+  is node-proportional and non-cumulative: a large focus-node DDL raises one
+  hop's message and is gone the next.
 - Synthesis starts from a fresh completion envelope containing the archived
   findings plus engine-owned lifecycle and column-provenance state.
 
@@ -431,33 +427,18 @@ directly according to the phase policy.
   (synthesis and completed follow-ups); preview is exempt because its bodies
   are verbatim spans of the cached answer.
 
-## Evidence-status contract (partially live)
+## SQL witness contract
 
-Adopted from the 2026-08 AI SQL documentation review. Live today in the
-capture-template grounding blocks: SQL witnesses must be exact substrings of
-the hop's DDL (never paraphrased), and gaps are stated as
-`not established from the available SQL` instead of inferred. The synthesis
-detail contract additionally preserves exact node IDs, parameter names, and
-formulas through compression. The full categorical vocabulary below remains
-the agreed target; extend live templates only through an approved change plus
-e2e replay.
+Capture-template grounding blocks require SQL witnesses to be exact
+substrings of the hop's DDL (never paraphrased). Gaps are stated as
+`not established from the available SQL` instead of inferred. Synthesis
+preserves exact node IDs, parameter names, and formulas through compression.
 
-Every captured claim carries one categorical evidence status:
-
-- direct SQL evidence (`static`) — observable in the loaded snapshot;
-- requires schema/index/statistics metadata (`metadata_required`);
-- requires execution-plan or runtime evidence (`runtime_required`);
-- requires business confirmation — intent, prevalence, or realized impact;
-- not established — never filled by plausible inference.
-
-Performance-claim tiering: static SQL may identify a candidate pattern only.
-Sargability, index benefit, join-strategy quality, parameter sniffing, and
-statistics staleness are `metadata_required` or `runtime_required`. On Synapse
-Dedicated SQL Pool and Fabric Warehouse, actual data movement (shuffle/
-broadcast) and its cost are established by distributed plans and runtime
-evidence, never by query text alone. Engine targeting is required — SQL
-Server/Azure SQL, Synapse, and Fabric must not receive identical movement or
-tuning language.
+Static SQL may identify a candidate performance pattern only. Sargability,
+index benefit, join strategy, parameter sniffing, and statistics staleness
+need catalog or runtime evidence. On Synapse Dedicated SQL Pool and Fabric
+Warehouse, data movement (shuffle/broadcast) is established by distributed
+plans and runtime evidence, never by query text alone.
 
 ## Editing and verification
 
