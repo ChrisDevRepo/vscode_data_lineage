@@ -1,25 +1,42 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { FloatingPortal } from '@floating-ui/react';
 import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
+import { useDropdown } from '../hooks/useDropdown';
 import { AI_SECTION_ID_PREFIX, FOCUS_NODE_HREF_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
 
 /** Which edge of the canvas the report column is docked against. */
 export type AiDockPosition = 'right' | 'left' | 'bottom';
 
 /**
- * The dock choices, in the order their buttons sit in the header.
+ * The dock choices, in the order the menu lists them.
  *
  * @remarks
- * A segmented control rather than one cycling button: three exclusive layout options is exactly
- * what a segmented control is for — every position is one click away and the current one is
- * readable without hovering, where a cycle asked for up to three clicks and a tooltip to find out
- * where it was.
+ * One dropdown rather than three always-visible buttons: the trigger already shows the current
+ * edge through its icon, so the header carries a single control and every position stays one
+ * click away in the menu — the same shape VS Code uses for its own "Move Panel To" layout menu.
  */
-const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; glyph: string; label: string }> = [
-  { position: 'left', glyph: '\u2BC7', label: 'Dock report panel left' },
-  { position: 'bottom', glyph: '\u2BC6', label: 'Dock report panel bottom' },
-  { position: 'right', glyph: '\u2BC8', label: 'Dock report panel right' },
+const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; label: string }> = [
+  { position: 'left', label: 'Dock left' },
+  { position: 'bottom', label: 'Dock bottom' },
+  { position: 'right', label: 'Dock right' },
 ];
+
+/**
+ * Panel-dock icon: a frame with the docked edge filled, modelled on VS Code's
+ * `layout-panel-left` / `layout-panel` / `layout-panel-right` codicons so each position reads
+ * at a glance instead of three near-identical arrow glyphs.
+ */
+function DockIcon({ position }: { position: AiDockPosition }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" />
+      {position === 'left' && <rect x="2.5" y="3.5" width="3.5" height="9" rx="0.5" fill="currentColor" />}
+      {position === 'right' && <rect x="10" y="3.5" width="3.5" height="9" rx="0.5" fill="currentColor" />}
+      {position === 'bottom' && <rect x="2.5" y="9" width="11" height="3.5" rx="0.5" fill="currentColor" />}
+    </svg>
+  );
+}
 
 /** One numbered report section, derived client-side from the bridged badge chips (`"N label"`). */
 export interface AiReportSection {
@@ -84,6 +101,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
 }: AiDescriptionOverlayProps) {
   const [maximized, setMaximized] = useState(false);
   const [fontScale, setFontScale] = useState<0 | 1 | 2>(0);
+  const dockMenu = useDropdown();
 
   // Reports the panel's rendered size (a `resize` drag or a dock switch) up to the canvas.
   const anchorRef = useRef<HTMLDivElement | null>(null);
@@ -223,20 +241,52 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             {railName}
           </span>
           <div className="ln-ai-description-actions">
-            <div className="ln-ai-dock-group" role="group" aria-label="Report panel dock position">
-              {DOCK_CHOICES.map(choice => (
-                <Tooltip key={choice.position} content={choice.label}>
-                  <button
-                    className={`ln-ai-description-action${dockPosition === choice.position ? ' ln-active' : ''}`}
-                    onClick={() => onDockPositionChange?.(choice.position)}
-                    aria-label={choice.label}
-                    aria-pressed={dockPosition === choice.position}
-                  >
-                    {choice.glyph}
-                  </button>
-                </Tooltip>
-              ))}
-            </div>
+            <Tooltip content="Dock report panel">
+              <button
+                ref={dockMenu.refs.setReference}
+                className="ln-ai-description-action ln-ai-dock-trigger"
+                onClick={dockMenu.toggle}
+                aria-label="Report panel dock position"
+                aria-haspopup="menu"
+                aria-expanded={dockMenu.isOpen}
+              >
+                <DockIcon position={dockPosition} />
+                <svg className="ln-ai-dock-chevron" width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                  <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </Tooltip>
+            <FloatingPortal>
+              {dockMenu.isOpen && (
+                <div
+                  ref={dockMenu.refs.setFloating}
+                  style={{ ...dockMenu.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+                  className="ln-dropdown rounded-md z-50 p-1"
+                  role="menu"
+                  aria-label="Report panel dock position"
+                  {...dockMenu.getFloatingProps()}
+                >
+                  {DOCK_CHOICES.map(choice => (
+                    <button
+                      key={choice.position}
+                      className="ln-ai-dock-menu-item"
+                      role="menuitemradio"
+                      aria-checked={dockPosition === choice.position}
+                      onClick={() => {
+                        onDockPositionChange?.(choice.position);
+                        dockMenu.close();
+                      }}
+                    >
+                      <span className="ln-ai-dock-menu-check" aria-hidden="true">
+                        {dockPosition === choice.position ? '✓' : ''}
+                      </span>
+                      <DockIcon position={choice.position} />
+                      {choice.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </FloatingPortal>
             <Tooltip content="Open in editor">
               <button
                 className="ln-ai-description-action"

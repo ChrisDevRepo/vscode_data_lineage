@@ -300,6 +300,7 @@ export class LineageParticipant {
     });
 
     const requestId = randomUUID();
+    const turnStartedAt = Date.now();
     const cancellation = tokenToAbortSignal(token);
     const traceWriter = this.traceWriter?.isEnabled() ? this.traceWriter : undefined;
     const model = new VscodeModelPort(request.model, {
@@ -342,7 +343,7 @@ export class LineageParticipant {
       };
       if (result.outcome !== 'error') {
         this.logger.info(
-          `[${session.id}] native turn terminal status=${result.outcome} modelCalls=${result.modelCalls}`,
+          `[${session.id}] native turn terminal status=${result.outcome} modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
         );
         return { metadata };
       }
@@ -350,10 +351,12 @@ export class LineageParticipant {
       const message = sanitizeProviderError(result.failure?.message ?? '')
         || 'Data Lineage could not complete this request.';
       this.logger.error(
-        `[${session.id}] native turn terminal status=error modelCalls=${result.modelCalls}`,
+        `[${session.id}] native turn terminal status=error modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
         message,
       );
-      return { metadata, errorDetails: { message } };
+      // The hint rides the one carrier that already renders terminal failures (errorDetails owns
+      // the presentation and its native Retry affordance) — never a second inline copy.
+      return { metadata, errorDetails: { message: `${message} (Retry — send the request again.)` } };
     } finally {
       this.statusBarStop();
       cancellation.dispose();

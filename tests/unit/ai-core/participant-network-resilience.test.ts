@@ -114,7 +114,7 @@ describe('participant provider/network settlement', () => {
         modelCalls: 1,
       },
       errorDetails: {
-        message: 'endpoint=‹redacted› Bearer ‹redacted›',
+        message: 'endpoint=‹redacted› Bearer ‹redacted› (Retry — send the request again.)',
       },
     });
     expect(stream.markdown).not.toHaveBeenCalled();

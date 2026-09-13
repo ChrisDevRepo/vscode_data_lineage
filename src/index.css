@@ -518,17 +518,35 @@ body.vscode-reduce-motion *::after {
   opacity: 0.35;
 }
 
-/* Dock segmented control — three exclusive positions, the current one pressed */
-.ln-ai-dock-group {
-  display: inline-flex;
-  gap: 1px;
-  margin-right: 4px;
+/* Dock dropdown — one trigger showing the current edge; the menu lists all three positions */
+.ln-ai-dock-trigger {
+  gap: 2px;
 }
-.ln-ai-description-action.ln-active {
-  opacity: 1;
-  background: var(--ln-ai-bg);
+.ln-ai-dock-chevron {
+  opacity: 0.7;
+}
+.ln-ai-dock-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
   color: var(--ln-fg);
-  border-color: var(--ln-ai-border);
+  font-size: 12px;
+  text-align: left;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.ln-ai-dock-menu-item:hover {
+  background: var(--ln-hover-bg);
+}
+.ln-ai-dock-menu-check {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
 }
 .ln-ai-description-text-action {
   min-width: 24px;

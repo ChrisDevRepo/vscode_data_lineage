@@ -8,7 +8,7 @@ import {
 import { z } from 'zod';
 import type { IToolRegistry } from '../tools/registry';
 
-import type { TurnEventSink } from '../runtime/turnEventSink';
+import type { TurnEventSink, TurnStatusPhase } from '../runtime/turnEventSink';
 import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
 import { PendingGateSchema, type PendingGate } from '../session/sessionPhase';
@@ -127,6 +127,43 @@ const HOLD_GATE_NOTICE =
 
 /** Absolute floor for {@link turnRecursionLimit} so short-`maxRounds` turns keep generous headroom. */
 const RECURSION_LIMIT_FLOOR = 50;
+
+/**
+ * Base chat-progress label per self-looping phase, single-sourced for the repair-status suffix.
+ *
+ * @remarks
+ * Matches the entry statuses the phase nodes emit; keyed by {@link InstructionPhase} so a retry
+ * line never drifts from its phase's own wording.
+ */
+const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
+  detect_entry: 'Scoping',
+  discover: 'Discovering context',
+  visual_preview: 'Building lineage preview',
+  sm_entry: 'Starting exploration',
+  active: 'Analysing hop-by-hop',
+  compose: 'Composing',
+  synthesis: 'Synthesising',
+  completed: 'Following up',
+};
+
+/**
+ * Chat-facing short form of a rejection code for repair-progress lines.
+ *
+ * @remarks
+ * One fixed label per observed code — the raw `reason` prose stays in the debug channel; an
+ * unmapped code falls through verbatim rather than being guessed at.
+ */
+const REJECTION_SHORT_LABELS: Readonly<Record<string, string>> = {
+  missing_required_tool_call: 'no required tool call',
+  validation: 'invalid tool arguments',
+  empty_structured_output: 'empty output',
+};
+
+/** Short cause of an attempt's latest rejection, for repair-progress chat lines. */
+function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>): string {
+  const last = attempt.rejections[attempt.rejections.length - 1];
+  return last ? REJECTION_SHORT_LABELS[last.code] ?? last.code : 'rejected call';
+}
 
 /**
  * LangGraph `recursionLimit` for one turn, derived from the graph shape and the provider-call cap so
@@ -317,6 +354,30 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? '\n\n_⚠️ Response truncated: the model reached its output token limit._'
       : '\n\n_⚠️ Response stopped by the provider content filter._';
 
+  /**
+   * Announces one in-phase repair retry in the same progress grammar the hop counter uses.
+   *
+   * @remarks
+   * A semantic failure inside a self-looping phase is otherwise invisible in chat — the phase's
+   * entry status just repeats identically (the observed "Hop 3/3 — analysing X" twice). This
+   * emits the bracketed attempt counter on the status line and one permanent italic line naming
+   * the failed attempt, mirroring the hop counter's `(+N added, −N pruned)` brackets and the
+   * post-commit digest lines. One line per failed attempt; raw rejection prose stays in the
+   * debug channel.
+   */
+  const emitRepairProgress = (
+    phaseLabel: string,
+    subject: string,
+    priorAttempt: ToolPhaseAttemptState,
+    nextAttempt: ToolPhaseAttemptState,
+  ): void => {
+    if (nextAttempt.semanticFailures <= priorAttempt.semanticFailures) return;
+    const base = PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject;
+    const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
+    deps.sink.status(statusPhase, `${base}… (attempt ${nextAttempt.providerCalls + 1} — repairing)`);
+    deps.sink.stream(`\n\n_${subject} attempt ${nextAttempt.providerCalls} failed (${rejectionCauseLabel(nextAttempt)}) — repairing…_`);
+  };
+
   const failEngineRestore = (err: unknown): AgentStateUpdate => {
     if (err instanceof InvalidEngineCheckpointError) {
       deps.logger?.error(`engine checkpoint restore rejected — paths=${trunc(sanitizeForLog(err.diagnostic), LOG_TRUNC_CONTENT)}`, err);
@@ -327,15 +388,24 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return fail(err instanceof Error ? err.message : String(err));
   };
 
-  /** Shared post-generation bookkeeping: records the finished attempt and emits the per-phase debug line. */
+  /**
+   * Shared post-generation bookkeeping: records the finished attempt and emits the per-phase debug
+   * line. `startedAt` (captured where the attempt was launched) adds the wall-clock duration, and
+   * the newest rejection names its tool and code — so a silent semantic failure is readable from
+   * the log line alone, without opening the NDJSON trace.
+   */
   const recordAttempt = (
     priorAttempt: ToolPhaseAttemptState,
     res: ToolAttemptResult,
     phaseLabel: string,
+    startedAt?: number,
   ): ToolPhaseAttemptState => {
     const nextAttempt = recordToolAttempt(priorAttempt, res, deps.model.budget, message => deps.logger?.debug(message));
+    const last = nextAttempt.rejections[nextAttempt.rejections.length - 1];
     deps.logger?.debug(
-      `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`,
+      `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`
+      + `${startedAt !== undefined ? ` durationMs=${Math.max(0, Date.now() - startedAt)}` : ''}`
+      + `${last ? ` lastReject=${last.toolName}:${last.code}` : ''}`,
     );
     return nextAttempt;
   };
@@ -482,13 +552,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         phaseHook?.(toolName, input, isError, resultText);
       },
     });
+    const startedAt = Date.now();
     const result = await withLmStage(draft.stage, () => runToolAttempt(plan, priorAttempt));
     if (result.stop === 'cancelled') {
       const terminal: AgentStateUpdate = { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
       return { terminal };
     }
-    const nextAttempt = recordAttempt(priorAttempt, result, phaseLabel);
+    const nextAttempt = recordAttempt(priorAttempt, result, phaseLabel, startedAt);
     const terminal = attemptFailure(result, nextAttempt, ...failure);
+    if (!terminal && result.stop === 'continue') emitRepairProgress(phaseLabel, failure[1], priorAttempt, nextAttempt);
     return terminal ? { terminal } : { result, nextAttempt };
   };
 
@@ -785,6 +857,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const targetColumns = state.entry === 'column_trace' ? (state.targetColumns ?? undefined) : undefined;
     const priorAttempt = attemptStateFor(state, 'sm_entry');
     const messages = state.messages;
+    const startedAt = Date.now();
     const res = await withLmStage({ kind: 'sm_entry' }, () => runToolAttempt(compileInstructionPlan({
         kind: 'converse',
         stage: { kind: 'sm_entry' },
@@ -802,7 +875,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, 'sm_entry');
+    const nextAttempt = recordAttempt(priorAttempt, res, 'sm_entry', startedAt);
     if (res.stop === 'error') {
       return { ...failProvider(res, 'Failed to start exploration'), toolAttempt: nextAttempt };
     }
@@ -812,6 +885,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration entry', 'without reaching the consent gate');
     if (stopped) return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     if (res.stop !== 'continue') return fail('Exploration did not reach the consent gate.');
+    emitRepairProgress('sm_entry', 'Exploration entry', priorAttempt, nextAttempt);
     return { toolAttempt: nextAttempt, phase: 'sm_entry' };
   };
 
@@ -859,6 +933,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ...state.messages,
       modelUserMessage(buildGateRefinePrompt(scopeMd, refine, proposal.revision)),
     ];
+    const refineStartedAt = Date.now();
     // The normal SM-entry policy exposes search_objects plus start_exploration. Lookup remains
     // available for typos, wildcard-like requests, and newly named objects, while discovery and
     // scope-bundle tools remain unavailable in this phase.
@@ -879,7 +954,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, 'gate_refine');
+    const nextAttempt = recordAttempt(priorAttempt, res, 'gate_refine', refineStartedAt);
     if (res.stop === 'error') {
       failProvider(res, 'Scope refinement failed');
       return keepPendingGate('the model/provider could not complete the change.');
@@ -1060,7 +1135,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       prunedThisStep > 0 ? `−${prunedThisStep} pruned` : null,
     ].filter((d): d is string => d !== null);
     const deltaNote = deltas.length > 0 ? ` (${deltas.join(', ')})` : '';
-    deps.sink.status('scoping', `Hop ${progress.current}/${progress.total} — analysing ${focusLabel}${deltaNote}`);
+    // A re-entered hop carries its rejected generations in `priorAttempt` — without the suffix the
+    // entry status would repeat the identical "Hop X/Y — analysing X" line (the observed duplicate)
+    // instead of telling the user a repair is running. Same bracket grammar as the deltas above,
+    // plus one permanent italic cause line so the retry is explained in the transcript.
+    const priorAttempt = attemptStateFor(state, 'active');
+    if (priorAttempt.semanticFailures > 0) {
+      deps.sink.stream(`\n\n_Hop ${progress.current} attempt ${priorAttempt.providerCalls} failed (${rejectionCauseLabel(priorAttempt)}) — repairing…_`);
+    }
+    const repairSuffix = priorAttempt.semanticFailures > 0
+      ? ` (attempt ${priorAttempt.providerCalls + 1} — repairing)`
+      : '';
+    deps.sink.status('scoping', `Hop ${progress.current}/${progress.total} — analysing ${focusLabel}${deltaNote}${repairSuffix}`);
 
     // Lean per-hop worker turn: focus task + focus DDL/neighbours (peekHopContext, non-advancing) +
     // rolling memory. The stable mission/rules ride in the cached `system`, so this volatile content
@@ -1077,7 +1163,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // `let` reassigned only inside `onToolResult` narrows to `never` there under TS's control-flow
     // analysis. Captured only for the post-commit progress echo below — never stored past this hop.
     const committedFinding: { value: { summary: string; verdict: z.infer<typeof SubmitFindingsModelSchema>['verdict'] } | null } = { value: null };
-    const priorAttempt = attemptStateFor(state, 'active');
     const inputMessages = [...state.messages, hopMessage];
 
     // The classification filter is the one drop in the prompt chain that is otherwise unrecorded:
@@ -1089,6 +1174,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     ]);
 
     const activeStage = { kind: 'active', mode: activeModeOf(isCtMode) } as const;
+    const hopStartedAt = Date.now();
     const res = await withLmStage(activeStage, () => runToolAttempt(compileInstructionPlan({
       kind: 'converse',
       stage: activeStage,
@@ -1120,7 +1206,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${state.activeHopCount + 1}`);
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${state.activeHopCount + 1}`, hopStartedAt);
 
     /**
      * Routes the exploration's submitted hops to synthesis with a user-visible partial-coverage
