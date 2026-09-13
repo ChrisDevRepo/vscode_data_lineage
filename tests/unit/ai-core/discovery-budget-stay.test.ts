@@ -13,7 +13,7 @@ import {
   checkScopeBudget,
   DEFAULT_TURN_TOKEN_BUDGET,
 } from '../../../src/ai/support/tokenBudget';
-import { captureRejectedScopeOffer } from '../../../src/ai/agent/discoveryCapture';
+import { captureRejectedScopeOffer, emitDiscoveryBudgetNotice, readOverBudgetNotice } from '../../../src/ai/agent/discoveryCapture';
 import {
   ScriptedModelPort,
   scriptedRegistry,
@@ -92,6 +92,56 @@ describe('captureRejectedScopeOffer', () => {
   });
 });
 
+describe('readOverBudgetNotice', () => {
+  it('reads the rejection from any catalog tool, not only scope bundles', () => {
+    const notice = readOverBudgetNotice('lineage_get_screen_state', overBudgetEnvelope());
+    expect(notice?.toolName).toBe('lineage_get_screen_state');
+    expect(notice?.nodes).toBe(48);
+    expect(notice?.hint).toContain('discovery budget');
+  });
+
+  it('falls back to the default hint when the envelope omitted it', () => {
+    const admission = checkScopeBudget(DEFAULT_TURN_TOKEN_BUDGET, 11, 0);
+    if (admission.ok) throw new Error('test fixture must overflow');
+    const notice = readOverBudgetNotice('lineage_get_object_detail', JSON.stringify({ ...admission, scope_proposal: undefined }));
+    expect(notice?.nodes).toBe(11);
+    expect(notice?.hint).toContain('a detailed analysis would be needed');
+  });
+
+  it('returns null for non-budget envelopes and malformed JSON', () => {
+    expect(readOverBudgetNotice('lineage_get_scope_bundle', JSON.stringify({ error: 'not_found' }))).toBeNull();
+    expect(readOverBudgetNotice('lineage_get_scope_bundle', 'not json')).toBeNull();
+  });
+});
+
+describe('emitDiscoveryBudgetNotice', () => {
+  it('emits one recoverable inline notice per turn, deduped across rejections', () => {
+    const { sink, events } = collectingSink();
+    emitDiscoveryBudgetNotice(sink, 'lineage_get_scope_bundle', overBudgetEnvelope());
+    emitDiscoveryBudgetNotice(sink, 'lineage_get_screen_state', overBudgetEnvelope());
+    const notices = events.filter(event => event.type === 'error');
+    expect(notices).toHaveLength(1);
+    const first = notices[0];
+    if (first.type !== 'error') throw new Error('unreachable');
+    expect(first.recoverable).not.toBe(false);
+    expect(first.message).toContain('Discovery budget reached');
+    expect(first.message).toContain('lineage_get_scope_bundle');
+  });
+
+  it('marks nodes only when the envelope carried a count and stays silent for other results', () => {
+    const { sink, events } = collectingSink();
+    emitDiscoveryBudgetNotice(sink, 'lineage_search_objects', JSON.stringify({ matches: [] }));
+    expect(events).toHaveLength(0);
+    emitDiscoveryBudgetNotice(sink, 'lineage_get_scope_bundle', JSON.stringify({
+      reason: 'over_discovery_budget',
+      hint: 'Scope exceeds the discovery budget.',
+    }));
+    const notices = events.filter(event => event.type === 'error');
+    expect(notices).toHaveLength(1);
+    expect(notices[0].type === 'error' ? notices[0].message : '').not.toContain('projected nodes');
+  });
+});
+
 describe('oversized discovery stays in chat', () => {
   it('finishes discovery with a summary and seeds the existing SM-offer from the rejected origin', async () => {
     const session = new AiSession();
@@ -131,6 +181,9 @@ describe('oversized discovery stays in chat', () => {
     expect(session.lastDiscoveryOrigin).toBe(ORIGIN);
     expect(session.lastDiscoveryAnswer).toBe(SUMMARY);
     expect(events.filter(event => event.type === 'text').map(event => event.type === 'text' ? event.delta : '')).toContain(SUMMARY);
+    const notices = events.filter(event => event.type === 'error');
+    expect(notices, 'the budget rejection must reach the user, not only the model').toHaveLength(1);
+    expect(notices[0].type === 'error' ? notices[0].message : '').toContain('Discovery budget reached');
   });
 
   it('/trace still opens SM-entry immediately', async () => {

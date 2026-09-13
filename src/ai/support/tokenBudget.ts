@@ -15,6 +15,7 @@
  *
  * Zero VS Code imports — pure functions for testability.
  */
+import { REJECTION_CODES } from './rejectionCodes';
 
 /**
  * Provides a heuristic estimation of token count from a character count.
@@ -154,7 +155,7 @@ export function checkScopeBudget(
   if (!exceedsPhaseBudget(budget.discovery, requestedNodes, tokens)) return { ok: true };
   return {
     ok: false,
-    reason: 'over_discovery_budget',
+    reason: REJECTION_CODES.overDiscoveryBudget,
     counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
     limits: { node_cap: budget.discovery.nodeCap, token_budget: budget.discovery.tokenBudget },
     hint: 'Scope exceeds the discovery budget. Summarize what is already known; a detailed analysis would be needed.',

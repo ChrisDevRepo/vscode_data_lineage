@@ -1,6 +1,7 @@
 /** Detects a multi-object discovery walk from accepted graph-owned tool observations. */
 import { z } from 'zod';
 import type { ToolAttemptObservation } from './toolAttempt';
+import type { TurnEventSink } from '../runtime/turnEventSink';
 import { readToolError } from '../support/toolErrorEnvelope';
 
 /** The captured walk used to seed the SM-offer pill / `lineage_start_exploration`. */
@@ -28,6 +29,7 @@ const ScopeBundleOriginView = z.object({ origin: z.string().trim().min(1) }).loo
 const OverBudgetResultView = z.object({
   reason: z.literal('over_discovery_budget'),
   counts: z.object({ nodes: z.number() }).loose().optional(),
+  hint: z.string().optional(),
   scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
 }).loose();
 
@@ -120,4 +122,66 @@ export function detectOverBudgetFromResult(toolName: string, resultText: string)
   } catch {
     return false;
   }
+}
+
+/** A parsed `over_discovery_budget` rejection from any catalog tool — drives the user-visible notice. */
+export interface OverBudgetNotice {
+  /** Tool whose result carried the rejection envelope. */
+  readonly toolName: string;
+  /** Projected node count from the envelope, when the emitting guard provided one. */
+  readonly nodes: number | null;
+  /** The envelope's AI-facing hint, or the shipped default when omitted. */
+  readonly hint: string;
+}
+
+const DEFAULT_OVER_BUDGET_HINT = 'Scope exceeds the discovery budget. Summarize what is already known; a detailed analysis would be needed.';
+
+/**
+ * Reads an `over_discovery_budget` rejection from any tool result.
+ *
+ * @remarks
+ * Unlike {@link captureRejectedScopeOffer} this is tool-agnostic: every catalog surface shares
+ * `checkScopeBudget`, so the same envelope can arrive from scope bundles, DDL detail, group
+ * requests, or screen recall. Returns `null` for anything else, including malformed JSON.
+ *
+ * @param toolName - Tool that produced `resultText`.
+ * @param resultText - The tool's serialized result.
+ * @returns The notice payload, or `null` when the result is not an over-budget rejection.
+ */
+export function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetNotice | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(resultText);
+  } catch {
+    return null;
+  }
+  const view = OverBudgetResultView.safeParse(raw);
+  if (!view.success) return null;
+  return { toolName, nodes: view.data.counts?.nodes ?? null, hint: view.data.hint?.trim() || DEFAULT_OVER_BUDGET_HINT };
+}
+
+/** Sinks that already showed the budget notice this turn — one notice per turn, however many rejections fire. */
+const budgetNoticeShown = new WeakSet<TurnEventSink>();
+
+/**
+ * Emits the user-visible discovery-budget notice, once per turn.
+ *
+ * @remarks
+ * The envelope itself is model-facing (an observation the model summarizes); without this notice
+ * a budget rejection is silent to the user whenever the model does not mention it. Recoverable,
+ * so it renders inline rather than claiming the turn's error presentation.
+ *
+ * @param sink - The turn's event sink.
+ * @param toolName - Tool that produced `resultText`.
+ * @param resultText - The tool's serialized result.
+ */
+export function emitDiscoveryBudgetNotice(sink: TurnEventSink, toolName: string, resultText: string): void {
+  if (budgetNoticeShown.has(sink)) return;
+  const notice = readOverBudgetNotice(toolName, resultText);
+  if (!notice) return;
+  budgetNoticeShown.add(sink);
+  const scope = notice.nodes !== null && notice.nodes > 0 ? ` (${notice.nodes} projected nodes)` : '';
+  sink.error(
+    `**Discovery budget reached** — \`${notice.toolName}\` was rejected${scope}: the requested scope exceeds what one turn can load. The assistant will continue with what is already loaded; ask about a narrower part of the lineage, or start a detailed analysis, to cover the rest.`,
+  );
 }

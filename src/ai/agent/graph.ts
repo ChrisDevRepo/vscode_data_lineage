@@ -42,7 +42,7 @@ import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
-import { captureDiscoveryWalkFromObservations, captureRejectedScopeOffer } from './discoveryCapture';
+import { captureDiscoveryWalkFromObservations, captureRejectedScopeOffer, emitDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
 import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, trunc as truncStatusLabel, type ProviderErrorDiagnostic } from '../support/text';
@@ -468,12 +468,19 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     draft: StandardPhaseDraft,
     failure: StandardPhaseFailure,
   ) => {
+    // Every phase's tool results flow through this one hook: the user-visible budget notice rides
+    // here rather than per call site, so a rejection is never silent whichever surface emitted it.
+    const phaseHook = draft.onToolResult;
     const plan = compileInstructionPlan({
       kind: 'converse',
       registry: deps.registry,
       sink: deps.sink,
       signal: deps.signal,
       ...draft,
+      onToolResult: (toolName, input, isError, resultText) => {
+        emitDiscoveryBudgetNotice(deps.sink, toolName, resultText);
+        phaseHook?.(toolName, input, isError, resultText);
+      },
     });
     const result = await withLmStage(draft.stage, () => runToolAttempt(plan, priorAttempt));
     if (result.stop === 'cancelled') {
