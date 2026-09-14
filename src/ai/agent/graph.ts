@@ -369,24 +369,27 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * Announces one in-phase repair retry in the same progress grammar the hop counter uses.
    *
    * @remarks
-   * A semantic failure inside a self-looping phase is otherwise invisible in chat — the phase's
-   * entry status just repeats identically (the observed "Hop 3/3 — analysing X" twice). This
-   * emits the bracketed attempt counter on the status line and one permanent italic line naming
-   * the failed attempt, mirroring the hop counter's `(+N added, −N pruned)` brackets and the
-   * post-commit digest lines. One line per failed attempt; raw rejection prose stays in the
-   * debug channel.
+   * A semantic failure inside a self-looping phase is otherwise invisible in chat. This fires only
+   * when the attempt just recorded added a failure — an accepted non-terminal tool call that loops
+   * the phase announces nothing — and re-emits the phase status with a `(Retry N)` bracket plus one
+   * permanent italic line naming the failed attempt, mirroring the hop counter's
+   * `(+N added, −N pruned)` brackets. One line per failed attempt; raw rejection prose stays in
+   * the debug channel.
+   *
+   * @param statusText - The phase's own status line to re-emit; defaults to the phase progress label.
    */
   const emitRepairProgress = (
     phaseLabel: string,
     subject: string,
     priorAttempt: ToolPhaseAttemptState,
     nextAttempt: ToolPhaseAttemptState,
+    statusText?: string,
   ): void => {
     if (nextAttempt.semanticFailures <= priorAttempt.semanticFailures) return;
-    const base = PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject;
+    const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject}…`;
     const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
-    deps.sink.status(statusPhase, `${base}… (attempt ${nextAttempt.providerCalls + 1} — repairing)`);
-    deps.sink.stream(`\n\n_${subject} attempt ${nextAttempt.providerCalls} failed (${rejectionCauseLabel(nextAttempt)}) — repairing…_`);
+    deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.semanticFailures})`);
+    deps.sink.stream(`\n\n_${subject} attempt ${nextAttempt.providerCalls} failed (${rejectionCauseLabel(nextAttempt)}) — retrying…_`);
   };
 
   const failEngineRestore = (err: unknown): AgentStateUpdate => {
@@ -762,7 +765,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       system: discoveryInstruction.system,
       detectGate: detectGateFromToolResult,
       // Oversized `get_scope_bundle` stays on this path: the envelope is a rejection (never
-      // charged) the model recovers from with a narrower read. `/trace` and column-trace still
+      // charged) the model recovers from with a narrower read. Only `/trace` and the offer pill
       // enter SM via entryRouting, not this overflow.
       onToolResult: (toolName, input, _isError, resultText) => {
         const seed = captureRejectedScopeOffer(toolName, input, resultText);
@@ -1146,18 +1149,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       prunedThisStep > 0 ? `−${prunedThisStep} pruned` : null,
     ].filter((d): d is string => d !== null);
     const deltaNote = deltas.length > 0 ? ` (${deltas.join(', ')})` : '';
-    // A re-entered hop carries its rejected generations in `priorAttempt` — without the suffix the
-    // entry status would repeat the identical "Hop X/Y — analysing X" line (the observed duplicate)
-    // instead of telling the user a repair is running. Same bracket grammar as the deltas above,
-    // plus one permanent italic cause line so the retry is explained in the transcript.
+    // The hop header is announced once, on the hop's first generation. A re-entry — the loop after an
+    // accepted read such as get_neighbor_columns, or a retry after a rejection — carries its
+    // generations in `priorAttempt` and prints no second header; a retry is announced where the
+    // failure is recorded, below, as `(Retry N)`.
     const priorAttempt = attemptStateFor(state, 'active');
-    if (priorAttempt.semanticFailures > 0) {
-      deps.sink.stream(`\n\n_Hop ${progress.current} attempt ${priorAttempt.providerCalls} failed (${rejectionCauseLabel(priorAttempt)}) — repairing…_`);
+    const hopHeader = `Hop ${progress.current}/${progress.total} — analysing ${focusLabel}`;
+    if (priorAttempt.providerCalls === 0) {
+      deps.sink.status('scoping', `${hopHeader}${deltaNote}`);
     }
-    const repairSuffix = priorAttempt.semanticFailures > 0
-      ? ` (attempt ${priorAttempt.providerCalls + 1} — repairing)`
-      : '';
-    deps.sink.status('scoping', `Hop ${progress.current}/${progress.total} — analysing ${focusLabel}${deltaNote}${repairSuffix}`);
 
     // Lean per-hop worker turn: focus task + focus DDL/neighbours (peekHopContext, non-advancing) +
     // rolling memory. The stable mission/rules ride in the cached `system`, so this volatile content
@@ -1290,6 +1290,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // finish already charged `missing_required_tool_call` inside the generation attempt (the one
     // owner of that failure mode), so the self-loop is always budget-bounded.
     if (!submitted) {
+      emitRepairProgress('active', `Hop ${progress.current}`, priorAttempt, nextAttempt, hopHeader);
       return {
         engineSnapshot: engine.toJSON(),
         toolAttempt: nextAttempt,
@@ -1629,7 +1630,7 @@ function routeAfterDetectEntry(state: AgentStateType): string {
   if (state.phase === 'gate_refine') return AGENT_NODES.gateRefine;
   if (state.phase === 'follow_up') return AGENT_NODES.followUp;
   if (!state.entry) return END;
-  switch (selectInitialAgentStage(state.entry, state.executionTrigger)) {
+  switch (selectInitialAgentStage(state.executionTrigger)) {
     case 'discover': return AGENT_NODES.discovery;
     case 'visual_preview': return AGENT_NODES.visualPreview;
     case 'sm_entry': return AGENT_NODES.smEntry;

@@ -4,9 +4,9 @@
  * @remarks
  * A semantic failure inside a self-looping phase used to be invisible in chat — the phase's entry
  * status repeated identically (the observed "Hop 3/3 — analysing X" twice). These tests pin the
- * two emission sites through the real graph wiring: `emitRepairProgress` for the standard phases
- * (discovery here) and the active worker's suffixed hop status plus cause line, so a retry reads
- * as progress in the same bracket grammar as the hop counter's `(+N added, −N pruned)`.
+ * emission sites through the real graph wiring: `emitRepairProgress` for a standard phase
+ * (visual preview here) and for the active worker, whose header prints once per hop while a retry
+ * reads as `(Retry N)` in the same bracket grammar as the hop counter's `(+N added, −N pruned)`.
  */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
@@ -181,16 +181,16 @@ describe('repair-progress chat emissions', () => {
     const outcome = await runtime.run(PREVIEW_REQUEST_MARKER);
     expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
 
-    // The retry is announced on the status line with the bracketed attempt counter...
-    expect(statusLabels(turn.events)).toContain('Building lineage preview… (attempt 2 — repairing)');
+    // The retry is announced on the status line with the bracketed retry counter...
+    expect(statusLabels(turn.events)).toContain('Building lineage preview… (Retry 1)');
     // ...and one permanent italic line names the failed attempt and its cause. The synthetic
     // rejection's code is deliberately unmapped, pinning the verbatim fallthrough.
-    expect(textDeltas(turn.events)).toContain('\n\n_Visual preview attempt 1 failed (synthetic_test_semantic_failure) — repairing…_');
+    expect(textDeltas(turn.events)).toContain('\n\n_Visual preview attempt 1 failed (synthetic_test_semantic_failure) — retrying…_');
     // No announcement without a new failure: the accepted attempt emits no second repair line.
-    expect(statusLabels(turn.events).filter(label => label.includes('repairing')).length).toBe(1);
+    expect(statusLabels(turn.events).filter(label => label.includes('(Retry')).length).toBe(1);
   });
 
-  it('suffixes the re-entered hop status with the repair counter instead of repeating the identical line', async () => {
+  it('announces a hop retry once with (Retry N) instead of repeating the identical line', async () => {
     const session = new AiSession();
     const leaves = seedFanOutLineage(session, 2);
     const epoch = session.beginTurn();
@@ -256,13 +256,74 @@ describe('repair-progress chat emissions', () => {
     expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
     expect(model.requests.length).toBe(script.length);
 
-    // Hop 2 was entered twice: bare the first time, repair-suffixed on the re-entry after the
-    // rejected submit — the two lines are never identical (the observed duplicate).
+    // Hop 2 was entered twice: the header once, then one (Retry 1) line where the rejected submit
+    // was recorded — the two lines are never identical (the observed duplicate).
     const hop2 = statusLabels(turn.events).filter(label => label.startsWith('Hop 2/'));
     expect(hop2.length).toBe(2);
     expect(hop2[0]).toMatch(/^Hop 2\/\d+ — analysing Leaf0$/);
-    expect(hop2[1]).toMatch(/^Hop 2\/\d+ — analysing Leaf0 \(attempt 2 — repairing\)$/);
+    expect(hop2[1]).toMatch(/^Hop 2\/\d+ — analysing Leaf0 \(Retry 1\)$/);
     // The permanent cause line explains the retry in the transcript.
-    expect(textDeltas(turn.events)).toContain('\n\n_Hop 2 attempt 1 failed (synthetic_test_semantic_failure) — repairing…_');
+    expect(textDeltas(turn.events)).toContain('\n\n_Hop 2 attempt 1 failed (synthetic_test_semantic_failure) — retrying…_');
+  });
+
+  it('prints the hop header once when an accepted read loops the hop before its submit', async () => {
+    const session = new AiSession();
+    const leaves = seedFanOutLineage(session, 2);
+    const epoch = session.beginTurn();
+    seedProposal(session, epoch, leaves.length + 1);
+
+    let submitCalls = 0;
+    const { registry } = scriptedRegistry([
+      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
+      { name: 'lineage_start_exploration', result: GATE_RESULT },
+      { name: 'lineage_get_neighbor_columns', result: JSON.stringify({ results: [] }) },
+      {
+        name: 'lineage_submit_findings',
+        result: (): string => {
+          submitCalls += 1;
+          const engine = session.stateMachine as NavigationEngine;
+          return JSON.stringify(submitAndAdvance(engine, {
+            focus_node_id: engine.currentFocus!,
+            sections: [{ angle: 'business', text: 'analyzed' }],
+            summary: 'analyzed',
+            verdict: 'analyze',
+            ...(submitCalls === 1 ? { route_requests: leaves.map(id => ({ nodeId: id, question: `origin of ${id}?` })) } : {}),
+          }));
+        },
+      },
+      { name: 'lineage_present_result', result: () => commitStubPresentation(session, epoch) },
+    ]);
+
+    const script = [
+      { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
+      { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: 'analyzed', verdict: 'analyze' })] },
+      // Hop 2: an accepted non-terminal read loops the hop once, then the submit commits it.
+      { toolCalls: [validCall('columns-leaf-0', 'lineage_get_neighbor_columns', { ids: ['[ai].[Origin]'] })] },
+      { toolCalls: [validCall('submit-leaf-0', 'lineage_submit_findings', { summary: 'analyzed', verdict: 'analyze' })] },
+      { toolCalls: [validCall('submit-leaf-1', 'lineage_submit_findings', { summary: 'analyzed', verdict: 'analyze' })] },
+      { toolCalls: [validCall('present-1', 'lineage_present_result', {})] },
+    ];
+    const model = new ScriptedModelPort(script);
+    const turn = makeGateSink();
+    const runtime = new AgentRuntime({
+      threadId: 'single-hop-header',
+      getSession: () => session,
+      model: model as unknown as ModelPort,
+      registry,
+      sink: turn.sink,
+      turnEpoch: epoch,
+      maxRounds: 10,
+    });
+
+    const running = runtime.run('/trace [ai].[Origin]');
+    const gate = await turn.nextGate();
+    expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
+    const outcome = await running;
+    expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
+    expect(model.requests.length).toBe(script.length);
+
+    const hop2 = statusLabels(turn.events).filter(label => label.startsWith('Hop 2/'));
+    expect(hop2).toHaveLength(1);
+    expect(statusLabels(turn.events).some(label => label.includes('(Retry'))).toBe(false);
   });
 });

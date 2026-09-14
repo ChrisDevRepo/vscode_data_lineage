@@ -151,13 +151,16 @@ When accepted observations show at least two distinct objects inspected
 through `lineage_get_object_detail`, the walk is treated as multi-object and
 the SM-offer pill is seeded from its first object and final answer.
 
-Requests that need hop-by-hop analysis, explicit named-column tracing, or more
-scope than discovery permits are routed to SM entry. Tool availability is
-defined only in
+Only a mechanical trigger opens SM entry: the `/trace` command or the user's
+SM-offer pill. Every free-text request, including one the detector classifies
+as `column_trace`, runs discovery first. When the scope exceeds the discovery
+budget, `lineage_get_scope_bundle` returns a partial payload (the origin with
+its whole DDL and the neighbor counts). The answer summarizes it, says the full
+question needs a detailed analysis, and seeds the SM-offer pill; the user may
+accept or ask something else. Tool availability is defined only in
 [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 
-A column-trace request always escalates to SM entry, budget irrelevant. Which
-traversal mode then runs, BB or CT, is settled at the consent gate, never by
+Which traversal mode runs, BB or CT, is settled at the consent gate, never by
 this routing step.
 
 ### Consent gate

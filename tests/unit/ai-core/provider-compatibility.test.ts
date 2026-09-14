@@ -74,7 +74,7 @@ describe('provider tool-call compatibility', () => {
       .join('');
     // The tool-less false error is one semantic failure: its repair retry is announced in chat
     // (the repair-progress contract), then the trusted answer completes the turn.
-    expect(text).toContain('\n\n_Discovery attempt 1 failed (missing_required_evidence) — repairing…_');
+    expect(text).toContain('\n\n_Discovery attempt 1 failed (missing_required_evidence) — retrying…_');
     expect(text).toContain('There is 1 object in the loaded snapshot.');
     expect(text).not.toContain('DB Error');
   });

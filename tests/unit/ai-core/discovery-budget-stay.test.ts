@@ -2,8 +2,8 @@
  * BUDGET-STAY-DISCOVERY: an oversized `lineage_get_scope_bundle` stays in discovery.
  *
  * The envelope is a rejection (never charged) the model recovers from with a narrower read; the
- * existing SM-offer pill is the opt-in. `/trace` and column-trace still open SM-entry immediately
- * via entryRouting.
+ * existing SM-offer pill is the opt-in. Only `/trace` (with or without a named column) opens
+ * SM-entry immediately via entryRouting; a free-text `column_trace` verdict runs discovery first.
  */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
@@ -227,7 +227,55 @@ describe('oversized discovery stays in chat', () => {
     await expect(running).resolves.toBe('ok');
   });
 
-  it('column-trace still opens SM-entry immediately', async () => {
+  it('a free-text column_trace verdict runs discovery first and offers instead of gating', async () => {
+    // The detector verdict observed live: column_trace with a string-encoded object name.
+    class ColumnTraceVerdictPort extends ScriptedModelPort {
+      public override generateStructured<T>(): Promise<T> {
+        return Promise.resolve({ entry: 'column_trace', targetColumns: `["${ORIGIN}"]` } as T);
+      }
+    }
+    const session = new AiSession();
+    const epoch = session.beginTurn();
+    const model = new ColumnTraceVerdictPort([
+      {
+        toolCalls: [validCall('scope-1', 'lineage_get_scope_bundle', {
+          origin: ORIGIN,
+          upstream_depth: 'all',
+          downstream_depth: 0,
+        })],
+      },
+      {
+        toolCalls: [validCall('detail-1', 'lineage_get_object_detail', { id: ORIGIN })],
+      },
+      { text: SUMMARY },
+    ]);
+    const { registry, invocations } = scriptedRegistry([
+      { name: 'lineage_get_scope_bundle', result: overBudgetEnvelope() },
+      { name: 'lineage_get_object_detail', result: JSON.stringify({ id: ORIGIN, definition: 'CREATE VIEW ai.FactSalesReport AS SELECT 1;' }) },
+      { name: 'lineage_start_exploration', result: GATE_RESULT },
+    ]);
+    const { sink, events } = collectingSink();
+    const runtime = new AgentRuntime({
+      threadId: 'budget-stay-free-text-column-trace',
+      getSession: () => session,
+      model: model as unknown as ModelPort,
+      registry,
+      sink,
+      turnEpoch: epoch,
+      maxRounds: 4,
+    });
+
+    await expect(runtime.run(`review the obj. ${ORIGIN} the all way up what sources and explain business logic.`)).resolves.toBe('ok');
+
+    expect(model.requests[0]?.phase).toBe('discover');
+    expect(model.requests[0]?.tools.map(tool => tool.name)).not.toContain('lineage_start_exploration');
+    expect(invocations.map(call => call.toolName)).toEqual(['lineage_get_scope_bundle', 'lineage_get_object_detail']);
+    expect(events.some(event => event.type === 'gate'), 'free text never opens the approval gate directly').toBe(false);
+    expect(session.pendingExploration).toBeNull();
+    expect(session.smOfferAvailable()).toBe(true);
+  });
+
+  it('/trace with a named column still opens SM-entry immediately', async () => {
     const session = new AiSession();
     const epoch = session.beginTurn();
     const model = new ScriptedModelPort([

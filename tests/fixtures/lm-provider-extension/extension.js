@@ -34,7 +34,7 @@ let ctColumnAssignment = new Map();
  *
  * @remarks
  * `entry`/`targetColumns` feed the `structured_output` entry-detector reply (src/ai/agent/state.ts
- * EntryDetectionSchema). S6 sets `entry: null` because its donor prompt is a leading `/trace`
+ * EntryDetectionSchema). S6 and S7 set `entry: null` because their prompts lead with a `/trace`
  * command — `detectSlashRoute` (src/ai/agent/slashCommands.ts) pins the route deterministically and
  * the graph never calls the entry-detector model, so the fixture must never see a `structured_output`
  * tool for that case (if it does, something upstream regressed and the fixture answers 'discovery'
@@ -88,7 +88,7 @@ const DEFAULT_CASES = {
     depth: 'all',
   },
   S7: {
-    entry: 'column_trace',
+    entry: null, // pinned by '/trace [schema].[object].[column]' — no entry-detector call for this case
     kind: 'sm',
     mode: 'ct',
     origin: '[ai].[FactSalesReport]',

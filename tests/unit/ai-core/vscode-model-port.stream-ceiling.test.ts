@@ -199,6 +199,31 @@ describe('VscodeModelPort per-phase stream ceiling (runaway-text-toolcall)', () 
     expect(script.returnCalls()).toBe(0);
   });
 
+  it('reports non-text (reasoning) part size in the usage line without capping or surfacing it', async () => {
+    // 90K chars of reasoning in `active` (50K text cap): the text ceilings are calibrated on text
+    // alone, so reasoning is reported but never cut, and its content never reaches the text.
+    const reasoning = { value: 'r'.repeat(45_000) };
+    const parts: unknown[] = [reasoning, { value: ['r'.repeat(20_000), 'r'.repeat(25_000)] }, 'answer', { data: new Uint8Array(4) }];
+    const sendRequest = vi.fn().mockResolvedValue({
+      stream: (async function* () { yield* parts.map((part) => typeof part === 'string' ? new vscode.LanguageModelTextPart(part) : part); })(),
+    });
+    const model = { id: 'publisher.exact', name: 'Exact', vendor: 'test', family: 'scripted', version: '1', sendRequest };
+    const lines: string[] = [];
+    const port = new VscodeModelPort(model as never, { debugLog: (line) => lines.push(line) });
+
+    const result = await port.generateToolTurn({
+      messages: [new HumanMessage('act')],
+      tools: [],
+      phase: 'active',
+    });
+
+    expect(result).toMatchObject({ status: 'completed', finishReason: 'stop', text: 'answer', toolCalls: [] });
+    const usage = lines.find((line) => line.startsWith('[AI] usage'));
+    expect(usage).toContain('observed_text_chars=6');
+    expect(usage).toContain('observed_nontext_chars=90000');
+    expect(lines.some((line) => line.includes('stream-ceiling'))).toBe(false);
+  });
+
   it('resolves an unrecognized phase label to the outer bound, never to a smaller cap', async () => {
     // 80K chars: above every smaller cap in the map, below the 200K outer bound. An unknown
     // label must behave exactly like a phase mapped to the outer bound.

@@ -1377,7 +1377,8 @@ function emitSynthesizedRejection(
  * @remarks
  * Enforces the single-generation model-port contract (exactly one provider call per attempt),
  * classifies a truncated or filtered generation as an `output_limit` stop before any tool or
- * session effect can commit from incomplete output, then dispatches the returned tool calls
+ * session effect can commit from incomplete output (a tool-less length cut in a phase that must
+ * call a tool is instead a chargeable missing-call rejection the repair ladder retries), then dispatches the returned tool calls
  * against gate/reroute/phase-completion detection and the semantic-failure budget.
  *
  * @param model - Request-scoped model port; must record exactly one provider call.
@@ -1437,7 +1438,14 @@ export async function executeToolGenerationAttempt(
     generated.finishReason === 'length' ? 'length'
       : generated.finishReason === 'content-filter' ? 'content-filter'
         : null;
-  if (finishAnomaly) {
+  // A length cut that carried no tool call, in a phase that must call one, dispatched nothing, so
+  // no partial effect can commit: it is a failed submission the semantic-failure budget retries,
+  // not a terminal stop. A cut that carried calls, a content filter, and a cut in a prose phase
+  // stay terminal.
+  const truncatedBeforeRequiredCall = finishAnomaly === 'length'
+    && generated.toolCalls.length === 0
+    && (input.requiredTerminalTool !== undefined || input.requiresToolEvidence === true);
+  if (finishAnomaly && !truncatedBeforeRequiredCall) {
     return {
       stop: 'output_limit',
       finishAnomaly,
@@ -1706,11 +1714,15 @@ export async function executeToolGenerationAttempt(
   if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: input.requiredTerminalTool,
-      emptyGeneration: generated.text.trim().length === 0,
+      // A length cut is never an empty provider artifact, even when no text reached the channel:
+      // it charges the semantic budget so the retries stay bounded.
+      emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: 'missing_required_tool_call',
       emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
-      nonEmptyReason: `The model did not call ${input.requiredTerminalTool}.`,
+      nonEmptyReason: truncatedBeforeRequiredCall
+        ? `The output limit was reached before ${input.requiredTerminalTool} was called.`
+        : `The model did not call ${input.requiredTerminalTool}.`,
       hint: `Emit ${input.requiredTerminalTool} through the tool-call channel: a fenced JSON body, or a <function=...> block with <parameter=...> pairs, is message text and is not a call. Same fields, correct channel.`,
     });
   }
@@ -1722,11 +1734,13 @@ export async function executeToolGenerationAttempt(
     const evidenceToolNames = input.registry.getTools().map((tool) => tool.name).join(', ');
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: 'lineage_evidence',
-      emptyGeneration: generated.text.trim().length === 0,
+      emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: 'missing_required_evidence',
       emptyReason: 'The provider returned an empty response instead of calling a lineage tool.',
-      nonEmptyReason: 'The response contained no trusted lineage evidence.',
+      nonEmptyReason: truncatedBeforeRequiredCall
+        ? 'The output limit was reached before any lineage tool was called.'
+        : 'The response contained no trusted lineage evidence.',
       hint: `Call one of this phase's lineage tools before answering: ${evidenceToolNames}.`,
     });
   }

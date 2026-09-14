@@ -201,7 +201,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const { parts: response, hitCeiling } = await this.collectGeneration(
+      const { parts: response, hitCeiling, nonTextChars } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -285,6 +285,7 @@ export class VscodeModelPort implements ModelPort {
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
+        + ` observed_nontext_chars=${nonTextChars}`
         + ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}`
         + ' (provider usage unavailable)',
       );
@@ -382,7 +383,7 @@ export class VscodeModelPort implements ModelPort {
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
-  ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean }> {
+  ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean; nonTextChars: number }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
     // Captured now rather than read at emit time: concurrent generations would otherwise all
@@ -438,6 +439,9 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       const parts: PortGenerationPart[] = [];
       let textChars = 0;
+      // Output the host streamed outside the text channel (reasoning). Reported, never capped: the
+      // text ceilings are calibrated on text alone, and legitimate reasoning exceeds them.
+      let nonTextChars = 0;
       let hitCeiling = false;
       // The phase cap breaks only a tool-free text drain: a chunk that finally delivers a tool
       // call must never be discarded because earlier prose crossed the cap. The outer bound keeps
@@ -454,6 +458,8 @@ export class VscodeModelPort implements ModelPort {
           parts.push({ type: 'text', text: chunk.content });
           textChars += chunk.content.length;
         }
+        const streamedNonText = chunk.response_metadata?.nonTextChars;
+        if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
         for (const call of chunk.tool_call_chunks ?? []) {
           sawToolCallDelta = true;
           if (!call.id || !call.name || typeof call.args !== 'string') {
@@ -478,7 +484,7 @@ export class VscodeModelPort implements ModelPort {
         ) {
           hitCeiling = true;
           this.options.debugLog?.(
-            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} cap=${textCeiling}`,
+            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} nontext=${nonTextChars} cap=${textCeiling}`,
           );
           break;
         }
@@ -530,7 +536,7 @@ export class VscodeModelPort implements ModelPort {
           : resolvedParts.some((part) => part.type === 'tool-call') ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
       });
-      return { parts: resolvedParts, hitCeiling };
+      return { parts: resolvedParts, hitCeiling, nonTextChars };
     } catch (error) {
       // The watchdog aborts through the shared cancellation token, so the stream surfaces its
       // expiry as a cancellation — reclassify it here so it reaches callers as a provider timeout

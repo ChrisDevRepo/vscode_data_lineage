@@ -6,8 +6,8 @@
  *      discovery. Over cap → hard-rejected with `over_discovery_budget`; discovery stays in
  *      chat and the existing SM-offer pill is the opt-in for a detailed analysis.
  *   2. ai.discoveryTokenBudget (default 10000) — max projected DDL token estimate
- *      for that same scope. Either cap exceeded → the same envelope. `/trace` and
- *      column-trace still enter SM via entryRouting, not this overflow.
+ *      for that same scope. Either cap exceeded → the same envelope. Only `/trace` and
+ *      the SM-offer pill enter SM via entryRouting, not this overflow.
  *
  * ZERO-TRUNCATION GUARANTEE:
  *   No tool response is ever truncated, capped, or sliced.

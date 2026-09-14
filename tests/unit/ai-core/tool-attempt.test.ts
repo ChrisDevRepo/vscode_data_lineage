@@ -554,6 +554,67 @@ describe('executeToolGenerationAttempt — truncated generation classification',
     expect(attempted.events.filter((event) => event.type === 'text')).toEqual([]);
   });
 
+  it('retries a tool-less length cut in a required-terminal-tool phase as a chargeable missing call', async () => {
+    const attempted = await runAttempt(
+      [{ text: 'Wait, but the task says re-anchor. '.repeat(50), finishReason: 'length' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('continue');
+    expect(attempted.result.finishAnomaly).toBeUndefined();
+    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.rejections).toEqual([
+      expect.objectContaining({
+        code: 'missing_required_tool_call',
+        reason: 'The output limit was reached before lineage_submit_findings was called.',
+      }),
+    ]);
+    expect(attempted.invocations).toEqual([]);
+    expect(attempted.events.filter((event) => event.type === 'text')).toEqual([]);
+  });
+
+  it('charges a text-free length cut in a required-terminal-tool phase, never as an empty generation', async () => {
+    const attempted = await runAttempt(
+      [{ text: '', finishReason: 'length' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('continue');
+    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.rejections).toEqual([expect.objectContaining({ code: 'missing_required_tool_call' })]);
+  });
+
+  it('retries a tool-less length cut in an evidence-required phase as missing evidence', async () => {
+    const attempted = await runAttempt(
+      [{ text: 'Thinking about the scope…', finishReason: 'length' }],
+      [{ name: 'lineage_get_context', result: '{"visible_objects":32}' }],
+      { requiresToolEvidence: true, proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('continue');
+    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.rejections).toEqual([
+      expect.objectContaining({
+        code: 'missing_required_evidence',
+        reason: 'The output limit was reached before any lineage tool was called.',
+      }),
+    ]);
+  });
+
+  it('keeps a content-filter cut terminal even when the phase requires a tool', async () => {
+    const attempted = await runAttempt(
+      [{ text: 'Filtered', finishReason: 'content-filter' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('output_limit');
+    expect(attempted.result.finishAnomaly).toBe('content-filter');
+    expect(attempted.result.rejections).toEqual([]);
+  });
+
   it('treats a truncation stop as phase-terminal ahead of the cumulative budget counters', () => {
     const state: ToolPhaseAttemptState = {
       phase: 'active',

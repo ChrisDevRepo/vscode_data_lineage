@@ -69,22 +69,13 @@ describe('ai-slash-routing', () => {
     }
   });
 
-  it('semantic verdict and execution trigger stay separate', () => {
-    // visual_render is a semantic classification, not an execution trigger: free-text render
-    // intent runs the main discovery loop, same as any other free-text request, so the bounded
-    // preview it may offer afterward stays reachable only through the explicit trigger.
-    expect(selectInitialAgentStage('visual_render', 'free_text'), 'free-text visual intent enters discovery, not gated SM').toBe('discover');
-    expect(selectInitialAgentStage('visual_render', 'preview_button'), 'explicit preview action retains the bounded preview').toBe('visual_preview');
-    expect(selectInitialAgentStage('discovery', 'free_text'), 'plain discovery intent enters discovery').toBe('discover');
-    expect(selectInitialAgentStage('column_trace', 'free_text'), 'named-column trace enters gated CT').toBe('sm_entry');
-
-    // Every explicit mechanical trigger outranks the model's semantic classification, whatever
-    // that classification was — this is the ranking the entry router exists to enforce.
-    expect(selectInitialAgentStage('discovery', 'preview_button'), 'preview_button outranks a discovery verdict').toBe('visual_preview');
-    expect(selectInitialAgentStage('discovery', 'slash_trace'), '/trace mechanically enters SM').toBe('sm_entry');
-    expect(selectInitialAgentStage('visual_render', 'slash_trace'), 'slash_trace outranks a visual_render verdict').toBe('sm_entry');
-    expect(selectInitialAgentStage('discovery', 'run_trace'), 'run_trace mechanically enters SM').toBe('sm_entry');
-    expect(selectInitialAgentStage('visual_render', 'run_trace'), 'run_trace outranks a visual_render verdict').toBe('sm_entry');
+  it('only the mechanical trigger selects the first stage', () => {
+    // Every free-text verdict — discovery, visual_render, column_trace — runs the discovery loop;
+    // the bounded preview and SM entry stay reachable only through an explicit trigger.
+    expect(selectInitialAgentStage('free_text'), 'free text enters discovery, never gated SM').toBe('discover');
+    expect(selectInitialAgentStage('preview_button'), 'explicit preview action retains the bounded preview').toBe('visual_preview');
+    expect(selectInitialAgentStage('slash_trace'), '/trace mechanically enters SM').toBe('sm_entry');
+    expect(selectInitialAgentStage('run_trace'), 'the SM-offer pill mechanically enters SM').toBe('sm_entry');
   });
 
   /**
@@ -103,12 +94,12 @@ describe('ai-slash-routing', () => {
    */
   it('routes every AgentEntryRoute x AgentExecutionTrigger pair per docs/ARCHITECTURE.md §Discovery and visual preview', () => {
     const ROUTING_TABLE: Record<AgentEntryRoute, Record<AgentExecutionTrigger, InitialAgentStage>> = {
-      // docs/ARCHITECTURE.md:178 — "A column-trace request always escalates to SM entry, budget
-      // irrelevant — the escalation is keyed on request kind, not size." That contract confirms
-      // entryRouting.ts:22 is correct and is NOT touched by the visual_render
-      // repair: kind-based, never size-based, in every trigger column.
+      // docs/ARCHITECTURE.md §Discovery and visual preview — "Only a mechanical trigger opens SM
+      // entry": a free-text column_trace verdict runs discovery first, so an oversized scope is
+      // summarized and the detailed analysis offered instead of gated. The escalation stays keyed on
+      // the trigger, never on size.
       column_trace: {
-        free_text: 'sm_entry',
+        free_text: 'discover',
         slash_trace: 'sm_entry',
         run_trace: 'sm_entry',
         preview_button: 'visual_preview',
@@ -140,7 +131,7 @@ describe('ai-slash-routing', () => {
       for (const trigger of triggerKeys) {
         const expected = triggers[trigger];
         expect(
-          selectInitialAgentStage(entry, trigger),
+          selectInitialAgentStage(trigger),
           `docs/ARCHITECTURE.md §Discovery and visual preview: (entry=${entry}, trigger=${trigger}) must route to '${expected}'`,
         ).toBe(expected);
       }
