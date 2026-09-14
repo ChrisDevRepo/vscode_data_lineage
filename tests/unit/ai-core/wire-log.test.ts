@@ -117,8 +117,11 @@ describe('model wire log', () => {
       },
     ]);
     // The tool input schema is the field no other capture surface exposes.
+    // The description is identified by digest, like the system instruction, so a trace proves which
+    // modelDescription revision the model received.
     expect(request.tools).toEqual([{
       name: 'lineage_present_result',
+      descriptionHash: systemPromptHash('present'),
       inputSchema: expect.objectContaining({
         type: 'object',
         properties: { id: { type: 'string' } },

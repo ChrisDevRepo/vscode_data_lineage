@@ -119,7 +119,7 @@ describe('AiTraceWriter resilience', () => {
       requestId: 'request-1',
       generation: 1,
       messages: [],
-      tools: [{ name: 'lineage_test', inputSchema: schema }],
+      tools: [{ name: 'lineage_test', descriptionHash: '0'.repeat(64), inputSchema: schema }],
     })).resolves.toBeUndefined();
 
     expect(() => JSON.parse(written)).not.toThrow();
