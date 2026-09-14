@@ -67,7 +67,7 @@ summary:
 title:
   stages: [synthesis]
   instruction: >
-    Optional, ≤80 chars and hard-capped at 120:
+    Optional, ≤80 chars:
     "[Subject] — [key computation, pattern, or finding]", ending on the final
     output object where it fits.
   example: "NetFeeA — DaysA × RateA, 6-hop ETL to FactCircA"
@@ -114,7 +114,8 @@ highlights:
   stages: [synthesis]
   instruction: >
     Colors and labels are two different channels, both relative to the USER
-    QUESTION. Colors (highlight_groups) mark importance: the question's data
+    QUESTION. Each group's legend label names the role its nodes share — aim
+    for ~40 chars. Colors (highlight_groups) mark importance: the question's data
     Sources, its Target, and the important transformations — nodes that CREATE
     or CHANGE the answer's values (formula, condition, classification, status
     transition). Carry-through plumbing (renames, SELECT * bridges, movement

@@ -124,6 +124,20 @@ export interface DriveOptions {
   followDownstream?: boolean;
   /** Ids to submit as `passthrough` rather than `analyze`. */
   passthrough?: ReadonlySet<string>;
+  /** Ids to submit as `prune`. Evaluated before {@link DriveOptions.passthrough}. */
+  prune?: ReadonlySet<string>;
+  /**
+   * CT walk: focus id → the single upstream node supplying {@link DriveOptions.column}.
+   *
+   * @remarks
+   * Present at all, every focus submits `column_flow` and no `route_requests` — a CT contraction is
+   * carried on the column edge, not on a route. A focus that maps to a supplier submits one entry
+   * for it; a focus mapped to `undefined`, or absent from the map, submits `column_flow: []`, which
+   * is how a walk states that the chain ends at that node.
+   */
+  columnFlow?: Record<string, string | undefined>;
+  /** The traced column name, required whenever {@link DriveOptions.columnFlow} is given. */
+  column?: string;
   /** Prefixes the section text and summary, to tell two walks of one graph apart. */
   tag?: string;
   /** Hop ceiling, so a routing bug fails the test instead of hanging it. */
@@ -145,7 +159,8 @@ export function driveEngine(
   engine: Pick<NavigationEngine, 'getHopContext' | 'submitFindings'>,
   options: DriveOptions = {},
 ): string[] {
-  const { succ, routes, followDownstream, passthrough, tag, limit = 50 } = options;
+  const { succ, routes, followDownstream, passthrough, prune, columnFlow, column, tag, limit = 50 } = options;
+  if (columnFlow && !column) throw new Error('driveEngine: columnFlow requires column, the traced column name.');
   const visited: string[] = [];
 
   for (let hop = 0; hop < limit; hop++) {
@@ -169,12 +184,20 @@ export function driveEngine(
     } else targets = [];
 
     const label = tag ? `${tag}: ${id}` : id;
+    const verdict = prune?.has(id) ? 'prune' : passthrough?.has(id) ? 'passthrough' : 'analyze';
+    const supplier = columnFlow?.[id];
     engine.submitFindings({
       focus_node_id: id,
       sections: [{ angle: 'business', text: `analysis for ${label}` }],
       summary: label,
-      verdict: passthrough?.has(id) ? 'passthrough' : 'analyze',
-      route_requests: targets.map((target) => ({ nodeId: target, question: 'trace downstream' })),
+      verdict,
+      ...(columnFlow
+        ? {
+            column_flow: supplier
+              ? [{ out_col: column!, upstream_columns: [{ node: supplier, col: column! }] }]
+              : [],
+          }
+        : { route_requests: targets.map((target) => ({ nodeId: target, question: 'trace downstream' })) }),
     });
   }
 

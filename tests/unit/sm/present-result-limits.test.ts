@@ -1,6 +1,7 @@
 import {
   discoveryPreviewNarrative,
   findDiscoveryPreviewReuseViolations,
+  orderAndAssemble,
   validatePresentResult,
 } from '../../../src/ai/tools/presentResult';
 import {
@@ -21,6 +22,17 @@ describe("present_result hard/soft text limits", () => {
     summary: 'One-line purpose.',
     sections: [{ label: 'Result', text: 'Grounded detail.' }],
   };
+  /** A payload that validates end to end, so each case below changes exactly one label. */
+  const validBase = {
+    name: 'Import flow',
+    summary: 'One-line purpose.',
+    sections: [{ label: 'Result', text: 'Grounded detail.', node_ids: ['a'] }],
+    highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
+  };
+  const validate = (payload: Record<string, unknown>) => {
+    const assembled = orderAndAssemble(payload.sections as Parameters<typeof orderAndAssemble>[0]);
+    return validatePresentResult(payload as never, ['a'], assembled.badges, assembled.description);
+  };
 
   it("the boundary never truncates authored text", () => {
     const longName = 'n'.repeat(PRESENT_RESULT_NAME_MAX - 5);
@@ -36,55 +48,104 @@ describe("present_result hard/soft text limits", () => {
     expect(result.data!.summary, 'summary is never truncated (content, not a GUI label)').toBe(longSummary);
   });
 
+  /**
+   * The four GUI labels whose hard cap the MODEL-FACING schema advertises and
+   * `validatePresentResult` — never the boundary parse — enforces. A Zod reject at the boundary
+   * fails the whole call with no held draft, so an overrun would cost a full resend of an answer
+   * that was otherwise correct; enforced in the validator it is a repairable, one-field patch.
+   */
   const textLimitCases: Array<{
     name: string;
     max: number;
     char: string;
+    field: string;
     path: string;
-    input: (value: string) => unknown;
+    payload: (value: string) => Record<string, unknown>;
   }> = [
     {
       name: 'name',
       max: PRESENT_RESULT_NAME_MAX,
       char: 'n',
+      field: 'name',
       path: 'name',
-      input: value => ({ ...base, name: value }),
+      payload: value => ({ ...validBase, name: value }),
     },
     {
       name: 'title',
       max: PRESENT_RESULT_TITLE_MAX,
       char: 't',
+      field: 'title',
       path: 'title',
-      input: value => ({ ...base, name: 'ok', title: value }),
+      payload: value => ({ ...validBase, title: value }),
     },
     {
       name: 'section label',
       max: PRESENT_RESULT_SECTION_LABEL_MAX,
       char: 'L',
-      path: 'sections',
-      input: value => ({ ...base, name: 'ok', sections: [{ label: value, text: 'x' }] }),
+      field: 'sections',
+      path: 'sections.0.label',
+      payload: value => ({ ...validBase, sections: [{ label: value, text: 'Grounded detail.', node_ids: ['a'] }] }),
     },
     {
       name: 'highlight label',
       max: PRESENT_RESULT_HIGHLIGHT_LABEL_MAX,
       char: 'H',
-      path: 'highlight_groups',
-      input: value => ({
-        ...base,
-        name: 'ok',
-        highlight_groups: [{ label: value, color: 'source', node_ids: ['a'] }],
-      }),
+      field: 'highlight_groups',
+      path: 'highlight_groups.0.label',
+      payload: value => ({ ...validBase, highlight_groups: [{ label: value, color: 'source', node_ids: ['a'] }] }),
     },
   ];
 
-  it.each(textLimitCases)('$name accepts its hard cap', ({ name, max, char, input }) => {
-    expect(parse(input(char.repeat(max))).success, `${name} at the hard cap is accepted`).toBe(true);
+  it.each(textLimitCases)('no parse enforces the $name cap, so the validator sees the overrun', ({ name, max, char, payload }) => {
+    // The model-facing schema is what the model port parses; a reject there carries no measured
+    // size, no held draft, and no repairable classification, so the cap is advertised only.
+    expect(PresentResultModelSchema.safeParse(payload(char.repeat(max + 1))).success,
+      `${name} over the cap parses on the schema the model is offered`).toBe(true);
+    expect(parse(payload(char.repeat(max + 1))).success,
+      `${name} over the cap parses at the boundary, so the validator — not Zod — judges it`).toBe(true);
   });
 
-  it.each(textLimitCases)('$name rejects one character over its hard cap', ({ name, max, char, path, input }) => {
-    const result = parse(input(char.repeat(max + 1)));
+  it.each(textLimitCases)('$name at exactly its hard cap validates', ({ name, max, char, payload }) => {
+    expect(validate(payload(char.repeat(max))).success, `${name} at the hard cap is accepted verbatim`).toBe(true);
+  });
+
+  it.each(textLimitCases)('an over-long $name is a repairable single-field rejection naming the entry', ({ name, max, char, field, path, payload }) => {
+    const result = validate(payload(char.repeat(max + 1)));
     if (result.success) throw new Error(`${name} over the hard cap should reject`);
-    expect(result.error.issues.some(issue => issue.path[0] === path), `${name} rejection points at ${path}`).toBe(true);
+    expect(result.repairable, `${name} over the cap is repairable`).toBe(true);
+    expect(result.repairFields, `${name} authorizes only its own field for repair`).toEqual([field]);
+    expect(result.detail?.map(entry => entry.path), `${name} names the offending entry path`).toEqual([path]);
+    expect(result.errors.join(' '), 'the rejection states the measured length against the limit').toContain(`${max + 1} chars, limit ${max}`);
+    expect(result.hint, 'the hint names the single field to resend').toContain(`Fix ${field} only.`);
+  });
+
+  it('names the exact section entry, not just the sections field', () => {
+    const sections = [
+      { label: 'One', text: 'First.', node_ids: ['a'] },
+      { label: 'Two', text: 'Second.' },
+      { label: 'L'.repeat(PRESENT_RESULT_SECTION_LABEL_MAX + 1), text: 'Third.' },
+    ];
+    const result = validate({ ...validBase, sections });
+    if (result.success) throw new Error('an over-long section label should reject');
+    expect(result.detail?.map(entry => entry.path)).toEqual(['sections.2.label']);
+  });
+
+  it('the model-facing JSON Schema carries each label ceiling as a typed constraint', () => {
+    const projected = toModelJsonSchema(PresentResultModelSchema) as {
+      properties?: {
+        name?: { maxLength?: number };
+        title?: { maxLength?: number };
+        sections?: { items?: { properties?: { label?: { maxLength?: number } } } };
+        highlight_groups?: { maxItems?: number; minItems?: number; items?: { properties?: { label?: { maxLength?: number } } } };
+      };
+    };
+    expect(projected.properties?.name?.maxLength).toBe(PRESENT_RESULT_NAME_MAX);
+    expect(projected.properties?.title?.maxLength).toBe(PRESENT_RESULT_TITLE_MAX);
+    expect(projected.properties?.sections?.items?.properties?.label?.maxLength).toBe(PRESENT_RESULT_SECTION_LABEL_MAX);
+    expect(projected.properties?.highlight_groups?.items?.properties?.label?.maxLength).toBe(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX);
+    expect(projected.properties?.highlight_groups?.maxItems).toBe(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX);
+    // The floor is structural (a new render needs at least one group), so it stays a real check.
+    expect(projected.properties?.highlight_groups?.minItems).toBe(1);
   });
 
   it("a 400-char summary is accepted (was truncated at 300 before)", () => { expect(parse({ ...base, name: 'ok', summary: 's'.repeat(400) }).success, 'a 400-char summary is accepted (was truncated at 300 before)').toBe(true); });
@@ -92,11 +153,11 @@ describe("present_result hard/soft text limits", () => {
 
 // T-1 (tooltext sweep): `highlight_groups` advertised `min(1)` but hid the hard `max` that
 // `validatePresentResult` (presentResult.ts) rejects on, so a model could only learn the ceiling
-// by being rejected. The cap now lives on the model-facing schema itself (`.max()`), asserted here
+// by being rejected. The ceiling is now stated in the JSON schema the model reads, asserted here
 // against the exported constant rather than a literal 5 copied into the test — a future change to
-// PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX moves this test with it. `PresentResultBoundarySchema`
-// deliberately keeps no count cap (see its own remarks) so the runtime validator can still produce
-// a repairable hint; this pins the model-facing schema only.
+// PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX moves this test with it. It is advertised, not parsed: the
+// validator owns the rejection so an over-long list is repaired as a `highlight_groups` patch
+// against the held draft rather than failing the whole render at the model port.
 describe('present_result highlight_groups model-facing cap (T-1)', () => {
   const buildGroups = (count: number) =>
     Array.from({ length: count }, (_, i) => ({ label: `g${i}`, color: 'source' as const, node_ids: ['a'] }));
@@ -111,14 +172,26 @@ describe('present_result highlight_groups model-facing cap (T-1)', () => {
     expect(result.success, 'the model-facing schema accepts highlight_groups at the cap').toBe(true);
   });
 
-  it('rejects one group over the cap at the model-facing schema, not only at validatePresentResult', () => {
-    const result = PresentResultModelSchema.safeParse({ ...base, highlight_groups: buildGroups(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX + 1) });
-    expect(!result.success, 'one group over the cap rejects at the Zod boundary the model is offered').toBe(true);
-    if (result.success) return;
-    expect(result.error.issues.some(issue => issue.path[0] === 'highlight_groups'), 'rejection points at highlight_groups').toBe(true);
+  it('leaves one group over the cap to the validator instead of failing the parse', () => {
+    // The section links the highlighted node, so the count is the only rule this payload breaks.
+    const overCap = {
+      ...base,
+      sections: [{ label: 'Result', text: 'Grounded detail.', node_ids: ['a'] }],
+      highlight_groups: buildGroups(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX + 1),
+    };
+    expect(PresentResultModelSchema.safeParse(overCap).success,
+      'the schema the model port parses does not reject an over-long list').toBe(true);
+
+    const assembled = orderAndAssemble(overCap.sections);
+    const result = validatePresentResult(overCap as never, ['a'], assembled.badges, assembled.description);
+    if (result.success) throw new Error('one group over the cap must reject');
+    expect(result.errors.some(message => message.includes(`maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`)),
+      'the validator states the ceiling it enforced').toBe(true);
+    expect(result.repairable, 'an over-long list is repairable').toBe(true);
+    expect(result.repairFields, 'the repair is scoped to highlight_groups').toEqual(['highlight_groups']);
   });
 
-  it('the model-facing JSON Schema carries the enforced ceiling as a typed constraint', () => {
+  it('the model-facing JSON Schema carries the advertised ceiling as a typed constraint', () => {
     const projected = toModelJsonSchema(PresentResultModelSchema) as {
       properties?: { highlight_groups?: { description?: string; maxItems?: number; minItems?: number } };
     };

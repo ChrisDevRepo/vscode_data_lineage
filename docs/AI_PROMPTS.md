@@ -37,6 +37,26 @@ which call, which field a template lands in. A content rule or threshold never
 moves from the YAML into a prompt builder or a schema description to bypass the
 overlay; a description may point at the template entry, not restate it.
 
+A field's length has three separate homes and no duplicates. The **soft target**
+— the length the answer aims for — is stated once: in the template entry that
+governs the field where one exists (`title`, `summary`, `notes`, `highlights`),
+otherwise in the field's own `.describe()` (`name`, and the per-hop tool fields
+`badge_label` and `column_flow[].upstream_columns[].note`, which are not
+template content). The **hard cap** is a named constant in
+[`toolSchemas.ts`](../src/ai/tools/toolSchemas.ts), stated to the model as a
+typed JSON-Schema constraint (`maxLength` / `maxItems`, through `advertisedMax`)
+and nowhere else in prose. Its **enforcement** is the validator —
+`validatePresentResult`, or `NavigationEngine` for the `submit_findings` fields —
+never a parse: the model port validates structure only, so an overrun is a
+repairable single-field rejection against a held draft instead of a rejection of
+the whole call at the wire. The same split covers a count cap
+(`highlight_groups`), while structural constraints — a required field, a floor,
+an enum — stay real parse-time checks. `sections[].label` carries a hard cap and deliberately no
+character target: a tool-parameter description outranks the system prompt, so a
+number there became the operative ceiling; its shape is owned by
+`buildPresentationDetailContract`. Prose fields (`summary`, `intro`, `closing`)
+have no cap at all — length is never a rejection axis for them.
+
 ## Tool catalog
 
 Two surfaces consume `TOOL_DEFS`. A name that exists on one does not imply it

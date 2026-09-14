@@ -307,6 +307,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * terminal already writes the same channel; routing every other budget stop through here keeps
    * one mapping instead of repeating it per phase.
    *
+   * Severity follows meaning: the error line stays content-free — stop reason, counters, the last
+   * rejection's tool, code, and issue paths — and the rejection prose, which is normal AI
+   * behaviour, rides the paired `[Stop]` line at `debug`. That pairing is what keeps the turn
+   * diagnosable: the error line says which budget ended it, the debug line says what the model was
+   * told last, and a default-on log carries only the first.
+   *
    * @param stopped - The stop `attemptStop` selected; `message`/`errorCode` may be overridden by
    *   spreading a replacement over it when a phase has a more specific diagnosis.
    */
@@ -315,13 +321,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     attempt: Pick<ToolPhaseAttemptState, 'phase' | 'providerCalls' | 'semanticFailures' | 'rejections'>,
   ): AgentStateUpdate => {
     const last = attempt.rejections[attempt.rejections.length - 1];
-    const lastPart = last
-      ? ` last=${last.toolName}:${last.code} reason=${trunc(sanitizeForLog(last.reason), LOG_TRUNC_REJECTION)}`
-      : '';
+    const pathPart = last?.issuePaths && last.issuePaths.length > 0 ? ` issuePaths=${last.issuePaths.join(',')}` : '';
+    const lastPart = last ? ` last=${last.toolName}:${last.code}${pathPart}` : '';
     deps.logger?.error(
       stopped.message,
       `phase=${attempt.phase} reason=${stopped.reason} providerCalls=${attempt.providerCalls} semanticFailures=${attempt.semanticFailures}${lastPart}`,
     );
+    if (last) {
+      deps.logger?.debug(
+        `[Stop] phase=${attempt.phase} reason=${stopped.reason} tool=${last.toolName} code=${last.code}`
+        + ` rejectReason=${trunc(sanitizeForLog(last.reason), LOG_TRUNC_REJECTION)}`,
+      );
+    }
     return { ...fail(stopped.message, stopped.errorCode), activeStop: stopped.reason };
   };
 

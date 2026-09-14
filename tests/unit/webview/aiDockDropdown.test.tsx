@@ -8,6 +8,7 @@ import { StrictMode, act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiDescriptionOverlay } from '../../../src/components/AiDescriptionOverlay';
+import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 
 // React 19 reads this to decide whether `act` may drive updates; without it every act() warns.
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,8 +27,11 @@ afterEach(() => {
   host.remove();
 });
 
+/** Inert host API: the overlay posts through the typed context, never through `window.vscode`. */
+const api: VsCodeAPI = { postMessage: () => {}, getState: () => undefined, setState: () => {} };
+
 function mount(element: ReactElement): void {
-  act(() => root.render(<StrictMode>{element}</StrictMode>));
+  act(() => root.render(<StrictMode><VsCodeProvider api={api}>{element}</VsCodeProvider></StrictMode>));
 }
 
 const PROPS = {

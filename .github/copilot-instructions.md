@@ -178,7 +178,14 @@ round costs its own semantic-failure charge against a budget of three.
 
 Repair is minimal-delta. A rejected submission is held and repaired through
 bounded correction fragments and the strict patch schema rather than re-sending
-the whole payload.
+the whole payload. A content cap — a label's length, a list's
+entry count — belongs to that repairable class: the JSON schema the model reads
+advertises it, no parse enforces it, and the validator — `validatePresentResult`,
+or `NavigationEngine` for the `submit_findings` fields — rejects the overrun with
+the measured size against the limit and authorizes only the offending field. A
+cap left on a parsed schema rejects the whole call at the model port with no held
+draft, which is a full resend charged for a label two words too long. Structural
+constraints (a required field, a floor, an enum) stay real parse-time checks.
 
 ## Persisted records
 

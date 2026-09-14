@@ -44,7 +44,10 @@ Model input crosses three layers, in this order:
   object reference against the loaded snapshot. Every rewrite is logged as
   `[Normalize] tool=… field=… from=… to=…`.
 - **Schema parse** — the tool's Zod schema is the structural contract; a payload
-  that does not parse never reaches a handler.
+  that does not parse never reaches a handler. Structural only: a content cap
+  (a label length, a legend-group count) is stated in the JSON schema the model
+  reads but never parsed, because a parse rejection carries no measured size, no
+  held draft, and no repairable classification.
 - **Policy rejection** — phase- and state-dependent checks a schema cannot
   express ([`src/ai/interaction/`](../src/ai/interaction/)), returned through
   one shared error envelope. A code named from more than one site is one entry
@@ -373,6 +376,21 @@ never rejects a commit: an expression the renderer cannot parse degrades to
 its original source text. Nodes may remain visible without a badge or
 highlight; pruning is the only operation that removes them from the answer
 graph.
+
+A content cap — an authored label's length, the legend-group count — is
+advertised, not parsed. The JSON schema the model reads states every one of them
+as a typed constraint; the model port validates structure only; and
+`validatePresentResult` enforces them, rejecting the overrun with the measured
+size, the limit, and the single field to resend — a repairable failure that
+holds the draft and is repaired as a field patch. `submit_findings` follows the
+same rule through the held finding draft: `badge_label` and
+`column_flow[].upstream_columns[].note` are checked in `NavigationEngine` ahead
+of every mutation, and the retry may omit `sections` to keep the prose already
+authored. Parsed instead, a label two words too long would reject the whole call
+at the port, with no held draft, and charge a full resend of an answer that was
+otherwise correct. Nothing is silently truncated on either path;
+engine-authored prose is fitted to the cap where it is written, never submitted
+over it.
 
 In CT, validated terminal source nodes must remain visible in the final
 source presentation surface so the rendered answer cannot silently drop the

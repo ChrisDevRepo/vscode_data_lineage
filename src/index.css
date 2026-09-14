@@ -450,6 +450,36 @@ body.vscode-reduce-motion *::after {
   font-size: 9px;
   color: var(--ln-fg-muted);
 }
+/* Rail dock variants — the rail sits on the edge the panel was docked to, so reopening it is where
+   the panel was. `right` has no rule: the base above already is the right-edge form. Each variant
+   mirrors the seam, moving the borderless edge and the square corners to the docked side. */
+.ln-ai-description-railwrap--left {
+  right: auto;
+  left: 0;
+}
+.ln-ai-description-railwrap--left .ln-ai-description-rail {
+  border-left: none;
+  border-right: 1px solid var(--ln-border-light);
+  border-radius: 0 8px 8px 0;
+}
+/* Bottom docks horizontally centred, so the rail is a strip rather than a tab: the vertical
+   writing mode and the height cap that shape the side rails are undone here. */
+.ln-ai-description-railwrap--bottom {
+  top: auto;
+  right: auto;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.ln-ai-description-railwrap--bottom .ln-ai-description-rail {
+  writing-mode: horizontal-tb;
+  padding: 5px 14px;
+  border-bottom: none;
+  border-right: 1px solid var(--ln-border-light);
+  border-radius: 8px 8px 0 0;
+  max-height: none;
+  max-width: 45vw;
+}
 
 /* Expanded report column */
 .ln-ai-description-overlay {

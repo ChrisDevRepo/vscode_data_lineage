@@ -887,8 +887,6 @@ export interface EngineInternalsSnapshot {
   depthLimits?: { upstream: number | null; downstream: number | null };
   /** BFS depth-from-origin, flattened to `[nodeId, depth]` pairs (insertion order preserved). */
   depthFromOrigin: Array<[string, number]>;
-  /** Extra depth levels confirmed mid-session beyond the mode cap. */
-  extendedDepthCap: number;
   /** Out-of-budget expansions allowed in soft/silent mode. */
   budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }>;
   /** Count of bodied (view/proc/function) nodes in scope — the hop denominator. */

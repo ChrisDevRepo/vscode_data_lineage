@@ -2,6 +2,7 @@ import { columnCarryFromRoute, columnCarryOf, DEFAULT_SM_START_DEPTH, EngineAspe
 import { buildRouteValidationRejection, FULL_RESUBMIT_ORDER, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { buildIncompleteRejection, computeUnaccounted } from './smCompleteness';
 import { checkActiveScopeAdmission, DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
+import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX } from '../tools/toolSchemas';
 /**
  * Unified Navigation Engine — The core state machine for all exploration modes.
  *
@@ -372,8 +373,10 @@ export class NavigationEngine implements IHopStateMachine {
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
   /**
-   * Submission held only after route/column incompleteness so a retry with empty sections can reuse
-   * already-valid authored prose. Other validation failures never establish held state.
+   * Submission held only after a field-scoped failure a retry can correct without re-authoring the
+   * analysis — route/column incompleteness, or a field over its length cap — so a retry with empty
+   * sections can reuse already-valid authored prose. Other validation failures never establish held
+   * state.
    */
   private readonly heldFindingDraft = new RepairDraftStore<HopSubmission, HopSubmission>();
 
@@ -431,8 +434,6 @@ export class NavigationEngine implements IHopStateMachine {
    * {@link getDiscoverySummary}.
    */
   protected _discoverySummary: string | null = null;
-  /** Legacy checkpoint field retained for snapshot compatibility; no longer affects routing. */
-  protected extendedDepthCap = 0;
   /** Last per-hop snapshot of detail/summary chars, used for diagnostics. */
   protected lastHopDetailChars = 0;
   /** Last per-hop summary-char count. */
@@ -519,7 +520,8 @@ export class NavigationEngine implements IHopStateMachine {
    * Canonical focus id of a currently-held finding, or `null` when none is held.
    *
    * @remarks
-   * Non-null means the prior `submit_findings` failed only route/column completeness.
+   * Non-null means the prior `submit_findings` failed only on a field-scoped, correctable defect
+   * (route/column completeness, or a field over its length cap).
    */
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();
@@ -530,7 +532,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Restores held prose only when an incompleteness retry keeps the focus and sends no sections.
+   * Restores held prose only when a correction retry keeps the focus and sends no sections.
    * A retry with authored sections is a deliberate replacement and remains unchanged.
    *
    * @param incoming - Strict full BB/CT submission from the dispatcher boundary.
@@ -2189,9 +2191,10 @@ export class NavigationEngine implements IHopStateMachine {
    * Route/column validation classifies failures into a structural {@link InvalidRouteKind}.
    * *Content* errors (real node, wrong column — CT-only) hard-reject via
    * {@link buildRouteValidationRejection}. Absent route/contributor references and refused no-op
-   * prunes are recorded notices; content, completeness, conflict, origin, and topology failures
-   * reject atomically. Loaded routes may be transitively reachable in the approved direction; the
-   * engine does not impose a direct-current-neighbor rule. Hints remain mode-pure.
+   * prunes are recorded notices; field-length, content, completeness, conflict, origin, and
+   * topology failures reject atomically. Loaded routes may be transitively reachable in the
+   * approved direction; the engine does not impose a direct-current-neighbor rule. Hints remain
+   * mode-pure.
    *
    * @param params - Submission details including focus, verdict, and routing data.
    * @param budget - The submitting turn's budget, which the active-scope admission guard is
@@ -2223,6 +2226,39 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (focusId !== this.currentFocusNodeId) {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
+    }
+    // The two content caps the `submit_findings` schema advertises without parsing (`advertisedMax`,
+    // `toolSchemas.ts`). Parsed at the model port instead, a label two words too long would fail the
+    // whole hop with a field path and no held draft, costing a verbatim resend of the authored
+    // sections and summary. Enforced here: ahead of every mutation, stating the measured length a
+    // model cannot count for itself, and holding the draft so the retry carries only the corrected
+    // structured fields.
+    // The rejection code stays a local literal: this is its one emitting site, and `rejectionCodes.ts`
+    // owns only codes a second surface shows to the model.
+    const lengthViolations: Array<{ path: string; chars: number; limit: number }> = [];
+    if (finding.badge_label !== undefined && finding.badge_label.length > SUBMIT_FINDINGS_BADGE_LABEL_MAX) {
+      lengthViolations.push({ path: 'badge_label', chars: finding.badge_label.length, limit: SUBMIT_FINDINGS_BADGE_LABEL_MAX });
+    }
+    (finding.column_flow ?? []).forEach((entry, entryIndex) => {
+      (entry.upstream_columns ?? []).forEach((ref, refIndex) => {
+        if (ref.note !== undefined && ref.note.length > COLUMN_FLOW_NOTE_MAX) {
+          lengthViolations.push({
+            path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.note`,
+            chars: ref.note.length,
+            limit: COLUMN_FLOW_NOTE_MAX,
+          });
+        }
+      });
+    });
+    if (lengthViolations.length > 0) {
+      const measured = lengthViolations.map(v => `${v.path}: ${v.chars} chars, limit ${v.limit}`).join('; ');
+      this.memory.recordRejection(focusId, `field_length_exceeded: ${measured}`, this.hopCount);
+      this.heldFindingDraft.hold(structuredClone(finding));
+      return {
+        error: 'field_length_exceeded',
+        hint: `${measured}. Nothing was committed. Your analysis is held: resubmit submit_findings for ${focusId} with the listed field(s) shortened — send sections: [] to keep the prose you already authored, or new sections to replace it.`,
+        detail: lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit })),
+      };
     }
     // The active columns the focus itself declares. One value serves both consumers: the CT
     // completeness guard below, which uses it to decide whether an empty-flow claim is checkably
@@ -3786,7 +3822,6 @@ export class NavigationEngine implements IHopStateMachine {
         downstream: Number.isFinite(this.depthLimits.downstream) ? this.depthLimits.downstream : null,
       },
       depthFromOrigin: Array.from(this.depthFromOrigin.entries()),
-      extendedDepthCap: this.extendedDepthCap,
       budgetExpansions: this.budgetExpansions.map(b => ({ ...b })),
       bodiedScopeSize: this._bodiedScopeSize,
       totalNodes: this._totalNodes,
@@ -3882,13 +3917,12 @@ export class NavigationEngine implements IHopStateMachine {
       engine.depthEnforcement = internals.depthEnforcement;
       log('debug', `[Depth] restored border enforcement=${internals.depthEnforcement} cap=up:${engine.depthLimits.upstream}/down:${engine.depthLimits.downstream}`);
     } else {
-      if (internals.depthEnforcement !== 'silent' || internals.extendedDepthCap !== 0) {
-        log('debug', `[Depth] normalized legacy checkpoint authority enforcement=${internals.depthEnforcement} extension=${internals.extendedDepthCap} to seed-only routing`);
+      if (internals.depthEnforcement !== 'silent') {
+        log('debug', `[Depth] normalized legacy checkpoint authority enforcement=${internals.depthEnforcement} to seed-only routing`);
       }
       engine.depthEnforcement = 'silent';
     }
     engine.depthFromOrigin = new Map(internals.depthFromOrigin);
-    engine.extendedDepthCap = 0;
     engine.budgetExpansions = internals.budgetExpansions.map(b => ({ ...b }));
     engine._bodiedScopeSize = internals.bodiedScopeSize;
     engine._totalNodes = internals.totalNodes;

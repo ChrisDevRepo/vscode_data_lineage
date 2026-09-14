@@ -7,8 +7,12 @@
  * section instead of throwing. The payload answers "what is on screen", never "what is in the
  * model" — the catalog, statistics, and filters stay with `lineage_get_context`.
  */
-import type { RenderStateSnapshot, ScreenStateExtras } from '../../bridge/debugDumpScreenState';
-import { SCREEN_STATE_MAX_IDS, TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
+import {
+  SCREEN_STATE_MAX_IDS,
+  TRACE_ALL_LEVELS,
+  type RenderStateSnapshot,
+  type ScreenStateExtras,
+} from '../../engine/shared/bridgeContract';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';

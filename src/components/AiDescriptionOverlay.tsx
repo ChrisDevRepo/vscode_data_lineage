@@ -3,6 +3,7 @@ import { FloatingPortal } from '@floating-ui/react';
 import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
+import { useVsCode } from '../contexts/VsCodeContext';
 import { AI_SECTION_ID_PREFIX, FOCUS_NODE_HREF_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
 
 /** Which edge of the canvas the report column is docked against. */
@@ -21,6 +22,20 @@ const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; label: string }> =
   { position: 'bottom', label: 'Dock bottom' },
   { position: 'right', label: 'Dock right' },
 ];
+
+/**
+ * The collapsed rail's expand glyph, per dock edge: it points the way the panel will reopen.
+ *
+ * @remarks
+ * A right- or left-docked rail is a vertical tab and reopens sideways into the canvas; a
+ * bottom-docked rail is a horizontal strip and reopens upward. The arrow is the only part of the
+ * rail that changes with the edge — the name and the hit target are identical on all three.
+ */
+const RAIL_TOGGLE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
+  right: '\u25C0',
+  left: '\u25B6',
+  bottom: '\u25B2',
+};
 
 /**
  * Panel-dock icon: a frame with the docked edge filled, modelled on VS Code's
@@ -79,7 +94,7 @@ interface AiDescriptionOverlayProps {
  * @remarks
  * Renders GitHub Flavored Markdown and KaTeX math through the same `marked` extension VS Code
  * applies to chat responses, so a description renders identically in both surfaces. When
- * collapsed it shrinks to a slim vertical rail on the right edge instead of disappearing, so
+ * collapsed it shrinks to a slim rail on the edge it was docked to instead of disappearing, so
  * reopening never hunts for a button. Numbered section
  * chips navigate the document and, through `onFocusSection`, highlight that section's nodes on
  * the graph while the rest dim.
@@ -99,6 +114,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   onDockPositionChange,
   onPanelResize,
 }: AiDescriptionOverlayProps) {
+  const vscodeApi = useVsCode();
   const [maximized, setMaximized] = useState(false);
   const [fontScale, setFontScale] = useState<0 | 1 | 2>(0);
   const dockMenu = useDropdown();
@@ -153,7 +169,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
       nodeId = decodeURIComponent(encoded);
     } catch (err) {
       // A malformed escape in an assembled link must not trip the graph error boundary.
-      window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[AI] focus link decode failed: ${encoded} (${err instanceof Error ? err.message : String(err)})` });
+      vscodeApi.postMessage({ type: 'log', level: 'debug', text: `[AI] focus link decode failed: ${encoded} (${err instanceof Error ? err.message : String(err)})` });
     }
     return () => onFocusNode(nodeId);
   }
@@ -170,7 +186,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
       return;
     }
     if (/^https?:\/\//i.test(href)) {
-      window.vscode?.postMessage({ type: 'open-external', url: href });
+      vscodeApi.postMessage({ type: 'open-external', url: href });
     }
   }
 
@@ -193,7 +209,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   // links on the way out (`stripFocusNodeLinks` in `messageHandlers.ts`) since only this webview
   // resolves them.
   function handleOpenInEditor() {
-    window.vscode?.postMessage({ type: 'ai-open-in-editor', markdown: description });
+    vscodeApi.postMessage({ type: 'ai-open-in-editor', markdown: description });
   }
 
   /**
@@ -216,10 +232,16 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     dockPosition !== 'right' ? `ln-ai-description-anchor-${dockPosition}` : '',
     maximized ? 'ln-ai-description-anchor-maximized' : '',
   ].filter(Boolean).join(' ');
+  // The collapsed rail stays on the edge the panel was docked to, so reopening it is where the
+  // panel was. `right` carries no modifier — it is the default the base rule already describes.
+  const railwrapClassName = [
+    'ln-ai-description-railwrap',
+    dockPosition !== 'right' ? `ln-ai-description-railwrap--${dockPosition}` : '',
+  ].filter(Boolean).join(' ');
 
   if (!expanded) {
     return (
-      <div className="ln-ai-description-railwrap">
+      <div className={railwrapClassName}>
         <button
           className="ln-ai-description-rail"
           onClick={() => onExpandedChange?.(true)}
@@ -227,7 +249,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           aria-label="Expand AI report"
         >
           <span className="ln-ai-description-rail-name">{railName}</span>
-          <span className="ln-ai-description-rail-toggle">&#x25C0;</span>
+          <span className="ln-ai-description-rail-toggle">{RAIL_TOGGLE_GLYPH[dockPosition]}</span>
         </button>
       </div>
     );

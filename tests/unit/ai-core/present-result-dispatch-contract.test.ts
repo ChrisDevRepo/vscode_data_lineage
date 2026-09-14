@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
 import { rejectionIssuePaths } from '../../../src/ai/support/toolErrorEnvelope';
-import { presentResultBoundarySchemaForPhase } from '../../../src/ai/tools/toolSchemas';
+import { presentResultBoundarySchemaForPhase, PRESENT_RESULT_TITLE_MAX } from '../../../src/ai/tools/toolSchemas';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import type { ResultGraph } from '../../../src/ai/session/types';
@@ -117,6 +117,34 @@ describe('present_result — the stage schema is the dispatch contract', () => {
     }, probe.services));
 
     expect(result.success, 'the completed stage sees the full schema').toBe(true);
+  });
+});
+
+describe('present_result — a label over its hard cap is repaired as a one-field patch', () => {
+  it('holds the rejected draft, authorizes the offending field only, and commits the shortened resend', async () => {
+    const session = new AiSession();
+    const epoch = session.beginTurn();
+    seedResultGraph(session);
+    const probe = handlerProbe(session, epoch);
+
+    const overLong = 'T'.repeat(PRESENT_RESULT_TITLE_MAX + 1);
+    const rejected = parseResult(await executePresentResult({ ...validPayload(), title: overLong }, probe.services));
+
+    expect(rejected.success, 'a title over its cap rejects').toBe(false);
+    expect(String(rejected.errors), 'the rejection states the measured length against the limit')
+      .toContain(`${PRESENT_RESULT_TITLE_MAX + 1} chars, limit ${PRESENT_RESULT_TITLE_MAX}`);
+    expect(String(rejected.hint), 'the hint orders the held-draft repair, not a full resend').toContain('is_update:true');
+    expect(session.presentResultRepairDraft.hasRepairableDraft(), 'the draft is held for repair').toBe(true);
+    expect(session.presentResultRepairDraft.getAuthorization(), 'only the offending field is authorized').toEqual(['title']);
+
+    const repaired = parseResult(await executePresentResult({ is_update: true, title: 'Orders lineage' }, probe.services));
+
+    expect(repaired.success, 'a patch carrying only the shortened title commits').toBe(true);
+    const description = session.presentationArtifact?.aiMetadata.description ?? '';
+    expect(description, 'the shortened title reaches the committed render').toContain('Orders lineage');
+    expect(description, 'the held section prose survives the one-field patch verbatim')
+      .toContain('Orders is the sole source table.');
+    expect(session.presentResultRepairDraft.hasRepairableDraft(), 'a committed render clears the held draft').toBe(false);
   });
 });
 

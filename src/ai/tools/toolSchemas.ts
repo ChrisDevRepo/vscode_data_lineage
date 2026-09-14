@@ -456,12 +456,60 @@ export const PRUNE_NEIGHBORS_DESCRIPTION =
   'Current-hop neighbor IDs to drop from the session because current evidence proves they are off the answer path — out of the approved scope, or in scope with nothing the answer needs.';
 
 /**
+ * States a content cap in the JSON schema the model reads (`maxLength` / `maxItems`) without
+ * enforcing it at parse.
+ *
+ * @remarks
+ * Enforcement is the validator's (`validatePresentResult`) or the engine's
+ * (`NavigationEngine.submitFindings`), which rejects the offending field alone as repairable,
+ * states the measured size against the limit, and holds the draft. A parse-time cap would reject at
+ * the model port instead — with no held draft, no measured size, and no repairable classification —
+ * forcing a full resend of an answer that was otherwise correct. Structural constraints
+ * (`min`, non-whitespace refinements, type and enum) stay real parse-time checks: they describe the
+ * shape a reader needs, not the size a surface can render.
+ *
+ * The projection carries the same keyword and the same value the equivalent `.max()` produced — key
+ * order differs, which JSON Schema does not distinguish — so the model is offered the same contract
+ * either way.
+ *
+ * @param schema - The field schema the cap describes.
+ * @param bound - The advertised ceiling, keyed for the projected type: `maxLength` for a string,
+ *   `maxItems` for an array. Always a named constant.
+ * @returns The same schema, carrying the cap as projected metadata only.
+ */
+function advertisedMax<T extends z.ZodType>(
+  schema: T,
+  bound: { readonly maxLength: number } | { readonly maxItems: number },
+): T {
+  return schema.meta({ ...bound });
+}
+
+/**
+ * Hard cap on `badge_label`.
+ *
+ * @remarks
+ * Advertised on the model-facing `submit_findings` schemas through {@link advertisedMax} and
+ * enforced by `NavigationEngine.submitFindings`, before any mutation.
+ */
+export const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
+
+/**
  * Single source for the `badge_label` describe text, shared by the strict per-mode
  * `submit_findings` schemas and the permissive registered union so the two never restate the
- * same fact with different wording.
+ * same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere
+ * else: `badge_label` is a per-hop tool field, not template-governed content.
  */
 export const BADGE_LABEL_DESCRIPTION =
-  'Short advisory label for this hop; final graph labels are authored by present_result sections. Maximum 50 characters — a 2-4 word label.';
+  `Short advisory label for this hop; final graph labels are authored by present_result sections. Maximum ${SUBMIT_FINDINGS_BADGE_LABEL_MAX} characters — a 2-4 word label.`;
+
+/**
+ * Hard cap on `column_flow[].upstream_columns[].note`.
+ *
+ * @remarks
+ * Advertised on the model-facing `submit_findings` schemas through {@link advertisedMax} and
+ * enforced by `NavigationEngine.submitFindings`, before any mutation.
+ */
+export const COLUMN_FLOW_NOTE_MAX = 200;
 
 const ColumnRefSchema = z.object({
   node: z.string().describe('Canonical upstream node ID.'),
@@ -474,7 +522,7 @@ const ColumnRefSchema = z.object({
     'combine: JOIN, UNION/EXCEPT/INTERSECT, APPLY, UNPIVOT. filter: WHERE, HAVING, join ON predicate, ' +
     'TOP, DISTINCT.',
   ),
-  note: z.string().max(200).optional().describe(
+  note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(
     'One short grounded clause naming the rule or expression behind the transforms — e.g. ' +
     '"SUM of LoanLines Days * Rate" — at most ~12 words. Omit when transforms is omitted or the ' +
     'DDL gives nothing concrete to quote; never speculate.',
@@ -544,7 +592,7 @@ const HopFindingBaseSchema = z.object({
    * `nodeId` must already be a real id you have seen.
    */
   route_requests: coercedStringArray(RouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
-  badge_label: z.string().min(1).max(50)
+  badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
@@ -665,22 +713,26 @@ export const SearchDdlInputSchema = z.object({
  * the model-facing JSON Schema has one generated source under the drift guard. `angle`
  * on a section is advisory capture metadata carried in the manifest.
  */
-// GUI-rendered labels carry a SOFT target (stated to the model in the tool description / templates —
-// the length it aims for) and a HARD Zod cap at ~1.5x for tolerance: a value within tolerance is
-// accepted verbatim (no silent truncation), and only a genuinely layout-breaking overrun rejects and
-// rides the normal self-heal loop. One source of truth for the advertised schema AND the boundary.
-/** Hard cap on `name` (graph node label). Soft target ~60. */
+// GUI-rendered labels carry a SOFT target — advertised exactly once, in the field's own
+// description or in the output-template entry that governs the field — and a HARD cap at ~1.5x for
+// tolerance: a value within tolerance is accepted verbatim (no silent truncation) and only a
+// genuinely layout-breaking overrun rejects. Every cap below reaches the model through
+// `advertisedMax` and is enforced by `validatePresentResult` alone; no parse enforces one.
+/** Hard cap on `name` (graph node label); its soft target is the field's own description. */
 export const PRESENT_RESULT_NAME_MAX = 90;
-/** Hard cap on `title` (report heading). Soft target ~80. */
+/** Hard cap on `title` (report heading); its soft target is the `title` output template. */
 export const PRESENT_RESULT_TITLE_MAX = 120;
-/** Hard cap on a `sections[].label`. Soft target ~60. */
+/**
+ * Hard cap on a `sections[].label`. The label's shape is owned by `buildPresentationDetailContract`
+ * (`prompts.ts`), which states a semantic-pointer shape and deliberately no character target.
+ */
 export const PRESENT_RESULT_SECTION_LABEL_MAX = 90;
-/** Hard cap on a `highlight_groups[].label`. Soft target ~40. */
+/** Hard cap on a `highlight_groups[].label`; its soft target is the `highlights` output template. */
 export const PRESENT_RESULT_HIGHLIGHT_LABEL_MAX = 60;
 /**
  * Max color groups on one rendered result — a small cap keeps the graph legend scannable.
- * Enforced by `validatePresentResult` (`presentResult.ts`), not the model-facing Zod schema — see
- * {@link PresentResultBoundarySchema}'s remarks for why the count cap moved off the boundary.
+ * Advertised through {@link advertisedMax} and enforced by `validatePresentResult`
+ * (`presentResult.ts`), which rejects an over-long list as a repairable `highlight_groups` patch.
  */
 export const PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX = 5;
 /**
@@ -713,18 +765,32 @@ const NodeIdSchema = z.string()
  * Schema for a visual highlight group, grouping nodes by a shared role or status.
  */
 const HighlightGroupSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX).describe('Short legend label describing the shared graph role or status — aim for ~40 chars.'),
+  label: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_HIGHLIGHT_LABEL_MAX }).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
   color: HighlightSchemeSchema.describe('Semantic graph color role or status.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
+}).strict();
+
+/**
+ * One final report section: a label that becomes both the section heading and the graph badge, the
+ * nodes it explains, and its detail body.
+ */
+const PresentResultSectionSchema = z.object({
+  // Role only, no character target: a tool-parameter description outranks the system prompt, so a
+  // soft character target here became the operative ceiling and licensed a full question as a
+  // badge. Shape guidance belongs in `buildPresentationDetailContract`; the cap below is the one
+  // this schema advertises and `validatePresentResult` enforces.
+  label: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_SECTION_LABEL_MAX }).describe('Section heading and graph badge for every linked node.'),
+  node_ids: z.array(NodeIdSchema).optional().describe('A node ID can only appear in ONE section. Do not link a node to multiple sections.'),
+  text: z.string().describe('Required detail body for this section label.'),
 }).strict();
 
 /**
  * Schema defining the shape of the final generated presentation result.
  */
 export const PresentResultModelSchema = z.object({
-  name: z.string().max(PRESENT_RESULT_NAME_MAX).describe('Short name for the generated lineage view — aim for ~60 chars.'),
+  name: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_NAME_MAX }).describe('Short name for the generated lineage view — aim for ~60 chars.'),
   summary: z.string().describe('One-line summary shown with the generated view.'),
-  title: z.string().max(PRESENT_RESULT_TITLE_MAX).optional().describe('Optional report heading.'),
+  title: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_TITLE_MAX }).optional().describe('Optional report heading.'),
   intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
   // Prose, never a rejection axis (a 400 cap once made the model self-truncate mid-sentence);
   // bounded at the wire only.
@@ -732,17 +798,10 @@ export const PresentResultModelSchema = z.object({
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
-  highlight_groups: z.array(HighlightGroupSchema).min(1).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX).describe(
+  highlight_groups: advertisedMax(z.array(HighlightGroupSchema).min(1), { maxItems: PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX }).describe(
     'REQUIRED for new renders, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
-  sections: coercedStringArray(z.object({
-    // Role only, no character target: a tool-parameter description outranks the system prompt, so
-    // a soft "~60 chars" here became the operative ceiling and licensed a full question as a badge.
-    // Shape guidance belongs in `buildPresentationDetailContract`; the hard limit is the max() above.
-    label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).describe('Section heading and graph badge for every linked node.'),
-    node_ids: z.array(NodeIdSchema).optional().describe('A node ID can only appear in ONE section. Do not link a node to multiple sections.'),
-    text: z.string().describe('Required detail body for this section label.'),
-  }).strict(), { min: 1 }).describe('Required final report sections; each label maps to exactly one text body.'),
+  sections: coercedStringArray(PresentResultSectionSchema, { min: 1 }).describe('Required final report sections; each label maps to exactly one text body.'),
   notes: z.array(z.object({
     node_id: NodeIdSchema.describe('Node ID receiving this below-node caption.'),
     // Stage-neutral on purpose: synthesis grounds a caption in the archive, preview must copy one
@@ -783,12 +842,14 @@ export function presentResultSchemaForPhase(
  * Runtime boundary schema for `presentResult` — structural shape only.
  *
  * @remarks
- * Identical to {@link PresentResultModelSchema} except `highlight_groups` drops both the `min(1)`
- * and the `max(`{@link PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`)` requirements. `min(1)` is conditional
- * (exempt when `is_update`); the count cap is unconditional but a bare Zod `.max()` reject here would
- * surface only a field path — never the actual limit or a repairable classification. Both are owned
- * by `validatePresentResult`, which produces the field-specific, actionable self-heal hint. Everything
- * else type/enum/cap-shaped still rejects here with Zod issue paths fed back to the model.
+ * Identical to {@link PresentResultModelSchema} but for one requirement: `highlight_groups` drops
+ * `min(1)`, which is conditional (exempt when the render amends an existing one) and therefore not
+ * expressible on a schema. `validatePresentResult` owns that condition.
+ *
+ * It drops no cap, because no cap is enforced at any parse: every content cap is advertised through
+ * {@link advertisedMax} and enforced by `validatePresentResult`, the one rejection point that can
+ * state the measured size, hold the draft, and authorize the single field to resend. Everything
+ * type/enum/shape-shaped still rejects here with Zod issue paths fed back to the model.
  */
 export const PresentResultBoundarySchema = PresentResultModelSchema.extend({
   highlight_groups: z.array(HighlightGroupSchema).optional(),
@@ -955,7 +1016,7 @@ export const SubmitFindingsModelSchema = z.object({
   route_requests: coercedStringArray(RouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
   prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
-  badge_label: z.string().min(1).max(50)
+  badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),

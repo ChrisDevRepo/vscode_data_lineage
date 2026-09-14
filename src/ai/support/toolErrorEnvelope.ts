@@ -409,10 +409,12 @@ function describeSizeIssue(
  * When the caller supplies the parsed `input`, each issue line is enriched from the issue's own
  * metadata and the received value — Zod v4 issues do not carry the input, so the measurement must
  * happen here: a `too_big`/`too_small` issue reports the measured size against the bound
- * (`badge_label: 61 chars, limit 50`) and echoes a scalar leaf verbatim (bounded). Models cannot
- * count characters, and the rejected call is replayed without arguments, so the measured value and
- * the sent text are the two facts that turn a blind regeneration into a directed edit. All derived
- * mechanically from the ZodError issue tree — no per-tool or per-field text.
+ * (`sections: 3 items, limit 2`) and echoes a scalar leaf verbatim (bounded). Models cannot count,
+ * and the rejected call is replayed without arguments, so the measured value and the sent text are
+ * the two facts that turn a blind regeneration into a directed edit. All derived mechanically from
+ * the ZodError issue tree — no per-tool or per-field text. Only STRUCTURAL bounds reach this
+ * function: a content cap is advertised in the JSON schema and enforced by the validator or the
+ * engine (`advertisedMax`, `toolSchemas.ts`), which reports its own measured size.
  *
  * @remarks
  * Callers hand this a bare `z.ZodError`: the `vscode.lm` port validates tool input itself with

@@ -120,6 +120,10 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         );
       }
 
+      // Structure only. `badge_label` and `column_flow[].upstream_columns[].note` advertise their
+      // cap without parsing it (`advertisedMax`, `toolSchemas.ts`); the engine enforces both ahead
+      // of every mutation, so an overrun holds the draft and is repaired as one corrected field
+      // instead of failing the hop.
       const parsed = engine.columnAspect
         ? SubmitFindingsCtInputSchema.safeParse(normalizedInput)
         : SubmitFindingsBbInputSchema.safeParse(normalizedInput);

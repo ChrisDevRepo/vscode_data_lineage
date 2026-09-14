@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ExplorationDepthSelectionSchema } from './explorationDepthContract';
-import { OBJECT_TYPES, type ExtensionConfig } from '../types';
+import { OBJECT_TYPES, type ExtensionConfig, type TraceAffordanceSnapshot } from '../types';
 
 /**
  * ─── Bridge Contract ────────────────────────────────────────────────────────
@@ -31,6 +31,21 @@ const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
 /** Upper bound on scope arrays carried across the bridge (DoS / payload guard). */
 export const AI_MAX_SCOPE_NODE_IDS = 500;
+
+/**
+ * Upper bound, in characters, on the assembled AI report markdown the webview hands back to the
+ * host for "Open in editor".
+ *
+ * @remarks
+ * Bounds the `ai-open-in-editor` payload, which is otherwise the one unbounded string the webview
+ * can post: the report's own field caps govern labels and headings only — its section bodies,
+ * intro, closing and captions are prose the presentation contract deliberately never rejects on
+ * length, and the section count is uncapped too, so no existing limit composes into a total.
+ * A report is the prose of a single language-model turn, which no provider lets run past a few
+ * tens of thousands of characters; a payload above this ceiling is therefore not a long answer but
+ * a malformed or hostile frame, and it is rejected at the seam rather than opened as a document.
+ */
+export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
 
 /**
  * Maximum object ids one screen-state list carries: the cap the presenter applies when it renders
@@ -553,6 +568,54 @@ export const BRIDGE_PROTOCOL_VERSION = 1;
 export type BridgeEnvelope = { protocolVersion?: unknown };
 
 /**
+ * Reader's view of the `render-state` passthrough buffer.
+ *
+ * @remarks
+ * `render-state` crosses the bridge as `z.unknown()` — the webview owns the buffer's shape — so
+ * this is a projection its readers agree on, not a validated message schema; every read of it is
+ * defensive. It lives beside the message unions because both readers sit in different layers: the
+ * host debug dump and the AI screen-state presenter project the same buffer, and `src/ai` reaches
+ * the engine only through `src/engine/shared/*`, so this is the one module both may name it from.
+ */
+export interface RenderStateSnapshot {
+  /** Node currently selected or highlighted on the canvas. */
+  highlightedNodeId?: string | null;
+  /** Serialized add/prune affordances for the highlighted trace node. */
+  affordances?: TraceAffordanceSnapshot | null;
+  /** Active trace scope mirrored from the graph renderer. */
+  traceScope?: {
+    /** Current trace mode used by the renderer. */
+    mode: string;
+    /** Starting node for the trace, when one has been selected. */
+    origin: string | null;
+    /** Original BFS node scope before manual trace edits. */
+    baseNodeIds: string[];
+    /** Direct-neighbor nodes manually added to the trace. */
+    manualAddedNodeIds: string[];
+    /** Nodes manually removed from the trace. */
+    manualPrunedNodeIds: string[];
+    /** Node IDs currently rendered as part of the trace. */
+    tracedNodeIds: string[];
+  } | null;
+}
+
+/**
+ * Analytics/bookmark mode state carried on `uiState.screenState`, not in `render-state`.
+ *
+ * @remarks
+ * A reader's view of the `filter-changed` passthrough buffer, on the same terms as
+ * {@link RenderStateSnapshot}.
+ */
+export interface ScreenStateExtras {
+  /** Active graph-analysis panel state used to explain scoped analysis views. */
+  analytics?: { type: string; activeGroupId: string | null; groups: { id: string; label: string; nodeIds: string[] }[] } | null;
+  /** Active saved view or AI-authored view used to explain allowlist rendering. */
+  bookmark?: { id: string; name: string; source: string | null; allowlistNodeIds: string[] } | null;
+  /** Whether the selected node detail panel is open in the webview. */
+  detailOpen?: boolean;
+}
+
+/**
  * Zod schema representing the complete discriminated union of message types
  * sent from the VS Code Extension Host to the React Webview.
  *
@@ -647,7 +710,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
-  z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string() }),
+  z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string().max(AI_REPORT_MARKDOWN_MAX_CHARS) }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string() }),
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,
@@ -668,6 +731,20 @@ export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,
 ]);
+
+/** Messages sent from the detail-panel webview to the extension host. */
+export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsgSchema>;
+
+/**
+ * Every message either webview may post to the extension host.
+ *
+ * @remarks
+ * The two panels keep separate dispatch unions so each host-side dispatcher stays exhaustive over
+ * its own variants. One `acquireVsCodeApi()` handle type serves both bundles, so the webview-facing
+ * `postMessage` signature is typed with this union: a send of a shape neither host dispatcher can
+ * receive then fails to compile instead of being dropped at the Zod seam at runtime.
+ */
+export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExtensionMsg;
 
 /**
  * Zod schema for messages sent from the extension host **to the detail-panel webview**.

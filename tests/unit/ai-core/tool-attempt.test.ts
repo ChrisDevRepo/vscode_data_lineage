@@ -1081,21 +1081,24 @@ describe('executeToolAttempt — bounded rejection replay', () => {
   });
 
   it('replays the whole schema-invalid call when the flagged field is not a list, instead of empty arguments', async () => {
-    // A title over its limit flags `title`, a scalar root no list projection covers; the standing hint
-    // orders "keep every other field unchanged", so a replay of `{}` sent the model into a full
-    // regeneration that overran the limit again (recorded: 146, 123, 124 chars, then terminal).
+    // An out-of-enum `layout_direction` flags a scalar root no list projection covers; the standing
+    // hint orders "keep every other field unchanged", so a replay of `{}` sent the model into a full
+    // regeneration of an answer it had already authored (recorded on the length cap this fixture
+    // used to carry: 146, 123, 124 chars, then terminal). Length caps no longer reject at this
+    // boundary — `validatePresentResult` owns them and holds the draft — but every remaining
+    // schema-shaped scalar issue still replays the whole call.
     const input = {
-      title: 'T'.repeat(146),
+      layout_direction: 'SIDEWAYS',
       sections: [{ label: 'Overview', text: 'SECTION-CARRIED' }],
     };
     const { replayed, first } = await replayAfterInvalidCall({
       toolName: 'lineage_present_result',
       input,
-      reason: 'title: 146 chars, limit 120',
-      issuePaths: ['title'],
+      reason: 'layout_direction: Invalid option: expected one of "LR"|"TB"',
+      issuePaths: ['layout_direction'],
     });
 
-    expect(first.rejections[0].issuePaths).toEqual(['title']);
+    expect(first.rejections[0].issuePaths).toEqual(['layout_direction']);
     expect(replayedToolArgs(replayed)).toEqual(input);
   });
 

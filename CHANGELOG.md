@@ -16,6 +16,8 @@
 - The longest-chain report follows chains through circular dependencies (up to 25, deepest first).
 
 ### Fixed
+- Over-long AI-authored names, titles, labels, and column notes are rejected as a single-field repair instead of a full resend, so a retry keeps the sections already written.
+- The collapsed AI report rail stays on the edge the report was docked to; a missing Markdown preview command opens the report as text with a warning instead of an error.
 - Assistant robustness: tool calls written as XML or unfenced JSON are read as calls without stalling the turn; a bookmark recalls the AI run it was saved from; a formula stored only as a column-flow note still reaches the report.
 - Parser and trace fixes: bracketed names with a `]]` escape, comments inside identifiers, and wildcard storage paths no longer drop or invent dependencies; a one-direction trace draws every edge between the objects it includes.
 - Display: large graphs stay responsive while dragging, a view past the render limit reports it, and saved views fit the graph on restore.

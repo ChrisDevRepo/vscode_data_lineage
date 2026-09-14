@@ -188,6 +188,35 @@ export function appendUniqueSectionText(
 
 
 /**
+ * Appends `incoming` sections that the archived `earlier` ones do not already carry.
+ *
+ * @remarks
+ * Same identity rule as {@link appendUniqueSectionText}: trimmed body text, matched by containment
+ * against the joined earlier text, angle ignored — a re-analysis that re-emits a section verbatim
+ * is the same evidence whichever template fired it. First occurrence wins, so the archived order
+ * never shifts. A first write (no `earlier`) is passed through untouched: with nothing to repeat,
+ * the rule has nothing to decide.
+ *
+ * @param earlier - Sections already archived for the node, in capture order.
+ * @param incoming - Sections captured by the current visit.
+ * @returns `earlier` followed by the incoming sections it does not already contain.
+ */
+function appendUniqueSections(
+  earlier: readonly CapturedSection[],
+  incoming: readonly CapturedSection[],
+): CapturedSection[] {
+  if (earlier.length === 0) return [...incoming];
+  const seen = earlier.map(s => s.text).join('\n');
+  const merged = [...earlier];
+  for (const section of incoming) {
+    const text = section.text.trim();
+    if (text && seen.includes(text)) continue;
+    merged.push(section);
+  }
+  return merged;
+}
+
+/**
  * In-session store for the per-hop working memory and full detail archive.
  *
  * @remarks
@@ -298,7 +327,10 @@ export class AiMemoryManager {
    * Sections are stored verbatim — uniform downstream shape simplifies eval
    * extraction and the synthesis prompt's carry instruction. A revisit (a reopened column chain
    * re-enqueues a visited node) appends its sections after the earlier visit's, so evidence the
-   * first visit captured stays in the archive; summary and metadata take the latest visit.
+   * first visit captured stays in the archive; summary and metadata take the latest visit. A
+   * revisit that re-emits text the archive already holds adds nothing — see
+   * {@link appendUniqueSections}: a second analysis of the same node is new evidence only where
+   * its text is new.
    * The caller merges `column_flow` notes into `sections` via {@link appendUniqueSectionText}
    * before this write, so a single-accept hop does not lose clauses that sat only on the flow.
    */
@@ -314,7 +346,7 @@ export class AiMemoryManager {
       schema: node.schema,
       name: node.name,
       type: node.type,
-      sections: [...earlier, ...sections],
+      sections: appendUniqueSections(earlier, sections),
       summary,
       badge_label: meta?.badge_label,
       reason_for_visit: meta?.reason_for_visit,

@@ -118,17 +118,11 @@ function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransfor
  * The mark drawn for one transform class.
  *
  * @remarks
- * Hand-authored rather than imported — the webview ships no icon library, and every other symbol
- * in it is an inline SVG or a Unicode glyph.
- *
- * No lineage tool publishes a glyph vocabulary for column transformations: the ones that classify
- * at all (OpenLineage and the viewers built on it) encode DIRECT vs INDIRECT in the LINE, which is
- * why an indirect edge here is drawn broken, and put the transformation itself behind a click. The
- * chip is this product's own affordance, so each class takes the mark its operation already carries
- * across data tooling rather than an invented one: the arrow copies, `fx` computes (formula
- * notation), the sigma aggregates, two overlapping circles join (the merge/join Venn), the funnel
- * filters. All are stroked primitives in the shared 24-unit box so they render as one family at
- * chip scale.
+ * Inline SVG, since the webview ships no icon library. One mark per class, each the symbol its
+ * operation already carries in data tooling: arrow copies, `fx` computes, sigma aggregates,
+ * overlapping circles join, funnel filters. All are stroked primitives in the shared 24-unit box
+ * so they render as one family at chip scale. DIRECT vs INDIRECT is carried by the line itself
+ * (an indirect edge is drawn broken), never by the chip.
  */
 function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
   switch (transformClass) {
@@ -187,18 +181,12 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
 }
 
 /**
- * The mark drawn inside an unclassified chip: an open ring, reading as "something happens here —
- * hover it".
+ * The mark drawn inside an unclassified chip: an open ring.
  *
  * @remarks
- * Hand-authored rather than imported — the webview ships no icon library, and every other symbol
- * in it is an inline SVG or a Unicode glyph. The ring is an affordance, not a depiction: it
- * carries no orientation, so on a canvas where direction is the primary semantic it cannot be
- * misread as bidirectional the way an arrow pair can. An edge the model classified shows its class
- * glyphs instead; the ring remains the honest mark for a transformation with no classification.
- *
- * Unfilled on purpose — the object-type legend uses a filled dot for a view, and the two must not
- * converge. r=7 in a 24-unit box lands as a ~5.8px ring inside the 20px glyph box.
+ * The ring carries no orientation, so it cannot be misread as a direction on a canvas where
+ * direction is the primary semantic, and it stays unfilled because the object-type legend uses a
+ * filled dot for a view. r=7 in the 24-unit box lands as a ~5.8px ring inside the 20px glyph box.
  */
 export function ColumnTransformGlyph() {
   return (

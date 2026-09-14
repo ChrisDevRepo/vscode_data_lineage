@@ -214,15 +214,13 @@ function GearGlyph() {
 }
 
 /**
- * The transform super node: a circle-and-gear hub standing in for the port card a procedure used to
- * render as. The circle is the whole node — no card is drawn around it, since a procedure is a
- * process rather than an object holding columns, so its stroke carries the selection colour.
+ * The transform super node: a circle-and-gear hub for a procedure or scalar function.
  *
  * @remarks
- * Every interaction survives the reshaping — the node keeps its id, its click and context-menu
- * wiring, and its (invisible) port handles, so neighbours, SQL and the column thread all behave
- * exactly as on the port card; only the visibility changes. The name strip sits under the circle,
- * and the AI badge/note toolbars keep their slots above and below the node box.
+ * The circle is the whole node; no card is drawn around it, so its stroke carries the selection
+ * colour. The node keeps its id, click and context-menu wiring, and its invisible port handles, so
+ * neighbours, SQL and the column thread behave exactly as on a column card. The name strip sits
+ * under the circle; the AI badge and note toolbars keep their slots above and below the node box.
  */
 function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
   view: ColumnTraceNodeData['view'];

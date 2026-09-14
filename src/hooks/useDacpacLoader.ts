@@ -267,19 +267,18 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
     // Dacpac path: request Phase 2 extraction from extension host
     // (dacpac-model response handled above — sets model + pendingVisualize)
+    // A blank name is spread away rather than sent as an empty string: the contract's
+    // `projectName` is optional, and the host reads "absent" as "keep the existing label".
+    const named = projectName ? { projectName } : {};
     if (schemaPreview !== null && model === null && loadingContext !== 'database') {
-      const payload: Record<string, unknown> = { type: 'dacpac-visualize', schemas: Array.from(schemas) };
-      if (projectName) payload.projectName = projectName;
-      vscodeApi.postMessage(payload);
+      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named });
       setIsLoading(true);
       setLoadingContext('dacpac');
       return;
     }
 
     // DB path: send selected schemas to extension host for Phase 2
-    const payload: Record<string, unknown> = { type: 'db-visualize', schemas: Array.from(schemas) };
-    if (projectName) payload.projectName = projectName;
-    vscodeApi.postMessage(payload);
+    vscodeApi.postMessage({ type: 'db-visualize', schemas: Array.from(schemas), ...named });
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Loading selected schemas from database...', type: 'info' });

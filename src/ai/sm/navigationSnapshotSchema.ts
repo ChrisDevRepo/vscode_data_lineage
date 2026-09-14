@@ -212,7 +212,9 @@ const EngineInternalsSchema = z.object({
     downstream: NonNegativeInt.nullable(),
   }).strict().optional(),
   depthFromOrigin: z.array(z.tuple([NonEmptyString, NonNegativeInt])),
-  extendedDepthCap: NonNegativeInt,
+  // Written by a build that still carried the legacy depth-extension field; accepted only so a
+  // record from that build still restores, and transformed away before restore. Never written.
+  extendedDepthCap: NonNegativeInt.optional(),
   budgetExpansions: z.array(z.object({ nodeId: NonEmptyString, depth: NonNegativeInt, atHop: NonNegativeInt }).strict()),
   bodiedScopeSize: NonNegativeInt,
   totalNodes: NonNegativeInt,
@@ -242,7 +244,11 @@ const EngineInternalsSchema = z.object({
   investigationTasks: z.array(InvestigationTaskSchema),
   pendingLeads: z.array(PendingLeadSchema),
   initSnapshot: InitSnapshotSchema.nullable(),
-}).strict().transform(({ qualityGuards: _legacyQualityGuards, ...internals }) => internals);
+}).strict().transform(({
+  qualityGuards: _legacyQualityGuards,
+  extendedDepthCap: _legacyExtendedDepthCap,
+  ...internals
+}) => internals);
 
 /** Current fail-closed NavigationEngine persistence contract. */
 export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({

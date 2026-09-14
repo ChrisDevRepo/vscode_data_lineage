@@ -560,10 +560,10 @@ function buildRunTraceTriggerPrompt(
     '',
     '## Discovery context',
     '',
-    `<original_question>${question}</original_question>`,
+    `<original_question>${escapePromptText(question)}</original_question>`,
     '',
     '<discovery_answer>',
-    answer,
+    escapePromptText(answer),
     '</discovery_answer>',
   ].join('\n');
 }
@@ -613,10 +613,10 @@ export function buildDiscoverySummaryComposePrompt(
     '',
     '## Discovery context',
     '',
-    `<original_question>${question}</original_question>`,
+    `<original_question>${escapePromptText(question)}</original_question>`,
     '',
     '<discovery_answer>',
-    answer,
+    escapePromptText(answer),
     '</discovery_answer>',
     ...(rejectReason
       ? ['', '## Retry — previous reply rejected', '', `Reason: ${rejectReason}`]
@@ -628,6 +628,10 @@ export function buildDiscoverySummaryComposePrompt(
  * Renders the `<discovery_summary>` XML block for SM hop stable prefix.
  * Returns empty string when summary is null or empty.
  *
+ * @remarks
+ * The memo restates the user's question near-verbatim and is composed from the discovery answer,
+ * so it is a dynamic slot and escapes through {@link escapePromptText} like the mission brief.
+ *
  * @param summary - The AI-composed memo, or `null` when unavailable.
  * @returns Filled block, or empty string.
  */
@@ -636,7 +640,7 @@ export function buildDiscoverySummaryBlock(summary: string | null): string {
   return [
     '## Discovery Summary',
     '<discovery_summary>',
-    summary.trim(),
+    escapePromptText(summary.trim()),
     '</discovery_summary>',
   ].join('\n');
 }

@@ -692,14 +692,14 @@ export function GraphCanvas({
       // A degraded projection is not a failed user action: the object view is still on stage and
       // nothing the user asked for was lost. It goes to the Output channel, not to a modal — the
       // `error` channel calls `showErrorMessage`, which would announce a crash that did not happen.
-      window.vscode?.postMessage({
+      vscodeApi.postMessage({
         type: 'log',
         level: 'warn',
         text: `[Graph] Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
       });
       return null;
     }
-  }, [activeAiMetadata, config, flowNodes, model]);
+  }, [activeAiMetadata, config, flowNodes, model, vscodeApi]);
 
   /** Whether the column view — not the object view — is the rendering currently on stage. */
   const columnViewActive = columnView && !!columnTraceView;
@@ -756,7 +756,12 @@ export function GraphCanvas({
     }
     return [...byNumber.values()].sort((a, b) => a.n - b.n);
   }, [activeAiMetadata]);
-  aiSectionsRef.current = aiSections;
+  // Committed, not assigned during render: the only reader is `handleFocusSection`, which runs from
+  // a chip click or key press — always after commit — so writing the ref in an effect keeps render
+  // free of side effects without the reader ever observing a stale list.
+  useEffect(() => {
+    aiSectionsRef.current = aiSections;
+  }, [aiSections]);
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -1557,7 +1562,7 @@ export function GraphCanvas({
           tracedNodeIds: Array.from(trace.tracedNodeIds),
         }
       : null;
-    window.vscode?.postMessage({
+    vscodeApi.postMessage({
       type: 'render-state',
       renderState: {
         ...graphErrorContext,
@@ -1722,7 +1727,7 @@ export function GraphCanvas({
           // Detail + the VS Code error toast are already emitted by ErrorBoundary.componentDidCatch
           // → bridge 'error' handler (error-level Output log). Here we only auto-reload so the user
           // never stares at a dead canvas; the navbar stays mounted above this boundary.
-          setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
+          setTimeout(() => vscodeApi.postMessage({ type: 'reload' }), 800);
         }}
         fallback={
           <div className="flex-1 flex items-center justify-center text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
