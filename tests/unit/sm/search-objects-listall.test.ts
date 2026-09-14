@@ -43,6 +43,16 @@ describe('search-objects-listall', () => {
     expect(results.every(r => (r.s as string) === 'ai'), 'every result is in the requested schema').toBe(true);
   });
 
+  it('list-all enumeration hits are labelled `schema`, not the false `name`', () => {
+    // SEARCH-MATCH-SCHEMA-LABEL: an empty query matches no name fragment, so a hit produced only
+    // by schema enumeration must not claim `match: 'name'` in the model-facing payload.
+    const res = searchObjects(model, '', undefined, ['ai']) as Record<string, unknown>;
+    const results = res.results as Array<Record<string, unknown>>;
+    expect(results.length).toBe(3);
+    expect(results.every(r => r.match === 'schema'), 'every list-all row is match:"schema"').toBe(true);
+    expect(results.some(r => r.match === 'name'), 'no list-all row keeps the false match:"name"').toBe(false);
+  });
+
   it('schema match is case-insensitive', () => {
     const res = searchObjects(model, '', undefined, ['AI']) as Record<string, unknown>;
     const results = res.results as Array<Record<string, unknown>>;
@@ -81,6 +91,7 @@ describe('search-objects-listall', () => {
     expect('error' in res, 'substring query does not reject').toBe(false);
     const results = res.results as Array<Record<string, unknown>>;
     expect(results.some(r => r.id === '[ai].[archiveorders]'), 'substring query still finds ArchiveOrders').toBe(true);
+    expect(results.every(r => r.match === 'name'), 'a real substring hit keeps match:"name"').toBe(true);
   });
 
   it('empty type filter means no filter for ordinary substring search', () => {
