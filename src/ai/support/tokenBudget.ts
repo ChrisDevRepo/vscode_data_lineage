@@ -256,7 +256,7 @@ export function checkActiveScopeAdmission(
   const counts = { nodes: projectedNodes, tokens };
   const limits = { node_cap: budget.exploration.nodeCap, token_budget: budget.exploration.tokenBudget };
   if (!exceedsPhaseBudget(budget.exploration, projectedNodes, tokens)) return { ok: true, counts, limits };
-  return { ok: false, reason: 'over_active_scope_budget', counts, limits };
+  return { ok: false, reason: REJECTION_CODES.overActiveScopeBudget, counts, limits };
 }
 
 /**

@@ -481,14 +481,23 @@ const ColumnRefSchema = z.object({
   ),
 }).strict();
 
-const ColumnFlowEntrySchema = declaredKeysOnly(z.object({
+const ColumnFlowWritesToObject = z.object({
+  node: z.string().describe('Canonical downstream node ID.'),
+  col: z.string().describe('Downstream column receiving this value.'),
+}).strict();
+
+const ColumnFlowEntryObject = z.object({
   out_col: z.string().describe('Tracked output column on the current focus node.'),
-  writes_to: nullAsAbsent(declaredKeysOnly(z.object({
-    node: z.string().describe('Canonical downstream node ID.'),
-    col: z.string().describe('Downstream column receiving this value.'),
-  }).strict()).optional()).describe('Optional downstream write destination observed in the current node.'),
+  writes_to: nullAsAbsent(declaredKeysOnly(ColumnFlowWritesToObject).optional()).describe('Optional downstream write destination observed in the current node.'),
   upstream_columns: z.array(ColumnRefSchema).describe('Real upstream columns that contribute to out_col; use [] only when none exists.'),
-}).strict());
+}).strict();
+
+const ColumnFlowEntrySchema = declaredKeysOnly(ColumnFlowEntryObject);
+
+/** Declared keys of one `column_flow[]` entry, for a caller that logs what `declaredKeysOnly` strips. */
+export const COLUMN_FLOW_ENTRY_KEYS: ReadonlySet<string> = new Set(Object.keys(ColumnFlowEntryObject.shape));
+/** Declared keys of `column_flow[].writes_to`, for a caller that logs what `declaredKeysOnly` strips. */
+export const COLUMN_FLOW_WRITES_TO_KEYS: ReadonlySet<string> = new Set(Object.keys(ColumnFlowWritesToObject.shape));
 
 /**
  * Mode-locked `verdict` field description for `submit_findings`.

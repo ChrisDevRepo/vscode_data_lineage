@@ -8,6 +8,7 @@
 - AI answers check SQL comments against the statement they annotate, and render formulas as mathematics.
 
 ### Changed
+- Security: the extension now declares limited untrusted-workspace support — workspace values for `parseRulesFile`, `dmvQueriesFile`, `excludePatterns`, and `ai.outputTemplateFile` are ignored until the workspace is trusted, so a cloned repository cannot supply SQL, regexes, or prompt templates.
 - Security: pin patched transitive `js-yaml` 4.3.2, `fast-uri` 3.1.7, `browserslist` 4.28.8, and `baseline-browser-mapping` 2.11.21.
 - An explicit graph/render request is answered in discovery; the picture itself is the **Show graph preview** follow-up, not hop-by-hop analysis.
 - A depth stated in the question is a hard limit per direction; the approval card reports the depth the engine will enforce.

@@ -803,11 +803,10 @@ export function createMessageHandlers(
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
-      // The column store is a pure projection of `sess.model` (`populateColumnStore` is its only
-      // writer), and a rebuild only re-reads configuration — the model is untouched. Clearing here
-      // emptied the store with nothing to refill it, which blanked the detail panel's columns and
-      // made every stored run report `stale` (an absent DDL hashes to `unknown`, never matching the
-      // saved digest). Reset belongs to `applyModelToSession`, the actual model-load path.
+      // The column store is left intact: it is a pure projection of `sess.model`
+      // (`populateColumnStore` is its only writer) and a rebuild only re-reads configuration, so
+      // nothing here would refill it. Resetting it belongs to `applyModelToSession`, the model-load
+      // path that can.
       const config = await readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },

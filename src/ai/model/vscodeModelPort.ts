@@ -50,41 +50,31 @@ type PortGenerationPart =
 // instead of a real tool call: UAT recorded a 3,638,544-char runaway against a ~33.6 KB legitimate
 // maximum, so 200,000 sits far above any real answer while stopping a runaway drain early.
 //
-// Per-phase calibration (issue runaway-text-toolcall): on the customendpoint/Ornith lane three
-// generations streamed 134,141-139,669 chars of tool-free chain-of-thought and slipped UNDER this
-// outer bound, each burning ~7 min until the provider's own token cap cut them mid-sentence.
-// Tool-bearing phases therefore carry a tighter text ceiling derived from the per-phase legitimate
-// maxima observed on the wire traces plus the documented ~33.6 KB global legitimate maximum. Every
-// cap sits at or above ~1.5x that documented maximum, so no generation inside the documented
-// legitimate envelope can ever be cut, while every recorded runaway (132,125-146,163 chars)
-// exceeds its phase cap by at least ~1.3x. Phases without a smaller cap keep the outer bound; an
-// unrecognized phase label always resolves to the outer bound, never to a smaller cap.
+// A tool-free chain-of-thought drain of 130,000-140,000 chars slips UNDER this outer bound and
+// still burns minutes until the provider's own token cap cuts it mid-sentence, so tool-bearing
+// phases carry a tighter per-phase ceiling. Every cap sits at or above ~1.5x the ~33.6 KB
+// legitimate maximum above, so no generation inside the legitimate envelope can be cut, while a
+// runaway of that size exceeds its phase cap by at least ~1.3x. Phases without a smaller cap keep
+// the outer bound; an unrecognized phase label always resolves to the outer bound, never to a
+// smaller cap.
 const STREAM_TEXT_CHAR_CEILING = 200_000;
 
 /**
  * Streamed-text ceiling per {@link InstructionPhase}, calibrating
  * {@link STREAM_TEXT_CHAR_CEILING} instead of adding a second guard site.
  *
- * Evidence (issue `runaway-text-toolcall`; traces 2026-09-12/13 plus the Ornith e2e batch):
- * observed legitimate text maxima are tiny against the 132K-146K runaway cluster — `discover`
- * 3,197 chars, `active` 4,699 chars (the accepted repair generation), `compose` 734, `sm_entry`
- * 190, `detect_entry`/`synthesis` 3 — while `visual_preview` has no legitimate sample at all (its
- * only record is the 139,669-char runaway). Derivation per phase:
+ * Each cap is anchored on the ~33.6 KB global legitimate maximum documented on
+ * {@link STREAM_TEXT_CHAR_CEILING}, never on a phase's own observed maximum alone:
  *
- * - `detect_entry` 100,000 — legitimate sample of 3 chars is far too thin to tighten below the
- *   documented legitimate envelope, so the anchor is 3x the documented ~33.6 KB global maximum.
- * - `discover` 50,000 — ~15x its 3,197-char legitimate max, and ~1.5x the documented global
- *   maximum.
- * - `visual_preview` 100,000 — no legitimate sample, so anchored at 3x the documented ~33.6 KB
- *   global maximum; catches its recorded 139,669-char runaway.
- * - `sm_entry` 100,000 — legitimate sample of 190 chars, same documented-maximum anchor.
- * - `active` 50,000 — ~10x its 4,699-char legitimate max, same global floor; the phase with the
- *   most recorded runaways (five, 132,125-146,163 chars).
+ * - `detect_entry`, `sm_entry`, `visual_preview`, `synthesis` 100,000 — legitimate text on these
+ *   phases is a few hundred chars at most, far too thin to tighten below the legitimate envelope,
+ *   so each is anchored at 3x the global maximum.
+ * - `discover`, `active` 50,000 — the two phases that legitimately stream prose, at ~1.5x the
+ *   global maximum, which is still an order of magnitude above their own legitimate maxima.
  * - `compose` 200,000 — the text channel IS the deliverable there (`completeText` discards
- *   `hitCeiling`), so a cut would be delivered silently with no retry behind it; no runaway has
- *   ever been observed in the phase, so it keeps the outer bound.
- * - `synthesis` 100,000 — legitimate sample of 3 chars, same documented-maximum anchor.
- * - `completed` 200,000 — no model call ever recorded for the label; outer bound.
+ *   `hitCeiling`), so a cut would be delivered silently with no retry behind it; it keeps the
+ *   outer bound.
+ * - `completed` 200,000 — no model call is issued under the label; outer bound.
  *
  * Total over {@link InstructionPhase} by construction: a new phase member fails to compile until
  * it is mapped here. An unrecognized phase string resolves through {@link streamTextCharCeiling}

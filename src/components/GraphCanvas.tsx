@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
@@ -625,13 +625,18 @@ export function GraphCanvas({
   const handleAiPanelResize = useCallback((width: number, height: number) => {
     setPanelSizePx(prev => (prev && prev.width === width && prev.height === height) ? prev : { width, height });
   }, []);
-  // Reserved-space style for the React Flow wrapper: the panel's measured width (right/left dock)
-  // or height (bottom dock), else the CSS default kept in sync with `.ln-ai-description-anchor*`.
-  const aiCanvasReserve = !(aiDescription && aiPanelOpen)
-    ? { width: '100%', height: '100%' }
+  // Reserved-space style for the React Flow wrapper, expressed as insets rather than a width: the
+  // wrapper is absolutely positioned, so a left-docked panel has to push the canvas's `left` edge
+  // in — a narrower box alone would leave the canvas under the panel with dead space opposite it.
+  // The reserved extent is the panel's measured size, else the CSS default kept in sync with
+  // `.ln-ai-description-anchor*`.
+  const aiCanvasReserve: CSSProperties = !(aiDescription && aiPanelOpen)
+    ? { inset: 0 }
     : dockPosition === 'bottom'
-      ? { width: '100%', height: `calc(100% - ${panelSizePx ? `${panelSizePx.height}px` : AI_PANEL_DEFAULT_HEIGHT})` }
-      : { width: `calc(100% - ${panelSizePx ? `${panelSizePx.width}px` : AI_PANEL_DEFAULT_WIDTH})`, height: '100%' };
+      ? { top: 0, left: 0, right: 0, bottom: panelSizePx ? panelSizePx.height : AI_PANEL_DEFAULT_HEIGHT }
+      : dockPosition === 'left'
+        ? { top: 0, bottom: 0, right: 0, left: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH }
+        : { top: 0, bottom: 0, left: 0, right: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH };
   // The narrowed canvas re-fits once the panel has claimed or released its width, so the visible
   // graph re-centers instead of leaving nodes under the docked column.
   useEffect(() => {

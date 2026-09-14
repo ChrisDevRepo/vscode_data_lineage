@@ -9,6 +9,8 @@
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
 import {
+  COLUMN_FLOW_ENTRY_KEYS,
+  COLUMN_FLOW_WRITES_TO_KEYS,
   SubmitFindingsBbInputSchema,
   SubmitFindingsCtInputSchema,
 } from '../../tools/toolSchemas';
@@ -25,17 +27,14 @@ import {
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
-const COLUMN_FLOW_ENTRY_KEYS = new Set(['out_col', 'writes_to', 'upstream_columns']);
-const COLUMN_FLOW_WRITES_TO_KEYS = new Set(['node', 'col']);
-
 // `declaredKeysOnly` (`inputNormalization.ts`) strips undeclared `column_flow[].*` keys inside
 // `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
 // permissive registered union `vscodeModelPort` parses first, ahead of this handler, where no logger
 // is reachable. This strip runs on the actual submit path so each drop is named
-// (entry index, dropped keys); the schema-side strip stays silent on the clean copy.
+// (entry index, dropped keys); the key sets are the schema's own, so a new field cannot go missing.
 function stripUndeclaredColumnFlowKeys(columnFlow: unknown[], logger: ToolServices['logger']): unknown[] {
   const dropped: string[] = [];
-  const stripKeys = (rec: Record<string, unknown>, declared: Set<string>, label: string) => {
+  const stripKeys = (rec: Record<string, unknown>, declared: ReadonlySet<string>, label: string) => {
     const surplus = Object.keys(rec).filter(key => !declared.has(key));
     if (surplus.length === 0) return rec;
     dropped.push(`${label}: ${surplus.join(', ')}`);

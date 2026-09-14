@@ -559,10 +559,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const hopKey = relation.hopNode.toLowerCase();
 
     // Ahead of every accumulator write, so a repeat is one fact for the rows a node derives as well
-    // as for the edges drawn. Behind them the collapse held only by luck: `inbound` is a plain
-    // array, and a second push stayed invisible because each of its readers happens to reduce it —
-    // a set of upstream tuples, a `.some()`, a test for zero. Any reader added on a count or an
-    // order would have inherited the duplicate.
+    // as for the edges drawn: `inbound` is a plain array, and a duplicate push would be counted by
+    // any reader that looks at its length or order rather than reducing it.
     const identity = [sourceKey, normalizeColName(relation.fromCol), targetKey, normalizeColName(relation.toCol), hopKey].join('->');
     if (seenRelations.has(identity)) return;
     seenRelations.add(identity);

@@ -64,9 +64,9 @@ export const MAX_TOOL_SEMANTIC_FAILURES = 3;
  * call it already has the answer to — not a transport artifact, bounded by the shared
  * unproductive-resend absorption (past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive identical
  * resends the duplicate charges a strike); and the budget guards
- * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}) —
- * valid-but-oversized requests under the PM not-too-strict ruling, never charged to the model's
- * semantic budget.
+ * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}),
+ * which refuse a well-formed request for its size alone and so say nothing about the model's
+ * semantic accuracy.
  */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
@@ -1526,8 +1526,8 @@ export async function executeToolGenerationAttempt(
       // a resend byte-identical to the just-rejected payload of the same tool is not mid-correction,
       // it is non-convergence, and past MAX_FREE_UNPRODUCTIVE_RESENDS consecutive ones charge like
       // every other invalid_tool_input — without this bound the free channel can spin to the
-      // provider-call cap (observed 2026-08-30: one repair turn resent an equivalent rejected
-      // payload until only MAX_TOOL_PROVIDER_CALLS stopped it). Initial (no held draft)
+      // provider-call cap, a repair turn resending an equivalent rejected payload until only
+      // MAX_TOOL_PROVIDER_CALLS stops it. Initial (no held draft)
       // present_result prevalidation rejects, and every other tool's invalid_tool_input, stay
       // chargeable via the untouched shared guard below.
       const isRepairTurnPresentResultPrevalidation = call.code === 'invalid_tool_input'

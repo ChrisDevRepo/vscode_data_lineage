@@ -352,7 +352,7 @@ export type ColumnCarry =
 export const INHERIT_CARRY: ColumnCarry = { kind: 'inherit' };
 
 /** Shared `row_role_only` carry — the stateless row-role decision, safe to hand out by reference. */
-export const ROW_ROLE_ONLY_CARRY: ColumnCarry = { kind: 'row_role_only' };
+const ROW_ROLE_ONLY_CARRY: ColumnCarry = { kind: 'row_role_only' };
 
 /**
  * Lifts the legacy `string[] | undefined` column argument into a {@link ColumnCarry}.

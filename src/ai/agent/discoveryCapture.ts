@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { ToolAttemptObservation } from './toolAttempt';
 import type { TurnEventSink } from '../runtime/turnEventSink';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 import { readToolError } from '../support/toolErrorEnvelope';
 
 /** The captured walk used to seed the SM-offer pill / `lineage_start_exploration`. */
@@ -27,7 +28,7 @@ const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 
 const ScopeBundleOriginView = z.object({ origin: z.string().trim().min(1) }).loose();
 const OverBudgetResultView = z.object({
-  reason: z.literal('over_discovery_budget'),
+  reason: z.literal(REJECTION_CODES.overDiscoveryBudget),
   counts: z.object({ nodes: z.number() }).loose().optional(),
   hint: z.string().optional(),
   scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
@@ -101,27 +102,6 @@ export function captureRejectedScopeOffer(
   const origin = (view.data.scope_proposal?.origin ?? (fromInput.success ? fromInput.data.origin : '')).trim();
   if (!origin) return null;
   return { origin, walkCount: view.data.counts?.nodes ?? 0 };
-}
-
-/**
- * Whether one tool result is an oversized `lineage_get_scope_bundle` request.
- *
- * @remarks
- * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
- * returns it for an oversized stored-run recall. Only an oversized *scope* request seeds the
- * SM-offer pill; matching on the envelope alone is not a routing trigger.
- *
- * @param toolName - Name of the tool that produced `resultText`.
- * @param resultText - The tool's serialized result.
- * @returns True only for an oversized scope-bundle request.
- */
-export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
-  if (toolName !== SCOPE_BUNDLE_TOOL) return false;
-  try {
-    return OverBudgetResultView.safeParse(JSON.parse(resultText)).success;
-  } catch {
-    return false;
-  }
 }
 
 /** A parsed `over_discovery_budget` rejection from any catalog tool — drives the user-visible notice. */

@@ -292,15 +292,15 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * CT only: neighbour ids named in an accepted `route_requests` entry — declared by the tracer as
    * part of the traced-column continuation. A non-bodied target is *contracted* by the bipartite
-   * agenda rule (`enqueueHop`, `smBase.ts:3048+`) the instant it is enqueued, so it gets no agenda
+   * agenda rule ({@link enqueueHop}) the instant it is enqueued, so it gets no agenda
    * entry and no detail slot — the two sources {@link committedConnectedIds} otherwise reads — and
    * an unrelated later hop's `prune_neighbors` can remove it with nothing left to refuse the prune.
    * The AI sees one hop at a time and cannot itself keep a contracted declaration
    * reachable past it; this set is the backend's record of the declaration, consulted both by
    * {@link committedConnectedIds} (indirect orphan protection for anything committed behind the
    * declared node) and directly by `submitFindings`'s `prune_neighbors` admission (direct
-   * self-target protection — a declared dead end with no further bodied neighbor, the
-   * CustomerMaster shape, orphans nothing else and so never trips the topology walk on its own).
+   * self-target protection — a declared dead end with no further bodied neighbor orphans nothing
+   * else and so never trips the topology walk on its own).
    * Populated only when {@link tracer} is set, so BB's prune-protection set stays byte-identical.
    */
   protected ctDeclaredRouteIds = new Set<string>();
@@ -2449,9 +2449,9 @@ export class NavigationEngine implements IHopStateMachine {
     // is the final guard, and all mutations stay staged until completeness also passes.
     // A node the tracer declared via an accepted route_request is refused as a prune
     // candidate outright, split out ahead of the topology walk below — a declared dead end (no
-    // further bodied neighbor to contract to, the CustomerMaster shape) orphans nothing else, so it
-    // never trips `firstDisconnectedAfterPrune`'s reachability check on its own. CT only; empty in
-    // BB, so `prunablePruneIds` equals `actionPolicy.acceptedPruneIds` there.
+    // further bodied neighbor to contract to) orphans nothing else, so it never trips
+    // `firstDisconnectedAfterPrune`'s reachability check on its own. CT only; empty in BB, so
+    // `prunablePruneIds` equals `actionPolicy.acceptedPruneIds` there.
     const declaredPruneIds = this.tracer
       ? actionPolicy.acceptedPruneIds.filter((nid) => this.ctDeclaredRouteIds.has(nid))
       : [];
@@ -3680,8 +3680,8 @@ export class NavigationEngine implements IHopStateMachine {
 
     // bfsDepthMap walks source->target only. On an upstream trace every retained node sits
     // behind the origin, so that directed walk reaches depth 1 and stops — the whole ancestor
-    // chain sorts past maxDepth on the `?? 999` fallback and never lands in a bucket (measured:
-    // m0-8-fireworks/run-T6 collapsed 28 retained nodes into 2 buckets). The skeleton groups
+    // chain sorts past maxDepth on the `?? 999` fallback and never lands in a bucket, collapsing
+    // a whole retained ancestor set into two buckets. The skeleton groups
     // render stages, not a flow claim — direction is stated separately by buildDirectionLines
     // in smPrompts.ts — so the grouping walk is fed both edge directions here; bfsDepthMap's own
     // directed contract and tests are untouched.

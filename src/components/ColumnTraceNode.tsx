@@ -77,11 +77,33 @@ function transformPortGeometry(portCount: number, width: number, height: number)
   } };
 }
 
+/** Half the rendered handle box (`w-2 h-2`), subtracted so the anchor point sits at its centre. */
+const HANDLE_HALF = 4;
+
+/**
+ * Absolute offset of one row's edge-attachment handle.
+ *
+ * @remarks
+ * A transform super node's ports fan across the circle arc, so `left` places the handle at the arc's
+ * x for that row — that is what makes the line meet the visible stroke rather than stopping at the
+ * invisible box edge. A table card's ports sit on its rows and take the row centre alone. Either way
+ * the handle is invisible: it is only the edge attachment point, and both sides read the same
+ * geometry so an inbound and an outbound line meet the same arc.
+ */
+function portHandleStyle(view: ColumnTraceNodeData['view'], index: number, side: 'source' | 'target'): CSSProperties {
+  if (!view.isTransformNode) return { top: rowCenter(index) };
+  const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
+  const height = view.height || COLUMN_TRANSFORM_NODE_MIN_HEIGHT;
+  const { cx, cy, radius, portY } = transformPortGeometry(view.rows.length, width, height);
+  const y = portY(index);
+  const dx = Math.sqrt(Math.max(radius * radius - (y - cy) ** 2, 0));
+  return { top: y - HANDLE_HALF, left: (side === 'source' ? cx + dx : cx - dx) - HANDLE_HALF };
+}
+
 function ColumnTraceRowLine({
   row,
   nodeId,
   nodeTitle,
-  isTransformNode,
   lineState,
   focused,
   isTabStop,
@@ -93,7 +115,6 @@ function ColumnTraceRowLine({
   row: ColumnTraceRow;
   nodeId: string;
   nodeTitle: string;
-  isTransformNode: boolean;
   lineState: ColumnLineState | undefined;
   focused: boolean;
   isTabStop: boolean;
@@ -126,7 +147,7 @@ function ColumnTraceRowLine({
     transition: ROW_TRANSITION,
   };
 
-  // Both glyphs are aria-hidden, so the row's own label is the only thing announced; it names the
+  // The state dot is aria-hidden, so the row's own label is the only thing announced; it names the
   // object as well as the column, since a bare column name is ambiguous across a multi-node trace.
   const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}`;
 
@@ -150,20 +171,16 @@ function ColumnTraceRowLine({
       onFocus={() => { onFocusStart(); onColumnHover(nodeId, row.name); }}
       onBlur={() => { onFocusEnd(); onColumnHover(nodeId, null); }}
     >
-      {isTransformNode ? (
-        <span aria-hidden="true" style={{ fontSize: 9, color: 'var(--ln-fg-muted)', width: 8, textAlign: 'center', flexShrink: 0 }}>▹</span>
-      ) : (
-        <span
-          aria-hidden="true"
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: 999,
-            flexShrink: 0,
-            backgroundColor: lineStateColor(lineState),
-          }}
-        />
-      )}
+      <span
+        aria-hidden="true"
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          flexShrink: 0,
+          backgroundColor: lineStateColor(lineState),
+        }}
+      />
       <span className="text-[10px]" style={{ color: 'var(--ln-fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isHoveredRow ? 600 : 400 }}>
         {row.name}
       </span>
@@ -326,9 +343,9 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const schemaColor = getSchemaColor(view.schema);
   const nodeTitle = `${view.schema}.${view.label}`;
 
-  const summaryLine = view.isTransformNode
-    ? `${view.rows.length} traced ports`
-    : `${view.rows.length} traced columns`;
+  // Only a column card lists rows — a transform super node renders its circle instead — so the
+  // collapsed stand-in is always the column count.
+  const summaryLine = `${view.rows.length} traced columns`;
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
@@ -442,7 +459,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
                   row={row}
                   nodeId={id}
                   nodeTitle={nodeTitle}
-                  isTransformNode={view.isTransformNode}
                   lineState={data.rowLineStates?.[row.name]}
                   focused={focusedRow === row.name}
                   isTabStop={row.name === tabStopRow}
@@ -461,51 +477,26 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         </>
       )}
 
-      {view.rows.map((row, i) => {
-        // A transform super node's ports fan across the circle arc; a table card's ports sit on its
-        // rows. Either way the handle is invisible — it is only the edge attachment point.
-        const portStyle: CSSProperties = view.isTransformNode
-          ? (() => {
-              const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
-              const { cx, radius, portY } = transformPortGeometry(view.rows.length, width, view.height);
-              const y = portY(i);
-              const dx = Math.sqrt(Math.max(radius * radius - (y - (view.height - TRANSFORM_NAME_STRIP_HEIGHT) / 2) ** 2, 0));
-              return { top: y - 4, left: cx - dx - 4 };
-            })()
-          : { top: rowCenter(i) };
-        return (
-          <Handle
-            key={`t-${row.name}`}
-            type="target"
-            position={Position.Left}
-            id={columnHandleId(row.name, 'target')}
-            className="w-2! h-2! ln-handle"
-            style={portStyle}
-          />
-        );
-      })}
-      {view.rows.map((row, i) => {
-        const portStyle: CSSProperties = view.isTransformNode
-          ? (() => {
-              const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
-              const { cx, radius, portY } = transformPortGeometry(view.rows.length, width, view.height);
-              const y = portY(i);
-              const cy = (view.height - TRANSFORM_NAME_STRIP_HEIGHT) / 2;
-              const dx = Math.sqrt(Math.max(radius * radius - (y - cy) ** 2, 0));
-              return { top: y - 4, left: cx + dx - 4 };
-            })()
-          : { top: rowCenter(i) };
-        return (
-          <Handle
-            key={`s-${row.name}`}
-            type="source"
-            position={Position.Right}
-            id={columnHandleId(row.name, 'source')}
-            className="w-2! h-2! ln-handle"
-            style={portStyle}
-          />
-        );
-      })}
+      {view.rows.map((row, i) => (
+        <Handle
+          key={`t-${row.name}`}
+          type="target"
+          position={Position.Left}
+          id={columnHandleId(row.name, 'target')}
+          className="w-2! h-2! ln-handle"
+          style={portHandleStyle(view, i, 'target')}
+        />
+      ))}
+      {view.rows.map((row, i) => (
+        <Handle
+          key={`s-${row.name}`}
+          type="source"
+          position={Position.Right}
+          id={columnHandleId(row.name, 'source')}
+          className="w-2! h-2! ln-handle"
+          style={portHandleStyle(view, i, 'source')}
+        />
+      ))}
     </div>
     </>
   );

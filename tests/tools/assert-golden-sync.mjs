@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-// Release gate (RC3, DECISIONS 2026-09-13): a prompt-surface change may not ship without the
-// golden-regeneration act. The prompt-golden suite lives in gitignored `internal-tests/`, which no
-// tracked signal runs — the 2026-09-13 incident demonstrated a 28-case prompt drift landing
-// invisible to every gate step. This manifest pins the sha256 of the prompt-affecting surface as
-// it stood at the last golden regeneration; a prompt edit without a regeneration act fails here.
+// Gate step: a prompt-surface change may not ship without a prompt-golden regeneration. The
+// prompt-golden suite is maintained outside the tracked tree, so no tracked signal runs it; this
+// manifest pins the sha256 of the prompt-affecting surface as it stood at the last regeneration,
+// and a prompt edit without a matching refresh fails here.
 //
-// After regenerating goldens (UPDATE_GOLDEN=1 … unit/prompts, then review the golden diff),
-// refresh the record as part of the same act:
+// After regenerating the goldens and reviewing their diff, refresh the record in the same change:
 //   node tests/tools/assert-golden-sync.mjs --update
 // No goldens are read — the manifest is tracked and the check works on public clones.
 import { createHash } from 'node:crypto';
@@ -32,6 +30,17 @@ function surfaceFiles() {
     }
   };
   for (const surface of SURFACES) {
+    // A surface renamed or deleted without updating SURFACES would otherwise crash with a bare
+    // ENOENT stack. Fail closed with the repair instead: the list is what the manifest covers, so
+    // an unreadable entry means the gate is no longer measuring what it claims to.
+    if (!existsSync(surface)) {
+      console.error(
+        `FAIL  prompt surface "${surface}" does not exist — it was renamed or removed without ` +
+        `updating SURFACES in tests/tools/assert-golden-sync.mjs. Fix the list, regenerate the ` +
+        `goldens, then refresh the manifest with --update.`,
+      );
+      process.exit(1);
+    }
     if (statSync(surface).isDirectory()) walk(surface);
     else files.push(surface);
   }
@@ -72,17 +81,17 @@ if (existsSync(MANIFEST)) {
 if (typeof recorded !== 'string' || recorded.length !== 64) {
   console.error(
     `FAIL  ${MANIFEST} is missing or malformed — the gate cannot verify golden sync. Fail closed: ` +
-    `regenerate the goldens (UPDATE_GOLDEN=1 npx vitest run --config internal-tests/vitest.config.ts ` +
-    `unit/prompts), review the golden diff, then run node ${MANIFEST.replace('golden-sync.json', 'assert-golden-sync.mjs')} --update.`,
+    `regenerate the prompt goldens, review the golden diff, then run ` +
+    `node ${MANIFEST.replace('golden-sync.json', 'assert-golden-sync.mjs')} --update.`,
   );
   process.exit(1);
 }
 
 if (recorded !== current) {
   console.error(
-    `FAIL  prompt surface changed without golden regeneration — run UPDATE_GOLDEN=1 npx vitest run ` +
-    `--config internal-tests/vitest.config.ts unit/prompts and review the golden diff, then refresh ` +
-    `the manifest with node tests/tools/assert-golden-sync.mjs --update. ` +
+    `FAIL  prompt surface changed without golden regeneration — regenerate the prompt goldens, ` +
+    `review the golden diff, then refresh the manifest with ` +
+    `node tests/tools/assert-golden-sync.mjs --update. ` +
     `(manifest ${recorded.slice(0, 12)}… vs surface ${current.slice(0, 12)}… over ${files.length} files.)`,
   );
   process.exit(1);

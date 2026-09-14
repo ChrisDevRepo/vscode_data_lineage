@@ -1,5 +1,5 @@
 /**
- * m0-zai-1-zai/run-T6 (lane zai, glm-5.3-flash): at hop 9, focus `[ai].[sploadsalesstaging]`,
+ * Recorded run: at hop 9, focus `[ai].[sploadsalesstaging]`,
  * the model's own submitted finding text named `[ai].[vwraworders]` as a direct upstream source,
  * but `route_requests` named only two other neighbors — `vwraworders` was never routed, never
  * pruned, and never surfaced as a deferred lead. Two golden-required nodes two hops behind it

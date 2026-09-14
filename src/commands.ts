@@ -46,9 +46,8 @@ export function registerCommands(
      * filter reset — suitable for programmatic callers and keyboard shortcuts.
      * Does not exit active trace, analysis, or AI preview modes.
      *
-     * The column store is deliberately left intact: it is a pure projection of the
-     * session model, which a settings push does not touch. Clearing it emptied the
-     * detail panel's columns and made every stored run report `stale`.
+     * The column store is left intact: it is a pure projection of the session model,
+     * which a settings push does not touch, so nothing here would refill it.
      */
     vscode.commands.registerCommand('dataLineageViz.refresh', () => {
       const panel = getActivePanel();

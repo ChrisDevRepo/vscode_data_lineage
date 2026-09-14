@@ -232,8 +232,8 @@ function presentBookmark(
     source,
     nodes: nodeIds.length,
     // The ids are the recall keys: `presentRunRecall` answers by id, so a card that reported only
-    // the count left the model no way to ask the stored run about anything and it reached for a
-    // scope walk instead — which is the one discovery call that reroutes to the approval gate.
+    // the count leaves the model no way to ask the stored run about anything and it reaches for a
+    // scope walk instead — the one discovery call the discovery budget can reject outright.
     ...spreadCapped('node_ids', nodeIds),
     ai_run: presentAiRun(run, getDdl),
   };

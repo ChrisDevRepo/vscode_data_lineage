@@ -77,8 +77,7 @@ type RunStoreReader = {
  * `ddlHashes` costs only the staleness annotation, so each falls back to its empty value instead
  * of dropping a whole run's memory. The snapshot is the one field a consumer walks structurally,
  * so it is validated by the same schema the engine restores from — a damaged checkpoint answers
- * "no run memory" rather than reaching the presenter as a half-shaped object. That split is the
- * exception named in `AGENTS.md` §Runtime Contract Hard Rules, not a deviation from it.
+ * "no run memory" rather than reaching the presenter as a half-shaped object.
  */
 const StoredAiRunSchema = z.object({
   schemaVersion: z.literal(1),

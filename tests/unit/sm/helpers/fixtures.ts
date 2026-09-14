@@ -43,11 +43,6 @@ export function makeNode(
 }
 
 /**
- * Build a `LineageEdge[]` fixture from `[source, target]` pairs. Every synthetic edge
- * is tagged `'body'`; see the module doc for why this is behaviorally inert versus a
- * non-member `'SELECT'` literal.
- */
-/**
  * Build the engine's `activeFilter` config — the GUI filter state the NavigationEngine reads at
  * construction. Every required field is defaulted to "no filter", so a test names only the axis
  * it exercises (`makeActiveFilter({ schemas: ['dbo'] })`) and still hands over a complete
@@ -65,6 +60,11 @@ export function makeActiveFilter(overrides: Partial<SerializedFilterState> = {})
   };
 }
 
+/**
+ * Build a `LineageEdge[]` fixture from `[source, target]` pairs. Every synthetic edge
+ * is tagged `'body'`; see the module doc for why this is behaviorally inert versus a
+ * non-member `'SELECT'` literal.
+ */
 export function makeEdges(pairs: ReadonlyArray<readonly [string, string]>): LineageEdge[] {
   return pairs.map(([source, target]) => ({ source, target, type: 'body' }));
 }
@@ -138,9 +138,8 @@ export interface DriveOptions {
  * @returns The focus ids visited, in dispatch order.
  *
  * @remarks
- * Replaces the near-identical `drain` / `driveWalk` / `drainChain` / `driveRoutes` loops
- * that each nav-engine suite carried its own copy of. Tests that assert on submitted prose
- * author their own `submitFindings` call rather than routing it through here.
+ * The shared drive loop for nav-engine suites. Tests that assert on submitted prose author
+ * their own `submitFindings` call rather than routing it through here.
  */
 export function driveEngine(
   engine: Pick<NavigationEngine, 'getHopContext' | 'submitFindings'>,

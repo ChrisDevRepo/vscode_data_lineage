@@ -223,10 +223,12 @@ Lifecycle is recorded separately from prose:
 - `passthrough` keeps topology without treating the node as a key transform;
 - `prune` removes an irrelevant node only when closure checks allow it.
 
-BB neighbor pruning is narrower than a focus-node `prune`: it can remove only
-an adjacent, topology-safe object outside the approved exploration scope.
-Approved in-scope neighbors remain protected. Repeated attempts against an
-object already removed are accepted as already-pruned no-ops.
+Neighbor pruning is narrower than a focus-node `prune`: it can remove only
+an adjacent, topology-safe object — outside the approved scope, or in scope
+when the hop decides it is off the answer path. A neighbor that already owns
+a queued hop is never pulled, and the don't-orphan closure check governs every
+accepted prune. Repeated attempts against an object already removed are
+accepted as already-pruned no-ops.
 
 Tables and other non-bodied nodes can be contracted as topology-only
 passthroughs so the agenda stays focused on analyzable SQL bodies. The model

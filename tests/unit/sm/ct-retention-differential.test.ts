@@ -1,7 +1,7 @@
 /**
- * CT retention differential — the wave-1 defect, reproduced deterministically.
+ * CT retention differential — a measured defect, reproduced deterministically.
  *
- * Wave 1 measured 10 required dependencies lost across 8 of 11 real-model cases, with BB
+ * Recorded runs measured 10 required dependencies lost across 8 of 11 real-model cases, with BB
  * losing none. Every loss had the same signature: the node was in `scopeNodeIds`, absent from
  * `removedSet`, and absent from the result — admitted, never pruned, and gone. These cases
  * reproduce that signature with no model and no network, one minimal topology per measured
@@ -439,7 +439,7 @@ describe('CT retention — every required dependency survives into the result', 
 
       // Reported as one set, so a failure names the whole loss for this case rather than its first node.
       const lost = testCase.reachRequired.filter(required => !rendered.has(required));
-      expect(lost, `${testCase.id}: required dependencies missing from the answer (wave 1 measured: ${testCase.measuredLost.join(', ') || 'none'})`).toEqual([]);
+      expect(lost, `${testCase.id}: required dependencies missing from the answer (measured: ${testCase.measuredLost.join(', ') || 'none'})`).toEqual([]);
 
       // The render's own disposition, named by the case rather than inferred from the gap below.
       // A case that expects none holds the drop stage to the same standard it held before this

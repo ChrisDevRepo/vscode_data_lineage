@@ -53,7 +53,14 @@
   "homepage": "https://datalineage.chwagner.eu/",
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": "limited",
+      "description": "Custom parse-rule, DMV query, exclusion-pattern and AI template settings are read from workspace configuration and compiled or executed; workspace values for them are ignored until the workspace is trusted.",
+      "restrictedConfigurations": [
+        "dataLineageViz.parseRulesFile",
+        "dataLineageViz.dmvQueriesFile",
+        "dataLineageViz.excludePatterns",
+        "dataLineageViz.ai.outputTemplateFile"
+      ]
     }
   },
   "main": "./out/extension.js",

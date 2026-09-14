@@ -2,7 +2,7 @@
 -- EXPECT  sources:[dbo].[Customer],[dbo].[Order],[dbo].[OrderLine],[dbo].[Product]  targets:[dbo].[SalesSummary]  exec:
 -- NOTE: extract_sources_ansi only fires on FROM/JOIN keywords.
 --       Tables after the first comma in "FROM t1, t2, t3" are NOT captured by current rules.
---       This test WILL FAIL on sources — gap signal for RL Wave (ANSI comma-join).
+--       This test WILL FAIL on sources — known parser gap (ANSI comma-join).
 --       Only [dbo].[Customer] (immediately after FROM) is found; [dbo].[Order] etc. are missed.
 
 -- Typical SQL Server 6.5 / 7.0 era stored procedure style

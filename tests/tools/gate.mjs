@@ -48,7 +48,7 @@ const STEPS = [
   npmRun('typecheck:tests', 'typecheck:tests'),
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
-  // The prompt-golden suite is gitignored, so no other step sees prompt-text drift (RC3). The
+  // The prompt-golden suite is not tracked, so no other step sees prompt-text drift. The
   // manifest pins the prompt-affecting surface at the last golden regeneration; a prompt edit
   // without that regeneration act fails here in seconds, 0 model calls.
   { name: 'prompt golden sync', cmd: nodeBin, args: ['tests/tools/assert-golden-sync.mjs'] },
