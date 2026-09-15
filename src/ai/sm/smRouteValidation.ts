@@ -67,6 +67,13 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
 const HELD_RETRY_ORDER =
   'Your analysis is held: resend submit_findings with `sections: []` and only the corrected routing to reuse your original sections and summary verbatim.';
 /**
+ * Resubmission order for a rejection made only of field-scoped content errors (a column, route or
+ * prune reference the detail names). The engine holds the draft for that set, so the prose the model
+ * authored survives the correction instead of being re-authored from scratch.
+ */
+const HELD_CORRECTION_ORDER =
+  'Your analysis is held: resend submit_findings with `sections: []` and the fields detail names corrected to reuse your original sections and summary verbatim.';
+/**
  * Shared "nothing is held" resubmission order — used both here (mixed route-kind rejections) and
  * by the caller that merges a topology fault with a deferred CT completeness fault into one
  * envelope, where the same stricter policy applies for the same reason: another repair is
@@ -74,6 +81,15 @@ const HELD_RETRY_ORDER =
  */
 export const FULL_RESUBMIT_ORDER =
   'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.';
+
+/**
+ * True for a correctable field-scoped content error: a fatal kind that is neither neighbor
+ * incompleteness nor a prune-topology fact. The engine holds the finding draft for a rejection made
+ * only of these, and {@link buildRouteValidationRejection} states that hold.
+ */
+export function isContentKind(kind: InvalidRouteKind): boolean {
+  return !isAbsentKind(kind) && kind !== 'prune_would_orphan' && kind !== 'missing_required_route';
+}
 
 /**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the
@@ -131,11 +147,12 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], appendHold
   const hint = [
     missingRouteHint,
     ...distinctKinds.filter(k => k !== 'missing_required_route').map(k => ROUTE_REJECTION_DIRECTIVE[k]),
-    // Mirrors the engine's hold condition — pure neighbor incompleteness — so the order the model
-    // follows is the one the engine will honour.
-    appendHoldOrder && missingRouteErrors.length > 0
-      ? (missingRouteErrors.length === errors.length ? HELD_RETRY_ORDER : FULL_RESUBMIT_ORDER)
-      : '',
+    // Mirrors the engine's hold condition — pure neighbor incompleteness, or content errors only —
+    // so the order the model follows is the one the engine will honour.
+    !appendHoldOrder ? ''
+      : missingRouteErrors.length > 0
+        ? (missingRouteErrors.length === errors.length ? HELD_RETRY_ORDER : FULL_RESUBMIT_ORDER)
+        : errors.length > 0 && errors.every(e => isContentKind(e.kind)) ? HELD_CORRECTION_ORDER : '',
   ].filter(Boolean).join(' ');
   // available_routes is the identical full required set on every missing_required_route entry, so
   // the envelope states it once — on the first such entry — instead of once per missing id.

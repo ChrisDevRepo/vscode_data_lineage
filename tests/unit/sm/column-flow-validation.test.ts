@@ -186,6 +186,36 @@ describe("Column Flow Validation", () => {
   }
 });
 
+  it("a field-scoped column_flow rejection holds the authored prose: the envelope states the hold and an empty-sections retry restores sections and summary verbatim", () => {
+    const engine = ctEngine(['amount']);
+    const authoredText = 'origin_view reads raw_amount. ⚠️ The inner join drops rows with no current match.';
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: authoredText }],
+      summary: 'origin summary',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'wrong_col', upstream_columns: [] }],
+      route_requests: requiredRoutes(engine),
+    });
+    expect('error' in result && result.error === 'out_col_not_on_node', 'content error rejects the hop').toBe(true);
+    if (!('error' in result)) throw new Error('unreachable — rejection asserted above');
+    expect(engine.heldFindingFocus, 'the draft is held at the focus').toBe('origin');
+    expect(/Your analysis is held: resend submit_findings with `sections: \[\]`/.test(result.hint ?? ''), 'the envelope states the held order the engine honours').toBe(true);
+
+    const retry = SubmitFindingsCtInputSchema.parse(engine.applyHeldContent({
+      focus_node_id: 'origin',
+      sections: [],
+      summary: '',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount' }] }],
+    }));
+    expect(retry.sections.length === 1 && retry.sections[0].text === authoredText, 'held sections are restored byte-identical').toBe(true);
+    expect(retry.summary, 'held summary is restored byte-identical').toBe('origin summary');
+    const committed = engine.submitFindings({ ...retry, route_requests: requiredRoutes(engine) });
+    expect('ok' in committed && committed.ok, `the corrected retry commits (${'error' in committed ? committed.error : ''})`).toBe(true);
+    expect(engine.heldFindingFocus, 'the hold clears once the correction commits').toBe(null);
+  });
+
   it("out_col existing on the node but off the tracked spine → out_col_not_tracked (verb-led order + tracked set)", () => {
     const engine = ctEngine(['amount']); // active = ['amount']; origin also declares 'region'
     const result = engine.submitFindings({
@@ -341,7 +371,9 @@ describe("Column Flow Validation", () => {
     const detail = 'detail' in rejected ? rejected.detail : undefined;
     const invalidContributor = Array.isArray(detail) ? detail[0] as { path?: string } : undefined;
     expect(invalidContributor?.path, 'CT rejection preserves the exact invalid column_flow path').toBe('column_flow.1.upstream_columns.0.col');
-    expect(rejected.hint, 'CT rejection preserves the existing corrective hint verbatim').toBe('Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.');
+    // The corrective order is unchanged; the field-scoped rejection now also holds the authored prose
+    // and states that hold, so the envelope ends with the held-correction order.
+    expect(rejected.hint, 'CT rejection keeps the corrective order and states the held draft').toBe('Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here. Your analysis is held: resend submit_findings with `sections: []` and the fields detail names corrected to reuse your original sections and summary verbatim.');
     expect(!JSON.stringify(rejected).includes('mixed flow'), 'CT rejection excludes authored sections and summary').toBe(true);
   }
   expect(durableCtSnapshot(engine), 'CT rejection preserves all durable engine state').toBe(beforeReject);
