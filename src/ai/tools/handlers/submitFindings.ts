@@ -11,8 +11,7 @@ import { sanitizeForLog } from '../../../utils/log';
 import {
   COLUMN_FLOW_ENTRY_KEYS,
   COLUMN_FLOW_WRITES_TO_KEYS,
-  SubmitFindingsBbInputSchema,
-  SubmitFindingsCtInputSchema,
+  submitFindingsSchemaForMode,
 } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import {
@@ -22,7 +21,6 @@ import {
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import {
   mapSubmitFindingsEngineGuard,
-  filterSectionsForClassification,
   validateSectionsAgainstClassification,
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
@@ -123,10 +121,12 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       // Structure only. `badge_label` and `column_flow[].upstream_columns[].note` advertise their
       // cap without parsing it (`advertisedMax`, `toolSchemas.ts`); the engine enforces both ahead
       // of every mutation, so an overrun holds the draft and is repaired as one corrected field
-      // instead of failing the hop.
-      const parsed = engine.columnAspect
-        ? SubmitFindingsCtInputSchema.safeParse(normalizedInput)
-        : SubmitFindingsBbInputSchema.safeParse(normalizedInput);
+      // instead of failing the hop. One contract for advertise and validate: this is the exact
+      // schema `instructionPlan.ts` dispatched for this mode/classification (mode-and-classification
+      // narrowed `sections[].angle`), not just the mode-only base — a provider that does not enforce
+      // the advertised schema is still held to it here.
+      const parsed = submitFindingsSchemaForMode(engine.columnAspect ? 'ct' : 'bb', sess.classification)
+        .safeParse(normalizedInput);
       if (!parsed.success) {
         const isCtMode = !!engine.columnAspect;
         // Surface specific field paths so the model can correct the right field on retry.
@@ -154,23 +154,16 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       // reference needed a retry.
       const finding = engine.applyHeldContent(parsed.data);
 
-      // The agreement-phase gate locks `sess.classification`. The finding's
-      // sections[] must include the required angle(s); off-classification angles are
-      // dropped deterministically below rather than rejected — a surplus section is
-      // not a field-scoped defect the held-draft repair flow could patch.
+      // The agreement-phase gate locks `sess.classification`. `submitFindingsSchemaForMode`
+      // (`toolSchemas.ts`) already narrowed the dispatched `sections[].angle` enum to the angle(s)
+      // this lock keeps, so an off-lock angle fails Zod parsing above and never reaches here — this
+      // check only catches a locked angle the model omitted (e.g. `both` submitted business only).
       const violation = validateSectionsAgainstClassification(finding.sections, sess.classification, finding.verdict);
       if (violation) {
         return s.logAndReturn('submit_findings', {
           error: 'classification_lock_violation',
           hint: violation,
         }, normalizedInput);
-      }
-      if (finding.sections) {
-        const { kept, droppedAngles } = filterSectionsForClassification(finding.sections, sess.classification);
-        if (droppedAngles.length > 0) {
-          s.logger.debug(`[submit_findings] dropped ${droppedAngles.length} off-classification section(s): ${droppedAngles.join(', ')} (classification=${sess.classification})`);
-          finding.sections = kept;
-        }
       }
 
       const result = engine.submitFindings(finding, s.budget);

@@ -257,14 +257,13 @@ export interface HopFinding {
   /** ID of the node that was analyzed. */
   focus_node_id: string;
   /**
-   * Captured sections — one per fired `*_capture` YAML template. The locked
-   * classification defines required angles; off-classification sections are
-   * dropped deterministically at the tool handler boundary before storage.
-   * Each stored section is material the synthesis prompt instructs the model to carry
-   * into a peer entry of `present_result.sections[]`. Mechanically validated and filtered
-   * against the locked session classification at the tool handler boundary
-   * (`interaction/rules/submitFindingsRules`: `validateSectionsAgainstClassification`
-   * + `filterSectionsForClassification`).
+   * Captured sections — one per fired `*_capture` YAML template. The locked classification
+   * defines required angles; an off-classification angle cannot be authored at all, since the
+   * per-dispatch `submit_findings` schema (`tools/toolSchemas.ts` `submitFindingsSchemaForMode`)
+   * narrows `angle` to the locked angle(s) before dispatch. Each stored section is material the
+   * synthesis prompt instructs the model to carry into a peer entry of `present_result.sections[]`.
+   * The locked angle(s) presence is validated at the tool handler boundary
+   * (`interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`).
    *
    * @remarks
    * Each entry is one fired `*_capture` template's output. The split lets
@@ -596,9 +595,10 @@ export interface ScopeSummary {
    */
   scopeNotes: string[];
   /**
-   * Gate-locked mission-type verdict. Surfaced at the approval gate because it is the only
-   * scope field that discards captured analysis: sections whose angle it did not request are
-   * dropped at commit by `filterSectionsForClassification`. Undefined until the AI sets it.
+   * Gate-locked mission-type verdict. Surfaced at the approval gate because it is the field that
+   * constrains captured analysis: the per-dispatch `submit_findings` schema narrows `sections[].angle`
+   * to the angle(s) this value keeps, so a section of another angle is never authored. Undefined
+   * until the AI sets it.
    */
   classification?: ClassificationValue;
 }

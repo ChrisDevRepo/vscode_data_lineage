@@ -1,45 +1,44 @@
 import {
   activeSubmitFindingsRecoveryHint,
-  filterSectionsForClassification,
   mapSubmitFindingsEngineGuard,
   validateSectionsAgainstClassification,
 } from '../../../src/ai/interaction/rules/submitFindingsRules';
 import { describe, expect, it } from 'vitest';
 
+// `filterSectionsForClassification` (the silent commit-time drop) is removed: an off-lock angle
+// can no longer be authored at all, since `submitFindingsSchemaForMode` (`toolSchemas.ts`) narrows
+// the per-dispatch `sections[].angle` enum to the locked classification's kept angle(s) before the
+// model is dispatched. Schema-narrowing coverage (business lock rejects a technical section with a
+// kept-angle hint; both lock accepts both; business lock accepts business-only) now lives in
+// `submit-findings-schema.test.ts`, next to the other `submitFindingsSchemaForMode` behavior. What
+// remains here is `validateSectionsAgainstClassification`'s own job: the locked angle(s) must
+// actually be present — a surplus angle is no longer its concern.
 describe("Submit Findings Rules", () => {
-  it("business lock validates when business is present, then drops the technical section at commit", () => {
+  it("business lock validates when only the business angle is present", () => {
   const sections = [
     { angle: 'business' as const, text: 'required business content' },
-    { angle: 'technical' as const, text: 'off-classification technical content' },
   ];
   expect(validateSectionsAgainstClassification(sections, 'business', 'analyze') === null, 'required business angle present').toBe(true);
-  const { kept, droppedAngles } = filterSectionsForClassification(sections, 'business');
-  expect(kept.length === 1 && kept[0].angle === 'business', 'only the business section is stored').toBe(true);
-  expect(droppedAngles.length === 1 && droppedAngles[0] === 'technical', 'the technical section is dropped, not stored').toBe(true);
 });
 
-  it("technical lock validates when technical is present, then drops the business section at commit", () => {
+  it("technical lock validates when only the technical angle is present", () => {
   const sections = [
     { angle: 'technical' as const, text: 'required technical content' },
-    { angle: 'business' as const, text: 'off-classification business content' },
   ];
   expect(validateSectionsAgainstClassification(sections, 'technical', 'analyze') === null, 'required technical angle present').toBe(true);
-  const { kept, droppedAngles } = filterSectionsForClassification(sections, 'technical');
-  expect(kept.length === 1 && kept[0].angle === 'technical', 'only the technical section is stored').toBe(true);
-  expect(droppedAngles.length === 1 && droppedAngles[0] === 'business', 'the business section is dropped, not stored').toBe(true);
 });
 
-  it("both lock keeps both angles and repeated same-angle sections survive the filter", () => {
-  const both = filterSectionsForClassification([
+  it("both lock validates when both angles are present, including repeated same-angle sections", () => {
+  const both = validateSectionsAgainstClassification([
     { angle: 'business' as const, text: 'b' },
     { angle: 'technical' as const, text: 't' },
-  ], 'both');
-  expect(both.kept.length === 2 && both.droppedAngles.length === 0, 'both lock drops nothing').toBe(true);
-  const repeated = filterSectionsForClassification([
+  ], 'both', 'analyze');
+  expect(both === null, 'both lock is satisfied when both angles are present').toBe(true);
+  const repeated = validateSectionsAgainstClassification([
     { angle: 'business' as const, text: 'b1' },
     { angle: 'business' as const, text: 'b2' },
-  ], 'business');
-  expect(repeated.kept.length === 2 && repeated.droppedAngles.length === 0, 'multiple sections of a requested angle are preserved').toBe(true);
+  ], 'business', 'analyze');
+  expect(repeated === null, 'multiple sections of the one requested angle still satisfy the lock').toBe(true);
 });
 
   it("business lock still requires business section", () => {

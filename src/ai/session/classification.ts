@@ -33,3 +33,19 @@ export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
   technical: 'technical-driven',
   both: 'business + technical driven',
 };
+
+/**
+ * `submit_findings.sections[].angle` value(s) a locked classification keeps.
+ *
+ * @remarks
+ * Single source for both readers that must never drift apart: the per-dispatch
+ * `submit_findings` schema (`tools/toolSchemas.ts` `submitFindingsSchemaForMode`) narrows
+ * the advertised `angle` enum to this set before the model is dispatched, and the
+ * classification-lock validator (`interaction/rules/submitFindingsRules.ts`) reads the
+ * same set to check the required angle(s) are present.
+ */
+export const CLASSIFICATION_KEPT_ANGLES: Record<ClassificationValue, readonly ('business' | 'technical')[]> = {
+  business: ['business'],
+  technical: ['technical'],
+  both: ['business', 'technical'],
+};

@@ -40,10 +40,11 @@ const MAX_RECENT_REJECTIONS = 5;
  * - `business` → at least one section with `angle: 'business'`
  * - `technical` → at least one section with `angle: 'technical'`
  * - `both` → at least one section of each angle
- * Mechanically enforced in `interaction/rules/submitFindingsRules`
- * (`validateSectionsAgainstClassification` requires the locked angles;
- * `filterSectionsForClassification` drops off-classification sections at commit)
- * per the agreement-phase classification contract.
+ * Mechanically enforced two ways per the agreement-phase classification contract: the
+ * per-dispatch `submit_findings` schema (`tools/toolSchemas.ts` `submitFindingsSchemaForMode`)
+ * narrows the advertised `angle` enum to the locked angle(s) so an off-lock angle cannot be
+ * authored at all, and `interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`
+ * checks the locked angle(s) are present.
  */
 export type CaptureAngle = 'business' | 'technical';
 

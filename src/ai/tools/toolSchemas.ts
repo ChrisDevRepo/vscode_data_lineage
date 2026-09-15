@@ -14,6 +14,9 @@ import {
 import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, nullAsAbsent } from '../support/inputNormalization';
 import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
+import type { CapturedSection } from '../session/memoryManager';
+import type { HopFinding } from '../sm/smTypes';
 import type { PresentResultStage } from './presentResult';
 
 /**
@@ -388,11 +391,13 @@ export const GetScopeBundleModelSchema = z.object({
  * Zod schema for one captured section within `submit_findings.sections[]`.
  *
  * @remarks
- * Each fired `*_capture` YAML template produces ONE entry. Angle-vs-classification
- * conformance is enforced at the tool handler boundary
- * (`interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`) — the schema accepts any
- * combination here; the handler requires the angle(s) locked by `sess.classification`
- * and drops off-classification sections deterministically before storage.
+ * Each fired `*_capture` YAML template produces ONE entry. This base shape backs the
+ * permissive registered union ({@link SubmitFindingsModelSchema}) and stays angle-open;
+ * the strict per-dispatch schema (`submitFindingsSchemaForMode`) narrows `angle` to the
+ * locked classification's kept angle(s) before every active-hop dispatch, so an off-lock
+ * angle fails there and the model re-submits with its content folded into a kept section.
+ * `interaction/rules/submitFindingsRules.validateSectionsAgainstClassification` still checks,
+ * after that, that every kept angle the lock requires is actually present.
  */
 const CapturedSectionSchema = z.object({
   /** Which YAML capture template produced this section. */
@@ -572,6 +577,13 @@ const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_ID
 );
 
 /**
+ * `submit_findings.sections[]` length cap: one angle per classification, two under `both`. Single
+ * governor for the cap so the base, registered-union, and classification-narrowed schemas cannot
+ * drift apart on it.
+ */
+const SUBMIT_FINDINGS_SECTIONS_MAX = 2;
+
+/**
  * Shared `submit_findings` fields across BB and CT modes.
  */
 const HopFindingBaseSchema = z.object({
@@ -580,7 +592,7 @@ const HopFindingBaseSchema = z.object({
    * One section per fired `*_capture` template. Length 1 (`business` / `technical`
    * classification) or 2 (`both`) — required on every hop (a node always commits its analysis).
    */
-  sections: coercedStringArray(CapturedSectionSchema, { max: 2 }).describe('One grounded section for each output angle required by the locked classification.'),
+  sections: coercedStringArray(CapturedSectionSchema, { max: SUBMIT_FINDINGS_SECTIONS_MAX }).describe('One grounded section for each output angle required by the locked classification.'),
   summary: z.string().describe(
     'One-line digest a later hop reads in isolation after older turns are wiped. Name what this node does ' +
     'to the data — the transform, filter, or pass-through — and what it hands to which downstream node. ' +
@@ -624,23 +636,65 @@ export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
   prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
 }).strict();
 
+/** Memoized per (mode, classification) narrowed `submit_findings` schemas built by {@link submitFindingsSchemaForMode}. */
+const submitFindingsSchemaCache = new Map<string, z.ZodType<HopFinding>>();
+
 /**
- * Selects the strict, mode-locked `submit_findings` schema advertised to the model during an active
- * SM hop.
+ * Narrows {@link CapturedSectionSchema}'s `angle` enum to the angle(s) a locked classification
+ * keeps ({@link CLASSIFICATION_KEPT_ANGLES}), with a rejection message naming the kept angle(s)
+ * and telling the model to fold an off-lock angle's content into that kept section.
+ *
+ * @param classification - The locked classification this dispatch's schema narrows to.
+ * @returns A `.strict()` section schema whose `angle` only accepts the kept angle(s).
+ */
+function capturedSectionSchemaForClassification(classification: ClassificationValue): z.ZodType<CapturedSection> {
+  const kept = CLASSIFICATION_KEPT_ANGLES[classification];
+  if (kept.length === 2) return CapturedSectionSchema; // `both` keeps every angle — no narrowing.
+  const [onlyAngle] = kept;
+  const foldMessage =
+    `classification=${classification} keeps only angle="${onlyAngle}". Fold this content into the `
+    + `existing "${onlyAngle}" section instead of submitting a separate section for another angle.`;
+  return CapturedSectionSchema.extend({
+    angle: z.literal(onlyAngle, { message: foldMessage }).describe(
+      `The locked output angle represented by this section (classification=${classification} keeps only "${onlyAngle}").`,
+    ),
+  }).strict();
+}
+
+/**
+ * Selects the strict, mode-and-classification-locked `submit_findings` schema advertised to the
+ * model during an active SM hop.
  *
  * @remarks
  * BB returns {@link SubmitFindingsBbInputSchema} (no `column_flow`); CT returns
- * {@link SubmitFindingsCtInputSchema} (`column_flow` required; `prune_neighbors` shared with BB). The host path
- * uses this at the last seam before the model sees the tool set so the model cannot fill a field
- * invalid for the locked mode — the contract is the form's shape, not prompt prose. The static
+ * {@link SubmitFindingsCtInputSchema} (`column_flow` required; `prune_neighbors` shared with BB). When
+ * `classification` is supplied, `sections[].angle` is further narrowed to the angle(s) that
+ * classification keeps ({@link capturedSectionSchemaForClassification}) — a `business` or `technical`
+ * lock structurally cannot author the other angle's section, so a surplus angle fails Zod at this
+ * boundary instead of being silently dropped at commit. The host path uses this at the last seam
+ * before the model sees the tool set so the model cannot fill a field or angle invalid for the
+ * locked mode/classification — the contract is the form's shape, not prompt prose. The static
  * catalog and `package.json` manifest keep the permissive union (drift guard + single-tool Copilot
  * lane unaffected).
  *
  * @param mode - Locked active analysis mode used for provider projection.
- * @returns The strict provider schema for that mode.
+ * @param classification - Locked output classification; omitted callers get the mode-only schema.
+ * @returns The strict provider schema for that mode and classification. Typed against
+ * {@link HopFinding} (rather than a bare `z.ZodType`) so the handler that parses the model's actual
+ * submission with this same selector — not just the tool-registration caller — keeps a concrete
+ * `.data` type without a cast.
  */
-export function submitFindingsSchemaForMode(mode: 'bb' | 'ct'): z.ZodType {
-  return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
+export function submitFindingsSchemaForMode(mode: 'bb' | 'ct', classification?: ClassificationValue): z.ZodType<HopFinding> {
+  const base = mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
+  if (!classification || CLASSIFICATION_KEPT_ANGLES[classification].length === 2) return base;
+  const cacheKey = `${mode}:${classification}`;
+  const cached = submitFindingsSchemaCache.get(cacheKey);
+  if (cached) return cached;
+  const narrowedSections = coercedStringArray(capturedSectionSchemaForClassification(classification), { max: SUBMIT_FINDINGS_SECTIONS_MAX })
+    .describe(`One grounded section for the output angle required by classification=${classification}.`);
+  const schema = base.extend({ sections: narrowedSections }).strict();
+  submitFindingsSchemaCache.set(cacheKey, schema);
+  return schema;
 }
 
 /**
@@ -997,17 +1051,17 @@ export const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({
  * @remarks
  * VS Code registers ONE `lineage_submit_findings` tool, so the model sees ONE schema —
  * the union of the BB and CT contracts (verdict `analyze | passthrough | prune`, both `prune_neighbors`
- * and `column_flow`). Instruction-plan compilation advertises the strict mode-specific schema
- * immediately before model dispatch, and the handler validates the payload against that same
- * mode contract. This is the model-facing source the drift guard pins against `package.json`; it
- * is not a second hand-authored JSON Schema.
+ * and `column_flow`). Instruction-plan compilation advertises the strict mode-and-classification-locked
+ * schema (`submitFindingsSchemaForMode`) immediately before model dispatch, and the handler validates
+ * the payload against that same contract. This is the model-facing source the drift guard pins
+ * against `package.json`; it is not a second hand-authored JSON Schema.
  */
 export const SubmitFindingsModelSchema = z.object({
   focus_node_id: z.string().describe('Exact current focus-node ID supplied by the runtime frame.'),
   sections: coercedStringArray(z.object({
     angle: z.enum(['business', 'technical']).describe('The locked output angle represented by this section.'),
     text: z.string().describe('Grounded analysis for this node under the selected angle.'),
-  }).strict(), { max: 2 }).describe('One grounded section for each output angle required by the locked classification.'),
+  }).strict(), { max: SUBMIT_FINDINGS_SECTIONS_MAX }).describe('One grounded section for each output angle required by the locked classification.'),
   summary: z.string().describe('One-line digest retained for later hops after older turns are wiped. Aim for one line; length is never a rejection axis.'),
   // The permissive BB∪CT superset registered with VS Code (see remarks above) uses the BB wording:
   // it is the broader, VS Code-registered surface, and the strict per-mode schema (bb/ct) is what
