@@ -661,7 +661,7 @@
         "toolReferenceName": "lineage_search_ddl",
         "displayName": "Search DDL",
         "userDescription": "Search SQL body scripts for a text pattern.",
-        "modelDescription": "Grep view, procedure and function bodies. Each hit has object, line, matched line, context, and `commented: true` when the match sits in a SQL comment. `by_object` is the per-object hit count. No matches is `total: 0`; a bad pattern is `invalid_regex` with the repair. Use lineage_search_objects for names.",
+        "modelDescription": "Grep view, procedure and function bodies. Each hit has object, line, matched line, context, `commented: true` when the match sits in a SQL comment, and `enclosing_predicate` with the governing IF/WHILE condition when the match is inside one. `by_object` is the per-object hit count. No matches is `total: 0`; a bad pattern is `invalid_regex` with the repair. Use lineage_search_objects for names.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",

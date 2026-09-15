@@ -76,6 +76,7 @@ function makeModel(extra: LineageNode[] = []): DatabaseModel {
 type DdlRow = {
   id: string; name: string; type: string; line: number; text: string; context: string;
   commented?: true;
+  enclosing_predicate?: string;
 };
 type DdlResult = {
   results?: DdlRow[]; total?: number; objects?: number; hint?: string; error?: string;
@@ -214,6 +215,39 @@ describe('search tools — grep contract', () => {
     const live = at(3).context.split('\n');
     expect(live.some(l => l.startsWith('--')), 'the live read keeps every line it always had').toBe(false);
     expect(live.some(l => l.includes('[ai].[RawOrderImport] r')), 'byte-for-byte, marker or not').toBe(true);
+  });
+
+  it('carries the governing IF predicate on a hit inside its block and appends it after `commented`', () => {
+    // IB3-T3-PREDICATE: the verification SELECT is ungated; the IF two lines below it gates only the
+    // warning that follows. A hit on the SELECT must report no predicate, and a hit inside the
+    // warning's block must report the IF that actually governs it — not a nearer, unrelated one.
+    const body = [
+      'CREATE PROCEDURE ai.spImportOrders',                            // 1
+      'AS',                                                            // 2
+      'BEGIN',                                                         // 3
+      '    IF @ForceReimport = 0',                                     // 4
+      '    BEGIN',                                                     // 5
+      '        DELETE rb FROM #RawBatch rb;',                          // 6
+      '    END',                                                       // 7
+      '    SELECT @VerifyCount = COUNT(*)',                            // 8
+      '    FROM [ai].[RawOrderImport]',                                // 9 — ungated hit
+      '    WHERE BatchID = @BatchID;',                                 // 10
+      '    IF @VerifyCount <> @ProcessedRows AND @DryRun = 0',         // 11
+      '    BEGIN',                                                     // 12
+      "        PRINT 'RawOrderImport count mismatch';",                // 13 — gated hit
+      '    END',                                                       // 14
+      'END',                                                           // 15
+    ].join('\n');
+    const proc = makeModel([node({ id: '[ai].[spimportorders]', name: 'spImportOrders', type: 'procedure', bodyScript: body })]);
+    const rows = ((searchDdl(proc, 'RawOrderImport', BUDGET) as DdlResult).results ?? []);
+    expect(rows.map(r => [r.line, r.enclosing_predicate])).toEqual([
+      [9, undefined],
+      [13, 'IF @VerifyCount <> @ProcessedRows AND @DryRun = 0'],
+    ]);
+    expect(JSON.stringify(rows[1]).endsWith('"enclosing_predicate":"IF @VerifyCount <> @ProcessedRows AND @DryRun = 0"}'))
+      .toBe(true);
+    expect('enclosing_predicate' in rows[0], 'omitted, never null or empty, when there is no governing block')
+      .toBe(false);
   });
 
   it('marks a dead audit query whose own text carries quotes and a line comment', () => {
