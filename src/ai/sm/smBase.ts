@@ -2196,9 +2196,13 @@ export class NavigationEngine implements IHopStateMachine {
    * Processes the findings from a completed hop and adjusts the agenda.
    *
    * @remarks
-   * Pruning is AI-decided in both modes (1.4b): a `verdict=prune` submission executes through
-   * the topology-safe don't-orphan path with reason `submitted_prune`; CT focus prunes are also
-   * surfaced as `ctPrunedNodeIds`. `prune_neighbors` is the same key on both forms.
+   * Pruning is AI-decided in both modes (1.4b): a `verdict=prune` submission's own `route_requests`
+   * and `prune_neighbors` commit through the same admission/enqueue path as every other verdict
+   * before the focus itself is pruned, so the topology-safe don't-orphan check
+   * ({@link firstDisconnectedAfterPrune} against {@link committedConnectedIds}) sees a route the
+   * same payload just queued rather than reading a stale pre-commit snapshot. The focus prune
+   * itself then executes with reason `submitted_prune`; CT focus prunes are also surfaced as
+   * `ctPrunedNodeIds`. `prune_neighbors` is the same key on both forms.
    * Column continuity is enforced after the strict CT boundary requires `column_flow`.
    *
    * Route/column validation classifies failures into a structural {@link InvalidRouteKind}.
@@ -2289,20 +2293,16 @@ export class NavigationEngine implements IHopStateMachine {
     const passthroughColumnClause = declaredActiveColumns.length > 0
       ? ` ${focusId} declares tracked column${declaredActiveColumns.length > 1 ? 's' : ''} [${declaredActiveColumns.join(', ')}], so that passthrough must carry a column_flow entry for each of them — column_flow:[] is refused here.`
       : '';
+    // Both checks below are content-only (no route dependency), so they still fail fast ahead of
+    // the shared route/prune_neighbors pipeline every other verdict already runs. The focus's own
+    // topology check — does pruning it orphan a committed node — moves past that pipeline (see
+    // `focusPruneDisconnected` below) so it reads `committedConnectedIds()` AFTER this same
+    // payload's `route_requests`/`prune_neighbors` have been admitted, not before.
     if (finding.verdict === 'prune') {
       if (focusId === this.originNodeId) {
         return {
           error: 'prune_origin_forbidden',
           hint: `Submit a complete analyze or passthrough finding for this focus. The exploration origin is immutable.${passthroughColumnClause}`,
-        };
-      }
-      const requiredConnectedIds = this.committedConnectedIds();
-      const disconnected = this.firstDisconnectedAfterPrune(focusId, requiredConnectedIds);
-
-      if (disconnected) {
-        return {
-          error: 'prune_would_orphan_noted',
-          hint: `Use verdict='passthrough' to keep it without pruning. Marking [${focusId}] prune would orphan committed node [${disconnected}] (already analyzed or still queued).${passthroughColumnClause}`
         };
       }
       const contradictingSections = finding.sections.filter(s => sectionTextHasCapturedArtifact(s.text));
@@ -2312,37 +2312,6 @@ export class NavigationEngine implements IHopStateMachine {
           hint: `Resubmit with verdict='analyze' or 'passthrough' to keep the captured formula/predicate evidence, or resubmit 'prune' with sections:[] (or prose with no captured artifact) if [${focusId}] truly contributes nothing. This submission's sections[] carry captured computation (a $$ … $$ formula, or SQL that computes a value or filters rows) while verdict='prune' discards it — a pruned node is not part of the lineage answer, so its analysis cannot also be kept.${passthroughColumnClause}`,
         };
       }
-
-      // Pruning is AI-decided in both modes, then engine-executed via the topology-safe path above.
-      this.lastRoutedNew = 0;
-      this.lastRoutedRejected = 0;
-      this.lastRoutedDeferred = 0;
-      this.lastHopColumnFlowEntries = 0;
-      this._pendingLineageQuestions = [];
-      if (this.tracer) this.ctPrunedFocusIds.add(focusId);
-      this.removedSet.add(focusId);
-      this.visited.add(focusId);
-      this.markNodeState(
-        focusId,
-        'prune',
-        'ai',
-        'submitted_prune',
-        { columns: this.tracer?.activeColumns, atHop: this.hopCount },
-      );
-      this.memory.storePrunedDetail(
-        this.nodeMap.get(focusId)!,
-        finding.sections ?? [],
-        finding.summary ?? '',
-        { badge_label: finding.badge_label, reason_for_visit: this.currentFocusQuestion || 'Historical path investigation' },
-      );
-      this.memory.recordVerdict('prune');
-      this.lastHopVerdict = 'prune';
-      this.completeTasks(this.currentFocusTaskIds);
-      this._status = 'exploring';
-      // Focus took an AI hop, so it counts towards hopCount. Do not decrement _totalNodes,
-      // which ensures x never exceeds y.
-      this.log('debug', `[Self-Prune] hop=${this.hopCount} id=${focusId} mode=${this.mode.kind}`);
-      return { ok: true };
     }
 
     const acceptedNids = new Set<string>();
@@ -2411,7 +2380,12 @@ export class NavigationEngine implements IHopStateMachine {
       resolved: resolveModelNodeId(raw, this.nodeMap),
       path: `prune_neighbors.${index}`,
     }));
-    const requiredNodeIds = this.requiredNeighborIds(focusId, budget);
+    // A self-pruned focus never owes an account of ITS OWN un-routed neighbors — demanding routes
+    // to the neighbors of a node being removed would orphan them, and `requiredNeighborIds`'
+    // own docstring records prune as an answer to the demand, not a subject of it. The payload's
+    // OWN `route_requests`/`prune_neighbors` still run the full admission pipeline below; only this
+    // one demand (the focus's un-accounted directional neighbors) is not raised for verdict='prune'.
+    const requiredNodeIds = finding.verdict === 'prune' ? [] : this.requiredNeighborIds(focusId, budget);
     const actionPolicy = evaluateCurrentHopActionPolicy({
       originId: this.originNodeId!,
       routeTargets,
@@ -2481,7 +2455,10 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
     // Column Aspect validation + completeness is delegated to ColumnTracer and pure set-difference checks.
-    if (this.tracer) {
+    // `column_flow` is optional on the wire (a prune verdict commonly omits it, same as before this
+    // path was reachable for prune); `validateColumnFlow` reads it as required, so the call is
+    // guarded on presence the same way every other `column_flow`-conditional branch here already is.
+    if (this.tracer && finding.column_flow) {
       const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log);
       if (valResult.error) {
         return valResult.error;
@@ -2568,7 +2545,30 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // analyze/pass path: commit the detail slot + CT edges (prune exits early above) — stage its sections + CT passthrough roles.
+    // Focus prune check, after this payload's own routes and neighbor prunes are staged: the walk
+    // reads the staged `acceptedNids` / `prunedNeighborNids` and widens its scope by the staged
+    // routes, which are not yet in `scopeNodeIds` until the commit below.
+    if (finding.verdict === 'prune') {
+      const requiredConnectedIds = this.committedConnectedIds();
+      for (const nid of acceptedNids) requiredConnectedIds.add(nid);
+      const stagedRemovedForFocus = new Set<string>(this.removedSet);
+      for (const nid of prunedNeighborNids) stagedRemovedForFocus.add(nid);
+      stagedRemovedForFocus.add(focusId);
+      const focusCheckScope = acceptedNids.size > 0
+        ? new Set<string>([...this.scopeNodeIds, ...acceptedNids])
+        : this.scopeNodeIds;
+      const focusPruneDisconnected = firstDisconnectedRequiredNode(
+        this.graph, this.originNodeId!, stagedRemovedForFocus, requiredConnectedIds, focusCheckScope,
+      );
+      if (focusPruneDisconnected) {
+        return {
+          error: 'prune_would_orphan_noted',
+          hint: `Use verdict='passthrough' to keep it without pruning. Marking [${focusId}] prune would orphan committed node [${focusPruneDisconnected}] (already analyzed or still queued).${passthroughColumnClause}`,
+        };
+      }
+    }
+
+    // analyze/pass path: commit the detail slot + CT edges (prune's own commit is separate, below) — stage its sections + CT passthrough roles.
     {
       const flowNotes = (finding.column_flow ?? []).flatMap(entry =>
         (entry.upstream_columns ?? []).map(ref => ref.note ?? ''),
@@ -2655,7 +2655,9 @@ export class NavigationEngine implements IHopStateMachine {
     // retained for what it does to the row set.
     let ctUnaccountedColumns: string[] | null = null;
     let ctActiveColumns: readonly string[] = [];
-    if (this.tracer) {
+    // Same exemption as `requiredNodeIds` above: a self-pruned focus does not owe a column_flow
+    // account of its own active columns either — it is leaving the graph, not continuing through it.
+    if (this.tracer && finding.verdict !== 'prune') {
       const submittedFlow = finding.column_flow ?? [];
       // `declaredActiveColumns` (computed above, shared with the prune hints) decides both halves:
       // whether the empty-flow declaration is checkably false, and — when the hop is rejected for
@@ -2831,8 +2833,20 @@ export class NavigationEngine implements IHopStateMachine {
       }
       this.log('debug', `[Prune] prune_neighbor hop=${this.hopCount}: ${nid}`);
     }
-    // analyze/pass path: commit the detail slot + CT edges (prune exits early above).
-    {
+    // Focus commit: a prune records via `storePrunedDetail` and the `submitted_prune` state (the
+    // detail slot and node-state shapes a pruned focus has always used); every other verdict keeps
+    // the analyze/pass path — commit the detail slot + CT edges — unchanged.
+    if (finding.verdict === 'prune') {
+      if (this.tracer) this.ctPrunedFocusIds.add(focusId);
+      this.removedSet.add(focusId);
+      this.visited.add(focusId);
+      this.memory.storePrunedDetail(
+        this.nodeMap.get(focusId)!,
+        finding.sections ?? [],
+        finding.summary ?? '',
+        { badge_label: finding.badge_label, reason_for_visit: this.currentFocusQuestion || 'Historical path investigation' },
+      );
+    } else {
       this.memory.storeDetail(this.nodeMap.get(focusId)!, stagedSections, finding.summary, {
         badge_label: finding.badge_label,
         reason_for_visit: this.currentFocusQuestion || 'Historical path investigation',
@@ -2869,21 +2883,31 @@ export class NavigationEngine implements IHopStateMachine {
 
     this.memory.recordVerdict(finding.verdict);
     this.lastHopVerdict = finding.verdict;
-    this.markNodeState(
-      focusId,
-      finding.verdict,
-      'ai',
-      finding.verdict === 'analyze' ? 'submitted_analyze' : 'submitted_passthrough',
-      {
+    if (finding.verdict === 'prune') {
+      this.markNodeState(focusId, 'prune', 'ai', 'submitted_prune', {
         columns: this.tracer?.activeColumns,
-        // The hop's own dispatch decides the role: a focus that was handed traced columns is a
-        // carrier, one handed none was explored for what it does to the row set. Recorded here so
-        // the snapshot, the synthesis surface and the render read the fact instead of each
-        // re-deriving it from a column list that drops when empty.
-        ...(this.tracer ? { columnRole: this.tracer.activeColumns.length > 0 ? 'carrier' as const : 'row_role_only' as const } : {}),
         atHop: this.hopCount,
-      },
-    );
+      });
+      // Focus took an AI hop, so it counts towards hopCount. Do not decrement _totalNodes, which
+      // ensures x never exceeds y.
+      this.log('debug', `[Self-Prune] hop=${this.hopCount} id=${focusId} mode=${this.mode.kind}`);
+    } else {
+      this.markNodeState(
+        focusId,
+        finding.verdict,
+        'ai',
+        finding.verdict === 'analyze' ? 'submitted_analyze' : 'submitted_passthrough',
+        {
+          columns: this.tracer?.activeColumns,
+          // The hop's own dispatch decides the role: a focus that was handed traced columns is a
+          // carrier, one handed none was explored for what it does to the row set. Recorded here so
+          // the snapshot, the synthesis surface and the render read the fact instead of each
+          // re-deriving it from a column list that drops when empty.
+          ...(this.tracer ? { columnRole: this.tracer.activeColumns.length > 0 ? 'carrier' as const : 'row_role_only' as const } : {}),
+          atHop: this.hopCount,
+        },
+      );
+    }
     this.completeTasks(this.currentFocusTaskIds);
 
     // Neighbor prunes exclude future enqueue attempts without shrinking the current agenda.
@@ -3123,6 +3147,12 @@ export class NavigationEngine implements IHopStateMachine {
    * a routed-but-unvisited node whose detail slot would silently vanish from the render if a prune
    * disconnected it (its id survives in scope but `getResult`'s reachability recompute drops it). K
    * makes the queued node visible to the orphan guard so the prune is rejected instead.
+   *
+   * A `ctDeclaredRouteIds` member counts only when it is in `scopeNodeIds`: the reachability walk
+   * this set feeds is scope-bounded (`bfsReachable`), so an out-of-scope `column_flow` endpoint —
+   * the border sink `columnEndpointsOutsideRender` withholds from the render — would read as
+   * disconnected after every prune and refuse unrelated ones. A direct prune of a declared node
+   * stays refused through `declaredPruneIds`.
    */
   private committedConnectedIds(): Set<string> {
     const ids = new Set<string>(this.memory.notedNodeIds);
@@ -3131,7 +3161,7 @@ export class NavigationEngine implements IHopStateMachine {
     // slot), or a column_flow entry naming a node for a traced column — still counts as committed,
     // protecting anything reachable only behind it. Empty in BB, so this widening is additive-only.
     if (this.tracer) {
-      for (const id of this.ctDeclaredRouteIds) ids.add(id);
+      for (const id of this.ctDeclaredRouteIds) if (this.scopeNodeIds.has(id)) ids.add(id);
     }
     return ids;
   }
@@ -3655,12 +3685,17 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param reachable - The reachability-bounded render set to classify.
    * @param columnBorder - Column-edge endpoints the render does not hold
-   *   ({@link columnEndpointsOutsideRender}), classified against the same contract with one
-   *   provenance difference: past the border, only a hop's own verdict counts as one. The recorded
-   *   edge is why the node is here at all, and the engine writes `non_bodied_passthrough` for both
-   *   endpoints of that same edge at the instant it commits it (`stagedCtNodeStates`), so the edge
-   *   and that record are one event stated twice — neither is evidence of the other. A verdict the
-   *   AI or the user submitted, and an open task, exempt exactly as inside the render.
+   *   ({@link columnEndpointsOutsideRender}), classified against the same contract with two
+   *   provenance differences from `reachable`. First: the engine writes `non_bodied_passthrough`
+   *   for both endpoints of a committed edge at the instant it commits it (`stagedCtNodeStates`),
+   *   so that record is not evidence of retention the way a hopped verdict is — treat it as the
+   *   sink check does an absent state. Second: a `reachable` node can never carry `action='prune'`
+   *   (a prune removes it from `reachable` itself, via `removedSet`), so an existing state there is
+   *   always retention; a border node's membership does not go through `removedSet` at all, so the
+   *   same AI prune that pulled it out of the render can still leave it named on a committed edge —
+   *   route that state through the sink check too, the one case a prune verdict does not already
+   *   answer for a node outside the render. Any other submitted verdict, and an open task, exempt
+   *   exactly as inside the render.
    * @returns Ids to drop; reachable ones leave the render, border ones leave the delivered chain.
    */
   private undispositionedSinkIds(reachable: ReadonlySet<string>, columnBorder: ReadonlySet<string>): Set<string> {
@@ -3668,13 +3703,16 @@ export class NavigationEngine implements IHopStateMachine {
     for (const id of [...reachable, ...columnBorder]) {
       if (id === this.originNodeId) continue;
       const state = this.nodeStates.get(id);
-      const engineRecord = columnBorder.has(id) && state?.source === 'engine';
-      // Any hop verdict (analyze or passthrough) is BB retention. `engineRecord` is the CT add:
-      // a column-border endpoint the engine auto-wrote, never hopped, classified by the same sink
-      // rule so the delivered chain cannot name a write sink the render refused to draw.
-      if (state !== undefined && !engineRecord) continue;
+      const onBorder = columnBorder.has(id);
+      const engineRecord = onBorder && state?.source === 'engine';
+      const borderPruned = onBorder && state?.action === 'prune';
+      // Any hop verdict (analyze or passthrough) is BB retention. `engineRecord` and `borderPruned`
+      // are the CT add: a column-border endpoint the engine auto-wrote or the AI pruned, neither a
+      // hop's own retention verdict for that node, classified by the same sink rule so the
+      // delivered chain cannot name a write sink the render refused to draw.
+      if (state !== undefined && !engineRecord && !borderPruned) continue;
       if (this.taskLedger.investigationTasks.some(task => task.nodeId === id)) continue;
-      if (!columnBorder.has(id) && this.tracer?.edges.some(edge =>
+      if (!onBorder && this.tracer?.edges.some(edge =>
         edge.from_node === id || edge.to_node === id || edge.hop_node === id)) continue;
       candidates.push(id);
     }
