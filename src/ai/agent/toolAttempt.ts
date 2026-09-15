@@ -260,6 +260,12 @@ interface ToolAttemptRejection {
    */
   readonly inputHash?: string;
   /**
+   * Set when the call was rejected before any handler ran (schema prevalidation, unknown tool,
+   * duplicate call id). Such a payload never reached a held `present_result` draft, so the draft
+   * block cannot stand in for it and {@link renderRejectionExchange} replays its fragments.
+   */
+  readonly preDispatch?: true;
+  /**
    * Count of consecutive unproductive resends ending at this rejection (absent or 0 on a genuine
    * repair attempt). Carried on the recorded rejection so the next attempt can bound the streak:
    * the free-resend absorption is a bounded grace, not an open loop.
@@ -866,9 +872,13 @@ function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: st
     const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
     return [modelUserMessage(note)];
   }
-  // The held draft rendered alongside this exchange already carries the tool's full payload, so the
-  // replayed call names the tool and call id only — the same text is never sent twice per attempt.
-  const input = rejection.toolName === draftHeldFor ? {} : boundedCorrectionArgs(rejection.correctionFragments);
+  // A dispatched rejection's payload is what the held draft rendered alongside this exchange carries,
+  // so that replayed call names the tool and call id only — the same text is never sent twice per
+  // attempt. A pre-dispatch rejection never reached the draft: its own fragments are the model's
+  // only view of the patch it sent.
+  const input = rejection.toolName === draftHeldFor && !rejection.preDispatch
+    ? {}
+    : boundedCorrectionArgs(rejection.correctionFragments);
   const output: Record<string, unknown> = { code: rejection.code, reason: rejection.reason };
   if (rejection.hint !== undefined) output.hint = rejection.hint;
   if (rejection.detail !== undefined) output.detail = rejection.detail;
@@ -982,9 +992,9 @@ function rejectionFromInvalid(
   registry: IToolRegistry<string>,
 ): ToolOutcomeData {
   const issuePaths = call.issuePaths ?? [];
-  // A prevalidation reject is the one repair turn with no held draft behind it, so the same bounded
-  // structural projection the dispatcher path uses ({@link correctionFragments}) is what stands
-  // between the model and a blind full-envelope rewrite. Never the raw payload: only flagged
+  // A prevalidation reject never reaches a held draft, so the same bounded structural projection
+  // the dispatcher path uses ({@link correctionFragments}) is what stands between the model and a
+  // blind full-envelope rewrite. Never the raw payload: only flagged
   // structural entries, byte-bounded, prose and result fields excluded.
   const fragments = replayFragments(call.input, issuePaths);
   return {
@@ -1569,16 +1579,15 @@ export async function executeToolGenerationAttempt(
         chargeableFailures++;
         if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
       }
-      if (call.code === 'invalid_tool_input') {
-        // Retains only a hash of this call's input (never the input itself), so the following
-        // attempt is checked against exactly this rejection — the same contract as the
-        // dispatched-rejection path below.
-        rejections[rejections.length - 1] = {
-          ...rejection,
-          inputHash: candidateHash,
-          ...(unproductiveStreak > 0 ? { unproductiveStreak } : {}),
-        };
-      }
+      // invalid_tool_input retains only a hash of this call's input (never the input itself), so the
+      // following attempt is checked against exactly this rejection — the same contract as the
+      // dispatched-rejection path below.
+      rejections[rejections.length - 1] = {
+        ...rejection,
+        preDispatch: true,
+        ...(call.code === 'invalid_tool_input' ? { inputHash: candidateHash } : {}),
+        ...(unproductiveStreak > 0 ? { unproductiveStreak } : {}),
+      };
       continue;
     }
 

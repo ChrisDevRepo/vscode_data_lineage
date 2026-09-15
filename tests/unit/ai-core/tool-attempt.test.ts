@@ -154,9 +154,11 @@ describe('executeToolGenerationAttempt — mixed valid/invalid tool batch', () =
       // Only a fingerprint of the rejected input survives — enough to bound unproductive resends
       // across attempts, never the payload itself.
       inputHash: expect.any(String),
+      // Rejected before any handler ran, so a held present_result draft never carries this payload.
+      preDispatch: true,
     });
     // The rejected input is absent by type — no key carries the raw payload, only its hash.
-    expect(Object.keys(rejection).sort()).toEqual(['callId', 'code', 'hint', 'inputHash', 'issuePaths', 'reason', 'toolName']);
+    expect(Object.keys(rejection).sort()).toEqual(['callId', 'code', 'hint', 'inputHash', 'issuePaths', 'preDispatch', 'reason', 'toolName']);
   });
 
   it('attaches repair guidance to an unknown_tool prevalidation reject, naming the phase\'s valid tools as data', async () => {
@@ -870,18 +872,22 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     input: unknown;
     reason: string;
     issuePaths: readonly string[];
+    presentResultRepairDraftContext?: () => { sections?: unknown; notes?: unknown; highlight_groups?: unknown } | null;
   }): Promise<{ replayed: readonly BaseMessage[]; first: ToolAttemptResult }> {
     const { registry } = scriptedRegistry([{ name: options.toolName, result: '{"ok":true}' }]);
     const plan = conversePlan(registry);
+    const draftHeld = options.presentResultRepairDraftContext
+      ? { presentResultRepairDraftHeld: true, presentResultRepairDraftContext: options.presentResultRepairDraftContext }
+      : {};
 
     const firstPort = new ScriptedModelPort([{
       toolCalls: [invalidCall('call-1', options.toolName, 'invalid_tool_input', options.reason, options.issuePaths, options.input)],
     }]);
-    const first = await executeToolAttempt(firstPort, plan);
+    const first = await executeToolAttempt(firstPort, plan, draftHeld);
     const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
 
     const secondPort = new ScriptedModelPort([{ text: 'Acknowledged.' }]);
-    await executeToolAttempt(secondPort, plan, { priorState: state });
+    await executeToolAttempt(secondPort, plan, { priorState: state, ...draftHeld });
 
     return { replayed: secondPort.requests[0].messages, first };
   }
@@ -1086,6 +1092,31 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(wire.split('HELD-SECTION-0').length - 1).toBe(1);
     expect(wire.split('HELD-SECTION-1').length - 1).toBe(1);
     expect(wire).not.toContain(RAW_PROSE_MARKER);
+  });
+
+  it('replays a prevalidation-rejected repair patch whole while a draft is held — the draft never received it', async () => {
+    // The held draft still shows the uncorrected render; the patch that added the missing node was
+    // refused by the schema before any handler ran. Replaying it as {} left the model rebuilding the
+    // patch from the stale draft and re-sending the gap the validation had named.
+    const heldSections = [{ label: 'Feeds', text: 'HELD-SECTION', node_ids: ['[dbo].[Orders]'] }];
+    const patch = {
+      is_update: true,
+      sections: [...heldSections, { label: 'Archive', text: 'PATCH-ADDED-SECTION', node_ids: ['[dbo].[Archive]'] }],
+      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['[dbo].[Archive]'] }],
+    };
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input: patch,
+      reason: 'Unrecognized key: "highlight_groups"',
+      issuePaths: [''],
+      presentResultRepairDraftContext: () => ({ sections: heldSections, notes: [], highlight_groups: [] }),
+    });
+
+    expect(first.rejections[0].code).toBe('invalid_tool_input');
+    expect(String(replayed[1].content)).toContain('held_draft_repair_state');
+    const args = replayedToolArgs(replayed);
+    expect(JSON.stringify(args.sections)).toContain('PATCH-ADDED-SECTION');
+    expect(args.highlight_groups).toBeDefined();
   });
 
   it('replays a long present_result list complete, bounded by bytes rather than skipped past four entries', async () => {
