@@ -1086,11 +1086,23 @@ export class NavigationEngine implements IHopStateMachine {
     return fallbackDepth > limit ? fallbackDepth : null;
   }
 
-  /** True when a route target is reachable from the origin within the approved traversal direction. */
+  /**
+   * True when a route target is reachable from the origin within the approved traversal direction.
+   *
+   * @remarks
+   * `'bidirectional'` is the upstream closure plus the downstream closure — the same definition
+   * {@link computeBfsScope} seeds the approved scope with — never the undirected walk: a node
+   * reachable only by crossing a shared consumer sideways (a downstream node's *other* input) is on
+   * neither directed side and is not an approved-direction target, even though an undirected walk
+   * would reach it in two hops. {@link directedDepthsFor} is the one distance table both this check
+   * and {@link depthBorderBreach} read, so the direction axis and the depth axis can't drift onto
+   * two different notions of "reachable".
+   */
   private isReachableInApprovedDirection(targetId: string): boolean {
     const direction = this.effectiveDirection();
-    if (direction === 'bidirectional' || !this.originNodeId) return true;
+    if (!this.originNodeId) return true;
     if (targetId === this.originNodeId) return true;
+    if (direction === 'bidirectional') return this.directedDepthsFor(targetId) !== undefined;
     const seen = new Set<string>([this.originNodeId]);
     const queue = [this.originNodeId];
     let idx = 0;
@@ -2483,20 +2495,21 @@ export class NavigationEngine implements IHopStateMachine {
     // The pure policy has already selected the accepted prune targets, in scope or out
     // (`prune_neighbors` may carry in-scope neighbors off the answer path); topology conservation
     // is the final guard, and all mutations stay staged until completeness also passes.
-    // A node the tracer declared via an accepted route_request is refused as a prune
-    // candidate outright, split out ahead of the topology walk below — a declared dead end (no
-    // further bodied neighbor to contract to) orphans nothing else, so it never trips
+    // A node the tracer declared — via an accepted route_request OR a column_flow entry naming
+    // it (upstream_columns contributor or writes_to target) for a traced column — is refused as a
+    // prune candidate outright, split out ahead of the topology walk below — a declared dead end
+    // (no further bodied neighbor to contract to) orphans nothing else, so it never trips
     // `firstDisconnectedAfterPrune`'s reachability check on its own. CT only; empty in BB, so
     // `prunablePruneIds` equals `actionPolicy.acceptedPruneIds` there.
     const declaredPruneIds = this.tracer
       ? actionPolicy.acceptedPruneIds.filter((nid) => this.ctDeclaredRouteIds.has(nid))
       : [];
     for (const nid of declaredPruneIds) {
-      this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${nid} reason=ct_declared_route_protected`);
+      this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${nid} reason=ct_declared_protected`);
       invalidRoutes.push({
         kind: 'prune_would_orphan',
         id: nid,
-        reason: `Pruning \`${nid}\` is refused: an earlier accepted route_request already declared it part of the traced-column continuation, so it stays reachable for the rest of the run.`,
+        reason: `Pruning \`${nid}\` is refused: an earlier accepted route_request or column_flow entry already declared it part of the traced-column continuation, so it stays reachable for the rest of the run.`,
       });
     }
     const prunablePruneIds = declaredPruneIds.length > 0
@@ -2826,6 +2839,18 @@ export class NavigationEngine implements IHopStateMachine {
 
       if (this.tracer && stagedColumnEdges.length > 0) {
         this.tracer.edges.push(...stagedColumnEdges);
+        // A staged edge's endpoints are the same declaration as an accepted route_request — the AI
+        // named this node as part of the traced-column continuation, either as an upstream_columns
+        // contributor (`from_node`) or a writes_to target (`to_node`, defaulting to focusId).
+        // `upstream_columns` targets are also separately re-offered as implicit route_requests
+        // above and land here via the accepted-route path when admitted; this covers the rest —
+        // writes_to targets (never synthesized as a route candidate) and any upstream_columns
+        // target the border/depth admission deferred or excluded rather than accepted. One
+        // protected set, fed from both declaration surfaces.
+        for (const e of stagedColumnEdges) {
+          this.ctDeclaredRouteIds.add(e.from_node);
+          this.ctDeclaredRouteIds.add(e.to_node);
+        }
         // Group continuation questions NOW (focusId + hopCount still match these edges) by the
         // upstream node that must answer each; the route loop below hands each group to that
         // node's own AgendaEntry so it renders only there, never at an unrelated next hop.
@@ -3098,9 +3123,9 @@ export class NavigationEngine implements IHopStateMachine {
   private committedConnectedIds(): Set<string> {
     const ids = new Set<string>(this.memory.notedNodeIds);
     for (const e of this._agenda.entries) ids.add(e.nodeId);
-    // A CT route declaration the bipartite rule contracted away (no agenda entry, no detail
-    // slot) still counts as committed, protecting anything reachable only behind it. Empty in BB,
-    // so this widening is additive-only.
+    // A CT declaration — a route the bipartite rule contracted away (no agenda entry, no detail
+    // slot), or a column_flow entry naming a node for a traced column — still counts as committed,
+    // protecting anything reachable only behind it. Empty in BB, so this widening is additive-only.
     if (this.tracer) {
       for (const id of this.ctDeclaredRouteIds) ids.add(id);
     }
@@ -3333,6 +3358,12 @@ export class NavigationEngine implements IHopStateMachine {
     // reopen offer travels to this carrier's producers and to no other neighbour: a consumer that
     // reads the same carrier explains nothing about where the value came from.
     const columnProducers = openColumnEnd ? new Set(this.graph.inNeighbors(targetId)) : null;
+    // The same rule holds for the carried column itself: it continues only on the carrier's far side
+    // from the node that handed it over. A neighbour on that node's own side — another reader, or
+    // another writer — shares the carrier and nothing else, so it is still walked (the contraction
+    // is the shared walk) but carries no traced column and no chain question; the spine bind at
+    // dispatch still recovers a column a committed edge later attributes to it. Null in BB.
+    const columnContinuation = this.tracer ? this.carrierColumnContinuation(targetId) : null;
     for (const nid of this.directionalNeighbors(targetId, this._direction)) {
       // Re-anchor only when the question lands on a bodied focus — further non-bodied hops forward
       // the plain question and annotate at their own bodied leaves (no compounding). The suffix
@@ -3342,8 +3373,32 @@ export class NavigationEngine implements IHopStateMachine {
         ? buildPassthroughReAnchor(targetId, nid, this.mode.kind)
         : '';
       const forwarded = `${question}${reAnchor}`;
-      this.enqueueHop(nid, forwarded, depth + 1, priority, { carry: forwardedCarry, lineageQuestions, visitedRefs, parentTaskId, admitContractedBodiedTarget, openColumnEnd: columnProducers?.has(nid) ?? false });
+      const continues = columnContinuation === null || columnContinuation.has(nid);
+      const neighborCarry = continues || forwardedCarry.kind === 'row_role_only' ? forwardedCarry : columnCarryOf([]);
+      this.enqueueHop(nid, forwarded, depth + 1, priority, { carry: neighborCarry, lineageQuestions: continues ? lineageQuestions : undefined, visitedRefs, parentTaskId, admitContractedBodiedTarget, openColumnEnd: columnProducers?.has(nid) ?? false });
     }
+  }
+
+  /**
+   * CT: the neighbours of a non-bodied carrier on which a column handed over by the committing
+   * focus (the origin at seed time) continues.
+   *
+   * @remarks
+   * A focus that reads the carrier hands over a value the carrier's producers wrote; a focus that
+   * writes it hands over a value the carrier's consumers read. A focus that is not adjacent to the
+   * carrier, or that both reads and writes it, does not fix a side, and every neighbour keeps the
+   * carry.
+   *
+   * @param carrierId - Canonical id of the non-bodied carrier being contracted.
+   * @returns The far-side neighbour ids, or `null` when the side is undetermined.
+   */
+  private carrierColumnContinuation(carrierId: string): Set<string> | null {
+    const senderId = this.currentFocusNodeId ?? this.originNodeId;
+    if (!senderId || senderId === carrierId || !this.graph.hasNode(senderId) || !this.graph.hasNode(carrierId)) return null;
+    const senderReads = this.graph.hasDirectedEdge(carrierId, senderId);
+    const senderWrites = this.graph.hasDirectedEdge(senderId, carrierId);
+    if (senderReads === senderWrites) return null;
+    return new Set(senderReads ? this.graph.inNeighbors(carrierId) : this.graph.outNeighbors(carrierId));
   }
 
   /**

@@ -108,8 +108,12 @@ function scriptFor(focusId: string, active: readonly string[]): { flow: Flow; ro
     };
   }
   if (focusId === CLEANER) {
-    // The early visit carries the display column alone; the reopened one carries the amount and is
-    // the only hop that can name its source.
+    // The early visit arrives through CUSTOMER, which CLEANER only reads, so it carries no traced
+    // column (a co-reader of a carrier is not its continuation) and answers for the row set; the
+    // reopened visit carries the amount and is the only hop that can name its source.
+    if (!active.includes(AMOUNT) && !active.includes(TIER)) {
+      return { flow: [], routes: [{ nodeId: CUSTOMER, question: `What does ${CUSTOMER} decide about the rows ${CLEANER} writes?` }] };
+    }
     return active.includes(AMOUNT)
       ? {
         flow: [{

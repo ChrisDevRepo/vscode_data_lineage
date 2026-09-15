@@ -1524,22 +1524,25 @@ describe('hop-level prune — the in-scope neighbour decision, both modes', () =
   });
 });
 
-describe('beyond-scope contraction — a routed table reaches its bodied writer in both modes', () => {
+describe('beyond-scope contraction — a route to a node outside the origin\'s directed closure is refused identically in both modes', () => {
   /**
-   * The table row of the decision space: a route to a table is accepted (the guard is satisfied)
-   * and then contracts through to its unvisited bodied writers. The bodied writer can lie outside
-   * the origin-rooted seed scope — the model read the table off the focus's own dependencies, so
-   * the route is the approved growth, and the contraction is the walk's continuation of that
-   * route, not a second ask. Pre-fix this admission was CT-only: BB silently dropped the writer
-   * ("enqueue drop — out-of-scope target") while CT admitted it — a walk-machinery divergence the
-   * same-graph contract forbids. Both modes must admit, enqueue, and render it identically.
+   * The table row of the decision space: a route to a table beyond the seed scope only used to be
+   * accepted because `isReachableInApprovedDirection` treated every `bidirectional` target as
+   * reachable (P1-13). `g` feeds `b` (`g` → `b`), and `b` is downstream of the origin `a` — the
+   * same co-parent-of-a-downstream-consumer shape as the P1-13 off-path cluster (`vwPriceList` →
+   * `spBuildSalesReport`): `g` is reached only by crossing sideways into one of `b`'s *other*
+   * inputs, never by a directed walk from `a` on either side, so it is outside the upstream ∪
+   * downstream closure `computeBfsScope` seeds. Fixed at `isReachableInApprovedDirection`
+   * (smBase.ts:1090), the route is now refused `out_of_direction` — mode-neutral (same check, no
+   * `mode.kind` branch), so BB and CT still agree; the corrected shared answer is "refuse", not
+   * "admit". Pre-fix this admission was CT-only (BB silently dropped the writer while CT admitted
+   * it) — the same-graph contract (both modes agree) still holds, only the agreed value changed.
    *
    * Topology: `a` (origin) → `b`; `g` (table) feeds `b`; `w` (procedure) writes `g`. The seed scope
-   * from `a` is {a, b} — `g` and `w` are beyond it. At hop `b` the model routes `g`; the
-   * contraction must reach `w` in both modes.
+   * from `a` is {a, b} — `g` and `w` are beyond it and neither upstream nor downstream of `a`.
    */
   for (const mode of ['bb', 'ct'] as const) {
-    it(`${mode.toUpperCase()}: routing the off-scope table at hop b contracts through to its writer`, () => {
+    it(`${mode.toUpperCase()}: routing the off-closure table at hop b is refused out_of_direction, so its writer never contracts in`, () => {
       const nodes: LineageNode[] = [
         makeNode({ id: '[ct].[vwa3]', schema: 'ct', name: 'vwa3', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
         makeNode({ id: '[ct].[vwb3]', schema: 'ct', name: 'vwb3', type: 'procedure', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
@@ -1568,7 +1571,8 @@ describe('beyond-scope contraction — a routed table reaches its bodied writer 
         const focusId = ctx.focus_node.id;
         const routes = engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `q ${id}` }));
         // The BB-style arm: `g` is beyond the seed scope, so the guard does not demand it — the
-        // model reads it off the focus's own dependencies and routes it (legal in both modes).
+        // model reads it off the focus's own dependencies and requests it anyway (an off-closure
+        // co-parent of `b`, so `admitsRoute` now refuses it, same as a bare `route_requests` ask).
         if (focusId === '[ct].[vwb3]' && !routes.some(r => r.nodeId === '[ct].[tblg3]')) {
           routes.push({ nodeId: '[ct].[tblg3]', question: 'g supplies the amount b joins' });
         }
@@ -1581,11 +1585,15 @@ describe('beyond-scope contraction — a routed table reaches its bodied writer 
           route_requests: routes,
         }) as SubmitOk;
         expect(outcome.error, `${mode}: the hop at ${focusId} commits`).toBeUndefined();
+        if (focusId === '[ct].[vwb3]') {
+          const gOutcome = (outcome.route_outcomes ?? []).find(o => o.nodeId === '[ct].[tblg3]');
+          expect(gOutcome?.accepted === false && gOutcome?.reason === 'out_of_direction', `${mode}: g is refused out_of_direction, not silently admitted (got ${JSON.stringify(gOutcome)})`).toBe(true);
+        }
       }
       const result = engine.getResult();
       const rendered = new Set(result.fullNodes.map(n => n.id));
-      expect(rendered.has('[ct].[tblg3]'), `${mode}: the routed table renders`).toBe(true);
-      expect(rendered.has('[ct].[vwg3]'), `${mode}: the contraction through the routed table reaches its writer`).toBe(true);
+      expect(rendered.has('[ct].[tblg3]'), `${mode}: the refused table does not render`).toBe(false);
+      expect(rendered.has('[ct].[vwg3]'), `${mode}: with no contraction through g, its writer never renders either`).toBe(false);
     });
   }
 });
