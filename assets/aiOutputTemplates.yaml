@@ -305,7 +305,7 @@ structural_callouts:
     A STRUCTURAL EXPOSURE the loaded DDL proves — quote the deciding statement
     and say what it does to the data, one ⚠️ line per mechanism per node. The
     exposures that matter most are the silent ones: where the statement
-    discards, duplicates, overwrites or mis-keys data without raising an error.
+    discards, duplicates, overwrites or mis-keys data, or substitutes a default for a missing or unmatched value, without raising an error.
 
     A value the statement hardcodes is reported as the literal it is, in the
     section it belongs to — never judged as good or bad.
