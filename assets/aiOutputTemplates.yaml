@@ -256,7 +256,11 @@ technical_capture:
        comes out: "one row per …".
     4. Formulas — per distinct assigned expression and its fallback default, a
        `$$ … $$` block beside its snippet, with the source → target mapping
-       where a rename happens.
+       where a rename happens. When more than one branch of a CASE/IF/
+       parameter-driven strategy switch assigns this same output column (for
+       example a dedup or aggregation mode), give each branch its own formula
+       line here — a branch already described in Rules and branches still
+       needs its own line in Formulas.
     5. State transitions — the procedure's steps as a numbered walk.
     6. Loading step — the shape a statement against the target shows: `reload`
        (TRUNCATE or unfiltered DELETE + INSERT), `append` (inserts only),
