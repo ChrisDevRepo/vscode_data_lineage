@@ -53,17 +53,17 @@ const CT_ACTION = 'Provide at least one named targetColumns value and resubmit C
 function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartRejectIssue {
   const path = issue.path.join('.') || '(root)';
   const tag = issue.code === 'custom' ? issue.params?.startIssue : undefined;
-  if (tag === 'bb_target_columns_forbidden') return { code: 'ct_field_forbidden_in_bb', path, message: issue.message, action: BB_ACTION };
-  if (tag === 'ct_target_columns_required') return { code: 'missing_field', path, message: issue.message, action: CT_ACTION };
+  if (tag === 'bb_target_columns_forbidden') return { code: REJECTION_CODES.ctFieldForbiddenInBb, path, message: issue.message, action: BB_ACTION };
+  if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message: issue.message, action: CT_ACTION };
   if (tag === ASYMMETRIC_DEPTH_BOTH_ZERO) return { code: ASYMMETRIC_DEPTH_BOTH_ZERO, path, message: issue.message, action: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' };
   if (tag === ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL) return { code: ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL, path, message: issue.message, action: 'Asymmetric upstream/downstream depth requires direction "bidirectional". For one direction only, use direction "upstream"/"downstream" with a symmetric depth (a hard border); or keep "bidirectional" and set the other side to 0 to permanently exclude it.' };
   if (issue.code === 'unrecognized_keys') return { code: 'unknown_field', path: issue.keys.join(',') || path, message: issue.message, action: 'Remove the unknown field and resubmit.' };
-  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? 'missing_field' : 'invalid_type', path, message: issue.message, action: `Correct ${path} and resubmit.` };
+  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message: issue.message, action: `Correct ${path} and resubmit.` };
   if (issue.code === 'invalid_value' && ['analysisMode', 'classification', 'direction'].includes(path)) {
-    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: 'missing_field', path, message: issue.message, action: `Provide ${path} and resubmit.` };
+    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message: issue.message, action: `Provide ${path} and resubmit.` };
     return { code: 'invalid_enum', path, message: issue.message, action: `Use an allowed ${path} value and resubmit.` };
   }
-  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' ? 'missing_field' : 'invalid_value', path, message: issue.message, action: `Correct ${path} and resubmit.` };
+  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message: issue.message, action: `Correct ${path} and resubmit.` };
 }
 
 /**
@@ -93,7 +93,7 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
  */
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
-  return { error: 'ct_field_forbidden_in_bb', hint: BB_ACTION, next_action: BB_ACTION };
+  return { error: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_ACTION, next_action: BB_ACTION };
 }
 
 /**

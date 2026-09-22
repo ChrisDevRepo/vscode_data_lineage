@@ -5,7 +5,6 @@ import {
   PresentResultModelSchema,
   SubmitFindingsModelSchema,
   PresentResultRepairPatchSchema,
-  PresentResultSynthesisModelSchema,
   presentResultSchemaForPhase,
   submitFindingsSchemaForMode,
 } from '../../../src/ai/tools/toolSchemas';
@@ -324,8 +323,19 @@ describe("Submit Findings Schema", () => {
 
   it("Host-path synthesis lock: graph-edit fields are not advertised during initial synthesis.", () => {
   const synthesis = presentResultSchemaForPhase('synthesis');
-  expect(synthesis === PresentResultSynthesisModelSchema, 'selector returns the strict new-render synthesis schema').toBe(true);
-  expect(presentResultSchemaForPhase('completed') === PresentResultModelSchema, 'completed keeps the full present_result schema').toBe(true);
+  // Selector identity is an implementation detail — presentResultSchemaForPhase wraps its
+  // selection in the section-notes hoist preprocess (SYNTHESIS-ABANDONED-3-SEMANTIC-FAILURES), so
+  // the returned object is never `===` one of the exported base consts. The guarantee under test —
+  // synthesis carries no graph-edit control, completed keeps the full schema — is behavioral: this
+  // block's own `withGraphEdit`/`cleanSynthesis` (synthesis) and `completedEdit` (completed, below)
+  // already verify it via safeParse.
+  const synthesisRejectsCompletedOnlyFields = !synthesis.safeParse({
+    name: 'Result', summary: 'ok',
+    highlight_groups: [{ label: 'Target', color: 'target', node_ids: ['[dbo].[fact]'] }],
+    sections: [{ label: 'Output', text: 'ok', node_ids: ['[dbo].[fact]'] }],
+    prune_node_ids: ['[dbo].[extra]'],
+  }).success;
+  expect(synthesisRejectsCompletedOnlyFields, 'synthesis schema rejects prune_node_ids (Completed-Phase only)').toBe(true);
 
   const withGraphEdit = synthesis.safeParse({
     name: 'Result',

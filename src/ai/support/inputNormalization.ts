@@ -256,6 +256,55 @@ export function coercedBoolean() {
   return z.preprocess((value) => parseStringEncodedBoolean(value) ?? value, z.boolean());
 }
 
+/**
+ * Relocates a `present_result` section's nested `notes` array onto the payload's top-level
+ * `notes[]` field before Zod parses it.
+ *
+ * @remarks
+ * Measured 2026-09-16 on independent `m17-bundle-azure-foundry` (run-T7) and
+ * `m17-head-azure-foundry` (run-T8) captures: the model repeatedly nests a below-node caption list
+ * inside the section it groups them under (`sections.N.notes`) instead of `present_result`'s one
+ * legal home for that shape, the payload's top-level `notes[]`
+ * ({@link PresentResultModelSchema}) — `sections.1: Unrecognized key: "notes"` on 2-of-3 sections in
+ * run-T7, then 4-of-4 in run-T8's next attempt, each nested entry already exactly the top-level
+ * shape (`{node_id, text}`). Both turns then spent their whole synthesis semantic-failure budget on
+ * repeats of the identical placement mistake and ended with no answer at all
+ * (`MAX_TOOL_SEMANTIC_FAILURES`, `graph.ts`). Hoisting loses nothing and invents nothing — the same
+ * accept-a-materially-equivalent-placement contract {@link coercedStringObject} and
+ * {@link coercedStringArray} already apply to an alternate provider encoding, extended here to an
+ * alternate placement of identically-shaped structured data. A relocated entry is never validated
+ * here — deferred to the top-level `notes[]` schema, so a malformed one still rejects there with its
+ * own issue path. `droppedKeyPaths` (the caller's raw-vs-parsed diff, `vscodeModelPort.ts`,
+ * `openAiCompatiblePort.ts`) reports the vacated `sections.N.notes` path, so a relocation is never
+ * silent. Transparent to `z.toJSONSchema` (`io: 'input'`), so the model-facing tool schema is
+ * unchanged — same contract as every other wrapper in this module.
+ *
+ * @param value - Raw model payload before Zod validation; anything but a plain object carrying a
+ * `sections` array with at least one `notes`-bearing entry passes through untouched.
+ * @returns The payload with every section's `notes` array moved onto the top-level `notes[]` array
+ * (appended after any notes already there) and stripped from its section, or `value` unchanged.
+ */
+export function hoistSectionNotes(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const sections = record.sections;
+  if (!Array.isArray(sections) || !sections.some(isRecordWithNotes)) return value;
+
+  const hoistedNotes: unknown[] = Array.isArray(record.notes) ? [...record.notes] : [];
+  const rewrittenSections = sections.map((section) => {
+    if (!isRecordWithNotes(section)) return section;
+    const { notes, ...rest } = section;
+    hoistedNotes.push(...(Array.isArray(notes) ? notes : [notes]));
+    return rest;
+  });
+  return { ...record, sections: rewrittenSections, notes: hoistedNotes };
+}
+
+/** Plain object carrying its own `notes` key, regardless of that key's shape. */
+function isRecordWithNotes(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && 'notes' in value;
+}
+
 /** Result of cloning and normalizing a raw start-exploration payload. */
 export interface StartExplorationNormalizationResult {
   /** Cloned payload passed to strict semantic validation. */

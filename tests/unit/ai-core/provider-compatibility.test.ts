@@ -72,9 +72,14 @@ describe('provider tool-call compatibility', () => {
       .filter((event): event is Extract<TurnEvent, { type: 'text' }> => event.type === 'text')
       .map(event => event.delta)
       .join('');
-    // The tool-less false error is one semantic failure: its repair retry is announced in chat
-    // (the repair-progress contract), then the trusted answer completes the turn.
-    expect(text).toContain('\n\n_Discovery attempt 1 failed (missing_required_evidence) — retrying…_');
+    const statusLabels = events
+      .filter((event): event is Extract<TurnEvent, { type: 'status' }> => event.type === 'status')
+      .map(event => event.label);
+    // The tool-less false error is one semantic failure: its repair retry is announced on the
+    // transient status line only (the repair-progress contract) — never as permanent transcript
+    // content, so a retry the phase goes on to resolve leaves no machinery ahead of the answer.
+    expect(statusLabels.some(label => label.includes('(Retry 1 — missing_required_evidence)'))).toBe(true);
+    expect(text).not.toContain('retrying');
     expect(text).toContain('There is 1 object in the loaded snapshot.');
     expect(text).not.toContain('DB Error');
   });

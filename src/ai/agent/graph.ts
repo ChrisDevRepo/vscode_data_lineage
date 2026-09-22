@@ -40,6 +40,7 @@ import { buildChatAnswer } from '../support/chatAnswer';
 import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, captureRejectedScopeOffer, emitDiscoveryBudgetNotice } from './discoveryCapture';
@@ -371,10 +372,22 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * @remarks
    * A semantic failure inside a self-looping phase is otherwise invisible in chat. This fires only
    * when the attempt just recorded added a failure — an accepted non-terminal tool call that loops
-   * the phase announces nothing — and re-emits the phase status with a `(Retry N)` bracket plus one
-   * permanent italic line naming the failed attempt, mirroring the hop counter's
-   * `(+N added, −N pruned)` brackets. One line per failed attempt; raw rejection prose stays in
-   * the debug channel.
+   * the phase announces nothing — and re-emits the phase status with a `(Retry N — <cause>)`
+   * bracket, mirroring the hop counter's `(+N added, −N pruned)` brackets.
+   *
+   * Retry ⇒ transient `status` (native `stream.progress`), never permanent `text` (native
+   * `stream.markdown`): the AI-preview goal (register row iiiii) is a question-first, correct,
+   * complete answer, and a retry the phase goes on to resolve is exactly the "still working" signal
+   * VS Code's progress surface exists for, not content that belongs in the final transcript. A
+   * one-line-per-attempt permanent markdown notice measurably flooded `answer.md` ahead of the
+   * answer (m17-head-azure-foundry run-T7: five such lines before any content, one per hop) with no
+   * offsetting benefit — a retry that later succeeds leaves the reader nothing to act on once the
+   * turn completes. This is additive-safe for the opposite case too: a phase that never recovers
+   * still ends on its own terminal `error`/`terminal` event (`failStopped`/`failProvider`/`fail`),
+   * so removing the interim notice loses no failure signal. Full observability is unaffected either
+   * way — every rejection is already logged unconditionally at `[Reject]`/`[Attempt]` regardless of
+   * what reaches chat (this repo's no-silent-errors rule), so the debug trail still carries every
+   * drop even though the transcript no longer repeats it as content.
    *
    * @param statusText - The phase's own status line to re-emit; defaults to the phase progress label.
    */
@@ -388,8 +401,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (nextAttempt.semanticFailures <= priorAttempt.semanticFailures) return;
     const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject}…`;
     const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
-    deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.semanticFailures})`);
-    deps.sink.stream(`\n\n_${subject} attempt ${nextAttempt.providerCalls} failed (${rejectionCauseLabel(nextAttempt)}) — retrying…_`);
+    deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.semanticFailures} — ${rejectionCauseLabel(nextAttempt)})`);
   };
 
   const failEngineRestore = (err: unknown): AgentStateUpdate => {
@@ -1726,7 +1738,7 @@ function routeAfterSynthesis(state: AgentStateType): string {
 function detectGateFromToolResult(toolName: string, resultText: string): unknown | null {
   if (toolName !== 'lineage_start_exploration') return null;
   try {
-    const envelopeSchema = z.object({ error: z.literal('action_required') }).passthrough();
+    const envelopeSchema = z.object({ error: z.literal(REJECTION_CODES.actionRequired) }).passthrough();
     const envelopeCheck = envelopeSchema.safeParse(JSON.parse(resultText));
     if (!envelopeCheck.success) return null;
 

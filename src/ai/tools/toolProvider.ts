@@ -350,7 +350,7 @@ class ToolHandler implements ToolServices {
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) {
         return this.logAndReturn('get_neighbor_columns', {
-          error: 'no_active_session',
+          error: REJECTION_CODES.noActiveSession,
           hint: 'No active exploration. Call lineage_start_exploration first.',
         }, input);
       }

@@ -11,7 +11,7 @@ import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, nullAsAbsent } from '../support/inputNormalization';
+import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, nullAsAbsent } from '../support/inputNormalization';
 import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
@@ -892,14 +892,19 @@ const PresentResultVisualPreviewModelSchema = PresentResultModelSchema.omit({
  * Selects the model-facing `present_result` schema from the phase and held-draft authorization.
  * Preview omits AI-authored wrapper prose; synthesis uses the full new-render contract; either
  * phase projects the existing strict patch schema while a repairable draft is held.
+ *
+ * @remarks
+ * Every branch here declares both `sections` and top-level `notes` (optional), so
+ * {@link hoistSectionNotes} is unconditionally safe to run ahead of the chosen schema's own parse —
+ * see its doc comment for the measured defect this closes.
  */
 export function presentResultSchemaForPhase(
   phase?: string,
   repairFields: readonly PresentResultRepairField[] | null = null,
 ): z.ZodType {
   if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields);
-  if (phase === 'visual_preview') return PresentResultVisualPreviewModelSchema;
-  return phase === 'synthesis' ? PresentResultSynthesisModelSchema : PresentResultModelSchema;
+  if (phase === 'visual_preview') return z.preprocess(hoistSectionNotes, PresentResultVisualPreviewModelSchema);
+  return z.preprocess(hoistSectionNotes, phase === 'synthesis' ? PresentResultSynthesisModelSchema : PresentResultModelSchema);
 }
 
 /**
@@ -1040,7 +1045,7 @@ export function presentResultRepairPatchSchemaForFields(
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
-  const schema = PresentResultRepairPatchSchema.pick(
+  const picked = PresentResultRepairPatchSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultRepairPatchSchema.shape, true>>,
   ).strict().superRefine((data, ctx) => {
     if (keys.length === 0) return;
@@ -1052,7 +1057,14 @@ export function presentResultRepairPatchSchemaForFields(
     for (const key of keys) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
     }
-  }) as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
+  });
+  // Only when both fields are authorized together does the picked shape declare a top-level
+  // `notes` key for a hoisted entry to land on — see {@link hoistSectionNotes}. Authorized without
+  // `notes` (or without `sections`), the wrap would inject a key this narrower patch never declares
+  // and reject it as unrecognized, so it is skipped rather than applied unconditionally.
+  const schema = (keys.includes('sections') && keys.includes('notes')
+    ? z.preprocess(hoistSectionNotes, picked)
+    : picked) as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   repairPatchSchemaCache.set(cacheKey, schema);
   return schema;
 }

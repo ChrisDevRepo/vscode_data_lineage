@@ -9,8 +9,10 @@ import {
   ModelPortError,
   matchProseToolCall,
   PROSE_PROMOTED_CALL_ID,
+  createStreamRepetitionObserver,
   type ModelToolChoice,
   type ModelToolDefinition,
+  type RepetitionStrike,
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
@@ -461,6 +463,12 @@ export class VscodeModelPort implements ModelPort {
       // makes the phase term inert for them.
       let sawToolCallDelta = false;
       const textCeiling = streamTextCharCeiling(phase);
+      // The degenerate-repeat stop shares the ceiling's protections: it is per-generation, frozen
+      // once a tool-call delta streams, and absent on `compose`, where the text channel is the
+      // deliverable and a cut would be silently delivered (the same rationale that keeps `compose`
+      // at the outer bound in PHASE_STREAM_TEXT_CHAR_CEILINGS).
+      const repetition = phase === 'compose' ? undefined : createStreamRepetitionObserver();
+      let repetitionStrike: RepetitionStrike | null = null;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         clearTimeout(watchdog);
@@ -469,6 +477,9 @@ export class VscodeModelPort implements ModelPort {
           onTextDelta?.(chunk.content);
           parts.push({ type: 'text', text: chunk.content });
           textChars += chunk.content.length;
+          if (!sawToolCallDelta && repetitionStrike === null) {
+            repetitionStrike = repetition?.observe(chunk.content) ?? null;
+          }
         }
         const streamedNonText = chunk.response_metadata?.nonTextChars;
         if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
@@ -489,14 +500,21 @@ export class VscodeModelPort implements ModelPort {
         }
         // Breaking here (rather than throwing) closes the underlying stream through the normal
         // async-generator return path. The caller stamps finishReason `length` so the retry layer
-        // classifies this as `output_limit`, not a missing tool call.
+        // classifies this as `output_limit`, not a missing tool call. A repetition stop breaks on
+        // the same contract: the cut body is partial, so it is retried with the existing
+        // truncation-before-required-call correction rather than dispatched or promoted.
         if (
           textChars >= STREAM_TEXT_CHAR_CEILING
           || (textChars >= textCeiling && !sawToolCallDelta)
+          || (repetitionStrike !== null && !sawToolCallDelta)
         ) {
           hitCeiling = true;
           this.options.debugLog?.(
-            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} nontext=${nonTextChars} cap=${textCeiling}`,
+            repetitionStrike
+              ? `[AI] stream-repetition phase=${phase ?? 'unknown'} call=${generation}`
+                + ` chars=${textChars} repeats=${repetitionStrike.repeats}`
+                + ` line=${trunc(sanitizeForLog(repetitionStrike.line), 120)}`
+              : `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} nontext=${nonTextChars} cap=${textCeiling}`,
           );
           break;
         }
@@ -507,8 +525,9 @@ export class VscodeModelPort implements ModelPort {
       // A provider that emits no native tool-call chunk can still answer with a complete,
       // schema-valid tool payload as prose; without promotion each such answer draws a synthetic
       // `missing_required_tool_call` rejection. Promotion recovers that call before it is measured,
-      // so a payload the tool's own schema accepts never pays for the miss. Text cut at the stream
-      // ceiling is never promoted: it is retried as `output_limit`, not dispatched as a call.
+      // so a payload the tool's own schema accepts never pays for the miss. Text cut at a stream
+      // ceiling or by the repetition stop is never promoted: it is retried as `output_limit`, not
+      // dispatched as a call.
       // The recognizer is shared with the harness port so a measured lane cannot diverge from it.
       const promotion = hitCeiling || parts.some((part) => part.type === 'tool-call')
         ? { kind: 'none' as const }

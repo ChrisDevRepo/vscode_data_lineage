@@ -249,6 +249,39 @@ describe("Submit Findings Handler", () => {
   expect(after.columnAspect?.edges.length ?? 0, 'no column edge is staged').toBe(before.columnAspect?.edges.length ?? 0);
 });
 
+  // m17-head-azure-foundry run-T7: a CT hop that omits the required `column_flow` array entirely
+  // (not the wrong type, absent altogether) rejected identically 5 times running because the
+  // hint was only the bare Zod message ("column_flow: Invalid input: expected array, received
+  // undefined") with no repair instruction — a model told nothing beyond that regenerates the
+  // same omission. This pins that the handler's own reject path names the omission and directs
+  // the addition repair, the same general treatment `rejectionFromZodError` already gives every
+  // other omitted-field `invalid_tool_input` reject (`missingFieldRepairHint`).
+  it("CT omitting column_flow entirely is told to add it, not just shown the bare Zod message", () => {
+  const { engine, services, result } = setupCt();
+  const before = engine.toJSON();
+  const raw = {
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Origin reads amount from base_table.' }],
+    summary: 'Origin reads amount from base_table.',
+    verdict: 'analyze',
+    route_requests: engine.requiredNeighborIds('origin').map(id => ({ nodeId: id, question: 'what does this contribute?' })),
+    // column_flow deliberately absent — CT requires it (SubmitFindingsCtInputSchema).
+  };
+  executeSubmitFindings(raw, services);
+
+  const rejected = result() as { error?: string; hint?: string };
+  expect(rejected.error, 'CT names its own required-field rejection code').toBe('ct_field_required');
+  expect(rejected.hint ?? '', 'the hint still names the offending field').toContain('column_flow');
+  expect(rejected.hint ?? '', 'the hint states the field is missing entirely, not just wrong-typed')
+    .toMatch(/missing entirely/);
+  expect(rejected.hint ?? '', 'the hint directs the model to add the field, not merely "correct" it')
+    .toMatch(/add(ed)?/i);
+
+  const after = engine.toJSON();
+  expect(Object.keys(after.memory.detailSlots).length, 'no archive mutation').toBe(Object.keys(before.memory.detailSlots).length);
+  expect(after.agenda.length, 'no agenda mutation').toBe(before.agenda.length);
+});
+
   it("repair:true is rejected by the strict full BB boundary", () => {
   const { engine, services, result } = setup();
   const before = engine.toJSON();

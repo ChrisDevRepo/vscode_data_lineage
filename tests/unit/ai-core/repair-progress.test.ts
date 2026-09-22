@@ -6,7 +6,15 @@
  * status repeated identically (the observed "Hop 3/3 — analysing X" twice). These tests pin the
  * emission sites through the real graph wiring: `emitRepairProgress` for a standard phase
  * (visual preview here) and for the active worker, whose header prints once per hop while a retry
- * reads as `(Retry N)` in the same bracket grammar as the hop counter's `(+N added, −N pruned)`.
+ * reads as `(Retry N — <cause>)` in the same bracket grammar as the hop counter's
+ * `(+N added, −N pruned)`.
+ *
+ * The retry cause rides the transient `status` line only (native `stream.progress`), never a
+ * permanent `text` delta (native `stream.markdown`): a retry the phase goes on to resolve is a
+ * "still working" signal, not durable content, and a permanent line per attempt measurably flooded
+ * `answer.md` ahead of the answer (m17-head-azure-foundry run-T7: five such lines before any
+ * content — issues.py search retry-notices-flood-chat). A phase that never recovers still ends on
+ * its own terminal `error`/`terminal` event, so nothing is lost on the failure path either.
  */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
@@ -181,11 +189,11 @@ describe('repair-progress chat emissions', () => {
     const outcome = await runtime.run(PREVIEW_REQUEST_MARKER);
     expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
 
-    // The retry is announced on the status line with the bracketed retry counter...
-    expect(statusLabels(turn.events)).toContain('Building lineage preview… (Retry 1)');
-    // ...and one permanent italic line names the failed attempt and its cause. The synthetic
-    // rejection's code is deliberately unmapped, pinning the verbatim fallthrough.
-    expect(textDeltas(turn.events)).toContain('\n\n_Visual preview attempt 1 failed (synthetic_test_semantic_failure) — retrying…_');
+    // The retry is announced on the transient status line with the bracketed retry counter and
+    // cause — the synthetic rejection's code is deliberately unmapped, pinning the verbatim
+    // fallthrough — and nowhere else: no permanent text delta repeats it into the transcript.
+    expect(statusLabels(turn.events)).toContain('Building lineage preview… (Retry 1 — synthetic_test_semantic_failure)');
+    expect(textDeltas(turn.events).some(delta => delta.includes('retrying'))).toBe(false);
     // No announcement without a new failure: the accepted attempt emits no second repair line.
     expect(statusLabels(turn.events).filter(label => label.includes('(Retry')).length).toBe(1);
   });
@@ -256,14 +264,14 @@ describe('repair-progress chat emissions', () => {
     expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
     expect(model.requests.length).toBe(script.length);
 
-    // Hop 2 was entered twice: the header once, then one (Retry 1) line where the rejected submit
-    // was recorded — the two lines are never identical (the observed duplicate).
+    // Hop 2 was entered twice: the header once, then one (Retry 1 — cause) line where the rejected
+    // submit was recorded — the two lines are never identical (the observed duplicate), and the
+    // cause rides that transient status line only, never a permanent transcript line.
     const hop2 = statusLabels(turn.events).filter(label => label.startsWith('Hop 2/'));
     expect(hop2.length).toBe(2);
     expect(hop2[0]).toMatch(/^Hop 2\/\d+ — analysing Leaf0$/);
-    expect(hop2[1]).toMatch(/^Hop 2\/\d+ — analysing Leaf0 \(Retry 1\)$/);
-    // The permanent cause line explains the retry in the transcript.
-    expect(textDeltas(turn.events)).toContain('\n\n_Hop 2 attempt 1 failed (synthetic_test_semantic_failure) — retrying…_');
+    expect(hop2[1]).toMatch(/^Hop 2\/\d+ — analysing Leaf0 \(Retry 1 — synthetic_test_semantic_failure\)$/);
+    expect(textDeltas(turn.events).some(delta => delta.includes('retrying'))).toBe(false);
   });
 
   it('prints the hop header once when an accepted read loops the hop before its submit', async () => {

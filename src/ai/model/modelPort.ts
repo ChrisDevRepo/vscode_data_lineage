@@ -479,5 +479,83 @@ export function matchProseToolCall(
   if (accepting.length > 1) {
     return { kind: 'ambiguous', tools: accepting.map((entry) => entry.name) };
   }
-  return { kind: 'promoted', toolName: accepting[0].name, input: candidate };
+  return { kind: 'promoted', toolName: accepting[0].name, input: candidate as Record<string, unknown> };
+}
+
+/** One degenerate-cycle finding: the repeated normalized line and its occurrence count. */
+export interface RepetitionStrike {
+  readonly repeats: number;
+  readonly line: string;
+}
+
+// Occurrences of one line that make a generation degenerate: the 3rd identical repeat, not the
+// 50,000th character (PM 2026-09-16). Calibration over the 341 archived wire responses of
+// 2026-09-16 (m17-head, m15-local-score, m14-head, m16-close): every one of the 9 degenerate
+// loop bodies (33-172 observed repeats each) trips at 3, and no tool-bearing or `stop`-finished
+// response trips at all.
+const REPETITION_STRIKE = 3;
+// Shortest repeated unit in any recorded loop is 37 chars; noise lines (`</parameter>`, `GO`,
+// table rules) are 12 chars or fewer. 32 splits the two, and keeps markdown table rows and DDL
+// boilerplate — legitimate text that may repeat — below the counted floor.
+const REPETITION_MIN_LINE_CHARS = 32;
+// Bounds the counter's memory on adversarial input: past this many distinct substantial lines,
+// new distinct lines are no longer admitted (already-counted lines keep counting), so a hostile
+// body cannot grow the map without bound while a genuine early repeat still fires.
+const REPETITION_MAX_TRACKED_LINES = 2048;
+// A line never terminated by a newline is counted whole once it passes this length, so a degenerate
+// paragraph cycle with no line breaks at all is still caught instead of buffering forever.
+const REPETITION_MAX_BUFFERED_LINE_CHARS = 8192;
+
+/**
+ * Counts repeated substantial text lines across ONE streamed generation — the degenerate-repeat
+ * sibling of the stream text ceilings.
+ *
+ * @remarks
+ * The ceilings in the ports bound a drain by SIZE; a model oscillating over one undecidable hop
+ * choice emits a small cycle tens to hundreds of times (146k-150k chars observed against
+ * 4-18k chars of unique content), so the size brake pays nearly the whole bill before reacting.
+ * This counter fires when one substantial line reaches its 3rd identical occurrence, which on
+ * every recorded loop body lands at 3-17% of the wasted characters. It observes text deltas as
+ * they stream, normalizes whitespace (chunk boundaries never split a comparison), and returns the
+ * strike exactly once; the caller applies the same protections as its phase ceiling — never after
+ * a tool-call delta, per-generation state, and no cut where text is the deliverable. Exported
+ * beside {@link matchProseToolCall} so any port, production or harness, stops on the same bytes.
+ *
+ * @returns An observer whose `observe` returns the first {@link RepetitionStrike}, or `null`.
+ */
+export function createStreamRepetitionObserver(): {
+  readonly observe: (textDelta: string) => RepetitionStrike | null;
+} {
+  const counts = new Map<string, number>();
+  let partial = '';
+  const count = (raw: string): RepetitionStrike | null => {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (
+      line.length < REPETITION_MIN_LINE_CHARS
+      || (counts.size >= REPETITION_MAX_TRACKED_LINES && !counts.has(line))
+    ) {
+      return null;
+    }
+    const repeats = (counts.get(line) ?? 0) + 1;
+    counts.set(line, repeats);
+    return repeats === REPETITION_STRIKE ? { repeats, line } : null;
+  };
+  return {
+    observe(textDelta: string): RepetitionStrike | null {
+      partial += textDelta;
+      let end = partial.indexOf('\n');
+      while (end !== -1) {
+        const strike = count(partial.slice(0, end));
+        partial = partial.slice(end + 1);
+        if (strike) return strike;
+        end = partial.indexOf('\n');
+      }
+      if (partial.length > REPETITION_MAX_BUFFERED_LINE_CHARS) {
+        const strike = count(partial);
+        partial = '';
+        if (strike) return strike;
+      }
+      return null;
+    },
+  };
 }

@@ -186,6 +186,57 @@ describe('rejection-adapter', () => {
         expect(rejection.hint, 'mixed hint also directs correcting the other flagged field(s)').toMatch(/other offending field/i);
       });
     });
+
+    describe('invalid_tool_input hint: a field missing entirely names itself for addition, never the resend-unchanged sentence', () => {
+      // Reproduces the measured m17-head-azure-foundry run-T7 defect (issues.py search
+      // missing-field-repair-hint): `column_flow` omitted from `lineage_submit_findings` three
+      // separate hops running, each time getting back the bare Zod string with the standing
+      // "keep every other field unchanged" hint — a repair that cannot fix a field never sent.
+      const findingsShape = z.object({
+        focus_node_id: z.string(),
+        column_flow: z.array(z.object({ output: z.string() })),
+      });
+
+      it('a wholly absent required array field yields a hint naming it for addition, not correction', () => {
+        const input = { focus_node_id: '[ai].[vwconsolidatedsales]' }; // column_flow omitted entirely
+        const result = findingsShape.safeParse(input);
+        expect(result.success, 'schema rejects the call missing column_flow').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input });
+        expect(rejection.hint, 'hint names the missing field').toContain('"column_flow"');
+        expect(rejection.hint, 'hint states the field is absent, not merely wrong').toMatch(/missing entirely/i);
+        expect(rejection.hint, 'hint directs addition, not the generic correct-in-place phrasing').toMatch(/added/i);
+        expect(rejection.hint, 'hint is not the standing resend-unchanged sentence').not.toBe(INVALID_TOOL_INPUT_REPAIR_HINT);
+      });
+
+      it('the same field present with the wrong type keeps the standing sentence (never claims "missing")', () => {
+        const input = { focus_node_id: '[ai].[vwconsolidatedsales]', column_flow: 'not-an-array' };
+        const result = findingsShape.safeParse(input);
+        expect(result.success, 'schema rejects a non-array column_flow').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input });
+        expect(rejection.hint, 'a present-but-wrong-type field is not misreported as missing')
+          .toBe(INVALID_TOOL_INPUT_REPAIR_HINT);
+      });
+
+      it('without input, a missing field keeps the standing sentence (absence is unprovable without the payload)', () => {
+        const result = findingsShape.safeParse({ focus_node_id: 'x' });
+        expect(result.success, 'schema rejects the call missing column_flow').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input' });
+        expect(rejection.hint, 'no input supplied → standing sentence unchanged').toBe(INVALID_TOOL_INPUT_REPAIR_HINT);
+      });
+
+      it('a missing field alongside another invalid field states both repairs without contradiction', () => {
+        const input = { focus_node_id: 123, column_flow: undefined }; // focus_node_id wrong type, column_flow absent
+        const result = findingsShape.safeParse(input);
+        expect(result.success, 'schema rejects both issues').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input });
+        expect(rejection.hint, 'mixed hint still names the missing field for addition').toContain('"column_flow"');
+        expect(rejection.hint, 'mixed hint also directs correcting the other flagged field(s)').toMatch(/other offending field/i);
+      });
+    });
   });
 
   describe('readToolError', () => {

@@ -39,4 +39,16 @@ export const REJECTION_CODES = {
   overDiscoveryBudget: 'over_discovery_budget',
   /** An active-phase scope admission exceeded the exploration node/token budget. */
   overActiveScopeBudget: 'over_active_scope_budget',
+  /** Consent-gate marker sharing the rejection envelope without being a rejection (`isConsentGateRejection`). */
+  actionRequired: 'action_required',
+  /** A required field was omitted from the call entirely, distinguished from a present-but-invalid value. */
+  missingField: 'missing_field',
+  /** `targetColumns` supplied while the effective `start_exploration`/refine mode is BB, which accepts no CT-only field. */
+  ctFieldForbiddenInBb: 'ct_field_forbidden_in_bb',
+  /** A tool requiring a live exploration session (`stateMachine`) was called with none active. */
+  noActiveSession: 'no_active_session',
+  /** A `prune_neighbors` entry would orphan a node kept by already-committed work. */
+  pruneWouldOrphanNoted: 'prune_would_orphan_noted',
+  /** `proposalRevision` no longer matches the pending approval gate under refine. */
+  staleProposalRevision: 'stale_proposal_revision',
 } as const;

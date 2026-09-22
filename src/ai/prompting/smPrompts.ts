@@ -43,7 +43,6 @@ const REQUIRED_NEIGHBOR_RESOLUTION =
  * line, its verdict wording, and its mode additions).
  */
 const NEIGHBOR_DECISION_CORE = [
-  'Use mission/task metadata as source of truth; treat history prose as context only.',
   '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
   '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.',
   REQUIRED_NEIGHBOR_RESOLUTION,

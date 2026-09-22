@@ -1470,7 +1470,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (params.analysisMode === 'bb' && params.targetColumns !== undefined) {
       return {
-        error: 'ct_field_forbidden_in_bb',
+        error: REJECTION_CODES.ctFieldForbiddenInBb,
         hint: 'Omit targetColumns and resubmit the BB specification. If the provider emits an empty array, the encoding boundary normalizes it automatically.',
       };
     }
@@ -2576,7 +2576,7 @@ export class NavigationEngine implements IHopStateMachine {
       );
       if (focusPruneDisconnected) {
         return {
-          error: 'prune_would_orphan_noted',
+          error: REJECTION_CODES.pruneWouldOrphanNoted,
           hint: `Use verdict='passthrough' to keep it without pruning. Marking [${focusId}] prune would orphan committed node [${focusPruneDisconnected}] (already analyzed or still queued).${passthroughColumnClause}`,
         };
       }

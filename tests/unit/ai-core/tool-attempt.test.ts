@@ -578,6 +578,33 @@ describe('executeToolGenerationAttempt — truncated generation classification',
     expect(attempted.events.filter((event) => event.type === 'text')).toEqual([]);
   });
 
+  it('names the deliberation repair, not the channel repair, when a length cut precedes the required call', async () => {
+    // Measured on m17-head-local-mlx run-T7: three hops spent the whole output limit weighing one
+    // routing choice and never reached a call, and the retry told the model its call had been
+    // written as message text — a mistake it had not made, while the one it had made went
+    // unnamed. The reason already branched on the length cut; the hint did not.
+    const truncated = await runAttempt(
+      [{ text: 'Let me reconsider the routing. '.repeat(50), finishReason: 'length' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+    const truncatedHint = truncated.result.rejections[0]?.hint ?? '';
+    expect(truncatedHint).toContain('Deliberation reached the output limit');
+    expect(truncatedHint).toContain('before any further reasoning');
+    expect(truncatedHint).not.toContain('is message text and is not a call');
+
+    // A model that stopped on its own without calling the tool made the channel mistake, and still
+    // gets the channel repair — the two branches must not collapse into one message.
+    const stopped = await runAttempt(
+      [{ text: 'Here are the findings in prose.', finishReason: 'stop' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+    const stoppedHint = stopped.result.rejections[0]?.hint ?? '';
+    expect(stoppedHint).toContain('is message text and is not a call');
+    expect(stoppedHint).not.toContain('Deliberation reached the output limit');
+  });
+
   it('charges a text-free length cut in a required-terminal-tool phase, never as an empty generation', async () => {
     const attempted = await runAttempt(
       [{ text: '', finishReason: 'length' }],
@@ -903,6 +930,70 @@ describe('executeToolAttempt — bounded rejection replay', () => {
 
     return { replayed: secondPort.requests[0].messages, first };
   }
+
+  /**
+   * Runs one attempt that never calls the required terminal tool at all, then the follow-up
+   * attempt that replays the resulting synthesized (`callId`-less) `missing_required_tool_call`
+   * rejection — the path {@link renderRejectionExchange} cannot render as a genuine
+   * assistant-call/tool-result pair because no provider call was ever made.
+   */
+  async function replayAfterMissingRequiredCall(options: {
+    attemptedText: string;
+  }): Promise<{ replayed: readonly BaseMessage[]; first: ToolAttemptResult }> {
+    const toolName = 'lineage_submit_findings';
+    const { registry } = scriptedRegistry([{ name: toolName, result: '{"ok":true}' }]);
+    const plan = conversePlan(registry, { requiredTerminalTool: toolName });
+
+    const firstPort = new ScriptedModelPort([{ text: options.attemptedText }]);
+    const first = await executeToolAttempt(firstPort, plan);
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
+
+    const secondPort = new ScriptedModelPort([{ text: 'Acknowledged.' }]);
+    await executeToolAttempt(secondPort, plan, { priorState: state });
+
+    return { replayed: secondPort.requests[0].messages, first };
+  }
+
+  it('replays a callId-less missing_required_tool_call as a synthesized assistant echo, never a lone user note', async () => {
+    // Nothing was ever dispatched, so there is no genuine assistant-call/tool-result pair to
+    // replay — but the retry history must still carry an `assistant` turn, or the correction that
+    // follows reads as an unmotivated new instruction rather than feedback on the model's own
+    // prior turn (the defect this test is red against: roles were `['system','user','user','user']`
+    // with no `assistant` message at all).
+    const { replayed, first } = await replayAfterMissingRequiredCall({
+      attemptedText: 'I will summarize the findings in prose instead of calling the tool.',
+    });
+
+    expect(first.rejections[0]).toMatchObject({ callId: '', code: 'missing_required_tool_call' });
+    expect(replayed.map((message) => message.getType())).toEqual(['human', 'ai', 'human']);
+
+    const echo = replayed[1] as AIMessage;
+    expect(echo.tool_calls ?? []).toHaveLength(0);
+    expect(String(echo.content)).toBe('I will summarize the findings in prose instead of calling the tool.');
+
+    const note = replayed[2];
+    expect(String(note.content)).toContain('Correction for lineage_submit_findings');
+    expect(String(note.content)).toContain('The model did not call lineage_submit_findings.');
+  });
+
+  it('bounds the synthesized assistant echo through the same capRejectionText ladder as the reason/hint', async () => {
+    const overlong = 'x'.repeat(MAX_REJECTION_TEXT_CHARS + 500);
+    const { replayed } = await replayAfterMissingRequiredCall({ attemptedText: overlong });
+
+    const echo = replayed[1] as AIMessage;
+    // Capped to the module's existing MAX_REJECTION_TEXT_CHARS ladder, mirrored above — the same
+    // bound already applied to `reason`/`hint` on this rejection, never a new constant.
+    expect(String(echo.content).length).toBeLessThanOrEqual(MAX_REJECTION_TEXT_CHARS + 1);
+    expect(String(echo.content).endsWith('…')).toBe(true);
+  });
+
+  it('renders an empty assistant echo for a true empty completion, never fabricated text', async () => {
+    const { replayed, first } = await replayAfterMissingRequiredCall({ attemptedText: '' });
+
+    expect(first.rejections[0]).toMatchObject({ callId: '', code: REJECTION_CODES.emptyGeneration });
+    const echo = replayed[1] as AIMessage;
+    expect(String(echo.content)).toBe('');
+  });
 
   it('never ends a retry history on a tool result — the exchange closes with a user-role note', async () => {
     // Provider contract, not style: Gemini 3 signature-validates every function call in the turn

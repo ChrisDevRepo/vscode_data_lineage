@@ -16,6 +16,7 @@
  * Provider-pure: no `vscode` imports, so it stays usable from any model lane.
  */
 import { z } from 'zod';
+import { REJECTION_CODES } from './rejectionCodes';
 
 /** Normalized, typed read of either error envelope. A `null` reader result means "not an error". */
 export interface ToolRejection {
@@ -33,8 +34,11 @@ export interface ToolRejection {
 
 /**
  * Engine code carried by the consent gate, which shares the rejection envelope without being one.
+ * Reuses {@link REJECTION_CODES.actionRequired} — the one constant every emission site
+ * (`start_exploration`'s gate return, the graph's gate detector) interpolates, so a rename cannot
+ * drift between them.
  */
-const CONSENT_GATE_CODE = 'action_required';
+const CONSENT_GATE_CODE = REJECTION_CODES.actionRequired;
 
 /**
  * Reports whether a rejection code is the consent gate rather than a failure.
@@ -379,6 +383,79 @@ function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
 }
 
 /**
+ * Repair hint for an `invalid_tool_input` rejection carrying at least one `invalid_type` issue
+ * whose field is absent from the call altogether (Zod's own "received undefined"), never a value
+ * of the wrong type. The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} tells the model to
+ * "correct the offending field(s)" and "keep every other field unchanged" — both phrases presume
+ * the field is already present and merely wrong, which is not true of a field never sent at all;
+ * a model told only that loops the identical omission (three separate hops, same bare Zod string,
+ * same repeat) since nothing in the hint says a whole field must be added. Naming the missing
+ * field(s) and directing that they be added is the repair the issue itself already states;
+ * nothing here is keyed to any one tool, field name, or fixture — `issue.path` names whatever
+ * field the schema required on whatever call it rejected.
+ *
+ * Mixed with another issue in the same reject (a missing field alongside a present-but-invalid
+ * one), both repairs are stated together rather than choosing one, so neither instruction
+ * contradicts the other.
+ *
+ * Checked after {@link unrecognizedKeyRepairHint}: an `unrecognized_keys` issue never shares a
+ * path with a missing-field issue, so the two hints never both apply to the same field, and the
+ * removal hint's own "separately correct the other offending field(s)" tail already covers a
+ * missing field riding alongside an unrecognized key in the same reject.
+ *
+ * @param error - The Zod validation failure under {@link rejectionFromZodError}.
+ * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
+ * an `invalid_type` issue alone does not distinguish the two. `undefined` (caller did not supply
+ * the payload) always yields `undefined` here rather than guessing every `invalid_type` issue is
+ * an absence, since that claim is unprovable without the payload to check.
+ * @returns The addition-directed hint when any issue names a field absent from `input`;
+ * `undefined` otherwise, so the caller falls back to {@link INVALID_TOOL_INPUT_REPAIR_HINT}
+ * unchanged.
+ */
+function missingFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
+  if (input === undefined) return undefined;
+  const isMissingFieldIssue = (issue: z.core.$ZodIssue): boolean =>
+    issue.code === 'invalid_type' && resolveAtPath(input, issue.path) === undefined && issue.path.length > 0;
+
+  const missingFields = [...new Set(
+    error.issues.filter(isMissingFieldIssue).map((issue) => issue.path.join('.')),
+  )];
+  if (missingFields.length === 0) return undefined;
+
+  const plural = missingFields.length > 1;
+  const fieldList = missingFields.map((field) => `"${field}"`).join(', ');
+  const addition = `Field${plural ? 's' : ''} ${fieldList} ${plural ? 'are' : 'is'} missing entirely from this call, `
+    + `not present with the wrong type — resend the full tool call with ${plural ? 'them' : 'it'} added at the `
+    + 'required type; keep every other field unchanged.';
+
+  const hasOtherIssues = error.issues.some((issue) => !isMissingFieldIssue(issue));
+  return hasOtherIssues
+    ? `${addition} Separately, correct the other offending field(s) named above; resend every element of a corrected `
+      + 'list, repeating the unflagged elements exactly as first sent.'
+    : addition;
+}
+
+/**
+ * General field-repair hint chain, shared by every Zod-validation reject regardless of the
+ * rejection `code` that will carry it: an unrecognized key first (removal is unambiguous), then a
+ * field absent outright (addition, distinct from "present but wrong type"). Both sub-hints are
+ * schema-derived — no per-tool or per-field text — so any caller that runs its own Zod `safeParse`
+ * and composes its own reject envelope gets the same repair intelligence
+ * {@link rejectionFromZodError} already gives every `invalid_tool_input` reject, instead of a
+ * second, drifting implementation of the same "resend it as if it were merely wrong" gap. Owner
+ * example: {@link rejectionFromZodError}'s own `invalid_tool_input` hint fallback below reuses this
+ * exact chain.
+ *
+ * @param error - The Zod validation failure.
+ * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
+ * see {@link missingFieldRepairHint}.
+ * @returns The first applicable repair hint, or `undefined` when neither chain link applies.
+ */
+export function zodFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
+  return unrecognizedKeyRepairHint(error) ?? missingFieldRepairHint(error, input);
+}
+
+/**
  * Standing repair instruction for a provider call naming a tool outside this phase's catalog. The
  * valid names ride in the rejection's `detail.allowedTools`, not this sentence, so the instruction
  * stays one fixed sentence regardless of how many tools the phase offers.
@@ -490,9 +567,12 @@ export function rejectionFromZodError(
   // The standing invalid_tool_input hint tells the model to resend every field unchanged, which
   // is the wrong repair for an unrecognized key: the fix is removal, and reproducing exactly that
   // rejection three times running (Unrecognized key: "notes") is what an unstated repair looks
-  // like in a live transcript. An explicit `opts.hint` (a caller-specific override) always wins.
+  // like in a live transcript. It is equally wrong for a field missing outright (nothing to
+  // "correct" or leave "unchanged" at a path that was never sent) — the same failure mode measured
+  // three times running on `column_flow` (m17-head-azure-foundry run-T7). An explicit `opts.hint`
+  // (a caller-specific override) always wins.
   const hint = opts.code === 'invalid_tool_input'
-    ? (opts.hint ?? unrecognizedKeyRepairHint(error) ?? INVALID_TOOL_INPUT_REPAIR_HINT)
+    ? (opts.hint ?? zodFieldRepairHint(error, opts.input) ?? INVALID_TOOL_INPUT_REPAIR_HINT)
     : opts.hint;
   return makeRejection({
     code: opts.code,

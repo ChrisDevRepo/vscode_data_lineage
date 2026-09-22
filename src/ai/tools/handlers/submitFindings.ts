@@ -12,6 +12,7 @@ import {
   submitFindingsSchemaForMode,
 } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
+import { zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
@@ -35,7 +36,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const sess = s.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) return s.logAndReturn('submit_findings', {
-        error: 'no_active_session',
+        error: REJECTION_CODES.noActiveSession,
         hint: 'No active exploration. Call lineage_start_exploration first.',
         next_action: 'start_exploration',
       }, input);
@@ -93,9 +94,18 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           if (fieldErrors.length >= 3) break;
         }
         const modeLabel = isCtMode ? 'CT' : 'BB';
-        const hint = fieldErrors.length > 0
+        const summary = fieldErrors.length > 0
           ? `Invalid ${modeLabel} submit_findings input — ${fieldErrors.join('; ')}.`
           : `Invalid ${modeLabel} submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
+        // The bare per-field Zod message above (e.g. "column_flow: Invalid input: expected array,
+        // received undefined") never says whether the field was sent with the wrong type or omitted
+        // entirely — the same envelope on a genuine omission (m17-head-azure-foundry run-T7,
+        // `column_flow` x5) gives a model nothing but a byte-identical string to regenerate against.
+        // Reuses the same schema-derived, field-name-agnostic chain `rejectionFromZodError` already
+        // applies to every other invalid_tool_input reject, so an omitted required field states the
+        // addition repair here too instead of a second, drifting implementation of the same gap.
+        const repairHint = zodFieldRepairHint(parsed.error, normalizedInput);
+        const hint = repairHint ? `${summary} ${repairHint}` : summary;
         return s.logAndReturn('submit_findings', {
           error: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
           hint,

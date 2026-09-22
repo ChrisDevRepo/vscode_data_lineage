@@ -158,10 +158,10 @@ business_capture:
 
     <scope_relevance>
     A sink that records the run itself — which procedure ran, when, with
-    what outcome — is backend logging: verdict `prune`, with the procedures
-    whose only job is to write it. A sink holding the traced column's own
-    values, before/after or as-of, is a business audit trail: a consumer
-    with a one-line caption.
+    what outcome — is a sidecar in this business section: one line inside
+    the section it hangs off, never a section or highlight of its own. A
+    sink holding the traced column's own values, before/after or as-of, is
+    a business audit trail: a consumer with a one-line caption.
     </scope_relevance>
 
     This recipe is one `sections[]` entry: `{ angle: "business", text: "<body>" }`.
@@ -309,7 +309,7 @@ structural_callouts:
     A STRUCTURAL EXPOSURE the loaded DDL proves — quote the deciding statement
     and say what it does to the data, one ⚠️ line per mechanism per node. The
     exposures that matter most are the silent ones: where the statement
-    discards, duplicates, overwrites or mis-keys data, or substitutes a default for a missing or unmatched value, without raising an error.
+    discards, duplicates, overwrites or mis-keys data, or substitutes a default for a missing or unmatched value, without raising an error. A ranking or dedup key (ROW_NUMBER/PARTITION BY, DISTINCT, GROUP BY) that omits a column carried on the surviving row is the same silent loss: rows that differ only in that column collapse, and its value is dropped without an error.
 
     A value the statement hardcodes is reported as the literal it is, in the
     section it belongs to — never judged as good or bad.
@@ -368,7 +368,6 @@ column_trace_capture:
     </purpose>
 
     ## Before submitting — verify
-    □ Every active tracked column appears as an out_col in column_flow (continued, or terminal with upstream_columns: []); off-trace nodes submit column_flow: [] (see Verdict).
     □ Each upstream_columns entry is a real INPUT to `out_col`'s value — it appears in `out_col`'s producing expression (the formula / CASE / SELECT clause that computes it). A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
     □ sections[].text — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
     □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".

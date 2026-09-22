@@ -10,6 +10,7 @@
  */
 
 import type { InvalidRouteKind, InvalidRoute, SubmitResult } from './smTypes';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
@@ -112,7 +113,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_analyzed: 'route_validation_failed',
   prune_noop_queued: 'route_validation_failed',
   prune_origin_forbidden: 'prune_origin_forbidden',
-  prune_would_orphan: 'prune_would_orphan_noted',
+  prune_would_orphan: REJECTION_CODES.pruneWouldOrphanNoted,
   prune_route_conflict: 'prune_route_conflict',
 };
 

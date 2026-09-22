@@ -160,7 +160,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       // Fresh exploration path: origin is required.
       if (!data.origin && data.proposalRevision === undefined) {
         return s.logAndReturn('start_exploration', {
-          error: 'missing_field',
+          error: REJECTION_CODES.missingField,
           hint: "Field 'origin' is required for a fresh exploration. Supply 'supplement' with nodeIds only when extending a completed prior exploration (follow-up phase).",
         }, loggedInput);
       }
@@ -171,13 +171,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       // Refinement replaces the reviewable proposal. No active engine exists before approval.
       if (data.proposalRevision !== undefined && !isRefining) {
         return s.logAndReturn('start_exploration', {
-          error: 'stale_proposal_revision',
+          error: REJECTION_CODES.staleProposalRevision,
           hint: 'proposalRevision is valid only while refining the matching pending approval gate.',
         }, loggedInput);
       }
       if (isRefining && data.proposalRevision !== sess.pendingExploration!.revision) {
         return s.logAndReturn('start_exploration', {
-          error: 'stale_proposal_revision',
+          error: REJECTION_CODES.staleProposalRevision,
           hint: `Refine proposal revision ${sess.pendingExploration!.revision}; do not reuse an older gate revision.`,
         }, loggedInput);
       }
@@ -297,7 +297,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       const classification = data.classification ?? sess.pendingExploration?.classification;
       if (!classification) {
-        return s.logAndReturn('start_exploration', { error: 'missing_field', hint: 'classification is required for the exploration proposal.' }, loggedInput);
+        return s.logAndReturn('start_exploration', { error: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }, loggedInput);
       }
       engine.classification = classification;
       // Native approval Markdown is the review surface, so every in-scope object must be visible.
@@ -380,7 +380,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
           : 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.';
         return s.logAndReturn('start_exploration', {
-          error: 'action_required',
+          error: REJECTION_CODES.actionRequired,
           ...gate,
           hint,
         }, loggedInput);

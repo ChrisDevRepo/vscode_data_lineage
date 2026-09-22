@@ -9,6 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import {
+  modelAssistantMessage,
   modelToolCallMessage,
   modelToolResultMessage,
   modelUserMessage,
@@ -252,6 +253,15 @@ interface ToolAttemptRejection {
   readonly detail?: unknown;
   readonly issuePaths?: readonly string[];
   readonly correctionFragments?: readonly ToolCorrectionFragment[];
+  /**
+   * The model's own buffered turn text for a synthesized (`callId`-less) rejection, capped by
+   * {@link capRejectionText} at construction. Absent when the generation carried no text (a true
+   * empty completion) or when the rejection paired a real provider call ({@link callId} set), where
+   * the replayed assistant turn is the genuine tool call instead. This is what
+   * {@link renderRejectionExchange} echoes back as the synthesized assistant turn a callId-less
+   * rejection has no real one to replay.
+   */
+  readonly attemptedText?: string;
   /**
    * {@link acceptedCallKey} of the rejected call's own input — never the raw input itself. Set only
    * for a chargeable dispatched-tool rejection, so a following attempt can be checked (via
@@ -925,8 +935,15 @@ function collapseHeldDraftDuplicateFragments(
  * {@link renderToolAttemptContext}. Rejection fields are already byte-bounded at construction
  * ({@link capRejectionText}, {@link MAX_REJECTION_HINT_BYTES}, {@link MAX_REJECTION_DETAIL_BYTES},
  * {@link MAX_CORRECTION_FRAGMENT_BYTES}), so rendering exactly one rejection needs no further shrink
- * ladder. A synthetic `missing_required_tool_call` rejection carries no provider `callId` and cannot
- * form a valid assistant/tool pair — it falls back to one plain user-role note.
+ * ladder. A synthetic `missing_required_tool_call` rejection carries no provider `callId` — nothing
+ * was ever dispatched, so there is no call to attribute an id to — and cannot form a genuine
+ * assistant-call/tool-result pair. It instead renders as a synthesized assistant turn (the model's
+ * own buffered {@link ToolAttemptRejection.attemptedText}, already capped by
+ * {@link capRejectionText} at construction, or empty when the generation carried no text at all)
+ * followed by one plain user-role correction note. Without that assistant turn the retry transcript
+ * carried no `assistant` message for this failure at all (roles `['system','user','user','user']`
+ * on the traced reference case) and the correction read as an unmotivated new instruction rather
+ * than feedback on the model's own prior turn.
  *
  * This is the one renderer of the replayed assistant tool call: every rejection source (dispatched
  * or pre-dispatch, held draft or none, object or non-object original input) reaches the model
@@ -941,16 +958,22 @@ function collapseHeldDraftDuplicateFragments(
  * @param draftHeldFor - Tool whose held repair draft is rendered in the same attempt; a dispatched
  * rejection on this tool collapses the draft's own fields ({@link HELD_DRAFT_DUPLICATE_ROOTS})
  * instead of repeating them.
- * @returns Zero messages when there is no rejection, one fallback user note for a callId-less
- * rejection, or one assistant tool-call and its paired tool result, closed by one user-role
- * continuation note (see {@link rejectionContinuationMessage}).
+ * @returns Zero messages when there is no rejection; a synthesized assistant echo plus one
+ * user-role correction note for a callId-less rejection; or one assistant tool-call and its paired
+ * tool result, closed by one user-role continuation note (see
+ * {@link rejectionContinuationMessage}), for a rejection with a real provider `callId`.
  */
 function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: string): ModelMessage[] {
   if (state.rejections.length === 0) return [];
   const rejection = state.rejections[state.rejections.length - 1];
   if (!rejection.callId) {
+    // No provider call was ever made, so there is nothing to replay as a genuine tool-call/result
+    // pair. The synthesized assistant turn echoes exactly what the model itself produced instead
+    // (already capped by capRejectionText at construction) — empty content when the generation was
+    // a true empty completion — so the correction that follows reads as feedback on that turn
+    // rather than an unmotivated new instruction.
     const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
-    return [modelUserMessage(note)];
+    return [modelAssistantMessage(rejection.attemptedText ?? ''), modelUserMessage(note)];
   }
   // A dispatched rejection whose tool matches the held draft is guaranteed to be the historical
   // rejection that PUT the draft on hold — its own correction fragments are therefore the draft's
@@ -1476,6 +1499,13 @@ interface SynthesizedRejectionSpec {
   readonly emptyReason: string;
   readonly nonEmptyReason: string;
   readonly hint: string;
+  /**
+   * The raw generation text this attempt produced instead of the required call, whitespace and
+   * all. Capped into {@link ToolAttemptRejection.attemptedText} via {@link capRejectionText}; never
+   * pre-trimmed here so an all-whitespace generation is correctly treated as having no echoable
+   * text.
+   */
+  readonly attemptedText: string;
 }
 
 /**
@@ -1500,6 +1530,7 @@ function emitSynthesizedRejection(
     code: spec.emptyGeneration ? spec.emptyCode : spec.nonEmptyCode,
     reason: capRejectionText(spec.emptyGeneration ? spec.emptyReason : spec.nonEmptyReason),
     hint: capRejectionText(spec.hint),
+    ...(spec.attemptedText.trim().length > 0 ? { attemptedText: capRejectionText(spec.attemptedText) } : {}),
   };
   rejections.push(rejection);
   input.debugLog?.(
@@ -1866,7 +1897,17 @@ export async function executeToolGenerationAttempt(
       nonEmptyReason: truncatedBeforeRequiredCall
         ? `The output limit was reached before ${input.requiredTerminalTool} was called.`
         : `The model did not call ${input.requiredTerminalTool}.`,
-      hint: `Emit ${input.requiredTerminalTool} through the tool-call channel: a fenced JSON body, or a <function=...> block with <parameter=...> pairs, is message text and is not a call. Same fields, correct channel.`,
+      // Two different failures reach this branch and they need opposite repairs. A channel
+      // mistake means the call was written as message text; a length cut means no call was ever
+      // reached because deliberation consumed the budget. Naming the channel repair for a length
+      // cut tells the model to fix something it did not do, and leaves the thing it did do
+      // unaddressed — measured on a hop that spent its whole output limit weighing one routing
+      // choice and retried into the same loop. The reason above already branches here; the hint
+      // must branch with it.
+      hint: truncatedBeforeRequiredCall
+        ? `Deliberation reached the output limit before ${input.requiredTerminalTool} was called. Decide from the evidence already in this hop and emit ${input.requiredTerminalTool} first, before any further reasoning; a question this hop cannot settle is reported in the call's own fields and carried forward, never resolved by weighing it again here.`
+        : `Emit ${input.requiredTerminalTool} through the tool-call channel: a fenced JSON body, or a <function=...> block with <parameter=...> pairs, is message text and is not a call. Same fields, correct channel.`,
+      attemptedText: generated.text,
     });
   }
 
@@ -1884,7 +1925,10 @@ export async function executeToolGenerationAttempt(
       nonEmptyReason: truncatedBeforeRequiredCall
         ? 'The output limit was reached before any lineage tool was called.'
         : 'The response contained no trusted lineage evidence.',
-      hint: `Call one of this phase's lineage tools before answering: ${evidenceToolNames}.`,
+      hint: truncatedBeforeRequiredCall
+        ? `Deliberation reached the output limit before any lineage tool was called. Call one of this phase's tools first, before any further reasoning: ${evidenceToolNames}.`
+        : `Call one of this phase's lineage tools before answering: ${evidenceToolNames}.`,
+      attemptedText: generated.text,
     });
   }
 
