@@ -221,7 +221,17 @@ shrink. GitHub does not run this test framework.
 | **Optional Electron lanes** | `npm run test:edh` | Four smoke labels in a real VS Code host. See [`EDH_TESTING.md`](EDH_TESTING.md). |
 
 Assert with vitest `expect`, and give each case its own `it` (or an `it.each`
-table). A new SQL parser case is cheapest as an `-- EXPECT` fixture under
+table).
+
+What earns a test outside the protected core (`sm/`, `ai-core/`, `webview/`):
+one decisive assertion per behaviour, placed in the file that owns the module,
+not a new file per fix. These do not earn one: a duplicate of a path another
+test already asserts, a value-only variant (use `it.each`), a pin on prompt,
+hint or log wording (internal suite only), a regex over `src/` text (unless it
+guards a security or layering boundary), a legacy or removed path, and an
+assertion that only exercises a test double. A trim keeps each red→green
+proof's decisive assertion and must lose no `src/**` statement or branch
+coverage, measured before and after. A new SQL parser case is cheapest as an `-- EXPECT` fixture under
 `tests/fixtures/sql/targeted/` rather than as TypeScript.
 
 Layout tests with ≥1500 nodes need the enlarged stack in

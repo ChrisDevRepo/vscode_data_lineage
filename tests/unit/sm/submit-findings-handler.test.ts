@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
@@ -519,22 +518,6 @@ describe("Submit Findings Handler", () => {
   }, services);
   // Length is never a rejection axis, so an empty summary commits and the echo is what skips it.
   expect((result() as { error?: string }).error === undefined, `the shape reaches the echo (got ${JSON.stringify(result())})`).toBe(true);
-});
-
-  // The echo itself lives in the agent graph's active-hop node, which has no public test seam
-  // (it runs only inside a full provider turn). Its rules are pinned at the source that owns them
-  // so a silent rewrite of the trail fails here. The line hangs under the "Hop X/Y — analysing
-  // <focus>" counter, so restating the hop number or the focus name is the defect, not the contract.
-  // The counter is the status progress; the digest is the thinking info — the two lines differ by
-  // role (italics), not by an ornament, so an arrow or indent glyph is a regression.
-  it("the per-hop thinking line marks only a prune, reads as thinking, and skips an empty summary", () => {
-  const source = readFileSync(new URL('../../../src/ai/agent/graph.ts', import.meta.url), 'utf8');
-  const echo = source.slice(source.indexOf('const prunedMark'));
-  expect(source.includes("committedFinding.value && committedFinding.value.summary.trim()"), 'an empty summary produces no echo').toBe(true);
-  expect(echo.includes("=== 'prune' ? '⛔ pruned — ' : ''"), 'a prune is marked; every other verdict adds no glyph the counter already implies').toBe(true);
-  expect(echo.includes('`_${prunedMark}'), 'the line is italicised so it reads as thinking, not as another status').toBe(true);
-  expect(!echo.includes('↳') && !echo.includes('\\u00a0'), 'the line carries no arrow or indent ornament the italics already express').toBe(true);
-  expect(!echo.includes('Hop ${hop}') && !echo.includes('${focusLabel}'), 'the line never restates the hop number or the focus name the counter already carries').toBe(true);
 });
 
 });

@@ -5,6 +5,10 @@ import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { activeModeOf } from '../../../src/ai/tools/toolPolicy';
 import { SubmitFindingsCtInputSchema } from '../../../src/ai/tools/toolSchemas';
+import { buildActiveHopInstruction, buildActiveInstruction } from '../../../src/ai/agent/stagePrompts';
+import { EMPTY_AI_TEMPLATES } from '../../../src/ai/session/types';
+import type { AiSession } from '../../../src/ai/session/session';
+import type { StagePromptContext } from '../../../src/ai/prompting/hostPrompts';
 import type { LogFn } from '../../../src/engine/graphGuards';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
@@ -1993,5 +1997,185 @@ describe("column_chain_incomplete names the repair the validator accepts", () =>
       .toBe(true);
     expect(/or return verdict:'passthrough' with column_flow:\[\]/.test(hint),
       'the closed escape is still not offered').toBe(false);
+  });
+});
+
+describe('CT — a node named only via column_flow.writes_to is a declared route too', () => {
+  // origin --(upstream)--> source, and origin also writes the traced column into `sink` — named
+  // only in writes_to, never in route_requests or upstream_columns. AI declares, backend guards
+  // (memory ai-declares-backend-guards.md): the writes_to name is the same declaration as an
+  // accepted route, so a later prune of `sink` is refused rather than silently orphaning the edge.
+  const nodes: LineageNode[] = [
+    makeNode({ id: 'wt_origin', schema: 'ct', name: 'wt_origin', type: 'procedure', columns: [{ name: 'Total', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: 'wt_source', schema: 'ct', name: 'wt_source', type: 'view', columns: [{ name: 'Total', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: 'wt_sink', schema: 'ct', name: 'wt_sink', type: 'table', columns: [{ name: 'Total', type: 'int', nullable: 'NULL', extra: '' }] }),
+  ];
+  const edgePairs: Array<[string, string]> = [['wt_source', 'wt_origin']];
+  const wtModel: DatabaseModel = makeModel(nodes, edgePairs, ['ct']);
+  const wtGraph = makeGraph(nodes, edgePairs);
+
+  it('a node named only in writes_to is refused when a later hop prunes it, and stays unremoved', () => {
+    const engine = new NavigationEngine(wtModel, wtGraph, () => {}, {});
+    engine.init({ origin: 'wt_origin', question: 'trace Total', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Total'], depthIntent: { kind: 'explicit', levels: 5 } });
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'wt_origin',
+      sections: [{ angle: 'business' as const, text: 'origin reads Total from source and writes it to sink' }],
+      summary: 'origin computes Total',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Total', writes_to: { node: 'wt_sink', col: 'Total' }, upstream_columns: [{ node: 'wt_source', col: 'Total' }] }],
+    });
+    const focus2 = engine.getHopContext() as { focus_node?: { id: string } };
+    expect(focus2.focus_node?.id, 'source dispatches next').toBe('wt_source');
+    const hop2 = engine.submitFindings({
+      focus_node_id: 'wt_source',
+      sections: [{ angle: 'business' as const, text: 'source supplies Total directly' }],
+      summary: 'source supplies Total',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Total', upstream_columns: [] }],
+      prune_neighbors: ['wt_sink'],
+    }) as { error?: string; hint?: string };
+    expect(hop2.error, 'the prune of the writes_to-declared node is refused').toBe('prune_would_orphan_noted');
+    expect(!engine.toJSON().removedSet.includes('wt_sink'), 'the refused prune leaves sink unremoved').toBe(true);
+  });
+});
+
+describe('CT — the instruction given to a column-less focus makes no verdict promise it will not enforce', () => {
+  // report --(upstream)--> carrier, side; side --(upstream)--> behind. `side` is inner-joined into
+  // report but declares no traced column at all — a row-shaper, dispatched under the BB contract.
+  // The engine may not tell that hop it "is kept in the answer": a row-shaper is kept and a dead
+  // end is pruned under the identical instruction, and only the AI's read of the body tells them
+  // apart, so every verdict must stay open and none may be pre-announced.
+  const nodes: LineageNode[] = [
+    makeNode({ id: 'cl_report', schema: 'dbo', name: 'cl_report', type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    makeNode({ id: 'cl_carrier', schema: 'dbo', name: 'cl_carrier', type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    makeNode({ id: 'cl_side', schema: 'dbo', name: 'cl_side', type: 'view', columns: [{ name: 'region', type: 'varchar', nullable: 'NOT NULL', extra: '' }] }),
+  ];
+  const edgePairs: Array<[string, string]> = [['cl_carrier', 'cl_report'], ['cl_side', 'cl_report']];
+  const clModel: DatabaseModel = makeModel(nodes, edgePairs, ['dbo']);
+  const clGraph = makeGraph(nodes, edgePairs);
+
+  it('a column-less hop is dispatched under BB with no "kept in the answer" claim, every verdict still open', () => {
+    const engine = new NavigationEngine(clModel, clGraph, () => {}, {});
+    engine.init({ origin: 'cl_report', question: 'trace amount', direction: 'upstream', targetColumns: ['amount'], depthIntent: { kind: 'explicit', levels: 3 } });
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'cl_report',
+      sections: [{ angle: 'business' as const, text: 'report body' }],
+      summary: 'report body',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'cl_carrier', col: 'amount' }] }],
+      route_requests: [
+        { nodeId: 'cl_carrier', question: 'where does amount come from' },
+        { nodeId: 'cl_side', question: 'what does this restrict', columns: 'none' as const },
+      ],
+    });
+    let ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    while (!ctx.done && ctx.focus_node && ctx.focus_node.id !== 'cl_side') {
+      const id = ctx.focus_node.id;
+      engine.submitFindings({
+        focus_node_id: id,
+        sections: [{ angle: 'business' as const, text: 'ok' }],
+        summary: 'ok',
+        verdict: 'passthrough',
+        column_flow: [],
+      });
+      ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    }
+    expect(ctx.focus_node?.id, 'side dispatches eventually, under BB').toBe('cl_side');
+    expect(engine.currentHopAnalysisMode, 'a column-less focus takes the BB contract').toBe('bb');
+    const sess = {
+      outputTemplates: { ...EMPTY_AI_TEMPLATES, business_capture: 'Capture the business meaning of this node.' },
+      classification: 'business',
+      requireLockedClassification: () => 'business',
+      stateMachine: engine,
+      memory: {
+        slotCount: 0,
+        getShortTermMemory: () => [],
+        getRecentRejections: () => [],
+        getMissionBrief: () => '',
+        getUserQuestion: () => 'trace amount',
+        getScopeNotes: () => [],
+      },
+    } as unknown as AiSession;
+    const ctxPrompt: StagePromptContext = { dbPlatform: 'SQL Server', filterSchemas: ['dbo'], totalSchemaCount: 1, visibleNodes: 3, totalNodes: 3 };
+    const system = buildActiveInstruction(sess, ctxPrompt, engine.currentHopAnalysisMode).system;
+    const hop = buildActiveHopInstruction(sess, engine, 'cl_side').message;
+    const prompt = `${system}\n${hop}`;
+    const lower = prompt.toLowerCase();
+    for (const claim of ['kept in the answer', 'node is kept', 'will be kept']) {
+      expect(lower.includes(claim), `the hop must not declare a verdict the engine does not enforce (found "${claim}")`).toBe(false);
+    }
+    for (const verdict of ['analyze', 'passthrough', 'prune']) {
+      expect(prompt, `${verdict} stays available to this hop`).toContain(verdict);
+    }
+  });
+});
+
+describe('CT — a payload carrying both a column-reference fault and a completeness fault is rejected once', () => {
+  // origin(view, Discount) <- source(table); origin -> consumer(procedure, no column surface).
+  // The consumer's submit both names an out_col outside the tracked set (reference fault) and
+  // leaves the tracked column unaccounted (completeness fault). Both must reach one envelope, not
+  // cascade across two rejected generations.
+  const nodes: LineageNode[] = [
+    makeNode({ id: 'df_origin', schema: 'dbo', name: 'df_origin', type: 'view', columns: [{ name: 'Discount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: 'df_source', schema: 'dbo', name: 'df_source', type: 'table', columns: [{ name: 'OrderAmount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: 'df_consumer', schema: 'dbo', name: 'df_consumer', type: 'procedure', columns: [] }),
+  ];
+  const edgePairs: Array<[string, string]> = [['df_source', 'df_origin'], ['df_origin', 'df_consumer']];
+  const dfModel: DatabaseModel = makeModel(nodes, edgePairs, ['dbo']);
+  const dfGraph = makeGraph(nodes, edgePairs);
+
+  it('names both faults in the same rejection, and holds the authored prose for the retry', () => {
+    const engine = new NavigationEngine(dfModel, dfGraph, () => {}, {});
+    engine.init({ origin: 'df_origin', question: 'trace Discount', direction: 'bidirectional', analysisMode: 'ct', targetColumns: ['Discount'], depthIntent: { kind: 'explicit', levels: 2 } });
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'df_origin',
+      sections: [{ angle: 'business' as const, text: 'origin computes Discount' }],
+      summary: 'origin',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Discount', upstream_columns: [{ node: 'df_source', col: 'OrderAmount' }] }],
+      route_requests: [{ nodeId: 'df_consumer', question: 'what does the consumer do with Discount?', columns: ['Discount'] }],
+    });
+    const ctx = engine.getHopContext() as { focus_node?: { id: string } };
+    expect(ctx.focus_node?.id, 'consumer dispatches next').toBe('df_consumer');
+    const rejection = engine.submitFindings({
+      focus_node_id: 'df_consumer',
+      sections: [{ angle: 'business' as const, text: 'consumer inspected' }],
+      summary: 'consumer inspected',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Rebate', upstream_columns: [] }],
+    });
+    expect('error' in rejection, 'the two-fault payload is rejected once').toBe(true);
+    if (!('error' in rejection)) return;
+    const detail = JSON.stringify(rejection.detail ?? rejection);
+    expect(detail.includes('Rebate'), `the column-reference fault is named: ${JSON.stringify(rejection)}`).toBe(true);
+    expect(detail.includes('Discount'), 'the completeness fault reaches the SAME envelope, not a second generation').toBe(true);
+    expect(String(rejection.hint ?? '').includes('Your analysis is held'), 'a co-reported field-scoped set still holds the authored prose').toBe(true);
+  });
+});
+
+describe('buildCurrentTaskBlock — the tracked column set outranks a stale sub-question', () => {
+  // A route_requests[].question is delivered verbatim one or more hops later; between the two the
+  // active set can narrow. The engine states its own precedence instead of editing the question:
+  // the <column_trace> list is the whole tracked set and outranks the sub-question, an untracked
+  // name it mentions does not belong in column_flow, and the observation is redirected, not dropped.
+  const STALE_SUB_QUESTION = 'How does vwConsolidatedSales derive Qty (renamed from OrderQty?) and StagingID/RegionCode from its sources?';
+
+  it('states precedence, the column_flow consequence, and where the untracked observation goes — without editing the question', () => {
+    const block = buildCurrentTaskBlock([{ kind: 'analytical', question: STALE_SUB_QUESTION }], ['Qty']);
+    expect(block, 'the tracked set is still printed').toContain('Active columns: [Qty]');
+    expect(block, 'the list is the whole tracked set, not a highlight').toContain('whole tracked set for this hop');
+    expect(block, 'and states which source wins when they disagree').toContain('outranks the sub-question');
+    expect(block, 'the consequence is a field rule').toContain('`column_flow` may not name it');
+    expect(block, 'the observation is redirected, not discarded').toContain('sections[].text');
+    expect(block, 'the model-authored question is never edited').toContain(STALE_SUB_QUESTION);
+  });
+
+  it('renders no tracked-set block on a hop that tracks no column', () => {
+    const block = buildCurrentTaskBlock([{ kind: 'analytical', question: STALE_SUB_QUESTION }], []);
+    expect(block.includes('<column_trace>'), 'a column-less hop takes the BB contract, which has no column channel').toBe(false);
+    expect(block, 'the task itself still reaches the hop').toContain(STALE_SUB_QUESTION);
   });
 });

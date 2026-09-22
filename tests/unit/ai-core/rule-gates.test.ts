@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 
 /**
  * Executable form of three written architecture rules.
@@ -286,68 +287,6 @@ describe('architecture rule gates', () => {
   });
 });
 
-describe('rule-gate scan primitives', () => {
-  it('allows a modal warning and rejects every other notification or console call', () => {
-    const source = `
-      const url = 'https://example.test//not-a-comment';
-      vscode.window.showWarningMessage('Delete everything?', { modal: true }, 'Yes', 'No');
-      vscode.window.showWarningMessage(
-        localize('confirm'),
-        { modal: true, detail: 'irreversible' },
-      );
-    `;
-
-    expect(forbiddenNotificationCalls(source)).toEqual([]);
-  });
-
-  it('flags non-modal warnings, error messages and console calls', () => {
-    // The first warning must stay flagged even though a *later* call in the same file is modal:
-    // the exception is per call, not per file.
-    const source = `
-      vscode.window.showWarningMessage('just a warning');
-      vscode.window.showWarningMessage('confirm', { modal: true });
-      vscode.window.showErrorMessage('boom', { modal: true });
-      console.warn('debug');
-      console.log(1);
-    `;
-
-    expect(forbiddenNotificationCalls(source)).toEqual([
-      'showWarningMessage',
-      'showErrorMessage',
-      'console.warn',
-      'console.log',
-    ]);
-  });
-
-  it('ignores banned identifiers that appear only in prose', () => {
-    const source = `
-      /** Never call showErrorMessage or console.log here — use notifyError. */
-      // vscode.window.showWarningMessage('commented out');
-      notifyError('real path');
-    `;
-
-    expect(forbiddenNotificationCalls(source)).toEqual([]);
-  });
-
-  it('resolves relative import specifiers to src-relative module paths', () => {
-    const file = join(aiRoot, 'tools', 'tools.ts');
-    const source = `
-      import type { DatabaseModel } from '../../engine/types';
-      import { AI_MAX_SCOPE_NODE_IDS } from '../../engine/shared/bridgeContract';
-      export { helper } from './handlers/toolServices';
-      const late = await import('../../engine/columnStore');
-      import * as vscode from 'vscode';
-    `;
-
-    expect(importedModules(file, source)).toEqual([
-      'engine/types',
-      'engine/shared/bridgeContract',
-      'ai/tools/handlers/toolServices',
-      'engine/columnStore',
-    ]);
-  });
-});
-
 /**
  * Extracts one `- **Label**: …` bullet from a `general`-style YAML instruction block.
  *
@@ -363,11 +302,12 @@ function renderRuleBullet(instruction: string, label: string): string {
   return (next < 0 ? rest : rest.slice(0, next)).replace(/\s+/g, ' ').trim();
 }
 
+// N-16b: callouts are a sidecar placement rule, never a counted discovery risk list or a
+// permission gate (fix 41fdb97be). The decisive assertion of that fix, kept here.
 describe('output-template rendering rules — captured ⚠️ callouts are delivered, not re-judged', () => {
-  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
-  const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
-
   it('states the callout bullet as a placement rule, never as a count or a permission gate', () => {
+    const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
+    const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
     const callouts = renderRuleBullet(general, 'Callouts');
 
     expect(general).toContain('- **Callouts**');
@@ -378,73 +318,47 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
     expect(callouts).not.toMatch(/count the ⚠️/);
     expect(callouts).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
   });
-
-  // ⚠️ placement is `general`'s job. Closing is wrap-up prose; a leftover "Unplaced risks"
-  // block re-opens a bookkeeping heading the sidecar rewrite deleted.
-  it('leaves closing as wrap-up prose, with no Unplaced-risks block', () => {
-    const closing = asset
-      .slice(asset.indexOf('\nclosing:'), asset.indexOf('\nhighlights:'))
-      .replace(/\s+/g, ' ');
-
-    expect(closing).not.toMatch(/Unplaced risks/i);
-    expect(closing).not.toMatch(/no section placed/i);
-    expect(closing).not.toMatch(/risk block/i);
-    expect(closing).not.toMatch(/only when there is a significant/i);
-    expect(closing).not.toMatch(/omit risk callouts/i);
-  });
-
-  it('does not let the scope bullet delete a captured ⚠️ on a side branch', () => {
-    const scope = renderRuleBullet(general, 'Scope');
-
-    expect(scope).toMatch(/a side branch it did not ask about/);
-    expect(scope).toMatch(/⚠️ on such a branch is that one line, never a deletion/i);
-    expect(scope).not.toMatch(/a captured ⚠️ on such a branch/);
-  });
 });
 
-// A `$$ … $$` block must preserve the DDL expression term for term — a prior gap let a rendered
-// formula corrupt terms (e.g. swapped DATEADD operands) with no fidelity clause to catch it.
-describe('business_capture — a $$ … $$ block preserves the DDL expression term for term', () => {
-  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
-  const businessCapture = asset.slice(asset.indexOf('\nbusiness_capture:'), asset.indexOf('\ntechnical_capture:'));
+/**
+ * Codes with more than one emission site; every site must interpolate `REJECTION_CODES`
+ * (`src/ai/support/rejectionCodes.ts`) rather than hand-typing the literal, so a rename cannot
+ * drift between the emitting guard, the prompt that teaches the recovery, and the schema that
+ * types the envelope.
+ */
+const MULTI_SITE_REJECTION_CODES = [
+  REJECTION_CODES.staleTurn,
+  REJECTION_CODES.invalidInput,
+  REJECTION_CODES.notFound,
+  REJECTION_CODES.supplementRequiresCompleteEngine,
+  REJECTION_CODES.invalidRegex,
+] as const;
 
-  it('states the fidelity rule on the MATHEMATICS bullet that orders $$ … $$ rendering', () => {
-    const mathBullet = businessCapture.replace(/\s+/g, ' ');
-
-    expect(mathBullet).toMatch(/write the formula as a `\$\$ … \$\$` block/i);
-    expect(mathBullet).toMatch(
-      /a `\$\$ … \$\$` block must preserve the ddl expression term for term/i,
-    );
-    expect(mathBullet).toMatch(/no operator added, dropped, or reordered/i);
-    expect(mathBullet).toMatch(/when a faithful rendering is not possible, quote the sql instead/i);
-  });
-});
-
-// BOTH-TWO-FILES: error/CATCH, loading-shape names, and $$ each have one home. Dual-lens
-// grain/CASE stays on both recipes; add/prune stays in HOP_DECISION_CONTRACT, not YAML.
-describe('capture recipes — one home per overlapping topic', () => {
-  const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
-  const businessCapture = asset.slice(asset.indexOf('\nbusiness_capture:'), asset.indexOf('\ntechnical_capture:'));
-  const technicalCapture = asset.slice(asset.indexOf('\ntechnical_capture:'), asset.indexOf('\nstructural_callouts:'));
-  const columnTrace = asset.slice(asset.indexOf('\ncolumn_trace_capture:'), asset.indexOf('\n# Per-angle section assembly'));
-
-  it('gives post-failure row value to business and TRY/CATCH mechanics to technical', () => {
-    expect(businessCapture).toMatch(/what the rows\s+carry afterwards/);
-    expect(businessCapture).not.toMatch(/TRY\/CATCH/);
-    expect(technicalCapture).toMatch(/TRY\/CATCH, retry and lock behaviour/);
-    expect(technicalCapture).not.toMatch(/rows carry after/);
-  });
-
-  it('gives loading-shape names one home on the technical recipe', () => {
-    expect(technicalCapture).toMatch(/`reload`/);
-    expect(technicalCapture).toMatch(/`append`/);
-    expect(technicalCapture).toMatch(/`upsert`/);
-    expect(businessCapture).toMatch(/what the DML does to the target/);
-    expect(businessCapture).not.toMatch(/`reload`|`append`|`upsert`|truncate\+insert/);
+describe('rejection codes — one home per multi-site code', () => {
+  it('leaves no hand-typed literal for a multi-site code anywhere in src/ai', () => {
+    const REJECTION_CODES_OWNER = join(aiRoot, 'support', 'rejectionCodes.ts');
+    const offenders: string[] = [];
+    for (const file of sourceFiles(aiRoot)) {
+      if (file === REJECTION_CODES_OWNER) continue;
+      const lines = readFileSync(file, 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        for (const code of MULTI_SITE_REJECTION_CODES) {
+          if (line.includes(`error: '${code}'`) || line.includes(`error: "${code}"`)) {
+            offenders.push(`${posixRelative(aiRoot, file)}:${index + 1} ${code}`);
+          }
+        }
+      });
+    }
+    expect(offenders, 'every emission site interpolates REJECTION_CODES').toEqual([]);
   });
 
-  it('does not restate $$ producing expressions in column_trace_capture', () => {
-    expect(columnTrace).not.toMatch(/\$\$ … \$\$/);
-    expect(businessCapture).toMatch(/`\$\$ … \$\$` block/);
+  it('keeps the five codes exported with their wire values unchanged', () => {
+    expect(MULTI_SITE_REJECTION_CODES).toEqual([
+      'stale_turn',
+      'invalid_input',
+      'not_found',
+      'supplement_requires_complete_engine',
+      'invalid_regex',
+    ]);
   });
 });

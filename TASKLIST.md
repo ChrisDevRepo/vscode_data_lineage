@@ -10,8 +10,10 @@ test trim under tests/unit/sm, tests/unit/ai-core — uncommitted until the PM a
 `45cc1ab49`** (`test-results/facts/agg-c8964a0f9-azure-foundry.json`, 7/9 questions green, facts
 69/71, blocking 0, MISSING none). T8 8/8 must — first full pass since 850e4caf2 (reopen fixes). T6
 `negative_qty_clamp` = quarantined FLIP; T7 `unitprice_zero_fallback` red at both refs (never blocks).
-Q25 BB-parity 11/11. Not baselined, not pushed: open items below first (PM goal), and HEAD moved past
-`c8964a0f9` with peer commits, so the final capture runs at the new HEAD.
+Q25 BB-parity 11/11. Not baselined, not pushed: open items below first (PM goal). Peer `testing05-code-review-fixes`
+is DONE (comment batches 1–7 through `8a77d78bb`, `d951a7616` pruneOriginForbidden + bridge types);
+the final capture runs at the HEAD after O1/O2/O4. Peer `vscode-data-lineage-f3` test trim
+committed as `c305d5da4`.
 
 ## Open — next session, in this order
 
@@ -23,6 +25,8 @@ Q25 BB-parity 11/11. Not baselined, not pushed: open items below first (PM goal)
 | O4 | `follow-up-explore-next-autosupplement` — headless only (row no-pm-retest) | not run | `--followup "Explore related objects"` then a pick: turn 2 lists + asks, turn 3 supplements |
 | O5 | `ct-edge-transform-classes` (`c3c2babde`) | measured by final capture | close on capture |
 | R1 | Code-review cleanup rest (plan `~/.claude/plans/robust-popping-dusk.md`; comment batches 1–7 + `d951a7616` landed) | stopped on the usage limit | `smBase.ts`/`session`/`sm` comment pass was partial; open: `columnTraceDirection()` ×4 in `smBase.ts`, required `traceDirection`, `runStore.ts:112` `trunc`, `GraphCanvas.tsx:1097` refs + test, de-dup of `searchBodyScripts` regex branch, `tools.ts` regex guard, `toolAttempt`/`toolErrorEnvelope`/`nodeDecoration`/`memoryManager` helpers, `useTraceNeighborPicker`; each proven by `assert-comment-only.mjs` or the unit suites |
+| T1 | AI-runtime test trim (PM 2026-09-21): pass 1 committed — 17 files folded or deleted, 0 lost `src/**` coverage; stopped on the usage limit, far short of the ≥40% target | pass 2 open | per-file unique coverage (0-unique files are the candidates: rerun the per-file coverage map); fold each red→green proof's decisive assertion into its owner file; biggest targets are `tool-attempt.test.ts`, `column-flow-validation.test.ts`, `ct-retention-differential.test.ts`, the `navigation-engine-*`, `prune-*`, `present-result-*` and `completion-envelope-*` families; parser/engine never |
+| R2 | Register row owed — `.claude/skills/…/rulings-register.md` is write-denied to the agent (sandbox + auto-mode classifier), PM pastes it | not written | append after row `no-pm-retest`: `\| 2026-09-21 (parser-signoff-testing05) \| **The testing05 parser changes are signed off — removeBlockComments string/quote/bracket/line-comment skipping, resolveComputedColumnTypes, and the ]]/"" escapes in sqlRegex.ts — and search and parser share one SQL comment scanner.** \| IN FORCE \|` |
 | L2 | New green baseline | after O1/O2/O4 + peer sessions done | `capture_wt.py <label> --lane azure-foundry --prompts T2,T3,T4,T5,T6,T7,T8,T8S,T25 --parallel 3 --against test-results/facts/agg-45cc1ab49-azure-foundry.json` (sandbox off; clean the capture worktree first if pin fails) → compare both → `baseline`, commit, push |
 
 ## Done this release

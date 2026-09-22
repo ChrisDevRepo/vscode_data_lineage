@@ -428,7 +428,7 @@ fixture through independent BB and CT engine instances and asserts their
 reachable only through a `row_role_only` hop. That two independently-run
 traces of the *same question* issue matching routing decisions in the first
 place is a property of the model's own behaviour, not something any engine
-mechanism enforces. `tests/unit/sm/ct-chain-connectivity.test.ts` pins a
+mechanism enforces. `tests/unit/sm/ct-retention-differential.test.ts` ("CT chain connectivity") pins a
 related but distinct invariant — that the committed `column_flow` edges form
 one connected component reaching the origin, so a column chain can never start
 detached from the traced origin.

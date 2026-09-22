@@ -2154,3 +2154,282 @@ describe('CT per-neighbour column carry — a stated subset is not an inherit', 
     ).toEqual([]);
   });
 });
+
+/**
+ * F1 (agenda-column-carry-merge) — a node two siblings both reach: one route states `columns:
+ * 'none'` for it, a sibling's later hop then commits a column_flow edge naming it as the supplier
+ * of a traced column. The stated `'none'` is honoured on the agenda entry (not overturned at
+ * enqueue time), but the dispatch-time spine bind still binds the column when the node is
+ * actually dispatched — the LAST place the engine resolves the disagreement on the AI's behalf.
+ */
+describe('F1 — a stated "none" on the agenda entry does not drop the column a later committed edge attributes', () => {
+  it('agenda entry keeps "none"; dispatch still binds the column the committed edge names', () => {
+    const col = (name: string) => ({ name, type: 'int' as const, nullable: 'NOT NULL' as const, extra: '' });
+    const nodes: LineageNode[] = [
+      makeNode({ id: 'f1_origin', schema: 'dbo', name: 'f1_origin', type: 'view', columns: [col('TargetCol')] }),
+      makeNode({ id: 'f1_carrier', schema: 'dbo', name: 'f1_carrier', type: 'view', columns: [col('TargetCol')] }),
+      makeNode({ id: 'f1_filter', schema: 'dbo', name: 'f1_filter', type: 'view', columns: [col('FilterKey')] }),
+      makeNode({ id: 'f1_shared', schema: 'dbo', name: 'f1_shared', type: 'view', columns: [col('TargetCol')] }),
+    ];
+    const edges: Array<[string, string]> = [
+      ['f1_carrier', 'f1_origin'], ['f1_filter', 'f1_origin'], ['f1_shared', 'f1_carrier'], ['f1_shared', 'f1_filter'],
+    ];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['dbo']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({ origin: 'f1_origin', question: 'trace TargetCol upstream', direction: 'upstream', analysisMode: 'ct', targetColumns: ['TargetCol'] });
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'f1_origin',
+      sections: [{ angle: 'business' as const, text: 'origin' }], summary: 'origin', verdict: 'analyze',
+      column_flow: [{ out_col: 'TargetCol', upstream_columns: [{ node: 'f1_carrier', col: 'TargetCol' }] }],
+      route_requests: [
+        { nodeId: 'f1_carrier', question: 'where does TargetCol come from?', columns: ['TargetCol'] },
+        { nodeId: 'f1_filter', question: 'which rows does this admit?', columns: 'none' as const },
+      ],
+    });
+    engine.getHopContext();
+    expect(engine.currentFocus, 'the carrier dequeues first').toBe('f1_carrier');
+    engine.submitFindings({
+      focus_node_id: 'f1_carrier',
+      sections: [{ angle: 'business' as const, text: 'carrier' }], summary: 'carrier', verdict: 'analyze',
+      column_flow: [{ out_col: 'TargetCol', upstream_columns: [{ node: 'f1_shared', col: 'TargetCol' }] }],
+      route_requests: [{ nodeId: 'f1_shared', question: 'where does TargetCol come from?', columns: ['TargetCol'] }],
+    });
+    engine.getHopContext();
+    expect(engine.currentFocus, 'the filter branch dequeues next').toBe('f1_filter');
+    engine.submitFindings({
+      focus_node_id: 'f1_filter',
+      sections: [{ angle: 'business' as const, text: 'filter' }], summary: 'filter', verdict: 'analyze',
+      column_flow: [],
+      route_requests: [{ nodeId: 'f1_shared', question: 'which rows does this admit?', columns: 'none' as const }],
+    });
+
+    interface SnapshotAgendaEntry { nodeId: string; activeColumns?: string[]; columnCarry?: { kind: string } }
+    const shared = (JSON.parse(JSON.stringify(engine.toJSON())) as { agenda: SnapshotAgendaEntry[] })
+      .agenda.find(entry => entry.nodeId === 'f1_shared');
+    expect(shared?.columnCarry?.kind, 'the later route said "none" and the entry records "none"').toBe('row_role_only');
+    expect(shared?.activeColumns?.length ?? 0, 'no column is padded back on at enqueue time').toBe(0);
+
+    engine.getHopContext();
+    expect(engine.currentFocus, 'the shared node dispatches').toBe('f1_shared');
+    expect(engine.columnAspect?.active_columns.join(','), 'the proven column is not dropped at dispatch').toBe('TargetCol');
+  });
+});
+
+/**
+ * ct-border-endpoint-prune-disposition — a submit that names a node both as a column_flow
+ * writes_to target and in prune_neighbors contradicts itself; the prune is refused and the node
+ * stays reachable for a clean resubmit.
+ */
+describe('CT — a same-submit writes_to plus prune_neighbors naming the same node is refused', () => {
+  it('the contradiction is refused, the node is never removed, and a clean resubmit commits the edge', () => {
+    const col = { name: 'Amt', type: 'int', nullable: 'NULL' as const, extra: '' };
+    const nodes = [
+      makeNode({ id: 'bp_origin', schema: 'x', name: 'bp_origin', type: 'view', columns: [col] }),
+      makeNode({ id: 'bp_spmove', schema: 'x', name: 'bp_spmove', type: 'procedure', columns: [col] }),
+      makeNode({ id: 'bp_archive', schema: 'x', name: 'bp_archive', type: 'table', columns: [col] }),
+    ];
+    const edges: Array<[string, string]> = [['bp_origin', 'bp_spmove'], ['bp_spmove', 'bp_archive']];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['x']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({
+      origin: 'bp_origin', question: 'trace Amt downstream', direction: 'downstream',
+      analysisMode: 'ct', targetColumns: ['Amt'], depthIntent: { kind: 'explicit', levels: 1 },
+    });
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'bp_origin', sections: [{ angle: 'business' as const, text: 'origin carries Amt' }],
+      summary: 'origin carries Amt', verdict: 'analyze', column_flow: [{ out_col: 'Amt', upstream_columns: [] }],
+      route_requests: engine.requiredNeighborIds('bp_origin').map(id => ({ nodeId: id, question: `what does ${id} decide?` })),
+    });
+    engine.getHopContext();
+    expect(engine.currentFocus).toBe('bp_spmove');
+    const contradicted = engine.submitFindings({
+      focus_node_id: 'bp_spmove', sections: [{ angle: 'business' as const, text: 'spmove writes Amt into archive' }],
+      summary: 'spmove writes Amt into archive', verdict: 'analyze',
+      column_flow: [{ out_col: 'Amt', upstream_columns: [{ node: 'bp_origin', col: 'Amt' }], writes_to: { node: 'bp_archive', col: 'Amt' } }],
+      prune_neighbors: ['bp_archive'],
+    }) as { error?: string; hint?: string };
+    expect(contradicted.error, 'the same-submit prune of the staged writes_to target is refused').toBe('prune_would_orphan_noted');
+
+    const clean = engine.submitFindings({
+      focus_node_id: 'bp_spmove', sections: [{ angle: 'business' as const, text: 'spmove writes Amt into archive' }],
+      summary: 'spmove writes Amt into archive', verdict: 'analyze',
+      column_flow: [{ out_col: 'Amt', upstream_columns: [{ node: 'bp_origin', col: 'Amt' }], writes_to: { node: 'bp_archive', col: 'Amt' } }],
+    });
+    expect('error' in clean, 'the clean resubmit commits').toBe(false);
+    const snapshot = engine.toJSON();
+    expect(snapshot.removedSet.includes('bp_archive'), 'archive is never removed').toBe(false);
+    expect((snapshot.columnAspect?.edges ?? []).some(e => e.to_node === 'bp_archive'), 'the column edge into archive is committed').toBe(true);
+  });
+});
+
+/**
+ * ct-chain-connectivity — the committed column edges form one component containing the origin; a
+ * neighbour reached without a route carry dispatches column-less and cannot stage a detached one.
+ */
+describe('CT chain connectivity — the committed column-edge graph forms one component containing the origin', () => {
+  it('a plain chain commits one connected component; an omitted route carry forecloses a detached one', () => {
+    const nodes: LineageNode[] = ['cx_report', 'cx_carrier', 'cx_vendor'].map(id =>
+      makeNode({ id, schema: 'dbo', name: id, type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] }));
+    const edges: Array<[string, string]> = [['cx_carrier', 'cx_report'], ['cx_vendor', 'cx_carrier']];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['dbo']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({ origin: 'cx_report', question: 'trace amount', direction: 'upstream', analysisMode: 'ct', targetColumns: ['amount'], depthIntent: { kind: 'explicit', levels: 3 } });
+    const chainFlow: Record<string, Array<{ out_col: string; upstream_columns: Array<{ node: string; col: string }> }>> = {
+      cx_report: [{ out_col: 'amount', upstream_columns: [{ node: 'cx_carrier', col: 'amount' }] }],
+      cx_carrier: [{ out_col: 'amount', upstream_columns: [{ node: 'cx_vendor', col: 'amount' }] }],
+      cx_vendor: [{ out_col: 'amount', upstream_columns: [] }],
+    };
+    for (let hop = 0; hop < 5; hop++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      engine.submitFindings({ focus_node_id: ctx.focus_node.id, sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'passthrough', column_flow: chainFlow[ctx.focus_node.id] });
+    }
+    const edgesOut = engine.getResult().columnAspect?.edges ?? [];
+    expect(edgesOut.length, 'the chain commits an edge at report and at carrier').toBe(2);
+    expect(edgesOut.some(e => e.from_node === 'cx_report' || e.to_node === 'cx_report'), 'the component contains the origin').toBe(true);
+
+    // Detach: cx_carrier separately routes `cx_gadget` with NO columns field. Omitted route carry
+    // resolves to row_role_only, so gadget dispatches with no active column and cannot stage an edge.
+    const detachNodes = [...nodes, makeNode({ id: 'cx_gadget', schema: 'dbo', name: 'cx_gadget', type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] })];
+    const detachEdges: Array<[string, string]> = [...edges, ['cx_gadget', 'cx_carrier']];
+    const engine2 = new NavigationEngine(makeModel(detachNodes, detachEdges, ['dbo']), makeGraph(detachNodes, detachEdges), () => {}, {});
+    engine2.init({ origin: 'cx_report', question: 'trace amount', direction: 'upstream', analysisMode: 'ct', targetColumns: ['amount'], depthIntent: { kind: 'explicit', levels: 4 } });
+    engine2.getHopContext();
+    engine2.submitFindings({ focus_node_id: 'cx_report', sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'passthrough', column_flow: chainFlow.cx_report });
+    engine2.getHopContext();
+    engine2.submitFindings({
+      focus_node_id: 'cx_carrier', sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'passthrough',
+      column_flow: [{ out_col: 'amount', upstream_columns: [] }],
+      route_requests: [{ nodeId: 'cx_gadget', question: 'what feeds this' }],
+    });
+    engine2.getHopContext();
+    const outcome = engine2.submitFindings({
+      focus_node_id: 'cx_gadget', sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'passthrough',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'cx_report', col: 'amount' }] }],
+    }) as { error?: string };
+    expect(outcome.error, 'the omitted-carry route leaves gadget with no active column to declare').toBe('out_col_not_tracked');
+  });
+});
+
+/**
+ * ct-neighbor-attributed-columns — a hop's neighbour list discloses what committed column_flow
+ * edges already attribute to each neighbour, before the model states a route_requests[].columns
+ * decision for it. Purely additive disclosure: the same spine the override later acts on, surfaced
+ * one hop earlier instead of applied only at the moment a route is accepted.
+ */
+describe('hop_context.neighbors[] discloses columns a committed column_flow edge already attributed', () => {
+  const nodes: LineageNode[] = [
+    makeNode({ id: 'na_origin', schema: 'dbo', name: 'na_origin', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: 'na_hub', schema: 'dbo', name: 'na_hub', type: 'view' }),
+    makeNode({ id: 'na_sup', schema: 'dbo', name: 'na_sup', type: 'table', columns: [{ name: 'RawAmount', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: 'na_other', schema: 'dbo', name: 'na_other', type: 'view' }),
+  ];
+  const edges: Array<[string, string]> = [['na_hub', 'na_origin'], ['na_sup', 'na_hub'], ['na_other', 'na_hub']];
+
+  it('shows the attributed column on the named neighbour, and nothing on an untouched sibling', () => {
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['dbo']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({ origin: 'na_origin', question: 'trace Amount', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Amount'], depthIntent: { kind: 'explicit', levels: 3 } });
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'na_origin', sections: [{ angle: 'business' as const, text: 'origin computes Amount from na_sup' }],
+      summary: 'origin', verdict: 'analyze',
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: 'na_sup', col: 'RawAmount' }] }],
+      route_requests: [{ nodeId: 'na_hub', question: 'what does hub do with the value?', columns: 'none' as const }],
+    });
+    const ctx = engine.getHopContext() as { focus_node?: { id: string }; neighbors?: Array<{ id: string; attributed_columns?: string[] }> };
+    expect(ctx.focus_node?.id, 'hub dispatches next').toBe('na_hub');
+    const byId = new Map((ctx.neighbors ?? []).map(n => [n.id, n]));
+    expect(byId.get('na_sup')?.attributed_columns, "origin's column_flow named na_sup as the supplier of Amount before this hop").toEqual(['RawAmount']);
+    expect(byId.get('na_other')?.attributed_columns, 'no hop has ever named na_other in a column_flow entry').toBeUndefined();
+  });
+
+  it('discloses nothing in BB mode — no column channel to read from', () => {
+    const bbNodes: LineageNode[] = [makeNode({ id: 'na_origin', schema: 'dbo', name: 'na_origin', type: 'view' }), makeNode({ id: 'na_hub', schema: 'dbo', name: 'na_hub', type: 'view' })];
+    const bbEdges: Array<[string, string]> = [['na_hub', 'na_origin']];
+    const engine = new NavigationEngine(makeModel(bbNodes, bbEdges, ['dbo']), makeGraph(bbNodes, bbEdges), () => {}, {});
+    engine.init({ origin: 'na_origin', question: 'trace origin back to its sources', direction: 'upstream', depthIntent: { kind: 'explicit', levels: 2 } });
+    const ctx = engine.getHopContext() as { neighbors?: Array<{ id: string; attributed_columns?: string[] }> };
+    expect((ctx.neighbors ?? []).length, 'na_hub is a neighbour of the BB seed').toBeGreaterThan(0);
+    for (const neighbor of ctx.neighbors ?? []) expect(neighbor.attributed_columns, `BB neighbour ${neighbor.id} carries no column channel at all`).toBeUndefined();
+  });
+});
+
+/**
+ * ct-reopen-carrier-row-role-merge / ct-reopen-open-column-end — a column a committed column_flow
+ * edge leaves open at a non-bodied carrier stays owed by that carrier's producer. The reopen it
+ * triggers dispatches the producer with the column active even when: (a) a different router later
+ * states a row role about another carrier the producer also reads (a row role never outranks a
+ * committed edge), and (b) the producer was already visited (BB's visited guard) before the
+ * column reached it — a new column on it is a new question, reopened rather than skipped.
+ */
+describe('CT reopen — a committed edge left open outranks both a later row role and the visited flag', () => {
+  it('reopens the producer with the owed column though a later router states a row role about a different carrier it also reads', () => {
+    const col = (name: string) => ({ name, type: 'int', nullable: 'NULL' as const, extra: '' });
+    const nodes: LineageNode[] = [
+      makeNode({ id: 'rp_calc', schema: 'ct', name: 'rp_calc', type: 'view', columns: [col('Discount')] }),
+      makeNode({ id: 'rp_staging', schema: 'ct', name: 'rp_staging', type: 'table', columns: [col('Amount')] }),
+      makeNode({ id: 'rp_master', schema: 'ct', name: 'rp_master', type: 'table', columns: [col('Tier')] }),
+      makeNode({ id: 'rp_loader', schema: 'ct', name: 'rp_loader', type: 'procedure', columns: [] }),
+      makeNode({ id: 'rp_rawview', schema: 'ct', name: 'rp_rawview', type: 'view', columns: [col('Amount')] }),
+      makeNode({ id: 'rp_cleaner', schema: 'ct', name: 'rp_cleaner', type: 'procedure', columns: [] }),
+      makeNode({ id: 'rp_rawsrc', schema: 'ct', name: 'rp_rawsrc', type: 'table', columns: [col('RawAmount')] }),
+    ];
+    const edges: Array<[string, string]> = [
+      ['rp_staging', 'rp_calc'], ['rp_master', 'rp_calc'], ['rp_loader', 'rp_staging'], ['rp_rawview', 'rp_loader'],
+      ['rp_cleaner', 'rp_rawview'], ['rp_rawsrc', 'rp_cleaner'], ['rp_master', 'rp_cleaner'],
+    ];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['ct']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({ origin: 'rp_calc', question: 'Trace rp_calc.Discount back to its original sources', direction: 'bidirectional', analysisMode: 'ct', targetColumns: ['Discount'], depthIntent: { kind: 'full_frontier' } });
+
+    const dispatched: Array<{ focusId: string; active: string[] }> = [];
+    for (let hop = 0; hop < 15; hop++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      const focusId = ctx.focus_node.id;
+      const active = [...(engine.columnAspect?.active_columns ?? [])];
+      dispatched.push({ focusId, active });
+      const routes = engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `what does ${id} do?` }));
+      let flow: Array<{ out_col: string; upstream_columns: Array<{ node: string; col: string }>; writes_to?: { node: string; col: string } }> = [];
+      if (focusId === 'rp_calc') flow = [{ out_col: 'Discount', upstream_columns: [{ node: 'rp_staging', col: 'Amount' }, { node: 'rp_master', col: 'Tier' }] }];
+      else if (focusId === 'rp_loader') flow = [{ out_col: 'Amount', upstream_columns: [{ node: 'rp_rawview', col: 'Amount' }], writes_to: { node: 'rp_staging', col: 'Amount' } }];
+      else if (focusId === 'rp_rawview') flow = [{ out_col: 'Amount', upstream_columns: [{ node: 'rp_cleaner', col: 'Amount' }] }];
+      else if (focusId === 'rp_cleaner' && active.includes('Amount')) flow = [{ out_col: 'Amount', upstream_columns: [{ node: 'rp_rawsrc', col: 'RawAmount' }], writes_to: { node: 'rp_rawview', col: 'Amount' } }];
+      engine.submitFindings({ focus_node_id: focusId, sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'analyze', column_flow: flow, route_requests: routes });
+    }
+    const cleanerHops = dispatched.filter(d => d.focusId === 'rp_cleaner');
+    expect(cleanerHops.length, 'cleaner is visited early (as a co-reader of master) and reopened once the column reaches it').toBe(2);
+    expect(cleanerHops[1].active, 'the reopened hop asks for the owed column').toEqual(['Amount']);
+  });
+
+  it('reopens a producer the BB visited guard already dispatched, once a new column names it', () => {
+    const col = (name: string) => ({ name, type: 'decimal' as const, nullable: 'NULL' as const, extra: '' });
+    const nodes: LineageNode[] = [
+      makeNode({ id: 'ro_origin', schema: 'ai', name: 'ro_origin', type: 'view', columns: [col('Discount')] }),
+      makeNode({ id: 'ro_customer', schema: 'ai', name: 'ro_customer', type: 'table', columns: [col('CustomerTier')] }),
+      makeNode({ id: 'ro_cleaner', schema: 'ai', name: 'ro_cleaner', type: 'procedure', columns: [] }),
+      makeNode({ id: 'ro_cleaned', schema: 'ai', name: 'ro_cleaned', type: 'table', columns: [col('OrderAmount')] }),
+      makeNode({ id: 'ro_import', schema: 'ai', name: 'ro_import', type: 'table', columns: [col('RawAmount')] }),
+    ];
+    const edges: Array<[string, string]> = [
+      ['ro_customer', 'ro_origin'], ['ro_cleaner', 'ro_cleaned'], ['ro_customer', 'ro_cleaner'], ['ro_import', 'ro_cleaner'], ['ro_cleaned', 'ro_origin'],
+    ];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['ai']), makeGraph(nodes, edges), () => {}, {});
+    engine.init({ origin: 'ro_origin', question: 'Trace ro_origin.Discount', direction: 'bidirectional', analysisMode: 'ct', targetColumns: ['Discount'], depthIntent: { kind: 'full_frontier' } });
+
+    const dispatchedAt = new Map<string, string[][]>();
+    for (let hop = 0; hop < 15; hop++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      const focusId = ctx.focus_node.id;
+      const active = [...(engine.columnAspect?.active_columns ?? [])];
+      const seen = dispatchedAt.get(focusId); if (seen) seen.push(active); else dispatchedAt.set(focusId, [active]);
+      const routes = engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `what does ${id} do?` }));
+      let flow: Array<{ out_col: string; upstream_columns: Array<{ node: string; col: string }> }> = [];
+      if (focusId === 'ro_origin') flow = [{ out_col: 'Discount', upstream_columns: [{ node: 'ro_customer', col: 'CustomerTier' }, { node: 'ro_cleaned', col: 'OrderAmount' }] }];
+      else if (focusId === 'ro_cleaner' && active.includes('OrderAmount')) flow = [{ out_col: 'OrderAmount', upstream_columns: [{ node: 'ro_import', col: 'RawAmount' }] }];
+      engine.submitFindings({ focus_node_id: focusId, sections: [{ angle: 'business' as const, text: 'ok' }], summary: 'ok', verdict: 'analyze', column_flow: flow, route_requests: routes });
+    }
+    const cleanerDispatches = dispatchedAt.get('ro_cleaner') ?? [];
+    expect(cleanerDispatches.some(active => active.includes('OrderAmount')), 'cleaner (visited early as a co-reader of customer) is reopened with OrderAmount active once cleaned names it').toBe(true);
+    expect(cleanerDispatches.length, 'cleaner is dispatched at most twice — once per column question, not repeatedly').toBeLessThanOrEqual(2);
+  });
+});
