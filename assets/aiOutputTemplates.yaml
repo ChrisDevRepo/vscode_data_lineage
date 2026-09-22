@@ -116,17 +116,14 @@ highlights:
     Colors and labels are two different channels, both relative to the USER
     QUESTION. Each group's legend label names the role its nodes share — aim
     for ~40 chars. Colors (highlight_groups) mark importance: the question's data
-    Sources, its Target, and the important transformations — nodes that CREATE
-    or CHANGE the answer's values (formula, condition, classification, status
-    transition). Carry-through plumbing (renames, SELECT * bridges, movement
-    procs, plain storage tables, row filters) stays uncolored — the graph is a
-    map: colored landmarks on a plain background — emphasis, not the full
-    node list; the linked sections already carry the complete set. One
-    scheme per graph: Lineage (source/transform/target) or Diagnostic
-    (good/warn/fail). Lineage colors follow DATA
-    FLOW, not question direction: `source` = the deepest data origins the trace
-    reached (raw/base feeds), `target` = where the data lands — in an upstream
-    trace that is the queried object itself.
+    Sources, its Target, and the important transformations. Carry-through
+    plumbing stays uncolored — the graph is a map: colored landmarks on a
+    plain background — emphasis, not the full node list; the linked sections
+    already carry the complete set. One scheme per graph: Lineage
+    (source/transform/target) or Diagnostic (good/warn/fail). Lineage colors
+    follow DATA FLOW, not question direction: `source` = the deepest data
+    origins the trace reached (raw/base feeds), `target` = where the data
+    lands — in an upstream trace that is the queried object itself.
 
 notes:
   stages: [synthesis]
