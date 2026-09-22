@@ -267,9 +267,9 @@ source and tests are the implementation baseline.
 
 `npm run gate` is the deterministic pre-merge check; `CONTRIBUTING.md` and the
 `package.json` scripts list the command set. Beyond type-checking, builds, and the
-unit suites it enforces eight derived contracts: the
+unit suites it enforces nine derived contracts: the
 `contributes.languageModelTools` manifest drift check, the output template
-schema-version gate, the honest-test-label scan, the core-case-completeness
+schema-version gate, the prompt-golden-sync check, the honest-test-label scan, the core-case-completeness
 check, the unit-project coverage check that makes the two unit steps add up to
 the whole suite, the `src/engine` → `src/components` layer-direction guard, the
 packaged-VSIX contents check, and the `assert-no-langsmith` bundle check.

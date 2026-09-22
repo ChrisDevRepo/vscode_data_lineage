@@ -58,6 +58,10 @@ rather than inherit it.
 | `dompurify` | `monaco-editor` pins a range with known advisories. `$dompurify` points the override at our direct dependency so the version is stated once. | `monaco-editor` ships a patched DOMPurify. |
 | `serialize-javascript` | Lifts a transitive copy past a known advisory. | Dependents update. |
 | `diff` | Lifts a transitive copy past a known advisory. | Dependents update. |
+| `js-yaml@4` | Pins transitive js-yaml 4.x to 4.3.2 (CVE-2026-84375). | Dependents ship a patched range. |
+| `fast-uri` | Keeps transitive copies on a patched release (open Dependabot alert). | Dependents update. |
+| `browserslist` | Keeps transitive copies on a patched release (open Dependabot alert). | Dependents update. |
+| `baseline-browser-mapping` | Keeps transitive copies on a patched release (open Dependabot alert). | Dependents update. |
 
 Vendored third-party source is registered in `THIRD_PARTY_NOTICES.md` with its
 source, license, destination, and the modifications applied.

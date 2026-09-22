@@ -45,7 +45,7 @@ describe('appendUniqueSectionText — column_flow notes reach the slot', () => {
     expect(merged[0].text).toContain('BaseAmt * COALESCE(DiscountPct,0)');
   });
 
-  it('does not duplicate a note already present in sections[].text', () => {
+  it('keeps a note that is merely a substring of an earlier section — containment is not identity', () => {
     const sections = [{
       angle: 'business' as const,
       text: 'DiscountVal = BaseAmt * COALESCE(DiscountPct,0) per StagingID.',
@@ -54,7 +54,32 @@ describe('appendUniqueSectionText — column_flow notes reach the slot', () => {
       'BaseAmt * COALESCE(DiscountPct,0)',
       '  BaseAmt * COALESCE(DiscountPct,0)  ',
     ]);
+    // The two extras are exact duplicates of each other (after trim), so only one copy is merged in.
+    expect(merged).toHaveLength(1);
+    expect(merged[0].text).toBe(
+      'DiscountVal = BaseAmt * COALESCE(DiscountPct,0) per StagingID.\nBaseAmt * COALESCE(DiscountPct,0)',
+    );
+  });
+
+  it('drops a note that is an exact duplicate (trimmed) of an earlier section — equality still dedupes', () => {
+    const sections = [{ angle: 'business' as const, text: 'BaseAmt * COALESCE(DiscountPct,0)' }];
+    const merged = appendUniqueSectionText(sections, [
+      'BaseAmt * COALESCE(DiscountPct,0)',
+      '  BaseAmt * COALESCE(DiscountPct,0)  ',
+    ]);
     expect(merged).toEqual(sections);
+  });
+
+  it('logs the dropped-duplicate count and node id at the commit site when a debugLog sink is supplied', () => {
+    const sections = [{ angle: 'business' as const, text: 'BaseAmt * COALESCE(DiscountPct,0)' }];
+    const logs: string[] = [];
+    appendUniqueSectionText(
+      sections,
+      ['BaseAmt * COALESCE(DiscountPct,0)', 'CostPrice * (1 + COALESCE(MarkupPct,0.15))'],
+      'spRefresh',
+      message => logs.push(message),
+    );
+    expect(logs.some(l => l.includes('[Memory] duplicate column_flow note(s) dropped') && l.includes('node=spRefresh') && l.includes('count=1'))).toBe(true);
   });
 
   it('drops blank extras and de-duplicates identical notes', () => {

@@ -51,6 +51,36 @@ describe('compileInstructionPlan — provider tool choice', () => {
     expect(plan.input.toolChoice).toBe('required');
   });
 
+  // VS Code LanguageModelChatToolMode.Required: "some models only support a single tool when
+  // using this mode." Copilot Chat participants must send Auto when the hop exposes more than
+  // one tool (official chat-sample: Required only after narrowing to one tool). The graph still
+  // names requiredTerminalTool and retries a tool-less generation.
+  it('demotes provider required to auto on an active hop with submit_findings plus neighbor lookup', () => {
+    const registry = registryFor([
+      'lineage_submit_findings',
+      'lineage_get_neighbor_columns',
+    ]);
+    const { sink } = collectingSink();
+
+    const plan = compileInstructionPlan({
+      kind: 'converse',
+      stage: { kind: 'active', mode: 'sm_bb' },
+      messages: [modelUserMessage('Analyze the focus node.')],
+      registry,
+      sink,
+      toolChoice: 'required',
+      requiredTerminalTool: 'lineage_submit_findings',
+      facts: { analysisMode: 'bb', classification: 'technical' },
+    });
+
+    expect(plan.input.toolChoice).toBe('auto');
+    expect(plan.input.requiredTerminalTool).toBe('lineage_submit_findings');
+    expect(plan.input.registry.getTools().map(tool => tool.name).sort()).toEqual([
+      'lineage_get_neighbor_columns',
+      'lineage_submit_findings',
+    ]);
+  });
+
   it('projects the existing narrow repair schema during visual preview retries', () => {
     const registry = registryFor(['lineage_present_result']);
     const { sink } = collectingSink();

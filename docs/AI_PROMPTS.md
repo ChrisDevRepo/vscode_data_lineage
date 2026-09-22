@@ -78,6 +78,17 @@ Active exploration exposes `lineage_submit_findings` and
 opaque focus DDL (`SELECT *`, dynamic SQL, ambiguous joins), not a second
 catalog search.
 
+Tool-choice follows the VS Code Chat participant contract, not OpenAI
+`tool_choice: required` with many tools. `LanguageModelChatToolMode.Required`
+means the model must call one of the supplied tools, and some models only
+support a single tool in that mode. The official Copilot sample sends Required
+only after narrowing to one tool; otherwise Auto. `compileInstructionPlan`
+keeps `required` when the phase exposes only its terminal tool (synthesis /
+preview), and demotes to Auto on the two-tool active hop. The graph still
+names `requiredTerminalTool` and retries a tool-less generation;
+`matchProseToolCall` promotes a fenced JSON body. Do not send Required with
+two tools on the participant path.
+
 ## Assembly and memory contract
 
 The participant does not build prompts or own a tool loop. The outer graph

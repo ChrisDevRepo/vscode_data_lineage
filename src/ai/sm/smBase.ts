@@ -2060,6 +2060,7 @@ export class NavigationEngine implements IHopStateMachine {
           candidate.nodeId,
           candidate.activeColumns ?? [],
           this.writtenCarrierIds(candidate.nodeId),
+          this.log,
         );
         const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
         const statedRowRole = candidate.columnCarry?.kind === 'row_role_only';
@@ -2643,7 +2644,12 @@ export class NavigationEngine implements IHopStateMachine {
       const flowNotes = (finding.column_flow ?? []).flatMap(entry =>
         (entry.upstream_columns ?? []).map(ref => ref.note ?? ''),
       );
-      stagedSections = appendUniqueSectionText(finding.sections ?? [], flowNotes);
+      stagedSections = appendUniqueSectionText(
+        finding.sections ?? [],
+        flowNotes,
+        focusId,
+        message => this.log('debug', message),
+      );
       stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       stagedSummaryChars = finding.summary?.length ?? 0;
 
@@ -2874,10 +2880,16 @@ export class NavigationEngine implements IHopStateMachine {
         { badge_label: finding.badge_label, reason_for_visit: this.currentFocusQuestion || 'Historical path investigation' },
       );
     } else {
-      this.memory.storeDetail(this.nodeMap.get(focusId)!, stagedSections, finding.summary, {
-        badge_label: finding.badge_label,
-        reason_for_visit: this.currentFocusQuestion || 'Historical path investigation',
-      });
+      this.memory.storeDetail(
+        this.nodeMap.get(focusId)!,
+        stagedSections,
+        finding.summary,
+        {
+          badge_label: finding.badge_label,
+          reason_for_visit: this.currentFocusQuestion || 'Historical path investigation',
+        },
+        message => this.log('debug', message),
+      );
       this.lastHopDetailChars = stagedDetailChars;
       this.lastHopSummaryChars = stagedSummaryChars;
       this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
@@ -3145,7 +3157,7 @@ export class NavigationEngine implements IHopStateMachine {
   private contractThroughPassNode(entry: AgendaEntry): void {
     // Bound carried columns to this pass node's on-trace spine before propagation.
     const spineBound = this.tracer
-      ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [])
+      ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [], new Set(), this.log)
       : entry.activeColumns;
     // Spine-empty candidates fall back to the requested set verbatim (determineActiveColumnsForCandidate
     // above) — bound that result to the pass node's own declared columns too, same predicate as enqueueHop.
@@ -3785,7 +3797,7 @@ export class NavigationEngine implements IHopStateMachine {
       // attributed columns and avoid it. Empty (never `[]` on the wire; see the neighbor spread
       // below) when nothing is staged.
       const attributedColumns = this.tracer
-        ? this.tracer.determineActiveColumnsForCandidate(nid, [])
+        ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log)
         : [];
       const neighbor: HopNeighborDisclosure = {
         id: nid, s: n.schema, n: n.name, t: n.type,

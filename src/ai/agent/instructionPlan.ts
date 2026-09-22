@@ -368,9 +368,10 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     if (!input.requiredTerminalTool) {
       throw new Error(`InstructionPlan: multi-tool required choice in ${phase} needs a graph-enforced terminal tool.`);
     }
-    // Some providers reject generic Required when more than one tool is visible. The graph still
-    // enforces the required terminal tool and retries a tool-less generation, so provider Auto
-    // preserves the phase contract without narrowing away the phase's lookup tools.
+    // VS Code LanguageModelChatToolMode.Required: some models only support a single
+    // tool in that mode. Copilot Chat participants must send Auto when more than one
+    // tool is visible (official chat-sample: Required only after narrowing to one tool).
+    // The graph still names requiredTerminalTool and retries a tool-less generation.
     toolChoice = 'auto';
   }
   const context = buildContext('converse', phase, frozenFacts, toolNames);

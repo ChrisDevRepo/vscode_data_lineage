@@ -831,6 +831,99 @@ describe("Column Flow Validation", () => {
   expect(boundedBr.length, 'Part B+A: bracketed [ListPrice] matches the unbracketed spine').toBe(1);
 });
 
+  it("determineActiveColumnsForCandidate logs the off-spine entryColumns it drops (NORMALIZE-WITH-LOG), never silently", () => {
+  const tracer = new ColumnTracer(['TotalRevenue']);
+  tracer.state.edges.push({ hop: 1, hop_node: 'vwpricelist', to_node: 'vwpricelist', to_col: 'UnitPrice', from_node: 'pricemaster', from_col: 'ListPrice' });
+  const logCalls: Array<[string, string]> = [];
+  const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
+
+  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode'], undefined, log);
+  expect(bounded, 'the returned spine is unchanged by adding the log param').toEqual(['ListPrice']);
+  const debugCall = logCalls.find(([level]) => level === 'debug');
+  expect(!!debugCall, 'the off-spine drop is logged at debug level').toBe(true);
+  expect(debugCall?.[1].includes('pricemaster'), 'log names the candidate node').toBe(true);
+  expect(debugCall?.[1].includes('EffectiveFrom') && debugCall?.[1].includes('RegionCode'), 'log names both dropped off-spine columns').toBe(true);
+
+  const boundedNoLog = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode']);
+  expect(boundedNoLog).toEqual(['ListPrice']);
+});
+
+  it("determineActiveColumnsForCandidate logs nothing when every entry column is already on the spine", () => {
+  const tracer = new ColumnTracer(['TotalRevenue']);
+  tracer.state.edges.push({ hop: 1, hop_node: 'vwpricelist', to_node: 'vwpricelist', to_col: 'UnitPrice', from_node: 'pricemaster', from_col: 'ListPrice' });
+  const logCalls: Array<[string, string]> = [];
+  const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
+
+  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice'], undefined, log);
+  expect(bounded).toEqual(['ListPrice']);
+  expect(logCalls.length, 'nothing was actually dropped, so nothing is logged').toBe(0);
+});
+
+  it("submitFindings logs an exact-duplicate column_flow note instead of dropping it silently", () => {
+  const logs: string[] = [];
+  const engine = new NavigationEngine(model, graph, (_level, msg) => logs.push(msg), {});
+  const init = engine.init({ origin: 'origin', question: 'test', direction: 'upstream', targetColumns: ['amount'] });
+  expect('ok' in init, 'CT session initializes').toBe(true);
+  engine.getHopContext();
+  const note = 'raw_amount feeds amount';
+  const result = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: note }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount', note }] }],
+  });
+  expect(!('error' in result), 'the hop commits').toBe(true);
+  expect(
+    logs.some(l => l.includes('[Memory] duplicate column_flow note(s) dropped') && l.includes('node=origin') && l.includes('count=1')),
+    'the production commit site wires the engine logger into appendUniqueSectionText',
+  ).toBe(true);
+});
+
+  it("getHopContext logs over-declared entry columns bound to the spine — production wiring of determineActiveColumnsForCandidate", () => {
+  const producer = makeNode({
+    id: 'producer_view',
+    schema: 'dbo',
+    name: 'producer_view',
+    type: 'view',
+    columns: [
+      { name: 'raw_amount', type: 'int', nullable: 'NOT NULL', extra: '' },
+      { name: 'region', type: 'nvarchar(50)', nullable: 'NULL', extra: '' },
+    ],
+  });
+  const originView = makeNode({
+    id: 'origin_view2',
+    schema: 'dbo',
+    name: 'origin_view2',
+    type: 'view',
+    columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }],
+  });
+  const pair = [originView, producer];
+  const pairEdges: Array<[string, string]> = [['producer_view', 'origin_view2']];
+  const pairModel = makeModel(pair, pairEdges, ['dbo']);
+  const pairGraph = makeGraph(pair, pairEdges);
+  const logs: string[] = [];
+  const engine = new NavigationEngine(pairModel, pairGraph, (_level, msg) => logs.push(msg), {});
+  expect('ok' in engine.init({ origin: 'origin_view2', question: 'trace', direction: 'upstream', targetColumns: ['amount'] }), 'CT session initializes').toBe(true);
+  engine.getHopContext();
+  const committed = engine.submitFindings({
+    focus_node_id: 'origin_view2',
+    sections: [{ angle: 'business' as const, text: 'amount from producer' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'producer_view', col: 'raw_amount' }] }],
+    route_requests: [{ nodeId: 'producer_view', question: 'where does raw_amount come from?', columns: ['raw_amount', 'region'] }],
+  });
+  expect(!('error' in committed), `origin hop commits (${'error' in committed ? committed.error : ''})`).toBe(true);
+  logs.length = 0;
+  engine.getHopContext();
+  expect(engine.currentFocus, 'producer_view dispatches next').toBe('producer_view');
+  expect(
+    logs.some(l => l.includes('[Normalize] entry columns bound to spine') && l.includes('producer_view') && l.includes('region')),
+    'the production dispatch site wires the engine logger into determineActiveColumnsForCandidate',
+  ).toBe(true);
+});
+
   const ctForwardNodes: LineageNode[] = [
     makeNode({ id: 'ct_origin', schema: 'dbo', name: 'ct_origin', type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
     makeNode({ id: 'ct_down', schema: 'dbo', name: 'ct_down', type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] }),

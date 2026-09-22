@@ -7,6 +7,15 @@ import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName } from '../../utils/sql';
 
 /**
+ * Debug/info/warn/error sink shape shared by every optional logger this module accepts —
+ * same shape as {@link validateColumnFlow}'s existing `log` parameter, kept as a local alias
+ * rather than importing `engine/graphGuards`' `LogFn` (an `src/ai -> src/engine` coupling
+ * `tests/unit/ai-core/rule-gates.test.ts` gates to a grandfathered list `columnTracer.ts` is
+ * not on).
+ */
+type TracerLogFn = (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void;
+
+/**
  * Traces column-level lineage (Column Flow) between database objects.
  */
 export class ColumnTracer {
@@ -135,15 +144,21 @@ export class ColumnTracer {
    * spine too: a carrier is never analysed, so the column an edge leaves open there is owed by the
    * carrier's producers, the same side the reopen of an open column end is offered to.
    *
+   * Dropping the off-spine entries is NORMALIZE-WITH-LOG, not a silent bound: the AI's own
+   * `entryColumns` submission is replaced with the narrower spine, so the substitution is logged
+   * (`log`, when supplied) in the same `[Normalize]` shape the inverse dispatch-carry already uses.
+   *
    * @param candidateNodeId - The id of the node being considered.
    * @param entryColumns - The columns declared for entry by the AI.
    * @param writtenCarrierIds - Non-bodied carriers the candidate writes; empty when it writes none.
+   * @param log - Optional logger; the caller (`smBase.ts`) supplies the one it already holds.
    * @returns The resolved active columns for the candidate node.
    */
   determineActiveColumnsForCandidate(
     candidateNodeId: string,
     entryColumns: string[],
     writtenCarrierIds: ReadonlySet<string> = new Set(),
+    log?: TracerLogFn,
   ): string[] {
     const spineByNorm = new Map<string, string>();
     for (const e of this.aspect.edges) {
@@ -151,7 +166,16 @@ export class ColumnTracer {
       const key = normalizeColName(e.from_col);
       if (!spineByNorm.has(key)) spineByNorm.set(key, e.from_col);
     }
-    return spineByNorm.size > 0 ? [...spineByNorm.values()] : entryColumns;
+    if (spineByNorm.size === 0) return entryColumns;
+    const spine = [...spineByNorm.values()];
+    if (log && entryColumns.length > 0) {
+      const spineNorms = new Set(spineByNorm.keys());
+      const dropped = entryColumns.filter((c) => !spineNorms.has(normalizeColName(c)));
+      if (dropped.length > 0) {
+        log('debug', `[Normalize] entry columns bound to spine id=${candidateNodeId} from=[${entryColumns.join(', ')}] to=[${spine.join(', ')}] — off-spine entry column(s) dropped: [${dropped.join(', ')}]`);
+      }
+    }
+    return spine;
   }
 
   /**
@@ -221,7 +245,7 @@ export class ColumnTracer {
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
     store: ColumnStore | null,
-    log?: (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void,
+    log?: TracerLogFn,
     removedSet?: ReadonlySet<string>,
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];

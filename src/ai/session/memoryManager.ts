@@ -161,26 +161,40 @@ export interface MemoryStateSnapshot {
 
 
 /**
- * Appends texts that no existing section already contains.
+ * Appends texts that no existing section already carries verbatim.
  *
  * @remarks
  * `submit_findings` may put a grounded clause on `column_flow[].upstream_columns[].note`
  * while synthesis lifts only `detail_slots[].sections[].text`. The commit site merges those
- * notes into the sections it stores so the archive does not drop them. A note that is already
- * a substring of a section is left out — merge, never duplicate.
+ * notes into the sections it stores so the archive does not drop them. Identity is trimmed
+ * exact equality — a note that merely appears as a substring of a longer section is new
+ * evidence and is kept. A dropped exact duplicate is NORMALIZE-WITH-LOG when `debugLog` is
+ * supplied, never a silent containment drop.
+ *
+ * @param nodeId - Node id, for the log line when a duplicate is dropped.
+ * @param debugLog - Optional debug sink the commit site already holds.
  */
 export function appendUniqueSectionText(
   sections: CapturedSection[],
   extras: readonly string[],
+  nodeId?: string,
+  debugLog?: (message: string) => void,
 ): CapturedSection[] {
   if (sections.length === 0) return sections;
-  const seen = sections.map(s => s.text).join('\n');
+  const seenTexts = new Set(sections.map(s => s.text.trim()));
   const unique: string[] = [];
+  let droppedCount = 0;
   for (const raw of extras) {
     const text = raw.trim();
     if (!text) continue;
-    if (seen.includes(text) || unique.includes(text)) continue;
+    if (seenTexts.has(text) || unique.includes(text)) {
+      droppedCount++;
+      continue;
+    }
     unique.push(text);
+  }
+  if (droppedCount > 0) {
+    debugLog?.(`[Memory] duplicate column_flow note(s) dropped — node=${nodeId ?? '(unknown)'} count=${droppedCount}`);
   }
   if (unique.length === 0) return sections;
   const last = sections[sections.length - 1]!;
@@ -189,30 +203,41 @@ export function appendUniqueSectionText(
 
 
 /**
- * Appends `incoming` sections that the archived `earlier` ones do not already carry.
+ * Appends `incoming` sections that the archived `earlier` ones do not already carry verbatim.
  *
  * @remarks
- * Same identity rule as {@link appendUniqueSectionText}: trimmed body text, matched by containment
- * against the joined earlier text, angle ignored — a re-analysis that re-emits a section verbatim
- * is the same evidence whichever template fired it. First occurrence wins, so the archived order
- * never shifts. A first write (no `earlier`) is passed through untouched: with nothing to repeat,
- * the rule has nothing to decide.
+ * Same identity rule as {@link appendUniqueSectionText}: trimmed body text, matched by exact
+ * equality against an earlier section's own trimmed text, angle ignored. First occurrence wins.
+ * A first write (no `earlier`) is passed through untouched. A section that merely contains, or
+ * is contained by, an earlier one is distinct evidence and is kept. A dropped exact duplicate
+ * is NORMALIZE-WITH-LOG when `debugLog` is supplied.
  *
  * @param earlier - Sections already archived for the node, in capture order.
  * @param incoming - Sections captured by the current visit.
- * @returns `earlier` followed by the incoming sections it does not already contain.
+ * @param nodeId - Node id, for the log line when a duplicate is dropped.
+ * @param debugLog - Optional debug sink; {@link AiMemoryManager.storeDetail} passes the logger it holds.
+ * @returns `earlier` followed by the incoming sections it does not already carry verbatim.
  */
 function appendUniqueSections(
   earlier: readonly CapturedSection[],
   incoming: readonly CapturedSection[],
+  nodeId?: string,
+  debugLog?: (message: string) => void,
 ): CapturedSection[] {
   if (earlier.length === 0) return [...incoming];
-  const seen = earlier.map(s => s.text).join('\n');
+  const seenTexts = new Set(earlier.map(s => s.text.trim()));
   const merged = [...earlier];
+  let droppedCount = 0;
   for (const section of incoming) {
     const text = section.text.trim();
-    if (text && seen.includes(text)) continue;
+    if (text && seenTexts.has(text)) {
+      droppedCount++;
+      continue;
+    }
     merged.push(section);
+  }
+  if (droppedCount > 0) {
+    debugLog?.(`[Memory] duplicate section(s) dropped on revisit — node=${nodeId ?? '(unknown)'} count=${droppedCount}`);
   }
   return merged;
 }
@@ -334,12 +359,16 @@ export class AiMemoryManager {
    * its text is new.
    * The caller merges `column_flow` notes into `sections` via {@link appendUniqueSectionText}
    * before this write, so a single-accept hop does not lose clauses that sat only on the flow.
+   *
+   * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG line
+   * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat.
    */
   public storeDetail(
     node: LineageNode,
     sections: CapturedSection[],
     summary: string,
     meta?: { badge_label?: string; reason_for_visit?: string },
+    debugLog?: (message: string) => void,
   ): void {
     const earlier = this.detailSlots.get(node.id)?.sections ?? [];
     this.detailSlots.set(node.id, {
@@ -347,7 +376,7 @@ export class AiMemoryManager {
       schema: node.schema,
       name: node.name,
       type: node.type,
-      sections: appendUniqueSections(earlier, sections),
+      sections: appendUniqueSections(earlier, sections, node.id, debugLog),
       summary,
       badge_label: meta?.badge_label,
       reason_for_visit: meta?.reason_for_visit,

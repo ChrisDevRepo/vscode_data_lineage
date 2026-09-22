@@ -209,6 +209,25 @@ describe('rejection-adapter', () => {
         expect(rejection.hint, 'hint is not the standing resend-unchanged sentence').not.toBe(INVALID_TOOL_INPUT_REPAIR_HINT);
       });
 
+      it('a wholly absent required enum field yields the addition hint (Zod v4 reports the absence as invalid_value, not invalid_type)', () => {
+        // m24-head-local-mlx run-T7 (2026-09-20): the model wrote its verdict inside the summary
+        // prose and resent the identical payload three times — the enum absence surfaced as
+        // "Invalid option" with the standing resend hint, which names no repair a model that
+        // believes it already wrote the field can act on.
+        const enumShape = z.object({
+          focus_node_id: z.string(),
+          verdict: z.enum(['analyze', 'passthrough', 'prune']),
+        });
+        const input = { focus_node_id: '[ai].[vwexternalorders]' }; // verdict omitted entirely
+        const result = enumShape.safeParse(input);
+        expect(result.success, 'schema rejects the call missing verdict').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input });
+        expect(rejection.hint, 'hint names the missing enum field').toContain('"verdict"');
+        expect(rejection.hint, 'hint states the field is absent').toMatch(/missing entirely/i);
+        expect(rejection.hint, 'hint is not the standing resend-unchanged sentence').not.toBe(INVALID_TOOL_INPUT_REPAIR_HINT);
+      });
+
       it('the same field present with the wrong type keeps the standing sentence (never claims "missing")', () => {
         const input = { focus_node_id: '[ai].[vwconsolidatedsales]', column_flow: 'not-an-array' };
         const result = findingsShape.safeParse(input);

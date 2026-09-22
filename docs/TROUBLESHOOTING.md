@@ -44,8 +44,7 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 |---|---|---|---|---|---|
 | GitHub Copilot | claude-sonnet-5 | high | good | ~9 min | not reported by the Copilot API |
 | Azure AI Foundry | gpt-5.4-mini | medium | good | ~9 min | ~310k |
-| Fireworks | deepseek-v4-flash | low | good | ~13 min | ~350k |
-| Google | gemini-3.8-flash | medium (model default) | good | ~9 min | ~400k |
+| Fireworks | deepseek-v4p1-flash | low | good | ~13 min | ~350k |
 | Local (oMLX on Apple silicon) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~18 min | ~290k |
 
 *good* means discovery and object-trace answers were complete and the column-trace answer had minor omissions; *okay* means every answer was usable but each had omissions. Duration and tokens are totals for one discovery, one object trace, and one column trace on the sample database.

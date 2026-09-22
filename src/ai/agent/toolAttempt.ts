@@ -403,6 +403,13 @@ interface ToolGenerationAttemptInput {
    * never mutated or replayed by this module beyond that check.
    */
   readonly priorRejection?: ToolAttemptRejection;
+  /**
+   * The phase's whole rejection history, when a prior attempt exists. Extends
+   * {@link priorRejection} for unproductive-resend accounting: an identity's repeat count is its
+   * whole history, so a model alternating between two duplicate reads cannot reset the bound by
+   * switching (recorded 2026-09-20, m24-close run-T5 spun to the provider-call cap that way).
+   */
+  readonly priorRejections?: readonly ToolAttemptRejection[];
   /** Recognizes a successful registry result that opens consent. */
   readonly detectGate?: (toolName: string, resultText: string) => unknown | null;
   /** Recognizes a successful registry result that changes graph route. */
@@ -608,6 +615,31 @@ function isUnproductiveResend(
 ): boolean {
   if (!prior || prior.toolName !== toolName || prior.inputHash === undefined) return false;
   return prior.inputHash === candidateHash || touchesNoRepairField(input, repairFieldsFromDetail(prior.detail));
+}
+
+/**
+ * Unproductive-resend streak for one call identity: the larger of (a) how many times this exact
+ * (tool, payload) was already rejected in this phase, and (b) the consecutive-only streak a
+ * last-rejection comparison yields. (b) alone resets when the model alternates between two
+ * non-converging identities — m24-close run-T5 (2026-09-20) alternated two duplicate reads whose
+ * streak never exceeded 1 and spun to the provider-call cap the free allowance exists to prevent —
+ * so (a) counts the identity's whole history and the bound holds under interleave.
+ */
+function unproductiveResendStreak(
+  priorRejections: readonly ToolAttemptRejection[] | undefined,
+  prior: ToolAttemptRejection | undefined,
+  toolName: string,
+  input: unknown,
+  candidateHash: string,
+): number {
+  let sameIdentity = 0;
+  for (const rejection of priorRejections ?? []) {
+    if (rejection.toolName === toolName && rejection.inputHash === candidateHash) sameIdentity++;
+  }
+  const consecutive = isUnproductiveResend(prior, toolName, input, candidateHash)
+    ? (prior?.unproductiveStreak ?? 0) + 1
+    : 0;
+  return Math.max(sameIdentity, consecutive);
 }
 
 /**
@@ -1507,6 +1539,7 @@ export async function executeToolAttempt(
     priorRejection: priorState && priorState.rejections.length > 0
       ? priorState.rejections[priorState.rejections.length - 1]
       : undefined,
+    priorRejections: priorState?.rejections,
   });
 }
 
@@ -1750,8 +1783,7 @@ export async function executeToolGenerationAttempt(
       // free-channel rejection breaks the streak of the equivalent resends around it.
       const candidateHash = acceptedCallKey(call.toolName, call.input);
       const unproductiveStreak = call.code === 'invalid_tool_input'
-        && isUnproductiveResend(input.priorRejection, call.toolName, call.input, candidateHash)
-        ? (input.priorRejection?.unproductiveStreak ?? 0) + 1
+        ? unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, candidateHash)
         : 0;
       const repairResendBeyondAbsorption = isRepairTurnPresentResultPrevalidation
         && unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS;
@@ -1804,9 +1836,7 @@ export async function executeToolGenerationAttempt(
         // Free while the model may still act on the answer it already holds; past
         // MAX_FREE_UNPRODUCTIVE_RESENDS consecutive identical resends it charges like every other
         // non-converging resend, so the phase closes instead of spinning to the provider-call cap.
-        const unproductiveStreak = isUnproductiveResend(input.priorRejection, call.toolName, call.input, reusableKey)
-          ? (input.priorRejection?.unproductiveStreak ?? 0) + 1
-          : 0;
+        const unproductiveStreak = unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, reusableKey);
         if (unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS) {
           chargeableFailures++;
           if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
@@ -1857,9 +1887,7 @@ export async function executeToolGenerationAttempt(
         // The absorption is bounded: past MAX_FREE_UNPRODUCTIVE_RESENDS consecutive no-ops the
         // strike charges again, so a non-converging model closes the phase instead of spinning to
         // the provider-call cap.
-        const unproductiveStreak = isUnproductiveResend(input.priorRejection, call.toolName, call.input, candidateHash)
-          ? (input.priorRejection?.unproductiveStreak ?? 0) + 1
-          : 0;
+        const unproductiveStreak = unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, candidateHash);
         if (unproductiveStreak === 0 || unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS) {
           chargeableFailures++;
           if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;

@@ -26,18 +26,21 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
  * disagree about. CT names the traced value, and the question is answerable: a traced value exists.
  * BB has none, so a question anchored on one is unsatisfiable, and a model asked it writes the
  * dead end it can answer — "confirm it contributes no columns" — instead of reading the node.
- * The BB form anchors on the row set, which every routed node acts on whether or not it supplies a
- * value. Both read the node against the same {@link ANALYTICAL_LOGIC_VOCABULARY}: CT is BB plus
- * columns, never a narrower reading.
+ * The BB row-set sentence is therefore rendered verbatim in BOTH modes — every routed node acts
+ * on the row set whether or not it supplies a value — and CT only appends the traced-value rider
+ * on top (parity-pinned: CT ⊇ BB verbatim). Both read the node against the same
+ * {@link ANALYTICAL_LOGIC_VOCABULARY}: CT is BB plus columns, never a narrower reading.
  *
  * In CT the analytical answer feeds the capture narration only; `column_flow[].upstream_columns`
  * stays structural (see the CT-safety bullet in {@link BLOCK.hopDecisionContractCt}) so it stays
  * the sole structural channel for column precision and the column-precision regression cannot
  * re-enter.
  */
+const ANALYTICAL_ROUTE_QUESTION_BB = `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what the routed node does to the ROW SET the answer returns — the joins, filters, predicates and thresholds that decide which rows survive it, and the ${ANALYTICAL_LOGIC_VOCABULARY} it applies to them — not only which sources feed it.`;
 const ANALYTICAL_ROUTE_QUESTION = {
-  bb: `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what the routed node does to the ROW SET the answer returns — the joins, filters, predicates and thresholds that decide which rows survive it, and the ${ANALYTICAL_LOGIC_VOCABULARY} it applies to them — not only which sources feed it.`,
-  ct: `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it.
+  bb: ANALYTICAL_ROUTE_QUESTION_BB,
+  ct: `${ANALYTICAL_ROUTE_QUESTION_BB}
+- In CT, also anchor the question on the traced value: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it.
 - A neighbor routed with \`columns: "none"\` supplies no traced value, so anchor its question on the row set instead: the joins, filters, predicates and thresholds that decide which rows survive it. A question anchored on a traced value it does not carry has only a dead end for an answer.`,
 } as const;
 
@@ -52,9 +55,9 @@ const REQUIRED_NEIGHBOR_RESOLUTION =
 
 /**
  * The neighbor decision core, composed by BOTH hop contracts — same instruction, same pruning,
- * same routing in BB and CT. Only the route question's analytical anchor is mode-scoped
- * ({@link ANALYTICAL_ROUTE_QUESTION}); each contract adds its own framing line, its verdict
- * wording, and its mode additions.
+ * same routing in BB and CT. The route question's row-set anchor is shared verbatim
+ * ({@link ANALYTICAL_ROUTE_QUESTION}); CT appends the traced-value rider; each contract adds its
+ * own framing line, its verdict wording, and its mode additions.
  */
 const neighborDecisionCore = (mode: 'bb' | 'ct'): readonly string[] => [
   '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',

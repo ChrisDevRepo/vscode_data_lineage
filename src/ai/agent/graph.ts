@@ -710,7 +710,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       sess.appendDiscoveryTurn(deps.model.budget, [
         modelUserMessage(state.prompt),
         assistantMessage,
-      ]);
+      ], [], message => deps.logger?.debug(message));
       return {
         ctx,
         messages: [...messages, assistantMessage],
@@ -857,7 +857,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
-    ], nextAttempt.observations);
+    ], nextAttempt.observations, message => deps.logger?.debug(message));
     return { outcome: 'ok', messages: assistantMessage, toolAttempt: null, phase: 'done' };
   };
 
@@ -911,7 +911,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
-    ], nextAttempt.observations);
+    ], nextAttempt.observations, message => deps.logger?.debug(message));
     return { outcome: 'ok', messages: assistantMessage, toolAttempt: null, phase: 'done' };
   };
 

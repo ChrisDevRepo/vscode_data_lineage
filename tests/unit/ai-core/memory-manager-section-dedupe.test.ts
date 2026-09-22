@@ -1,7 +1,9 @@
 /**
  * `AiMemoryManager.storeDetail` must not archive the same evidence twice: sections dedupe on the
- * same identity `appendUniqueSectionText` uses for `column_flow` notes (trimmed text, containment
- * match, angle ignored).
+ * same identity `appendUniqueSectionText` uses for `column_flow` notes (trimmed text, exact-equality
+ * match, angle ignored). Containment is not identity — a genuinely distinct section that happens
+ * to contain, or be contained by, an earlier one is kept. `storeDetail` takes an optional
+ * `debugLog` so a dropped exact-repeat is NORMALIZE-WITH-LOG.
  */
 import { describe, expect, it } from 'vitest';
 import { AiMemoryManager, appendUniqueSectionText } from '../../../src/ai/session/memoryManager';
@@ -54,6 +56,34 @@ describe('AiMemoryManager — a revisit does not duplicate archived sections', (
       { angle: 'business', text: CLAUSE },
       { angle: 'technical', text: 'Reads the staging table nightly.' },
     ]);
+  });
+
+  it('keeps a revisit section that is only a substring of an earlier one — containment is not identity', () => {
+    const mem = new AiMemoryManager();
+    const node = makeNode('vwOrders');
+    const longer = `${CLAUSE} It is capped at the line total.`;
+
+    mem.storeDetail(node, [{ angle: 'business' as const, text: longer }], 'first');
+    mem.storeDetail(node, [{ angle: 'technical' as const, text: CLAUSE }], 'second');
+
+    expect(mem.toJSON().detailSlots[node.id].sections, 'the shorter, contained section is kept, not dropped').toEqual([
+      { angle: 'business', text: longer },
+      { angle: 'technical', text: CLAUSE },
+    ]);
+  });
+
+  it('logs the dropped node id and count at the commit site (storeDetail) when a debugLog sink is supplied', () => {
+    const mem = new AiMemoryManager();
+    const node = makeNode('vwOrders');
+    const logs: string[] = [];
+
+    mem.storeDetail(node, [{ angle: 'business' as const, text: CLAUSE }], 'first');
+    mem.storeDetail(node, [
+      { angle: 'technical' as const, text: `  ${CLAUSE}  ` },
+      { angle: 'technical' as const, text: 'Reads the staging table nightly.' },
+    ], 'second', undefined, message => logs.push(message));
+
+    expect(logs.some(l => l.includes('[Memory] duplicate section(s) dropped on revisit') && l.includes(`node=${node.id}`) && l.includes('count=1'))).toBe(true);
   });
 
   it('archives a first visit byte-for-byte, repeated text included', () => {

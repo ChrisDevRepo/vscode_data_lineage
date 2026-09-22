@@ -414,8 +414,14 @@ function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
  */
 function missingFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
   if (input === undefined) return undefined;
+  // `invalid_type` covers absent object/string/array fields; Zod v4 reports an absent enum field
+  // as `invalid_value` ("Invalid option: expected one of …"), which reads like a wrong value to a
+  // model that believes it already wrote the field (m24-head-local-mlx run-T7 2026-09-20: a
+  // verdict written inside summary prose resent three times against the standing hint). Both
+  // codes mean "absent" here only when the path resolves to nothing in the rejected payload.
   const isMissingFieldIssue = (issue: z.core.$ZodIssue): boolean =>
-    issue.code === 'invalid_type' && resolveAtPath(input, issue.path) === undefined && issue.path.length > 0;
+    (issue.code === 'invalid_type' || issue.code === 'invalid_value')
+    && resolveAtPath(input, issue.path) === undefined && issue.path.length > 0;
 
   const missingFields = [...new Set(
     error.issues.filter(isMissingFieldIssue).map((issue) => issue.path.join('.')),

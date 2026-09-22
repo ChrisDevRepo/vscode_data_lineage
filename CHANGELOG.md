@@ -13,9 +13,11 @@
 - An explicit graph/render request is answered in discovery; the picture itself is the **Show graph preview** follow-up, not hop-by-hop analysis.
 - A depth stated in the question is a hard limit per direction; the approval card reports the depth the engine will enforce.
 - Column trace is the same exploration as object analysis plus columns: an object that only shapes which rows the answer returns stays in the result.
+- Copilot Chat `LanguageModelChatToolMode.Required` is single-tool: the two-tool active hop sends Auto; synthesis still sends Required.
 - The longest-chain report follows chains through circular dependencies (up to 25, deepest first).
 
 ### Fixed
+- Remaining silent drops of model-authored hop content (duplicate section identity, discovery-turn discard, CT spine bind) now log instead of vanishing.
 - Over-long AI-authored names, titles, labels, and column notes are rejected as a single-field repair instead of a full resend, so a retry keeps the sections already written.
 - The collapsed AI report rail stays on the edge the report was docked to; a missing Markdown preview command opens the report as text with a warning instead of an error.
 - Assistant robustness: tool calls written as XML or unfenced JSON are read as calls without stalling the turn; a bookmark recalls the AI run it was saved from; a formula stored only as a column-flow note still reaches the report.

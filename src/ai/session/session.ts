@@ -19,6 +19,7 @@ import { discoveryBlockBytes, discoveryEvidenceItemBytes, type TurnTokenBudget }
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError } from '../support/toolErrorEnvelope';
 import { longestPrefixFitting } from '../support/textTruncation';
+import { sanitizeForLog, trunc } from '../../utils/log';
 import type { PresentResultInput, PresentResultRepairPatch } from '../tools/presentResult';
 import type { PresentResultRepairField } from '../tools/toolSchemas';
 import type { LmStage } from '../tools/toolPolicy';
@@ -646,17 +647,23 @@ export class AiSession {
    * @remarks
    * Provider-native assistant tool calls and `tool` messages are never retained. Evidence is
    * accepted only when it is valid JSON produced by a successful graph-owned observation. Oldest
-   * evidence is evicted first when the session count or rendered-byte bound is reached.
+   * evidence is evicted first when the session count or rendered-byte bound is reached, and oldest
+   * transcript turns are evicted first on the same bound; both evictions and every whole-observation
+   * drop (oversized, unparseable, or an error envelope) are NORMALIZE-WITH-LOG — reported through
+   * `debugLog` when the caller supplies one — never a silent `shift()`/`continue`.
    *
    * @param budget - Budget of the turn that produced the messages; the session is shared by every
    *   turn, so the bound comes from the caller rather than from session state.
    * @param turnMessages - Canonical user/final-assistant messages for the completed turn.
    * @param observations - Successful provider-neutral discovery observations from graph state.
+   * @param debugLog - Optional debug sink for a normalized eviction/drop; the session holds no
+   *   logger of its own, so the caller passes in the one it already holds.
    */
   public appendDiscoveryTurn(
     budget: TurnTokenBudget,
     turnMessages: readonly ModelMessage[],
     observations: readonly DiscoveryEvidenceObservation[] = [],
+    debugLog?: (message: string) => void,
   ): void {
     let user: string | null = null;
     let assistant: string | null = null;
@@ -680,21 +687,40 @@ export class AiSession {
       while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
         || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > discoveryBlockBytes(budget)) {
         this.discoveryTranscript.shift();
+        debugLog?.(`[AI] [Discovery] oldest transcript turn evicted — turnsRemaining=${this.discoveryTranscript.length} cap=${MAX_DISCOVERY_TRANSCRIPT_TURNS}`);
       }
     }
     for (const observation of observations) {
-      if (!observation.toolName || Buffer.byteLength(observation.result, 'utf8') > discoveryEvidenceItemBytes(budget)) continue;
+      const toolName = observation.toolName ? trunc(sanitizeForLog(observation.toolName), 64) : '(missing)';
+      if (!observation.toolName) {
+        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=missing_tool_name`);
+        continue;
+      }
+      const resultBytes = Buffer.byteLength(observation.result, 'utf8');
+      if (resultBytes > discoveryEvidenceItemBytes(budget)) {
+        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized bytes=${resultBytes} cap=${discoveryEvidenceItemBytes(budget)}`);
+        continue;
+      }
       let result: unknown;
       try {
         result = JSON.parse(observation.result);
       } catch {
+        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=unparseable`);
         continue;
       }
-      if (result === null || typeof result !== 'object' || readToolError(result)) continue;
+      if (result === null || typeof result !== 'object') {
+        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=not_an_object`);
+        continue;
+      }
+      if (readToolError(result)) {
+        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=error_envelope`);
+        continue;
+      }
       this.discoveryEvidence.push({ toolName: observation.toolName, result });
       while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
         || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > discoveryBlockBytes(budget)) {
-        this.discoveryEvidence.shift();
+        const evicted = this.discoveryEvidence.shift();
+        debugLog?.(`[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`);
       }
     }
   }

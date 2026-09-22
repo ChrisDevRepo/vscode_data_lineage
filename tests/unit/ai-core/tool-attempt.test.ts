@@ -1821,6 +1821,46 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(state.stopReason).toBe('semantic_failures');
   });
 
+  it('alternating duplicate reads of two accepted calls charge past the free allowance — the bound survives interleave', async () => {
+    // m24-close run-T5: the model alternated duplicate lineages_get_object_detail /
+    // lineage_get_scope_bundle reads, so a streak that only compares the immediately-prior
+    // rejection reset on every switch and the free channel spun to the provider-call cap —
+    // the exact spin the allowance's own comment says it prevents.
+    const { registry, invocations } = scriptedRegistry([
+      { name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' },
+      { name: 'lineage_get_object_detail', effect: 'read', result: '{"id":"[ai].[vwpricelist]"}' },
+    ]);
+    let callIndex = 0;
+    const readA = () => ({ toolCalls: [validCall(`call-a${++callIndex}`, 'lineage_get_screen_state', { filter: 'stale' })] });
+    const readB = () => ({ toolCalls: [validCall(`call-b${++callIndex}`, 'lineage_get_object_detail', { id: '[ai].[vwpricelist]' })] });
+    const port = new ScriptedModelPort([readA(), readB(), readA(), readB(), readA(), readB(), readA(), readB(), readA()]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_screen_state', 'lineage_get_object_detail'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('Has anything changed?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const failuresPerAttempt: number[] = [];
+    for (let attempt = 0; attempt < 9 && state.stopReason === null; attempt++) {
+      const result = await executeToolAttempt(port, plan, { priorState: state });
+      failuresPerAttempt.push(result.semanticFailures);
+      state = recordToolAttempt(state, result);
+    }
+
+    // Two dispatches, then seven alternating duplicates. Each identity reaches its fourth
+    // occurrence inside the allowance bound: A's fourth (attempt 9) charges. A last-only streak
+    // would keep every alternation free — failuresPerAttempt would stay all zeros.
+    expect(invocations).toHaveLength(2);
+    expect(failuresPerAttempt).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    expect(state.rejections.every((rejection) => rejection.code === REJECTION_CODES.duplicateRead)).toBe(true);
+    expect(state.rejections.at(-1)?.unproductiveStreak).toBe(3);
+    expect(state.semanticFailures).toBe(1);
+    expect(state.providerCalls).toBe(9);
+  });
+
   it('logs a [Reject] line for every rejection it raises without a dispatch, so the log and the trace count the same rejections', async () => {
     const { registry } = scriptedRegistry([{ name: 'lineage_get_screen_state', effect: 'read', result: '{"stale":[{"id":"[ai].[vwpricelist]"}]}' }]);
     const port = new ScriptedModelPort([
