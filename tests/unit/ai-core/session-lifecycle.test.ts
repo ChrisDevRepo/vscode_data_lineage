@@ -141,11 +141,12 @@ describe('AiSession lifecycle ownership', () => {
     expect(session.lastDiscoveryAnswer).toBe('A detailed analysis would be needed.');
   });
 
-  it('floors a missing rejected walk count at 2 so the existing pill still fires', () => {
+  it('lights the SM-offer from an oversized seed even when the envelope omitted a walk count', () => {
     const session = new AiSession();
     session.beginTurn();
     session.seedSmOfferFromRejectedOrigin('[ai].[FactSalesReport]', 0, 'What feeds FactSalesReport?', 'Summary.');
-    expect(session.lastDiscoveryWalkCount).toBe(2);
+    expect(session.lastDiscoveryWalkCount).toBe(0);
+    expect(session.lastDiscoveryOverBudget).toBe(true);
     expect(session.smOfferAvailable()).toBe(true);
   });
 });

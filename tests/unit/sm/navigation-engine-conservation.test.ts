@@ -294,7 +294,7 @@ describe("Navigation Engine — node conservation", () => {
     verdict: 'analyze',
     prune_neighbors: ['b'],
   }) as any;
-  // Amended from the pre-D-020 pin (the orphaning prune died as missing_required_route before
+  // Amended from the earlier pin (the orphaning prune died as missing_required_route before
   // don't-orphan could speak): the hop-level prune is now expressible, so the don't-orphan guard
   // is what refuses it. The refused prune also leaves the required id unaccounted, so the
   // rejection mixes both facts — the generic code with the orphan reason carried in hint and

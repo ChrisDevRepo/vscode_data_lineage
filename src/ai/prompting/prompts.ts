@@ -31,7 +31,7 @@ export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis'
  * never a narrower "structure only" subset.
  */
 export const ANALYTICAL_LOGIC_VOCABULARY =
-  'rules, transformations, thresholds, guards, lifecycle, and material data-quality risks';
+  'rules, transformations, thresholds, guards, and lifecycle';
 
 /**
  * The three stages that author a `lineage_present_result` payload, as seen by
@@ -182,8 +182,9 @@ export const CHAT_MARKDOWN_FORMAT = [
  * scope walk is what turned "what do I see here" into a fresh approval gate. No restated
  * phase/state framing, no routing taxonomy. The `over_discovery_budget` envelope is returned by
  * `lineage_get_scope_bundle` and stays on the discovery path: the hint on that envelope is the one
- * instruction (summarize what is already known; a detailed analysis would be needed). The existing
- * SM-offer pill is the opt-in. `/trace` and column-trace still enter SM via entryRouting, not this
+ * instruction (answer briefly from the partial data the envelope carries; say the full question
+ * needs a detailed analysis and offer it — never start it). The existing
+ * SM-offer pill is the opt-in. Only `/trace` and that pill enter SM via entryRouting, not this
  * overflow. Tool parameter routing and filter-boundary semantics live in each tool's
  * modelDescription — including the scope-depth mechanics this list used to restate, which now have
  * one home in `lineage_get_scope_bundle`'s description and its `.describe()` texts.
@@ -559,10 +560,10 @@ function buildRunTraceTriggerPrompt(
     '',
     '## Discovery context',
     '',
-    `<original_question>${question}</original_question>`,
+    `<original_question>${escapePromptText(question)}</original_question>`,
     '',
     '<discovery_answer>',
-    answer,
+    escapePromptText(answer),
     '</discovery_answer>',
   ].join('\n');
 }
@@ -612,10 +613,10 @@ export function buildDiscoverySummaryComposePrompt(
     '',
     '## Discovery context',
     '',
-    `<original_question>${question}</original_question>`,
+    `<original_question>${escapePromptText(question)}</original_question>`,
     '',
     '<discovery_answer>',
-    answer,
+    escapePromptText(answer),
     '</discovery_answer>',
     ...(rejectReason
       ? ['', '## Retry — previous reply rejected', '', `Reason: ${rejectReason}`]
@@ -627,6 +628,10 @@ export function buildDiscoverySummaryComposePrompt(
  * Renders the `<discovery_summary>` XML block for SM hop stable prefix.
  * Returns empty string when summary is null or empty.
  *
+ * @remarks
+ * The memo restates the user's question near-verbatim and is composed from the discovery answer,
+ * so it is a dynamic slot and escapes through {@link escapePromptText} like the mission brief.
+ *
  * @param summary - The AI-composed memo, or `null` when unavailable.
  * @returns Filled block, or empty string.
  */
@@ -635,7 +640,7 @@ export function buildDiscoverySummaryBlock(summary: string | null): string {
   return [
     '## Discovery Summary',
     '<discovery_summary>',
-    summary.trim(),
+    escapePromptText(summary.trim()),
     '</discovery_summary>',
   ].join('\n');
 }

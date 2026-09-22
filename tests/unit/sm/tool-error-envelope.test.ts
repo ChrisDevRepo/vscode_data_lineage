@@ -46,6 +46,29 @@ describe("tool-error-envelope", () => {
     expect(r!.reason, 'default reason when nothing else resolves').toBe('tool returned failure envelope');
   });
 
+  it("readToolError: budget-guard shape ({ok:false, reason}) → code from reason, siblings ride detail", () => {
+    const r = readToolError({ ok: false, reason: 'over_discovery_budget', counts: { nodes: 11 }, limits: { node_cap: 10 }, hint: 'h' });
+    expect(r !== null, 'ok:false envelope → non-null').toBe(true);
+    expect(r!.code, 'code = trimmed reason').toBe('over_discovery_budget');
+    expect(r!.hint, 'hint passed through').toBe('h');
+    expect(r!.reason, 'reason line falls back to the ok-false code').toBe('over_discovery_budget');
+    expect((r!.detail as Record<string, unknown>).counts, 'counts ride detail').toEqual({ nodes: 11 });
+    expect((r!.detail as Record<string, unknown>).limits, 'limits ride detail').toEqual({ node_cap: 10 });
+  });
+
+  it("bare {ok:false} → code 'ok_false'", () => {
+    const r = readToolError({ ok: false });
+    expect(r !== null, 'bare ok:false is still a failure envelope').toBe(true);
+    expect(r!.code, 'no reason → code ok_false').toBe('ok_false');
+  });
+
+  it("{ok:false, error:'x'} → error string wins as code", () => {
+    const r = readToolError({ ok: false, error: 'x' });
+    expect(r!.code, 'error string takes precedence over the ok-false code').toBe('x');
+  });
+
+  it("ok:true stays null", () => { expect(readToolError({ ok: true }) === null, 'ok:true → null').toBe(true); });
+
   it("success payload → null", () => { expect(readToolError({ ok: true, nodes: [] }) === null, 'success payload → null').toBe(true); });
 
   it("empty object → null", () => { expect(readToolError({}) === null, 'empty object → null').toBe(true); });

@@ -450,6 +450,36 @@ body.vscode-reduce-motion *::after {
   font-size: 9px;
   color: var(--ln-fg-muted);
 }
+/* Rail dock variants — the rail sits on the edge the panel was docked to, so reopening it is where
+   the panel was. `right` has no rule: the base above already is the right-edge form. Each variant
+   mirrors the seam, moving the borderless edge and the square corners to the docked side. */
+.ln-ai-description-railwrap--left {
+  right: auto;
+  left: 0;
+}
+.ln-ai-description-railwrap--left .ln-ai-description-rail {
+  border-left: none;
+  border-right: 1px solid var(--ln-border-light);
+  border-radius: 0 8px 8px 0;
+}
+/* Bottom docks horizontally centred, so the rail is a strip rather than a tab: the vertical
+   writing mode and the height cap that shape the side rails are undone here. */
+.ln-ai-description-railwrap--bottom {
+  top: auto;
+  right: auto;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.ln-ai-description-railwrap--bottom .ln-ai-description-rail {
+  writing-mode: horizontal-tb;
+  padding: 5px 14px;
+  border-bottom: none;
+  border-right: 1px solid var(--ln-border-light);
+  border-radius: 8px 8px 0 0;
+  max-height: none;
+  max-width: 45vw;
+}
 
 /* Expanded report column */
 .ln-ai-description-overlay {
@@ -518,17 +548,35 @@ body.vscode-reduce-motion *::after {
   opacity: 0.35;
 }
 
-/* Dock segmented control — three exclusive positions, the current one pressed */
-.ln-ai-dock-group {
-  display: inline-flex;
-  gap: 1px;
-  margin-right: 4px;
+/* Dock dropdown — one trigger showing the current edge; the menu lists all three positions */
+.ln-ai-dock-trigger {
+  gap: 2px;
 }
-.ln-ai-description-action.ln-active {
-  opacity: 1;
-  background: var(--ln-ai-bg);
+.ln-ai-dock-chevron {
+  opacity: 0.7;
+}
+.ln-ai-dock-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
   color: var(--ln-fg);
-  border-color: var(--ln-ai-border);
+  font-size: 12px;
+  text-align: left;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.ln-ai-dock-menu-item:hover {
+  background: var(--ln-hover-bg);
+}
+.ln-ai-dock-menu-check {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
 }
 .ln-ai-description-text-action {
   min-width: 24px;
@@ -547,18 +595,6 @@ body.vscode-reduce-motion *::after {
 }
 .ln-ai-description-close:hover {
   background: var(--ln-hover-bg);
-}
-.ln-ai-description-raw {
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--ln-fg);
-  background: var(--ln-input-bg);
-  padding: 12px;
-  border-radius: 4px;
-  overflow-y: auto;
-  margin: 0;
 }
 .ln-ai-description-body {
   overflow-y: auto;

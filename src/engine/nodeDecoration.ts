@@ -299,13 +299,16 @@ export function projectColumnNodes(
   cache: ColumnNodeCache,
 ): FlowNode[] {
   const present = new Set<string>();
-  const projected = views.map((view) => {
+  const projected: FlowNode[] = [];
+  for (const view of views) {
+    const data = dataById.get(view.id);
+    if (!data) continue;
     present.add(view.id);
-    const data = dataById.get(view.id)!;
     const position = positions[view.id] ?? view.position;
     const cached = cache.get(view.id);
     if (cached && cached.data === data && cached.x === position.x && cached.y === position.y) {
-      return cached.result;
+      projected.push(cached.result);
+      continue;
     }
     const result: FlowNode = {
       id: view.id,
@@ -316,8 +319,8 @@ export function projectColumnNodes(
       data,
     };
     cache.set(view.id, { data, x: position.x, y: position.y, result });
-    return result;
-  });
+    projected.push(result);
+  }
   pruneStaleEntries(cache, present);
   return projected;
 }

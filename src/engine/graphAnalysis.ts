@@ -182,14 +182,17 @@ const DEFAULT_MAX_CHAINS = 25;
 interface Condensation {
   /** Member node ids per component, indexed by component number. */
   components: string[][];
-  /** Component successors, each remembering the `[tail, head]` node pair that realises the edge. */
-  successors: Map<number, Map<number, [string, string]>>;
-  /** Component in-degree in the condensation. */
+  /**
+   * Component successors. Each destination keeps every realised `[tail, head]` pair, not only the
+   * first edge the walk saw — two bridges between the same components can have different lengths.
+   */
+  successors: Map<number, Map<number, Array<[string, string]>>>;
+  /** Component in-degree in the condensation (one per successor component, not per parallel edge). */
   inDegree: number[];
   /**
    * Nodes at which a chain can arrive in each component: the head of every realised incoming edge,
-   * or the first member when the component is a root. These are the only entry points the DP has to
-   * consider, so its state count is `|condensation edges| + |roots|`.
+   * or every member when the component is a root. A root that starts only at `members[0]` is
+   * order-dependent and can miss the longer chain.
    */
   entriesOf: string[][];
 }
@@ -202,7 +205,7 @@ function condense(graph: Graph): Condensation {
     for (const id of members) componentOf.set(id, index);
   });
 
-  const successors = new Map<number, Map<number, [string, string]>>();
+  const successors = new Map<number, Map<number, Array<[string, string]>>>();
   const inDegree = new Array<number>(components.length).fill(0);
   const heads = components.map(() => new Set<string>());
   graph.forEachEdge((_edge, _attrs, source, target) => {
@@ -214,14 +217,18 @@ function condense(graph: Graph): Condensation {
       edges = new Map();
       successors.set(from, edges);
     }
-    if (edges.has(to)) return;
-    edges.set(to, [source, target]);
+    let pairs = edges.get(to);
+    if (!pairs) {
+      pairs = [];
+      edges.set(to, pairs);
+      inDegree[to]++;
+    }
+    pairs.push([source, target]);
     heads[to].add(target);
-    inDegree[to]++;
   });
 
   const entriesOf = components.map((members, index) =>
-    inDegree[index] === 0 ? [members[0]] : [...heads[index]]);
+    inDegree[index] === 0 ? [...members] : [...heads[index]]);
 
   return { components, successors, inDegree, entriesOf };
 }
@@ -326,12 +333,20 @@ function solveChains(graph: Graph, condensation: Condensation, order: readonly n
       let nodes = tail.length;
       let exit: string | null = null;
       let next: ChainState | null = null;
-      for (const [to, [edgeTail, edgeHead]] of successors.get(component) ?? []) {
-        const candidate = dist.get(edgeTail)! + 1 + best.get(to)!.get(edgeHead)!.nodes;
-        if (candidate > nodes) {
-          nodes = candidate;
-          exit = edgeTail;
-          next = { component: to, entry: edgeHead };
+      for (const [to, pairs] of successors.get(component) ?? []) {
+        const nextBest = best.get(to);
+        if (!nextBest) continue;
+        for (const [edgeTail, edgeHead] of pairs) {
+          const hop = dist.get(edgeTail);
+          if (hop === undefined) continue;
+          const nextValue = nextBest.get(edgeHead);
+          if (!nextValue) continue;
+          const candidate = hop + 1 + nextValue.nodes;
+          if (candidate > nodes) {
+            nodes = candidate;
+            exit = edgeTail;
+            next = { component: to, entry: edgeHead };
+          }
         }
       }
       byEntry.set(entry, {
@@ -359,7 +374,11 @@ function expandChain(best: Map<number, Map<string, ChainValue>>, root: ChainStat
 }
 
 /**
- * Calculates the longest non-cyclic dependency chains in the graph.
+ * Calculates the longest dependency chains in the graph, walking through circular dependencies.
+ *
+ * @remarks
+ * Strongly connected components condense to single vertices, so a chain crosses a cycle as one
+ * entry-to-exit segment ({@link walkComponent}, {@link walkFromEntry}) instead of stopping at it.
  *
  * @param graph - The graph instance.
  * @param minNodes - Minimum nodes required in a chain to be reported.
@@ -372,7 +391,7 @@ export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number
   }
 
   const condensation = condense(graph);
-  const { components, successors, inDegree, entriesOf } = condensation;
+  const { components, successors, inDegree } = condensation;
 
   // Kahn ordering of the condensation, then the chain DP in reverse. Both are iterative, so a chain
   // spanning thousands of objects cannot exhaust the call stack.
@@ -387,7 +406,20 @@ export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number
 
   const best = solveChains(graph, condensation, order);
   const roots = order.filter((component) => inDegree[component] === 0);
-  const expandedChains = roots.map((root) => expandChain(best, { component: root, entry: entriesOf[root][0] }));
+  const expandedChains: string[][] = [];
+  for (const root of roots) {
+    const byEntry = best.get(root);
+    if (!byEntry) continue;
+    let winner: string | null = null;
+    let bestNodes = -1;
+    for (const [entry, value] of byEntry) {
+      if (value.nodes > bestNodes) {
+        bestNodes = value.nodes;
+        winner = entry;
+      }
+    }
+    if (winner) expandedChains.push(expandChain(best, { component: root, entry: winner }));
+  }
   expandedChains.sort((a, b) => b.length - a.length);
 
   const chains: Array<{ nodeIds: string[]; length: number }> = [];

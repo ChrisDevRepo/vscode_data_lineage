@@ -1,7 +1,7 @@
 /**
- * CT retention differential — the wave-1 defect, reproduced deterministically.
+ * CT retention differential — a measured defect, reproduced deterministically.
  *
- * Wave 1 measured 10 required dependencies lost across 8 of 11 real-model cases, with BB
+ * Recorded runs measured 10 required dependencies lost across 8 of 11 real-model cases, with BB
  * losing none. Every loss had the same signature: the node was in `scopeNodeIds`, absent from
  * `removedSet`, and absent from the result — admitted, never pruned, and gone. These cases
  * reproduce that signature with no model and no network, one minimal topology per measured
@@ -439,7 +439,7 @@ describe('CT retention — every required dependency survives into the result', 
 
       // Reported as one set, so a failure names the whole loss for this case rather than its first node.
       const lost = testCase.reachRequired.filter(required => !rendered.has(required));
-      expect(lost, `${testCase.id}: required dependencies missing from the answer (wave 1 measured: ${testCase.measuredLost.join(', ') || 'none'})`).toEqual([]);
+      expect(lost, `${testCase.id}: required dependencies missing from the answer (measured: ${testCase.measuredLost.join(', ') || 'none'})`).toEqual([]);
 
       // The render's own disposition, named by the case rather than inferred from the gap below.
       // A case that expects none holds the drop stage to the same standard it held before this
@@ -777,7 +777,7 @@ const SINK_CASE: RetentionCase = {
       upstream_columns: [{ node: '[ct].[vwdiscountcalc]', col: 'Discount' }],
       writes_to: { node: '[ct].[factsalesreport]', col: 'Discount' },
     }],
-    // D1 convergence routes every in-scope directional neighbour, but the bipartite agenda rule
+    // The convergence routes every in-scope directional neighbour, but the bipartite agenda rule
     // dispatches only bodied focuses: the table neighbours (`salesstaging`, `customermaster`,
     // `dimcalendar`, `factsalesreport`, `errorlog`) are routed and contracted to their bodied
     // writers, so they appear in no flow here — the walk never focuses them.
@@ -814,7 +814,7 @@ function driveSinkWalk(routeFromConsumer?: string): {
     const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
     if (ctx.done || !ctx.focus_node) return { engine, model, graph };
     const focusId = ctx.focus_node.id;
-    // D-008: logging sinks are off the answer path for a column question, so the walk prunes them
+    // Logging sinks are off the answer path for a column question, so the walk prunes them
     // at their own focus once dispatched — the same decision BB makes, now in CT too. In the routed
     // variant splogaudit is the contracted-through focus of the consumer route, so it is analysed
     // from its scripted flow instead of pruned.
@@ -861,10 +861,10 @@ function sinkWalkResult(routeFromConsumer?: string): SmResult {
 describe('CT render bound — scope admits, only a hop dispositions', () => {
   it('drops the logging sinks the walk can disposition — routed-and-deferred sinks stay, as in BB', () => {
     const rendered = new Set(sinkWalkResult().fullNodes.map(n => n.id));
-    // D1 convergence: the guard demands every in-scope directional neighbour, so `errorlog` is
+    // Convergence: the guard demands every in-scope directional neighbour, so `errorlog` is
     // routed (accepted, contracted to no unvisited bodied neighbour, deferred as a lead) and stays
     // in the render exactly as a BB walk on this topology renders it. What still drops:
-    // `splogaudit`, dispatched and verdict-pruned (D-008 — a logging sink is off the answer path),
+    // `splogaudit`, dispatched and verdict-pruned (a logging sink is off the answer path),
     // and `auditlog`, which no hop ever dispositioned. The old pin (all three sinks dropped) was
     // CT-specific: CT's guard used to be a no-op, so `errorlog` was never routed at all.
     expect(rendered.has('[ct].[splogaudit]'), 'the dispatched logging proc is pruned at its focus and dropped').toBe(false);
@@ -912,7 +912,7 @@ describe('CT snapshot provenance — the render records the drop it made', () =>
     const snapshot = engine.toJSON();
     const dropped = snapshot.renderDroppedNodeIds ?? [];
 
-    // D1 convergence: `auditlog` is the one sink the render itself drops (no hop dispositioned
+    // Convergence: `auditlog` is the one sink the render itself drops (no hop dispositioned
     // it). `splogaudit` left via an explicit verdict prune (removedSet, not a render drop), and
     // `errorlog` was guard-demanded, routed, and deferred as a contracted lead — it renders, as in
     // BB. The old pin named all three because CT's guard used to demand nothing, so all three sat
@@ -1001,8 +1001,8 @@ function drivePassthroughWalk(archiveFlow: FlowEntry[]): SmResult {
     if (ctx.done || !ctx.focus_node) return engine.getResult();
     const focusId = ctx.focus_node.id;
     if (focusId === ARCHIVE_LOG) {
-      // D1 convergence: the log writer is guard-demanded, so the walk routes it; once dispatched it
-      // is off the traced column's answer path (D-008) and prunes at its own focus, as in BB.
+      // Convergence: the log writer is guard-demanded, so the walk routes it; once dispatched it
+      // is off the traced column's answer path and prunes at its own focus, as in BB.
       const prune = engine.submitFindings({
         focus_node_id: focusId,
         sections: [{ angle: 'business' as const, text: `log writer, off the traced column's answer path` }],
@@ -1316,7 +1316,7 @@ describe('CT neighbour accounting — the same checklist BB gets, shown and enfo
  *
  * The amount chain is real and checkable end to end — the origin produces it, `b` carries it
  * from `a`, `e` from `b`, `f` from `c` — so every CT column_flow names a column its named
- * upstream really declares (nothing the P1-12 rejection would refuse), and no hop needs the
+ * upstream really declares (nothing the rejection would refuse), and no hop needs the
  * passthrough escape: every focus either carries or produces the traced column.
  *
  * Red reproductions (written before the fix): in-scope prune targets were protected no-ops, so the
@@ -1599,7 +1599,7 @@ describe('route-border demand — the guard demands only what the router admits 
    * deferred as a lead, never accepted — so demanding it is a demand the model cannot meet: the
    * hop could never commit. `requiredNeighborIds` must therefore filter on the router's own
    * admission test (`admitsRoute`), of which this is the border axis; the depth axis is the case
-   * below (P1-7's piece; validated shape on record in `0852aadb`).
+   * below (validated shape on record in `0852aadb`).
    *
    * Red pre-fix: the guard demanded the out-of-allowlist neighbour and rejected the hop with
    * `missing_required_route` however the model accounted for it.

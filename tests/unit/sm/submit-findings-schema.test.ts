@@ -81,7 +81,7 @@ describe("Submit Findings Schema", () => {
   expect(parsed.success, 'CT accepts self-prune verdict (analyze|passthrough|prune)').toBe(true);
 });
 
-  it("CT carries the shared prune_neighbors — same decision space as BB (D1 convergence)", () => {
+  it("CT carries the shared prune_neighbors — same decision space as BB", () => {
   const parsed = SubmitFindingsCtInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
     sections: [{ angle: 'business', text: 'ok' }],
@@ -226,7 +226,7 @@ describe("Submit Findings Schema", () => {
     focus_node_id: '[dbo].[vSales]', sections: [], summary: 'ok', verdict: 'analyze',
     column_flow: [], prune_neighbors: ['[dbo].[vStaging]'],
   });
-  // D1 convergence: the advertised CT form accepts the shared BB field — the model can prune or
+  // Convergence: the advertised CT form accepts the shared BB field — the model can prune or
   // route a neighbour in either mode.
   expect(withPruneNeighbors.success, 'host-advertised CT form accepts the shared prune_neighbors').toBe(true);
   const repairCt = ct.safeParse({ repair: true, focus_node_id: '[dbo].[vSales]', column_flow: [] });
@@ -468,6 +468,17 @@ it("is_update describes only its own schema's meaning, not the other schema's re
     const descriptions = [SubmitFindingsBbInputSchema, SubmitFindingsCtInputSchema, SubmitFindingsModelSchema].map(describeOf);
     expect(descriptions.every(d => d.length > 0), 'every surface actually carries a badge_label description').toBe(true);
     expect(new Set(descriptions).size, 'BB, CT, and the registered union describe badge_label identically').toBe(1);
+    expect(descriptions[0], 'the shared describe string states the 50-char cap').toContain('Maximum 50 characters');
+  });
+
+  it('CT verdict description carries no BB-only "business/technical logic" phrase', () => {
+    const projected = toModelJsonSchema(SubmitFindingsCtInputSchema) as { properties?: Record<string, { description?: string }> };
+    expect(projected.properties?.verdict?.description ?? '').not.toContain('business/technical logic');
+  });
+
+  it('BB verdict description carries no CT-only "terminal source" phrase', () => {
+    const projected = toModelJsonSchema(SubmitFindingsBbInputSchema) as { properties?: Record<string, { description?: string }> };
+    expect(projected.properties?.verdict?.description ?? '').not.toContain('terminal source');
   });
 
 });

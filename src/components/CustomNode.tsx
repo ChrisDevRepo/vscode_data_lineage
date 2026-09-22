@@ -9,9 +9,10 @@ import type { CustomNodeData, TraceNeighborOption } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
 
 /** User action supported by the interactive trace node controls. */
-type TraceNeighborAction = 'add' | 'prune';
+export type TraceNeighborAction = 'add' | 'prune';
 
-type TraceNeighborPicker = {
+/** Picker state for adding or pruning one inbound or outbound neighbor set. */
+export type TraceNeighborPicker = {
   action: TraceNeighborAction;
   side: NeighborSide;
   options: TraceNeighborOption[];
@@ -35,7 +36,8 @@ function traceActionTooltip(
     : `${label}: choose one of ${options.length}`;
 }
 
-function TraceActionButton({
+/** One add/prune control on a trace node; hidden when that side has no neighbors at all. */
+export function TraceActionButton({
   action,
   side,
   options,
@@ -82,7 +84,8 @@ function TraceActionButton({
   );
 }
 
-function TraceNeighborPickerToolbar({
+/** Bottom toolbar listing neighbor options for the active add/prune picker. */
+export function TraceNeighborPickerToolbar({
   picker,
   onClose,
   onSelect,

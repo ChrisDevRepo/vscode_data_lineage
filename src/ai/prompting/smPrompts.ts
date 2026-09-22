@@ -86,9 +86,9 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
  * test is what feeds route and prune, so CT carries it verbatim and appends its column-specific
  * case; narrowing CT to hidden column names alone dropped the role test CT still needs.
  */
-export const NEIGHBOR_COLUMNS_TRIGGER = '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone';
+const NEIGHBOR_COLUMNS_TRIGGER = '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone';
 
-const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about.'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
+const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about. It also applies to a neighbor that touches the focus object yet contributes no column to the traced column path; it never applies to a neighbor that decides which rows any kept node returns, or that writes or transforms a value a kept node consumes — a join, filter, predicate, or column-value source stays routed or retained.'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
 
 /**
  * The one prune trigger, byte-shared by the BB and CT verdict blocks and mirrored into the

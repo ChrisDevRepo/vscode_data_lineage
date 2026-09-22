@@ -59,24 +59,48 @@ export const MAX_TOOL_SEMANTIC_FAILURES = 3;
 
 /**
  * Rejection codes exempt from the model's semantic budget: provider/transport artifacts
- * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration}) plus
+ * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration});
  * {@link REJECTION_CODES.duplicateRead}, a deliberate policy exemption for a model resending a
- * call it already has the answer to — not a transport artifact. The exemption is bounded by the
- * shared unproductive-resend absorption: past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive
- * identical resends the duplicate charges a strike.
+ * call it already has the answer to — not a transport artifact, bounded by the shared
+ * unproductive-resend absorption (past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive identical
+ * resends the duplicate charges a strike); and the budget guards
+ * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}),
+ * which refuse a well-formed request for its size alone and so say nothing about the model's
+ * semantic accuracy.
  */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
   REJECTION_CODES.emptyGeneration,
   REJECTION_CODES.duplicateRead,
+  REJECTION_CODES.overDiscoveryBudget,
+  REJECTION_CODES.overActiveScopeBudget,
 ]);
 
 /**
  * Hint paired with a `duplicate_read` rejection: the answer material is already in the observations.
  * Raised only while that body is still stored — an evicted body is re-served instead, so the hint
- * is a true statement in every state it reaches the model in.
+ * is a true statement in every state it reaches the model in, except when the held body is itself an
+ * error envelope (e.g. a `result_too_large` reply), where
+ * {@link heldErrorEnvelopeDuplicateHint} restates that error instead — "answer from it" is false
+ * when the stored observation carries no answer material.
  */
 const DUPLICATE_READ_HINT = 'You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.';
+
+/**
+ * Correction hint for a `duplicate_read` whose held observation is itself an error envelope: restates
+ * that held error (its code, then its hint or reason line) instead of {@link DUPLICATE_READ_HINT}.
+ * @param held - The observation the duplicate read would reuse.
+ * @returns The restatement hint, or `undefined` when the held body is not an error envelope.
+ */
+function heldErrorEnvelopeDuplicateHint(held: ToolAttemptObservation): string | undefined {
+  try {
+    const rejection = readToolError(JSON.parse(held.result));
+    if (!rejection) return undefined;
+    return `The held result for callId ${held.callId} is an error envelope (${rejection.code}): ${rejection.hint ?? rejection.reason}`;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Hand-off carried by a `result_too_large` reply — the same route `over_discovery_budget` names for
@@ -384,8 +408,8 @@ interface ToolGenerationAttemptInput {
  * Registry-dispatched rejections are captured by the observability decorator wrapping
  * `IToolRegistry.invoke`. A rejection raised here never reaches that decorator, so without this
  * hook the only failures the model was actually charged for would be invisible to a trace consumer.
- * Enumerated code and tool name only — the reason prose stays on {@link
- * ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
+ * Enumerated code and tool name only — the reason prose stays on
+ * {@link ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
  * observability import.
  */
 export type SyntheticRejectionTrace = (rejection: { toolName: string; code: string }) => void;
@@ -603,9 +627,9 @@ function boundStoredRejections(
  * @param attempt - Exactly one completed graph attempt.
  * @param budget - The recording turn's budget, which sizes the retained-correction share; the
  *   shipped defaults apply where a caller runs outside a turn.
- * @param debugLog - Secret-safe single-line diagnostic sink, same convention as {@link
- *   ToolGenerationAttemptInput.debugLog}. A correction the budget drops never reaches the model
- *   again, so the drop is reported here rather than being invisible to a log reader.
+ * @param debugLog - Secret-safe single-line diagnostic sink, same convention as
+ *   {@link ToolGenerationAttemptInput.debugLog}. A correction the budget drops never reaches the
+ *   model again, so the drop is reported here rather than being invisible to a log reader.
  * @returns Updated state with independent semantic and physical-call hard stops.
  */
 export function recordToolAttempt(
@@ -1353,7 +1377,8 @@ function emitSynthesizedRejection(
  * @remarks
  * Enforces the single-generation model-port contract (exactly one provider call per attempt),
  * classifies a truncated or filtered generation as an `output_limit` stop before any tool or
- * session effect can commit from incomplete output, then dispatches the returned tool calls
+ * session effect can commit from incomplete output (a tool-less length cut in a phase that must
+ * call a tool is instead a chargeable missing-call rejection the repair ladder retries), then dispatches the returned tool calls
  * against gate/reroute/phase-completion detection and the semantic-failure budget.
  *
  * @param model - Request-scoped model port; must record exactly one provider call.
@@ -1413,7 +1438,14 @@ export async function executeToolGenerationAttempt(
     generated.finishReason === 'length' ? 'length'
       : generated.finishReason === 'content-filter' ? 'content-filter'
         : null;
-  if (finishAnomaly) {
+  // A length cut that carried no tool call, in a phase that must call one, dispatched nothing, so
+  // no partial effect can commit: it is a failed submission the semantic-failure budget retries,
+  // not a terminal stop. A cut that carried calls, a content filter, and a cut in a prose phase
+  // stay terminal.
+  const truncatedBeforeRequiredCall = finishAnomaly === 'length'
+    && generated.toolCalls.length === 0
+    && (input.requiredTerminalTool !== undefined || input.requiresToolEvidence === true);
+  if (finishAnomaly && !truncatedBeforeRequiredCall) {
     return {
       stop: 'output_limit',
       finishAnomaly,
@@ -1447,9 +1479,9 @@ export async function executeToolGenerationAttempt(
   let budgetClosedByCallId: string | null = null;
   let chargeableFailures = 0;
   const semanticFailuresRemaining = Math.max(0, input.semanticFailuresRemaining ?? MAX_TOOL_SEMANTIC_FAILURES);
-  // Earlier entries win on a duplicate key, matching the original `[...priorObservations, ...observations].find(...)`
-  // scan order: prior-attempt observations are seeded first, then this batch's own accepted reads are
-  // folded in as they are recorded, and a key already present is never overwritten.
+  // Earlier entries win on a duplicate key, mirroring the `[...priorObservations, ...observations].find(...)`
+  // scan order: earlier-attempt observations seed first, then this batch's own accepted reads fold in
+  // as they are recorded, and a key already present is never overwritten.
   const reusableObservations = new Map<string, ToolAttemptObservation>();
   // Keys already answered by an earlier generation: a resend of one of these is the model asking
   // again for a result it holds, and is answered with a `duplicate_read` envelope instead of a
@@ -1502,8 +1534,8 @@ export async function executeToolGenerationAttempt(
       // a resend byte-identical to the just-rejected payload of the same tool is not mid-correction,
       // it is non-convergence, and past MAX_FREE_UNPRODUCTIVE_RESENDS consecutive ones charge like
       // every other invalid_tool_input — without this bound the free channel can spin to the
-      // provider-call cap (observed 2026-08-30: one repair turn resent an equivalent rejected
-      // payload until only MAX_TOOL_PROVIDER_CALLS stopped it). Initial (no held draft)
+      // provider-call cap, a repair turn resending an equivalent rejected payload until only
+      // MAX_TOOL_PROVIDER_CALLS stops it. Initial (no held draft)
       // present_result prevalidation rejects, and every other tool's invalid_tool_input, stay
       // chargeable via the untouched shared guard below.
       const isRepairTurnPresentResultPrevalidation = call.code === 'invalid_tool_input'
@@ -1562,7 +1594,7 @@ export async function executeToolGenerationAttempt(
           status: 'rejected',
           code: REJECTION_CODES.duplicateRead,
           message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
-          correction: { hint: DUPLICATE_READ_HINT },
+          correction: { hint: heldErrorEnvelopeDuplicateHint(reused) ?? DUPLICATE_READ_HINT },
           detail: { acceptedCallId: reused.callId },
         }, calls, observations, rejections, input.traceSyntheticRejection)!;
         // Free while the model may still act on the answer it already holds; past
@@ -1682,11 +1714,15 @@ export async function executeToolGenerationAttempt(
   if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: input.requiredTerminalTool,
-      emptyGeneration: generated.text.trim().length === 0,
+      // A length cut is never an empty provider artifact, even when no text reached the channel:
+      // it charges the semantic budget so the retries stay bounded.
+      emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: 'missing_required_tool_call',
       emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
-      nonEmptyReason: `The model did not call ${input.requiredTerminalTool}.`,
+      nonEmptyReason: truncatedBeforeRequiredCall
+        ? `The output limit was reached before ${input.requiredTerminalTool} was called.`
+        : `The model did not call ${input.requiredTerminalTool}.`,
       hint: `Emit ${input.requiredTerminalTool} through the tool-call channel: a fenced JSON body, or a <function=...> block with <parameter=...> pairs, is message text and is not a call. Same fields, correct channel.`,
     });
   }
@@ -1698,11 +1734,13 @@ export async function executeToolGenerationAttempt(
     const evidenceToolNames = input.registry.getTools().map((tool) => tool.name).join(', ');
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: 'lineage_evidence',
-      emptyGeneration: generated.text.trim().length === 0,
+      emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: 'missing_required_evidence',
       emptyReason: 'The provider returned an empty response instead of calling a lineage tool.',
-      nonEmptyReason: 'The response contained no trusted lineage evidence.',
+      nonEmptyReason: truncatedBeforeRequiredCall
+        ? 'The output limit was reached before any lineage tool was called.'
+        : 'The response contained no trusted lineage evidence.',
       hint: `Call one of this phase's lineage tools before answering: ${evidenceToolNames}.`,
     });
   }

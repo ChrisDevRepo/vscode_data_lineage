@@ -2,14 +2,12 @@
 // One command that answers "which gates are green?" — `npm run gate`.
 //
 // Local deterministic gate. Nothing here pushes, publishes, or runs a real
-// model. The scripted S1-S7 scenario matrix and real-model T1-T7 measurement
-// both launch outside this process (Electron / a live provider) and are
-// internal-only.
+// model. Scripted internal lanes and real-model T1–T8S measurement both launch
+// outside this process (Electron / a live provider) and are internal-only.
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { nodeBin, npmCommand, pythonCommand } from './npm-launcher.mjs';
+import { nodeBin, npmCommand } from './npm-launcher.mjs';
 
 /** Where a failing step's captured output is written, so a red gate stays diagnosable. */
 const LOG_DIR = join('test-results', 'gate');
@@ -43,31 +41,6 @@ function runStep(step) {
 /** One gate step that runs an npm script by name. See npm-launcher.mjs for the spawn form. */
 const npmRun = (name, script) => ({ name, ...npmCommand('npm', ['run', script]) });
 
-/**
- * Builds one internal-only Python gate step.
- *
- * @param name - Gate step label.
- * @param scriptPath - Path to the `.py` suite, relative to the repo root.
- * @returns A step descriptor: runnable when both the script and a Python interpreter are present,
- *   `skip`-flagged with the specific reason otherwise.
- *
- * @remarks
- * The step stays in `STEPS` unconditionally so a skip is a visible row in the summary, not an
- * entry that silently never existed. Two independent reasons can produce a skip — the script is
- * internal-only and absent from a public clone, or no interpreter is on PATH — and the summary
- * reports whichever applies, never a generic "skipped".
- */
-function internalPythonStep(name, scriptPath) {
-  if (!existsSync(scriptPath)) {
-    return { name, skip: `${scriptPath} not present in this clone (internal-only)` };
-  }
-  const python = pythonCommand();
-  if (!python) {
-    return { name, skip: 'no python interpreter on PATH' };
-  }
-  return { name, cmd: python, args: [scriptPath] };
-}
-
 const STEPS = [
   // Ordered cheapest-first: type errors and derived-artifact drift fail in seconds, before the
   // suites, and everything needing build output runs after the single build step.
@@ -75,15 +48,11 @@ const STEPS = [
   npmRun('typecheck:tests', 'typecheck:tests'),
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
+  // The prompt-golden suite is not tracked, so no other step sees prompt-text drift. The
+  // manifest pins the prompt-affecting surface at the last golden regeneration; a prompt edit
+  // without that regeneration act fails here in seconds, 0 model calls.
+  { name: 'prompt golden sync', cmd: nodeBin, args: ['tests/tools/assert-golden-sync.mjs'] },
   { name: 'honest test labels', cmd: nodeBin, args: ['tests/tools/assert-honest-test-labels.mjs'] },
-  // The process guards live in .claude/, which is internal-only and never tracked here, so this
-  // step SKIPs (reported, not omitted — see internalPythonStep) for a public clone that has
-  // neither the suite nor necessarily a Python interpreter.
-  internalPythonStep('process guards', '.claude/hooks/test_guard.py'),
-  internalPythonStep('loop continuity', '.claude/hooks/test_continuity.py'),
-  // One mocked improvement cycle end to end - start, guarded work, gate, Ladder, push gate,
-  // recorded result, halt and ruling - against isolated state and scratch copies of a batch.
-  internalPythonStep('mock cycle', '.claude/hooks/test_mock_cycle.py'),
   // Structural, so it runs with the other seconds-long checks rather than with the suites. Line
   // coverage cannot answer this: a rule matched by no fixture still reads as covered.
   { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },

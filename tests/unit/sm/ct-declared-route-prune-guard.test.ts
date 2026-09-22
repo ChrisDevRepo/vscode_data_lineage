@@ -1,9 +1,9 @@
 /**
- * D-074 — a CT route declaration the bipartite rule contracted away must still refuse a later
+ * A CT route declaration the bipartite rule contracted away must still refuse a later
  * `prune_neighbors` targeting it directly.
  *
  * @remarks
- * Real-world shape (m0-13 run-T8, `[ai].[vwDiscountCalc].Discount`): at the origin hop the model
+ * Real-world shape (a recorded T8 run, `[ai].[vwDiscountCalc].Discount`): at the origin hop the model
  * accepted a route to `[ai].[customermaster]` (a table — non-bodied). The bipartite agenda rule
  * contracts a non-bodied route target on admission (`enqueueHop`, `smBase.ts:3048+`), so
  * CustomerMaster got no agenda entry and no detail slot. Ten hops later, from an unrelated focus
@@ -44,7 +44,7 @@ function buildWorld(): { model: DatabaseModel; graph: ReturnType<typeof makeGrap
   return { model: makeModel(nodes, edges, ['ct']), graph: makeGraph(nodes, edges) };
 }
 
-describe('D-074 — CT declared-route prune guard', () => {
+describe('CT declared-route prune guard', () => {
   it('(1) CT: a non-bodied node named in an accepted route_request is refused when later prune_neighbors targets it, and survives in the result', () => {
     const { model, graph } = buildWorld();
     const engine = new NavigationEngine(model, graph, () => {}, {});

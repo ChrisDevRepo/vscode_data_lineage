@@ -105,13 +105,14 @@ Unqualified names depend on caller default schema and context. Schema-qualified 
 
 - [`docs/FEATURES.md`](docs/FEATURES.md) — full feature catalogue, settings, customisation paths.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Map & Router engine, BB and column-trace exploration modes, memory model.
-- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — fork starting point, repo layout, build / test, prompt-builder hierarchy.
+- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — fork starting point, repo layout, build / test.
+- [`docs/EDH_TESTING.md`](docs/EDH_TESTING.md) — local test commands and Extension Development Host smoke lanes.
 - [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA contract for live-database ingestion (no black box).
 - [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — generated SQL for table profiling.
 - [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) — YAML reference for the SQL parser.
 - [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — prompt architecture + YAML reference for `@lineage` capture / render templates.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common issues.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — coding standards, testing protocol, PR hygiene.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — coding standards and testing protocol.
 
 ## Contributing
 

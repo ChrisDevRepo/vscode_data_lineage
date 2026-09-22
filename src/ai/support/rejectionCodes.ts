@@ -35,4 +35,8 @@ export const REJECTION_CODES = {
   supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
   /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
   invalidRegex: 'invalid_regex',
+  /** A discovery-phase scope-expanding catalog request exceeded the turn's node/token budget. */
+  overDiscoveryBudget: 'over_discovery_budget',
+  /** An active-phase scope admission exceeded the exploration node/token budget. */
+  overActiveScopeBudget: 'over_active_scope_budget',
 } as const;

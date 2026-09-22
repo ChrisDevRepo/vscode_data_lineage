@@ -183,4 +183,36 @@ describe('Present Result — scoped unknown-node-id repair', () => {
     expect(!result.success && !isRepairablePresentResultFailure(result),
       'one non-repairable error in the batch makes the whole failure non-repairable').toBe(true);
   });
+
+  it('unknown-node-id hint is stage-aware: preview and synthesis name no off-policy tool', () => {
+    const buildUnknownIdFailure = (stage: Parameters<typeof validatePresentResult>[6]) => {
+      const sections = [{ label: 'Source', node_ids: ['unknown_node'], text: 'One.' }];
+      const assembled = orderAndAssemble(sections);
+      return validatePresentResult(
+        {
+          name: 'ok',
+          summary: 'ok',
+          sections,
+          highlight_groups: [{ label: 'Flow', color: 'source' as const, node_ids: [] }],
+        },
+        ['a'],
+        assembled.badges,
+        assembled.description,
+        false,
+        [],
+        stage,
+      );
+    };
+
+    for (const stage of ['visual_preview', 'synthesis'] as const) {
+      const result = buildUnknownIdFailure(stage);
+      if (result.success) throw new Error(`${stage}: unknown node id must reject`);
+      expect(result.hint, `${stage} hint names no off-policy tool`).not.toContain('lineage_search_objects');
+      expect(result.errors.join(' '), `${stage} errors name no off-policy tool`).not.toContain('lineage_search_objects');
+    }
+
+    const completed = buildUnknownIdFailure('completed');
+    if (completed.success) throw new Error('completed: unknown node id must reject');
+    expect(completed.hint).toContain('lineage_search_objects');
+  });
 });

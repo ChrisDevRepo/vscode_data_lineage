@@ -1246,7 +1246,7 @@ export function App() {
     // Every save — create or update — records the view shape it was taken in, so reopening the
     // bookmark restores schema clusters, individual objects, or the mixed state rather than
     // whatever happens to be on screen. All three fields overwrite unconditionally: an update
-    // taken after collapsing every schema must clear a previously saved expansion, not keep it.
+    // taken after collapsing every schema must clear the saved expansion, not keep it.
     const stamped: FilterProfile = {
       ...profile,
       graphMode,

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
@@ -625,13 +625,18 @@ export function GraphCanvas({
   const handleAiPanelResize = useCallback((width: number, height: number) => {
     setPanelSizePx(prev => (prev && prev.width === width && prev.height === height) ? prev : { width, height });
   }, []);
-  // Reserved-space style for the React Flow wrapper: the panel's measured width (right/left dock)
-  // or height (bottom dock), else the CSS default kept in sync with `.ln-ai-description-anchor*`.
-  const aiCanvasReserve = !(aiDescription && aiPanelOpen)
-    ? { width: '100%', height: '100%' }
+  // Reserved-space style for the React Flow wrapper, expressed as insets rather than a width: the
+  // wrapper is absolutely positioned, so a left-docked panel has to push the canvas's `left` edge
+  // in — a narrower box alone would leave the canvas under the panel with dead space opposite it.
+  // The reserved extent is the panel's measured size, else the CSS default kept in sync with
+  // `.ln-ai-description-anchor*`.
+  const aiCanvasReserve: CSSProperties = !(aiDescription && aiPanelOpen)
+    ? { inset: 0 }
     : dockPosition === 'bottom'
-      ? { width: '100%', height: `calc(100% - ${panelSizePx ? `${panelSizePx.height}px` : AI_PANEL_DEFAULT_HEIGHT})` }
-      : { width: `calc(100% - ${panelSizePx ? `${panelSizePx.width}px` : AI_PANEL_DEFAULT_WIDTH})`, height: '100%' };
+      ? { top: 0, left: 0, right: 0, bottom: panelSizePx ? panelSizePx.height : AI_PANEL_DEFAULT_HEIGHT }
+      : dockPosition === 'left'
+        ? { top: 0, bottom: 0, right: 0, left: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH }
+        : { top: 0, bottom: 0, left: 0, right: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH };
   // The narrowed canvas re-fits once the panel has claimed or released its width, so the visible
   // graph re-centers instead of leaving nodes under the docked column.
   useEffect(() => {
@@ -687,14 +692,14 @@ export function GraphCanvas({
       // A degraded projection is not a failed user action: the object view is still on stage and
       // nothing the user asked for was lost. It goes to the Output channel, not to a modal — the
       // `error` channel calls `showErrorMessage`, which would announce a crash that did not happen.
-      window.vscode?.postMessage({
+      vscodeApi.postMessage({
         type: 'log',
         level: 'warn',
         text: `[Graph] Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
       });
       return null;
     }
-  }, [activeAiMetadata, config, flowNodes, model]);
+  }, [activeAiMetadata, config, flowNodes, model, vscodeApi]);
 
   /** Whether the column view — not the object view — is the rendering currently on stage. */
   const columnViewActive = columnView && !!columnTraceView;
@@ -751,7 +756,12 @@ export function GraphCanvas({
     }
     return [...byNumber.values()].sort((a, b) => a.n - b.n);
   }, [activeAiMetadata]);
-  aiSectionsRef.current = aiSections;
+  // Committed, not assigned during render: the only reader is `handleFocusSection`, which runs from
+  // a chip click or key press — always after commit — so writing the ref in an effect keeps render
+  // free of side effects without the reader ever observing a stale list.
+  useEffect(() => {
+    aiSectionsRef.current = aiSections;
+  }, [aiSections]);
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -1399,19 +1409,26 @@ export function GraphCanvas({
       // Report-section focus is not in this channel: it emphasizes the section labels instead, so
       // it cannot overwrite what selection or the column thread is saying about the bodies.
       const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
+      const isTraceOrigin = view.id === trace.selectedNodeId && (
+        trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied'
+      );
+      const removable = isBookmarkMode && canRemoveNodeFromScopedView;
       byNode.set(view.id, {
         view,
-        rowsVisible: notesVisible,
+        rowsVisible: true,
         rowLineStates,
-        highlighted: isHighlighted ? 'yellow' : undefined,
-        dimmed,
+        highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : undefined,
+        dimmed: dimmed && !isTraceOrigin,
         aiHighlight: aiHighlightMap.get(view.id),
         aiBadge: aiBadgeMap.get(view.id),
         aiNote: notesVisible ? aiNoteMap.get(view.id) : undefined,
+        showRemoveButton: removable,
+        onRemoveFromView: removable ? onRemoveFromView : undefined,
+        traceControls: traceControlsByNode.get(view.id),
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
@@ -1457,7 +1474,12 @@ export function GraphCanvas({
           target: edge.target,
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
-          markerEnd: { type: MarkerType.ArrowClosed, width: COLUMN_EDGE_MARKER_SIZE, height: COLUMN_EDGE_MARKER_SIZE },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: COLUMN_EDGE_MARKER_SIZE,
+            height: COLUMN_EDGE_MARKER_SIZE,
+            color: lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)',
+          },
           data: {
             state: edge.state,
             lit,
@@ -1540,7 +1562,7 @@ export function GraphCanvas({
           tracedNodeIds: Array.from(trace.tracedNodeIds),
         }
       : null;
-    window.vscode?.postMessage({
+    vscodeApi.postMessage({
       type: 'render-state',
       renderState: {
         ...graphErrorContext,
@@ -1705,7 +1727,7 @@ export function GraphCanvas({
           // Detail + the VS Code error toast are already emitted by ErrorBoundary.componentDidCatch
           // → bridge 'error' handler (error-level Output log). Here we only auto-reload so the user
           // never stares at a dead canvas; the navbar stays mounted above this boundary.
-          setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
+          setTimeout(() => vscodeApi.postMessage({ type: 'reload' }), 800);
         }}
         fallback={
           <div className="flex-1 flex items-center justify-center text-xs" style={{ color: 'var(--ln-fg-muted)' }}>

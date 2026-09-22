@@ -8,7 +8,7 @@
  * back on and `AgendaManager.push` unions the two spellings by raw string identity. The next
  * bodied focus with no declared column surface — a procedure — passes both through unresolved and
  * `computeUnaccounted` then demands BOTH as an `out_col`, which no submission can satisfy: on the
- * recorded run (`test-results/e2e/m0-3b-fireworks/run-T8S`) every retry accounted for one spelling
+ * recorded run every retry accounted for one spelling
  * and was rejected `column_chain_incomplete` for the other until the breaker fired.
  *
  * `[ai].[spBuildSalesReport]` has no `Discount` column of its own: it reads `dc.Discount` from the

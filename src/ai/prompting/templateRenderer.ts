@@ -28,11 +28,9 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * this map with no warning.
  *
  * Capture keys (`business_capture`, `technical_capture`, `structural_callouts`) fire at active phase;
- * render keys fire at synthesis. The slot body is the canonical surface, but not
- * the only one: the `general` render key states its own rule over what capture
- * produced — every captured ⚠️ callout carried through exactly once, its
- * significance settled at capture and not re-judged — so callout wording changed
- * in a capture key is checked against `general` as well.
+ * render keys fire at synthesis. The slot body is the canonical surface; `general`
+ * is placement-only at synthesis — a captured ⚠️ sits once in the section it
+ * belongs to.
  *
  * `description` is intentionally absent — it is engine output (built by
  * `orderAndAssemble` in `presentResult.ts` from title + intro + sections[] + closing),
@@ -56,7 +54,7 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   technical_capture:    ['active'],
   structural_callouts:  ['active'],
   structural_summary:   ['active'],
-  general:              ['discover', 'synthesis'],
+  general:              ['synthesis'],
   loading_pattern:      ['synthesis'],
   column_trace_capture: ['active'],
 };
@@ -129,7 +127,7 @@ export interface StagePromptResult {
  * @param templates - The loaded AI output templates (instruction strings).
  * @param phase - The current conversation phase.
  * @param classification - Optional mission-type signal; gates active-phase capture firing.
- * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below {@link CLOSING_MIN_SLOTS}.
+ * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below the `CLOSING_MIN_SLOTS` threshold (3).
  * @param isCtMode - True if column trace mode is active.
  * @param render - The render scope configuration.
  * @returns An object containing the assembled prompt block, shipped keys, and dropped keys.
@@ -151,7 +149,7 @@ export function resolveStagePrompt(
 ): StagePromptResult {
   // `closing` wraps up an analysis with named detail; below this many captured slots the
   // wrap-up has nothing to summarize and the tokens buy no content. Replay evidence
-  // (test-results/replay/p1-89d-closing-min-slots-n8, 8 pairs on a 3-slot case): admitting
+  // (8 prompt-replay pairs on a 3-slot case): admitting
   // `closing` at slotCount 3 raised its presence from 4/8 to 7/8 and dropped no node, section
   // or highlight-group member on any pair — the one variant run that omitted the column table
   // is matched by the same omission on the pair where both arms rendered identically.

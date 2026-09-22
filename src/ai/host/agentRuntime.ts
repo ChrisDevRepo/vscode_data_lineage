@@ -39,8 +39,11 @@ export { type GateDecision } from '../agent/state';
 
 /** Diagnostic detail behind a non-`ok` {@link TurnOutcome}. */
 export interface AgentFailureDetail {
+  /** Error prose behind the non-`ok` outcome — graph-state error or the caught exception message. */
   readonly message: string;
+  /** Enumerated {@link AgentErrorCode} when the failure carries one. */
   readonly code?: AgentErrorCode;
+  /** Engine stop reason when the turn ended on a stop rather than a hard failure. */
   readonly stop?: string;
 }
 
@@ -56,6 +59,7 @@ export interface AgentRuntimeDeps {
   readonly registry: IToolRegistry<string>;
   /** Native turn event sink. */
   readonly sink: TurnEventSink;
+  /** Abort signal cancelling this turn; re-checked before every graph invoke and forwarded to the graph. */
   readonly signal?: AbortSignal;
   /** Per-phase max LM step count; defaults to 50. */
   readonly maxRounds?: number;
@@ -107,8 +111,8 @@ function assertExternalTracingDisabled(): void {
   const enabled = EXTERNAL_TRACING_FLAGS.filter((name) => {
     const value = process.env[name];
     if (value === undefined) return false;
-    // LangChain's legacy LANGCHAIN_TRACING branch treats every defined value
-    // as enabled; the other flags are enabled only by the literal "true".
+    // LangChain's LANGCHAIN_TRACING switch treats every defined value as enabled; the other
+    // flags are enabled only by the literal "true".
     return name === 'LANGCHAIN_TRACING' || value.toLowerCase() === 'true';
   });
   if (enabled.length > 0) {
@@ -168,7 +172,7 @@ export class AgentRuntime {
       ? null
       : prompt;
     try {
-      // Seed prior discovery turns ahead of the current prompt so discovery has cross-turn memory.
+      // Seed the retained discovery turns ahead of the current prompt so discovery has cross-turn memory.
       // History rides in `messages` (after the cached system prefix), preserving prompt caching.
       let input: AgentStateUpdate | Command = this.priorMessages.length > 0
         ? { prompt, messages: [...this.priorMessages, modelUserMessage(prompt)] }

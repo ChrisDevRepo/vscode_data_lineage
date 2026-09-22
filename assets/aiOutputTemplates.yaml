@@ -11,7 +11,7 @@
 #
 #   discovery   first chat reply, no exploration — bounded catalog and lineage
 #               questions answered with the discovery read tools
-#               → discovery_chat, general
+#               → discovery_chat
 #
 #   active      per-hop analysis. Each fired *_capture writes ONE section:
 #               business → 1, technical → 1, both → 2. Blocks are independent.
@@ -31,7 +31,7 @@
 # Per-key reference: docs/AI_PROMPTS.md
 # ──────────────────────────────────────────────────────────────────────────────
 
-schemaVersion: 3
+schemaVersion: 2
 
 # ── Discovery (chat-only) — editable via overlay ─────────────────────────────
 
@@ -45,8 +45,8 @@ discovery_chat:
 
     Preserve every substantive fact supported by the loaded data, including
     transformations and column mappings, filters and predicates, read/write
-    distinctions, validation or deduplication rules, error and audit paths, and
-    notable inconsistencies or risks. Use canonical object and column names.
+    distinctions, validation or deduplication rules, and notable
+    inconsistencies or risks. Use canonical object and column names.
     If evidence is missing, state what is unavailable instead of inferring it.
 
 
@@ -67,7 +67,7 @@ summary:
 title:
   stages: [synthesis]
   instruction: >
-    Optional, ≤80 chars and hard-capped at 120:
+    Optional, ≤80 chars:
     "[Subject] — [key computation, pattern, or finding]", ending on the final
     output object where it fits.
   example: "NetFeeA — DaysA × RateA, 6-hop ETL to FactCircA"
@@ -95,21 +95,14 @@ closing:
   instruction: >
     Required whenever this template appears — the engine renders it only
     for results large enough to need a wrap-up. After the sections,
-    separated by a `---` divider, two parts: one paragraph naming the
-    overall pipeline answer in the lens the user requested, then a risk
-    block carrying the ⚠️ callouts from the captured evidence that no
-    section placed — significance was settled at capture. A business
-    mission states impact and scope; the mechanism stays in the sections.
+    separated by a `---` divider, one paragraph naming the overall
+    pipeline answer in the lens the user requested. A business mission
+    states impact and scope; the mechanism stays in the sections.
     Complete sentences, finished cleanly.
   example: |
     The spBuildCircA pipeline reloads from staging each run, applies a
     four-stage cascade (loan staging → fee calculation → waiver
     application → fact write), and lands region-normalized totals in FactCircA.
-
-    | Risk | Scope |
-    |---|---|
-    | ⚠️ NULL RateA in LoanDetailA collapses NetFeeA | All circulation rows |
-    | ⚠️ Missing DimRegion rows produce NULL RegionTotal | Final fact load |
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools/presentResult.ts
 # from title + intro + sections[] + closing) — NOT an AI-writeable field.
@@ -121,7 +114,8 @@ highlights:
   stages: [synthesis]
   instruction: >
     Colors and labels are two different channels, both relative to the USER
-    QUESTION. Colors (highlight_groups) mark importance: the question's data
+    QUESTION. Each group's legend label names the role its nodes share — aim
+    for ~40 chars. Colors (highlight_groups) mark importance: the question's data
     Sources, its Target, and the important transformations — nodes that CREATE
     or CHANGE the answer's values (formula, condition, classification, status
     transition). Carry-through plumbing (renames, SELECT * bridges, movement
@@ -170,8 +164,7 @@ business_capture:
     what outcome — is backend logging: verdict `prune`, with the procedures
     whose only job is to write it. A sink holding the traced column's own
     values, before/after or as-of, is a business audit trail: a consumer
-    with a one-line caption. Either is in scope when the question is about
-    logging, errors, auditing or retention.
+    with a one-line caption.
     </scope_relevance>
 
     This recipe is one `sections[]` entry: `{ angle: "business", text: "<body>" }`.
@@ -274,10 +267,11 @@ technical_capture:
        `purge`, `orchestration` (EXECs other procedures); coarse, SCD/CDC in
        prose. Absent, or a view/UDF focus: no shape.
     7. Error handling — TRY/CATCH, retry and lock behaviour.
-    8. Antipatterns — non-sargable or implicitly converting predicate,
-       excessive DISTINCT, OR in a join predicate, correlated subquery or
-       scalar UDF per row, unguarded UPDATE or DELETE, TRUNCATE outside a
-       transaction, loading order that reads a target before it is written.
+    8. Antipatterns — a ⚠️ sidecar on a non-sargable or implicitly converting
+       predicate, excessive DISTINCT, OR in a join predicate, correlated
+       subquery or scalar UDF per row, unguarded UPDATE or DELETE, TRUNCATE
+       outside a transaction, or a loading order that reads a target before
+       it is written.
     </section_skeleton>
 
     Markdown; the engine owns `#`/`##` headings, so a bold label opens the
@@ -311,11 +305,10 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    ⚠️ lines this hop: a STRUCTURAL EXPOSURE the loaded DDL proves — quote the
-    deciding statement and say what it does to the data, one line per mechanism
-    per node. The exposures that matter most are the silent ones: where the
-    statement discards, duplicates, overwrites or mis-keys data without raising
-    an error.
+    A STRUCTURAL EXPOSURE the loaded DDL proves — quote the deciding statement
+    and say what it does to the data, one ⚠️ line per mechanism per node. The
+    exposures that matter most are the silent ones: where the statement
+    discards, duplicates, overwrites or mis-keys data without raising an error.
 
     A value the statement hardcodes is reported as the literal it is, in the
     section it belongs to — never judged as good or bad.
@@ -429,7 +422,7 @@ column_trace_capture:
 # material; the AI does NOT invent tables / formulas / fences without source.
 
 general:
-  stages: [discovery, synthesis]
+  stages: [synthesis]
   instruction: >
     How the captured material renders across the assembled sections, business
     meaning first:
@@ -440,11 +433,8 @@ general:
       key the data, short rather than whole statements.
     - **Status-enum lifecycles**: numbered transitions ("1. New →
       2. Approved → 3. Shipped").
-    - **Risks / data-quality flags**: every ⚠️ callout present in the captured
-      or loaded bodies appears exactly once, in its most relevant section. Before
-      submitting, count the ⚠️ lines captured against the ⚠️ lines drafted; a
-      lower draft count means one was dropped, not resolved — restore it before
-      sending. A business mission states the impact first, the mechanism second.
+    - **Callouts**: a captured ⚠️ sits once, in the section it belongs to.
+      A business mission states the impact first, the mechanism second.
     - **Scope**: the sections follow the question; a side branch it did not
       ask about is one line inside the section it hangs off, not a section or
       highlight of its own — a ⚠️ on such a branch is that one line, never a

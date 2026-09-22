@@ -19,15 +19,17 @@ import type { NavigationEngine } from '../sm/smBase';
 import type { ClassificationValue } from '../session/classification';
 import { sanitizeForLog, type Logger } from '../../utils/log';
 
-/** Validated boundary for the optional one-shot discovery-to-exploration memo. */
-// Nonblank only — model-authored content is never length-rejected (R006). Brevity (2–4 sentences)
-// is a prompt target, not a hard cap; the memo's length legitimately scales with the analysis it
-// summarizes.
+/**
+ * Validated boundary for the optional one-shot discovery-to-exploration memo.
+ *
+ * @remarks
+ * Nonblank only — model-authored content is never length-rejected. Brevity (2–4 sentences) is a
+ * prompt target, not a hard cap: the memo's length legitimately scales with the analysis it
+ * summarizes.
+ */
 const DiscoverySummarySchema = z.string().trim().min(1);
 
-// One mechanical re-ask on a rejected compose reply (empty output) — mirrors the reject-with-hint
-// self-correction convention used at every other Zod boundary in this pipeline. Not a policy cap:
-// a single retry of a one-shot, no-tool text round.
+/** One mechanical re-ask on a rejected compose reply, the reject-with-hint convention every Zod boundary here follows. */
 const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
 
 /**
@@ -75,8 +77,7 @@ export async function composeDiscoverySummaryText(
     let parsed: z.ZodSafeParseResult<string> | undefined;
     let rejectReason = '';
     for (let attempt = 1; attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS; attempt++) {
-      // Structural reject-with-hint retry: feeds the exact Zod issue back, same convention as
-      // every other self-correcting boundary in this pipeline — not new prompt wording/tuning.
+      // Structural reject-with-hint retry: the exact Zod issue is fed back as the repair.
       const prompt = buildDiscoverySummaryComposePrompt(
         lastDiscoveryQuestion,
         lastDiscoveryAnswer,
@@ -87,8 +88,7 @@ export async function composeDiscoverySummaryText(
         kind: 'text',
         phase: 'compose',
         system: DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
-        // Compose folds three inputs into the memo: the discovery Q/A and the approved contract summary,
-        // declared inline at this — the sole — assembly site.
+        // Compose folds the discovery Q/A and the approved contract summary into the memo.
         facts: explorationFacts(analysisMode, targetColumns, {
           classification,
           memorySections: ['discovery_question', 'discovery_answer', 'approved_contract'],

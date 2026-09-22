@@ -815,6 +815,12 @@ export type ColumnTraceNodeData = {
   view: ColumnTraceViewNode;
   /** Whether the row list renders; false collapses the node to a single summary line. */
   rowsVisible?: boolean;
+  /** Whether the scoped-view remove control is shown — same chrome as {@link CustomNodeData}. */
+  showRemoveButton?: boolean;
+  /** Removes the node from the active allowlist-backed view. */
+  onRemoveFromView?: (nodeId: string) => void;
+  /** Interactive trace controls for adding or pruning direct neighbors. */
+  traceControls?: TraceNodeControls;
   /**
    * Per-row line state for the state dot, keyed by row name.
    *

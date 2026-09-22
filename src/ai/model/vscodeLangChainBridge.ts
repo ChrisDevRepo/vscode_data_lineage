@@ -35,19 +35,25 @@ import { sanitizeProviderError } from '../support/text';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
 export interface VscodeBridgeToolDefinition {
+  /** Tool name the model addresses the call by. */
   readonly name: string;
+  /** Natural-language tool description shown to the model. */
   readonly description: string;
+  /** JSON Schema object describing the tool's input. */
   readonly inputSchema: Record<string, unknown>;
 }
 
 /** LangChain call options projected onto one VS Code Language Model request. */
 export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
+  /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
 }
 
 /** Constructor fields for one request-selected VS Code language model. */
 export interface VscodeLangChainBridgeFields {
+  /** The exact `vscode.LanguageModelChat` selected for this request. */
   readonly model: vscode.LanguageModelChat;
+  /** Cancellation token for the request; firing it surfaces as a port-level cancellation. */
   readonly token: vscode.CancellationToken;
   /**
    * Debug wire capture, present only when session trace logging is enabled.
@@ -213,8 +219,14 @@ export class VscodeLangChainBridge extends BaseChatModel<
         }
         // `LanguageModelChatResponse.stream` is typed `… | unknown` as the API's forward-compat
         // placeholder, so a part kind added by a newer VS Code must never end the user's turn.
-        // Ignore it silently: providers may emit many metadata parts, and logging each one floods
-        // the Output channel without adding actionable diagnostics.
+        // Its content is dropped and never logged per part. Only the size of a string-valued part
+        // (the host streams reasoning as `thinking` parts) rides a content-free chunk, so the port
+        // can report how much output never reached the text channel.
+        const nonTextChars = streamedValueChars(part);
+        if (nonTextChars > 0) {
+          const message = new AIMessageChunk({ content: '', response_metadata: { nonTextChars } });
+          yield new ChatGenerationChunk({ text: '', message });
+        }
       }
       if (this.isCancelled(options)) {
         throw cancelledError();
@@ -273,6 +285,16 @@ export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatM
     'invalid_request',
     `Unsupported LangChain message type: ${message.getType()}.`,
   );
+}
+
+/** Character size of a stream part's string or string-array `value`; 0 for any other shape. */
+function streamedValueChars(part: unknown): number {
+  const value = part && typeof part === 'object' ? (part as { value?: unknown }).value : undefined;
+  if (typeof value === 'string') return value.length;
+  if (Array.isArray(value)) {
+    return value.reduce<number>((sum, item) => sum + (typeof item === 'string' ? item.length : 0), 0);
+  }
+  return 0;
 }
 
 function toTextParts(content: MessageContent): vscode.LanguageModelTextPart[] {

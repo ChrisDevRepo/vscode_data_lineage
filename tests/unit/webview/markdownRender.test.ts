@@ -103,6 +103,12 @@ describe('renderAiMarkdown — links and sanitization', () => {
     const host = render('[click](javascript:alert(1))');
     expect(host.querySelector('a')?.getAttribute('href') ?? null).toBeNull();
   });
+
+  it('keeps numbered section ids and strips any other id', () => {
+    const host = render('## 1 Sales\n\n<img id="vscode" src="x">');
+    expect(host.querySelector('h2')?.id).toBe('ln-ai-sec-1');
+    expect(host.querySelector('img')?.getAttribute('id') ?? null).toBeNull();
+  });
 });
 
 describe('renderAiMarkdown — the reported document', () => {

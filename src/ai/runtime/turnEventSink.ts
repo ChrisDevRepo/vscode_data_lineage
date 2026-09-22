@@ -6,9 +6,13 @@ export type TurnResultStatus = 'ok' | 'error' | 'cancelled';
 
 /** Provider-neutral payload for a native consent gate. */
 export interface NativeGateEvent {
+  /** Identifier the user's decision reply carries so the paused turn can be resumed. */
   readonly gateId: string;
+  /** Engine consent gate that fired, as named by the engine's gate envelope. */
   readonly gate: string;
+  /** One-line human-readable summary of what needs the user's approval. */
   readonly summary: string;
+  /** Optional exposure classes from the gate payload; an approve decision echoes them back. */
   readonly classes?: readonly string[];
 }
 

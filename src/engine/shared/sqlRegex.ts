@@ -99,15 +99,15 @@ export const KEYWORDS_RE = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})\\b$`, '
  * structures that should be ignored or normalized before extraction rules run:
  * 1. Brackets: preserved (YAML rules need them for structure), composed from
  *    {@link BRACKET_IDENT} so the `]]` escape is honoured here too
- * 2. Double-quoted strings: identified for bracket conversion
- * 3. Single-quoted strings: identified for neutralization
+ * 2. Double-quoted identifiers: identified for bracket conversion; `""` is an escaped quote
+ * 3. Single-quoted strings: identified for neutralization; `''` is an escaped quote
  * 4. Comments: identified for removal
  *
  * @constant
  * @readonly
  */
 export const PASS1_CLEANSE_RE = new RegExp(
-  `${BRACKET_IDENT.source}|"[^"]*"|'(?:''|[^'])*'|--[^\\r\\n]*`, 'g'
+  `${BRACKET_IDENT.source}|"(?:""|[^"])*"|'(?:''|[^'])*'|--[^\\r\\n]*`, 'g'
 );
 
 /**

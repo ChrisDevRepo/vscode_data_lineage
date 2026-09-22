@@ -409,7 +409,7 @@ describe("NavigationEngine Robustness", () => {
   expect('error' in invalid && invalid.error === 'target_columns_required_for_ct', 'CT merge rejection has a stable error code').toBe(true);
 });
 
-  // Served SQL is the SQL as written (PM rulings nn, rr): no classification strips, rewrites or
+  // Served SQL is the SQL as written: no classification strips, rewrites or
   // annotates the body a hop hands to the model.
   it('serves the focus DDL exactly as stored under every classification', () => {
   const body = 'CREATE PROCEDURE [dbo].[spProcA] AS\n  PRINT N\'start\';\n  CREATE CLUSTERED INDEX ix_a ON TableA(Col1) WITH (PAD_INDEX = OFF)\n  -- a comment\nGO';
@@ -449,5 +449,12 @@ describe("NavigationEngine Robustness", () => {
   expect(byId.get('read_from')?.edge_type === 'read', `a table feeding the procedure is a read (got ${byId.get('read_from')?.edge_type})`).toBe(true);
   expect(byId.get('read_from')?.edge_direction === 'upstream', 'the source table is upstream of the procedure').toBe(true);
 });
+
+  it('origin_not_found hint names no tool the caller stage does not have', () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: 'no_such_origin', question: 'q', direction: 'downstream' });
+    expect('error' in result && result.error).toBe('origin_not_found');
+    expect('hint' in result ? result.hint : '').not.toContain('get_context');
+  });
 
 });

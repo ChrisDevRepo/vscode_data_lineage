@@ -37,7 +37,7 @@ import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/ru
 import { populateColumnStore } from '../engine/modelBuilder';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
 import { formatRenderConnectivity, type RenderConnectivity } from '../engine/renderConnectivity';
-import { formatScreenStateSections, type RenderStateSnapshot, type ScreenStateExtras } from './debugDumpScreenState';
+import { formatScreenStateSections } from './debugDumpScreenState';
 import {
   BRIDGE_PROTOCOL_VERSION,
   DetailPanelToExtensionMsgSchema,
@@ -45,6 +45,8 @@ import {
   type BridgeEnvelope,
   type MainPanelToExtensionMsg,
   type Project,
+  type RenderStateSnapshot,
+  type ScreenStateExtras,
 } from '../engine/shared/bridgeContract';
 import { summarizeZodError, postToDetail } from './host';
 
@@ -803,11 +805,10 @@ export function createMessageHandlers(
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
-      // The column store is a pure projection of `sess.model` (`populateColumnStore` is its only
-      // writer), and a rebuild only re-reads configuration — the model is untouched. Clearing here
-      // emptied the store with nothing to refill it, which blanked the detail panel's columns and
-      // made every stored run report `stale` (an absent DDL hashes to `unknown`, never matching the
-      // saved digest). Reset belongs to `applyModelToSession`, the actual model-load path.
+      // The column store is left intact: it is a pure projection of `sess.model`
+      // (`populateColumnStore` is its only writer) and a rebuild only re-reads configuration, so
+      // nothing here would refill it. Resetting it belongs to `applyModelToSession`, the model-load
+      // path that can.
       const config = await readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },
@@ -830,21 +831,54 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', 'Opening extension settings');
       host.executeCommand('workbench.action.openSettings', 'dataLineageViz');
     },
+    /**
+     * Saves a webview-composed export under a name the user confirms in the save dialog.
+     *
+     * @remarks
+     * `defaultName` is webview-supplied, so only its base name pre-fills the dialog: a name carrying
+     * separators or `..` segments would otherwise seed the dialog at a path the export never came
+     * from. The dialog still owns the destination — this only bounds what the webview may suggest.
+     */
     'export-file': async (msg) => {
-      host.log('debug', 'Bridge', `Exporting file: ${msg.defaultName}`);
-      const uri = await host.showSaveDialog({ defaultUri: vscode.Uri.file(msg.defaultName) });
+      const defaultName = path.basename(msg.defaultName);
+      host.log('debug', 'Bridge', `Exporting file: ${defaultName}`);
+      const uri = await host.showSaveDialog({ defaultUri: vscode.Uri.file(defaultName) });
       if (uri) {
         await host.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
         host.executeCommand('revealFileInOS', uri);
       }
     },
+    /**
+     * Opens the AI report as an untitled markdown document and previews it beside the panel.
+     *
+     * @remarks
+     * No HTML sanitizing pass runs here: the content lands in a text document, and VS Code's own
+     * markdown preview renders it under its `markdown.preview.security` policy, which blocks
+     * scripts and inline event handlers in preview content by default — the extension adding a
+     * second sanitizer would duplicate that guarantee without owning the surface that enforces it.
+     * The webview's own rendering of the same text is sanitized separately, at its own render site.
+     *
+     * The preview command belongs to the built-in markdown extension, which a user can disable. Its
+     * absence is not a failed action — the document is open either way — so the fallback shows the
+     * document itself and reports the missing preview as a warning, not an error.
+     */
     'ai-open-in-editor': async (msg) => {
       host.log('debug', 'Bridge', 'Opening AI description in editor');
       const doc = await vscode.workspace.openTextDocument({
         content: stripFocusNodeLinks(msg.markdown),
         language: 'markdown',
       });
-      await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
+      try {
+        await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
+      } catch (err) {
+        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+        notifyWarning(
+          Logger.create(outputChannel, 'Bridge'),
+          'Markdown preview unavailable',
+          'Data Lineage: the built-in Markdown preview is unavailable, so the report opened as a Markdown document instead.',
+          { messageType: 'ai-open-in-editor', reason: err instanceof Error ? err.message : String(err) },
+        );
+      }
     },
     'log': (msg) => {
       const level = msg.level ?? 'debug';

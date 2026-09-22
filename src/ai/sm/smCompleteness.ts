@@ -55,7 +55,7 @@ export function computeUnaccounted(required: readonly string[], accounted: Itera
  * @param available - Valid active columns exposed for correction.
  * @param contradicted - Active columns the focus itself declares; empty when it declares none.
  * @param appendHeldOrder - False when the caller merges this envelope with another fault family
- * (D-048) and states the resubmission order itself once, covering both; true (default) preserves
+ * and states the resubmission order itself once, covering both; true (default) preserves
  * the standalone envelope's own held-draft order.
  * @returns The narrow held-content retry envelope.
  */

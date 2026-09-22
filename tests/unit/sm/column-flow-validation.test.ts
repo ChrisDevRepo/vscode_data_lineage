@@ -41,7 +41,7 @@ describe("Column Flow Validation", () => {
     engine.getHopContext();
     return engine;
   }
-  // D1 convergence: CT is held to BB's neighbour accounting, so scripted submits route every
+  // Convergence: CT is held to BB's neighbour accounting, so scripted submits route every
   // required neighbour the guard demands — exactly what `<required_neighbors>` renders to a model.
   const requiredRoutes = (engine: NavigationEngine, focusId = 'origin') =>
     engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: 'what does this contribute?' }));
@@ -186,7 +186,7 @@ describe("Column Flow Validation", () => {
   }
 });
 
-  it("P1-16: out_col existing on the node but off the tracked spine → out_col_not_tracked (verb-led order + tracked set)", () => {
+  it("out_col existing on the node but off the tracked spine → out_col_not_tracked (verb-led order + tracked set)", () => {
     const engine = ctEngine(['amount']); // active = ['amount']; origin also declares 'region'
     const result = engine.submitFindings({
       focus_node_id: 'origin',
@@ -207,7 +207,7 @@ describe("Column Flow Validation", () => {
     }
   });
 
-  it("P1-16: out_col the node does not carry at all stays out_col_not_on_node, including a tracked name the node never declares", () => {
+  it("out_col the node does not carry at all stays out_col_not_on_node, including a tracked name the node never declares", () => {
     // 'GhostCol' is on the tracked spine but absent from the node's DDL, so it passes the
     // active-columns gate and is caught by the existence gate — still case (a): not on the node.
     const ctModel: DatabaseModel = makeModel([], [], ['dbo']);
@@ -366,7 +366,7 @@ describe("Column Flow Validation", () => {
   expect(committed.nodeStates.filter(state => state.nodeId === 'base_table').length, 'corrected CT flow commits one source node state').toBe(1);
 });
 
-  it("P1-40: prune_origin_forbidden names the column_flow its passthrough repair must carry", () => {
+  it("prune_origin_forbidden names the column_flow its passthrough repair must carry", () => {
   const engine = ctEngine(['amount']);
   const rejected = engine.submitFindings({
     focus_node_id: 'origin',
@@ -382,7 +382,7 @@ describe("Column Flow Validation", () => {
   expect(hint.trim() !== 'The exploration origin is immutable. Submit a complete analyze or passthrough finding for this focus.', 'a bare analyze/passthrough is no longer the whole repair').toBe(true);
 });
 
-  it("P1-40: prune_would_orphan_noted names the column_flow its passthrough repair must carry", () => {
+  it("prune_would_orphan_noted names the column_flow its passthrough repair must carry", () => {
   const col = { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' };
   const orphanOrigin: LineageNode = makeNode({ id: 'orphan_origin', schema: 'dbo', name: 'orphan_origin', type: 'view', columns: [col] });
   const orphanMid: LineageNode = makeNode({ id: 'orphan_mid', schema: 'dbo', name: 'orphan_mid', type: 'view', columns: [col] });
@@ -434,7 +434,7 @@ describe("Column Flow Validation", () => {
   expect(!hint.trim().endsWith("Use verdict='passthrough' to keep it without pruning."), 'passthrough alone is no longer the whole repair').toBe(true);
 });
 
-  it("P1-40: rejection precedence — a submit that is both contradicted and prune-shaped reports the contradicted verdict", () => {
+  it("rejection precedence — a submit that is both contradicted and prune-shaped reports the contradicted verdict", () => {
     const col = { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' };
     const topoOrigin: LineageNode = makeNode({ id: 'topo_origin', schema: 'dbo', name: 'topo_origin', type: 'view', columns: [col] });
     const topoMid: LineageNode = makeNode({ id: 'topo_mid', schema: 'dbo', name: 'topo_mid', type: 'view', columns: [col] });
@@ -1092,7 +1092,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     return engine;
   }
 
-  // D1 convergence: CT is held to BB's neighbour accounting, so every scripted submit routes
+  // Convergence: CT is held to BB's neighbour accounting, so every scripted submit routes
   // the required set the guard demands — the same list `<required_neighbors>` renders to a model.
   const j23RequiredRoutes = (engine: NavigationEngine, focusId: string) =>
     engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?` }));
@@ -1165,7 +1165,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     // Stage 2 — commit origin_view's column_flow naming staging.OrderAmount as the sole real
     // upstream contributor to Discount. `staging` itself is auto-added from the upstream_columns
     // reference (routeQuestionsByNode), which contracts through to both writer_proc and
-    // reader_proc, both newly admitted. D1 convergence: the remaining required neighbours
+    // reader_proc, both newly admitted. Convergence: the remaining required neighbours
     // (`rules`, `consumer_proc`) are routed explicitly, as the guard now demands in CT too.
     const commit = engine.submitFindings({
       focus_node_id: 'origin_view',
@@ -1272,7 +1272,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     // The stall this used to pin is closed. The overturned contract, restated: resubmitting
     // `verdict:'passthrough'` with `column_flow:[]` returned `column_chain_incomplete` again, so the
     // hint's own literal escape did not resolve the hop and the model had no way out. It now
-    // commits — the declaration is the account (P1-36).
+    // commits — the declaration is the account.
     const again = engine.submitFindings({
       focus_node_id: 'writer_proc',
       sections: [],
@@ -1285,10 +1285,10 @@ describe("J23 — CT active columns through contracted tables (red reproductions
   });
 
   it("RC4e: both CT-completeness admissions emit a parseable [Admit] line — a guard that stops rejecting must still leave a record", () => {
-    // P1-39. The engine logged richly on reject and almost nothing on admit, so a fix whose whole
+    // The engine logged richly on reject and almost nothing on admit, so a fix whose whole
     // purpose is to stop producing a rejection was indistinguishable in the artifacts from a code
     // path never taken. That cost two wrong "branch never exercised" records for 120cba46 before a
-    // hand grep of wave-b8731fc7 disproved them. The line carries the same kv shape as [Reject] so
+    // hand grep of the raw logs disproved them. The line carries the same kv shape as [Reject] so
     // evidence_review.facts_host_log buckets it without a second parser.
     const logs: string[] = [];
     const engine = new NavigationEngine(j23Model, j23Graph, (_level, message) => logs.push(message), {});
@@ -1325,7 +1325,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
       route_requests: j23RequiredRoutes(engine, 'writer_proc'),
     });
     expect(!('error' in declared), 'J23 RC4e: the declaration commits').toBe(true);
-    // Branch two: the P1-36 escape. This is the line that made 120cba46 attributable at all.
+    // Branch two: the passthrough escape. This is the line that made 120cba46 attributable at all.
     const admit = logs.find(m => m.includes('[Admit] guard=ct_completeness') && m.includes('reason=declares_none'));
     expect(admit !== undefined, 'J23 RC4e: the chain-ends-here admission is recorded').toBe(true);
     expect(admit?.includes('focus=writer_proc'), 'J23 RC4e: the admission names the focus it admitted').toBe(true);
@@ -1335,7 +1335,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
   });
 
   it("RC4c: a focus declaring none of the active columns commits with verdict:'passthrough' and column_flow:[] — the escape the hint offers, on a node the engine cannot check", () => {
-    // The live shape (wave-2320d530-local-mlx/run-T8, P1-36): the traced column is bound to a
+    // The live shape (an earlier T8 capture): the traced column is bound to a
     // procedure that never carried it. A procedure declares no columns, so
     // `resolveActiveColumnsForNode` passes every requested column through (smBase.ts:893) — absence
     // of metadata is not evidence of absence — and the completeness guard then demanded a chain the
@@ -1401,7 +1401,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
   });
 
   it("RC4d: the incomplete-chain hint offers the passthrough escape only where the engine will accept it", () => {
-    // P1-37, the named residual of P1-36. The escape `verdict:'passthrough'` with `column_flow:[]`
+    // The named residual of that escape. The `verdict:'passthrough'` + `column_flow:[]` route
     // is refused where the focus declares one of the active columns, so at those focuses the hint
     // must stop naming it — a rejection that prescribes a repair the engine rejects spends another
     // generation and teaches nothing. Two focuses, one fixture, opposite halves of the branch.
@@ -1429,7 +1429,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     expect((declaredDetail?.declared_here ?? []).map(c => c.toLowerCase()).sort().join(','), 'J23 RC4d: detail.declared_here carries the contradicting columns, so the repair is machine-readable too').toBe(['baseamt', 'discount'].sort().join(','));
 
     // Declares none: writer_proc is a procedure with no column metadata, so the escape is open and
-    // the hint must keep offering it — the wording P1-36 made true (RC4 proves it commits).
+    // the hint must keep offering it — the wording the repair made true (RC4 proves it commits).
     const silent = new NavigationEngine(j23Model, j23Graph, () => {}, {});
     expect('ok' in silent.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] }), 'J23 RC4d: second session initializes at origin_view').toBe(true);
     silent.getHopContext();
@@ -1517,7 +1517,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     expect(retry.sections.length === 1 && retry.sections[0].text === authoredText, 'J23 RC4b: held sections are restored byte-identical on the empty-sections retry').toBe(true);
     expect(retry.summary === 'writer_proc summary', 'J23 RC4b: held summary is restored byte-identical').toBe(true);
 
-    // D1 convergence: the guard runs in CT too, so the amended resubmit carries the same required
+    // Convergence: the guard runs in CT too, so the amended resubmit carries the same required
     // routing the original submission did.
     const committed = engine.submitFindings({ ...retry, route_requests: j23RequiredRoutes(engine, 'writer_proc') });
     expect('ok' in committed && committed.ok, 'J23 RC4b: the amended hop commits').toBe(true);

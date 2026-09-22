@@ -1,9 +1,11 @@
 // Structural fingerprint of `assets/aiOutputTemplates.yaml` (and any overlay of it).
 //
-// The schema-version contract protects STRUCTURE: the set of template keys and, per template, the
-// set of fields and their value types — the shape `parseAiOutputTemplatesYaml` and the renderer
-// read. Prose inside `instruction` / `example` is content: an older overlay carrying different
-// wording still parses, still renders, and cannot crash the host, so wording never forces a bump.
+// The schema-version contract exists so a user's old overlay never misbehaves after an upgrade:
+// it bumps only when a previous release's overlay would stop fitting — a template key removed or
+// renamed, a field removed or retyped (`breakingStructureChanges`). Additions are backward
+// compatible: the overlay merges over the built-in file, which fills what the overlay lacks, so
+// they never force a bump. Prose inside `instruction` / `example` is content: an older overlay
+// carrying different wording still parses and renders, so wording never forces a bump.
 //
 // Shared by the release gate (`assert-template-schema-version.mjs`) and its unit test so the two
 // cannot drift.
@@ -71,3 +73,15 @@ export function structureDiff(before, after) {
   }
   return lines;
 }
+
+/**
+ * The breaking subset of a {@link structureDiff} result: removals and retypes — every change where
+ * a previous release's overlay no longer fits the current shape. A key rename appears here as the
+ * removal of the old key. Additions (`+` lines) are backward compatible: an older overlay merges
+ * over the built-in file, which fills the keys the overlay lacks, so they never force a bump.
+ *
+ * @param {string[]} diff Lines as produced by {@link structureDiff}.
+ * @returns {string[]} Only the lines that require a schemaVersion bump.
+ */
+export const breakingStructureChanges = (diff) =>
+  diff.filter((line) => line.startsWith('-') || line.startsWith('~'));

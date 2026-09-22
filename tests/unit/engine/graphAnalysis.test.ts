@@ -193,6 +193,13 @@ describe('analyzeLongestPath', () => {
     expect(group.nodeIds.at(-1)).toBe('D');
   });
 
+  it('summarises a one-step chain in the singular', () => {
+    const pair = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
+    const result = analyzeLongestPath(pair, 2);
+    expect(result.groups[0].meta?.depth).toBe(1);
+    expect(result.summary).toBe('Deepest chain: 1 step (1 chain)');
+  });
+
   it('filters out a chain shorter than minNodes', () => {
     expect(analyzeLongestPath(chain(), 5).groups).toEqual([]);
   });
@@ -316,6 +323,27 @@ describe('analyzeLongestPath', () => {
     expect(group.nodeIds).toEqual(['A', 'B', 'C', 'D', 'E']);
     expect(group.meta?.depth).toBe(4);
   });
+
+  // Two bridges between the same pair of components: the first edge in walk order is a short
+  // sink; the second is a longer chain. Keeping only the first bridge would rank the short arm.
+  const twoBridges = () => makeGraph(
+    [
+      { id: 'A1' }, { id: 'A2' },
+      { id: 'Short' },
+      { id: 'L1' }, { id: 'L2' }, { id: 'L3' },
+    ],
+    [
+      ['A1', 'A2'], ['A2', 'A1'],
+      ['A1', 'Short'],
+      ['A2', 'L1'], ['L1', 'L2'], ['L2', 'L3'],
+    ],
+  );
+
+  it('keeps every inter-component bridge, not only the first edge seen', () => {
+    const group = analyzeLongestPath(twoBridges(), 2).groups[0];
+    expect(group.nodeIds).toEqual(['A1', 'A2', 'L1', 'L2', 'L3']);
+    expect(group.meta?.depth).toBe(4);
+  });
 });
 
 // ─── analyzeCycles ───────────────────────────────────────────────────────────
@@ -424,6 +452,51 @@ describe('analyzeExternalRefs', () => {
     ]);
     expect(analyzeExternalRefs(graph).groups.map(group => group.label))
       .toEqual(['aa.csv', 'zz.csv', 'ADB / schema.T2', 'BDB / schema.T1']);
+  });
+
+  it('labels a file source with no URL by the node name', () => {
+    const graph = externalGraph([['file1', {
+      schema: '', name: 'orphan.csv', type: 'external',
+      externalType: 'file', externalUrl: '', externalDatabase: '',
+    }]]);
+    const groups = analyzeExternalRefs(graph).groups;
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe('orphan.csv');
+  });
+
+  it('labels a file source whose URL has no path segment by the node name', () => {
+    const graph = externalGraph([['file1', {
+      schema: '', name: 'slash-only', type: 'external',
+      externalType: 'file', externalUrl: '///', externalDatabase: '',
+    }]]);
+    expect(analyzeExternalRefs(graph).groups[0].label).toBe('slash-only');
+  });
+
+  it('falls back to the node id when a file source has no name', () => {
+    const graph = externalGraph([['file-id', {
+      schema: '', type: 'external',
+      externalType: 'file',
+    }]]);
+    expect(analyzeExternalRefs(graph).groups[0].label).toBe('file-id');
+  });
+
+  it('labels a database cross-reference with no database by the node name', () => {
+    const graph = externalGraph([['db1', {
+      schema: 'dbo', name: 'dbo.Sales', type: 'external',
+      externalType: 'db',
+    }]]);
+    const groups = analyzeExternalRefs(graph).groups;
+    expect(groups[0].label).toBe('dbo.Sales');
+    expect(String(groups[0].meta?.database)).toBe('');
+  });
+
+  it('sorts same-database refs by label', () => {
+    const graph = externalGraph([
+      ['db2', { schema: '', name: 'schema.Z', type: 'external', externalType: 'db', externalUrl: '', externalDatabase: 'SameDB' }],
+      ['db1', { schema: '', name: 'schema.A', type: 'external', externalType: 'db', externalUrl: '', externalDatabase: 'SameDB' }],
+    ]);
+    expect(analyzeExternalRefs(graph).groups.map(group => group.label))
+      .toEqual(['SameDB / schema.A', 'SameDB / schema.Z']);
   });
 
   it('includes the external node and every neighbour that reads it', () => {

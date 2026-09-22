@@ -73,16 +73,36 @@ const DEAD_LINE_PREFIX = '--';
 const REDOS_BUDGET_MS = 5;
 
 /**
- * Runs `regex` against a bounded sample and reports whether it exceeded the ReDoS guard budget.
+ * Bounded probe inputs for the ReDoS guard.
+ *
+ * @remarks
+ * Catastrophic backtracking is triggered by the character class the nested quantifier consumes,
+ * so a single letter run passes patterns such as `(\s+)+$` or `(\[+)+\]` that blow up on the
+ * whitespace- and bracket-heavy SQL they are then run over. Each sample covers one class that is
+ * dense in DDL bodies.
+ */
+const REDOS_SAMPLES: readonly string[] = [
+  'a'.repeat(200),
+  ' \t'.repeat(100),
+  '['.repeat(200),
+  'a,'.repeat(100),
+  'a]'.repeat(100),
+];
+
+/**
+ * Runs `regex` against each bounded sample and reports whether any run exceeded the ReDoS guard
+ * budget.
  *
  * @remarks
  * Uses `performance.now()` (sub-ms precision) instead of `Date.now()` (1ms / 15ms on Windows).
  */
 function exceedsRedosBudget(regex: RegExp): boolean {
-  const sample = 'a'.repeat(200);
-  const start = performance.now();
-  regex.test(sample);
-  return performance.now() - start > REDOS_BUDGET_MS;
+  for (const sample of REDOS_SAMPLES) {
+    const start = performance.now();
+    regex.test(sample);
+    if (performance.now() - start > REDOS_BUDGET_MS) return true;
+  }
+  return false;
 }
 
 /**
@@ -309,7 +329,7 @@ export function searchBodyScripts(
 
   // One allocation for the whole sweep, not one per node: `compileSearchRegex` fixes the flags, and
   // walking every match in a body needs the `g` flag's `lastIndex` cursor.
-  const scanner = regex === null ? null : new RegExp(regex.source, `${regex.flags}g`);
+  const scanner = regex === null ? null : regex.global ? regex : new RegExp(regex.source, `${regex.flags}g`);
 
   const matches: BodyMatch[] = [];
   for (const node of filtered) {

@@ -28,7 +28,6 @@ global keybindings, so none of these can conflict with your editor bindings.
 | <kbd>h</kbd> | Hide schema clusters in Expanded Schema View |
 | <kbd>Delete</kbd> | Exclude the selected node from the view |
 | <kbd>Esc</kbd> | Close active input, then exit the current mode |
-| <kbd>Enter</kbd> | Select a suggestion or apply the focused action |
 
 Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text,
 and never fire with a Ctrl, Cmd, or Alt modifier. <kbd>Esc</kbd> cascades: it closes
@@ -237,7 +236,7 @@ The user-visible flow has the following paths:
 
 #### Discovery (chat answers, no graph)
 
-The default state. The AI uses read-only catalog tools to inspect loaded scope, DDL, columns, neighbours, and graph patterns, then answers in chat.
+The default state. The AI uses snapshot catalog tools to inspect loaded scope, DDL, columns, neighbours, and graph patterns, then answers in chat.
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
 - `/search` pins this path deterministically, skipping the entry-detection model call. `/trace` pins the deep-analysis path below.
@@ -282,8 +281,8 @@ database for compliance-critical claims.
 #### Deep analysis
 
 Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
-analysis** follow-up, or an engine-forced over-budget discovery request. It
-begins only after the user approves the `confirm_sm_start` consent gate.
+analysis** follow-up, or a discovery request that exceeds the configured
+budget. It begins only after the user approves the consent gate.
 
 - The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal.
 - The extension walks the approved graph scope one object at a time and validates every requested route against the loaded catalog before visiting it.
@@ -291,12 +290,6 @@ begins only after the user approves the `confirm_sm_start` consent gate.
 - Below the `Hop X/Y` counter, the chat echoes each completed hop's one-line finding as it lands — a
   transient progress trail, not part of the saved transcript, so it never reaches the model again on
   a later turn.
-
-### Why it matters
-
-In complex ETL pipelines a column often changes name several times. Deep
-analysis preserves recent context while retaining per-object findings for the
-final synthesis.
 
 ### Mission types
 

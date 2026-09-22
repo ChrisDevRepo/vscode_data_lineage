@@ -61,8 +61,12 @@ Lenient intake happens once at the schema edge, not per field: a strict array
 the model sends as a JSON string (`sections`) is decoded and accepted, and a
 prose tool call whose payload body is not fenced is read — a shape the port can
 read is read, and only a shape it cannot is rejected.
-The `package.json` `languageModelTools` manifest is generated from the Zod
-schemas and a drift test guards the pair.
+The `package.json` `languageModelTools` manifest is generated from the
+read-effect subset of `TOOL_DEFS` (`src/ai/tools/toolDefs.ts`); a drift test
+guards the pair. Mutating tools (`lineage_get_scope_bundle`,
+`lineage_start_exploration`, `lineage_submit_findings`,
+`lineage_present_result`) stay on the participant dispatcher and are never
+registered with `vscode.lm`.
 
 An AI-authored view carries its run forward. `present_result` stamps the run id
 onto the view metadata and, once the presentation commits, captures the engine
@@ -174,7 +178,14 @@ round costs its own semantic-failure charge against a budget of three.
 
 Repair is minimal-delta. A rejected submission is held and repaired through
 bounded correction fragments and the strict patch schema rather than re-sending
-the whole payload.
+the whole payload. A content cap — a label's length, a list's
+entry count — belongs to that repairable class: the JSON schema the model reads
+advertises it, no parse enforces it, and the validator — `validatePresentResult`,
+or `NavigationEngine` for the `submit_findings` fields — rejects the overrun with
+the measured size against the limit and authorizes only the offending field. A
+cap left on a parsed schema rejects the whole call at the model port with no held
+draft, which is a full resend charged for a label two words too long. Structural
+constraints (a required field, a floor, an enum) stay real parse-time checks.
 
 ## Persisted records
 

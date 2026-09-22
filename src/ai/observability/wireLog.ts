@@ -48,6 +48,7 @@ export interface WireMessage {
    * trace never claims a role its provider never saw.
    */
   readonly role: number | string;
+  /** Message content parts, shaped exactly as they sit on the wire. */
   readonly parts: readonly WirePart[];
 }
 
@@ -59,8 +60,11 @@ export interface WireMessage {
  * exposes none at all. An absent field means "not reported", never zero.
  */
 export interface TokenUsage {
+  /** Provider-reported prompt (input) token count; absent when not reported. */
   readonly inputTokens?: number;
+  /** Provider-reported completion (output) token count; absent when not reported. */
   readonly outputTokens?: number;
+  /** Provider-reported total token count; absent when not reported. */
   readonly totalTokens?: number;
   /** Reasoning tokens billed separately by reasoning models, when the provider itemizes them. */
   readonly reasoningTokens?: number;

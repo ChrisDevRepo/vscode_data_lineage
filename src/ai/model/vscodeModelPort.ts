@@ -19,6 +19,7 @@ import {
   isHostCancellationError,
   isPortCancellation,
 } from './modelPort';
+import type { InstructionPhase } from '../agent/instructionPlan';
 import { VscodeLangChainBridge } from './vscodeLangChainBridge';
 import { systemPromptHash, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
@@ -48,7 +49,54 @@ type PortGenerationPart =
 // Backstop against an unbounded drain when a provider streams prose (e.g. pseudo-tool-call markup)
 // instead of a real tool call: UAT recorded a 3,638,544-char runaway against a ~33.6 KB legitimate
 // maximum, so 200,000 sits far above any real answer while stopping a runaway drain early.
+//
+// A tool-free chain-of-thought drain of 130,000-140,000 chars slips UNDER this outer bound and
+// still burns minutes until the provider's own token cap cuts it mid-sentence, so tool-bearing
+// phases carry a tighter per-phase ceiling. Every cap sits at or above ~1.5x the ~33.6 KB
+// legitimate maximum above, so no generation inside the legitimate envelope can be cut, while a
+// runaway of that size exceeds its phase cap by at least ~1.3x. Phases without a smaller cap keep
+// the outer bound; an unrecognized phase label always resolves to the outer bound, never to a
+// smaller cap.
 const STREAM_TEXT_CHAR_CEILING = 200_000;
+
+/**
+ * Streamed-text ceiling per {@link InstructionPhase}, calibrating
+ * {@link STREAM_TEXT_CHAR_CEILING} instead of adding a second guard site.
+ *
+ * Each cap is anchored on the ~33.6 KB global legitimate maximum documented on
+ * {@link STREAM_TEXT_CHAR_CEILING}, never on a phase's own observed maximum alone:
+ *
+ * - `detect_entry`, `sm_entry`, `visual_preview`, `synthesis` 100,000 — legitimate text on these
+ *   phases is a few hundred chars at most, far too thin to tighten below the legitimate envelope,
+ *   so each is anchored at 3x the global maximum.
+ * - `discover`, `active` 50,000 — the two phases that legitimately stream prose, at ~1.5x the
+ *   global maximum, which is still an order of magnitude above their own legitimate maxima.
+ * - `compose` 200,000 — the text channel IS the deliverable there (`completeText` discards
+ *   `hitCeiling`), so a cut would be delivered silently with no retry behind it; it keeps the
+ *   outer bound.
+ * - `completed` 200,000 — no model call is issued under the label; outer bound.
+ *
+ * Total over {@link InstructionPhase} by construction: a new phase member fails to compile until
+ * it is mapped here. An unrecognized phase string resolves through {@link streamTextCharCeiling}
+ * to the outer bound, never to a smaller cap.
+ */
+const PHASE_STREAM_TEXT_CHAR_CEILINGS: Readonly<Record<InstructionPhase, number>> = {
+  detect_entry: 100_000,
+  discover: 50_000,
+  visual_preview: 100_000,
+  sm_entry: 100_000,
+  active: 50_000,
+  compose: STREAM_TEXT_CHAR_CEILING,
+  synthesis: 100_000,
+  completed: STREAM_TEXT_CHAR_CEILING,
+};
+
+/** Resolves the streamed-text ceiling for one call: its phase cap, or the outer bound when unknown. */
+function streamTextCharCeiling(phase: string | undefined): number {
+  if (phase === undefined) return STREAM_TEXT_CHAR_CEILING;
+  const mapped = PHASE_STREAM_TEXT_CHAR_CEILINGS[phase as InstructionPhase];
+  return typeof mapped === 'number' ? mapped : STREAM_TEXT_CHAR_CEILING;
+}
 
 // A provider that streams nothing at all is indistinguishable from a hung connection: UAT recorded
 // a generation that produced zero chunks for 16m42s until manually cancelled, and neither
@@ -153,7 +201,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const { parts: response, hitCeiling } = await this.collectGeneration(
+      const { parts: response, hitCeiling, nonTextChars } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -237,6 +285,7 @@ export class VscodeModelPort implements ModelPort {
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
+        + ` observed_nontext_chars=${nonTextChars}`
         + ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}`
         + ' (provider usage unavailable)',
       );
@@ -334,7 +383,7 @@ export class VscodeModelPort implements ModelPort {
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
-  ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean }> {
+  ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean; nonTextChars: number }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
     // Captured now rather than read at emit time: concurrent generations would otherwise all
@@ -390,7 +439,16 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       const parts: PortGenerationPart[] = [];
       let textChars = 0;
+      // Output the host streamed outside the text channel (reasoning). Reported, never capped: the
+      // text ceilings are calibrated on text alone, and legitimate reasoning exceeds them.
+      let nonTextChars = 0;
       let hitCeiling = false;
+      // The phase cap breaks only a tool-free text drain: a chunk that finally delivers a tool
+      // call must never be discarded because earlier prose crossed the cap. The outer bound keeps
+      // today's unconditional behavior. Unknown phase labels resolve to the outer bound, which
+      // makes the phase term inert for them.
+      let sawToolCallDelta = false;
+      const textCeiling = streamTextCharCeiling(phase);
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         clearTimeout(watchdog);
@@ -400,7 +458,10 @@ export class VscodeModelPort implements ModelPort {
           parts.push({ type: 'text', text: chunk.content });
           textChars += chunk.content.length;
         }
+        const streamedNonText = chunk.response_metadata?.nonTextChars;
+        if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
         for (const call of chunk.tool_call_chunks ?? []) {
+          sawToolCallDelta = true;
           if (!call.id || !call.name || typeof call.args !== 'string') {
             throw new ModelPortError(
               'unsupported_response',
@@ -417,10 +478,13 @@ export class VscodeModelPort implements ModelPort {
         // Breaking here (rather than throwing) closes the underlying stream through the normal
         // async-generator return path. The caller stamps finishReason `length` so the retry layer
         // classifies this as `output_limit`, not a missing tool call.
-        if (textChars >= STREAM_TEXT_CHAR_CEILING) {
+        if (
+          textChars >= STREAM_TEXT_CHAR_CEILING
+          || (textChars >= textCeiling && !sawToolCallDelta)
+        ) {
           hitCeiling = true;
           this.options.debugLog?.(
-            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars}`,
+            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} nontext=${nonTextChars} cap=${textCeiling}`,
           );
           break;
         }
@@ -472,7 +536,7 @@ export class VscodeModelPort implements ModelPort {
           : resolvedParts.some((part) => part.type === 'tool-call') ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
       });
-      return { parts: resolvedParts, hitCeiling };
+      return { parts: resolvedParts, hitCeiling, nonTextChars };
     } catch (error) {
       // The watchdog aborts through the shared cancellation token, so the stream surfaces its
       // expiry as a cancellation — reclassify it here so it reaches callers as a provider timeout

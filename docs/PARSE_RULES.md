@@ -7,7 +7,7 @@ SQL-body dependencies are extracted by a multi-pass regex engine driven by metad
 1. Command Palette → **Data Lineage: Create Parse Rules** copies the built-in YAML into your workspace.
 2. Set `dataLineageViz.parseRulesFile` to the path of the copy (search "dataLineageViz" in VS Code Settings).
 3. Edit, add, or disable rules. Invalid entries are skipped and logged; the extension shows a warning whenever any rule is skipped, not only when none remain valid.
-4. Reload the model. Run `npm run test:parser` and review the resulting dependency edges against the affected SQL before merging.
+4. Reload the model. Run `npm run test:parser` and review the resulting dependency edges against the affected SQL.
 
 ## Parsing pipeline
 
@@ -74,8 +74,8 @@ construct is rare on the supported platforms. Scoped by platform where that matt
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | neither table is captured | partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list followed by `UNION`, `OPTION`, `PIVOT` or `TABLESAMPLE`, or containing a table variable | the whole list fails to normalise, so tables after the first are lost | legacy bodies on any platform |
 
-`CONTAINSTABLE`, `WITH XMLNAMESPACES`, and `CROSS APPLY x.Doc.nodes(...)` were checked and are
-handled correctly — the base table is captured and no phantom reference is produced.
+`CONTAINSTABLE`, `WITH XMLNAMESPACES`, and `CROSS APPLY x.Doc.nodes(...)` are
+handled: the base table is captured and no phantom reference is produced.
 
 ## XML fallback direction
 

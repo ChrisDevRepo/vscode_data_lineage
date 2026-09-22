@@ -554,6 +554,67 @@ describe('executeToolGenerationAttempt — truncated generation classification',
     expect(attempted.events.filter((event) => event.type === 'text')).toEqual([]);
   });
 
+  it('retries a tool-less length cut in a required-terminal-tool phase as a chargeable missing call', async () => {
+    const attempted = await runAttempt(
+      [{ text: 'Wait, but the task says re-anchor. '.repeat(50), finishReason: 'length' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('continue');
+    expect(attempted.result.finishAnomaly).toBeUndefined();
+    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.rejections).toEqual([
+      expect.objectContaining({
+        code: 'missing_required_tool_call',
+        reason: 'The output limit was reached before lineage_submit_findings was called.',
+      }),
+    ]);
+    expect(attempted.invocations).toEqual([]);
+    expect(attempted.events.filter((event) => event.type === 'text')).toEqual([]);
+  });
+
+  it('charges a text-free length cut in a required-terminal-tool phase, never as an empty generation', async () => {
+    const attempted = await runAttempt(
+      [{ text: '', finishReason: 'length' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('continue');
+    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.rejections).toEqual([expect.objectContaining({ code: 'missing_required_tool_call' })]);
+  });
+
+  it('retries a tool-less length cut in an evidence-required phase as missing evidence', async () => {
+    const attempted = await runAttempt(
+      [{ text: 'Thinking about the scope…', finishReason: 'length' }],
+      [{ name: 'lineage_get_context', result: '{"visible_objects":32}' }],
+      { requiresToolEvidence: true, proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('continue');
+    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.rejections).toEqual([
+      expect.objectContaining({
+        code: 'missing_required_evidence',
+        reason: 'The output limit was reached before any lineage tool was called.',
+      }),
+    ]);
+  });
+
+  it('keeps a content-filter cut terminal even when the phase requires a tool', async () => {
+    const attempted = await runAttempt(
+      [{ text: 'Filtered', finishReason: 'content-filter' }],
+      [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
+      { requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required', proseGate: 'buffer-until-tool' },
+    );
+
+    expect(attempted.result.stop).toBe('output_limit');
+    expect(attempted.result.finishAnomaly).toBe('content-filter');
+    expect(attempted.result.rejections).toEqual([]);
+  });
+
   it('treats a truncation stop as phase-terminal ahead of the cumulative budget counters', () => {
     const state: ToolPhaseAttemptState = {
       phase: 'active',
@@ -976,7 +1037,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
   it('replays the whole submit_findings call when the rejection names no path, so a full resend can carry it over', async () => {
     // A route rejection orders "resend submit_findings whole, carrying your sections and summary over
     // unchanged" and names no field path; a replay of `{}` leaves the model rebuilding the call from
-    // memory, which reintroduced an already-repaired out_col (m1-n3-b-fireworks T8 gen 21).
+    // memory, which reintroduced an already-repaired out_col (a recorded T8 generation).
     const columnFlow = Array.from({ length: 6 }, (_, index) => ({
       out_col: `Col${index}`,
       upstream_columns: [{ node: '[dbo].[Src]', col: `Src${index}`, transforms: ['direct'] }],
@@ -1081,21 +1142,24 @@ describe('executeToolAttempt — bounded rejection replay', () => {
   });
 
   it('replays the whole schema-invalid call when the flagged field is not a list, instead of empty arguments', async () => {
-    // A title over its limit flags `title`, a scalar root no list projection covers; the standing hint
-    // orders "keep every other field unchanged", so a replay of `{}` sent the model into a full
-    // regeneration that overran the limit again (b2-b-fireworks T6: 146, 123, 124 chars, terminal).
+    // An out-of-enum `layout_direction` flags a scalar root no list projection covers; the standing
+    // hint orders "keep every other field unchanged", so a replay of `{}` sent the model into a full
+    // regeneration of an answer it had already authored (recorded on the length cap this fixture
+    // used to carry: 146, 123, 124 chars, then terminal). Length caps no longer reject at this
+    // boundary — `validatePresentResult` owns them and holds the draft — but every remaining
+    // schema-shaped scalar issue still replays the whole call.
     const input = {
-      title: 'T'.repeat(146),
+      layout_direction: 'SIDEWAYS',
       sections: [{ label: 'Overview', text: 'SECTION-CARRIED' }],
     };
     const { replayed, first } = await replayAfterInvalidCall({
       toolName: 'lineage_present_result',
       input,
-      reason: 'title: 146 chars, limit 120',
-      issuePaths: ['title'],
+      reason: 'layout_direction: Invalid option: expected one of "LR"|"TB"',
+      issuePaths: ['layout_direction'],
     });
 
-    expect(first.rejections[0].issuePaths).toEqual(['title']);
+    expect(first.rejections[0].issuePaths).toEqual(['layout_direction']);
     expect(replayedToolArgs(replayed)).toEqual(input);
   });
 
@@ -1536,6 +1600,57 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(results[1].rejections[0]?.hint)
       .toBe('You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.');
     expect(state.observations[0].result).toBe(body);
+  });
+
+  it('restates the held error envelope instead of DUPLICATE_READ_HINT for a repeat whose stored body is a result_too_large reply', async () => {
+    // The held body of the repeated read is the too-big stand-in stored for it (2026-09-06 ruling) —
+    // an error envelope, so "Answer from it" would be false; the correction restates the held error.
+    const bodies: Record<string, string> = {
+      spimportorders: JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(40_000) }),
+      spcleanorders: JSON.stringify({ id: 'spcleanorders', body: 'B'.repeat(10_000) }),
+    };
+    const { registry, invocations } = scriptedRegistry([{
+      name: 'lineage_get_object_detail',
+      effect: 'read',
+      result: (input) => bodies[String((input as { id: string }).id)],
+    }]);
+    const port = new ScriptedModelPort([
+      { toolCalls: [validCall('call-1', 'lineage_get_object_detail', { id: 'spimportorders' })] },
+      { toolCalls: [validCall('call-2', 'lineage_get_object_detail', { id: 'spcleanorders' })] },
+      { toolCalls: [validCall('call-3', 'lineage_get_object_detail', { id: 'spcleanorders' })] },
+      { text: 'The second procedure was refused storage for size.' },
+    ]);
+    const { sink } = collectingSink();
+    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: ['lineage_get_object_detail'] };
+    const plan: ConverseInstructionPlan = {
+      kind: 'converse',
+      context,
+      frame: { phase: 'active' },
+      input: { messages: [modelUserMessage('What do these procedures do?')], registry, sink, phase: 'active', instructionContext: context },
+    };
+    let state = initialToolPhaseAttemptState('active');
+    const results: ToolAttemptResult[] = [];
+    for (let index = 0; index < 4; index++) {
+      const result = await executeToolAttempt(port, plan, { priorState: state });
+      results.push(result);
+      state = recordToolAttempt(state, result);
+    }
+
+    // Two dispatches only; the repeat of the second read is a duplicate, not a third dispatch.
+    expect(invocations.map((invocation) => (invocation.input as { id: string }).id))
+      .toEqual(['spimportorders', 'spcleanorders']);
+    expect(results[2].rejections[0]?.code).toBe(REJECTION_CODES.duplicateRead);
+    // The stored body of the repeated read is the error envelope, and the hint restates it —
+    // code, then the held hint — instead of DUPLICATE_READ_HINT.
+    expect(JSON.parse(state.observations[1].result)).toMatchObject({ error: 'result_too_large' });
+    expect(results[2].rejections[0]?.hint).toBe(
+      'The held result for callId call-2 is an error envelope (result_too_large): '
+      + 'This result is larger than the evidence one hop can hold, so none of it was stored. Stop this tool loop; narrow the request with lineage_get_scope_bundle, or take the consent-gated hop-by-hop path with lineage_start_exploration, which reads one object per hop.',
+    );
+    expect(results[2].rejections[0]?.hint).not.toContain('Answer from it');
+    // Charging and streak semantics are unchanged: the duplicate stays free on its first appearance.
+    expect(results[2].semanticFailures).toBe(0);
+    expect(state.semanticFailures).toBe(0);
   });
 
   it('replays turn 23: two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {

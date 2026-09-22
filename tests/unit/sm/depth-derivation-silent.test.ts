@@ -1,8 +1,7 @@
 /**
  * Depth derivation must not resolve silently.
  *
- * T8S-DEPTH-SILENT: two recorded baselines (`mainref-ds2-fireworks`,
- * `baseline-main-1.1.0`) carried a correctly derived `depthIntent`
+ * Two recorded baselines carried a correctly derived `depthIntent`
  * `{kind: 'asymmetric', upstream: 2, downstream: 1}` and still ran with
  * `depthEnforcement: 'silent'`. The intent was visible in the `[BFS]` line
  * (`depth=up=2 down=1`) while the enforcement it resolved to was not logged at

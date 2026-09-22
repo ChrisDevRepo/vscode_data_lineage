@@ -19,10 +19,9 @@ const AI_VOCABULARY = /(^|[^a-z])(ai|llm|model|copilot|gpt)([^a-z]|$)/i;
  * Prohibited for every script without exception.
  *
  * @remarks
- * No automated suite runs the product's real path. The Electron lanes use a fixture provider; the
- * live-provider lane calls a model but drives the runtime through the harness's own port and a
- * `vscode` shim, so it never touches `vscode.lm`. Real is a user in real VS Code with their own
- * Copilot model — that is UAT, and UAT is not a script.
+ * No public automated suite runs the product's real path. The Electron lanes use a fixture
+ * provider and perform no inference. Real is a user in real VS Code with their own Copilot
+ * model — that is UAT, and UAT is not a script.
  */
 const OVERCLAIM_VOCABULARY = /(^|[^a-z])(real|e2e|endtoend)([^a-z]|$)/i;
 

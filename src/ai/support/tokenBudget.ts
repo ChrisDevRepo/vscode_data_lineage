@@ -6,15 +6,20 @@
  *      discovery. Over cap → hard-rejected with `over_discovery_budget`; discovery stays in
  *      chat and the existing SM-offer pill is the opt-in for a detailed analysis.
  *   2. ai.discoveryTokenBudget (default 10000) — max projected DDL token estimate
- *      for that same scope. Either cap exceeded → the same envelope. `/trace` and
- *      column-trace still enter SM via entryRouting, not this overflow.
+ *      for that same scope. Either cap exceeded → the same envelope. Only `/trace` and
+ *      the SM-offer pill enter SM via entryRouting, not this overflow.
  *
  * ZERO-TRUNCATION GUARANTEE:
  *   No tool response is ever truncated, capped, or sliced.
- *   No data is ever lost. Over-budget requests are HARD-REJECTED with a hint.
+ *   No data is ever lost. An over-budget request is rejected as a whole and answered
+ *   with a partial bundle plus the referral hint below (report-and-offer) — the
+ *   partial payload is a different bounded payload, never a slice of the rejected
+ *   request. Naming `lineage_start_exploration` in a tool hint is precedented
+ *   (`RESULT_TOO_LARGE_HINT`).
  *
  * Zero VS Code imports — pure functions for testability.
  */
+import { REJECTION_CODES } from './rejectionCodes';
 
 /**
  * Provides a heuristic estimation of token count from a character count.
@@ -133,11 +138,17 @@ export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget(
  *
  * @remarks
  * Run BEFORE executing the underlying catalog handler. On overflow, the caller
- * returns the structured rejection envelope (with `hint` that a detailed analysis
- * would be needed) instead of running the handler. No fallback — over-budget
- * requests are hard rejections per the project's "no fallback paths" rule. The
- * existing post-discovery SM-offer pill is the opt-in; this hint must not name
- * hop-by-hop or a consent-gated path.
+ * returns the structured rejection envelope carrying partial data plus this
+ * `hint` — the report-and-offer referral: answer the user briefly from the
+ * partial data the result carries, say the full question needs a detailed
+ * analysis, and offer to continue with `lineage_start_exploration` once the
+ * user confirms, never starting it. Naming `lineage_start_exploration` in a
+ * tool hint is precedented (`RESULT_TOO_LARGE_HINT`); the rule that a
+ * hint must not name hop-by-hop or a consent-gated path does not apply to this
+ * hint — the consent gate itself stays untouched and the post-discovery
+ * SM-offer pill remains the trigger. No
+ * fallback, and nothing is ever truncated: the partial payload the caller
+ * attaches is a different bounded payload, not a slice of the rejected request.
  *
  * @param budget - The calling turn's budget.
  * @param requestedNodes - Number of nodes the request would load (e.g. BFS result size).
@@ -154,10 +165,10 @@ export function checkScopeBudget(
   if (!exceedsPhaseBudget(budget.discovery, requestedNodes, tokens)) return { ok: true };
   return {
     ok: false,
-    reason: 'over_discovery_budget',
+    reason: REJECTION_CODES.overDiscoveryBudget,
     counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
     limits: { node_cap: budget.discovery.nodeCap, token_budget: budget.discovery.tokenBudget },
-    hint: 'Scope exceeds the discovery budget. Summarize what is already known; a detailed analysis would be needed.',
+    hint: 'Scope exceeds the discovery budget, so only partial data could be loaded. Answer the user briefly from the partial data this result carries, say the full question needs a detailed analysis, and offer to continue with lineage_start_exploration once the user confirms — do not start it yourself.',
   };
 }
 
@@ -245,7 +256,7 @@ export function checkActiveScopeAdmission(
   const counts = { nodes: projectedNodes, tokens };
   const limits = { node_cap: budget.exploration.nodeCap, token_budget: budget.exploration.tokenBudget };
   if (!exceedsPhaseBudget(budget.exploration, projectedNodes, tokens)) return { ok: true, counts, limits };
-  return { ok: false, reason: 'over_active_scope_budget', counts, limits };
+  return { ok: false, reason: REJECTION_CODES.overActiveScopeBudget, counts, limits };
 }
 
 /**

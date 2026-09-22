@@ -1,21 +1,20 @@
 #!/usr/bin/env node
-// Release gate: the STRUCTURE of `assets/aiOutputTemplates.yaml` may not change without bumping
-// AI_TEMPLATE_SCHEMA_VERSION.
+// Release gate: a BREAKING structure change to `assets/aiOutputTemplates.yaml` may not ship
+// without bumping AI_TEMPLATE_SCHEMA_VERSION — and the version may not move without one.
 //
 // A user's custom overlay (dataLineageViz.ai.outputTemplateFile) is applied only when its
 // schemaVersion equals the constant. That gate is what produces the Output-channel warning and the
-// fallback to built-in templates on upgrade — and it only fires if someone remembers to bump the
-// number. Its single purpose is crash-avoidance: a template key renamed or removed, a field added,
-// removed, or retyped, changes the shape the loader and renderer read, and an older overlay that
-// still clears the version gate would be applied against a shape it no longer fits.
-//
-// Structure is the trigger, not content. Wording inside `instruction` / `example` is the tuning
-// surface the YAML exists for; an older overlay with different prose parses and renders exactly as
-// before, so a wording-only change passes here and never forces users to re-scaffold. The
-// structure comparison lives in `templateStructure.mjs` (shared with its unit test).
+// fallback to built-in templates on upgrade. Its single purpose: an old overlay that no longer
+// fits must be rejected, not silently mis-applied. Breaking is a template key removed or renamed,
+// or a field removed or retyped. Additions are backward compatible — the overlay merges over the
+// built-in file, which fills what the overlay lacks — so an added template key or field passes
+// without a bump, exactly like wording inside `instruction` / `example`, which is the tuning
+// surface the YAML exists for. A bump without a breaking change fails here too: it forces every
+// custom overlay to be re-scaffolded for nothing. The structure comparison lives in
+// `templateStructure.mjs` (shared with its unit test).
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { structureDiff, templateStructure } from './templateStructure.mjs';
+import { breakingStructureChanges, structureDiff, templateStructure } from './templateStructure.mjs';
 
 const ASSET = 'assets/aiOutputTemplates.yaml';
 const TYPES = 'src/ai/session/types.ts';
@@ -28,17 +27,26 @@ const normalize = (text) => text.replace(/\r\n/g, '\n');
 const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 /**
- * Baseline is the highest release tag, which is what a user actually upgraded from.
+ * Baseline the gate compares against: the highest release tag, which is what a user actually
+ * upgraded from — falling back to `origin/main` in repositories that carry no `v*` tags, so the
+ * comparison still runs instead of skipping.
  *
  * Deliberately not `git describe`: releases are squash-merged, so a release tag is usually NOT an
  * ancestor of the feature branch being gated, and `describe` would find nothing and skip the check
  * on precisely the branches that need it. Sorting all `v*` tags by version is reachability-free.
  */
-function lastReleaseTag() {
+function baselineRef() {
   try {
-    return git(['tag', '--list', 'v*', '--sort=-v:refname']).split('\n')[0].trim();
+    const tag = git(['tag', '--list', 'v*', '--sort=-v:refname']).split('\n')[0].trim();
+    if (tag) return { ref: tag, label: tag };
   } catch {
-    return '';
+    // fall through to origin/main
+  }
+  try {
+    git(['rev-parse', '--verify', '--quiet', 'origin/main']);
+    return { ref: 'origin/main', label: 'origin/main' };
+  } catch {
+    return { ref: '', label: '' };
   }
 }
 
@@ -75,49 +83,65 @@ if (constantVersion !== assetVersion) {
   process.exit(1);
 }
 
-const tag = lastReleaseTag();
-if (!tag) {
-  // A shallow or tagless clone is a legitimate state, not a defect to fail the whole gate over.
-  console.log('SKIP  no release tag found — cannot compare the templates asset against a baseline.');
+const { ref: baseline, label: baselineLabel } = baselineRef();
+if (!baseline) {
+  // A shallow clone without tags or a main branch is a legitimate state, not a defect to fail over.
+  console.log('SKIP  no release tag and no origin/main — cannot compare the templates asset against a baseline.');
   process.exit(0);
 }
 
-const baselineAsset = showAtTag(tag, ASSET);
+const baselineAsset = showAtTag(baseline, ASSET);
 if (baselineAsset === undefined) {
-  console.log(`SKIP  ${tag} predates ${ASSET} — no comparable baseline.`);
+  console.log(`SKIP  ${baselineLabel} predates ${ASSET} — no comparable baseline.`);
   process.exit(0);
 }
 
 if (baselineAsset === currentAsset) {
-  console.log(`PASS  ${ASSET} unchanged since ${tag}; schemaVersion ${assetVersion} still correct.`);
+  console.log(`PASS  ${ASSET} unchanged since ${baselineLabel}; schemaVersion ${assetVersion} still correct.`);
   process.exit(0);
 }
 
 const baselineStructure = templateStructure(baselineAsset);
 const currentStructure = templateStructure(currentAsset);
-if (JSON.stringify(baselineStructure) === JSON.stringify(currentStructure)) {
-  console.log(
-    `PASS  ${ASSET} wording changed since ${tag}; template structure unchanged, ` +
-    `schemaVersion ${assetVersion} still correct (an older overlay still fits this shape).`,
-  );
-  process.exit(0);
-}
-const changes = structureDiff(baselineStructure, currentStructure).map((line) => `      ${line}`).join('\n');
+const identicalStructure = JSON.stringify(baselineStructure) === JSON.stringify(currentStructure);
+const changes = structureDiff(baselineStructure, currentStructure);
+const breaking = breakingStructureChanges(changes);
+const formattedChanges = changes.map((line) => `      ${line}`).join('\n');
 
 // Only the changed path needs the baseline constant, and it is the rare path. Reading it above
 // would spawn a `git show` on every gate run that leaves the templates asset alone — which is most.
-const baselineTypes = showAtTag(tag, TYPES);
+const baselineTypes = showAtTag(baseline, TYPES);
 if (baselineTypes === undefined) {
-  console.log(`SKIP  ${tag} predates ${TYPES} — no comparable baseline for the constant.`);
+  console.log(`SKIP  ${baselineLabel} predates ${TYPES} — no comparable baseline for the constant.`);
+  process.exit(0);
+}
+const baselineVersion = readVersion(baselineTypes, VERSION_RE, `AI_TEMPLATE_SCHEMA_VERSION at ${baselineLabel}`);
+
+if (breaking.length === 0) {
+  if (baselineVersion !== constantVersion) {
+    console.error(
+      `FAIL  ${ASSET} changed since ${baselineLabel} with no removal, rename, or retype — wording and ` +
+      `additions are backward compatible — but AI_TEMPLATE_SCHEMA_VERSION moved ` +
+      `${baselineVersion} → ${constantVersion} anyway:\n${formattedChanges}\n` +
+      `      The bump alone forces every custom overlay to be re-scaffolded for nothing. Revert the ` +
+      `constant in ${TYPES} and schemaVersion in ${ASSET} to ${baselineVersion}.`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    (identicalStructure
+      ? `PASS  ${ASSET} wording changed since ${baselineLabel}; template structure unchanged`
+      : `PASS  ${ASSET} changed additively since ${baselineLabel} — no template key or field removed, renamed, or retyped`) +
+    `, so a previous overlay still fits; schemaVersion ${assetVersion} stays.`,
+  );
   process.exit(0);
 }
 
-const baselineVersion = readVersion(baselineTypes, VERSION_RE, `AI_TEMPLATE_SCHEMA_VERSION at ${tag}`);
 if (baselineVersion === constantVersion) {
   console.error(
-    `FAIL  ${ASSET} structure changed since ${tag} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
-    `${changes}\n` +
-    `      A ${tag} custom overlay will match this version, be accepted, and be read against a shape it\n` +
+    `FAIL  ${ASSET} broke structure since ${baselineLabel} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
+    `${breaking.map((line) => `      ${line}`).join('\n')}\n` +
+    `      A ${baselineLabel} custom overlay will match this version, be accepted, and be read against a shape it\n` +
     `      no longer fits, with no warning and no fallback. Bump the constant in ${TYPES} and\n` +
     `      schemaVersion in ${ASSET}, then record the change in CHANGELOG.md.`,
   );
@@ -125,6 +149,6 @@ if (baselineVersion === constantVersion) {
 }
 
 console.log(
-  `PASS  ${ASSET} structure changed since ${tag} and AI_TEMPLATE_SCHEMA_VERSION was bumped ` +
-  `${baselineVersion} → ${constantVersion}; stale overlays fall back to built-in templates.\n${changes}`,
+  `PASS  ${ASSET} broke structure since ${baselineLabel} and AI_TEMPLATE_SCHEMA_VERSION was bumped ` +
+  `${baselineVersion} → ${constantVersion}; stale overlays fall back to built-in templates.\n${formattedChanges}`,
 );

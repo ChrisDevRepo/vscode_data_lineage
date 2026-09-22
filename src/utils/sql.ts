@@ -26,7 +26,7 @@ export function schemaKey(name: string): string {
  * Matches one delimited identifier — `[bracketed]` (with `]]` as an escaped `]`) or `"quoted"` —
  * or a single stray delimiter left over from an unbalanced name.
  */
-const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"[^"]*"|[\[\]"]/g;
+const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"(?:""|[^"])*"|[\[\]"]/g;
 
 /**
  * Removes SQL-standard delimiters (brackets `[]` and double-quotes `""`) from an identifier and
@@ -43,7 +43,7 @@ const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"[^"]*"|[\[\]"]/g;
  */
 export function stripBrackets(name: string): string {
   return name.replace(DELIMITED_PART, part =>
-    part.length > 1 ? part.slice(1, -1).replace(/\]\]/g, ']') : ''
+    part.length > 1 ? part.slice(1, -1).replace(/\]\]/g, ']').replace(/""/g, '"') : ''
   );
 }
 
@@ -92,7 +92,10 @@ export function splitSqlName(name: string): string[] {
       if (name[i + 1] === ']') { current += ']]'; i++; continue; }
       inBracket = false; current += ch;
     }
-    else if (ch === '"' && !inBracket) { inQuote = !inQuote; current += ch; }
+    else if (ch === '"' && !inBracket) {
+      if (inQuote && name[i + 1] === '"') { current += '""'; i++; continue; }
+      inQuote = !inQuote; current += ch;
+    }
     else if (ch === '.' && !inBracket && !inQuote) {
       if (current) { parts.push(current); current = ''; }
     }

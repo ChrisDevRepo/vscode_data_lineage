@@ -123,24 +123,9 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
       origin: 'origin', question: 'trace', direction: 'downstream',
       depthIntent: { kind: 'explicit', levels: 3 },
     });
-    let safety = 20;
     // 'a' fans out to both 'b' and the audit sink; the BB guard requires every in-scope
     // directional neighbour to be accounted for, so both are routed.
-    const nextOf: Record<string, string[]> = {
-      origin: ['a'], a: ['b', 'audit'], b: ['c'], c: ['d'],
-    };
-    while (safety-- > 0) {
-      const ctx = engine.getHopContext() as any;
-      if (ctx.done || !ctx.focus_node) break;
-      const targets = nextOf[ctx.focus_node.id] ?? [];
-      engine.submitFindings({
-        focus_node_id: ctx.focus_node.id,
-        sections: [{ angle: 'business' as const, text: 'x' }],
-        summary: 'x',
-        verdict: 'analyze',
-        route_requests: targets.map(t => ({ nodeId: t, question: 'continue downstream' })),
-      });
-    }
+    driveEngine(engine, { routes: { origin: ['a'], a: ['b', 'audit'], b: ['c'], c: ['d'] }, limit: 20 });
     const deferredD = engine.deferredQuestions.find(q => q.nodeId.toLowerCase() === 'd');
     expect(!!deferredD, "'d' is 4 directed levels out and must be deferred past a 3-level border").toBe(true);
     expect(deferredD!.depth === 4, `'d' is 4 directed edges from origin; the undirected shortest path is 3. `
@@ -283,30 +268,11 @@ describe('Depth border — explicit depth is hard, omitted depth is soft', () =>
   const ctGraph = makeGraph(ctNodes, ctEdges);
 
   /** Drives the CT chain, forwarding Amount to the single upstream supplier at each focus. */
-  function driveCtChain(engine: NavigationEngine): string[] {
-    const supplier: Record<string, string | undefined> = {
-      '[ct].[vworders]': '[ct].[stg]',
-      '[ct].[vwsrc]': undefined,
-    };
-    const dispatched: string[] = [];
-    for (let hop = 0; hop < 10; hop++) {
-      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
-      if (ctx.done || !ctx.focus_node) break;
-      const focusId = ctx.focus_node.id;
-      dispatched.push(focusId);
-      const upstream = supplier[focusId];
-      engine.submitFindings({
-        focus_node_id: focusId,
-        sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
-        summary: focusId,
-        verdict: 'analyze',
-        column_flow: upstream
-          ? [{ out_col: 'Amount', upstream_columns: [{ node: upstream, col: 'Amount' }] }]
-          : [],
-      });
-    }
-    return dispatched;
-  }
+  const driveCtChain = (engine: NavigationEngine): string[] => driveEngine(engine, {
+    columnFlow: { '[ct].[vworders]': '[ct].[stg]', '[ct].[vwsrc]': undefined },
+    column: 'Amount',
+    limit: 10,
+  });
 
   it('T18: a CT contraction past the stated border is deferred as a contracted lead', () => {
     const engine = new NavigationEngine(ctModel, ctGraph, () => {}, {});

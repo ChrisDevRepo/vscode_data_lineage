@@ -97,15 +97,15 @@ describe('NavigationEngine active-phase admission', () => {
     expect(typeof rejected.hint === 'string' && rejected.hint.includes('held'), 'hint tells the model its analysis is held').toBe(true);
     expect(rejected.detail?.node_cap === 4, 'detail carries the effective cap').toBe(true);
 
-    // P1-22: exactly one route is staged, which is the shape that cost wave-739076f1-local-mlx its
+    // exactly one route is staged, which is the shape that cost an earlier run its
     // T8 answer. Every set-choosing repair is inapplicable here — the model judged its one route
     // essential, kept it, and resubmitted byte-identical three times until the breaker. The hint
     // must name the repair that exists at this shape, and only that one.
     const singleHint = rejected.hint ?? '';
-    expect(/route_requests:\[\]/.test(singleHint), 'P1-22: with one staged route the hint names the repair that always exists — resend with route_requests:[]').toBe(true);
-    expect(/no smaller set of routes exists/.test(singleHint), 'P1-22: the hint says why choosing a subset is not open, so the model does not re-derive it by resubmitting').toBe(true);
-    expect(/keeping only the routes essential/.test(singleHint), 'P1-22: the set-choosing repair is not offered where no set exists — following it produces the identical resubmission').toBe(false);
-    expect(/1 new route would/.test(singleHint), 'P1-22: one route reads as one route').toBe(true);
+    expect(/route_requests:\[\]/.test(singleHint), 'with one staged route the hint names the repair that always exists — resend with route_requests:[]').toBe(true);
+    expect(/no smaller set of routes exists/.test(singleHint), 'the hint says why choosing a subset is not open, so the model does not re-derive it by resubmitting').toBe(true);
+    expect(/keeping only the routes essential/.test(singleHint), 'the set-choosing repair is not offered where no set exists — following it produces the identical resubmission').toBe(false);
+    expect(/1 new route would/.test(singleHint), 'one route reads as one route').toBe(true);
 
     // Amend with the growth pruned: sections may be empty — the held draft restores the prose.
     const amended = engine.submitFindings({
@@ -125,7 +125,7 @@ describe('NavigationEngine active-phase admission', () => {
     expect(slotIds.has('n3') && !slotIds.has('n4'), 'n3 analyzed with held prose; n4 never entered scope').toBe(true);
   });
 
-  it('an admitted growth records [Admit] with the counts it admitted under (P1-39)', () => {
+  it('an admitted growth records [Admit] with the counts it admitted under', () => {
     // The reject path recorded the budget it broke; the admit path recorded nothing, so a run that
     // never grew the scope and a run that grew it comfortably read identically in host.log. The
     // line carries the same kv shape as [Reject] so evidence_review.facts_host_log buckets it.
@@ -156,13 +156,13 @@ describe('NavigationEngine active-phase admission', () => {
     }, capFifty) as { ok?: boolean };
     expect(ok.ok === true, 'growth under the cap commits').toBe(true);
     const admit = logs.find(m => m.includes('[Admit] guard=active_scope_budget'));
-    expect(admit !== undefined, 'P1-39: the admitted growth is recorded, not only the rejected one').toBe(true);
-    expect(admit?.includes('routes=+1'), 'P1-39: the record names how much scope was admitted').toBe(true);
-    expect(/nodes=\d+\/50/.test(admit ?? ''), 'P1-39: the record names the budget it was admitted under').toBe(true);
+    expect(admit !== undefined, 'the admitted growth is recorded, not only the rejected one').toBe(true);
+    expect(admit?.includes('routes=+1'), 'the record names how much scope was admitted').toBe(true);
+    expect(/nodes=\d+\/50/.test(admit ?? ''), 'the record names the budget it was admitted under').toBe(true);
   });
 
   it('with more than one staged route the hint keeps the set-choosing repairs and adds the empty-route escape', () => {
-    // The other half of the P1-22 branch. A fan-out origin stages two out-of-cap routes at once, so
+    // The other half of the budget branch. A fan-out origin stages two out-of-cap routes at once, so
     // pruning to a subset is genuinely open and stays offered — the fix narrows the wording only
     // where the subset does not exist.
     // The fan sits past the default seed (DEFAULT_SM_START_DEPTH = 3 covers f0..f3), so both
@@ -196,8 +196,8 @@ describe('NavigationEngine active-phase admission', () => {
     }, capFour) as { error?: string; hint?: string; detail?: Record<string, unknown> };
     expect(rejected.error === 'over_active_scope_budget', 'two staged routes past the cap reject with the stable code').toBe(true);
     const manyHint = rejected.hint ?? '';
-    expect(/keeping only the routes essential/.test(manyHint), 'P1-22: choosing a subset is open here, so it stays the first repair offered').toBe(true);
-    expect(/route_requests:\[\]/.test(manyHint), 'P1-22: the repair that always exists is named here too, not only where it is the last one left').toBe(true);
-    expect(/no smaller set of routes exists/.test(manyHint), 'P1-22: a smaller set does exist here, so the hint does not claim otherwise').toBe(false);
+    expect(/keeping only the routes essential/.test(manyHint), 'choosing a subset is open here, so it stays the first repair offered').toBe(true);
+    expect(/route_requests:\[\]/.test(manyHint), 'the repair that always exists is named here too, not only where it is the last one left').toBe(true);
+    expect(/no smaller set of routes exists/.test(manyHint), 'a smaller set does exist here, so the hint does not claim otherwise').toBe(false);
   });
 });

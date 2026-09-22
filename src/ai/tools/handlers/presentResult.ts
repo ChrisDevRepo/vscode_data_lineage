@@ -26,6 +26,7 @@ import {
 import {
   presentResultBoundarySchemaForPhase,
   PRESENT_RESULT_NAME_MAX,
+  PRESENT_RESULT_TITLE_MAX,
   presentResultRepairPatchSchemaForFields,
 } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
@@ -165,10 +166,13 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const supplied = input && typeof input === 'object' && !Array.isArray(input)
           ? input as Record<string, unknown>
           : {};
+        // Every label here is engine-owned prose, so it is fitted to the cap the validator enforces
+        // rather than submitted over it: a rejection the model did not author is one it cannot
+        // repair. `summary` is prose and carries no cap.
         const previewProse: Record<string, string | undefined> = {
           name: `${scope.origin} graph preview`.slice(0, PRESENT_RESULT_NAME_MAX),
           summary: previewNarrative.summary,
-          title: previewNarrative.title,
+          title: previewNarrative.title?.slice(0, PRESENT_RESULT_TITLE_MAX),
         };
         // Normalize-with-log: preview prose is engine-owned, but a model that sent its own copy of
         // one of these fields anyway had that value replaced, and a silent replacement is invisible
@@ -202,7 +206,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           }, { clearDraft: true });
         }
         // L1 encoding-only (Guard Discipline layer 1): a repair-turn model that cannot see its own
-        // held draft tends to blindly re-send the FULL prior envelope rather than a scoped patch.
+        // held draft tends to blindly re-send the FULL held envelope rather than a scoped patch.
         // Drop only the unauthorized keys whose resent value is structurally unchanged; a genuinely
         // differing value stays in place so the strict patch schema below still rejects it.
         const heldDraftForStrip = sess.presentResultRepairDraft.get();
@@ -259,8 +263,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // Zod at the boundary: the advertised structural contract IS the runtime contract, so the
       // parse runs against the same stage projection the model was offered — a field that stage
       // omits rejects here as a schema violation, not through a check after a permissive parse.
-      // A type/enum/cap violation rejects with field paths the model can self-heal from —
-      // never silently nulled fields. Conditional rules stay in validatePresentResult.
+      // A type/enum/shape violation rejects with field paths the model can self-heal from —
+      // never silently nulled fields. Conditional rules and every length cap stay in
+      // validatePresentResult, which can hold the draft and authorize a single-field repair.
       const boundary = presentResultBoundarySchemaForPhase(presentResultStage).safeParse(input);
       if (!boundary.success) {
         const fieldErrors = boundary.error.issues.slice(0, 3)

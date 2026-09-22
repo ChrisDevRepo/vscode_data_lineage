@@ -20,7 +20,9 @@ the source of truth for exact wording and provider-visible shapes.
   shapes, phase availability, strict validation, and dispatch.
 - [`src/ai/tools/presentResult.ts`](../src/ai/tools/presentResult.ts) validates
   and deterministically assembles the final presentation.
-- `package.json` owns the contributed tool descriptions and chat commands.
+- [`src/ai/tools/toolDefs.ts`](../src/ai/tools/toolDefs.ts) is the single tool
+  catalog. `package.json` `languageModelTools` is the generated read-effect
+  subset; chat commands stay in `package.json`.
 
 YAML is a customization layer, not the whole prompt. Phase instructions and
 mechanical enforcement remain code-owned.
@@ -34,6 +36,47 @@ operates the mechanism: which tool carries which template, which phase allows
 which call, which field a template lands in. A content rule or threshold never
 moves from the YAML into a prompt builder or a schema description to bypass the
 overlay; a description may point at the template entry, not restate it.
+
+A field's length has three separate homes and no duplicates. The **soft target**
+— the length the answer aims for — is stated once: in the template entry that
+governs the field where one exists (`title`, `summary`, `notes`, `highlights`),
+otherwise in the field's own `.describe()` (`name`, and the per-hop tool fields
+`badge_label` and `column_flow[].upstream_columns[].note`, which are not
+template content). The **hard cap** is a named constant in
+[`toolSchemas.ts`](../src/ai/tools/toolSchemas.ts), stated to the model as a
+typed JSON-Schema constraint (`maxLength` / `maxItems`, through `advertisedMax`)
+and nowhere else in prose. Its **enforcement** is the validator —
+`validatePresentResult`, or `NavigationEngine` for the `submit_findings` fields —
+never a parse: the model port validates structure only, so an overrun is a
+repairable single-field rejection against a held draft instead of a rejection of
+the whole call at the wire. The same split covers a count cap
+(`highlight_groups`), while structural constraints — a required field, a floor,
+an enum — stay real parse-time checks. `sections[].label` carries a hard cap and deliberately no
+character target: a tool-parameter description outranks the system prompt, so a
+number there became the operative ceiling; its shape is owned by
+`buildPresentationDetailContract`. Prose fields (`summary`, `intro`, `closing`)
+have no cap at all — length is never a rejection axis for them.
+
+## Tool catalog
+
+Two surfaces consume `TOOL_DEFS`. A name that exists on one does not imply it
+exists on the other.
+
+**Registered with `vscode.lm`** (`effect: 'read'` only — Copilot agent mode and
+`#lineage_*` references): `lineage_get_context`, `lineage_get_screen_state`,
+`lineage_search_objects`, `lineage_get_object_detail`, `lineage_search_ddl`,
+`lineage_detect_graph_patterns`, `lineage_get_neighbor_columns`.
+
+**Participant-internal** (in-process dispatcher only; never
+`vscode.lm.registerTool`): `lineage_get_scope_bundle` (discovery `scope_store`),
+`lineage_start_exploration` (consent gate), `lineage_submit_findings` (hop
+commit), `lineage_present_result` (presentation commit).
+
+Phase availability is [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
+Active exploration exposes `lineage_submit_findings` and
+`lineage_get_neighbor_columns` together; neighbor-column inspection is for
+opaque focus DDL (`SELECT *`, dynamic SQL, ambiguous joins), not a second
+catalog search.
 
 ## Assembly and memory contract
 
@@ -78,14 +121,10 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   or one flagging a scalar field replays the whole bounded submitted call, never
   `{}`. For `present_result`, whose rejected draft the session holds and renders
   as its own block, the replayed call carries the name and call id only, so no
-  section text is sent twice in one attempt. The replayed exchange closes on a user-role continuation
-  note: with history ending on a tool result, the replayed function call stays
-  inside the provider's current turn, where Gemini 3 enforces thought-signature
-  echo on every function call and `LanguageModelToolCallPart` carries no
-  signature to re-send. The note — the documented turn boundary — ends that
-  turn and the signature obligation with it; the correction still rides the
-  paired tool result, and the note only directs the model to act on it. Hop context is node-proportional and non-cumulative: a
-  large focus-node DDL raises one hop's message and is gone the next.
+  section text is sent twice in one attempt. The replayed exchange closes on a
+  user-role continuation note so the next generation is a new turn. Hop context
+  is node-proportional and non-cumulative: a large focus-node DDL raises one
+  hop's message and is gone the next.
 - Synthesis starts from a fresh completion envelope containing the archived
   findings plus engine-owned lifecycle and column-provenance state.
 
@@ -128,14 +167,20 @@ equals the version the installed release expects
 (`AI_TEMPLATE_SCHEMA_VERSION` in
 [`src/ai/session/types.ts`](../src/ai/session/types.ts)).
 
-A release bumps that version whenever the shipped file's structure changes in
-a way an older overlay cannot fit — a template key renamed or removed, a field
-added, removed, or retyped. Wording inside `instruction` is content and never
+A release bumps that version only when the shipped file changes in a way an
+older overlay can no longer fit — a template key removed or renamed, or a
+field removed or retyped: with those, an overlay that still clears the
+version gate would be silently mis-applied. An added template key or field
+never bumps — the overlay merges over the built-in file, which fills
+everything the overlay lacks, so a previous overlay keeps working unchanged.
+Wording inside `instruction` is content and never
 bumps the version (nor does `example`, which the loader never reads at all): an older overlay with different prose
 still parses and renders, so a wording change in a release leaves existing
 overlays in force. The release gate
 ([`tests/tools/assert-template-schema-version.mjs`](../tests/tools/assert-template-schema-version.mjs))
-compares the structural fingerprint of the file against the last release tag.
+compares the structural fingerprint of the file against the last release tag
+(or `origin/main` when the repository has no release tag) and fails when a
+breaking change ships without a bump — or the version moves without one.
 
 On a version mismatch the extension does not fail and does not silently
 mis-apply the file. It writes a warning naming the file and the expected
@@ -181,11 +226,11 @@ own tool:
   treated as untrusted database content, never as instructions, and the block is
   absent when nothing is applied.
 - **`exploration_scope`** — the node set fixed at the approval gate and owned by
-  `NavigationEngine` for the rest of the run. `lineage_submit_findings` and
-  `lineage_present_result` operate inside it; nothing widens it silently — a
-  follow-up that names an object is the consent that admits exactly that object,
-  never its schema, and a scope-expansion gate is the consent that admits a
-  schema.
+  `NavigationEngine` for the rest of the run. `lineage_submit_findings`,
+  `lineage_present_result`, and `lineage_get_neighbor_columns` operate inside
+  it; nothing widens it silently — a follow-up that names an object is the
+  consent that admits exactly that object, never its schema, and a
+  scope-expansion gate is the consent that admits a schema.
 - **`full_model`** — every parsed object in the loaded snapshot.
   `lineage_get_context`, `lineage_search_objects`, `lineage_search_ddl`,
   `lineage_get_object_detail`, `lineage_get_scope_bundle`, and
@@ -217,7 +262,12 @@ was at run time, so the prompt contract is to confirm a stale object with
 
 The response carries a `_token_estimate` and is never truncated: a recall over
 the discovery token budget is hard-rejected with the standard
-`over_discovery_budget` envelope and a hint naming how far to narrow `ids`. When
+`over_discovery_budget` envelope. Under that envelope's referral contract the
+reply carries partial data and a hint directing the model to answer briefly
+from what was returned and offer a detailed analysis
+(`lineage_start_exploration` is the named continuation — offered, never
+started); on this recall path the hint stays the narrowing one naming how far
+to narrow `ids`, and no partial bundle is attached. When
 no bookmark is applied, the applied bookmark is not AI-authored, or no run was
 stored for it, the call answers `no_run_memory` with the repair.
 
@@ -351,10 +401,12 @@ author its report from the completed exploration archive.
 ## Phase policy and completed follow-ups
 
 [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) is the canonical
-phase/tool map. Discovery tools are read-only; visual preview, SM entry, active
-submission, synthesis, and completed follow-ups each receive only their
-phase-valid tools. Production dispatch is direct through the local registry and
-does not call `vscode.lm.invokeTool`.
+phase/tool map. Discovery answers from snapshot tools and does not publish a
+`NavigationEngine`; `lineage_get_scope_bundle` still stores discovery evidence
+and is therefore participant-internal, not a `vscode.lm` tool. Visual preview,
+SM entry, active submission, synthesis, and completed follow-ups each receive
+only their phase-valid tools. Production dispatch is direct through the local
+registry and does not call `vscode.lm.invokeTool`.
 
 After a preview is accepted by the active graph webview, chat emits only a short
 confirmation and does not add a redundant **Show in Graph** action. If automatic
@@ -406,33 +458,18 @@ directly according to the phase policy.
   (synthesis and completed follow-ups); preview is exempt because its bodies
   are verbatim spans of the cached answer.
 
-## Evidence-status contract (partially live)
+## SQL witness contract
 
-Adopted from the 2026-08 AI SQL documentation review. Live today in the
-capture-template grounding blocks: SQL witnesses must be exact substrings of
-the hop's DDL (never paraphrased), and gaps are stated as
-`not established from the available SQL` instead of inferred. The synthesis
-detail contract additionally preserves exact node IDs, parameter names, and
-formulas through compression. The full categorical vocabulary below remains
-the agreed target; extend live templates only through an approved change plus
-e2e replay.
+Capture-template grounding blocks require SQL witnesses to be exact
+substrings of the hop's DDL (never paraphrased). Gaps are stated as
+`not established from the available SQL` instead of inferred. Synthesis
+preserves exact node IDs, parameter names, and formulas through compression.
 
-Every captured claim carries one categorical evidence status:
-
-- direct SQL evidence (`static`) — observable in the loaded snapshot;
-- requires schema/index/statistics metadata (`metadata_required`);
-- requires execution-plan or runtime evidence (`runtime_required`);
-- requires business confirmation — intent, prevalence, or realized impact;
-- not established — never filled by plausible inference.
-
-Performance-claim tiering: static SQL may identify a candidate pattern only.
-Sargability, index benefit, join-strategy quality, parameter sniffing, and
-statistics staleness are `metadata_required` or `runtime_required`. On Synapse
-Dedicated SQL Pool and Fabric Warehouse, actual data movement (shuffle/
-broadcast) and its cost are established by distributed plans and runtime
-evidence, never by query text alone. Engine targeting is required — SQL
-Server/Azure SQL, Synapse, and Fabric must not receive identical movement or
-tuning language.
+Static SQL may identify a candidate performance pattern only. Sargability,
+index benefit, join strategy, parameter sniffing, and statistics staleness
+need catalog or runtime evidence. On Synapse Dedicated SQL Pool and Fabric
+Warehouse, data movement (shuffle/broadcast) is established by distributed
+plans and runtime evidence, never by query text alone.
 
 ## Editing and verification
 

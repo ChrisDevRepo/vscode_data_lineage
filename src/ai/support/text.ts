@@ -14,14 +14,19 @@ const PROVIDER_ERROR_CAUSE_DEPTH = 3;
 
 /** Sanitized allowlisted fields retained from one provider exception or nested cause. */
 export interface ProviderErrorCauseDiagnostic {
+  /** Sanitized exception name, reduced to diagnostic-safe characters. */
   readonly name: string;
+  /** Redacted, length-capped error message. */
   readonly message: string;
+  /** Connection-level or provider code when one survives sanitization (e.g. `ECONNRESET`). */
   readonly code?: string;
+  /** Nested sanitized cause, at most three levels deep. */
   readonly cause?: ProviderErrorCauseDiagnostic;
 }
 
 /** Sanitized provider exception evidence bound to the model-call phase that failed. */
 export interface ProviderErrorDiagnostic extends ProviderErrorCauseDiagnostic {
+  /** Model-call phase in which the exception surfaced. */
   readonly phase: string;
 }
 

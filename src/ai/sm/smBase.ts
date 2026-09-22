@@ -2,6 +2,7 @@ import { columnCarryFromRoute, columnCarryOf, DEFAULT_SM_START_DEPTH, EngineAspe
 import { buildRouteValidationRejection, FULL_RESUBMIT_ORDER, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { buildIncompleteRejection, computeUnaccounted } from './smCompleteness';
 import { checkActiveScopeAdmission, DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
+import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX } from '../tools/toolSchemas';
 /**
  * Unified Navigation Engine — The core state machine for all exploration modes.
  *
@@ -27,7 +28,7 @@ import { edgeApiType } from '../support/aiPresenter';
 import { bfsDepthMap, firstDisconnectedRequiredNode, bfsReachable, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import { normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
-import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
+import { AiMemoryManager, appendUniqueSectionText, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
@@ -292,15 +293,15 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * CT only: neighbour ids named in an accepted `route_requests` entry — declared by the tracer as
    * part of the traced-column continuation. A non-bodied target is *contracted* by the bipartite
-   * agenda rule (`enqueueHop`, `smBase.ts:3048+`) the instant it is enqueued, so it gets no agenda
+   * agenda rule ({@link enqueueHop}) the instant it is enqueued, so it gets no agenda
    * entry and no detail slot — the two sources {@link committedConnectedIds} otherwise reads — and
-   * an unrelated later hop's `prune_neighbors` can remove it with nothing left to refuse the prune
-   * (D-074). The AI sees one hop at a time and cannot itself keep a contracted declaration
+   * an unrelated later hop's `prune_neighbors` can remove it with nothing left to refuse the prune.
+   * The AI sees one hop at a time and cannot itself keep a contracted declaration
    * reachable past it; this set is the backend's record of the declaration, consulted both by
    * {@link committedConnectedIds} (indirect orphan protection for anything committed behind the
    * declared node) and directly by `submitFindings`'s `prune_neighbors` admission (direct
-   * self-target protection — a declared dead end with no further bodied neighbor, the
-   * CustomerMaster shape, orphans nothing else and so never trips the topology walk on its own).
+   * self-target protection — a declared dead end with no further bodied neighbor orphans nothing
+   * else and so never trips the topology walk on its own).
    * Populated only when {@link tracer} is set, so BB's prune-protection set stays byte-identical.
    */
   protected ctDeclaredRouteIds = new Set<string>();
@@ -372,8 +373,10 @@ export class NavigationEngine implements IHopStateMachine {
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
   /**
-   * Submission held only after route/column incompleteness so a retry with empty sections can reuse
-   * already-valid authored prose. Other validation failures never establish held state.
+   * Submission held only after a field-scoped failure a retry can correct without re-authoring the
+   * analysis — route/column incompleteness, or a field over its length cap — so a retry with empty
+   * sections can reuse already-valid authored prose. Other validation failures never establish held
+   * state.
    */
   private readonly heldFindingDraft = new RepairDraftStore<HopSubmission, HopSubmission>();
 
@@ -431,8 +434,6 @@ export class NavigationEngine implements IHopStateMachine {
    * {@link getDiscoverySummary}.
    */
   protected _discoverySummary: string | null = null;
-  /** Legacy checkpoint field retained for snapshot compatibility; no longer affects routing. */
-  protected extendedDepthCap = 0;
   /** Last per-hop snapshot of detail/summary chars, used for diagnostics. */
   protected lastHopDetailChars = 0;
   /** Last per-hop summary-char count. */
@@ -519,7 +520,8 @@ export class NavigationEngine implements IHopStateMachine {
    * Canonical focus id of a currently-held finding, or `null` when none is held.
    *
    * @remarks
-   * Non-null means the prior `submit_findings` failed only route/column completeness.
+   * Non-null means the prior `submit_findings` failed only on a field-scoped, correctable defect
+   * (route/column completeness, or a field over its length cap).
    */
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();
@@ -530,7 +532,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Restores held prose only when an incompleteness retry keeps the focus and sends no sections.
+   * Restores held prose only when a correction retry keeps the focus and sends no sections.
    * A retry with authored sections is a deliberate replacement and remains unchanged.
    *
    * @param incoming - Strict full BB/CT submission from the dispatcher boundary.
@@ -1883,10 +1885,9 @@ export class NavigationEngine implements IHopStateMachine {
         skipped++;
         continue;
       }
-      // A user-excluded or out-of-allowlist node is a hard wall on the supplement write path — the
-      // border only widens for a route this run itself deferred ({@link admitSupplementTargets},
-      // called before this), never through an AI-initiated supplement naming an id no lead offered
-      // or re-adding what the user removed.
+      // A user-excluded or out-of-allowlist node is a hard wall on the supplement write path: the
+      // border widens only for a route this run itself deferred via `admitSupplementTargets`, never
+      // through an AI-initiated supplement naming an id no lead offered or re-adding what the user removed.
       const supNode = this.nodeMap.get(id);
       const supBorder = supNode ? this.checkBorder(id, supNode, 'supplement') : null;
       if (supBorder && supBorder.kind !== 'in_border') {
@@ -2190,9 +2191,10 @@ export class NavigationEngine implements IHopStateMachine {
    * Route/column validation classifies failures into a structural {@link InvalidRouteKind}.
    * *Content* errors (real node, wrong column — CT-only) hard-reject via
    * {@link buildRouteValidationRejection}. Absent route/contributor references and refused no-op
-   * prunes are recorded notices; content, completeness, conflict, origin, and topology failures
-   * reject atomically. Loaded routes may be transitively reachable in the approved direction; the
-   * engine does not impose a direct-current-neighbor rule. Hints remain mode-pure.
+   * prunes are recorded notices; field-length, content, completeness, conflict, origin, and
+   * topology failures reject atomically. Loaded routes may be transitively reachable in the
+   * approved direction; the engine does not impose a direct-current-neighbor rule. Hints remain
+   * mode-pure.
    *
    * @param params - Submission details including focus, verdict, and routing data.
    * @param budget - The submitting turn's budget, which the active-scope admission guard is
@@ -2212,7 +2214,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     try {
-      // A prior hold can survive only through applyHeldContent immediately before this call.
+      // A held draft reaches this point only via `applyHeldContent`, called directly above.
       this.heldFindingDraft.clear();
     const invalidRoutes: InvalidRoute[] = [];
     const routeOutcomes: RouteOutcome[] = [];
@@ -2224,6 +2226,39 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (focusId !== this.currentFocusNodeId) {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
+    }
+    // The two content caps the `submit_findings` schema advertises without parsing (`advertisedMax`,
+    // `toolSchemas.ts`). Parsed at the model port instead, a label two words too long would fail the
+    // whole hop with a field path and no held draft, costing a verbatim resend of the authored
+    // sections and summary. Enforced here: ahead of every mutation, stating the measured length a
+    // model cannot count for itself, and holding the draft so the retry carries only the corrected
+    // structured fields.
+    // The rejection code stays a local literal: this is its one emitting site, and `rejectionCodes.ts`
+    // owns only codes a second surface shows to the model.
+    const lengthViolations: Array<{ path: string; chars: number; limit: number }> = [];
+    if (finding.badge_label !== undefined && finding.badge_label.length > SUBMIT_FINDINGS_BADGE_LABEL_MAX) {
+      lengthViolations.push({ path: 'badge_label', chars: finding.badge_label.length, limit: SUBMIT_FINDINGS_BADGE_LABEL_MAX });
+    }
+    (finding.column_flow ?? []).forEach((entry, entryIndex) => {
+      (entry.upstream_columns ?? []).forEach((ref, refIndex) => {
+        if (ref.note !== undefined && ref.note.length > COLUMN_FLOW_NOTE_MAX) {
+          lengthViolations.push({
+            path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.note`,
+            chars: ref.note.length,
+            limit: COLUMN_FLOW_NOTE_MAX,
+          });
+        }
+      });
+    });
+    if (lengthViolations.length > 0) {
+      const measured = lengthViolations.map(v => `${v.path}: ${v.chars} chars, limit ${v.limit}`).join('; ');
+      this.memory.recordRejection(focusId, `field_length_exceeded: ${measured}`, this.hopCount);
+      this.heldFindingDraft.hold(structuredClone(finding));
+      return {
+        error: 'field_length_exceeded',
+        hint: `${measured}. Nothing was committed. Your analysis is held: resubmit submit_findings for ${focusId} with the listed field(s) shortened — send sections: [] to keep the prose you already authored, or new sections to replace it.`,
+        detail: lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit })),
+      };
     }
     // The active columns the focus itself declares. One value serves both consumers: the CT
     // completeness guard below, which uses it to decide whether an empty-flow claim is checkably
@@ -2448,11 +2483,11 @@ export class NavigationEngine implements IHopStateMachine {
     // The pure policy has already selected the accepted prune targets, in scope or out
     // (`prune_neighbors` may carry in-scope neighbors off the answer path); topology conservation
     // is the final guard, and all mutations stay staged until completeness also passes.
-    // D-074: a node the tracer declared via an accepted route_request is refused as a prune
+    // A node the tracer declared via an accepted route_request is refused as a prune
     // candidate outright, split out ahead of the topology walk below — a declared dead end (no
-    // further bodied neighbor to contract to, the CustomerMaster shape) orphans nothing else, so it
-    // never trips `firstDisconnectedAfterPrune`'s reachability check on its own. CT only; empty in
-    // BB, so `prunablePruneIds` equals `actionPolicy.acceptedPruneIds` there.
+    // further bodied neighbor to contract to) orphans nothing else, so it never trips
+    // `firstDisconnectedAfterPrune`'s reachability check on its own. CT only; empty in BB, so
+    // `prunablePruneIds` equals `actionPolicy.acceptedPruneIds` there.
     const declaredPruneIds = this.tracer
       ? actionPolicy.acceptedPruneIds.filter((nid) => this.ctDeclaredRouteIds.has(nid))
       : [];
@@ -2521,7 +2556,10 @@ export class NavigationEngine implements IHopStateMachine {
 
     // analyze/pass path: commit the detail slot + CT edges (prune exits early above) — stage its sections + CT passthrough roles.
     {
-      stagedSections = finding.sections ?? [];
+      const flowNotes = (finding.column_flow ?? []).flatMap(entry =>
+        (entry.upstream_columns ?? []).map(ref => ref.note ?? ''),
+      );
+      stagedSections = appendUniqueSectionText(finding.sections ?? [], flowNotes);
       stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       stagedSummaryChars = finding.summary?.length ?? 0;
 
@@ -2654,7 +2692,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (pruneRoutes.length > 0) {
       for (const r of pruneRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
       if (ctUnaccountedColumns) {
-        // D-048: the deferred CT completeness fault (`ctUnaccountedColumns`, computed above) was
+        // The deferred CT completeness fault (`ctUnaccountedColumns`, computed above) was
         // true in the same payload as the topology fault(s) just accumulated. Report both in this
         // one envelope instead of returning here and re-deriving the CT fault next turn — a
         // topology fault riding along forces "nothing is held", the same stricter policy already
@@ -2833,7 +2871,7 @@ export class NavigationEngine implements IHopStateMachine {
         const targetNode = this.nodeMap.get(nid);
         const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
         const wasAlreadyVisited = this.visited.has(nid);
-        // D-074: the tracer declares nid part of the traced-column continuation the moment this
+        // The tracer declares nid part of the traced-column continuation the moment this
         // route is admitted — before `enqueueHop` runs, since a non-bodied target ends that call
         // contracted, with no agenda entry left for anything downstream to protect it.
         if (this.tracer) this.ctDeclaredRouteIds.add(nid);
@@ -3060,7 +3098,7 @@ export class NavigationEngine implements IHopStateMachine {
   private committedConnectedIds(): Set<string> {
     const ids = new Set<string>(this.memory.notedNodeIds);
     for (const e of this._agenda.entries) ids.add(e.nodeId);
-    // D-074: a CT route declaration the bipartite rule contracted away (no agenda entry, no detail
+    // A CT route declaration the bipartite rule contracted away (no agenda entry, no detail
     // slot) still counts as committed, protecting anything reachable only behind it. Empty in BB,
     // so this widening is additive-only.
     if (this.tracer) {
@@ -3678,8 +3716,8 @@ export class NavigationEngine implements IHopStateMachine {
 
     // bfsDepthMap walks source->target only. On an upstream trace every retained node sits
     // behind the origin, so that directed walk reaches depth 1 and stops — the whole ancestor
-    // chain sorts past maxDepth on the `?? 999` fallback and never lands in a bucket (measured:
-    // m0-8-fireworks/run-T6 collapsed 28 retained nodes into 2 buckets). The skeleton groups
+    // chain sorts past maxDepth on the `?? 999` fallback and never lands in a bucket, collapsing
+    // a whole retained ancestor set into two buckets. The skeleton groups
     // render stages, not a flow claim — direction is stated separately by buildDirectionLines
     // in smPrompts.ts — so the grouping walk is fed both edge directions here; bfsDepthMap's own
     // directed contract and tests are untouched.
@@ -3696,9 +3734,9 @@ export class NavigationEngine implements IHopStateMachine {
         sections.push({ label: i === 0 ? 'Origin' : `Stage ${i}`, node_ids: idsAtDepth });
       }
     }
-    // A retained node with no edge in finalEdges at all never enters the walk above either;
-    // the skeleton's contract is to bucket every rendered node, so the remainder is appended
-    // rather than silently dropped like it was before this fix.
+    // A retained node with no edge in finalEdges never enters the walk above; the skeleton's
+    // contract is to bucket every rendered node, so the remainder is appended as "Unconnected"
+    // rather than silently dropped.
     const unbucketed = sortedIds.filter(id => !depthMap.has(id));
     if (unbucketed.length > 0) {
       sections.push({ label: 'Unconnected', node_ids: unbucketed });
@@ -3784,7 +3822,6 @@ export class NavigationEngine implements IHopStateMachine {
         downstream: Number.isFinite(this.depthLimits.downstream) ? this.depthLimits.downstream : null,
       },
       depthFromOrigin: Array.from(this.depthFromOrigin.entries()),
-      extendedDepthCap: this.extendedDepthCap,
       budgetExpansions: this.budgetExpansions.map(b => ({ ...b })),
       bodiedScopeSize: this._bodiedScopeSize,
       totalNodes: this._totalNodes,
@@ -3880,13 +3917,12 @@ export class NavigationEngine implements IHopStateMachine {
       engine.depthEnforcement = internals.depthEnforcement;
       log('debug', `[Depth] restored border enforcement=${internals.depthEnforcement} cap=up:${engine.depthLimits.upstream}/down:${engine.depthLimits.downstream}`);
     } else {
-      if (internals.depthEnforcement !== 'silent' || internals.extendedDepthCap !== 0) {
-        log('debug', `[Depth] normalized legacy checkpoint authority enforcement=${internals.depthEnforcement} extension=${internals.extendedDepthCap} to seed-only routing`);
+      if (internals.depthEnforcement !== 'silent') {
+        log('debug', `[Depth] normalized legacy checkpoint authority enforcement=${internals.depthEnforcement} to seed-only routing`);
       }
       engine.depthEnforcement = 'silent';
     }
     engine.depthFromOrigin = new Map(internals.depthFromOrigin);
-    engine.extendedDepthCap = 0;
     engine.budgetExpansions = internals.budgetExpansions.map(b => ({ ...b }));
     engine._bodiedScopeSize = internals.bodiedScopeSize;
     engine._totalNodes = internals.totalNodes;
@@ -3915,7 +3951,7 @@ export class NavigationEngine implements IHopStateMachine {
     // session re-dispatches focus nodes the AI already pruned and drops the pending sub-questions.
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
-    // Absent on a checkpoint written before D-074 persisted this set — restores as empty, which is
+    // Absent on a checkpoint written before this set was persisted — restores as empty, which is
     // today's live-engine-only protection rather than inventing declarations.
     engine.ctDeclaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
     // Absent on a checkpoint written before the field existed, and on one whose last render dropped

@@ -271,20 +271,7 @@ describe("Supplement Agenda", () => {
     { activeFilter: makeActiveFilter({ schemas: ['dbo'] }) },
   );
   engine.init({ origin: 'b0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
-  const succ: Record<string, string | undefined> = { b0: 'b1', b1: 'b2', b2: 'bx' };
-  let safety = 20;
-  while (safety-- > 0) {
-    const ctx = engine.getHopContext() as any;
-    if (ctx.done || !ctx.focus_node) break;
-    const next = succ[ctx.focus_node.id];
-    engine.submitFindings({
-      focus_node_id: ctx.focus_node.id,
-      sections: [{ angle: 'business' as const, text: `analysis for ${ctx.focus_node.id}` }],
-      summary: ctx.focus_node.id,
-      verdict: 'analyze',
-      route_requests: next ? [{ nodeId: next, question: 'trace downstream' }] : [],
-    });
-  }
+  driveEngine(engine, { succ: { b0: 'b1', b1: 'b2', b2: 'bx' }, limit: 20 });
 
   // The lead is the persisted record; `deferredQuestions` is a lossy projection back out of it,
   // so the composite reason is only ever observable through which boundary the lead names.
@@ -414,7 +401,7 @@ describe("Supplement Agenda", () => {
   expect(engine.admitSupplementTargets(['far', 'ext1']).join(','), 'only the offered id is admitted').toBe('ext1');
 });
 
-  it("P1-40: supplement_empty names the input the model owns, and the exit for having no node to name", () => {
+  it("supplement_empty names the input the model owns, and the exit for having no node to name", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'sp', question: 'test', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
   drain(engine, 'initial');
@@ -428,23 +415,12 @@ describe("Supplement Agenda", () => {
   expect(hint !== 'supplementAgenda requires at least one node id or pending lead id.', 'the lead id is no longer offered as an alternative input').toBe(true);
 });
 
-  it("P1-40: supplement_target_pruned reports every pruned id at once and names the empty-list exit", () => {
+  it("supplement_target_pruned reports every pruned id at once and names the empty-list exit", () => {
   // Prune both leaf views so a two-id supplement has two invalid targets: reporting only the first
   // charged one rejection per pruned id, and dropping the only target lands on supplement_empty.
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'sp', question: 'test', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
-  const prunable = new Set(['viewa', 'viewb']);
-  for (let hop = 0; hop < 20; hop++) {
-    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
-    if (ctx.done || !ctx.focus_node) break;
-    const id = ctx.focus_node.id;
-    engine.submitFindings({
-      focus_node_id: id,
-      sections: [{ angle: 'business' as const, text: `analysis for ${id}` }],
-      summary: id,
-      verdict: prunable.has(id) ? 'prune' : 'analyze',
-    });
-  }
+  driveEngine(engine, { prune: new Set(['viewa', 'viewb']), limit: 20 });
   expect(engine.status === 'complete', 'engine completes with both leaf views pruned').toBe(true);
 
   const both = engine.supplementAgenda(['viewa', 'viewb']);

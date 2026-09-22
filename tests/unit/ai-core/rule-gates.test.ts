@@ -367,28 +367,28 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
   const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
   const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
 
-  /** Placement shape the risk bullet carries: mandatory carry-through, one occurrence, best section. */
-  const placementRule = /every .*present in the captured.*bodies.*appears exactly once.*in its most relevant section/i;
+  it('states the callout bullet as a placement rule, never as a count or a permission gate', () => {
+    const callouts = renderRuleBullet(general, 'Callouts');
 
-  it('states the risk bullet as a placement rule, never as a permission gate', () => {
-    const risks = renderRuleBullet(general, 'Risks / data-quality flags');
-
-    expect(general).toContain('- **Risks / data-quality flags**');
-    expect(general).toMatch(/stages: \[discovery, synthesis\]/);
-    expect(risks).toMatch(placementRule);
-    expect(risks).toMatch(/captured or loaded bodies/);
-    expect(risks).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
+    expect(general).toContain('- **Callouts**');
+    expect(general).not.toContain('data-quality');
+    expect(general).toMatch(/stages: \[synthesis\]/);
+    expect(general).not.toMatch(/stages: \[discovery/);
+    expect(callouts).toMatch(/sits once.*section/i);
+    expect(callouts).not.toMatch(/count the ⚠️/);
+    expect(callouts).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
   });
 
-  // The `closing` block is the second synthesis surface that renders ⚠️ lines (its example is a
-  // Risk/Scope table), so a surviving permission gate here re-opens the significance question the
-  // general risks bullet already closed.
-  it('states the closing risk block as a placement rule, never as a permission gate', () => {
+  // ⚠️ placement is `general`'s job. Closing is wrap-up prose; a leftover "Unplaced risks"
+  // block re-opens a bookkeeping heading the sidecar rewrite deleted.
+  it('leaves closing as wrap-up prose, with no Unplaced-risks block', () => {
     const closing = asset
       .slice(asset.indexOf('\nclosing:'), asset.indexOf('\nhighlights:'))
       .replace(/\s+/g, ' ');
 
-    expect(closing).toMatch(/significance was settled at capture/i);
+    expect(closing).not.toMatch(/Unplaced risks/i);
+    expect(closing).not.toMatch(/no section placed/i);
+    expect(closing).not.toMatch(/risk block/i);
     expect(closing).not.toMatch(/only when there is a significant/i);
     expect(closing).not.toMatch(/omit risk callouts/i);
   });

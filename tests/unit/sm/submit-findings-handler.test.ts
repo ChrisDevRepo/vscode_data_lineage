@@ -3,6 +3,7 @@ import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFind
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import { makeGraph } from '../helpers/testUtils';
+import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX } from '../../../src/ai/tools/toolSchemas';
 import { describe, expect, it } from 'vitest';
 
 describe("Submit Findings Handler", () => {
@@ -104,6 +105,79 @@ describe("Submit Findings Handler", () => {
   expect(engine.toJSON().memory.detailSlots.origin !== undefined, 'accepted full finding commits authored detail').toBe(true);
   expect(raw.focus_node_id, 'normalization does not mutate the raw focus identity').toBe('ORIGIN');
   expect(raw.route_requests[0].nodeId, 'normalization does not mutate raw route identities').toBe('A');
+});
+
+  // `badge_label` and `column_flow[].upstream_columns[].note` carry their cap on the model-facing
+  // schema only. A Zod reject at the boundary would fail the hop with a field path and no held
+  // draft, so a label two words too long cost a verbatim resend of the authored sections and
+  // summary. The engine enforces both ahead of every mutation and holds the draft instead.
+  it("an over-long badge_label rejects before any mutation and holds the authored prose", () => {
+  const { engine, services, result } = setup();
+  const before = engine.toJSON();
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Origin dispatches both paths.' }],
+    summary: 'Origin dispatches both paths.',
+    verdict: 'analyze',
+    badge_label: 'B'.repeat(SUBMIT_FINDINGS_BADGE_LABEL_MAX + 1),
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+
+  const rejected = result() as { error?: string; hint?: string; detail?: Array<{ path?: string; chars?: number; limit?: number }> };
+  expect(rejected.error, 'an over-long badge_label rejects on its own code').toBe('field_length_exceeded');
+  expect(rejected.hint, 'the rejection states the measured length against the limit')
+    .toContain(`${SUBMIT_FINDINGS_BADGE_LABEL_MAX + 1} chars, limit ${SUBMIT_FINDINGS_BADGE_LABEL_MAX}`);
+  expect(rejected.detail?.[0]?.path, 'the rejection names the exact field path').toBe('badge_label');
+  expect(rejected.hint, 'the retry is told it may omit sections to keep the held prose').toMatch(/sections: \[\]/);
+
+  const after = engine.toJSON();
+  expect(Object.keys(after.memory.detailSlots).length, 'no archive mutation').toBe(Object.keys(before.memory.detailSlots).length);
+  expect(after.agenda.length, 'no agenda mutation').toBe(before.agenda.length);
+  expect(after.scopeNodeIds.length, 'no scope mutation').toBe(before.scopeNodeIds.length);
+
+  // The retry carries only the corrected structured fields; `sections: []` keeps the held prose.
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [],
+    summary: '',
+    verdict: 'analyze',
+    badge_label: 'Dispatch',
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+
+  const accepted = result() as { error?: string };
+  expect(accepted.error, 'the shortened retry commits').toBeUndefined();
+  const slot = engine.toJSON().memory.detailSlots.origin as { sections?: Array<{ text: string }>; summary?: string };
+  expect(slot?.summary, 'the held summary is restored').toBe('Origin dispatches both paths.');
+  expect(slot?.sections?.[0]?.text, 'the held section prose is restored').toBe('Origin dispatches both paths.');
+});
+
+  it("an over-long column_flow note rejects before any mutation and names its entry path", () => {
+  const { engine, services, result } = setupCt();
+  const before = engine.toJSON();
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Origin reads amount from base_table.' }],
+    summary: 'Origin reads amount from base_table.',
+    verdict: 'analyze',
+    column_flow: [{
+      out_col: 'amount',
+      upstream_columns: [{ node: 'base_table', col: 'raw_amount', note: 'N'.repeat(COLUMN_FLOW_NOTE_MAX + 1) }],
+    }],
+    route_requests: engine.requiredNeighborIds('origin').map(id => ({ nodeId: id, question: 'what does this contribute?' })),
+  }, services);
+
+  const rejected = result() as { error?: string; hint?: string; detail?: Array<{ path?: string }> };
+  expect(rejected.error, 'an over-long note rejects on its own code').toBe('field_length_exceeded');
+  expect(rejected.detail?.[0]?.path, 'the rejection names the exact entry path')
+    .toBe('column_flow.0.upstream_columns.0.note');
+  expect(rejected.hint, 'the rejection states the measured length against the limit')
+    .toContain(`${COLUMN_FLOW_NOTE_MAX + 1} chars, limit ${COLUMN_FLOW_NOTE_MAX}`);
+
+  const after = engine.toJSON();
+  expect(Object.keys(after.memory.detailSlots).length, 'no archive mutation').toBe(Object.keys(before.memory.detailSlots).length);
+  expect(after.agenda.length, 'no agenda mutation').toBe(before.agenda.length);
+  expect(after.columnAspect?.edges.length ?? 0, 'no column edge is staged').toBe(before.columnAspect?.edges.length ?? 0);
 });
 
   it("repair:true is rejected by the strict full BB boundary", () => {
@@ -209,7 +283,7 @@ describe("Submit Findings Handler", () => {
   expect((raw.column_flow[0] as Record<string, unknown>).bogus_field, 'the raw model payload stays immutable').toBe('nope');
 });
 
-  it("CT accepts prune_neighbors — same decision space as BB (D1 convergence)", () => {
+  it("CT accepts prune_neighbors — same decision space as BB", () => {
   const { services, result } = setupCt();
   executeSubmitFindings({
     focus_node_id: 'origin',

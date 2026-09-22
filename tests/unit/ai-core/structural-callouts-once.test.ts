@@ -70,4 +70,12 @@ describe('structural_callouts — one home, rendered once per bodied hop', () =>
     expect(result.shippedKeys).not.toContain('structural_callouts');
     expect(result.gatedOut).toContainEqual({ key: 'structural_callouts', reason: 'focus_scope' });
   });
+
+  it('ships general at synthesis only', () => {
+    const discover = resolveStagePrompt(templates, 'discover', undefined);
+    expect(discover.shippedKeys).not.toContain('general');
+    expect(discover.gatedOut).toContainEqual({ key: 'general', reason: 'stage' });
+    const synthesis = resolveStagePrompt(templates, 'synthesis', 'business', 5);
+    expect(synthesis.shippedKeys).toContain('general');
+  });
 });

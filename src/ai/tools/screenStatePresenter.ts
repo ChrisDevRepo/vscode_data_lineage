@@ -7,8 +7,12 @@
  * section instead of throwing. The payload answers "what is on screen", never "what is in the
  * model" — the catalog, statistics, and filters stay with `lineage_get_context`.
  */
-import type { RenderStateSnapshot, ScreenStateExtras } from '../../bridge/debugDumpScreenState';
-import { SCREEN_STATE_MAX_IDS, TRACE_ALL_LEVELS } from '../../engine/shared/bridgeContract';
+import {
+  SCREEN_STATE_MAX_IDS,
+  TRACE_ALL_LEVELS,
+  type RenderStateSnapshot,
+  type ScreenStateExtras,
+} from '../../engine/shared/bridgeContract';
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
@@ -232,8 +236,8 @@ function presentBookmark(
     source,
     nodes: nodeIds.length,
     // The ids are the recall keys: `presentRunRecall` answers by id, so a card that reported only
-    // the count left the model no way to ask the stored run about anything and it reached for a
-    // scope walk instead — which is the one discovery call that reroutes to the approval gate.
+    // the count leaves the model no way to ask the stored run about anything and it reaches for a
+    // scope walk instead — the one discovery call the discovery budget can reject outright.
     ...spreadCapped('node_ids', nodeIds),
     ai_run: presentAiRun(run, getDdl),
   };

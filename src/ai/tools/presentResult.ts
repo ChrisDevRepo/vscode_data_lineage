@@ -8,7 +8,11 @@ import {
   PresentResultModelSchema,
   PresentResultRepairPatchSchema,
   PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX,
+  PRESENT_RESULT_HIGHLIGHT_LABEL_MAX,
+  PRESENT_RESULT_NAME_MAX,
   PRESENT_RESULT_REPAIR_FIELDS,
+  PRESENT_RESULT_SECTION_LABEL_MAX,
+  PRESENT_RESULT_TITLE_MAX,
   type PresentResultRepairField,
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
@@ -244,8 +248,11 @@ export function discoveryPreviewNarrative(answer: string): {
  * Passing findings in instead keeps every rule on one accumulator and one rejection.
  */
 export interface PresentResultViolation {
+  /** Input field the violation is attributed to. */
   readonly field: PresentResultFailedField;
+  /** Rejection messages reported through the validator's accumulator. */
   readonly messages: readonly string[];
+  /** Fields this violation authorizes for a repair resend. */
   readonly repairFields: readonly PresentResultRepairField[];
   /** Exact offending entry paths, empty when the violation is about the payload as a whole. */
   readonly paths: readonly string[];
@@ -795,9 +802,34 @@ export function validatePresentResult(
   // thing wrong, without assuming one violation means one message.
   const externalErrorCount = errors.length;
 
-  // Presence only — length caps are Zod-owned at the boundary schema (name/title/summary), so no
-  // hand-rolled length check here (it would duplicate Zod and, for summary, reject on prose length).
+  /**
+   * Reports one GUI label over its hard cap.
+   *
+   * @remarks
+   * The caps are validator-owned rather than Zod-owned at the boundary (see
+   * `PresentResultBoundarySchema`): a Zod reject fails the whole call with a field path and no held
+   * draft, so an overrun costs a full resend of an answer that was otherwise correct. Reported here
+   * the overrun is repairable, authorizes only its own field, and names the exact entry. The
+   * measured length is stated because a model cannot count characters — the same fact
+   * `describeSizeIssue` (`toolErrorEnvelope.ts`) states for a Zod size issue, in the same wording.
+   * `summary`, `intro` and `closing` are prose, never a rejection axis, and have no cap to check.
+   */
+  const addLengthError = (
+    field: PresentResultFailedField & PresentResultRepairField,
+    path: string,
+    value: string,
+    limit: number,
+  ): void => {
+    if (value.length <= limit) return;
+    // The path is stated in the message as well as in `detail`, which the rejection replay drops.
+    addError(field, `${path} is over its length limit: ${value.length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`, [field], [path]);
+  };
+
+  // Presence, then the hard cap. `summary` is prose (the one-line graph purpose) and is deliberately
+  // uncapped, so only its presence is checked.
   if (!input.name || input.name.trim().length === 0) addError('name', 'name is required');
+  else addLengthError('name', 'name', input.name, PRESENT_RESULT_NAME_MAX);
+  if (typeof input.title === 'string') addLengthError('title', 'title', input.title, PRESENT_RESULT_TITLE_MAX);
 
   // Node set must be non-empty (after resolve + prune)
   if (resolvedNodeIds.length === 0) {
@@ -878,7 +910,8 @@ export function validatePresentResult(
       if (!label) {
         addError('sections', 'Section label is required — provide a short final label for this detail section');
       } else {
-        // Label brevity is prompt-owned content quality; structural validity stays at this boundary.
+        // Label brevity is prompt-owned content quality; the hard cap and structural validity stay here.
+        addLengthError('sections', `sections.${sectionIndex}.label`, sec.label, PRESENT_RESULT_SECTION_LABEL_MAX);
         if (labels.has(normalizedLabel)) {
           addError('sections', `Duplicate section label "${label}" — each final label must map to exactly one section text`);
         }
@@ -933,6 +966,7 @@ export function validatePresentResult(
     }
     for (const [groupIndex, g] of input.highlight_groups.entries()) {
       if (!g.label) addError('highlight_groups', 'Group label is required');
+      else addLengthError('highlight_groups', `highlight_groups.${groupIndex}.label`, g.label, PRESENT_RESULT_HIGHLIGHT_LABEL_MAX);
       if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
       const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
       if (unknownIds.length > 0) {
@@ -978,9 +1012,9 @@ export function validatePresentResult(
   };
 
   if (errors.length > 0) {
-    // The failed-field list was attached structurally at each addError site above.
+    // The failed-field list is attached structurally at each addError site above.
     const fieldList = [...failedFields];
-    // Derive the resend list from the same field set used to narrow the repair schema.
+    // The resend list is the same field set that narrows the repair schema.
     const resendList = [...repairFields];
     let hint = fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`

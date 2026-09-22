@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
+import { DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT } from '../../../src/ai/prompting/prompts';
 import { collectingSink, scriptedRegistry } from './helpers/scriptedModelPort';
 
 function registryFor(names: readonly string[]) {
@@ -67,5 +68,17 @@ describe('compileInstructionPlan — provider tool choice', () => {
     const schema = plan.input.registry.get('lineage_present_result')!.inputSchema;
     expect(schema.safeParse({ sections: [{ label: 'Flow', text: 'Exact source.' }] }).success).toBe(true);
     expect(schema.safeParse({ notes: [] }).success).toBe(false);
+  });
+
+  it('the compose instruction plan carries a non-empty @lineage system prompt', () => {
+    const plan = compileInstructionPlan({
+      kind: 'text',
+      phase: 'compose',
+      system: DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
+      messages: [modelUserMessage('Compose the discovery summary.')],
+    });
+
+    expect(plan.input.system).toBeTruthy();
+    expect(plan.input.system).toContain('@lineage');
   });
 });

@@ -86,7 +86,7 @@ describe('checkScopeBudget escalates at the documented discovery caps', () => {
     if (!result.ok) {
       expect(result.reason).toBe('over_discovery_budget');
       expect(result.limits).toEqual({ node_cap: DEFAULT_DISCOVERY_NODE_CAP, token_budget: DEFAULT_DISCOVERY_TOKEN_BUDGET });
-      expect(result.hint).toMatch(/detailed analysis would be needed/i);
+      expect(result.hint).toMatch(/a detailed analysis/i);
       expect(result.hint).not.toMatch(/hop-by-hop/i);
       expect(result.hint).not.toMatch(/consent-gated/i);
     }

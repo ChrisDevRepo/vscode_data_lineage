@@ -47,11 +47,10 @@ function numericStringDepth<T extends z.ZodType>(schema: T) {
  *
  * @remarks
  * The numeric branch is wrapped in {@link numericStringDepth} for the same reason as
- * {@link ExplorationDepthSideSchema}: this branch is also rendered next to the quoted literal
- * `'all'` in the same `anyOf`, so it invites a provider to quote the number too. A quoted
- * `depth: "1"` / `"2"` is rejected as `invalid_tool_input` and can stop the turn on cumulative
- * semantic failures at `sm_entry`, while the asymmetric sibling accepts the identical encoding —
- * one union, two opposite policies.
+ * {@link ExplorationDepthSideSchema}: this branch is rendered next to the quoted literal `'all'`
+ * in the same `anyOf`, which invites a provider to quote the number too. Both sides of the contract
+ * therefore accept the identical encoding — one union, one policy. The wrapped bounds still decide
+ * the value: a quoted `"0"` stays rejected here by `.min(1)`.
  */
 const ExplorationDepthLimitSchema = z.union([numericStringDepth(z.number().int().min(1)), z.literal('all')]);
 

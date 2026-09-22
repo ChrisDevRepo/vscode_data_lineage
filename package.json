@@ -53,7 +53,14 @@
   "homepage": "https://datalineage.chwagner.eu/",
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": "limited",
+      "description": "Custom parse-rule, DMV query, exclusion-pattern and AI template settings are read from workspace configuration and compiled or executed; workspace values for them are ignored until the workspace is trusted.",
+      "restrictedConfigurations": [
+        "dataLineageViz.parseRulesFile",
+        "dataLineageViz.dmvQueriesFile",
+        "dataLineageViz.excludePatterns",
+        "dataLineageViz.ai.outputTemplateFile"
+      ]
     }
   },
   "main": "./out/extension.js",
@@ -826,14 +833,18 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.0",
     "vite": "^6.4.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "langsmith": "file:./stubs/langsmith",
     "esbuild": "^0.28.2",
     "dompurify": "$dompurify",
     "serialize-javascript": "^7.0.5",
-    "diff": "^8.0.3"
+    "diff": "^8.0.3",
+    "js-yaml@4": "4.3.2",
+    "fast-uri": "3.1.7",
+    "browserslist": "4.28.8",
+    "baseline-browser-mapping": "2.11.21"
   },
   "allowScripts": {
     "esbuild@0.28.2": true

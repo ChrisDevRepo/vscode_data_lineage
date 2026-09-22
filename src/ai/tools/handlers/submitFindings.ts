@@ -9,6 +9,8 @@
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
 import {
+  COLUMN_FLOW_ENTRY_KEYS,
+  COLUMN_FLOW_WRITES_TO_KEYS,
   SubmitFindingsBbInputSchema,
   SubmitFindingsCtInputSchema,
 } from '../../tools/toolSchemas';
@@ -25,17 +27,14 @@ import {
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
-const COLUMN_FLOW_ENTRY_KEYS = new Set(['out_col', 'writes_to', 'upstream_columns']);
-const COLUMN_FLOW_WRITES_TO_KEYS = new Set(['node', 'col']);
-
-// `declaredKeysOnly` (`inputNormalization.ts`) already strips undeclared `column_flow[].*` keys
-// inside `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
-// permissive registered union `vscodeModelPort` parses before this handler runs, where no logger
-// is reachable. This mirrors that strip here, on the actual submit path, so the drop is named
-// (entry index, dropped keys) before the schema-side strip becomes a no-op on the clean copy.
+// `declaredKeysOnly` (`inputNormalization.ts`) strips undeclared `column_flow[].*` keys inside
+// `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
+// permissive registered union `vscodeModelPort` parses first, ahead of this handler, where no logger
+// is reachable. This strip runs on the actual submit path so each drop is named
+// (entry index, dropped keys); the key sets are the schema's own, so a new field cannot go missing.
 function stripUndeclaredColumnFlowKeys(columnFlow: unknown[], logger: ToolServices['logger']): unknown[] {
   const dropped: string[] = [];
-  const stripKeys = (rec: Record<string, unknown>, declared: Set<string>, label: string) => {
+  const stripKeys = (rec: Record<string, unknown>, declared: ReadonlySet<string>, label: string) => {
     const surplus = Object.keys(rec).filter(key => !declared.has(key));
     if (surplus.length === 0) return rec;
     dropped.push(`${label}: ${surplus.join(', ')}`);
@@ -121,6 +120,10 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         );
       }
 
+      // Structure only. `badge_label` and `column_flow[].upstream_columns[].note` advertise their
+      // cap without parsing it (`advertisedMax`, `toolSchemas.ts`); the engine enforces both ahead
+      // of every mutation, so an overrun holds the draft and is repaired as one corrected field
+      // instead of failing the hop.
       const parsed = engine.columnAspect
         ? SubmitFindingsCtInputSchema.safeParse(normalizedInput)
         : SubmitFindingsBbInputSchema.safeParse(normalizedInput);

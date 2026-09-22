@@ -18,8 +18,11 @@ import { readToolError, rejectionIssuePaths, isConsentGateRejection } from '../s
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
 export interface LineageRuntimeRequest {
+  /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
+  /** Verbatim user prompt for this turn. */
   readonly prompt: string;
+  /** Optional prior-turn conversation, oldest first; when present the session transcript is cleared after the turn. */
   readonly priorMessages?: readonly ModelMessage[];
 }
 
@@ -27,25 +30,35 @@ export interface LineageRuntimeRequest {
 export interface LineageRuntimeRunInput {
   /** The exact native request model, already wrapped as a provider-neutral port. */
   readonly model: ModelPort;
+  /** Request identity, prompt, and optional history for this turn. */
   readonly request: LineageRuntimeRequest;
+  /** Native event sink that receives this turn's events and its one terminal result. */
   readonly sink: TurnEventSink;
+  /** Optional abort signal cancelling the turn; rides the captured turn lease. */
   readonly signal?: AbortSignal;
 }
 
 /** Terminal runtime outcome and provider-call accounting for one lineage turn. */
 export interface LineageRuntimeResult {
+  /** Terminal status of the turn. */
   readonly outcome: TurnOutcome;
+  /** Provider calls attempted through the request's model port. */
   readonly modelCalls: number;
+  /** Diagnostic detail when the turn ended other than `ok`. */
   readonly failure?: AgentFailureDetail;
 }
 
 /** Long-lived dependencies used to construct request-scoped lineage turns. */
 export interface LineageRuntimeDeps {
+  /** Session accessor for the {@link AiSession} singleton. */
   readonly getSession: () => AiSession;
   /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
   readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
+  /** Optional logger forwarded to the agent runtime. */
   readonly logger?: Logger;
+  /** Optional per-turn model-step cap forwarded to the agent runtime. */
   readonly maxRounds?: number;
+  /** Optional trace writer receiving this runtime's lifecycle and tool records. */
   readonly traceWriter?: AiTraceWriter;
 }
 

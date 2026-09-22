@@ -249,7 +249,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         s.logger.debug(`[Mission] provenance=pending_proposal len=${refineMissionBrief.length}`);
       }
       const refineAnalysisMode = data.analysisMode ?? (isRefining ? pendingInit?.analysisMode : 'bb');
-      // Static Zod validation cannot know the prior mode inherited by a refine payload.
+      // Static Zod validation cannot know the inherited mode of a refine payload.
       const bbTargetConflict = refineAnalysisMode === 'bb'
         ? evaluateBbTargetColumnsRule(data.targetColumns)
         : null;
@@ -281,7 +281,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       } satisfies import('../../sm/smTypes').NavigationInitParams;
       const initResult = engine.init(proposalInit);
 
-      // The preview engine is never published. Rejected proposals leave the prior proposal intact.
+      // The preview engine is never published. Rejected proposals leave the pending proposal intact.
       if ('error' in initResult) return s.logAndReturn('start_exploration', initResult, loggedInput);
       const maxRounds = s.maxRounds;
       const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
