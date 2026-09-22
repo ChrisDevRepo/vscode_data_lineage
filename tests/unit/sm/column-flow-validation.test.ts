@@ -1138,7 +1138,7 @@ describe("J23 — CT active columns through contracted tables (red reproductions
    * with an empty projection, so the node behind it is reached in CT exactly as it is in BB, and
    * merges its real column when the route arrives.
    */
-  it("RC2: the origin-resolved target column no longer leaks through the carrier's SEED-time contraction (writer_proc, pure-inbound chain) — symmetric with its later route-admission (reader_proc, contraction-extension)", () => {
+  it("RC2: the origin-resolved target column no longer leaks through the carrier's SEED-time contraction (writer_proc, pure-inbound chain); reader_proc (contraction-extension) is refused out_of_direction, not admitted", () => {
     // Stage 1 — immediately after init()+one getHopContext() (origin_view dispatched), BEFORE any
     // column_flow has run: staging (the carrier) never declares 'Discount', so the seed-time
     // contraction stops at staging and neither sibling gets an entry yet.
@@ -1164,9 +1164,15 @@ describe("J23 — CT active columns through contracted tables (red reproductions
 
     // Stage 2 — commit origin_view's column_flow naming staging.OrderAmount as the sole real
     // upstream contributor to Discount. `staging` itself is auto-added from the upstream_columns
-    // reference (routeQuestionsByNode), which contracts through to both writer_proc and
-    // reader_proc, both newly admitted. Convergence: the remaining required neighbours
-    // (`rules`, `consumer_proc`) are routed explicitly, as the guard now demands in CT too.
+    // reference (routeQuestionsByNode). `staging`'s contraction reaches writer_proc (on the
+    // pure-inbound chain to origin_view — upstream of origin_view, in the directed closure).
+    // reader_proc is `staging`'s *other*, unrelated consumer (staging → reader_proc): neither
+    // upstream nor downstream of origin_view, the same co-parent shape as the P1-13 off-path
+    // cluster (`vwPriceList` → `spBuildSalesReport`), so post-fix (smBase.ts:1090
+    // isReachableInApprovedDirection) the contraction into it is refused out_of_direction — a
+    // silent `[Disposition] enqueue drop`, same as it never having a seed-time entry (stage 1).
+    // Convergence: the remaining required neighbours (`rules`, `consumer_proc`) are routed
+    // explicitly, as the guard now demands in CT too.
     const commit = engine.submitFindings({
       focus_node_id: 'origin_view',
       sections: [{ angle: 'business' as const, text: 'Discount is computed from staging.OrderAmount' }],
@@ -1181,21 +1187,10 @@ describe("J23 — CT active columns through contracted tables (red reproductions
     const routedWriter = routedSnap.agenda.find((e) => e.nodeId === 'writer_proc');
     const routedReader = routedSnap.agenda.find((e) => e.nodeId === 'reader_proc');
     expect([...(routedWriter?.activeColumns ?? [])].sort().join(','), `J23 RC2 stage 2b (GREEN, mirrors 2c): writer_proc's activeColumns after the staging.OrderAmount route must deep-equal ['OrderAmount'] — actual: [${(routedWriter?.activeColumns ?? []).join(',')}]`).toBe('OrderAmount');
-    expect([...(routedReader?.activeColumns ?? [])].sort().join(','), `J23 RC2 stage 2c (GREEN control, pins the asymmetry): reader_proc's freshly route-admitted activeColumns already deep-equal ['OrderAmount'] — no prior seed entry existed to merge a leaked 'Discount' into; actual: [${(routedReader?.activeColumns ?? []).join(',')}]`).toBe('OrderAmount');
+    expect(routedReader === undefined, `J23 RC2 stage 2c (P1-13 fix): reader_proc is outside origin_view's directed closure (staging's other, unrelated consumer), so the contraction into it is refused out_of_direction and it gets no agenda entry — found: ${JSON.stringify(routedReader)}`).toBe(true);
 
-    // Stage 3 — dispatch reader_proc (terminal-submitting writer_proc first if it dequeues ahead,
-    // since both tie at priority=2) and submit its sole legitimate column, OrderAmount. GREEN
-    // control: reader_proc's clean active-column set (stage 2c) fully accounts for the hop.
-    j23DispatchUntil(engine, 'reader_proc');
-    const readerResult = engine.submitFindings({
-      focus_node_id: 'reader_proc',
-      sections: [{ angle: 'business' as const, text: 'reader_proc forwards staging.OrderAmount into archive' }],
-      summary: 'ok',
-      verdict: 'passthrough',
-      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
-      route_requests: j23RequiredRoutes(engine, 'reader_proc'),
-    });
-    expect(!('error' in readerResult), `J23 RC2 stage 3 (GREEN control): reader_proc submitting only its legitimate OrderAmount contribution is accepted, not rejected — actual: ${'error' in readerResult ? `${readerResult.error}: ${readerResult.hint ?? ''}` : 'ok'}`).toBe(true);
+    // Stage 3 removed: reader_proc is never admitted post-fix (stage 2c), so it is never
+    // dispatched — there is nothing left to terminal-submit at it.
   });
 
   it("RC3: an entry the contraction bound to [] dispatches with no active columns — the seed spelling is not re-padded at dispatch onto a node with no column surface", () => {
