@@ -14,7 +14,6 @@ const CASE_MODE: 'CI' | 'CS' = 'CI';
  * When `CASE_MODE` is 'CI', the name is lowercased to ensure that 'dbo', 'DBO',
  * and '[dbo]' (after bracket stripping) are treated as identical.
  *
- * @param name - The raw SQL identifier name.
  * @returns The normalized key for use in Maps and sets.
  */
 export function schemaKey(name: string): string {
@@ -37,9 +36,6 @@ const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"(?:""|[^"])*"|[\[\]"]/g;
  * @remarks
  * The single owner of identifier-text normalization: an escaped `]` survives here as one literal
  * character, so a name containing `]` round-trips instead of losing the character.
- *
- * @param name - The delimited SQL identifier.
- * @returns The raw, unquoted identifier name.
  */
 export function stripBrackets(name: string): string {
   return name.replace(DELIMITED_PART, part =>
@@ -76,9 +72,6 @@ export function normalizeColName(name: string): string {
  * splitSqlName("db.schema.obj")           // returns ["db", "schema", "obj"]
  * splitSqlName("[dbo].[a]].b]")           // returns ["[dbo]", "[a]].b]"]
  * ```
- *
- * @param name - The fully qualified SQL name to split.
- * @returns An array of identifier parts.
  */
 export function splitSqlName(name: string): string[] {
   const parts: string[] = [];
@@ -105,12 +98,7 @@ export function splitSqlName(name: string): string[] {
   return parts;
 }
 
-/**
- * Escapes special characters in a string for safe interpolation into HTML.
- *
- * @param s - The raw string to escape.
- * @returns The HTML-safe escaped string.
- */
+/** Escapes special characters in a string for safe interpolation into HTML. */
 export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -131,10 +119,6 @@ const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
  * interpolate into `[schema]`/`"schema"` positions. If an identifier context is ever
  * needed, add a dedicated helper that validates against `sys.schemas` or brackets with
  * `]`-escaping.
- *
- * @param sql - The SQL template string containing the placeholder.
- * @param schemas - The list of schema names to inject.
- * @returns The expanded SQL query.
  */
 export function expandSchemaPlaceholder(sql: string, schemas: string[]): string {
   if (!sql.includes(SCHEMA_PLACEHOLDER)) return sql;
@@ -145,8 +129,6 @@ export function expandSchemaPlaceholder(sql: string, schemas: string[]): string 
 /**
  * Validates that a SQL template contains the required schema placeholder for its execution phase.
  *
- * @param name - The name of the query being validated.
- * @param sql - The SQL template content.
  * @param phase - The execution phase (Phase 2 requires the placeholder for filtering).
  * @returns A warning message if validation fails, otherwise `undefined`.
  */
@@ -163,20 +145,12 @@ export function validateSchemaPlaceholder(name: string, sql: string, phase: numb
  * Supports the `%` wildcard character, which is converted to `.*`.
  *
  * @example `%tmp%` matches any string containing "tmp".
- *
- * @param pattern - The pattern string to compile.
- * @returns A compiled `RegExp` object.
  */
 export function compileExclusionPattern(pattern: string): RegExp {
   return new RegExp(pattern.replace(/%/g, '.*'), 'i');
 }
 
-/**
- * Escapes a string so it can be safely used as a literal part of a regular expression.
- *
- * @param s - The string to escape.
- * @returns The escaped string.
- */
+/** Escapes a string so it can be safely used as a literal part of a regular expression. */
 export function escapeRegexLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -186,9 +160,6 @@ export function escapeRegexLiteral(s: string): string {
  * - Removes blank lines.
  * - Trims trailing whitespace.
  * - Converts tabs to two-space indentation.
- *
- * @param raw - The raw DDL script content.
- * @returns The normalized, clean script string.
  */
 export function normalizeBodyScript(raw: string): string {
   return raw

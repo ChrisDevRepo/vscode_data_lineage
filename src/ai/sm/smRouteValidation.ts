@@ -129,7 +129,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_visited: 'route_validation_failed',
   prune_noop_analyzed: 'route_validation_failed',
   prune_noop_queued: 'route_validation_failed',
-  prune_origin_forbidden: 'prune_origin_forbidden',
+  prune_origin_forbidden: REJECTION_CODES.pruneOriginForbidden,
   prune_would_orphan: REJECTION_CODES.pruneWouldOrphanNoted,
   prune_route_conflict: 'prune_route_conflict',
   route_columns_flow_conflict: 'route_columns_flow_conflict',
@@ -169,15 +169,13 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], appendHold
   const hint = [
     missingRouteHint,
     ...distinctKinds.filter(k => k !== 'missing_required_route').map(k => ROUTE_REJECTION_DIRECTIVE[k]),
-    // Mirrors the engine's hold condition — pure neighbor incompleteness, or content errors only —
-    // so the order the model follows is the one the engine will honour.
+    // Mirrors the engine's hold condition — pure neighbor incompleteness, or content errors only — so the order the model follows is the one the engine will honour.
     !appendHoldOrder ? ''
       : missingRouteErrors.length > 0
         ? (missingRouteErrors.length === errors.length ? HELD_RETRY_ORDER : FULL_RESUBMIT_ORDER)
         : errors.length > 0 && errors.every(e => isContentKind(e.kind)) ? HELD_CORRECTION_ORDER : '',
   ].filter(Boolean).join(' ');
-  // available_routes is the identical full required set on every missing_required_route entry, so
-  // the envelope states it once — on the first such entry — instead of once per missing id.
+  // available_routes is the identical full required set on every missing_required_route entry, so the envelope states it once, on the first such entry, instead of once per missing id.
   const firstMissingRouteIdx = errors.findIndex(e => e.kind === 'missing_required_route');
   return {
     error,
@@ -209,20 +207,11 @@ export interface SubmissionFaults {
   originPrune?: { focusId: string; keepClause: string };
   /** `verdict:'prune'` whose removal would disconnect a protected node from the origin. */
   focusOrphan?: { focusId: string; orphanId: string; keepClause: string };
-  /**
-   * `verdict:'prune'` carrying non-empty `sections`. A prune archives to `prunedDetails`,
-   * which synthesis never reads, so authored findings on a prune verdict are silently lost;
-   * a prune owes no account and findings belong on `analyze`.
-   */
+  /** `verdict:'prune'` carrying non-empty `sections` — a prune archives to `prunedDetails`, which synthesis never reads, so those findings would be silently lost. */
   pruneSections?: { focusId: string; sectionCount: number };
   /** CT column-chain completeness: tracked columns the payload left unaccounted. */
   columnChain?: { focusId: string; unaccounted: string[]; available: string[]; contradicted: readonly string[]; traceDirection?: 'upstream' | 'downstream' };
-  /**
-   * Required neighbours a non-prune repair of this payload would bring into play. Stated because a
-   * `verdict:'prune'` payload is exempt from the neighbour demand: repairing the verdict is what
-   * raises the obligation, so a rejection that hides it hands the model an obligation set that
-   * appears only on the turn after the repair.
-   */
+  /** Required neighbours a non-prune repair of this payload would bring into play — a prune verdict is exempt from the neighbour demand, so this avoids hiding the obligation until the turn after repair. */
   repairWouldOwe?: readonly string[];
 }
 
@@ -230,17 +219,11 @@ export interface SubmissionFaults {
  * Composes ONE rejection envelope naming every fault the payload carries.
  *
  * @remarks
- * The guard chain accumulates and reports once instead of returning at the first fault. A first
- * fault that hides the rest makes the model repair one defect, resubmit, and be told about the
- * next — a cascade that spends the whole semantic budget on a payload with three faults in it.
- * `docs/AI_PROMPTS.md` already promises one complete rejection per submission; this is where the
- * promise is kept.
- *
- * A single-family payload keeps the exact code, hint and `detail` shape that family had as a
- * standalone rejection, so nothing about the established envelopes changes. A multi-family payload
- * reports under the first family's code, carries each family's `detail` under its own key, states
- * the resubmission order once, and holds nothing — another repair rides along, so the sections have
- * to come back with it, the same stricter policy a mixed route rejection already uses.
+ * The guard chain accumulates and reports once instead of returning at the first fault, so a
+ * multi-fault payload is not spent on a resubmit cascade. A single-family payload keeps the exact
+ * code, hint and `detail` shape that family had standalone; a multi-family payload reports under
+ * the first family's code, carries each family's `detail` under its own key, and holds nothing —
+ * another repair rides along, so the sections have to come back with it.
  *
  * @param faults - The accumulated faults; an empty set means the payload passed this chain.
  * @returns The envelope plus whether the finding draft is held for the retry, or `null` when there
@@ -261,7 +244,7 @@ export function buildSubmissionRejection(
   let soleDetail: unknown;
 
   if (faults.originPrune) {
-    codes.push('prune_origin_forbidden');
+    codes.push(REJECTION_CODES.pruneOriginForbidden);
     hints.push(`Submit a complete analyze or passthrough finding for this focus. The exploration origin is immutable.${faults.originPrune.keepClause}`);
   }
   if (faults.focusOrphan) {
@@ -293,15 +276,7 @@ export function buildSubmissionRejection(
       soleDetail = envelope.detail;
     }
   }
-  // Field-scoped in every family it is granted for, so the authored sections and summary stay
-  // valid whether one family fired or three. Holding across a co-report is the point of the
-  // co-report: a model told about two faults at once must not pay to re-author prose it already
-  // wrote because the second fault arrived with the first.
-  // `pruneSections` is excluded like the other verdict-level faults: the refused content IS
-  // the authored sections, so holding the draft would merge them back into a bare-prune retry
-  // via `applyHeldContent` (which restores held sections when the retry sends `sections: []`)
-  // and resurrect exactly what was refused. Nothing is held; the resubmission order is the
-  // full one.
+  // pruneSections is excluded like the other verdict-level faults: the refused content IS the authored sections, so holding the draft would resurrect via `applyHeldContent` exactly what was refused.
   const holdEligible = (faults.originPrune === undefined && faults.focusOrphan === undefined
     && faults.pruneSections === undefined)
     && (faults.routes.length === 0

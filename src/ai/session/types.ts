@@ -51,11 +51,7 @@ export interface ResultGraph {
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /** Engine-owned lifecycle state for nodes; detail slots are content only. */
   node_states?: SmNodeState[];
-  /**
-   * Engine-assembled markdown body produced by `present_result` (engine output, not AI input).
-   * Populated by the tool handler from `orderAndAssemble()` output so `GET /session/:id/state`
-   * carries the full synthesized description, not just topology + suggested_* fields.
-   */
+  /** Engine-assembled markdown body from `present_result` (engine output, not AI input) — carries the full synthesized description, not just topology. */
   description?: string;
   /** AI-supplied one-line digest from `present_result.input.summary`. */
   summary?: string;
@@ -67,16 +63,9 @@ export interface ResultGraph {
   closing?: string;
   /** AI-supplied report sections from `present_result.input.sections[]`. */
   sections?: Array<{ label: string; node_ids?: string[]; text?: string }>;
-  /**
-   * The `explorationRunId` that authored {@link sections}. A newly approved exploration replaces
-   * the engine without clearing this graph, so the stamp is what distinguishes sections a later
-   * render may retain from ones left over from the previous run.
-   */
+  /** The `explorationRunId` that authored {@link sections} — distinguishes sections a later render may retain from ones left over from a previous run. */
   sectionsRunId?: string;
-  /**
-   * Column lineage chain from a CT session, serialized into AI metadata for React canvas
-   * rendering. `ctPrunedNodeIds` identifies visited nodes that contributed no flow edges.
-   */
+  /** Column lineage chain from a CT session; `ctPrunedNodeIds` are visited nodes with no flow edges. */
   columnAspect?: { edges: ColumnEdge[]; ctPrunedNodeIds: string[] };
 }
 
@@ -84,18 +73,10 @@ export interface ResultGraph {
  * Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure).
  *
  * @remarks
- * The single source of truth for overlay compatibility. The built-in YAML carries a matching
- * `schemaVersion`; a user's custom overlay (`ai.outputTemplateFile`) is honoured only when its
- * `schemaVersion` equals this. **Bump this only when a released change would make a previous
- * release's overlay stop fitting** — a template key removed or renamed, a field removed or
- * retyped: the changes where a still-matching old overlay is silently mis-applied. An added
- * template key or field is backward compatible (the overlay merges over the built-in file, which
- * fills everything the overlay lacks) and never bumps; wording inside `instruction` / `example`
- * is content and never bumps. No migration code — on mismatch the overlay is skipped, the
- * built-in templates are used, and a warning goes to the Output channel.
- * `tests/tools/assert-template-schema-version.mjs` compares the structural fingerprint against
- * the last release tag (or `origin/main` when no tag exists) and fails the gate when a breaking
- * change ships without a bump — or the version moves without one.
+ * A user's custom overlay (`ai.outputTemplateFile`) is honoured only when its `schemaVersion`
+ * equals this. Bump only when a released change would break a previous overlay (a key/field
+ * removed or retyped); an added key or wording change never bumps. On mismatch the overlay is
+ * skipped with an Output-channel warning — no migration code.
  */
 export const AI_TEMPLATE_SCHEMA_VERSION = 2;
 
@@ -107,13 +88,7 @@ export const AI_TEMPLATE_SCHEMA_VERSION = 2;
  * and guide the AI in synthesizing its findings into a structured, user-friendly report.
  */
 export interface AiOutputTemplates {
-  /**
-   * Discovery-phase chat output — editable via the YAML overlay for tuning
-   * answer length, citation discipline, single-vs-balanced format, no-padding
-   * rule, and the biz / tech / math reference shapes used when writing chat
-   * prose. NOT a capture template; full angle templates ship only after SM
-   * gate approval.
-   */
+  /** Discovery-phase chat output — tunes answer length, citation and format; NOT a capture template. */
   discovery_chat: string;
   /** Instructions for generating the high-level summary. */
   summary: string;

@@ -9,11 +9,7 @@ interface AiViewBannerProps {
   nodeCount: number;
   /** Callback triggered when the user chooses to discard the AI preview. */
   onDiscard: () => void;
-  /**
-   * Callback triggered when the user chooses to save the current AI view as a permanent bookmark.
-   * @param name - The name for the new bookmark.
-   * @param withPositions - Whether to save the current visual positions of nodes.
-   */
+  /** Callback triggered when the user chooses to save the current AI view as a permanent bookmark. */
   onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
   /**
    * Whether the run recorded column-level findings, which is what the column view renders.

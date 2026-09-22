@@ -88,9 +88,7 @@ function resolveBfsGraph(
 ): { bfsGraph: Graph | null; autoPromoted: boolean } {
   const preferred = preferFull ? (fullGraph ?? graph) : graph;
   if (preferred?.hasNode(nodeId)) return { bfsGraph: preferred, autoPromoted: false };
-  // Auto-fallback: node not in preferred graph, try fullGraph
   if (!preferFull && fullGraph?.hasNode(nodeId)) return { bfsGraph: fullGraph, autoPromoted: true };
-  // Node not in any graph — caller gets the usual empty-result path
   return { bfsGraph: preferred, autoPromoted: false };
 }
 
@@ -98,14 +96,8 @@ function resolveBfsGraph(
  * Custom hook for managing interactive data lineage traces and pathfinding.
  *
  * @remarks
- * This hook manages the lifecycle of "drilling into" specific nodes. It supports:
- * 1. **Level-based Tracing**: Upstream and downstream traversal.
- * 2. **Shortest Path**: Finding connections between two specific nodes.
- * 3. **Analysis Subsets**: Highlighting architectural patterns (hubs, islands).
- *
- * It handles the complex logic of "Auto-Promotion", where a trace on a node that is
- * currently filtered out will automatically switch to the `fullGraph` to ensure
- * the user can always see the requested lineage.
+ * Auto-promotes to `fullGraph` when the selected node is filtered out of the base graph, so the
+ * user can always see the requested lineage.
  *
  * @param graph - The currently active (filtered) graph instance.
  * @param flowNodes - The current set of React Flow nodes.
@@ -126,8 +118,7 @@ export function useInteractiveTrace(
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
   const [useFullModel, setUseFullModel] = useState(false);
 
-  // Full (unfiltered) graph for path-finding and unfiltered trace —
-  // traverses all model nodes, not just the filtered subset.
+  // Full (unfiltered) graph for path-finding and unfiltered trace — all model nodes, not just the filtered subset.
   const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
 
   const useFullModelRef = useRef(useFullModel);
@@ -231,7 +222,6 @@ export function useInteractiveTrace(
     }));
   }, [config]);
 
-  // Compute and apply shortest path — returns true if path found
   // Always prefers fullGraph so paths can traverse nodes hidden by filters.
   const applyPath = useCallback((targetNodeId: string): boolean => {
     if (!trace.selectedNodeId) {

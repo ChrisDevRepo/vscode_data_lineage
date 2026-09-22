@@ -54,8 +54,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     logger.error('load parse rules at activation', err);
   });
 
-  // Validation discards persisted projects it cannot read. That is data loss the user must hear
-  // about once — every later load logs at debug so a repeated read cannot turn into toast spam.
+  // Validation discards persisted projects it cannot read. That is data loss the user must hear about once — every later load logs at debug so a repeated read cannot turn into toast spam.
   const projectLogger = Logger.create(outputChannel, 'Project');
   let droppedProjectsReported = false;
   const reportDroppedProjects = ({ dropped, issuePaths }: ProjectStoreDropReport): void => {
@@ -120,8 +119,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   });
   getSession().outputTemplates = templates;
 
-  // The kill switch prevents AI registration and turn execution. Imports remain static because the
-  // extension is emitted as a single CommonJS bundle without a code-splitting boundary.
+  // The kill switch prevents AI registration and turn execution. Imports remain static because the extension is emitted as a single CommonJS bundle without a code-splitting boundary.
   const aiEnabled = vscode.workspace
     .getConfiguration('dataLineageViz.ai')
     .get<boolean>('enabled', DEFAULT_AI_ENABLED);
@@ -138,20 +136,15 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   // Contain optional AI initialization so a failure cannot disable parsing and visualization.
   try {
     if (aiEnabled && missingAiApis.length > 0) {
-      // Output channel only, never a notification: a host without these namespaces is an editor
-      // fork or a policy that switched AI off, so its user chose this state and would meet the
-      // same popup on every window start. The absence is a diagnostic, not an incident.
+      // Output channel only, never a notification: a host without these namespaces is an editor fork or a policy that switched AI off, and its user would meet the same popup on every window start.
       logger.info(
         `AI surface unavailable — this editor does not provide ${missingAiApis.join(' or ')}. `
         + 'Lineage visualisation, parsing and the graph are unaffected.',
       );
     } else if (aiEnabled) {
-    // Retain contributed language-model tools for external VS Code compatibility.
-    // Their invocations route through the same canonical strict registry builder;
-    // the @lineage runtime dispatches its graph calls directly.
+    // Retain contributed language-model tools for external VS Code compatibility, routed through the same canonical strict registry builder; the @lineage runtime dispatches its graph calls directly.
     const runStoreLogger = Logger.create(outputChannel, 'AI');
-    // Resolved once at activation; the graph runtime and the start_exploration scope check read the
-    // same value, so the hop cap the model is admitted against is the cap the loop enforces.
+    // Resolved once at activation so the graph runtime and the start_exploration scope check read the same value: the hop cap the model is admitted against is the cap the loop enforces.
     const maxRounds = vscode.workspace
       .getConfiguration('dataLineageViz')
       .get<number>('ai.maxRounds', DEFAULT_MAX_ROUNDS);
@@ -163,8 +156,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
     );
 
-    // One native runtime. Every turn receives its exact ChatRequest.model and a
-    // lease-bound strict registry for direct dispatch.
+    // One native runtime. Every turn receives its exact ChatRequest.model and a lease-bound strict registry for direct dispatch.
     lineageRuntime = new LineageRuntime({
       getSession,
       createRegistry: (lease, model) =>
@@ -190,8 +182,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       );
     }
   } catch (err) {
-    // Degrade visibly, never silently: the core product continues, and the user is told the
-    // AI half is unavailable and why.
+    // Degrade visibly, never silently: the core product continues, and the user is told the AI half is unavailable and why.
     lineageRuntime = undefined;
     participant = undefined;
     const detail = err instanceof Error ? err.message : String(err);
@@ -232,8 +223,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       if (!e.affectsConfiguration('dataLineageViz')) return;
       configLogger.debug('Settings changed — dataLineageViz.*');
 
-      // The kill switch decides what gets imported at activation, so it can only be
-      // applied by a window reload — no hot re-registration.
+      // The kill switch decides what gets imported at activation, so it can only be applied by a window reload — no hot re-registration.
       if (e.affectsConfiguration('dataLineageViz.ai.enabled')) {
         const nowEnabled = vscode.workspace
           .getConfiguration('dataLineageViz.ai')
@@ -506,8 +496,7 @@ async function loadParseRules(
 
   for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
   logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
-  // Any skipped rule silently narrows extraction, so it is notified — not only the
-  // total-failure case. The named per-rule reasons are on the `info` lines above.
+  // Any skipped rule silently narrows extraction, so it is notified — not only the total-failure case. The named per-rule reasons are on the `info` lines above.
   if (result.skipped.length > 0) {
     const allSkipped = result.loaded === 0;
     notifyWarning(

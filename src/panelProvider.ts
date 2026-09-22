@@ -19,11 +19,7 @@ let activeTriggerDemo: (() => Promise<void>) | undefined;
 
 export { PROJECT_STORE_KEY };
 
-/**
- * Retrieves the currently active lineage webview panel, if one exists.
- *
- * @returns The active `vscode.WebviewPanel` or `undefined` if no panel is open.
- */
+/** Retrieves the currently active lineage webview panel, if one exists. */
 export function getActivePanel() { return activePanel; }
 
 /**
@@ -35,13 +31,6 @@ export function getActivePanel() { return activePanel; }
  * - Injecting the necessary HTML, scripts, and styles into the webview.
  * - Managing panel-scoped state and ensuring cleanup on disposal.
  *
- * @param context - The extension context.
- * @param title - The display title for the webview tab.
- * @param getSession - Factory to retrieve the current AI session.
- * @param outputChannel - Log channel for bridge and extension events.
- * @param loadProjectStore - Function to retrieve saved projects.
- * @param saveProjectStore - Function to persist project changes.
- * @param migrateFromWorkspaceState - Helper for legacy state migration.
  * @param loadDemo - If true, triggers the "AdventureWorks Demo" load sequence on initialization.
  */
 export function openPanel(
@@ -95,8 +84,7 @@ export function openPanel(
     while (panelDisposables.length > 0) panelDisposables.pop()?.dispose();
 
     const sess = getSession();
-    // Only discard exploration state when there is no active SM.
-    // A panel closed mid-exploration preserves the archive for the next panel open.
+    // Only discard exploration state when there is no active SM — a panel closed mid-exploration preserves the archive for the next panel open.
     if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed') {
       sess.resetExploration();
     }
@@ -121,9 +109,7 @@ export function openPanel(
 
   activeTriggerDemo = triggerDemoLoad;
 
-  // The webview asks `check-mssql` once, on mount. Installing, enabling or disabling the SQL Server
-  // extension while the panel is open would otherwise leave the database entry points stale until
-  // the panel is reopened. The listener is panel-scoped, so it is gone before the panel is.
+  // The webview asks `check-mssql` once, on mount, so this re-posts on later install/enable/disable; the listener is panel-scoped, so it is gone before the panel is.
   let mssqlAvailable = isMssqlAvailable();
   vscode.extensions.onDidChange(() => {
     const available = isMssqlAvailable();
@@ -139,10 +125,7 @@ export function openPanel(
   });
 
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
-    // Envelope check before the payload union: a frame carrying a *different* protocol version came
-    // from a bundle this host cannot speak to, and parsing it would be guesswork. Webview→host
-    // frames are unstamped by contract (only the host's send path stamps), so an absent version is
-    // normal and only a present-but-wrong one is a skew.
+    // Envelope check before the payload union: frames are unstamped by contract (only the host's send path stamps), so an absent version is normal and only a present-but-wrong one is a skew from a bundle this host cannot speak to.
     const inboundVersion = (rawMsg as BridgeEnvelope | undefined)?.protocolVersion;
     if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
       notifyError(

@@ -36,8 +36,7 @@ export interface CurrentHopActionPolicyResult {
   fatalErrors: InvalidRoute[];
   /** Nonfatal refused/unknown actions recorded for the next hop. */
   notices: InvalidRoute[];
-  /** Prune targets — in scope or out — that are not already visited, queued, noted or
-   * removed, all eligible for declared-route and topology (don't-orphan) validation. */
+  /** Prune targets — in scope or out — that are not already visited, queued, noted or removed, all eligible for declared-route and topology (don't-orphan) validation. */
   acceptedPruneIds: string[];
 }
 
@@ -45,8 +44,7 @@ export interface CurrentHopActionPolicyResult {
  * Classifies current-hop actions without mutating engine state.
  *
  * @remarks
- * This consolidates the former scattered guards while preserving their observable contract:
- * unresolved routes and refused no-op prunes are notices; route/prune conflicts and origin
+ * Unresolved routes and refused no-op prunes are notices; route/prune conflicts and origin
  * mutation are fatal. Reachable routes are not restricted to direct neighbors, and approved
  * in-scope/queued work is protected rather than turned into a retry-loop rejection.
  */
@@ -95,11 +93,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       notices.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: `\`${id}\` is already recorded as an analyzed node.` });
       continue;
     }
-    // Queued work is the one protection, and it is unconditional: a prune may not pull a
-    // neighbour that already owns a pending hop, whether or not that neighbour is in scope
-    // (a priority-3 origin/supplement enqueue takes an agenda slot without a scope entry).
-    // Reading it only for in-scope targets left every out-of-scope queued node unprotected,
-    // which is not what this notice's reason promises.
+    // Unconditional: a prune may not pull a neighbour that already owns a pending hop, in or out of scope (a priority-3 origin/supplement enqueue can hold an agenda slot without a scope entry).
     if (input.agendaIds.has(id)) {
       notices.push({
         kind: 'prune_noop_queued',
@@ -109,9 +103,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       });
       continue;
     }
-    // The hop-level prune decision: an in-scope neighbour the model has decided is off the
-    // answer path is pruned at the hop, like any out-of-scope one. The declared-route check and
-    // the don't-orphan topology check govern every accepted prune after this.
+    // Hop-level prune decision: an in-scope neighbour deemed off-path is pruned like any out-of-scope one; declared-route and don't-orphan checks govern every accepted prune after this.
     acceptedPruneIds.push(id);
   }
 

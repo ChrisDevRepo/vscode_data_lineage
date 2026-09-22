@@ -263,13 +263,12 @@ export function buildGateRefinePrompt(
  * committed hop.
  *
  * @remarks
- * The graph replaces the thread with `[anchor]` alone (`RESET_HISTORY` + this message); the
- * per-hop task, focus context and rolling `<short_term_memory>` ride the worker user message that
- * follows, and the hop protocol and session memo blocks live in the stable `system`. The anchor
- * keeps the conversation leading with a `user` turn (strict providers reject a leading assistant
- * turn) and points the model at the next agenda node, so it stays a one-line continuation
- * directive, not a per-hop task config. The incomplete-stop path keeps the last tool pair behind
- * it instead (`extractShortTermMemory`).
+ * The graph replaces the thread with `[anchor]` alone (`RESET_HISTORY` + this message); the per-hop
+ * task, focus context and `<short_term_memory>` ride the following worker message, while hop
+ * protocol and session memo stay in the stable `system`. The anchor keeps the conversation leading
+ * with a `user` turn (strict providers reject a leading assistant turn), so it stays a one-line
+ * continuation directive, not a per-hop task config. The incomplete-stop path keeps the last tool
+ * pair instead (`extractShortTermMemory`).
  *
  * @returns The anchor user-message text.
  */

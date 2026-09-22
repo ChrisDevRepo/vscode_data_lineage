@@ -53,11 +53,11 @@ const ColumnEdgeSchema = z.object({
   from_col: NonEmptyString,
   to_node: NonEmptyString,
   to_col: NonEmptyString,
-  // Absent in a checkpoint written before the classifier existed, and absent whenever the model
-  // did not classify the edge; restores unclassified either way.
+  // Absent in a checkpoint written before the classifier existed, or when the model did not
+  // classify the edge; restores unclassified either way.
   transforms: z.array(ColumnTransformClassSchema).optional(),
-  // Absent in a checkpoint written before the per-edge note existed, and absent whenever the model
-  // offered none; restores noteless either way. Surface text only — never parsed on restore.
+  // Absent before the per-edge note existed or when the model offered none; restores noteless
+  // either way. Surface text only — never parsed on restore.
   note: z.string().optional(),
 }).strict();
 
@@ -80,8 +80,8 @@ const NodeStateSchema = z.object({
     'non_bodied_passthrough',
   ]),
   columns: z.array(NonEmptyString).optional(),
-  // Absent in a checkpoint written before the per-node column role existed, and absent on any node
-  // no hop has dispatched; restores roleless either way.
+  // Absent before the per-node column role existed, or on any node no hop has dispatched; restores
+  // roleless either way.
   columnRole: z.enum(['carrier', 'row_role_only']).optional(),
   viaNodeId: NonEmptyString.optional(),
   atHop: NonNegativeInt.optional(),
@@ -189,12 +189,12 @@ const AgendaEntrySchema = z.object({
   depth: NonNegativeInt,
   // Aligned with `ColumnAspectSchema.active_columns`, which already permits an empty set: a CT
   // agenda entry records what the engine resolved on that node, and "none of them" is a resolved
-  // answer. The CT refinement below still requires the projection to be present.
+  // answer.
   activeColumns: z.array(NonEmptyString).optional(),
   // The router's authored per-neighbor decision, kept beside the resolved projection because only
   // it can say "this neighbor carries no traced value" — `activeColumns: []` is also what an
-  // engine-resolved empty bind looks like. Absent in a checkpoint written before per-neighbor carry
-  // existed, which restores from `activeColumns` alone.
+  // engine-resolved empty bind looks like. Absent in an older checkpoint, which restores from
+  // `activeColumns` alone.
   columnCarry: ColumnCarrySchema.optional(),
   lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
@@ -204,8 +204,8 @@ const EngineInternalsSchema = z.object({
   direction: z.enum(['upstream', 'downstream', 'bidirectional']),
   depthBudget: NonNegativeInt.nullable(),
   depthEnforcement: z.enum(['strict', 'soft', 'silent']),
-  // Per-side ceilings; `null` on a side means unbounded, since `Infinity` has no JSON form.
-  // Absent in a v1 checkpoint, which restores to seed-only routing instead.
+  // Per-side ceilings; `null` means unbounded (`Infinity` has no JSON form). Absent in a v1
+  // checkpoint, which restores to seed-only routing instead.
   depthLimits: z.object({
     upstream: NonNegativeInt.nullable(),
     downstream: NonNegativeInt.nullable(),
@@ -348,9 +348,8 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     if (snapshot.lineageQuestionsLastHop !== undefined) issue('BB snapshot cannot carry lineage questions', ['lineageQuestionsLastHop']);
     if (snapshot.ctPrunedNodeIds !== undefined) issue('BB snapshot cannot carry CT pruned nodes', ['ctPrunedNodeIds']);
     // `ctDeclaredRouteIds` is deliberately absent from this BB-purity list: an accepted route is a
-    // routing decision, not a column fact, so the declared-route prune protection it feeds is
-    // mode-independent and a BB checkpoint carries it too. The `ct` key name is frozen by
-    // every stored run written under the current snapshotVersion.
+    // routing decision, not a column fact, so a BB checkpoint carries it too; the `ct` key name is
+    // frozen by every stored run written under the current snapshotVersion.
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
       if (task.kind === 'column_lineage') issue('BB snapshot cannot carry column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
     });

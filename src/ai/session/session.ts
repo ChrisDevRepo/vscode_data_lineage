@@ -53,8 +53,7 @@ export function sameExplorationProposal(
   left: Omit<PendingExplorationProposal, 'revision' | 'discoverySummary'>,
   right: PendingExplorationProposal | Omit<PendingExplorationProposal, 'revision'>,
 ): boolean {
-  // `discoverySummary` is excluded on both sides — it is cached after this comparison runs, so a
-  // stale cached memo must never make a genuinely-unchanged refine look "changed".
+  // `discoverySummary` is excluded on both sides — cached after this comparison runs, so a stale memo must never make an unchanged refine look "changed".
   const { revision: _revision, discoverySummary: _discoverySummary, ...rightRest } = right as PendingExplorationProposal;
   return canonicalJson(left) === canonicalJson(rightRest);
 }
@@ -63,21 +62,16 @@ export function sameExplorationProposal(
  * Result of a turn-guarded session write ({@link AiSession.enterExploring} and its siblings).
  *
  * @remarks
- * `accepted` — the calling turn still owns the session and the write committed. `dropped_stale_turn`
- * — the write carried an epoch from a turn that has since been superseded (a "zombie" turn that
- * outlived its awaited promise, e.g. a test timeout abandoning it), so it was a no-op and the caller
- * must not treat the transition as applied. Callers that can log surface the drop at DEBUG; none may
- * silently discard the outcome.
+ * `accepted` — the write committed. `dropped_stale_turn` — the epoch belonged to a turn already
+ * superseded (a "zombie" that outlived its awaited promise); the caller must not treat it as applied
+ * and should surface the drop at DEBUG, never discard it silently.
  */
 export type SessionWriteOutcome =
   | { kind: 'accepted' }
   | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number };
 
 interface MemoryWipeEvent {
-  /**
-   * Only `sliding` exists: the graph replaces history with a continuation anchor after an accepted
-   * hop submission. A second `forced` kind was removed once it proved to have no construction site.
-   */
+  /** Only `sliding` exists: the graph replaces history with a continuation anchor after an accepted hop submission. */
   kind: 'sliding';
   trigger: string;
   hop: number;
@@ -98,10 +92,8 @@ export type ExplorationActivationOutcome =
  */
 export const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
 /*
- * The byte bounds on the discovery-evidence message, on one evidence item, and on the replayed
- * discovery transcript are governed by `support/tokenBudget.ts` (`discoveryBlockBytes()`,
- * `discoveryEvidenceItemBytes()`): one 64 KiB ceiling per block, scaled down with the selected
- * model's input window.
+ * Byte bounds for the discovery-evidence message, one evidence item, and the replayed transcript
+ * live in `support/tokenBudget.ts` (`discoveryBlockBytes()`, `discoveryEvidenceItemBytes()`).
  */
 /**
  * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn history
@@ -160,10 +152,7 @@ function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn, budget: TurnTokenBudg
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
  *
  * @remarks
- * The `AiSession` acts as a "Clean Slate" for `@lineage` participant interactions.
- * It maintains the grounded database model, the active exploration state machine,
- * and the two-tier memory manager. Sessions are strictly isolated to prevent
- * cross-project or cross-user context leakage.
+ * Sessions are strictly isolated to prevent cross-project or cross-user context leakage.
  */
 export class AiSession {
   /** Unique session identifier for log correlation and telemetry. */
@@ -172,11 +161,9 @@ export class AiSession {
    * Identifier of the exploration approved in this chat, or `null` before the first approval.
    *
    * @remarks
-   * A presented run is what a bookmark recalls, and a chat can hold several: two explorations
-   * sharing the chat session id made a bookmark saved from the first resolve against the second.
-   * Minted at {@link activatePendingExploration} — the sole publisher of an engine, so exactly one
-   * id exists per approved run — and cleared by {@link resetExploration}. A presentation with no
-   * approved exploration behind it (a discovery-turn render) falls back to {@link id}.
+   * Minted at {@link activatePendingExploration} — the sole publisher of an engine — and cleared by
+   * {@link resetExploration}. Distinguishes bookmarked runs that share one chat session id; a
+   * discovery-turn render with no approved exploration behind it falls back to {@link id}.
    */
   public explorationRunId: string | null = null;
   /** Count of explorations approved in this chat; the suffix that makes each run id unique. */
@@ -268,9 +255,8 @@ export class AiSession {
    * `true` when `present_result` was successfully invoked in the current turn.
    *
    * @remarks
-   * Reset to `false` at turn start by the graph runtime. Set to `true` by the
-   * `present_result` tool handler on success. The presentation node and the "Show in Graph"
-   * button gate read this flag so a graph is only announced when one was actually built.
+   * Reset at turn start; set true on a successful `present_result` call. The presentation node and
+   * "Show in Graph" gate read it so a graph is announced only when one was actually built.
    */
   private _presentResultCalledThisTurn = false;
   /** Whether a `present_result` call succeeded in the current turn. */
@@ -278,12 +264,7 @@ export class AiSession {
   private _presentResultAutoDispatched = false;
   /** Whether the successful presentation was auto-dispatched to the webview panel this turn. */
   public get presentResultAutoDispatched(): boolean { return this._presentResultAutoDispatched; }
-  /**
-   * Number of `present_result` tool invocations observed in the current turn.
-   *
-   * @remarks
-   * Incremented at tool-handler entry. Reset at turn start.
-   */
+  /** Number of `present_result` tool invocations observed in the current turn. */
   private _presentResultAttemptCountThisTurn = 0;
   /** Count of `present_result` invocations observed in the current turn. */
   public get presentResultAttemptCountThisTurn(): number { return this._presentResultAttemptCountThisTurn; }
@@ -292,17 +273,11 @@ export class AiSession {
    *
    * @remarks
    * Incremented when `present_result` returns a structured failure envelope or throws.
-   * Reset at turn start.
    */
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
-  /**
-   * Last `present_result` failure reason captured this turn.
-   *
-   * @remarks
-   * Set when `present_result` fails validation this turn; cleared at turn start.
-   */
+  /** Last `present_result` failure reason captured this turn. */
   private _presentResultLastFailureReasonThisTurn: string | null = null;
   /** Last `present_result` failure reason captured in the current turn; `null` when none failed. */
   public get presentResultLastFailureReasonThisTurn(): string | null { return this._presentResultLastFailureReasonThisTurn; }
@@ -317,11 +292,9 @@ export class AiSession {
    * Origin node id walked during the most recent discovery turn.
    *
    * @remarks
-   * Captured after a discovery turn when the AI
-   * made ≥2 distinct `lineage_get_object_detail` calls. Read by the
-   * post-discovery SM-offer follow-up pill to seed
-   * `lineage_start_exploration` without re-asking the user. Cleared in
-   * {@link resetExploration}.
+   * Captured after a discovery turn makes ≥2 distinct `lineage_get_object_detail` calls; read by the
+   * post-discovery SM-offer pill to seed `lineage_start_exploration` without re-asking the user.
+   * Cleared in {@link resetExploration}.
    */
   public lastDiscoveryOrigin: string | null = null;
 
@@ -413,11 +386,9 @@ export class AiSession {
    * Current finite-state-machine phase. Persists across VS Code chat turns.
    *
    * @remarks
-   * LangGraph routes discovery, exploration, synthesis, and completed follow-ups from
-   * `phase.kind`; the participant only projects native gate and follow-up UI. Transitions go
-   * through {@link enterGate},
-   * {@link enterExploring}, {@link enterIdle}, and {@link enterCompleted} — never
-   * assign this field directly.
+   * LangGraph routes discovery, exploration, synthesis, and completed follow-ups from `phase.kind`.
+   * Transitions go only through {@link enterGate}, {@link enterExploring}, {@link enterIdle}, and
+   * {@link enterCompleted} — never assign this field directly.
    */
   public phase: SessionPhase = { kind: 'idle' };
 
@@ -438,10 +409,9 @@ export class AiSession {
    * guarded session writes.
    *
    * @remarks
-   * The ONLY site that bumps {@link turnEpoch}. Deliberately NOT called by {@link resetExploration}:
-   * graph nodes legitimately call `resetExploration` mid-turn on their own session, and a bump there
-   * would strand the still-running turn's captured epoch — turning its own later writes into
-   * dropped-stale no-ops.
+   * The ONLY site that bumps {@link turnEpoch}. Deliberately not called by {@link resetExploration}:
+   * a bump there would strand a still-running turn's captured epoch, turning its own later writes
+   * into dropped-stale no-ops.
    *
    * @returns The new epoch to capture for the duration of this turn.
    */
@@ -536,18 +506,10 @@ export class AiSession {
    * Resets the per-turn-scoped bookkeeping at the start of every chat turn.
    *
    * @remarks
-   * A held `present_result` repair draft belongs to the turn that authored it and must never survive
-   * into a later turn's fresh exploration. {@link resetExploration} already clears it on the paths
-   * that run it, but a synthesis abort (three cumulative graph-owned semantic failures,
-   * `present_result` calls) exits via a bare `fail()` in `graph.ts` that does NOT call
-   * `resetExploration()` — unlike the parallel active-hop abort. Without this turn-boundary clear a
-   * stale draft can be picked up by a later turn's first `present_result` call (models routinely set
-   * `is_update:true` on a first render) and silently seed the new render from the old, unrelated one.
-   * The same turn-boundary rule holds for the single-shot flags and attempt/failure counters: a
-   * visual-preview turn leaves `presentResultCalledThisTurn` true with no later reset on the
-   * discovery path, which suppressed fresh preview offers and let the participant's terminal
-   * handler offer a previous turn's graph. Owns the per-turn wipe counters too, so
-   * `LineageRuntime.run` has one call, not a manual field list (DRY).
+   * A held `present_result` repair draft, its single-shot flags, and the per-turn wipe counters must
+   * never survive into a later turn. {@link resetExploration} does not run on every exit path (a
+   * synthesis abort's bare `fail()` in `graph.ts` skips it), so this is the guaranteed turn-boundary
+   * clear `LineageRuntime.run` calls once instead of resetting each field at its own call site.
    */
   public beginTurnState(): void {
     this.resetMemoryWipeDiagnostics();
@@ -559,12 +521,9 @@ export class AiSession {
    * The newest follow-up prose held back by `proseGate: 'buffer-until-tool'`, turn-scoped.
    *
    * @remarks
-   * A follow-up generation that pairs prose with a tool call has that prose suppressed until the
-   * call is known good, and a rejected call discards it. When the phase then trips its breaker the
-   * user is left with an error and nothing else, though the answer to their question may already
-   * have been written — the observed case delivered a complete one and discarded it. Held here so
-   * the terminal path can still deliver it; superseded on every later generation, because only the
-   * newest prose describes the state the turn actually reached.
+   * `proseGate: 'buffer-until-tool'` suppresses prose until its paired tool call is known good, and a
+   * rejected call discards it — even when the prose alone already answered the question. Held here so
+   * the terminal path can still deliver it; each new generation supersedes the last.
    */
   private _bufferedFollowUpProse: string | null = null;
   /** The newest buffered follow-up prose, or null when this turn produced none. */
@@ -623,10 +582,9 @@ export class AiSession {
    * Whether the post-discovery SM-offer may render (idle phase, multi-object walk with an origin).
    *
    * @remarks
-   * The single predicate for every surface that renders the offer, so their trigger conditions
-   * cannot drift. Call it — never re-state the three conditions at a render site. An oversized
-   * scope never reaches this offer: the discovery budget guard cuts that turn into SM entry and
-   * the consent gate, so the pill is the opt-in only after a completed walk of ≥ 2 objects.
+   * The single predicate for every surface that renders the offer — call it, never re-state the
+   * three conditions at a render site. An oversized scope never reaches here: the discovery budget
+   * guard routes that turn straight into SM entry and the consent gate.
    */
   public smOfferAvailable(): boolean {
     return this.phase.kind === 'idle'
@@ -645,12 +603,10 @@ export class AiSession {
    * Appends canonical conversation text and bounded accepted discovery evidence.
    *
    * @remarks
-   * Provider-native assistant tool calls and `tool` messages are never retained. Evidence is
-   * accepted only when it is valid JSON produced by a successful graph-owned observation. Oldest
-   * evidence is evicted first when the session count or rendered-byte bound is reached, and oldest
-   * transcript turns are evicted first on the same bound; both evictions and every whole-observation
-   * drop (oversized, unparseable, or an error envelope) are NORMALIZE-WITH-LOG — reported through
-   * `debugLog` when the caller supplies one — never a silent `shift()`/`continue`.
+   * Provider-native tool calls and `tool` messages are never retained; evidence is accepted only
+   * when it is valid JSON from a successful graph-owned observation. Oldest evidence and oldest
+   * transcript turns are evicted first on their byte/count bounds; every eviction or drop is
+   * NORMALIZE-WITH-LOG, reported through `debugLog` when the caller supplies one.
    *
    * @param budget - Budget of the turn that produced the messages; the session is shared by every
    *   turn, so the bound comes from the caller rather than from session state.
@@ -789,10 +745,9 @@ export class AiSession {
    * gate and the next user turn must resolve it (yes / no / redirect).
    *
    * @remarks
-   * Discovery context (`lastDiscoveryOrigin` and siblings) is deliberately left intact here —
-   * the post-approval discovery-summary composition round reads it after the user approves the
-   * gate. The SM-offer pill is separately gated by `phase.kind === 'idle'`, so it disappears as
-   * soon as the gate is pending regardless; on cancel, {@link resetExploration} clears these fields.
+   * Discovery context (`lastDiscoveryOrigin` and siblings) is left intact — the post-approval
+   * discovery-summary composition round reads it after the gate is approved. On cancel,
+   * {@link resetExploration} clears these fields.
    *
    * @param gate - The validated consent-gate envelope produced by the engine.
    * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
@@ -823,10 +778,9 @@ export class AiSession {
    * Attaches the composed discovery-handoff memo to the pending proposal at `revision`.
    *
    * @remarks
-   * Runs after {@link storePendingExploration} so the memo is never mutated onto a proposal whose
-   * revision isn't known yet. Silently a no-op when the proposal has since moved past `revision`
-   * (superseded by a newer refine while composition was in flight) — the caller degrades by
-   * omitting the memo rather than treating this as a failure.
+   * Runs after {@link storePendingExploration}, once the revision is known. A no-op when the
+   * proposal has since moved past `revision` (superseded by a newer refine mid-composition) — the
+   * caller degrades by omitting the memo rather than treating this as a failure.
    */
   public attachDiscoverySummary(revision: number, text: string, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'attachDiscoverySummary');
@@ -957,11 +911,9 @@ export class AiSession {
    * Clears the single-shot `present_result` guard for the current follow-up turn.
    *
    * @remarks
-   * The flag persists from synthesis into the completed phase so the participant can
-   * stream the summary after the turn. `followUpNode` resets it at the start of each
-   * follow-up turn so a Route A `present_result` adjust fires fresh. Besides this and
-   * `enterExploring`, only the wholesale turn-boundary reset in `beginTurnState` touches it —
-   * do not assign `presentResultCalledThisTurn` directly from graph nodes.
+   * Persists from synthesis into the completed phase so the participant can stream the summary
+   * after the turn; `followUpNode` clears it at the start of each follow-up turn so a Route A
+   * `present_result` adjust fires fresh. Assign only through this method, never directly.
    */
   public clearPresentResultFlag(): void {
     this._presentResultCalledThisTurn = false;
@@ -1004,10 +956,9 @@ export class AiSession {
    * Reattaches a state machine rebuilt from a checkpointed engine snapshot.
    *
    * @remarks
-   * The LangGraph checkpointer persists the serializable engine projection, not live
-   * runtime handles. On resume, the graph reconstructs the `NavigationEngine` from fresh
-   * model/graph handles and restores this session's stable memory object in place so
-   * prompt builders and synthesis see the same archive as the engine.
+   * The LangGraph checkpointer persists the serializable engine projection, not live runtime
+   * handles. On resume, the graph reconstructs the `NavigationEngine` from fresh model/graph handles
+   * and restores this session's memory object in place so prompt builders and synthesis see one archive.
    * @param engine - Fully reconstructed engine, not yet published to this session.
    * @param snapshot - Validated serializable engine projection.
    * @param token - The restoring turn's captured ownership epoch.
@@ -1028,15 +979,10 @@ export class AiSession {
    * Transmutes state-machine findings into the visual `ResultGraph` format.
    *
    * @remarks
-   * Maps navigation-engine output (nodes, edges, detail slots) to the standard
-   * contract consumed by the `present_result` tool handler and the React webview.
-   * Handles both Blackboard and Column-Trace results — `source` is set from the
-   * engine's `columnAspect` flag at the time of the call.
-   *
-   * This fires both at exploration completion and on later supplement rounds; synthesized body
-   * fields (`description`/`summary`/`title`/etc.) from a prior `present_result` call are carried
-   * forward from the existing `resultGraph` until a new `present_result` call overwrites them —
-   * otherwise a supplement round would blank an already-rendered description.
+   * Maps navigation-engine output to the `ResultGraph` contract consumed by `present_result` and the
+   * webview; `source` reflects the engine's `columnAspect` flag at call time. Synthesized body
+   * fields (`description`/`summary`/`title`/etc.) carry forward from the prior `resultGraph` until a
+   * new `present_result` call overwrites them, so a supplement round never blanks an already-rendered one.
    *
    * @param fullResult - The raw completion result from the state machine.
    * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
@@ -1078,12 +1024,10 @@ export class AiSession {
    * The committed report sections a further render of this same run may keep instead of resending.
    *
    * @remarks
-   * Three facts have to hold together, so they are decided here once rather than at each caller:
-   * sections exist, an approved exploration is behind them, and that run is the one still
-   * rendering. The last is load-bearing — {@link storeSmResult} carries sections forward and an
-   * approval does not clear {@link resultGraph}, so an unstamped check would let a fresh
-   * exploration inherit the previous run's report. A discovery-turn render has no run id and never
-   * retains.
+   * Three facts must hold together: sections exist, an approved exploration is behind them, and
+   * that run is still the one rendering. The last is load-bearing — {@link storeSmResult} carries
+   * sections forward across a fresh exploration, so an unstamped check would leak the previous
+   * run's report. A discovery-turn render has no run id and never retains.
    *
    * @returns The retainable sections, or `null` when this render must author its own.
    */

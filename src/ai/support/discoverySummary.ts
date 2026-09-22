@@ -5,10 +5,9 @@
  *
  * @remarks
  * Called once per reviewable exploration proposal, at proposal-build time
- * (`src/ai/tools/handlers/startExploration.ts`), never at approval. The composed text is
- * cached on the revision-bound proposal and shown verbatim at the bottom of the native approval
- * card; approval reuses that exact cached string via `NavigationEngine.setDiscoverySummary`
- * rather than recomposing it.
+ * (`src/ai/tools/handlers/startExploration.ts`), never at approval. The composed text is cached
+ * on the revision-bound proposal; approval reuses that exact cached string via
+ * `NavigationEngine.setDiscoverySummary` rather than recomposing it.
  */
 import { z } from 'zod';
 import type { ModelPort } from '../model/modelPort';
@@ -46,7 +45,6 @@ const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
  * @param lastDiscoveryAnswer - The AI's discovery chat answer (Markdown).
  * @param classification - The proposal's locked-in-waiting classification.
  * @param engine - The unpublished preview engine already initialized from the proposal being reviewed.
- * @returns The composed memo, or `undefined` when it should be omitted.
  */
 export async function composeDiscoverySummaryText(
   model: Pick<ModelPort, 'generateStructured' | 'completeText'>,

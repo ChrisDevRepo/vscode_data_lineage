@@ -32,10 +32,6 @@ export const Legend = memo(function Legend({
   const [expanded, setExpanded] = useState(false);
   const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
 
-  /**
-   * Effect to monitor VS Code theme changes.
-   * Updates internal state to trigger re-renders when the theme kind attribute on document.body changes.
-   */
   useEffect(() => {
     const observer = new MutationObserver(() => {
       setThemeKind(document.body.getAttribute('data-vscode-theme-kind') ?? '');

@@ -237,10 +237,9 @@ export interface HopContext {
    * The contract this hop is dispatched under — mode as data, not as prose the model must infer.
    *
    * @remarks
-   * `ct` when this hop carries at least one traced column, `bb` otherwise, including a branch of a
-   * CT run that carries none. Per hop, therefore per edge: the same node reached on a carrying edge
-   * and on a row-shaping edge is dispatched under each contract in turn. Sourced from
-   * `NavigationEngine.currentHopAnalysisMode`, the single owner of that determination.
+   * `ct` when this hop carries at least one traced column, `bb` otherwise — per hop, therefore per
+   * edge, so the same node reached on a carrying edge and a row-shaping edge is dispatched under
+   * each contract in turn.
    */
   analysis_mode?: 'bb' | 'ct';
   /** Count of nodes still on the agenda. */
@@ -267,18 +266,8 @@ export interface HopFinding {
   /** ID of the node that was analyzed. */
   focus_node_id: string;
   /**
-   * Captured sections — one per fired `*_capture` YAML template. The locked classification
-   * defines required angles; an off-classification angle cannot be authored at all, since the
-   * per-dispatch `submit_findings` schema (`tools/toolSchemas.ts` `submitFindingsSchemaForMode`)
-   * narrows `angle` to the locked angle(s) before dispatch. Each stored section is material the
-   * synthesis prompt instructs the model to carry into a peer entry of `present_result.sections[]`.
-   * The locked angle(s) presence is validated at the tool handler boundary
-   * (`interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`).
-   *
-   * @remarks
-   * Each entry is one fired `*_capture` template's output. The split lets
-   * prompts and synthesis treat each angle independently; the synthesis prompt
-   * instructs carrying each into a peer entry of `present_result.sections[]`.
+   * Captured sections, one per fired `*_capture` template; the locked classification narrows
+   * `angle` to the approved angle(s) before dispatch, so an off-classification angle is never authored.
    */
   sections: CapturedSection[];
   /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
@@ -409,7 +398,7 @@ export interface RouteOutcome {
    * - `schema` — route target is outside the approved schema allowlist; user will see it as a follow-up offer.
    * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
    * - `schema_and_depth` — route target breaches both the schema allowlist and the stated depth border.
-   * - `depth_contracted_beyond_budget` — route target was a non-bodied node (table) whose bipartite contraction reached bodied neighbours that fell outside the active BFS scope, so no hop was enqueued. The route is structurally valid but produced no new agenda item.
+   * - `depth_contracted_beyond_budget` — a non-bodied (table) target's bipartite contraction reached bodied neighbours outside the active BFS scope, so no hop was enqueued.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction.
    * - `excluded` — route target exists but is outside the user's approved exclude filters.

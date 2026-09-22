@@ -70,15 +70,12 @@ export function DetailApp() {
   nodeIdRef.current = detail?.node?.id;
 
   useEffect(() => {
-    /**
-     * Handles incoming messages from the VS Code extension host.
-     */
+    // Handles incoming messages from the VS Code extension host.
     function handler(e: MessageEvent) {
       // Single validated inbound dispatcher — host→detail messages are Zod-checked here, never read raw.
       const frame = validateBridgeFrame(ExtensionToDetailMsgSchema, e.data);
       if (!frame.ok) {
-        // `postToDetail` stamps every frame, so a missing or different version means the host bundle
-        // and this view disagree about the contract — report it instead of half-rendering.
+        // `postToDetail` stamps every frame, so a version mismatch means the host bundle and this view disagree about the contract — report it instead of half-rendering.
         if (frame.reason === 'version') {
           vscodeApi.current.postMessage({
             type: 'error',
@@ -133,9 +130,7 @@ export function DetailApp() {
   const isTable = node.type === 'table' || node.type === 'external';
   const hasColumnsAndDdl = !!(node.columns?.length && node.bodyScript);
 
-  /**
-   * Dispatches a request to the host to profile the current table/view.
-   */
+  // Dispatches a request to the host to profile the current table/view.
   function handleRequestStats(mode: StatsMode) {
     vscodeApi.current.postMessage({
       type: 'table-stats-request',
@@ -147,9 +142,7 @@ export function DetailApp() {
     setStatsState({ phase: 'loading', mode });
   }
 
-  /**
-   * Signals the host to close the detail panel.
-   */
+  // Signals the host to close the detail panel.
   function handleClose() {
     vscodeApi.current.postMessage({ type: 'close-detail' });
   }

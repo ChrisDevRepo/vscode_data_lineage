@@ -264,21 +264,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   const getCtx = (state: AgentStateType): StagePromptContext =>
     state.ctx ?? deriveStagePromptContext(deps.getSession().model, deps.getSession().filter, deps.getSession().uiState);
 
-  // `buildDiscoveryInstruction` is documented byte-identical for the whole discovery phase turn
-  // (session + ctx are both fixed for this graph instance — one `buildAgentGraph` call is one
-  // turn), yet `discoveryNode` self-loops back into itself once per provider attempt (up to
-  // `MAX_TOOL_PROVIDER_CALLS`). Build it once lazily and reuse it across every attempt of this turn.
+  // `buildDiscoveryInstruction` is documented byte-identical for the whole discovery phase turn, yet `discoveryNode` self-loops back into itself once per provider attempt. Build it once lazily and reuse it across every attempt of this turn.
   let discoveryInstructionCache: StageSystemInstruction | null = null;
   const getDiscoveryInstructionCached = (state: AgentStateType): StageSystemInstruction => {
     discoveryInstructionCache ??= buildDiscoveryInstruction(deps.getSession(), getCtx(state));
     return discoveryInstructionCache;
   };
 
-  // `buildActiveInstruction` is documented byte-identical across the active hop it renders for
-  // (stable mission/rules prefix only), yet `activeWorkerNode` self-loops back into itself once per
-  // provider attempt within that hop. Memoize on the hop's own advance key — `activeHopCount` only
-  // moves forward on a committed submit, and `focusId`/`hopMode` change in lockstep with it — so
-  // wall time or attempt count never drives invalidation, only the hop genuinely advancing.
+  // `buildActiveInstruction` is documented byte-identical across the active hop it renders for, yet `activeWorkerNode` self-loops once per provider attempt within that hop. Memoize on the hop's own advance key so only the hop genuinely advancing invalidates it, never wall time or attempt count.
   let activeInstructionCache: { readonly key: string; readonly instruction: StageSystemInstruction } | null = null;
   const getActiveInstructionCached = (
     state: AgentStateType,
@@ -380,18 +373,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * bracket, mirroring the hop counter's `(+N added, −N pruned)` brackets.
    *
    * Retry ⇒ transient `status` (native `stream.progress`), never permanent `text` (native
-   * `stream.markdown`): the AI-preview goal (register row iiiii) is a question-first, correct,
-   * complete answer, and a retry the phase goes on to resolve is exactly the "still working" signal
-   * VS Code's progress surface exists for, not content that belongs in the final transcript. A
-   * one-line-per-attempt permanent markdown notice measurably flooded `answer.md` ahead of the
-   * answer (m17-head-azure-foundry run-T7: five such lines before any content, one per hop) with no
-   * offsetting benefit — a retry that later succeeds leaves the reader nothing to act on once the
-   * turn completes. This is additive-safe for the opposite case too: a phase that never recovers
-   * still ends on its own terminal `error`/`terminal` event (`failStopped`/`failProvider`/`fail`),
-   * so removing the interim notice loses no failure signal. Full observability is unaffected either
-   * way — every rejection is already logged unconditionally at `[Reject]`/`[Attempt]` regardless of
-   * what reaches chat (this repo's no-silent-errors rule), so the debug trail still carries every
-   * drop even though the transcript no longer repeats it as content.
+   * `stream.markdown`): a retry the phase goes on to resolve is exactly the "still working" signal
+   * VS Code's progress surface exists for, not content that belongs in the final transcript — a
+   * retry that later succeeds leaves the reader nothing to act on once the turn completes. This is
+   * additive-safe for the opposite case too: a phase that never recovers still ends on its own
+   * terminal `error`/`terminal` event (`failStopped`/`failProvider`/`fail`), and every rejection is
+   * already logged unconditionally at `[Reject]`/`[Attempt]` regardless of what reaches chat, so the
+   * debug trail still carries every drop even though the transcript no longer repeats it as content.
    *
    * @param statusText - The phase's own status line to re-emit; defaults to the phase progress label.
    */
@@ -505,10 +493,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return null;
   };
 
-  // Every guarded session write (enter*/storeSmResult) passes through here so a dropped stale-turn
-  // no-op is logged, never silently discarded. Accepted in the normal case; a drop means this node
-  // belongs to a superseded turn and the write was correctly rejected — the write is the only thing
-  // suppressed (the zombie completes harmlessly without mutating the new turn's session).
+  // Every guarded session write passes through here so a dropped stale-turn no-op is logged, never silently discarded; a drop means this node belongs to a superseded turn and the write was correctly rejected — the zombie completes harmlessly without mutating the new turn's session.
   const observeWrite = (outcome: SessionWriteOutcome): SessionWriteOutcome => {
     if (outcome.kind === 'dropped_stale_turn') {
       deps.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
@@ -1875,12 +1860,12 @@ function ensureEngine(state: AgentStateType, deps: AgentGraphDeps): NavigationEn
  * @remarks
  * The envelope is the turn's largest DDL-derived payload — captured formulas and SQL inside
  * `detail_slots[].sections[].text`, plus the verbatim user question threaded through
- * `synthesis_reminder` — and previously reached the model as a bare `JSON.stringify(envelope)`
- * user-role message with no escaping and no untrusted-content banner, the one delivery path where
- * this envelope was not escaped (`submitFindings`'s `logAndReturn` returns the same envelope as a
- * `ToolMessage`, a role that already marks it as tool output rather than prose). `escapeDelimitedJson`
- * neutralizes only `<`/`>` (unicode-escaped, so the JSON a model parses is unchanged byte-for-byte
- * apart from those two characters) — no field is dropped, truncated, or reordered.
+ * `synthesis_reminder` — reaching the model as a user-role message, so it needs the same escaping
+ * and untrusted-content banner as any other user-role delivery (`submitFindings`'s `logAndReturn`
+ * returns the same envelope as a `ToolMessage`, a role that already marks it as tool output rather
+ * than prose, so it needs none). `escapeDelimitedJson` neutralizes only `<`/`>` (unicode-escaped, so
+ * the JSON a model parses is unchanged byte-for-byte apart from those two characters) — no field is
+ * dropped, truncated, or reordered.
  *
  * @param envelope - The completion envelope from {@link buildSmCompletionEnvelope}.
  * @returns The delimited, banner-prefixed message text for `modelUserMessage`.

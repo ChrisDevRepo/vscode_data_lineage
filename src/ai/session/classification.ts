@@ -2,18 +2,12 @@
  * Mission-type classification — selects which synthesis subsections fire.
  *
  * @remarks
- * The classification gate is a mechanical contract (Zod enum); the value
- * chooses whether the "#### Technical" subsection is appended below the
- * business body. `business` omits it; `technical` treats the section body
- * as the technical write-up; `both` appends the subsection.
- *
- * The AI declares the classification in the `start_exploration` tool call
- * via the REQUIRED `classification` enum parameter. Zod hard-rejects missing
- * or invalid values — there is no engine-side fallback. The tool param
- * description makes `business` the default rather than a tie-breaker:
- * `technical` requires the user to have named a technical lens (performance,
- * indexes, execution plan, query shape, load pattern) as the whole request,
- * and `both` is for a request that spans both angles.
+ * A mechanical contract (Zod enum): `business` omits the "#### Technical" subsection,
+ * `technical` treats the section body as the technical write-up, `both` appends the subsection.
+ * Declared by the AI as a REQUIRED `start_exploration` parameter; Zod hard-rejects missing or
+ * invalid values, so there is no engine-side fallback. `technical` requires the user to have named
+ * a technical lens (performance, indexes, execution plan, query shape, load pattern) as the whole
+ * request; `both` is for a request spanning both angles.
  */
 
 import { z } from 'zod';

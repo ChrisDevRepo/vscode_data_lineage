@@ -21,26 +21,17 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * Canonical, code-owned routing of YAML keys to stages.
  *
  * @remarks
- * Authoritative — any `stages:` field in the YAML (user overlay or shipped
- * default) is informational for human readers only. The loader never reads it
- * (`AiOutputTemplatesConfigSchema` passes it through and only `instruction` is
- * overlaid), so an overlay that disagrees with this map is silently routed by
- * this map with no warning.
+ * Authoritative — a `stages:` field in the YAML (default or overlay) is informational only; the
+ * loader never reads it (`AiOutputTemplatesConfigSchema` passes it through, only `instruction` is
+ * overlaid), so a disagreeing overlay is silently routed by this map instead. `general` is
+ * placement-only at synthesis — a captured ⚠️ sits once in the section it belongs to.
  *
- * Capture keys (`business_capture`, `technical_capture`, `structural_callouts`) fire at active phase;
- * render keys fire at synthesis. The slot body is the canonical surface; `general`
- * is placement-only at synthesis — a captured ⚠️ sits once in the section it
- * belongs to.
- *
- * `description` is intentionally absent — it is engine output (built by
- * `orderAndAssemble` in `presentResult.ts` from title + intro + sections[] + closing),
- * not an AI-writeable field. Do not add it back without first restoring the
- * full AI-input plumbing in `tools.ts` and resolving the conflict with engine
- * assembly.
- *
- * `sections`, `business_subsection`, `technical_subsection` are also intentionally
- * absent — the lift+group+label rule for sections[] lives in
- * `buildSynthesisPrompt()` to avoid duplication with the synthesis cue.
+ * `description` is intentionally absent — it is engine output (`orderAndAssemble` in
+ * `presentResult.ts` from title + intro + sections[] + closing), not an AI-writeable field; do not
+ * add it back without restoring the full AI-input plumbing in `tools.ts` and resolving the
+ * conflict with engine assembly. `sections`, `business_subsection`, `technical_subsection` are
+ * also absent — their lift+group+label rule lives in `buildSynthesisPrompt()` to avoid
+ * duplication with the synthesis cue.
  */
 const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
   discovery_chat:       ['discover'],

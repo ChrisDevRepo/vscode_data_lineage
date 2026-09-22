@@ -173,12 +173,9 @@ export interface DatabaseModel {
    * Which ingestion lane produced this model.
    *
    * @remarks
-   * Stamped by each extractor rather than derived, because the two lanes are otherwise
-   * indistinguishable downstream — a DACPAC carries a platform label from its DSP just as a
-   * live import does, so platform presence cannot stand in for provenance. Consumers that
-   * describe the model to the user or the AI must read this, never infer it.
-   *
-   * Optional so `buildModel` stays lane-agnostic; both production extractors always set it.
+   * Stamped by each extractor rather than derived — platform presence cannot stand in for
+   * provenance, since a DACPAC also carries a platform label from its DSP. Optional so `buildModel`
+   * stays lane-agnostic; both production extractors always set it.
    */
   source?: ModelSource;
 }
@@ -190,12 +187,9 @@ export type ModelSource = 'dacpac' | 'database';
  * Label recorded when no source can identify the database platform.
  *
  * @remarks
- * Single-sourced because this string is simultaneously user-visible (status bar, project
- * card) and model-visible (the `db_platform` tool field and the `- Platform:` prompt line).
- * Independent copies in the extractor, the bridge, and the prompt builder would let a
- * reworded label desynchronize what the user sees from what the model is told. Deliberately
- * explicit rather than a `SQL Server` default — the model must not reason from an invented
- * platform.
+ * Single-sourced because this string is both user-visible (status bar, project card) and
+ * model-visible (the `db_platform` tool field). Deliberately explicit rather than a `SQL Server`
+ * default — the model must not reason from an invented platform.
  */
 export const UNKNOWN_DB_PLATFORM = 'Unknown database platform';
 
@@ -795,10 +789,9 @@ export type CustomNodeData = {
  * An AI-authored section label rendered above a node.
  *
  * @remarks
- * `emphasis` is the report's section focus, not a node state: with a section focused its own labels
- * read `lit` and every other label `dim`, while the node bodies keep whatever the selection and the
- * column thread already say about them. The two channels stay separate on purpose — a section focus
- * that dimmed nodes would overwrite the answer the user is looking at.
+ * `emphasis` is the report's section focus, not a node state: node bodies keep whatever the
+ * selection and column thread already say about them. The channels stay separate on purpose — a
+ * section focus that dimmed nodes would overwrite the answer the user is looking at.
  */
 export type AiBadge = {
   /** Section label text. */

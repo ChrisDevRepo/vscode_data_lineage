@@ -49,16 +49,7 @@ function formatContext(context?: NotifyContext): string {
   }
 }
 
-/**
- * Logs detailed error diagnostics before showing a concise VS Code error toast.
- *
- * @param logger - The logger instance.
- * @param operation - The operation being performed.
- * @param userMessage - The message to show to the user.
- * @param error - The optional error object.
- * @param context - Additional context to log.
- * @param showErrorMessage - Function to display the error message.
- */
+/** Logs detailed error diagnostics before showing a concise VS Code error toast. */
 export function notifyError(
   logger: Logger,
   operation: string,
@@ -72,15 +63,7 @@ export function notifyError(
   showErrorMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
 }
 
-/**
- * Logs detailed information diagnostics before showing a concise VS Code info toast.
- *
- * @param logger - The logger instance.
- * @param operation - The operation being performed.
- * @param userMessage - The message to show to the user.
- * @param context - Additional context to log.
- * @param showInformationMessage - Function to display the info message.
- */
+/** Logs detailed information diagnostics before showing a concise VS Code info toast. */
 export function notifyInfo(
   logger: Logger,
   operation: string,
@@ -92,15 +75,7 @@ export function notifyInfo(
   showInformationMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
 }
 
-/**
- * Logs detailed warning diagnostics before showing a concise VS Code warning toast.
- *
- * @param logger - The logger instance.
- * @param operation - The operation being performed.
- * @param userMessage - The message to show to the user.
- * @param context - Additional context to log.
- * @param showWarningMessage - Function to display the warning message.
- */
+/** Logs detailed warning diagnostics before showing a concise VS Code warning toast. */
 export function notifyWarning(
   logger: Logger,
   operation: string,

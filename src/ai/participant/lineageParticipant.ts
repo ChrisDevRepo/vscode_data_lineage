@@ -103,7 +103,7 @@ export class LineageParticipant {
           action: NativeGateAction,
           classes: string[] = [],
         ) => {
-          // Only the exploration gate can be changed; expansion gates are approve/cancel only.
+          // Only the exploration gate can be changed — expansion gates are approve/cancel only.
           const pending = this.requirePendingGate(
             gateId,
             action,
@@ -112,8 +112,7 @@ export class LineageParticipant {
           if (!pending) return;
 
           const resolved = await this.submitGateDecision(pending, gateId, action, classes);
-          // The turn has to reach terminal state before VS Code releases the chat input, so the
-          // prefill waits for the hold to land rather than racing the still-streaming response.
+          // Prefill waits for the hold to land rather than racing the still-streaming response.
           if (resolved && action === 'change') {
             await vscode.commands.executeCommand('workbench.action.chat.open', {
               query: CHANGE_SCOPE_QUERY,
@@ -144,9 +143,7 @@ export class LineageParticipant {
       && (requiredGate === undefined || pending.gate === requiredGate)
     ) return pending;
 
-    // Every discriminator this guard tests is reported. A refusal whose deciding condition is not
-    // in the record is indistinguishable from an idle card, which is exactly how a dead approval
-    // card once read as a user who simply walked away.
+    // Every discriminator this guard tests is reported, so a refusal is never indistinguishable from an idle card.
     this.traceGateResolution(pending, gateId, action, 'refused',
       pending === null ? 'no_pending_gate'
         : pending.gateId !== gateId ? 'gate_id_mismatch'
@@ -261,10 +258,7 @@ export class LineageParticipant {
       );
     }
 
-    // A live card means its turn is still parked on the interrupt, so this prompt cannot be the
-    // scope change — the change path first ends the turn, which clears `pendingGate`. A held
-    // proposal (no live card, session still `awaiting_gate`) falls through: the graph's entry
-    // route claims the prompt as the refinement.
+    // A live card means its turn is still parked on the interrupt; a held proposal with no live card falls through to the graph's entry route as the refinement.
     if (this.pendingGate && session.phase.kind === 'awaiting_gate') {
       this.write(stream, token, (out) => out.markdown(
         '_Use **Approve & Proceed**, **Change scope**, or **Cancel** on the proposal above._',
@@ -285,8 +279,7 @@ export class LineageParticipant {
     }
 
     const config = vscode.workspace.getConfiguration('dataLineageViz');
-    // Token budgets recalibrate per turn to the selected model: the setting is a ceiling and the
-    // model's input window bounds the share — a small BYOK window shrinks both budgets with it.
+    // Token budgets recalibrate per turn: the setting is a ceiling, the model's input window bounds the share, so a small BYOK window shrinks both budgets with it.
     const modelWindow = request.model.maxInputTokens > 0
       ? request.model.maxInputTokens
       : Number.POSITIVE_INFINITY;
@@ -311,8 +304,7 @@ export class LineageParticipant {
     const model = new VscodeModelPort(request.model, {
       debugLog: (message) => this.logger.debug(message),
       requestId,
-      // Fire-and-forget: a debug capture must never delay or fail the turn, so only the failure
-      // kind reaches the channel — never the record, which carries model content.
+      // Fire-and-forget: a debug capture must never delay or fail the turn, and only the failure kind reaches the channel, never the record, which carries model content.
       wireLog: traceWriter && ((record) => {
         void traceWriter.write(record).catch(() => {});
       }),
@@ -320,8 +312,7 @@ export class LineageParticipant {
       traceVerbose: traceWriter?.isVerbose(),
       budget: turnBudget,
     });
-    // The pill carries a short sentinel so chat can label it; expansion seeds the deterministic
-    // marker the graph routes on, so the re-entry costs no entry-detector call.
+    // Expansion seeds the deterministic marker the graph routes on, so the re-entry costs no entry-detector call.
     const prompt = request.command
       ? `/${request.command} ${request.prompt}`.trimEnd()
       : expandRunTracePrompt(expandShowGraphPreviewPrompt(request.prompt, session), session);
@@ -359,8 +350,7 @@ export class LineageParticipant {
         `[${session.id}] native turn terminal status=error modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
         message,
       );
-      // The hint rides the one carrier that already renders terminal failures (errorDetails owns
-      // the presentation and its native Retry affordance) — never a second inline copy.
+      // The hint rides the one carrier that already renders terminal failures — never a second inline copy.
       return { metadata, errorDetails: { message: `${message} (Retry — send the request again.)` } };
     } finally {
       this.statusBarStop();
@@ -431,8 +421,7 @@ export class LineageParticipant {
         stream.markdown(event.delta);
         return;
       case 'error':
-        // Terminal failures are returned through ChatResult.errorDetails so VS Code owns the
-        // error presentation and Retry affordance. Recoverable guidance remains inline.
+        // Terminal failures are returned through ChatResult.errorDetails; recoverable guidance remains inline.
         if (event.recoverable !== false) stream.markdown(`\n\n${event.message}`);
         return;
       case 'gate':
@@ -452,8 +441,7 @@ export class LineageParticipant {
           title: '$(check) Approve & Proceed',
           arguments: [event.gateId, 'approve', event.classes ?? []],
         });
-        // Only a fresh exploration proposal is editable; expansion gates are a yes/no on a
-        // scope the running exploration already needs.
+        // Only a fresh exploration proposal is editable; expansion gates are a yes/no on a scope the running exploration already needs.
         if (event.gate === 'confirm_sm_start') {
           stream.button({
             command: 'dataLineageViz.aiResumeNativeGate',

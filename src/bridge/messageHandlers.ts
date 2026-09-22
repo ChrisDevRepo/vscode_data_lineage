@@ -78,10 +78,9 @@ export type StatsConnState = {
  * Resolves the connection uri table profiling runs against, negotiating at most one connection.
  *
  * @remarks
- * A request arriving while a negotiation is in flight joins it instead of opening a second
- * connection — and instead of putting a second connection prompt in front of the user. The
- * in-flight promise is cleared however it settles, so a cancelled or failed negotiation leaves the
- * state ready for the next request rather than latched onto a dead promise.
+ * A request arriving while a negotiation is in flight joins it, instead of opening a second
+ * connection or putting a second connection prompt in front of the user. The in-flight promise is
+ * cleared however it settles, so a cancelled or failed negotiation leaves the state ready again.
  *
  * @param state - Panel-lived connection state, mutated in place.
  * @param negotiate - Opens or prompts for a connection and yields its uri, or `undefined` when the
@@ -139,11 +138,9 @@ function parseWebviewLog(text: string): { category: LogCategory; message: string
  * Splits a project list into the records the webview contract accepts and those it rejects.
  *
  * @remarks
- * The send path validates the whole frame, so one unacceptable record used to cost every project in
- * it — the webview then kept an empty or stale list for the rest of the session. Partitioning first
- * keeps that failure proportional: the readable projects still arrive, and the rejected one is named
- * in the log. This does not soften the contract — {@link ProjectSchema} stays strict, and a record
- * it rejects is still not replayed.
+ * The send path validates the whole frame, so one unacceptable record would otherwise cost every
+ * project in it. Partitioning first keeps the failure proportional: the readable projects still
+ * arrive, and the rejected one is named in the log — {@link ProjectSchema} stays strict throughout.
  *
  * @param projects - Records loaded from the project store.
  * @returns The records that validate, plus one issue summary per record that does not.
@@ -252,16 +249,11 @@ export interface MessageHandlerBundle {
  * Installs a freshly built model as the session's current one.
  *
  * @remarks
- * Deliberately panel-independent — it never posts to a webview, so a command-driven load
- * (`dataLineageViz.openExternalProject`) leaves the session in exactly the state a
- * bridge-driven load does: column store repopulated (column tracing reads it), source
- * labels set, and `dataLineageViz.modelLoaded` raised so the model-gated language-model tools
- * become available.
- *
- * The lineage store is opened for `project` only, fire-and-forget: an ad-hoc or demo load gets no
- * store, and a storage failure degrades to storage-off rather than failing the model install. The
- * snapshot is captured synchronously here because the write runs later on the storage queue — a
- * payload read at write time could be read after the session had replaced the model it came from.
+ * Deliberately panel-independent — it never posts to a webview, so a command-driven load leaves the
+ * session in exactly the state a bridge-driven load does: column store repopulated, source labels
+ * set, and `dataLineageViz.modelLoaded` raised. The lineage store is opened for `project` only,
+ * fire-and-forget, and the snapshot is captured synchronously here because the write runs later on
+ * the storage queue — a payload read at write time could see a model the session already replaced.
  *
  * @param sess - Session to install the model into.
  * @param model - Model just extracted from a dacpac or from DMV results.
@@ -339,9 +331,7 @@ export function createMessageHandlers(
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
-  // `pending` single-flights the connection negotiation. The detail panel's message listener is
-  // async and VS Code does not serialize it, so two table-stats requests can both observe an
-  // empty `uri` and each negotiate their own connection — the second overwriting the first.
+  // `pending` single-flights the connection negotiation, since two async table-stats requests can otherwise both observe an empty `uri` and each negotiate their own connection.
   const statsConnState: StatsConnState = { uri: undefined, pending: null };
   async function cleanupStatsConnection(): Promise<void> {
     if (statsConnState.uri) {
@@ -436,8 +426,7 @@ export function createMessageHandlers(
         setDetailPanel(detailPanel);
 
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
-          // Same envelope gate as the main panel: detail→host frames are unstamped, so only a
-          // present-but-wrong version proves the two bundles disagree about the message shapes.
+          // Same envelope gate as the main panel: detail→host frames are unstamped, so only a present-but-wrong version proves the two bundles disagree about the message shapes.
           const inboundVersion = (rawM as BridgeEnvelope | undefined)?.protocolVersion;
           if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
             notifyError(
@@ -613,9 +602,7 @@ export function createMessageHandlers(
             await runDbPhase2Host(host, dbResult.connectionUri, schemas, outputChannel, getSession, dbResult.connectionInfo.database, dbConn.sourceName, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
             });
-            // Re-narrow on write-back: the record must carry only allow-listed fields, whoever
-            // touched the object in between. `stripSensitiveFields` throws on a record the read
-            // side would reject — at save time, by the owning layer's contract, never silently.
+            // Re-narrow on write-back: the record must carry only allow-listed fields; `stripSensitiveFields` throws on a record the read side would reject, never silently.
             const refreshed = {
               ...project,
               connection: { ...dbConn, connectionInfo: stripSensitiveFields(dbConn.connectionInfo as IConnectionInfo) },
@@ -698,8 +685,7 @@ export function createMessageHandlers(
               schemas: msg.schemas,
             });
           } catch (err) {
-            // The graph still loads; only persistence is skipped, and the user learns it now
-            // rather than through a silently missing project on the next start.
+            // The graph still loads; only persistence is skipped, and the user learns it now rather than through a silently missing project on the next start.
             notifyWarning(
               Logger.create(outputChannel, 'DB'),
               'Persist database project',
@@ -777,10 +763,7 @@ export function createMessageHandlers(
             const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
             logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
           } else {
-            // A save under an existing id replaces that profile in place, so a record filed under it
-            // by an earlier run would survive and be recalled against a scope it no longer describes.
-            // Writing and clearing are the two halves of one decision. A no-op for a profile that
-            // never had a record.
+            // A save under an existing id replaces that profile in place, so a record filed under it by an earlier run would survive and be recalled against a scope it no longer describes.
             await clearStoredRun(context.globalState, msg.profile.id);
           }
         } catch (runErr) {
@@ -805,10 +788,7 @@ export function createMessageHandlers(
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
-      // The column store is left intact: it is a pure projection of `sess.model`
-      // (`populateColumnStore` is its only writer) and a rebuild only re-reads configuration, so
-      // nothing here would refill it. Resetting it belongs to `applyModelToSession`, the model-load
-      // path that can.
+      // The column store is left intact: a rebuild only re-reads configuration, and resetting it belongs to `applyModelToSession`, the model-load path that can refill it.
       const config = await readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },
@@ -853,14 +833,9 @@ export function createMessageHandlers(
      *
      * @remarks
      * No HTML sanitizing pass runs here: the content lands in a text document, and VS Code's own
-     * markdown preview renders it under its `markdown.preview.security` policy, which blocks
-     * scripts and inline event handlers in preview content by default — the extension adding a
-     * second sanitizer would duplicate that guarantee without owning the surface that enforces it.
-     * The webview's own rendering of the same text is sanitized separately, at its own render site.
-     *
-     * The preview command belongs to the built-in markdown extension, which a user can disable. Its
-     * absence is not a failed action — the document is open either way — so the fallback shows the
-     * document itself and reports the missing preview as a warning, not an error.
+     * markdown preview renders it under its `markdown.preview.security` policy. The preview command
+     * belongs to the built-in markdown extension, which a user can disable — its absence is not a
+     * failed action, so the fallback shows the document itself and reports it as a warning.
      */
     'ai-open-in-editor': async (msg) => {
       host.log('debug', 'Bridge', 'Opening AI description in editor');
@@ -888,8 +863,7 @@ export function createMessageHandlers(
     'error': (msg) => {
       const source = msg.source ?? 'unknown';
       const logger = Logger.create(outputChannel, 'Bridge');
-      // Reconstruct an Error carrying the webview's original stack so downstream
-      // consumers see the real throw site, not the rethrow point in the extension.
+      // Reconstruct an Error carrying the webview's original stack so downstream consumers see the real throw site, not the rethrow point in the extension.
       const err = new Error(msg.error);
       if (msg.stack) err.stack = msg.stack;
       const componentLine = msg.componentStack
@@ -899,8 +873,7 @@ export function createMessageHandlers(
         ? safeStringifyForLog(msg.context, 500)
         : '(no context)';
 
-      // Retain for the debug dump's LAST ERRORS section — the context carries the full
-      // current-screen snapshot, so a crash is reproducible from the dump alone.
+      // Retain for the debug dump's LAST ERRORS section — the context carries the full current-screen snapshot, so a crash is reproducible from the dump alone.
       recordWebviewError(getSession(), {
         timestamp: msg.timestamp ?? Date.now(),
         source,
@@ -910,14 +883,12 @@ export function createMessageHandlers(
         context: msg.context,
       });
 
-      // A render-boundary crash auto-reloads the panel — say so plainly. Other sources
-      // (window error, unhandled rejection) just report the failure.
+      // A render-boundary crash auto-reloads the panel — say so plainly; other sources just report the failure.
       const userMessage = source === 'error-boundary'
         ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
         : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
 
-      // Full detail (message + stack + component tree + screen context) is written to the
-      // Output channel at error level by notifyError, before the concise toast.
+      // Full detail is written to the Output channel at error level by notifyError, before the concise toast.
       notifyError(
         logger,
         `Webview ${source}`,
@@ -1023,16 +994,13 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const timeoutMs = (host.getConfiguration().get<number>('dmvQueryTimeout') ?? 120) * 1000;
-  // Platform detection and the catalog fetch precede the sweep; the sweep's own 1..N steps
-  // shift up by the lead-step count so the counter stays monotonic instead of restarting.
+  // Platform detection and the catalog fetch precede the sweep; the sweep's own 1..N steps shift up by the lead-step count so the counter stays monotonic instead of restarting.
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;
   const totalSteps = queries.filter(isPhase2Query).length + leadSteps;
   host.postMessage({ type: 'db-progress', step: 1, total: totalSteps, label: 'Detecting database platform' });
   const platformMetadata = await loadDatabasePlatform(connectionUri, queries, outputChannel, timeoutMs);
-  // Full object catalog for cross-schema dependency resolution. Optional by contract: a custom
-  // query file without 'all-objects', or a failed fetch, degrades to unclassified cross-schema
-  // references — never to a failed import.
+  // Full object catalog for cross-schema dependency resolution; optional by contract, degrading to unclassified cross-schema references, never to a failed import.
   let allObjectsResult: SimpleExecuteResult | undefined;
   if (allObjectsQuery) {
     host.postMessage({ type: 'db-progress', step: 2, total: totalSteps, label: 'Loading object catalog' });
@@ -1076,11 +1044,10 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
  * Upper bound for the platform probe, independent of `dmvQueryTimeout`.
  *
  * @remarks
- * The probe is a single-row `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must
- * not inherit the user's bulk-query budget (default 120 s). An unreachable server would
- * otherwise stall the import behind a progress notification showing no steps before any real
- * work began. Capping here costs nothing when the server is healthy and bounds the stall when
- * it is not — the fallback tiers still produce a platform either way.
+ * The probe is a single-row `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must not
+ * inherit the user's bulk-query budget (default 120 s) — an unreachable server would otherwise
+ * stall the import behind a progress notification showing no steps. The fallback tiers still
+ * produce a platform either way.
  */
 const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
 
@@ -1088,10 +1055,9 @@ const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
  * Shape accepted from the MSSQL extension's `getServerInfo`.
  *
  * @remarks
- * `IServerInfo` types these as required, but the value crosses an extension boundary this
- * code does not own, so the types are a claim rather than a guarantee. Only the three fields
- * the platform mapping reads are validated — a malformed response degrades to the explicit
- * unknown label instead of throwing inside `mapEngineMetadata`.
+ * `IServerInfo` types these as required, but the value crosses an extension boundary this code
+ * does not own, so a malformed response degrades to the explicit unknown label instead of throwing
+ * inside `mapEngineMetadata`.
  */
 const ServerInfoSchema = z.object({
   engineEditionId: z.number(),
@@ -1103,14 +1069,10 @@ const ServerInfoSchema = z.object({
  * Resolves the database platform before the Phase 2 model is built.
  *
  * @remarks
- * Three tiers, none of which may fail the import: the `platform-info` query, then
- * authoritative MSSQL `getServerInfo` metadata, then an explicit unknown label. Platform
- * is display and AI-grounding context, never a correctness input, so a database that
- * cannot answer must still import — but it must say so rather than be labelled with an
- * invented `SQL Server` default that the model would then reason from.
- *
- * Runs ahead of the Phase 2 sweep because `buildModelFromDmv` needs the result at model
- * construction; `platform-info` carries `phase: 1` so the sweep does not re-run it.
+ * Three tiers, none of which may fail the import: the `platform-info` query, then authoritative
+ * MSSQL `getServerInfo` metadata, then an explicit unknown label — never an invented `SQL Server`
+ * default the model would reason from. Runs ahead of the Phase 2 sweep because `buildModelFromDmv`
+ * needs the result at model construction.
  */
 async function loadDatabasePlatform(
   connectionUri: string,
@@ -1219,8 +1181,7 @@ async function handleTableStatsRequestHost(
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
     const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
     if (!profilingSql) {
-      // The detail panel is in its loading phase and leaves it only on a result or error frame —
-      // a bare return here left it spinning forever.
+      // The detail panel is in its loading phase and leaves it only on a result or error frame — a bare return here would leave it spinning forever.
       logger.info(`No profileable columns for ${schema}.${objectName} — nothing to query`);
       void postToDetail(panel, {
         type: 'table-stats-error',

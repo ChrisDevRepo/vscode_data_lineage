@@ -28,12 +28,6 @@ const SOURCE_COLORS = BOOKMARK_SOURCE_COLORS;
 /**
  * A persistent banner displayed at the top of the graph canvas when an "Advanced Bookmark"
  * (an allowlist-based view) is active.
- *
- * @remarks
- * This banner provides visual confirmation that the user is in a "locked" view mode
- * and provides a clear exit path to return to the global graph exploration.
- *
- * @param props - The component props.
  */
 export const BookmarkBanner = memo(function BookmarkBanner({
   profile,

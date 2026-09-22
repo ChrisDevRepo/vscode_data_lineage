@@ -2,18 +2,10 @@
  * Single typed channel for tool-result error envelopes.
  *
  * @remarks
- * A tool result crosses the graph dispatch boundary as a JSON string. Three legitimate error shapes
- * exist, and this module is the one place that normalizes all three:
- *
- * - **Engine-rejection shape** `{ error: <code>, hint?, message?, detail?, … }` — emitted by the
- *   state-machine tools; the graph-owned attempt executor interprets it.
- * - **Validation-failure shape** `{ success: false, errors: […], hint? }` — emitted by
- *   `present_result`; counted as a semantic failure, never a provider failure.
- * - **Budget-guard shape** `{ ok: false, reason: <code>, counts, limits, hint? }` — emitted by the
- *   turn budget guards; the code is read from `reason` (fallback `ok_false`), while `counts` /
- *   `limits` ride `detail` as extra facts.
- *
- * Provider-pure: no `vscode` imports, so it stays usable from any model lane.
+ * Normalizes the three legitimate error shapes a tool result carries across the graph dispatch
+ * boundary as a JSON string: engine-rejection (`{ error, hint?, message?, detail? }`),
+ * validation-failure (`{ success: false, errors: […], hint? }`), and budget-guard
+ * (`{ ok: false, reason, counts, limits, hint? }`, code read from `reason`). Provider-pure.
  */
 import { z } from 'zod';
 import { REJECTION_CODES } from './rejectionCodes';
@@ -48,8 +40,8 @@ const CONSENT_GATE_CODE = REJECTION_CODES.actionRequired;
  *
  * @remarks
  * The gate reuses the rejection envelope so one dispatch path serves both, but it is never charged
- * against the semantic budget and must not be counted or rendered as a failure. Every surface that
- * separates the two reads this predicate, so the distinction is defined once.
+ * against the semantic budget or rendered as a failure; every surface that separates the two reads
+ * this predicate.
  */
 export function isConsentGateRejection(code: string): boolean {
   return code === CONSENT_GATE_CODE;
@@ -96,10 +88,8 @@ const RECOGNIZED_ENVELOPE_KEYS = new Set(['error', 'success', 'errors', 'ok', 'r
  *
  * @remarks
  * `detail` folds in every offender the emit site attached: any existing `env.detail`, the full
- * `errors[]` array when it has more than one entry (so a multi-issue reject surfaces every offender
- * in one round instead of one-per-retry), and any unrecognized top-level sibling key the emit site
- * set alongside the recognized envelope keys (`error`/`success`/`errors`/`ok`/`reason`/`hint`/
- * `message`/`detail`, e.g. a budget guard's `counts`/`limits`).
+ * `errors[]` array when it has more than one entry, and any unrecognized top-level sibling key
+ * (e.g. a budget guard's `counts`/`limits`).
  * @param data - Parsed untrusted tool result.
  * @returns Normalized rejection, or `null` for a successful/non-envelope result.
  */
@@ -176,13 +166,9 @@ export function makeRejection(input: { code: string; reason: string; hint?: stri
  * Extracts exact field paths from structured rejection detail without interpreting reason prose.
  *
  * @remarks
- * Lives beside the envelope it reads rather than in any one consumer: the retry path turns these
- * into bounded correction fragments, and the diagnostic trace records them so two rejections
- * sharing a `code` stay distinguishable. Both read the same `detail` shape, so deriving the paths
- * twice would be the drift risk.
- *
- * The traversal is bounded (64 nodes, 16 paths) and every accepted value must match the dotted
- * identifier grammar, so the result is safe to record where prose is not allowed.
+ * Lives beside the envelope it reads, not in any one consumer, so the retry path and the diagnostic
+ * trace derive paths from one shape instead of two drifting copies. Bounded (64 nodes, 16 paths);
+ * every accepted value matches the dotted identifier grammar, safe to record where prose is not allowed.
  *
  * @param detail - The rejection's `detail` field, in any nesting the producing tool chose.
  * @returns Deduped dotted paths, in first-seen order; empty when the detail names none.
@@ -339,25 +325,12 @@ export const INVALID_TOOL_INPUT_REPAIR_HINT
   = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
 
 /**
- * Repair hint for an `invalid_tool_input` rejection carrying at least one `unrecognized_keys` Zod
- * issue. The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} tells the model to "keep every other
- * field unchanged" and resend — the wrong repair for a key the schema does not accept at all,
- * since resending it (under the same name) reproduces the identical rejection. Naming the exact
- * offending key(s) and directing removal is the repair the issue itself already states; nothing
- * here is keyed to any one tool, field name, or fixture (`issue.keys` names whatever key the
- * schema rejected on whatever call it rejected).
+ * Repair hint for an `invalid_tool_input` rejection carrying at least one `unrecognized_keys` issue.
  *
- * Mixed with another issue in the same reject (e.g. an unrecognized key alongside a missing
- * required field), both repairs are stated together rather than choosing one, so neither
- * instruction contradicts the other: remove the named key(s), and separately correct the
- * remaining flagged field(s) per the standing instruction's resend-whole-list rule.
- *
- * Naming the accepted keys at that path would need the source schema, not just the issue — the
- * issue carries only the rejected object (`$ZodIssueUnrecognizedKeys.input`), whose own keys are
- * the ones already accepted *in this instance*, not the schema's full accepted set. Deriving the
- * latter would mean threading the schema itself through every call site of
- * {@link rejectionFromZodError}, which is the contortion this hint is not authorized to add — every
- * caller already has this rejection reason. Note removal alone.
+ * @remarks
+ * The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} says "keep every other field unchanged" —
+ * wrong for a key the schema rejects outright, since resending it reproduces the same failure.
+ * This names the offending key(s) and directs removal, stated alongside any other flagged field's repair.
  *
  * @param error - The Zod validation failure under {@link rejectionFromZodError}.
  * @returns The removal-directed hint when any issue is `unrecognized_keys`; `undefined` otherwise,
@@ -383,42 +356,27 @@ function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
 }
 
 /**
- * Repair hint for an `invalid_tool_input` rejection carrying at least one `invalid_type` issue
- * whose field is absent from the call altogether (Zod's own "received undefined"), never a value
- * of the wrong type. The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} tells the model to
- * "correct the offending field(s)" and "keep every other field unchanged" — both phrases presume
- * the field is already present and merely wrong, which is not true of a field never sent at all;
- * a model told only that loops the identical omission (three separate hops, same bare Zod string,
- * same repeat) since nothing in the hint says a whole field must be added. Naming the missing
- * field(s) and directing that they be added is the repair the issue itself already states;
- * nothing here is keyed to any one tool, field name, or fixture — `issue.path` names whatever
- * field the schema required on whatever call it rejected.
+ * Repair hint for an `invalid_tool_input` rejection whose `invalid_type` issue names a field
+ * absent from the call altogether, not merely of the wrong type.
  *
- * Mixed with another issue in the same reject (a missing field alongside a present-but-invalid
- * one), both repairs are stated together rather than choosing one, so neither instruction
- * contradicts the other.
- *
- * Checked after {@link unrecognizedKeyRepairHint}: an `unrecognized_keys` issue never shares a
- * path with a missing-field issue, so the two hints never both apply to the same field, and the
- * removal hint's own "separately correct the other offending field(s)" tail already covers a
- * missing field riding alongside an unrecognized key in the same reject.
+ * @remarks
+ * The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} presumes the field is present and merely
+ * wrong, so a model told only that loops the identical omission. This names the missing field(s)
+ * and directs addition, checked after {@link unrecognizedKeyRepairHint} since the two issue kinds
+ * never share a path.
  *
  * @param error - The Zod validation failure under {@link rejectionFromZodError}.
  * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
- * an `invalid_type` issue alone does not distinguish the two. `undefined` (caller did not supply
- * the payload) always yields `undefined` here rather than guessing every `invalid_type` issue is
- * an absence, since that claim is unprovable without the payload to check.
+ * an `invalid_type` issue alone does not distinguish the two.
  * @returns The addition-directed hint when any issue names a field absent from `input`;
  * `undefined` otherwise, so the caller falls back to {@link INVALID_TOOL_INPUT_REPAIR_HINT}
  * unchanged.
  */
 function missingFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
   if (input === undefined) return undefined;
-  // `invalid_type` covers absent object/string/array fields; Zod v4 reports an absent enum field
-  // as `invalid_value` ("Invalid option: expected one of …"), which reads like a wrong value to a
-  // model that believes it already wrote the field (m24-head-local-mlx run-T7 2026-09-20: a
-  // verdict written inside summary prose resent three times against the standing hint). Both
-  // codes mean "absent" here only when the path resolves to nothing in the rejected payload.
+  // `invalid_type` covers absent fields; Zod v4 reports an absent enum as `invalid_value` instead,
+  // which reads like a wrong value to a model that believes it already sent the field. Both codes
+  // mean "absent" here only when the path resolves to nothing in the rejected payload.
   const isMissingFieldIssue = (issue: z.core.$ZodIssue): boolean =>
     (issue.code === 'invalid_type' || issue.code === 'invalid_value')
     && resolveAtPath(input, issue.path) === undefined && issue.path.length > 0;
@@ -442,15 +400,12 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown): string | und
 }
 
 /**
- * General field-repair hint chain, shared by every Zod-validation reject regardless of the
- * rejection `code` that will carry it: an unrecognized key first (removal is unambiguous), then a
- * field absent outright (addition, distinct from "present but wrong type"). Both sub-hints are
- * schema-derived — no per-tool or per-field text — so any caller that runs its own Zod `safeParse`
- * and composes its own reject envelope gets the same repair intelligence
- * {@link rejectionFromZodError} already gives every `invalid_tool_input` reject, instead of a
- * second, drifting implementation of the same "resend it as if it were merely wrong" gap. Owner
- * example: {@link rejectionFromZodError}'s own `invalid_tool_input` hint fallback below reuses this
- * exact chain.
+ * General field-repair hint chain, shared by every Zod-validation reject regardless of `code`.
+ *
+ * @remarks
+ * An unrecognized key first (removal is unambiguous), then a field absent outright (addition).
+ * Both sub-hints are schema-derived, so any caller composing its own reject envelope gets the same
+ * repair intelligence {@link rejectionFromZodError} already gives.
  *
  * @param error - The Zod validation failure.
  * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
@@ -526,26 +481,15 @@ function describeSizeIssue(
 }
 
 /**
- * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error. Maps
- * each issue to `"<dottedPath>: <message>"` (or just `<message>` for a root-level issue), except an
- * `invalid_union` issue — root or nested — which expands via {@link describeInvalidUnion} into a
- * per-branch required-field breakdown instead of Zod's generic "Invalid input". Joins all issues in
- * issue order (first issue first, so it survives downstream truncation), and carries the dotted
- * paths separately for correction-echo and observability.
- *
- * When the caller supplies the parsed `input`, each issue line is enriched from the issue's own
- * metadata and the received value — Zod v4 issues do not carry the input, so the measurement must
- * happen here: a `too_big`/`too_small` issue reports the measured size against the bound
- * (`sections: 3 items, limit 2`) and echoes a scalar leaf verbatim (bounded). Models cannot count,
- * and the rejected call is replayed without arguments, so the measured value and the sent text are
- * the two facts that turn a blind regeneration into a directed edit. All derived mechanically from
- * the ZodError issue tree — no per-tool or per-field text. Only STRUCTURAL bounds reach this
- * function: a content cap is advertised in the JSON schema and enforced by the validator or the
- * engine (`advertisedMax`, `toolSchemas.ts`), which reports its own measured size.
+ * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error.
  *
  * @remarks
- * Callers hand this a bare `z.ZodError`: the `vscode.lm` port validates tool input itself with
- * `safeParse` and passes `parsed.error` straight through, so there is no wrapper chain to unwrap.
+ * Maps each issue to `"<dottedPath>: <message>"`, except `invalid_union` which expands via
+ * {@link describeInvalidUnion} into a per-branch required-field breakdown. When `input` is
+ * supplied, each line is enriched with the measured size (`too_big`/`too_small`) or a bounded
+ * scalar echo — Zod v4 issues carry no input, so the enrichment happens here. Only STRUCTURAL
+ * bounds reach this function; a content cap is enforced and reported separately by the validator
+ * or engine.
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional remediation `hint`; optional `input`
  * (the value that failed parsing) enabling measured-size and scalar-echo enrichment.
@@ -570,13 +514,9 @@ export function rejectionFromZodError(
     }
     return path ? `${path}: ${message}` : message;
   });
-  // The standing invalid_tool_input hint tells the model to resend every field unchanged, which
-  // is the wrong repair for an unrecognized key: the fix is removal, and reproducing exactly that
-  // rejection three times running (Unrecognized key: "notes") is what an unstated repair looks
-  // like in a live transcript. It is equally wrong for a field missing outright (nothing to
-  // "correct" or leave "unchanged" at a path that was never sent) — the same failure mode measured
-  // three times running on `column_flow` (m17-head-azure-foundry run-T7). An explicit `opts.hint`
-  // (a caller-specific override) always wins.
+  // The standing invalid_tool_input hint tells the model to resend every field unchanged, which is
+  // the wrong repair for an unrecognized key (the fix is removal) and for a field missing outright
+  // (nothing to "correct" at a path never sent). An explicit `opts.hint` always wins.
   const hint = opts.code === 'invalid_tool_input'
     ? (opts.hint ?? zodFieldRepairHint(error, opts.input) ?? INVALID_TOOL_INPUT_REPAIR_HINT)
     : opts.hint;

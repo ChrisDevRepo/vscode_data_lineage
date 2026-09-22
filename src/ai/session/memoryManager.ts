@@ -164,12 +164,10 @@ export interface MemoryStateSnapshot {
  * Appends texts that no existing section already carries verbatim.
  *
  * @remarks
- * `submit_findings` may put a grounded clause on `column_flow[].upstream_columns[].note`
- * while synthesis lifts only `detail_slots[].sections[].text`. The commit site merges those
- * notes into the sections it stores so the archive does not drop them. Identity is trimmed
- * exact equality — a note that merely appears as a substring of a longer section is new
- * evidence and is kept. A dropped exact duplicate is NORMALIZE-WITH-LOG when `debugLog` is
- * supplied, never a silent containment drop.
+ * `submit_findings` may put a grounded clause on `column_flow[].upstream_columns[].note` while
+ * synthesis lifts only `detail_slots[].sections[].text`; the commit site merges those notes into
+ * the sections it stores here. Identity is trimmed exact equality — a substring match is new
+ * evidence and is kept. A dropped exact duplicate is NORMALIZE-WITH-LOG when `debugLog` is supplied.
  *
  * @param nodeId - Node id, for the log line when a duplicate is dropped.
  * @param debugLog - Optional debug sink the commit site already holds.
@@ -350,15 +348,11 @@ export class AiMemoryManager {
    * @param meta - Optional synthesis metadata — `badge_label`, `reason_for_visit`.
    *
    * @remarks
-   * Sections are stored verbatim — uniform downstream shape simplifies eval
-   * extraction and the synthesis prompt's carry instruction. A revisit (a reopened column chain
-   * re-enqueues a visited node) appends its sections after the earlier visit's, so evidence the
-   * first visit captured stays in the archive; summary and metadata take the latest visit. A
-   * revisit that re-emits text the archive already holds adds nothing — see
-   * {@link appendUniqueSections}: a second analysis of the same node is new evidence only where
-   * its text is new.
-   * The caller merges `column_flow` notes into `sections` via {@link appendUniqueSectionText}
-   * before this write, so a single-accept hop does not lose clauses that sat only on the flow.
+   * Sections are stored verbatim. A revisit (a reopened column chain re-enqueues a visited node)
+   * appends its sections after the earlier visit's — summary and metadata take the latest visit,
+   * and {@link appendUniqueSections} drops any re-emitted text as no new evidence. The caller
+   * merges `column_flow` notes into `sections` via {@link appendUniqueSectionText} before this
+   * write, so a single-accept hop does not lose clauses that sat only on the flow.
    *
    * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG line
    * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat.
@@ -389,10 +383,9 @@ export class AiMemoryManager {
    *
    * @remarks
    * A CT reopen re-enqueues a node `storeDetail` already wrote once; that earlier write's
-   * sections stay in the archive (appended, never replaced — see `storeDetail`'s remarks), so a
-   * revisit submission does not need to re-carry an angle the archive already holds for this
-   * node. Callers use this to credit the archive when checking classification-locked angle
-   * coverage (`interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`).
+   * sections stay in the archive (appended, never replaced), so a revisit submission does not
+   * need to re-carry an angle the archive already holds. Callers use this to credit the archive
+   * when checking classification-locked angle coverage.
    *
    * @param nodeId - Node id to look up in the detail archive.
    * @returns The set of angles already archived for `nodeId`; empty for a first visit.

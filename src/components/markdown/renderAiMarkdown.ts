@@ -21,15 +21,11 @@ const marked = new Marked({ gfm: true, breaks: false })
     renderer: {
       heading(token: Tokens.Heading): string {
         const body = this.parser.parseInline(token.tokens);
-        // The engine emits the object-link list as an `### Objects` transport line at the END of a
-        // section; render it as a small muted footnote paragraph, not a heading — the links then
-        // share one small size with the "Objects" label instead of heading-scale text.
+        // Render the trailing `### Objects` transport line as a muted footnote, not a heading.
         if (token.depth === 3 && body.startsWith(OBJECTS_HEADING_PREFIX)) {
           return `<p class="ln-ai-objects"><span class="ln-ai-objects-label">Objects</span>${body.slice(OBJECTS_HEADING_PREFIX.length)}</p>\n`;
         }
-        // Numbered `## N {label}` section headings carry a stable id so the report's section chips
-        // can scroll to them. Unnumbered headings (e.g. the engine's `## Column Chain` preface)
-        // take no chip and keep their plain form.
+        // Numbered `## N {label}` headings get a stable id for the report's section chips to scroll to.
         if (token.depth === 2) {
           const sectionNumber = /^\s*(\d+)\s/.exec(token.text ?? '');
           if (sectionNumber) return `<h2 id="${AI_SECTION_ID_PREFIX}${sectionNumber[1]}">${body}</h2>\n`;
@@ -39,13 +35,10 @@ const marked = new Marked({ gfm: true, breaks: false })
     },
   });
 
-// KaTeX's `data-latex` and `style` are already in DOMPurify's default allowlist. `name` is forbidden
-// for the same clobbering reason `id` is filtered below: `<img name=…>` shadows a `window` global.
+// `name` is forbidden for the same clobbering reason `id` is filtered below: `<img name=…>` shadows a `window` global.
 const SANITIZE_CONFIG = { FORBID_ATTR: ['name'] };
 
-// Default DOMPurify allows `id` on every tag. Only numbered section headings need it
-// (`ln-ai-sec-N`); any other id is stripped so a model-supplied attribute cannot clobber
-// `window.vscode` or other globals in the webview.
+// Only numbered section headings (`ln-ai-sec-N`) keep their id; any other is stripped so a model-supplied attribute cannot clobber a `window` global.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (!(node instanceof Element)) return;
   const id = node.getAttribute('id');
@@ -62,7 +55,6 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
  * with prose amounts excluded by the surrounding-character guards. A KaTeX expression that fails
  * to parse degrades to its original source text rather than throwing.
  *
- * @param description - The assembled markdown document.
  * @returns Sanitized HTML ready for insertion into the overlay.
  */
 export function renderAiMarkdown(description: string): string {

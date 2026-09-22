@@ -92,11 +92,7 @@ function assertNever(x: never): never {
   throw new Error(`toolPolicy: unhandled LmStage variant: ${JSON.stringify(x)}`);
 }
 
-/**
- * Returns the set of LM tool names allowed in the given stage.
- *
- * @param stage - Discriminated stage descriptor.
- */
+/** Returns the set of LM tool names allowed in the given stage. */
 export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
   switch (stage.kind) {
     case 'discover':

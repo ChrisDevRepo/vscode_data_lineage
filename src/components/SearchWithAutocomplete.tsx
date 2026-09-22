@@ -9,28 +9,15 @@ import { Tooltip } from './ui/Tooltip';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 interface SearchWithAutocompleteProps {
-  /**
-   * Callback to execute a node search/jump.
-   * @param name - Name of the object to search for.
-   * @param schema - Optional schema name used to disambiguate results.
-   */
+  /** Callback to execute a node search/jump; `schema` disambiguates results with the same name. */
   onExecuteSearch?: (name: string, schema?: string) => void;
-  /**
-   * Optional callback to initiate a trace directly from the search result.
-   * @param nodeId - ID of the node to trace.
-   */
+  /** Optional callback to initiate a trace directly from the search result. */
   onStartTrace?: (nodeId: string) => void;
   /** Flattened list of all nodes in the project for autocomplete suggestions. */
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
-  /**
-   * Authoritative set of node IDs currently rendered in the graph.
-   * Used to partition suggestions into "In View" and "Other" (filtered out).
-   */
+  /** Authoritative set of node IDs currently rendered in the graph; partitions suggestions into "In View" and "Other". */
   visibleNodeIds: Set<string>;
-  /**
-   * IDs of nodes that are in the working set but currently collapsed inside a schema cluster.
-   * When provided, these nodes form a third suggestion partition: "In Schema Cluster".
-   */
+  /** IDs of working-set nodes collapsed inside a schema cluster; forms a third suggestion partition when provided. */
   collapsedSchemaNodeIds?: Set<string>;
 }
 
@@ -42,8 +29,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   visibleNodeIds,
   collapsedSchemaNodeIds,
 }: SearchWithAutocompleteProps) {
-  // Search term is local state — keystrokes only re-render this component,
-  // not the entire App/GraphCanvas tree. The parent is notified only on Enter.
+  // Search term is local state so keystrokes don't re-render the App/GraphCanvas tree; the parent is notified only on Enter.
   const [searchTerm, setSearchTerm] = useState('');
 
   const allSuggestions = useMemo(

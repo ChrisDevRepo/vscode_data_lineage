@@ -38,8 +38,7 @@ function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement,
 }
 
 if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
-    // Global error handlers + ErrorBoundary are set up in DetailApp.tsx module scope
-  // (window.vscode is also set there, which ErrorBoundary requires).
+  // Global error handlers + ErrorBoundary are set up in DetailApp.tsx module scope (window.vscode too).
   Promise.all([
     import('./detail/DetailApp'),
     import('./components/ErrorBoundary'),
@@ -50,7 +49,6 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
           // Crash is already logged by ErrorBoundary.componentDidCatch; surface it to the
           // user before recovery so a real crash is never a silent flicker.
           notifyUser('The detail panel hit an error and was closed — see the output channel for details.');
-          // Close it via the existing 'close-detail' bridge message.
           // 800 ms delay lets the fallback render before disposal.
           setTimeout(() => window.vscode?.postMessage({ type: 'close-detail' }), 800);
         }}
@@ -84,9 +82,7 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     });
 
     window.addEventListener('error', (event) => {
-      // A browser notice — a ResizeObserver loop report, a failed resource load — arrives as an
-      // error event with nothing thrown behind it. Reporting it as an application failure spends a
-      // modal toast on something the user cannot act on, so it goes to the log instead.
+      // A browser notice with nothing thrown behind it goes to the log, not a modal toast the user cannot act on.
       if (!(event.error instanceof Error)) {
         window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[Graph] Window notice: ${event.message}` });
         return;
@@ -106,15 +102,13 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     import('./components/ErrorBoundary'),
     import('./engine/graphBuilder'),
   ]).then(([{ App }, { VsCodeProvider }, { ErrorBoundary }, { setGraphLogSink }]) => {
-    // The engine has no bridge of its own and the detail webview builds no graphs, so this is the
-    // one place the sink is installed — here, before the first render can build one.
+    // The engine has no bridge of its own, so this is the one place the sink is installed, before the first render can build one.
     setGraphLogSink((level, text) => window.vscode?.postMessage({ type: 'log', level, text }));
 
     createRoot(root).render(
       <ErrorBoundary
         onError={() => {
-          // The error toast + detailed Output log are emitted by ErrorBoundary.componentDidCatch
-          // → bridge 'error' handler (error level). Here we only auto-reopen the panel.
+          // The error toast + Output log are emitted by ErrorBoundary; here we only auto-reopen the panel.
           // 800 ms delay lets the fallback render before the panel is recycled.
           setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
         }}

@@ -34,8 +34,7 @@ import { SCRIPT_TYPES } from '../support/graphUtils';
  * `lineage_get_neighbor_columns`, not prior hops' tool results.
  */
 export function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
-  // `current_task` already rides authoritatively in the <current_task> block of the same message
-  // (buildActiveHopInstruction) — strip the duplicate from this JSON so the task string isn't sent twice.
+  // `current_task` already rides authoritatively in the <current_task> block of the same message (buildActiveHopInstruction) — strip the duplicate from this JSON so the task string isn't sent twice.
   let escapedBody: string;
   if (hop) {
     const hopForJson = { ...hop };
@@ -161,18 +160,14 @@ export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext,
   const classification = sess.requireLockedClassification();
   const isCtMode = hopMode === 'ct';
   const smProtocol = buildSmProtocol({
-    // The BB branch of `buildSmProtocol` keys on the absence of target columns; a BB-mode hop takes
-    // it by withholding them, so no CT block is composed and none needs suppressing.
+    // The BB branch of `buildSmProtocol` keys on the absence of target columns; a BB-mode hop takes it by withholding them, so no CT block is composed and none needs suppressing.
     targetColumns: isCtMode ? engine.columnAspect?.target_columns : undefined,
     classification,
   });
-  // Stable scope: per-focus capture keys ride the hop message, so this block — and with it
-  // the whole system prompt — is byte-identical across the hops of one mode.
+  // Stable scope: per-focus capture keys ride the hop message, so this block — and with it the whole system prompt — is byte-identical across the hops of one mode.
   const stageBlock = resolveStage(sess, 'active', isCtMode, { scope: 'stable' });
   const stableContext = buildStableContextBlocks(sess, engine);
-  // Stable prefix only — identical every hop so prompt caching holds across the trace. The per-hop
-  // volatile content (current task + capture recipe + rolling memory) rides in the worker user
-  // message (buildActiveHopInstruction), and the focus DDL is handed via buildWorkerHopMessage — never here.
+  // Stable prefix only — identical every hop so prompt caching holds across the trace. The per-hop volatile content (current task + capture recipe + rolling memory) rides in the worker user message (buildActiveHopInstruction), and the focus DDL is handed via buildWorkerHopMessage — never here.
   return {
     system: assemblePhaseSystem('active', ctx, [smProtocol, stageBlock.prompt, ...stableContext.blocks], hopMode),
     templateKeys: stageBlock.shippedKeys,
@@ -183,10 +178,12 @@ export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext,
 
 /**
  * Assembles the session-constant context blocks — mission brief, original question, discovery
- * summary — shared by every stage system prompt that anchors to the canonical question, plus the
- * measured provenance list of the blocks that assembled non-empty. Single home for this trio: a
- * context block added here reaches every consuming stage at once, which is exactly the drift
- * class the shared presentation contract already guards on its axis.
+ * summary — shared by every stage system prompt, plus the measured provenance list of the blocks
+ * that assembled non-empty.
+ *
+ * @remarks
+ * Single home for this trio: a context block added here reaches every consuming stage at once,
+ * which is exactly the drift class the shared presentation contract already guards on its axis.
  */
 function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | null): {
   blocks: readonly string[];
@@ -237,20 +234,14 @@ interface ActiveHopInstruction {
  * @returns The hop message and its selected capture-template keys.
  */
 export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
-  // The hop's own mode, read once and applied to every block this message composes, so the task
-  // block, the capture recipe and the `submit_findings` form this hop is held to state one
-  // contract. A BB-mode hop renders no `<column_trace>` block: the column form is not dispatched to
-  // it, so an instruction to submit `column_flow` names a field its own submission would be
-  // rejected for carrying.
+  // The hop's own mode, read once and applied to every block this message composes, so the task block, the capture recipe and the `submit_findings` form this hop is held to state one contract. A BB-mode hop renders no `<column_trace>` block, so an instruction to submit `column_flow` never names a field its own submission would be rejected for carrying.
   const isCtMode = engine.currentHopAnalysisMode === 'ct';
   const currentTask = buildCurrentTaskBlock(
     engine.getCurrentTasks(),
     isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
   );
-  // Both modes: render the exact set the required-nodes guard will enforce, next to the data it
-  // governs. Neighbor visibility is identical in BB and CT — a neighbor carrying none of the traced
-  // columns still decides which rows survive, so CT is shown and held to the same checklist.
+  // Both modes: render the exact set the required-nodes guard will enforce, next to the data it governs. Neighbor visibility is identical in BB and CT — a neighbor carrying none of the traced columns still decides which rows survive, so CT is shown and held to the same checklist.
   const required = engine.requiredNeighborIds(focusId);
   const accountFor = required.length > 0
     ? [
@@ -260,8 +251,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
         '</required_neighbors>',
       ].join('\n')
     : '';
-  // Per-focus capture recipe: which template fires depends on THIS hop's focus type, so it is
-  // per-hop volatile by definition and must never ride the (cached, byte-stable) system prompt.
+  // Per-focus capture recipe: which template fires depends on THIS hop's focus type, so it is per-hop volatile by definition and must never ride the (cached, byte-stable) system prompt.
   const captureRecipe = resolveStage(sess, 'active', isCtMode, {
     scope: 'per_focus',
     focusKind: focusIsNonBodied(sess, engine) ? 'non_bodied' : 'bodied',
@@ -269,9 +259,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
   const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
   const recentRejections = sess.memory.getRecentRejections();
   const memory = buildMemoryBlock(sess.memory.getShortTermMemory(), recentRejections);
-  // Provenance measured, not declared: name each block only when it assembled non-empty, in message
-  // order. `short_term_memory` always ships (buildMemoryBlock emits it even empty); the rest are
-  // conditional on this focus/hop.
+  // Provenance measured, not declared: name each block only when it assembled non-empty, in message order. `short_term_memory` always ships (buildMemoryBlock emits it even empty); the rest are conditional on this focus/hop.
   const memorySections: string[] = [];
   if (currentTask) memorySections.push('current_task');
   if (accountFor) memorySections.push('required_neighbors');
@@ -304,14 +292,9 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
 export function buildSynthesisInstruction(sess: AiSession, ctx: StagePromptContext): StageSystemInstruction {
   const engine = sess.stateMachine as NavigationEngine | null;
   const stage = resolveStage(sess, 'synthesis');
-  // Provenance is measured by buildStableContextBlocks. The completion envelope's archive
-  // sections (detail_slots / node_states / deferred_questions) are the call's user message,
-  // declared inline at that call site — not assembled by this builder.
+  // Provenance is measured by buildStableContextBlocks. The completion envelope's archive sections (detail_slots / node_states / deferred_questions) are the call's user message, declared inline at that call site — not assembled by this builder.
   const stableContext = buildStableContextBlocks(sess, engine);
-  // Session tracer, not hop mode: synthesis authors the closed archive. A CT run still
-  // reaches BB-shaped hops, but the completion envelope carries the column chain whenever
-  // the tracer recorded edges — so the protocol rider follows `columnAspect`, matching
-  // `buildSmCompletionEnvelope`.
+  // Session tracer, not hop mode: synthesis authors the closed archive. A CT run still reaches BB-shaped hops, but the completion envelope carries the column chain whenever the tracer recorded edges — so the protocol rider follows `columnAspect`, matching `buildSmCompletionEnvelope`.
   const analysisMode: 'bb' | 'ct' = engine?.columnAspect ? 'ct' : 'bb';
   return {
     system: assemblePhaseSystem('synthesis', ctx, [stage.prompt, ...stableContext.blocks], analysisMode),

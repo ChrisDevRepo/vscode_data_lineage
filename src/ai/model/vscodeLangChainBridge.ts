@@ -146,9 +146,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     }
     const definitions = [...(options.tools ?? [])];
     const { tools, toolMode } = projectToolChoice(definitions, options.tool_choice);
-    // `this.token` is already the caller's cancellation: VscodeModelPort binds the request
-    // AbortSignal to one CancellationTokenSource (`bindCancellation`) and hands its token to this
-    // bridge. Deriving a second source here would only duplicate that chain.
+    // `this.token` is already the caller's cancellation: VscodeModelPort binds the request AbortSignal to one CancellationTokenSource (`bindCancellation`) and hands its token to this bridge. Deriving a second source here would only duplicate that chain.
     let iterator: AsyncIterator<unknown> | undefined;
     let reachedEof = false;
     // Only allocated when the wire log is on, so the normal path pays one truthiness check.
@@ -221,11 +219,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
           yield new ChatGenerationChunk({ text: '', message });
           continue;
         }
-        // `LanguageModelChatResponse.stream` is typed `… | unknown` as the API's forward-compat
-        // placeholder, so a part kind added by a newer VS Code must never end the user's turn.
-        // Its content is dropped and never logged per part. Only the size of a string-valued part
-        // (the host streams reasoning as `thinking` parts) rides a content-free chunk, so the port
-        // can report how much output never reached the text channel.
+        // `LanguageModelChatResponse.stream` is typed `… | unknown` as the API's forward-compat placeholder, so a part kind added by a newer VS Code must never end the user's turn. Its content is dropped and never logged per part; only the size of a string-valued part rides a content-free chunk, so the port can report how much output never reached the text channel.
         const nonTextChars = streamedValueChars(part);
         if (nonTextChars > 0) {
           const message = new AIMessageChunk({ content: '', response_metadata: { nonTextChars } });
@@ -251,10 +245,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
 
 /** Converts one LangChain message without adding history or helper prose. */
 export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
-  // Platform constraint, not a simplification: `LanguageModelChatMessageRole` exposes only User and
-  // Assistant — VS Code has no System role — so a SystemMessage can only be projected onto `.User()`
-  // alongside genuine human turns. System instructions therefore reach the model as leading user
-  // content; nothing downstream can distinguish them again.
+  // Platform constraint, not a simplification: `LanguageModelChatMessageRole` exposes only User and Assistant — VS Code has no System role — so a SystemMessage can only be projected onto `.User()` alongside genuine human turns. System instructions therefore reach the model as leading user content; nothing downstream can distinguish them again.
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
     return vscode.LanguageModelChatMessage.User(toTextParts(message.content), message.name);
   }

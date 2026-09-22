@@ -36,8 +36,7 @@ export function deriveLegendSchemas(
   traceMode: TraceState['mode'],
   renderedSchemas: string[] | undefined,
 ): string[] {
-  // In overview mode localNodes are SchemaNodeData buckets, plus object nodes for any
-  // expanded schema. Externals are excluded so the list matches legendColorMap.
+  // Overview nodes are SchemaNodeData buckets plus object nodes for any expanded schema.
   if (graphMode === 'overview') {
     const schemas = new Set<string>();
     for (const n of nodes) {

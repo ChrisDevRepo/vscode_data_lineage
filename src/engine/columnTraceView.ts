@@ -11,7 +11,7 @@
 
 import { dagreLayout } from './graphBuilder';
 import { normalizeColName } from '../utils/sql';
-import type { ColumnTransformClass } from './shared/bridgeContract';
+import type { ColumnAspectEdge, ColumnTransformClass, NodeVerdict } from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
 
 /**
@@ -159,23 +159,8 @@ interface ColumnTraceView {
   portBridges: ColumnTracePortBridge[];
 }
 
-/** One recorded column relation, as it arrives on the wire. */
-export interface ColumnTraceRelation {
-  /** Node that analysed the hop producing this relation. */
-  hopNode: string;
-  /** Source node id. */
-  fromNode: string;
-  /** Source column name. */
-  fromCol: string;
-  /** Target node id. */
-  toNode: string;
-  /** Target column name. */
-  toCol: string;
-  /** Transform classes the model recorded for this relation; absent on an unclassified edge. */
-  transforms?: ColumnTransformClass[];
-  /** One-clause model note for the relation; absent whenever the model offered none. */
-  note?: string;
-}
+/** One recorded column relation, as it arrives on the wire — the wire shape of `AIViewMetadata.columnAspect.edges`. */
+export type ColumnTraceRelation = ColumnAspectEdge;
 
 /** Input to {@link buildColumnTraceView}. */
 export interface ColumnTraceViewInput {
@@ -191,7 +176,7 @@ export interface ColumnTraceViewInput {
    * relation whose hop node carries that verdict is a `passthrough` line. Absent entries yield
    * `unknown`, which renders no glyph.
    */
-  verdicts?: Map<string, 'analyze' | 'passthrough' | 'prune'>;
+  verdicts?: Map<string, NodeVerdict['verdict']>;
   /**
    * Live extension configuration, supplying the layout separations and the default direction.
    *
@@ -257,16 +242,9 @@ export const COLUMN_NODE_BORDER_WIDTH = 2;
  * separation.
  *
  * @remarks
- * Both annotations render through React Flow's `NodeToolbar` (`AiNodeAnnotations.tsx`), which is
- * positioned outside the node box and therefore invisible to Dagre: the badge above (~16px plus its
- * 2px offset) and the note below (~12px plus 2px) draw ~32px that no node height accounts for. At
- * the default `nodeSeparation` of 30 that guarantees a collision — the reported symptom is one
- * node's note landing on the next node's badge. The band is added to the separation rather than to
- * the node height because Dagre returns a centred box: a taller box would move the card inside the
- * reserved space and need a compensating offset at every read of the position.
- *
- * Applied unconditionally in the column view, which is only ever built from AI metadata, so every
- * column-trace graph is an AI view.
+ * Both annotations render through React Flow's `NodeToolbar`, positioned outside the node box and
+ * therefore invisible to Dagre. Added to the separation rather than the node height because Dagre
+ * returns a centred box, and a taller box would need a compensating offset at every position read.
  */
 export const COLUMN_AI_ANNOTATION_BAND = 32;
 
@@ -274,11 +252,8 @@ export const COLUMN_AI_ANNOTATION_BAND = 32;
  * Opacity of a column-view edge outside the hovered path.
  *
  * @remarks
- * One concept — de-emphasis while a column path is lit — governed here for both of its render
- * targets, because they read as a single visual effect and drifted apart once already. The two
- * values differ deliberately: an edge is pure decoration and can recede almost to nothing, while a
- * row carries the column name and has to stay readable, so it dims to
- * {@link COLUMN_ROW_DIM_OPACITY} instead. Change them together.
+ * An edge is pure decoration and can recede almost to nothing, while a row carries the column name
+ * and has to stay readable, so it dims to {@link COLUMN_ROW_DIM_OPACITY} instead. Change together.
  */
 export const COLUMN_EDGE_DIM_OPACITY = 0.25;
 
@@ -290,9 +265,7 @@ export const COLUMN_ROW_DIM_OPACITY = 0.5;
  *
  * @remarks
  * A row can carry both an incoming and an outgoing edge, so `side` is part of the id — a bare
- * column name would collide between the two handles on the same row. The column name is compared
- * via {@link normalizeColName} so a relation's raw spelling (bracketed, differently cased) resolves
- * to the same handle as the row it targets.
+ * column name would collide between the two handles on the same row.
  *
  * @param column - Column name as it appears on the relation or row.
  * @param side - Which handle on the row this id addresses.
@@ -307,8 +280,7 @@ export function columnHandleId(column: string, side: 'source' | 'target'): strin
  *
  * @remarks
  * A different key space from {@link columnHandleId} — that one addresses one of the two handles on a
- * row, this one identifies the row itself — but both normalise the column the same way, so a
- * relation's raw spelling resolves to the row it names.
+ * row, this one identifies the row itself.
  *
  * @param nodeId - Canonical node id.
  * @param column - Column name as it appears on the relation or row.
@@ -381,13 +353,8 @@ export function columnThread(index: ColumnThreadIndex, startKey: string): Set<st
  *
  * @remarks
  * Verdict-only resolution: `passthrough` yields `passthrough`, `analyze` yields `transformation`,
- * and a `prune` verdict or no verdict at all yields `unknown`. Isolated in its own function so a
- * future per-line label (a more precise, line-level signal than the node-level verdict) can take
- * precedence over this result without touching the verdict lookup itself.
- *
- * Exported for its own unit test, not for use elsewhere: no production caller outside this module
- * imports it, and a per-edge state resolved anywhere but here would be a second governor of the
- * same glyph. Read the state off the built view instead.
+ * and a `prune` verdict or no verdict at all yields `unknown`. Exported for its own unit test only —
+ * a per-edge state resolved anywhere else would be a second governor of the same glyph.
  *
  * @param hopNode - Hop node id from the relation, compared case-insensitively.
  * @param verdicts - Per-node trace verdicts, keyed by lower-cased node id.
@@ -395,7 +362,7 @@ export function columnThread(index: ColumnThreadIndex, startKey: string): Set<st
  */
 export function resolveVerdictLineState(
   hopNode: string,
-  verdicts?: Map<string, 'analyze' | 'passthrough' | 'prune'>,
+  verdicts?: Map<string, NodeVerdict['verdict']>,
 ): ColumnLineState {
   const verdict = verdicts?.get(hopNode.toLowerCase());
   if (verdict === 'passthrough') return 'passthrough';
@@ -407,12 +374,9 @@ export function resolveVerdictLineState(
  * Reduces every edge arriving at a row to that row's single line state.
  *
  * @remarks
- * An `incoming` row carries several inbound edges by construction, so a per-row indicator must reduce
- * them rather than keep whichever the relation list happened to end on — that would make the glyph
- * depend on hop order rather than on the trace. A transforming contributor makes the value arriving
- * at the row a transformation; `passthrough` requires every contributor to agree; a disagreement
- * that involves no transformation is `unknown`, which renders no glyph, matching the honest-unknown
- * rule {@link resolveVerdictLineState} already applies per edge.
+ * A transforming contributor makes the value arriving at the row a transformation; `passthrough`
+ * requires every contributor to agree; a disagreement with no transformation is `unknown`, which
+ * renders no glyph — the honest-unknown rule {@link resolveVerdictLineState} applies per edge.
  *
  * @param edges - The view's per-column edges.
  * @returns Line state keyed by the {@link columnRowKey} of each edge's target row.
@@ -484,15 +448,10 @@ function touchRow(acc: NodeAccumulator, columnName: string): string {
  * Derives one node's rows from its accumulated relations.
  *
  * @remarks
- * Shape precedence, most to least specific, applied when more than one condition holds for a row:
- * `incoming` (multiple distinct upstream tuples) outranks `outgoing` (one upstream column feeding
- * multiple targets), which outranks `renamed` (an inbound relation whose endpoint names differ),
- * which outranks `terminal` (no inbound relation at all) — a structural multiplicity is a stronger
- * signal than a naming difference, which is itself stronger than the mere absence of an upstream
- * relation.
- *
- * `renamed` is derived from inbound relations only: the name change happens at the target tuple, so
- * tagging the source row as well would mark a column that was never renamed.
+ * Shape precedence when more than one condition holds: `incoming` outranks `outgoing`, which
+ * outranks `renamed`, which outranks `terminal` — structural multiplicity beats a naming
+ * difference, which beats mere absence of an upstream relation. `renamed` looks at inbound
+ * relations only, so tagging the source row too would mark a column that was never renamed.
  */
 function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
   return acc.rowKeys.map((rowKey) => {
@@ -529,10 +488,9 @@ function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
  * Widens the layout separation on the axis the AI annotations grow along.
  *
  * @remarks
- * Under `LR` the ranks are columns and a node's vertical neighbour is its rank sibling, so the band
- * belongs to `nodeSeparation`; under `TB` the vertical neighbour is the next rank, so it belongs to
- * `rankSeparation`. Returned as a config copy rather than a separate layout input because the layout
- * cache keys on both separations — a banded layout would otherwise reuse an unbanded cache entry.
+ * Under `LR` the vertical neighbour is the rank sibling, so the band belongs to `nodeSeparation`;
+ * under `TB` it belongs to `rankSeparation`. Returned as a config copy, not a separate layout
+ * input, because the layout cache keys on both separations.
  *
  * @param config - Live extension configuration.
  * @param direction - Resolved rankdir for this view.
@@ -562,24 +520,14 @@ function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
  * Builds the column-level rendering of an AI column trace.
  *
  * @remarks
- * Row order is first-seen order across `input.relations` — there is no declared ordinal
- * information available at this stage, so rows are never sorted alphabetically or by relevance.
- *
- * A relation recorded more than once — the same endpoints and the same hop node — is skipped before
- * any node accumulator is written, so a column re-submitted across hops counts once for the rows a
- * node derives as well as for the edges drawn on the canvas.
- *
- * A relation analysed by a hop node that is neither endpoint but is itself on the canvas is drawn
- * through that node as two legs, source to hop and hop to target, rather than as one line past it.
- * A collapsed line would leave the hop with no inbound edge, which ranks a procedure as a source and
- * parks it at the left margin with a canvas-spanning line to its output. The split is a drawing
- * decision only: the target's incoming count and rename signal still describe the original endpoint
- * pair, since that is where the value came from.
- *
- * A relation whose source or target node is absent from `input.objects` is skipped: it has no node
- * to draw a row in. The trace scope is derived from the same relation list that produced these
- * edges, so an endpoint missing from the caller's graph means the object was filtered out of the
- * view, not that a finding was lost.
+ * Row order is first-seen order across `input.relations` — there is no declared ordinal available
+ * at this stage. A relation recorded more than once (same endpoints, same hop node) is skipped
+ * before any accumulator write, so a column re-submitted across hops counts once. A relation
+ * analysed by a hop node that is neither endpoint but is itself on the canvas draws as two legs
+ * (source to hop, hop to target) rather than one line past it — a collapsed line would leave the
+ * hop with no inbound edge and park it at the left margin; the target's incoming count and rename
+ * signal still describe the original endpoint pair. A relation whose endpoint node is absent from
+ * `input.objects` is skipped — it was filtered out of the view, not a lost finding.
  *
  * @param input - Recorded column relations, object identities, and verdicts for one trace.
  * @returns Positioned nodes and per-column edges ready to render.
@@ -626,9 +574,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const targetKey = targetObj.id.toLowerCase();
     const hopKey = relation.hopNode.toLowerCase();
 
-    // Ahead of every accumulator write, so a repeat is one fact for the rows a node derives as well
-    // as for the edges drawn: `inbound` is a plain array, and a duplicate push would be counted by
-    // any reader that looks at its length or order rather than reducing it.
+    // Ahead of every accumulator write, so a repeat counts once: `inbound` is a plain array, and a duplicate push would be counted by any reader of its length or order.
     const identity = [sourceKey, normalizeColName(relation.fromCol), targetKey, normalizeColName(relation.toCol), hopKey].join('->');
     if (seenRelations.has(identity)) return;
     seenRelations.add(identity);
@@ -638,9 +584,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const sourceRowKey = touchRow(sourceAcc, relation.fromCol);
     const targetRowKey = touchRow(targetAcc, relation.toCol);
 
-    // The semantic relation stays source-to-target even when the drawing goes through a hop: the
-    // target's incoming count and rename signal describe where its value came from, not which node
-    // carried it there.
+    // The semantic relation stays source-to-target even when the drawing goes through a hop.
     addOutbound(sourceAcc.outbound, sourceRowKey, `${targetKey}::${targetRowKey}`);
     pushInbound(targetAcc.inbound, targetRowKey, {
       otherNodeKey: sourceKey,
@@ -655,8 +599,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       if (hopObj) {
         viaId = hopObj.id;
         const viaAcc = getAcc(hopObj);
-        // One port per column passing through, under the name it carries on each side: a rename
-        // inside the hop shows as two ports, an unchanged name as one.
+        // One port per column passing through, under the name it carries on each side.
         const inRowKey = touchRow(viaAcc, relation.fromCol);
         const outRowKey = touchRow(viaAcc, relation.toCol);
         pushInbound(viaAcc.inbound, inRowKey, {
@@ -667,8 +610,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
         });
         addOutbound(viaAcc.outbound, outRowKey, `${targetKey}::${targetRowKey}`);
         if (inRowKey !== outRowKey) {
-          // The two ports are one thread through the hub; nothing is drawn between them, so the
-          // link is recorded for whoever follows the thread.
+          // The two ports are one thread through the hub; nothing is drawn between them, so the link is recorded for whoever follows the thread.
           const bridgeKey = `${hopKey}::${inRowKey}->${outRowKey}`;
           if (!seenBridges.has(bridgeKey)) {
             seenBridges.add(bridgeKey);
@@ -731,10 +673,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     transforms?: ColumnTransformClass[],
     note?: string,
   ): void {
-    // Two relations through the same hop share a leg — the two inbound halves stay distinct, their
-    // outbound halves are one line. Drawing both would stack identical lines on the same handles, so
-    // the shared line carries the union of both relations' transform classes and of their notes —
-    // a class on the chip is never left without the note that explains it.
+    // Two relations through the same hop share a leg — the shared line carries the union of both
+    // relations' transform classes and notes, so a class on the chip is never left without its note.
     const legKey = `${source.toLowerCase()}::${normalizeColName(sourceCol)}->${target.toLowerCase()}::${normalizeColName(targetCol)}`;
     const shared = edgeByLeg.get(legKey);
     if (shared) {
@@ -752,8 +692,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetColumn: targetCol,
       state,
     };
-    // Both legs of a hop-routed relation carry the same classification: the split is a drawing
-    // decision, and the value's story is one fact about the original endpoint pair.
+    // Both legs of a hop-routed relation carry the same classification: the split is a drawing decision, and the value's story is one fact about the original endpoint pair.
     if (transforms) edge.transforms = transforms;
     if (note) edge.note = note;
     edgeByLeg.set(legKey, edge);
@@ -771,8 +710,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   }
 
   // Laid out by graphBuilder's dagreLayout so the column view shares the object view's
-  // rankdir/separation/margins; only the per-node box differs (rows give variable heights) and the
-  // vertical separation carries the AI annotation band the node box cannot express.
+  // rankdir/separation/margins; only the per-node box differs, and the vertical separation carries
+  // the AI annotation band the node box cannot express.
   const boxes = new Map(nodes.map(n => [n.id, { width: n.width, height: n.height }]));
   const direction = input.layoutDirection ?? input.config.layout.direction;
   const positions = dagreLayout({

@@ -58,16 +58,7 @@ function DepthInput({
   );
 }
 
-/**
- * A configuration bar for setting up a lineage trace.
- *
- * It appears when a user initiates a trace but before the BFS is executed.
- * Users can specify numerical depths for upstream and downstream traversal
- * or select "All" for an exhaustive trace.
- *
- * @param props - The component props.
- * @returns A memoized React component.
- */
+/** A configuration bar for setting up a lineage trace, shown before the BFS is executed. */
 export const InlineTraceControls = memo(function InlineTraceControls({
   startNodeId,
   startNodeName,

@@ -255,9 +255,7 @@ function buildContext(
 ): InstructionContext {
   const analysisMode = facts?.analysisMode;
   const targets = facts?.analysisMode === 'ct' ? facts.targetColumns : undefined;
-  // Runtime-only guards: the BB-forbids / CT-requires targetColumns invariant is now compile-time
-  // (discriminated `InstructionPlanFacts`), but classification/mode presence for active & synthesis
-  // guards live engine-state drift the type system cannot see.
+  // Runtime-only guards: the BB-forbids / CT-requires targetColumns invariant is compile-time (discriminated `InstructionPlanFacts`), but classification/mode presence for active & synthesis guards live engine-state drift the type system cannot see.
   if ((phase === 'active' || phase === 'synthesis') && !facts?.classification) {
     throw new Error(`InstructionPlan: ${phase} requires a locked classification.`);
   }

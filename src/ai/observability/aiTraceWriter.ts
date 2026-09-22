@@ -214,12 +214,10 @@ export class AiTraceWriter {
     if (this.closed) {
       throw new Error('AiTraceWriter: writer is closed.');
     }
-    // Once a file is open (or opening), its trace-open record has stamped the capture level: a
-    // repeat enable returns the existing path and never mutates `verbose`/`origin` mid-file.
+    // Once a file is open (or opening), its trace-open record has stamped the capture level: a repeat enable returns the existing path and never mutates `verbose`/`origin` mid-file.
     if (this.filePath) return this.filePath;
     if (this.enabling) return this.enabling;
-    // Set before the first await so a port that reads it during the same tick as the enabling call
-    // already sees the requested capture level rather than the default.
+    // Set before the first await so a port that reads it during the same tick as the enabling call already sees the requested capture level rather than the default.
     this.verbose = options.verbose === true;
     this.origin = options.origin ?? 'extension-host';
 

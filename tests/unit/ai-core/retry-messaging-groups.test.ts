@@ -239,13 +239,14 @@ describe('classifyRejectionCode — Package 4 group membership', () => {
   }
 
   it('falls every rejectionCodes.ts code through to the correction fallback, except the ones explicitly mapped', () => {
-    // The single-owner shared module carries six codes with a non-fallback group: the CT/BB
-    // envelope-shape guards (`answer_format`, asserted above) and the orphan-prune guard
-    // (`source_selection`). Every other exported code is a session/state marker, a transport
+    // The single-owner shared module carries seven codes with a non-fallback group: the CT/BB
+    // envelope-shape guards (`answer_format`, asserted above) and the orphan-prune and
+    // origin-prune guards (`source_selection`). Every other exported code is a session/state marker, a transport
     // artifact, a budget guard, or a control-flow marker — none says anything about the model's
     // semantic accuracy, so none may borrow one of the four named groups.
     const explicitlyMapped: ReadonlySet<string> = new Set([
       REJECTION_CODES.pruneWouldOrphanNoted,
+      REJECTION_CODES.pruneOriginForbidden,
       REJECTION_CODES.bbFieldUnknown,
       REJECTION_CODES.invalidInput,
       REJECTION_CODES.ctFieldRequired,

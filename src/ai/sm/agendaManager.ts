@@ -43,19 +43,15 @@ export interface AgendaEntry {
  * Resolves the carry decision when two enqueues land on one node.
  *
  * @remarks
- * The one surviving cross-hop column-carry conflict rule in the engine (see `smBase.ts`
- * `routeCarryFor`'s remarks for the same-hop rule, which is a rejection, not a merge). A stated
- * decision beats an unstated one, and the later statement wins between two stated ones: an absent
- * carry is "no opinion" and never overwrites what is already recorded, while a router that names
- * columns or names a row role has judged this exact neighbor and its word stands until the router
- * says otherwise.
- *
- * This is how a route's `columns: 'none'` against a node an EARLIER hop already committed
- * `column_flow` columns to is honored rather than rejected: neither statement is wrong for the
- * hop that made it, so the later one simply supersedes on the shared agenda entry. The column the
- * earlier hop committed is not re-padded back on by this merge — see `smBase.ts`
- * `getHopContext`'s remarks for where that committed column can still resurface at dispatch, and
- * the follow-up that resolution is left waiting on.
+ * The one surviving cross-hop column-carry conflict rule in the engine (the same-hop rule is a
+ * rejection, not a merge — see `smBase.ts` `routeCarryFor`). A stated decision beats an unstated
+ * one, and the later statement wins between two stated ones: an absent carry is "no opinion" and
+ * never overwrites what is already recorded, while a router that names columns or a row role has
+ * judged this exact neighbor and its word stands until the router says otherwise. This is how a
+ * route's `columns: 'none'` against a node an EARLIER hop already committed `column_flow` columns
+ * to is honored rather than rejected — neither statement is wrong for the hop that made it, so the
+ * later one simply supersedes on the shared agenda entry (the earlier committed column can still
+ * resurface at dispatch; see `smBase.ts` `getHopContext`).
  *
  * @param existing - Carry already on the queued entry, if any.
  * @param incoming - Carry supplied by the re-push, if any.

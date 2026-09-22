@@ -10,7 +10,7 @@ import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 
 /**
  * Re-exported so AI callers keep importing node-id resolution from here.
- * The implementation moved to `src/engine/shared/` because the webview needs it too and must not
+ * Implementation lives in `src/engine/shared/` because the webview needs it too and must not
  * reach into `src/ai/**`.
  */
 export { resolveModelNodeId };
@@ -239,12 +239,11 @@ function parseStringEncodedObject(value: unknown): Record<string, unknown> | und
  *
  * @remarks
  * Object sibling of {@link coercedStringArray} for the local OpenAI-compatible (Qwen/oMLX)
- * lane, which can emit object-typed tool arguments as JSON strings — observed 2026-08-30 on
- * that lane: `depth: "{\"upstream\": 1, \"downstream\": 1}"` was rejected three
- * times as `invalid_tool_input`, stopping the turn on cumulative semantic failures, although
- * every other argument was valid and the provider repeats the identical encoding on every
- * repair attempt (the model cannot see or fix a transport-side re-encoding). Encoding-only
- * normalization per the middleware contract: a string is unwrapped ONLY when it parses to a
+ * lane, which can emit object-typed tool arguments as JSON strings (e.g.
+ * `depth: "{\"upstream\": 1, \"downstream\": 1}"`); an unrepaired encoding stops the turn on
+ * cumulative semantic failures even though every other argument was valid, since the model
+ * cannot see or fix a transport-side re-encoding it repeats on every repair attempt.
+ * Encoding-only normalization per the middleware contract: a string is unwrapped ONLY when it parses to a
  * JSON object; any other value (including a JSON scalar such as `"2"`, the literal `"all"`, a
  * non-JSON string, or a genuine object/array) passes through untouched so the wrapped schema's
  * own rejection surfaces normally. Transparent to `z.toJSONSchema` (`io: 'input'`), so the
@@ -294,15 +293,12 @@ export function coercedBoolean() {
  * `notes[]` field before Zod parses it.
  *
  * @remarks
- * Measured 2026-09-16 on independent `m17-bundle-azure-foundry` (run-T7) and
- * `m17-head-azure-foundry` (run-T8) captures: the model repeatedly nests a below-node caption list
- * inside the section it groups them under (`sections.N.notes`) instead of `present_result`'s one
- * legal home for that shape, the payload's top-level `notes[]`
- * ({@link PresentResultModelSchema}) — `sections.1: Unrecognized key: "notes"` on 2-of-3 sections in
- * run-T7, then 4-of-4 in run-T8's next attempt, each nested entry already exactly the top-level
- * shape (`{node_id, text}`). Both turns then spent their whole synthesis semantic-failure budget on
- * repeats of the identical placement mistake and ended with no answer at all
- * (`MAX_TOOL_SEMANTIC_FAILURES`, `graph.ts`). Hoisting loses nothing and invents nothing — the same
+ * The model repeatedly nests a below-node caption list inside the section it groups them under
+ * (`sections.N.notes`) instead of `present_result`'s one legal home for that shape, the payload's
+ * top-level `notes[]` ({@link PresentResultModelSchema}), each nested entry already exactly the
+ * top-level shape (`{node_id, text}`). Left unrepaired, a turn can spend its whole synthesis
+ * semantic-failure budget on repeats of the identical placement mistake and end with no answer at
+ * all (`MAX_TOOL_SEMANTIC_FAILURES`, `graph.ts`). Hoisting loses nothing and invents nothing — the same
  * accept-a-materially-equivalent-placement contract {@link coercedStringObject} and
  * {@link coercedStringArray} already apply to an alternate provider encoding, extended here to an
  * alternate placement of identically-shaped structured data. A relocated entry is never validated
@@ -427,19 +423,17 @@ function extractBalancedJsonObjects(text: string): Record<string, unknown>[] | n
  * further sibling elements) swept into that key's string value.
  *
  * @remarks
- * Measured 2026-09-16 on `m18-close-azure-foundry` run-T8S
- * (`run-T8S/lm-trace/trace-2026-09-16T17-57-31-092Z.ndjson`, provider-raw lines 56 and 64): Azure's
- * own non-streaming `lineage_present_result` tool-call body arrived with `sections[0]` carrying an
- * extra key spelled only with structural characters, whose value was the raw (already
- * JSON-escaped-and-recoverable) text of the sibling elements that should have followed. Both calls
- * are one signature — the boundary token that should have stayed raw JSON structure was quoted and
- * swept a tail of real content into one key's value — but the two payloads differ in what is
- * recoverable: one artifact's value decodes back into further complete elements (rejoined onto the
- * array, nothing lost); the other's value is a bare fragment with nothing inside it to recover (the
- * key is dropped, the element's own real fields are untouched). `PresentResultSectionSchema` is
- * `.strict()` (this module's caller declares the array shape), so an unrepaired artifact key spent
- * two of the run's three synthesis semantic-failure strikes on `invalid_tool_input` and the third
- * strike ended the turn with a 0-byte answer.
+ * A non-streaming `lineage_present_result` tool-call body can arrive with a section carrying an
+ * extra key spelled only with structural characters, whose value is the raw (already
+ * JSON-escaped-and-recoverable) text of the sibling elements that should have followed. Every
+ * occurrence is one signature — the boundary token that should have stayed raw JSON structure was
+ * quoted and swept a tail of real content into one key's value — but the payload can differ in what
+ * is recoverable: one artifact's value decodes back into further complete elements (rejoined onto
+ * the array, nothing lost); another's value is a bare fragment with nothing inside it to recover
+ * (the key is dropped, the element's own real fields are untouched). `PresentResultSectionSchema` is
+ * `.strict()` (this module's caller declares the array shape), so an unrepaired artifact key can
+ * spend the run's synthesis semantic-failure strikes on `invalid_tool_input` and end the turn with a
+ * 0-byte answer.
  *
  * This is the general defect class, not a fix keyed to one literal boundary token, one field name,
  * or one provider: {@link ARRAY_BOUNDARY_ARTIFACT_KEY} matches any key built solely from JSON's own
@@ -469,10 +463,7 @@ function extractBalancedJsonObjects(text: string): Record<string, unknown>[] | n
 export function repairArrayBoundaryArtifacts(value: unknown): unknown {
   if (Array.isArray(value)) {
     const walked = value.map(repairArrayBoundaryArtifacts);
-    // A repair made strictly inside an element (nested array/object) replaces that element's
-    // reference without adding or removing an artifact key at THIS level — `changed` must catch
-    // that too, or the nested repair is silently discarded when this level rebuilds `rebuilt` from
-    // `walked` but then returns the ORIGINAL `value` because nothing looked different from here.
+    // A nested-only repair must still set `changed`, or this level returns the original `value`.
     let changed = walked.some((item, index) => item !== value[index]);
     const rebuilt: unknown[] = [];
     for (const item of walked) {

@@ -19,9 +19,6 @@ const SOURCE_DESCRIPTIONS = BOOKMARK_SOURCE_DESCRIPTIONS;
 /**
  * Formats an ISO date string into a localized short date and time format.
  * Example: "Mar 29, 2026, 12:15"
- *
- * @param iso - The ISO date string.
- * @returns A formatted locale string.
  */
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -30,18 +27,7 @@ function formatDate(iso: string): string {
   });
 }
 
-/**
- * A floating information card that provides technical metadata about a saved bookmark.
- *
- * @remarks
- * This card is displayed in the bottom-left corner of the graph canvas. It shows:
- * - Graph statistics (node/schema counts).
- * - Source information (AI, Trace, User).
- * - Creation timestamps.
- * - Warnings if objects referenced in the bookmark are "stale" (missing from the current model).
- *
- * @param props - The component props.
- */
+/** A floating information card that provides technical metadata about a saved bookmark. */
 export const BookmarkInfoCard = memo(function BookmarkInfoCard({
   profile,
   nodeCount,

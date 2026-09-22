@@ -38,14 +38,10 @@ const SECTION_RULES: Record<ClassificationValue, {
  * either way — so a prune is exempt from the angle requirement below, the same way the unlocked
  * branch already exempts it from the non-empty requirement.
  *
- * @param sections - The captured sections to validate.
- * @param classification - The locked classification for the session.
- * @param verdict - The submission's verdict; a `prune` verdict requires no angle.
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
  * (`AiMemoryManager.getArchivedAngles`). A CT reopen revisits a node whose earlier sections
  * `storeDetail` already appended into the archive (never replaced), so an angle present there
  * satisfies the lock even when this submission does not re-carry it.
- * @returns An error message string if invalid, otherwise null.
  */
 export function validateSectionsAgainstClassification(
   sections: CapturedSection[] | undefined,
@@ -62,8 +58,7 @@ export function validateSectionsAgainstClassification(
   const angles = new Set(list.map(s => s.angle));
   const missing = rule.required.filter(req => !angles.has(req) && !archivedAngles?.has(req));
   if (missing.length === 0) return null;
-  // The rule alone does not say which angle is absent, so a model holding one angle can resend
-  // the other in its place and be refused again for the angle it just dropped.
+  // Names the missing angle explicitly, else a model holding one angle can resend the other in its place and be refused again for the angle it just dropped.
   const kept = rule.required.filter(req => angles.has(req));
   const missingText = missing.map(a => `missing angle="${a}"`).join(', ');
   const keepText = kept.length > 0
@@ -76,13 +71,10 @@ export function validateSectionsAgainstClassification(
  * Best-effort `sections[].angle` extraction from a raw, not-yet-Zod-validated submission payload.
  *
  * @remarks
- * Reused by the `submit_findings` handler's Zod-failure branch so a submission that fails
- * strict-schema validation for an unrelated reason (an unrecognized key, a wrong field type) and
- * is also missing a locked angle gets one combined hint instead of two sequential rejections —
- * the model would otherwise fix the schema issue, resend, and only then learn about the angle
- * gap. Deliberately tolerant: an item missing `text` or carrying an extra key still counts toward
- * angle coverage, since only `angle` is read here and the strict shape check is Zod's job, not
- * this one's.
+ * Reused by the `submit_findings` handler's Zod-failure branch so a schema failure and a missing
+ * locked angle produce one combined hint instead of two sequential rejections. Deliberately
+ * tolerant: only `angle` is read here, so an item missing `text` or carrying an extra key still
+ * counts toward coverage — the strict shape check is Zod's job, not this one's.
  *
  * @param rawSections - The unparsed `sections` value from the raw or normalized tool input.
  * @returns Angle-bearing entries suitable for {@link validateSectionsAgainstClassification};

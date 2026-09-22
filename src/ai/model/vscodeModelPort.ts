@@ -50,17 +50,9 @@ type PortGenerationPart =
       readonly input: unknown;
     };
 
-// Backstop against an unbounded drain when a provider streams prose (e.g. pseudo-tool-call markup)
-// instead of a real tool call: UAT recorded a 3,638,544-char runaway against a ~33.6 KB legitimate
-// maximum, so 200,000 sits far above any real answer while stopping a runaway drain early.
+// Backstop against an unbounded drain when a provider streams prose instead of a real tool call: a recorded runaway hit 3,638,544 chars against a ~33.6 KB legitimate maximum, so 200,000 sits far above any real answer while stopping a runaway drain early.
 //
-// A tool-free chain-of-thought drain of 130,000-140,000 chars slips UNDER this outer bound and
-// still burns minutes until the provider's own token cap cuts it mid-sentence, so tool-bearing
-// phases carry a tighter per-phase ceiling. Every cap sits at or above ~1.5x the ~33.6 KB
-// legitimate maximum above, so no generation inside the legitimate envelope can be cut, while a
-// runaway of that size exceeds its phase cap by at least ~1.3x. Phases without a smaller cap keep
-// the outer bound; an unrecognized phase label always resolves to the outer bound, never to a
-// smaller cap.
+// A tool-free chain-of-thought drain of 130,000-140,000 chars slips UNDER this outer bound and still burns minutes until the provider's own token cap cuts it mid-sentence, so tool-bearing phases carry a tighter per-phase ceiling. Every cap sits at or above ~1.5x the ~33.6 KB legitimate maximum above, so no generation inside the legitimate envelope can be cut, while a runaway of that size exceeds its phase cap by at least ~1.3x. Phases without a smaller cap keep the outer bound; an unrecognized phase label always resolves to the outer bound, never to a smaller cap.
 const STREAM_TEXT_CHAR_CEILING = 200_000;
 
 /**
@@ -102,14 +94,7 @@ function streamTextCharCeiling(phase: string | undefined): number {
   return typeof mapped === 'number' ? mapped : STREAM_TEXT_CHAR_CEILING;
 }
 
-// A provider that streams nothing at all is indistinguishable from a hung connection: UAT recorded
-// a generation that produced zero chunks for 16m42s until manually cancelled, and neither
-// `vscode.lm` nor Copilot Chat's default fetchers bound that path. The watchdog covers ONLY the
-// zero-output window — the first streamed chunk of any kind disarms it for the rest of the
-// generation, so a model that is thinking or streaming slowly is never interrupted. 600s still
-// bounds that hang while leaving better than 2x margin over the slowest completed generation
-// observed in the same UAT (270.5s): the observed maximum is a sample, not a ceiling, and a
-// margin that thin would abort a slower model that was about to answer.
+// A provider that streams nothing at all is indistinguishable from a hung connection: a recorded generation produced zero chunks for 16m42s until manually cancelled, and neither `vscode.lm` nor Copilot Chat's default fetchers bound that path. The watchdog covers ONLY the zero-output window — the first streamed chunk of any kind disarms it for the rest of the generation, so a model that is thinking or streaming slowly is never interrupted. 600s still bounds that hang while leaving better than 2x margin over the slowest completed generation observed (270.5s): the observed maximum is a sample, not a ceiling, and a margin that thin would abort a slower model that was about to answer.
 const FIRST_OUTPUT_TIMEOUT_MS = 600_000;
 
 /**

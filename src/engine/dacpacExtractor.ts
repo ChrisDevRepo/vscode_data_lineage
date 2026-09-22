@@ -50,11 +50,8 @@ function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 
  * Extracts a complete {@link DatabaseModel} from a DACPAC archive buffer.
  *
  * @param buffer - DACPAC archive bytes to extract.
- * @param onDebugLog - Debug logger callback.
- * @param onInfoLog - Info logger callback.
  * @param options - Runtime extraction settings from VS Code configuration.
  *
- * @returns The extracted database model.
  * @throws If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
  *   The thrown error carries the underlying archive error as `cause`.
  *
@@ -238,9 +235,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
 /**
  * Filters an existing DatabaseModel in memory to include only objects from specific schemas.
  *
- * @param model - The DatabaseModel to filter.
  * @param selectedSchemas - Set of schema names to retain.
- * @param maxNodes - Maximum number of nodes to return.
  * @returns A new DatabaseModel instance containing the filtered subset.
  */
 export function filterBySchemas(
@@ -465,8 +460,7 @@ function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources:
     return `${normalizeName(owner)}::${normalizeColName(column)}`;
   };
 
-  // Each pass resolves at least one still-unresolved column or stops, so view chains of any depth
-  // settle in at most one pass per column.
+  // Each pass resolves at least one still-unresolved column or stops, so view chains settle in at most one pass per column.
   for (;;) {
     let resolved = 0;
     for (const obj of objects) {
@@ -538,18 +532,14 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
         let scale: string | undefined;
 
         if (isComputed && computedSources) {
-          // A view's columns arrive as computed columns with no TypeSpecifier — the type is not in
-          // the model. What IS in the model is what the column reads: a single ExpressionDependency
-          // names the source column, whose declared type is this column's type. Recorded here and
-          // resolved once every object's declared columns are known.
+          // A view's columns arrive with no TypeSpecifier; the ExpressionDependency naming the source column stands in for the type, resolved once every object's declared columns are known.
           const refs = asArray(colEl.Relationship)
             .filter(r => r['@_Name'] === 'ExpressionDependencies')
             .flatMap(r => asArray(r.Entry))
             .flatMap(entry => asArray(entry.References))
             .map(ref => ref['@_Name'])
             .filter((n): n is string => !!n);
-          // Exactly one: two or more means an expression over several columns, and an expression
-          // has no declared type to borrow.
+          // Exactly one: two or more means an expression over several columns, which has no declared type to borrow.
           if (refs.length === 1) computedSources.set(`${objectId}::${normalizeColName(colName)}`, refs[0]);
         }
 
@@ -575,8 +565,7 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
           }
         }
 
-        // dacpac's TypeSpecifier.Length is already a character count (unlike the DMV's
-        // byte-count max_length) — lengthInChars=true tells formatColumnType not to halve it.
+        // dacpac's TypeSpecifier.Length is already a character count (unlike the DMV's byte-count max_length) — lengthInChars=true tells formatColumnType not to halve it.
         cols.push(buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true));
       }
     }
@@ -893,8 +882,7 @@ export function applyExclusionPatterns(model: DatabaseModel, patterns: string[],
   const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
     onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
   });
-  // Identity means no pattern survived compilation, so nothing was excluded and the
-  // parse-stat bookkeeping below has nothing to record.
+  // Identity means no pattern survived compilation, so nothing was excluded and there is no parse-stat bookkeeping to record.
   if (filtered === model) return model;
 
   const { nodes } = filtered;

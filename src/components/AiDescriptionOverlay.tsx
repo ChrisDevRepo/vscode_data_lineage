@@ -139,27 +139,24 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     return () => observer.disconnect();
   }, [expanded, onPanelResize]);
 
-  // The chip row lights the active section only — a node badge resolves to at most one section
-  // (first-wins at assembly), so there is never more than one chip to light.
+  // The chip row lights the active section only — a node badge resolves to at most one section (first-wins at assembly), so there is never more than one chip to light.
   const litSections = activeSection != null ? [activeSection] : [];
 
-  // Body scroll survives collapse/expand: the rail swap unmounts `.ln-ai-description-body`, so its
-  // native scrollTop is lost — captured on every scroll and reapplied once the body remounts.
+  // Body scroll survives collapse/expand: the rail swap unmounts `.ln-ai-description-body`, so its native scrollTop is lost — captured on every scroll and reapplied once the body remounts.
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const savedScrollTop = useRef(0);
   useEffect(() => {
     if (expanded && bodyRef.current) bodyRef.current.scrollTop = savedScrollTop.current;
   }, [expanded]);
 
-  // A chip click, node click or restored layout all land here through `activeSection` — one path
-  // scrolls the document, so a node click reaches its section the same way a chip does.
+  // A chip click, node click or restored layout all land here through `activeSection` — one path scrolls the document, so a node click reaches its section the same way a chip does.
   useEffect(() => {
     if (activeSection == null) return;
     document.getElementById(`${AI_SECTION_ID_PREFIX}${activeSection}`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [activeSection]);
 
-  /** `[` / `]` step to the previous/next section while the pane has focus. */
+  // `[` / `]` step to the previous/next section while the pane has focus.
   function handlePaneKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if ((e.key !== '[' && e.key !== ']') || !sections?.length) return;
     e.preventDefault();
@@ -181,7 +178,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     return () => onFocusNode(nodeId);
   }
 
-  /** Intercepts every markdown `<a>`: focus-node, http(s) via the host, everything else dropped. */
+  // Intercepts every markdown `<a>`: focus-node, http(s) via the host, everything else dropped.
   function activateMarkdownLink(e: React.SyntheticEvent<HTMLDivElement>): void {
     const anchor = (e.target as HTMLElement | null)?.closest('a');
     const href = anchor?.getAttribute('href');
@@ -201,8 +198,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     activateMarkdownLink(e);
   }
 
-  // Enter reaches the click handler through the anchor's own activation behaviour; Space does not
-  // activate a link, so without this the keyboard path is Enter-only.
+  // Enter reaches the click handler through the anchor's own activation behaviour; Space does not activate a link, so without this the keyboard path is Enter-only.
   function handleMarkdownKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === ' ') activateMarkdownLink(e);
   }
@@ -212,17 +208,12 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     onExpandedChange?.(false);
   }
 
-  // Opens the description as a markdown preview tab; the extension host strips `#focus-node:`
-  // links on the way out (`stripFocusNodeLinks` in `messageHandlers.ts`) since only this webview
-  // resolves them.
+  // Opens the description as a markdown preview tab; the extension host strips `#focus-node:` links on the way out (`stripFocusNodeLinks` in `messageHandlers.ts`) since only this webview resolves them.
   function handleOpenInEditor() {
     vscodeApi.postMessage({ type: 'ai-open-in-editor', markdown: description });
   }
 
-  /**
-   * A chip click toggles that section's graph focus; the `activeSection` effect above scrolls the
-   * report to its `## N` heading once the prop change comes back down.
-   */
+  // A chip click toggles that section's graph focus; the `activeSection` effect above scrolls the report to its `## N` heading once the prop change comes back down.
   function handleSectionChip(n: number) {
     onFocusSection?.(activeSection === n ? null : n);
   }
@@ -239,8 +230,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     dockPosition !== 'right' ? `ln-ai-description-anchor-${dockPosition}` : '',
     maximized ? 'ln-ai-description-anchor-maximized' : '',
   ].filter(Boolean).join(' ');
-  // The collapsed rail stays on the edge the panel was docked to, so reopening it is where the
-  // panel was. `right` carries no modifier — it is the default the base rule already describes.
+  // The collapsed rail stays on the edge the panel was docked to, so reopening it is where the panel was. `right` carries no modifier — it is the default the base rule already describes.
   const railwrapClassName = [
     'ln-ai-description-railwrap',
     dockPosition !== 'right' ? `ln-ai-description-railwrap--${dockPosition}` : '',

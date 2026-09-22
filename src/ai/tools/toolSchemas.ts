@@ -57,8 +57,8 @@ const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(AI_MAX_SCO
  *
  * @remarks
  * The approve gate covers the first run up to its presented result; a later request is the user's
- * own and is not bounded by that contract (PM 2026-09-21). A chain is walked from each named id in
- * the one stated direction; only the user's own exclusions stay a wall.
+ * own and is not bounded by that contract. A chain is walked from each named id in the one stated
+ * direction; only the user's own exclusions stay a wall.
  */
 const SupplementChainSchema = z.object({
   direction: z.enum(['upstream', 'downstream']).describe('"upstream" walks toward the sources, "downstream" toward the consumers.'),
@@ -1136,9 +1136,9 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * violation, with one issue per authorized field so `issuePaths` names the whole authorized set.
  * Without this, an empty patch parsed successfully, merged nothing into the held draft, and
  * re-ran the full held-draft validation — reproducing the identical prior rejection with no signal
- * that the patch itself carried no correction (`toolAttempt.ts` issue log, m10 2026-09-15). This is
- * a prevalidation reject (`vscodeModelPort.ts` / the harness port both `safeParse` against this
- * exact schema object before dispatch), never a check added after the handler runs.
+ * that the patch itself carried no correction. This is a prevalidation reject (`vscodeModelPort.ts`
+ * / the harness port both `safeParse` against this exact schema object before dispatch), never a
+ * check added after the handler runs.
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],

@@ -13,7 +13,6 @@ export const SQL_LINE_COMMENT = 2;
  * escapes; an unterminated block comment runs to the end of the text. The parser and the DDL
  * search share this one reading so both agree on what is commented out.
  *
- * @param sql - Raw SQL text.
  * @returns One mask value per UTF-16 code unit of `sql`.
  */
 export function sqlCommentMask(sql: string): Uint8Array {

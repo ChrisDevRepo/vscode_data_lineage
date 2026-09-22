@@ -61,13 +61,9 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
  * a debug trace and what the user saw can never disagree about which group a code belongs to.
  *
  * @remarks
- * Deliberately five groups, not six: there is no "scope limit" group. The chat retry line fires only
- * when `semanticFailures` increases, and the two budget codes
- * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}) are
- * non-chargeable (`NON_CHARGEABLE_REJECTION_CODES` in `toolAttempt.ts`), so neither ever reaches it;
- * `result_too_large` is a stored observation body, never a member of `rejections[]`. Adding a group
- * those codes route to would be unreachable and would misrepresent a budget refusal as a model
- * correction.
+ * Deliberately five groups, not six: there is no "scope limit" group. The two budget codes are
+ * non-chargeable and never reach `rejections[]`, so a sixth group for them would be unreachable and
+ * would misrepresent a budget refusal as a model correction.
  */
 export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'correction';
 
@@ -76,15 +72,13 @@ export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer
  * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
  * `correction` fallback, so an unmapped code can never surface to the user as a raw machine string.
  *
- * Membership follows the approved plan's Package 4 table:
  * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
  * - `source_selection` — routing and prune-topology guards.
  * - `answer_format` — structural/schema violations of the tool envelope itself.
  *
- * Session/state codes (`no_active_session`, `stale_turn`, …), transport artifacts
- * (`duplicate_call_id`, `empty_generation`), the budget guards, and control-flow markers
- * (`action_required`, `off_policy`) are deliberately absent — none says anything about the model's
- * semantic accuracy, so they fall to `correction` rather than borrowing one of the three named groups.
+ * Session/state codes, transport artifacts, the budget guards, and control-flow markers are
+ * deliberately absent — none says anything about the model's semantic accuracy, so they fall to
+ * `correction` rather than borrowing one of the three named groups.
  */
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
   // Column mapping
@@ -153,9 +147,9 @@ class ToolHandler implements ToolServices {
   public async deliverPreview(message: AiViewPreviewMessage): Promise<boolean> {
     const panel = this.getPanel();
     if (!panel) return false;
-    // Revealed before the send, not after: the webview lays the preview out the moment the message
-    // lands, and a hidden panel measures its canvas at zero — the graph would be framed against a
-    // box that does not exist yet and never re-framed once the tab came forward.
+    // Revealed before the send, not after: a hidden panel measures its canvas at zero, so the graph
+    // would be framed against a box that does not exist yet and never re-framed once the tab came
+    // forward.
     panel.reveal();
     return postToWebview(panel, message, this.logger);
   }
@@ -193,11 +187,10 @@ class ToolHandler implements ToolServices {
       // it `[Reject]` made a healthy refine round read as a retry loop in the log.
       const isGate = isConsentGateRejection(rejection.code);
       const label = isGate ? '[Gate]' : '[Reject]';
-      // `group=` only for a genuine rejection — a gate is not a retry-messaging concern, and
-      // classifying it would misleadingly imply a consent gate is a model correction.
+      // `group=` only for a genuine rejection — classifying a gate would misleadingly imply a
+      // consent gate is a model correction.
       const groupPart = isGate ? '' : ` group=${classifyRejectionCode(rejection.code)}`;
-      // `reason=` dropped: it duplicated `code=` verbatim on every observed rejection — the code
-      // IS the reason, at debug granularity; the prose sentence rides the `hint=` field instead.
+      // `reason=` dropped: it duplicated `code=` verbatim, so the prose rides `hint=` instead.
       this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code}${hintPart}${pathPart}`);
     } else {
       this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
@@ -242,8 +235,8 @@ class ToolHandler implements ToolServices {
    * registry execution boundary, not just at the LM `tools[]` parameter.
    *
    * @remarks
-   * The native runtime carries the full catalog. `registerAiTools` additionally exposes only the
-   * read-only subset through `vscode.lm`; both dispatch paths land on this check so the current
+   * The native runtime carries the full catalog; `registerAiTools` additionally exposes only the
+   * read-only subset through `vscode.lm`, and both dispatch paths land on this check so the current
    * phase remains authoritative even for externally addressable reads.
    *
    * @returns Provider-neutral JSON text carrying an `off_policy` error when the
@@ -534,10 +527,9 @@ export function buildAiToolRegistry(
  * The externally addressable subset of the catalog: read-only tools.
  *
  * @remarks
- * A `vscode.lm` registration is invokable by **any** extension or chat participant in the window,
- * with no `@lineage` turn behind it. The read tools are safe there — they answer questions about
- * an already-loaded snapshot. Every other effect class (`session_start`, `hop_commit`,
- * `preview_commit`, `presentation_commit`, `scope_store`) commits session lifecycle state that only
+ * A `vscode.lm` registration is invokable by **any** extension or chat participant, with no
+ * `@lineage` turn behind it; the read tools are safe there since they only answer questions about
+ * an already-loaded snapshot. Every other effect class commits session lifecycle state that only
  * the owning turn may advance, so exposing them externally would let a third party drive the
  * exploration state machine out from under the participant.
  */
@@ -573,10 +565,9 @@ export function registerAiTools(
     EXTERNAL_TOOL_NAMES,
   );
 
-  // Register the read-only catalog subset with VS Code, dispatching through the filtered view so a
-  // mutating name fails as an unknown tool even if a manifest entry were reintroduced by hand. The
-  // model-facing input schema still lives in `package.json` (VS Code reads it statically); the
-  // Zod-SSOT drift guard pins that manifest to the catalog so they cannot diverge.
+  // Dispatches through the filtered view so a mutating name fails as an unknown tool even if a
+  // manifest entry were reintroduced by hand. The model-facing input schema still lives in
+  // `package.json`; the Zod-SSOT drift guard pins that manifest to the catalog so they cannot diverge.
   return external.getTools().map((tool) =>
     vscode.lm.registerTool(tool.name, {
       prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel(tool.name, options.input) }; },

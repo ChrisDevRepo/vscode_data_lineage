@@ -123,8 +123,7 @@ export class LineageRuntime {
           nextSequence: () => ++toolSequence,
         })
       : registry;
-    // Shares the registry decorator's sequence counter and phase, so a synthetic rejection lands in
-    // the same ordered `tool` stream as the dispatched calls it is interleaved with.
+    // Shares the registry decorator's sequence counter and phase, so a synthetic rejection lands in the same ordered `tool` stream as the dispatched calls it is interleaved with.
     const traceSyntheticRejection = traceWriter
       ? (rejection: { toolName: string; code: string }): void => {
           void traceWriter.write({
@@ -167,10 +166,7 @@ export class LineageRuntime {
 
     try {
       const outcome = await runtime.run(input.request.prompt);
-      // `reason`/`errorCode` come from the failure detail the runtime already exposes to callers —
-      // enumerated values only, never the failure prose, so the lifecycle contract holds. Without
-      // them a turn that ends on a tool rejection is untraceable: the rejection text reaches the
-      // wire only as the tool result replayed into the next request, and there is no next request.
+      // `reason`/`errorCode` come from the failure detail the runtime already exposes to callers — enumerated values only, never the failure prose. Without them a turn that ends on a tool rejection is untraceable: the rejection text reaches the wire only as the tool result replayed into the next request, and there is no next request.
       const failure = runtime.lastFailureDetail;
       this.writeLifecycle({
         type: 'turn-terminal',
@@ -190,9 +186,7 @@ export class LineageRuntime {
           : {}),
       };
     } finally {
-      // Native ChatContext history is the production participant's sole cross-turn conversation
-      // owner. The session transcript remains only as a direct-runtime compatibility seam and must
-      // not retain a second, stale copy after a native turn.
+      // Native ChatContext history is the production participant's sole cross-turn conversation owner; the session transcript remains only as a direct-runtime compatibility seam and must not retain a second, stale copy after a native turn.
       if (input.request.priorMessages !== undefined) session.clearDiscoveryTranscript();
       eventObserver.dispose();
       completeRun();

@@ -40,11 +40,9 @@ import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 
-// Required set mirrors buildPassthroughFlowFacts' qualifying filter (kept, minus slotted, minus
-// pruned) narrowed to the traced column chain, not to edge-terminal sources: a staging table that is
-// both a from_node and a to_node was excluded by the terminal seed and could never be flagged.
-// Off-chain scope nodes stay out — the CT prompt keeps them out of the column-chain narrative.
-// Accepted surfaces are the three the synthesis self-check names, highlight colour immaterial.
+// Narrows buildPassthroughFlowFacts' qualifying filter (kept, minus slotted, minus pruned) to the
+// traced column chain rather than edge-terminal sources, so a staging table that is both a
+// from_node and a to_node is not missed by the terminal seed; off-chain scope nodes stay out.
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
   input: PresentResultInput,
@@ -80,16 +78,11 @@ function sectionLabelKey(label: string): string {
  * Fills a render that amends a committed report back out to a complete section array.
  *
  * @remarks
- * A section carrying no text asks to keep the committed body under that label, and an omitted
- * `sections` array asks to keep the whole report; both resolve here, before validation, so every
- * consumer downstream still sees the complete array a fresh render would have sent. Inherited
- * `node_ids` are narrowed to the nodes this render actually shows — a retained section must not
- * re-link a node the same call pruned. Supplied node ids are left alone: they are the model's own
- * decision and answer to the normal node-id contract.
+ * An omitted `sections` array or empty section text asks to retain the committed body under that
+ * label; inherited `node_ids` are narrowed to nodes this render still shows so a retained section
+ * cannot re-link a node the same call pruned. Supplied node ids are left alone.
  *
- * @param supplied - Sections as sent, if any.
  * @param committed - Sections of the report this run already rendered.
- * @param renderedNodeIds - The node set this render resolved to.
  * @returns The complete sections, or the labels that asked to retain a body that does not exist.
  */
 function resolveRetainedSections(
@@ -132,9 +125,8 @@ function notePresentResultFailure(sess: AiSession, token: number, data: object):
   sess.recordPresentResultFailure(token, trunc(sanitizeForLog(reason), 240));
 }
 
-// Every node the column edges reference needs a verdict, hop nodes included — a hop that is not
-// itself an answer node still decides whether its lines read as a transformation. Compared
-// case-insensitively: node ids reach these two lists from different sources.
+// Every node the column edges reference needs a verdict, hop nodes included; compared
+// case-insensitively since node ids reach these two lists from different sources.
 function buildColumnAspectNodeVerdicts(
   nodeIds: readonly string[],
   columnAspect: NonNullable<ResultGraph['columnAspect']>,
@@ -148,7 +140,7 @@ function buildColumnAspectNodeVerdicts(
 }
 
 // The engine checkpoint rides the artifact so a bookmark saved from this view can recall the run;
-// captured here so the single guarded commit below is the only write of the artifact.
+// captured here so the single guarded commit below is the only write.
 function captureCheckpoint(sess: AiSession, logger: ToolServices['logger']): PresentationArtifact['checkpoint'] {
   if (!sess.stateMachine) return undefined;
   try {
@@ -184,9 +176,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? discoveryPreviewNarrative(sess.lastDiscoveryAnswer)
         : null;
 
-      // One reject funnel for every uniform failure exit: session-note + logged return, optionally
-      // dropping the held repair draft first. The two draft-HOLDING rejects below (CT chain
-      // coverage, repairable validation) intentionally bypass this — they preserve the draft.
+      // One reject funnel for every uniform failure exit (session-note + logged return, optionally
+      // clearing the held repair draft); the two draft-HOLDING rejects below intentionally bypass
+      // this to preserve the draft.
       const reject = (failure: object, opts: { clearDraft?: boolean } = {}): string => {
         if (opts.clearDraft) sess.presentResultRepairDraft.clear();
         notePresentResultFailure(sess, turnEpoch, failure);
@@ -194,7 +186,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       };
 
       // L1 encoding-only: unwrap a JSON-string-encoded is_update before the pre-Zod repair gate,
-      // matching the advertised coercedBoolean() contract (known local-model string-encoding class).
+      // matching the advertised coercedBoolean() contract.
       const rawIsUpdate = typeof input === 'object' && input !== null
         ? (input as { is_update?: unknown }).is_update
         : undefined;
@@ -218,17 +210,16 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const supplied = input && typeof input === 'object' && !Array.isArray(input)
           ? input as Record<string, unknown>
           : {};
-        // Every label here is engine-owned prose, so it is fitted to the cap the validator enforces
-        // rather than submitted over it: a rejection the model did not author is one it cannot
-        // repair. `summary` is prose and carries no cap.
+        // Every label here is engine-owned prose, fitted to the validator's cap rather than submitted
+        // over it — a rejection the model did not author is one it cannot repair (`summary` carries
+        // no cap).
         const previewProse: Record<string, string | undefined> = {
           name: `${scope.origin} graph preview`.slice(0, PRESENT_RESULT_NAME_MAX),
           summary: previewNarrative.summary,
           title: previewNarrative.title?.slice(0, PRESENT_RESULT_TITLE_MAX),
         };
-        // Normalize-with-log: preview prose is engine-owned, but a model that sent its own copy of
-        // one of these fields anyway had that value replaced, and a silent replacement is invisible
-        // in the trace. Only a field whose value actually changed is logged.
+        // Normalize-with-log: a model-sent copy of engine-owned preview prose is replaced; only a
+        // field whose value actually changed is logged, so the replacement stays visible in the trace.
         for (const [field, value] of Object.entries(previewProse)) {
           const prior = supplied[field];
           if (typeof prior === 'string' && prior !== value) {
@@ -241,10 +232,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       if (sess.presentResultRepairDraft.hasRepairableDraft()) {
-        // Declared default (R009 middleware contract): while a repairable draft is held the projected
-        // schema IS the repair patch, so any present_result in this state is a repair. is_update is a
-        // redundant authorization echo the engine backfills — not a value every model must emit — and it
-        // does not drive isAmendment during synthesis (that needs the completed phase).
+        // Declared default: while a repairable draft is held the projected schema IS the repair patch,
+        // so any present_result in this state is a repair; is_update is a redundant authorization echo
+        // the engine backfills and does not drive isAmendment during synthesis (that needs the
+        // completed phase).
         if (coercedIsUpdate.data !== true) {
           input = { ...(input as Record<string, unknown>), is_update: true };
           s.logger.debug('presentResult normalization: repairable draft held — is_update defaulted to true (declared authorization backfill)');
@@ -257,10 +248,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: 'Call lineage_present_result again with the full required payload.',
           }, { clearDraft: true });
         }
-        // L1 encoding-only (Guard Discipline layer 1): a repair-turn model that cannot see its own
-        // held draft tends to blindly re-send the FULL held envelope rather than a scoped patch.
-        // Drop only the unauthorized keys whose resent value is structurally unchanged; a genuinely
-        // differing value stays in place so the strict patch schema below still rejects it.
+        // L1 encoding-only: a repair-turn model that cannot see its held draft tends to resend the
+        // full envelope, so only unauthorized keys whose resent value is structurally unchanged are
+        // dropped — a genuinely differing value stays in place so the strict patch schema still
+        // rejects it.
         const heldDraftForStrip = sess.presentResultRepairDraft.get();
         if (heldDraftForStrip && input && typeof input === 'object' && !Array.isArray(input)) {
           const { input: strippedInput, stripped } = stripUnchangedRepairEnvelopeKeys(
@@ -302,34 +293,29 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         }, { clearDraft: true });
       }
 
-      // Mirrors the toolPolicy.ts stage gate this same handler already branches on above
-      // (isVisualPreview / sess.phase.kind === 'completed'). Two consumers: the boundary schema
-      // selection below — the stage decides which fields were offered — and the unknown-node-id
-      // repair hint, which must not name lineage_search_objects on a stage that cannot call it.
+      // Mirrors the toolPolicy.ts stage gate already branched on above; feeds the boundary-schema
+      // selection below and the unknown-node-id repair hint, which must not name
+      // lineage_search_objects on a stage that cannot call it.
       const presentResultStage: PresentResultStage = isVisualPreview
         ? 'visual_preview'
         : sess.phase.kind === 'completed'
         ? 'completed'
         : 'synthesis';
 
-      // Zod at the boundary: the advertised structural contract IS the runtime contract, so the
-      // parse runs against the same stage projection the model was offered — a field that stage
-      // omits rejects here as a schema violation, not through a check after a permissive parse.
-      // A type/enum/shape violation rejects with field paths the model can self-heal from —
-      // never silently nulled fields. Conditional rules and every length cap stay in
-      // validatePresentResult, which can hold the draft and authorize a single-field repair.
-      // The one fact that relaxes the contract, read once so the parse and the fill below cannot
-      // disagree: a render amends a committed report only while the run that authored it is still
-      // the one rendering. A preview has no committed report to amend.
+      // Zod at the boundary: the parse runs against the same stage projection the model was offered,
+      // rejecting with self-healable field paths rather than silently nulling; conditional rules and
+      // length caps stay in validatePresentResult, which can hold the draft for a single-field repair.
+      // A render amends a committed report only while the authoring run is still rendering it — a
+      // preview has none to amend.
       const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
 
       const boundary = presentResultBoundarySchemaForPhase(presentResultStage, retainableSections !== null).safeParse(input);
       if (!boundary.success) {
         const fieldErrors = boundary.error.issues.slice(0, 3)
           .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
-        // Offenders ride as `{ path }` entries so the shared rejectionIssuePaths reader reaches the
-        // correction envelope and the trace. A strict-schema key violation names its offenders on
-        // the issue's `keys`, not on a path — the root path would otherwise name nothing.
+        // Offenders ride as `{ path }` entries so rejectionIssuePaths reaches the correction envelope
+        // and the trace; a strict-schema key violation names offenders via the issue's `keys` since
+        // the root path would otherwise name nothing.
         const issuePaths = [...new Set(boundary.error.issues.flatMap(issue =>
           issue.code === 'unrecognized_keys'
             ? [...issue.keys]
@@ -343,8 +329,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
       const presentInput = boundary.data as PresentResultInput;
 
-      // Only Completed Phase has an existing committed render to amend. A held synthesis draft has
-      // never committed, so its merged repair must pass the complete fresh-render validation contract
+      // Only Completed Phase has an existing committed render to amend; a held synthesis draft has
+      // never committed, so its merged repair must pass the full fresh-render validation contract
       // (including non-empty highlight_groups) before the one atomic commit.
       const isAmendment = !isVisualPreview && sess.phase.kind === 'completed' && presentInput.is_update === true;
 
@@ -368,8 +354,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const modelNodeMap = getModelNodeMap(model);
 
       // Normalize-with-log, the same contract submit_findings holds: an AI decision may be
-      // canonicalised, never rewritten silently. Only a value that actually changed is logged, so a
-      // clean payload costs no output-channel line.
+      // canonicalised, never rewritten silently, and only a changed value is logged.
       const canonicalNodeId = (id: string, field: string): string => {
         const resolved = resolveModelNodeId(id, modelNodeMap) ?? id;
         if (resolved !== id) {
@@ -415,7 +400,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
         // A presentation add reveals analysed scope; extending the lineage is the state machine's
-        // to record. No engine attached means no scope to enforce against.
+        // to record, and no engine attached means no scope to enforce against.
         const scopeSnapshot = sess.stateMachine?.toJSON() ?? null;
         const outOfScope = scopeSnapshot
           ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
@@ -452,8 +437,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         resolvedEdges = pruned.edges;
       }
 
-      // Closed-graph invariant: completed-phase add/prune edits must keep every
-      // node connected to the original origin node in the rendered view.
+      // Closed-graph invariant: completed-phase add/prune edits must keep every node connected to the
+      // original origin node in the rendered view.
       if (resultGraph.originNodeId) {
         const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
         if (disconnected.length > 0) {
@@ -488,20 +473,18 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       s.logger.debug(`presentResult section[0] preview: ${trunc(presentInput.sections?.[0]?.text ?? '(empty)', 200)}`);
 
-      // The notes schema requires a caption for every kept node the engine lists with no detail
-      // slot, so a node unlinked in both badge surfaces is not a licensed "stays bare" outcome —
-      // it may still carry a notes[] entry this check does not inspect. Observe and log only,
-      // never re-link; unlinked nodes still render via resolvedNodeIds.
+      // The notes schema requires a caption for every kept node the engine lists with no detail slot,
+      // so a node unlinked in both badge surfaces may still carry a notes[] entry this check does not
+      // inspect; observe and log only, never re-link — unlinked nodes still render via resolvedNodeIds.
       const bareNodeIds = findBareNonPrunedNodes(resultGraph, presentInput, resolvedNodeIds);
       if (bareNodeIds.length > 0) {
         s.logger.debug(`[Presentation] ${bareNodeIds.length} non-pruned node(s) left bare by the AI (rendered unlabeled/uncolored) — ${trunc(bareNodeIds.join(', '), 200)}`);
       }
 
-      // A detail slot is the model's own captured technical findings for that node — the richest
-      // material the synthesis call received for it — and only a sections[].node_ids link places
-      // that prose in the walkthrough. A notes[] caption or a highlight color does not. A slot
-      // this misses is not "bare" in the findBareNonPrunedNodes sense; reported below as a real
-      // violation (see findUnrenderedDetailSlotIds).
+      // A detail slot is the model's own captured findings for that node; only a sections[].node_ids
+      // link places that prose in the walkthrough (a notes[] caption or highlight color does not), so
+      // a slot this misses is a real violation reported below, not "bare" in the
+      // findBareNonPrunedNodes sense (see findUnrenderedDetailSlotIds).
       const renderedNodeIds = new Set(resolvedNodeIds);
       const unrenderedSlotIds = findUnrenderedDetailSlotIds(
         sess.memory.notedNodeIds.filter(id => renderedNodeIds.has(id)),
@@ -515,9 +498,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let assembledDescription: string | undefined = undefined;
       if (presentInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
-        // CT results carry a validated column chain the BB contract has no counterpart for; the
-        // engine prepends it as a deterministic table so the CT document is BB's walkthrough plus
-        // the column spine. No edges — no preface (undefined keeps BB output unchanged).
+        // CT results carry a validated column chain BB has no counterpart for; the engine prepends it
+        // as a deterministic table so the CT document is BB's walkthrough plus the column spine (no
+        // edges means no preface, keeping BB output unchanged).
         const columnChainPreface = resultGraph.columnAspect
           ? buildColumnChainPreface(resultGraph.columnAspect.edges)
           : undefined;
@@ -533,8 +516,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         );
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
-        // One badge per node is a rendering constraint the assembler resolves first-wins; the
-        // node stays described in every section's text, so nothing the model authored is lost.
+        // One badge per node is a rendering constraint the assembler resolves first-wins; the node
+        // stays described in every section's text, so nothing the model authored is lost.
         if (assembled.droppedSectionLinks.length > 0) {
           s.logger.debug(`[Presentation] ${assembled.droppedSectionLinks.length} duplicate section link(s) dropped (first section keeps the badge) — ${trunc(assembled.droppedSectionLinks.map(d => `${d.node_id}: "${d.dropped_from}" → kept in "${d.kept_in}"`).join(', '), 300)}`);
         }
@@ -544,11 +527,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
       );
 
-      // Checks that need context validatePresentResult does not hold — the cached discovery answer
-      // and the result graph. They are findings, not verdicts: reporting them through the shared
-      // accumulator is what lets a payload that breaks one of these AND a structural rule be told
-      // both at once. Each defect class reported on its own round costs its own semantic-failure
-      // charge, and three charges end the phase.
+      // Checks needing context validatePresentResult does not hold (cached discovery answer, result
+      // graph); reported through the shared accumulator so a payload breaking one of these AND a
+      // structural rule is told both at once, each defect class costing its own semantic-failure
+      // charge toward the three that end the phase.
       const externalViolations: PresentResultViolation[] = [];
       if (isVisualPreview && previewNarrative) {
         externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, presentInput));
@@ -566,11 +548,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           soleHint: 'Fix CT node coverage only. Keep existing section text where possible; add each named node to a section, a highlight group, or notes[].',
         });
       }
-      // A detail slot's captured prose lives in the section that links its node, in either mode —
-      // the aspect this repairs is "a slot was captured", never "the trace is CT", so it runs
-      // unconditionally alongside the CT chain check above rather than branching on resultGraph
-      // source/columnAspect. A notes[] caption or a highlight color never satisfies it (neither
-      // carries the slot's walkthrough); repair adds the missing id to sections[].node_ids.
+      // A detail slot's captured prose lives in the section linking its node in either mode, so this
+      // check runs unconditionally alongside the CT chain check rather than branching on resultGraph
+      // source/columnAspect — a notes[] caption or highlight color never satisfies it; repair adds the
+      // missing id to sections[].node_ids.
       if (unrenderedSlotIds.length > 0) {
         externalViolations.push({
           field: 'sections',
@@ -584,19 +565,18 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         });
       }
 
-      // A real object is never rejected as "unknown". The ids above were resolved against the WHOLE
-      // loaded model; when the result graph still cannot link one, the engine already records why —
-      // pruned, dropped by the render bound, in scope with no verdict, or outside the approved
-      // scope. Read lazily from the snapshot the engine already serializes, so a clean call pays
-      // nothing and no second projection of the same state exists.
+      // A real object is never rejected as "unknown": ids are resolved against the whole loaded model,
+      // and when the result graph cannot link one the engine already records why (pruned, dropped by
+      // the render bound, in scope with no verdict, or outside the approved scope) — read lazily from
+      // the snapshot the engine already serializes.
       let smSnapshot: SmState | null | undefined;
       const nodeIdState: PresentNodeIdStateLookup = (nodeId): PresentNodeIdState => {
         if (!modelNodeMap.has(nodeId)) return 'not_in_model';
         if (smSnapshot === undefined) smSnapshot = sess.stateMachine?.toJSON() ?? null;
         if (!smSnapshot) return 'out_of_scope';
-        // `ctPrunedNodeIds` needs no second test: the CT focus prune records both sets in one
-        // block (`smBase.ts` `ctPrunedFocusIds.add` immediately followed by `removedSet.add`), so
-        // it is a subset of `removedSet` on every snapshot, live or restored.
+        // `ctPrunedNodeIds` needs no second test: the CT focus prune records both sets together
+        // (`smBase.ts` `ctPrunedFocusIds.add` immediately followed by `removedSet.add`), so it is a
+        // subset of `removedSet` on every snapshot.
         if (smSnapshot.removedSet.includes(nodeId)) return 'pruned';
         if ((smSnapshot.renderDroppedNodeIds ?? []).includes(nodeId)) return 'render_dropped';
         if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
@@ -615,8 +595,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         return s.logAndReturn('present_result', validation, rawInput);
       }
 
-      // The approved exploration this render belongs to; a discovery-turn render, which never
-      // passed an approval gate, has none and is stamped with the chat session instead.
+      // The approved exploration this render belongs to; a discovery-turn render, which never passed
+      // an approval gate, is stamped with the chat session instead.
       const runId = sess.explorationRunId ?? sess.id;
       const aiMetadata: PresentationArtifact['aiMetadata'] = {
         summary: validation.summary,
@@ -652,8 +632,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       };
 
       // Handed to the host for delivery: reveal-before-send and the validated bridge sink are the
-      // host's, so the render reflection rides the contract and this layer keeps no knowledge of the
-      // panel. The webview normalizes node_ids against its model and ACKs via view-render-result.
+      // host's, so this layer keeps no knowledge of the panel; the webview normalizes node_ids against
+      // its model and ACKs via view-render-result.
       let autoDispatched = false;
       try {
         autoDispatched = await s.deliverPreview(
@@ -673,8 +653,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         }, rawInput);
       }
       // Outside the preview path resultGraph aliases the live session graph, so every write below
-      // must stay behind the accepted commit — a turn superseded during the webview await must not
-      // clobber the owning turn's graph.
+      // stays behind the accepted commit — a turn superseded during the webview await must not clobber
+      // the owning turn's graph.
       if (isAmendment) {
         resultGraph.nodeIds = resolvedNodeIds;
         resultGraph.edges = resolvedEdges;
@@ -698,7 +678,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             text: sec.text,
           }));
           // Stamped with the authoring run so a later render can tell these sections from ones a
-          // superseded exploration left behind (see AiSession.retainableReportSections).
+          // superseded exploration left behind.
           resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
         }
       }

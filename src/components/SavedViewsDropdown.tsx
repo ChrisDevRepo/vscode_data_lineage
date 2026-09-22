@@ -14,31 +14,17 @@ interface SavedViewsDropdownProps {
   activeViewId?: string | null;
   /** Whether the current filter state differs from the saved profile. */
   isViewModified?: boolean;
-  /**
-   * Callback to save the current filter state as a new bookmark.
-   * @param name - Display name for the new bookmark.
-   */
+  /** Callback to save the current filter state as a new bookmark. */
   onSaveView: (name: string) => void;
-  /**
-   * Callback to apply a saved bookmark's filter state.
-   * @param profile - Bookmark profile to apply.
-   */
+  /** Callback to apply a saved bookmark's filter state. */
   onApplyView: (profile: FilterProfile) => void;
-  /**
-   * Callback to delete a saved bookmark.
-   * @param profileId - ID of the bookmark to remove.
-   */
+  /** Callback to delete a saved bookmark. */
   onDeleteView: (profileId: string) => void;
-  /**
-   * Optional callback to update an existing bookmark with the current filter state.
-   * @param profileId - ID of the bookmark to update.
-   */
+  /** Optional callback to update an existing bookmark with the current filter state. */
   onUpdateView?: (profileId: string) => void;
 }
 
-/**
- * Creates, applies, updates, and deletes saved graph views.
- */
+/** Creates, applies, updates, and deletes saved graph views. */
 export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   filterProfiles,
   isEnabled,

@@ -1,18 +1,13 @@
 /**
  * Token budget — single source of truth for AI delivery-mode decisions.
  *
- * Two discovery caps control SM escalation:
- *   1. ai.discoveryNodeCap (default 10) — max projected scope nodes allowed in
- *      discovery before the engine forces SM via the gate.
- *   2. ai.discoveryTokenBudget (default 10000) — max projected DDL token estimate
- *      for that same scope. Either cap exceeded → request rejected at the tool boundary with
- *      a structured `over_discovery_budget` envelope pointing the AI at
- *      `lineage_start_exploration`.
+ * Two discovery caps control SM escalation: `ai.discoveryNodeCap` (default 10, max projected
+ * scope nodes) and `ai.discoveryTokenBudget` (default 10000, max projected DDL tokens). Either
+ * cap exceeded rejects the request at the tool boundary with `over_discovery_budget`, pointing
+ * the AI at `lineage_start_exploration`.
  *
- * ZERO-TRUNCATION GUARANTEE:
- *   No tool response is ever truncated, capped, or sliced.
- *   No data is ever lost. Over-budget requests are HARD-REJECTED with a hint;
- *   the AI escalates to SM via the gate.
+ * No tool response is ever truncated, capped or sliced — an over-budget request is hard-rejected
+ * with a hint instead, and the AI escalates to SM via the gate.
  *
  * Zero VS Code imports — pure functions for testability.
  */
@@ -23,9 +18,6 @@ import { REJECTION_CODES } from './rejectionCodes';
  *
  * @remarks
  * Uses a standard approximation of 1 token ≈ 4 characters for JSON/SQL payloads.
- *
- * @param chars - The number of characters in the payload string.
- * @returns An estimated token count.
  */
 export function estimateTokens(chars: number): number {
   return Math.ceil(chars / CHARS_PER_TOKEN);
@@ -134,17 +126,14 @@ export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget(
  * Discovery scope budget check — fires per scope-expanding catalog request.
  *
  * @remarks
- * Run BEFORE executing the underlying catalog handler. On overflow, the caller
- * returns the structured rejection envelope (with `hint` pointing at
- * `lineage_start_exploration`) instead of running the handler. No fallback —
- * over-budget requests are hard rejections per the project's "no fallback paths"
- * rule, and nothing is ever truncated: the whole request is refused, never sliced.
+ * Run BEFORE executing the underlying catalog handler; on overflow the caller returns the
+ * structured rejection envelope (`hint` pointing at `lineage_start_exploration`) instead of
+ * running it — no truncation, the whole request is refused.
  *
- * On the scope surface the hint is not a recovery instruction the model gets to
- * act on: `detectOverBudgetFromResult` makes that result a reroute terminal, so
- * the turn leaves discovery for SM entry and the consent gate opens there.
+ * On the scope surface the hint is not a recovery instruction the model gets to act on:
+ * `detectOverBudgetFromResult` makes that result a reroute terminal, so the turn leaves discovery
+ * for SM entry and the consent gate opens there.
  *
- * @param budget - The calling turn's budget.
  * @param requestedNodes - Number of nodes the request would load (e.g. BFS result size).
  * @param requestedDdlBytes - Total DDL bytes that would be returned.
  * @returns `{ ok: true }` when the request fits both caps; otherwise `{ ok: false, ... }`
@@ -232,7 +221,6 @@ export const EXPLORATION_WINDOW_SHARE = 0.5;
  * returns a structured rejection so the model prunes, defers, or synthesizes — no fallback,
  * no truncation, per the zero-truncation guarantee above.
  *
- * @param budget - The calling turn's budget.
  * @param projectedNodes - Scope size if the staged additions were committed.
  * @param projectedDdlChars - Cumulative DDL characters of the projected scope.
  * @returns `{ ok: true }` when the projection fits both caps; otherwise the counts and limits.
@@ -244,9 +232,7 @@ export function checkActiveScopeAdmission(
 ): { ok: true; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } }
   | { ok: false; reason: 'over_active_scope_budget'; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } } {
   const tokens = estimateTokens(projectedDdlChars);
-  // Both arms carry the same counts and limits. The rejection always recorded the budget it broke
-  // and the admission recorded nothing, so a run that grew the scope comfortably and a run that
-  // never grew it at all read identically in the log.
+  // Both arms share the same counts/limits shape, so a run that grew scope comfortably and one that never grew it read identically in the log.
   const counts = { nodes: projectedNodes, tokens };
   const limits = { node_cap: budget.exploration.nodeCap, token_budget: budget.exploration.tokenBudget };
   if (!exceedsPhaseBudget(budget.exploration, projectedNodes, tokens)) return { ok: true, counts, limits };

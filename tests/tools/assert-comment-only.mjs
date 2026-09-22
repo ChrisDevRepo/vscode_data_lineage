@@ -4,8 +4,8 @@
  *
  * Usage: node tests/tools/assert-comment-only.mjs [base-ref] [paths...]
  * Compares every changed .ts/.tsx file between `base-ref` (default HEAD) and the working tree by
- * scanning both sides with trivia skipped (catches type edits) and by transpiling both with comments
- * removed (catches string and template edits the context-free scanner cannot see); any difference fails.
+ * printing both syntax trees with comments removed (code and types) and by transpiling both with comments
+ * removed (emitted JavaScript); any difference fails.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
@@ -18,15 +18,12 @@ const changed = git('diff', '--name-only', base, '--', ...(paths.length ? paths 
   .split('\n')
   .filter(f => /\.tsx?$/.test(f) && existsSync(f));
 
+const printer = ts.createPrinter({ removeComments: true });
+
 /** @param {string} source @param {string} fileName */
 function tokens(source, fileName) {
-  const variant = fileName.endsWith('.tsx') ? ts.LanguageVariant.JSX : ts.LanguageVariant.Standard;
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, variant, source);
-  const out = [];
-  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
-    out.push(`${kind}:${scanner.getTokenText()}`);
-  }
-  return out.join('\n');
+  const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  return printer.printFile(ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, kind));
 }
 
 /** @param {string} source @param {string} fileName */

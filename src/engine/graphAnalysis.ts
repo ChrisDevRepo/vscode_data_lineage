@@ -166,9 +166,9 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
  *
  * @remarks
  * A chain count, not a node count. Chains are emitted deepest first, so the cap drops the shallow
- * tail of the ranking and never displaces the deepest chain. The previous default reused
- * `DEFAULT_CONFIG.maxNodes`, which is a node-count safety limit — three orders of magnitude too
- * loose for a per-chain group list, and a payload risk on a warehouse with many staging roots.
+ * tail of the ranking and never displaces the deepest chain. `DEFAULT_CONFIG.maxNodes` is a
+ * node-count safety limit — three orders of magnitude too loose for a per-chain group list, and a
+ * payload risk on a warehouse with many staging roots.
  */
 const DEFAULT_MAX_CHAINS = 25;
 
@@ -266,8 +266,7 @@ function walkFromEntry(graph: Graph, members: readonly string[], entry: string):
   if (members.length === 1) return { dist: new Map([[entry, 0]]), tail: [entry] };
   const memberIds = new Set(members);
   const dist = new Map<string, number>();
-  // Returning true prunes the walk at a non-member: a shortest path between members never leaves
-  // the component, so nothing outside it is expanded and no distance is lost.
+  // Returning true prunes the walk at a non-member — a shortest path between members never leaves it.
   bfsFromNode(graph, entry, (node, _attributes, depth) => {
     if (!memberIds.has(node)) return true;
     dist.set(node, depth);
@@ -393,8 +392,7 @@ export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number
   const condensation = condense(graph);
   const { components, successors, inDegree } = condensation;
 
-  // Kahn ordering of the condensation, then the chain DP in reverse. Both are iterative, so a chain
-  // spanning thousands of objects cannot exhaust the call stack.
+  // Kahn ordering, then the chain DP in reverse — both iterative, so a chain of thousands cannot exhaust the call stack.
   const remaining = [...inDegree];
   const order: number[] = [];
   for (let i = 0; i < components.length; i++) if (remaining[i] === 0) order.push(i);

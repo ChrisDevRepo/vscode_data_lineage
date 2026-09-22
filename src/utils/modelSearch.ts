@@ -45,10 +45,8 @@ export interface BodyMatch extends DdlMatch {
    * Present, and always `true`, when the match itself sits inside a SQL comment.
    *
    * @remarks
-   * Omitted when the match is executable, so a live hit's reported shape is unchanged. The flag is
-   * a structural fact about the text — a block comment, or `--` to end of line — and never a
-   * filter: a comment can carry the answer (a renamed column, a documented formula), so a
-   * commented match is reported like any other and the reading is left to the consumer.
+   * Omitted when the match is executable, so a live hit's reported shape is unchanged. Never a
+   * filter — a comment can carry the answer, so a commented match is reported like any other.
    */
   commented?: true;
   /**
@@ -57,11 +55,9 @@ export interface BodyMatch extends DdlMatch {
    * inside such a block.
    *
    * @remarks
-   * The reported context is a few lines wide, so a hit's controlling condition sits outside the
-   * window whenever it is more than a line or two away — the normal case in T-SQL. This restores
-   * that one structural bit for `IF`/`WHILE`, the same way {@link sqlCommentMask} restores it for a
-   * comment block; `CASE`, a `WHERE`-clause guard and `GOTO` flow are out of scope and stay
-   * unexpressed.
+   * The reported context is a few lines wide, so a hit's controlling condition usually sits outside
+   * the window. Restores that one structural bit for `IF`/`WHILE` only — `CASE`, a `WHERE`-clause
+   * guard and `GOTO` flow are out of scope and stay unexpressed.
    */
   enclosingPredicate?: string;
 }
@@ -76,10 +72,8 @@ const SIDEBAR_LINE_CAP = 50;
  * Prefix a snippet line carries when every non-whitespace character on it sits inside a comment.
  *
  * @remarks
- * The reported `commented` flag answers for the matched line only, and a snippet is a few lines
- * wide, so a dead line of context arrives byte-indistinguishable from live code — same indentation,
- * same SQL shape, and the comment's own delimiters outside the window. This states it per line, in
- * the language the text is already written in.
+ * The reported `commented` flag answers for the matched line only, so a dead context line would
+ * otherwise arrive byte-indistinguishable from live code. States it per line instead.
  */
 const DEAD_LINE_PREFIX = '--';
 
@@ -90,10 +84,9 @@ const REDOS_BUDGET_MS = 5;
  * Repeating units the ReDoS guard builds its probe inputs from.
  *
  * @remarks
- * Catastrophic backtracking is triggered by the character class the nested quantifier consumes,
- * so a single letter run passes patterns such as `(\s+)+$` or `(\[+)+\]` that blow up on the
- * whitespace- and bracket-heavy SQL they are then run over. Each unit covers one class that is
- * dense in DDL bodies: letters, whitespace, brackets, separators, and digit runs.
+ * Catastrophic backtracking is triggered by the character class the nested quantifier consumes, so
+ * a single letter run passes patterns such as `(\s+)+$` that blow up on whitespace-heavy SQL. Each
+ * unit covers one class dense in DDL bodies: letters, whitespace, brackets, separators, digits.
  */
 const REDOS_SAMPLE_UNITS: readonly string[] = ['a', ' \t', '[', 'a,', 'a]', '1'];
 
@@ -105,9 +98,7 @@ const REDOS_SAMPLE_MAX_CHARS = 200;
  *
  * @remarks
  * An exponential pattern roughly doubles its cost per added character, so a single 200-character
- * probe never returns and hangs the extension host instead of measuring anything. Probing in
- * short steps stops at the first input over budget, which a four-character step bounds to about
- * sixteen times the budget.
+ * probe never returns and hangs the extension host instead of measuring anything.
  */
 const REDOS_SAMPLE_STEP_CHARS = 4;
 
@@ -166,21 +157,12 @@ const SEARCH_REGEX_FLAGS = 'im';
  * @returns The pattern with the redundant group removed, or `null` when there is nothing to strip.
  *
  * @remarks
- * `compileSearchRegex` always compiles with `i` and `m`, so a leading `(?i)`, `(?m)` or `(?im)`
- * asks for exactly the behavior already in force — a no-op, so stripping it is lossless. Any other
- * flag letter (`(?s)`, `(?x)`, ...) changes matching semantics the engine does not otherwise apply,
- * so those groups are left untouched and fail to compile.
- *
- * The scoped form `(?i:...)` is a different construct — it is not a simple prefix, and rewriting it
- * would require re-deriving the subgroup boundary — so the pattern above requires the closing `)`
- * immediately after the flags and never matches it. The scoped form therefore reaches the engine
- * byte-for-byte, and what happens next is the engine's to decide, not this function's: a V8 with
- * ES2025 regexp modifiers compiles it, an older one raises a `SyntaxError` that
- * {@link regexRejectHint} turns into advice. Both outcomes are correct here; do not pin either.
- *
- * When the group is the entire pattern, stripping it would leave an empty pattern, and an empty
- * regex matches every string — trading a refused search for a silent match-everything. That case is
- * left unstripped on purpose, so it still falls through to the normal syntax rejection below.
+ * `compileSearchRegex` always compiles with `i` and `m`, so a leading `(?i)`, `(?m)` or `(?im)` asks
+ * for behavior already in force — a lossless no-op to strip. Any other flag letter, and the scoped
+ * form `(?i:...)`, are left untouched and reach the engine byte-for-byte, since rewriting the scoped
+ * form would require re-deriving the subgroup boundary. When the group is the entire pattern,
+ * stripping it would leave an empty regex that matches every string, so that case is left unstripped
+ * on purpose and falls through to the normal syntax rejection below.
  */
 function stripRedundantInlineFlags(pattern: string): string | null {
   const match = /^\(\?([im]+)\)/.exec(pattern);
@@ -226,14 +208,10 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
  * @returns A hint describing the concrete repair.
  *
  * @remarks
- * The repair is read off the rejection rather than re-derived, so the advice always describes the
- * measurement that rejected the pattern. Every search regex compiles with {@link SEARCH_REGEX_FLAGS},
- * so a pattern never needs an inline flag group. A redundant `(?i)`/`(?m)`/`(?im)` never reaches
- * this function: `compileSearchRegex` strips it before compiling, so what lands here asks for
- * semantics the engine does not otherwise apply (`(?s)`) or syntax it does not recognize at all.
- * Which forms those are is the engine's answer, not a fixed list: a V8 with ES2025 regexp modifiers
- * accepts the scoped `(?i:...)` and `(?-i:...)` forms, so on that host they compile instead of
- * arriving here. The advice below is keyed on V8's own message for exactly that reason.
+ * A redundant `(?i)`/`(?m)`/`(?im)` never reaches this function: `compileSearchRegex` strips it
+ * before compiling, so what lands here asks for semantics the engine does not otherwise apply, or
+ * syntax it does not recognize at all — which forms those are is the engine's answer, not a fixed
+ * list, so the advice below is keyed on V8's own message.
  */
 export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexResult, { ok: false }>): string {
   if (rejection.reason === 'syntax') {
@@ -565,20 +543,13 @@ const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|C
  *   the line sits outside any such condition.
  *
  * @remarks
- * The same reasoning as {@link sqlCommentMask}, applied to control flow instead of comments: the
- * context window a match ships with is a few lines wide, so a hit's governing `IF`/`WHILE` sits
- * outside it whenever the condition is more than a line or two away — the ordinary case in T-SQL.
- *
- * A single pass tracks a stack of open blocks. `BEGIN` and `CASE` each open a frame (matching the
- * `END` that later closes it); only a `BEGIN` immediately preceded by an `IF`/`WHILE` carries that
- * condition as its frame's predicate — a bare `BEGIN` (a procedure body, `BEGIN TRY`/`BEGIN CATCH`,
- * an unconditional block) and a `CASE` frame carry none, so a predicate never leaks past the block
- * it actually governs. `CASE` is tracked only so its own `END` cannot be mistaken for closing an
- * outer `BEGIN`; a `CASE WHEN` condition is not itself reported — it guards one expression, not a
- * statement, which is a different fact than this one. An `IF`/`WHILE` written without `BEGIN…END`
- * governs exactly the next live line and is then spent, the same reading a T-SQL batch gives it.
- * Text inside a comment (per `commentMask`) or a string/bracketed literal is never scanned for a
- * keyword, so a comment or a literal containing the word "BEGIN" cannot open a block.
+ * A single pass tracks a stack of open blocks. `BEGIN` and `CASE` each open a frame; only a `BEGIN`
+ * immediately preceded by an `IF`/`WHILE` carries that condition as its frame's predicate, so a
+ * predicate never leaks past the block it actually governs. `CASE` is tracked only so its own `END`
+ * cannot be mistaken for closing an outer `BEGIN` — a `CASE WHEN` condition is not itself reported,
+ * since it guards an expression, not a statement. An `IF`/`WHILE` without `BEGIN…END` governs
+ * exactly the next live line and is then spent. Text inside a comment or a string/bracketed literal
+ * is never scanned for a keyword, so a literal containing the word "BEGIN" cannot open a block.
  */
 function deriveEnclosingPredicates(
   lines: string[],
@@ -594,8 +565,7 @@ function deriveEnclosingPredicates(
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const base = lineStarts[i];
-    // The live-only view of the line: comment content replaced with spaces so a keyword inside a
-    // comment can neither open a block nor be mistaken for the line's own condition.
+    // The live-only view of the line: comment content replaced with spaces so a keyword inside a comment can neither open a block nor be mistaken for the line's own condition.
     let live = '';
     for (let c = 0; c < line.length; c++) live += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
     const trimmed = live.trim();
@@ -621,8 +591,7 @@ function deriveEnclosingPredicates(
       }
     }
 
-    // A hit on this line is governed by the innermost open frame, or — when no frame is open and a
-    // prior IF/WHILE is still pending a BEGIN that never came — the single live statement it governs.
+    // A hit on this line is governed by the innermost open frame, or a still-pending IF/WHILE's single live statement when no frame is open.
     let applicable = stack.length > 0 ? stack[stack.length - 1] : undefined;
     if (applicable === undefined && !ownPredicate && pending !== undefined && !pendingConsumed && isLive) {
       applicable = pending;
@@ -693,8 +662,7 @@ function buildSnippet(
   const start = Math.max(0, matchLine - (contextLines - 1));
   const end = Math.min(lines.length, matchLine + contextLines);
   const termLower = matchText.toLowerCase();
-  // Applied at every return, after the window is chosen: the prefix states the line's status and
-  // must not enter the cap arithmetic that decides what of the line is shown.
+  // Applied at every return, after the window is chosen — the prefix must not enter the cap arithmetic that decides what of the line is shown.
   const mark = (lineIndex: number, rendered: string): string =>
     deadLine[lineIndex] === 1 ? `${DEAD_LINE_PREFIX}${rendered}` : rendered;
   return lines.slice(start, end).map((l, offset) => {

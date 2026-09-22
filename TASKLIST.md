@@ -1,26 +1,39 @@
-# Open task list — testing05 → 1.2.0 (updated 2026-09-21)
+# Open task list — testing05 → 1.2.0 (handover 2026-09-21 22:10)
 
-HEAD `d67c44783` · gate 14/14 · last measured `agg-146385100-azure-foundry.json` GATE PASS vs main
-`20356737e` and prev baseline `45cc1ab49`. Full-set rerun waits for the peer session's code, then runs
-once at the final HEAD (PM 2026-09-21).
+HEAD has this session's fixes through `c8964a0f9`; peer commits on top (comment trim batches,
+`51d5a3d0a` shared SQL comment scanner). Last full agg: `agg-146385100` GATE PASS vs main
+`20356737e` and prev `45cc1ab49`. Working tree is NOT clean and NOT this session's: peer
+`testing05-code-review-fixes` (src comment pass) and `vscode-data-lineage-f3` (PM-ordered AI-runtime
+test trim under tests/unit/sm, tests/unit/ai-core — uncommitted until the PM asks).
 
-## Open
+**Pre-capture `m61-pre-azure` at `c8964a0f9` — full set, GATE PASS vs main `20356737e` AND prev
+`45cc1ab49`** (`test-results/facts/agg-c8964a0f9-azure-foundry.json`, 7/9 questions green, facts
+69/71, blocking 0, MISSING none). T8 8/8 must — first full pass since 850e4caf2 (reopen fixes). T6
+`negative_qty_clamp` = quarantined FLIP; T7 `unitprice_zero_fallback` red at both refs (never blocks).
+Q25 BB-parity 11/11. Not baselined, not pushed: open items below first (PM goal), and HEAD moved past
+`c8964a0f9` with peer commits, so the final capture runs at the new HEAD.
+
+## Open — next session, in this order
 
 | # | Item | State | Next |
 |---|---|---|---|
-| O1 | `follow-up-prune-reauthor` — `prompts.ts:455-459` "omitted section is a deleted section" contradicts retain contract `toolSchemas.ts:946` | agent: harness `--followup` + one-pair screen | PASS → apply wording, golden refresh, commit |
-| O2 | Playground proof owed for follow-up wording in `a4e7d559e`, `d73db5898` | waits on O1 harness | one pair each on the recorded follow-up gen |
-| O3 | Revisit angle-lock + double rejection per bad submit (T8 reopen, m57 host.log:176-187) | agent running | red→green → commit |
-| O4 | `follow-up-explore-next-autosupplement` | verify headless (row no-pm-retest): `--followup "Explore related objects"` then a pick on the O1 harness | folds into O2 capture |
-| O5 | `ct-edge-transform-classes` (`c3c2babde`) | measured by the final capture | close on capture |
-| L2 | New green baseline | after O1–O3 + peer code | full-set azure capture → `compare` vs main and `45cc1ab49` → `baseline`, commit, push |
+| O1 | Follow-up prune: `prompts.ts:455-459` "omitted section is a deleted section" contradicts retain contract `toolSchemas.ts:946` (825d1cc27); harness follow-up m60 also stopped 3× `Detail slot(s) reached no section: spimportorders, vwexternalorders` (`test-results/e2e/m60-followup-prune/2026-09-21T19-13-06-929Z-azure-foundry/run-1/host.log:295-296`) | package `/tmp/prune-reauthor-package.md`; agent was mid hop read of 2nd recording `…19-43-59-594Z…` | were the two nodes pruned (engine demands slots of pruned nodes → code) or kept (prompt contradiction → one-pair screen at the follow-up gen) |
+| O1b | Harness `--followup` (repeatable) in `internal-tests/tools/e2e-run.mjs` + harness — written by the agent, untracked internal-tests | verify it builds (`npx tsc -p internal-tests/tsconfig.integration.json`) | reuse for O2/O4 |
+| O2 | Playground proof owed for follow-up wording `a4e7d559e`, `d73db5898` | on an O1 follow-up recording | one pair each |
+| O4 | `follow-up-explore-next-autosupplement` — headless only (row no-pm-retest) | not run | `--followup "Explore related objects"` then a pick: turn 2 lists + asks, turn 3 supplements |
+| O5 | `ct-edge-transform-classes` (`c3c2babde`) | measured by final capture | close on capture |
+| R1 | Code-review cleanup rest (plan `~/.claude/plans/robust-popping-dusk.md`; comment batches 1–7 + `d951a7616` landed) | stopped on the usage limit | `smBase.ts`/`session`/`sm` comment pass was partial; open: `columnTraceDirection()` ×4 in `smBase.ts`, required `traceDirection`, `runStore.ts:112` `trunc`, `GraphCanvas.tsx:1097` refs + test, de-dup of `searchBodyScripts` regex branch, `tools.ts` regex guard, `toolAttempt`/`toolErrorEnvelope`/`nodeDecoration`/`memoryManager` helpers, `useTraceNeighborPicker`; each proven by `assert-comment-only.mjs` or the unit suites |
+| L2 | New green baseline | after O1/O2/O4 + peer sessions done | `capture_wt.py <label> --lane azure-foundry --prompts T2,T3,T4,T5,T6,T7,T8,T8S,T25 --parallel 3 --against test-results/facts/agg-45cc1ab49-azure-foundry.json` (sandbox off; clean the capture worktree first if pin fails) → compare both → `baseline`, commit, push |
 
 ## Done this release
 
-Solved this session: `ct-continuation-schema-mismatch` `146385100` · `ct-downstream-derived-column` `448c4db7c` (smoke m59 ok) · T8 reopen rejection hint `611c212ad` · overfit example removed `d67c44783`.
-
-A1 `.muse` out of VSIX `3ee3db61a` · A3 loader via `validateBridgeFrame` `ca650597e` · R1 release
-verification at `6d6784712` (gate 14/14, VSIX 78 files, EDH 17 passing).
+`146385100` continuation schema names the carrier side · `448c4db7c` downstream CT crosses a
+derived column (smoke m59 ok) · `611c212ad` classification-lock hint names the missing angle ·
+`d67c44783` question-shaped example removed from `prompts.ts:299` (agnostic test) · `c8964a0f9`
+CT reopen credited its archived angles, one rejection names every gap · Q25 price callout closed
+SPORADIC (bonus only) · T8 SUM/dedup loss traced to the reopen rejection chain (fixed above).
+Earlier: A1 `.muse` out of VSIX `3ee3db61a` · A3 loader via `validateBridgeFrame` `ca650597e` ·
+R1 release verification `6d6784712`.
 
 ## Backlog (not this release)
 

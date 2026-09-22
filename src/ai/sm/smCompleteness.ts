@@ -2,14 +2,10 @@
  * CT column completeness guard for the Navigation Engine.
  *
  * @remarks
- * Every tracked column the AI must account for at a hop is continued, terminal, or dropped —
- * anything left over means the chain was left incomplete, so the engine rejects and the worker
- * re-asks. The check is a pure set difference (`required − accounted`) over `normalizeColName` —
- * the same normalizer `ColumnTracer.validateColumnFlow` accepts a submitted `out_col` under, so a
- * value one guard admits can never be reported unaccounted by the other. No content judgment —
- * identifiers only. BB neighbor completeness is a separate, unrelated
- * mechanism (`requiredNeighborIds` → the unconditional completeness guard in
- * `submitFindings` → `missing_required_route`) and does not use this module.
+ * A pure set difference (`required − accounted`) over `normalizeColName` — the same normalizer
+ * `ColumnTracer.validateColumnFlow` accepts a submitted `out_col` under, so a value one guard admits
+ * can never be reported unaccounted by the other. BB neighbor completeness (`requiredNeighborIds` →
+ * `missing_required_route`) is a separate, unrelated mechanism and does not use this module.
  */
 
 import { normalizeColName } from '../../utils/sql';
@@ -19,12 +15,7 @@ import type { SubmitResult } from './smTypes';
  * Items in `required` not present in `accounted`, compared case-insensitively and ignoring SQL brackets, order preserved.
  *
  * @remarks
- * The pure core of the CT column completeness guard. Returns the original `required` casing so
- * the caller can surface the offending values verbatim.
- *
- * @param required - Active columns that the current hop must account for.
- * @param accounted - Column names represented by the submitted flow.
- * @returns Required columns absent from the submitted flow.
+ * Returns the original `required` casing so the caller can surface the offending values verbatim.
  */
 export function computeUnaccounted(required: readonly string[], accounted: Iterable<string>): string[] {
   const acc = new Set<string>();
@@ -36,33 +27,20 @@ export function computeUnaccounted(required: readonly string[], accounted: Itera
  * Builds the rejection envelope for an incomplete CT hop.
  *
  * @remarks
- * `available` is the valid set of active columns the AI may choose from, surfaced under
- * `available_columns` in `detail`.
- *
- * The hint carries the entry shape the completeness check accepts — an `out_col` per active column,
- * with real `upstream_columns` or `upstream_columns: []` where the column originates at the focus —
- * so a rejected hop repairs without re-deriving it.
- *
  * Two repairs exist, and only one of them is always open. A focus that declares none of the active
  * columns may end the chain with `verdict:'passthrough'` and `column_flow:[]`; a focus that
- * declares one of them may not, because there the claim is checkably false and the engine refuses
- * it. `contradicted` carries the active columns the focus declares, so the hint offers the escape
- * only where it will be accepted — a rejection that names a repair the engine rejects costs another
- * generation and teaches the model nothing.
+ * declares one of them may not, because there the claim is checkably false. `contradicted` carries
+ * the active columns the focus declares, so the hint offers only the escape the engine will accept.
  *
- * @param focusId - Canonical focus whose active columns were incomplete.
- * @param unaccounted - Active columns missing from the submitted flow.
- * @param available - Valid active columns exposed for correction.
+ * @param available - Valid active columns exposed for correction, surfaced as `available_columns`.
  * @param contradicted - Active columns the focus itself declares; empty when it declares none.
  * @param appendHeldOrder - False when the caller merges this envelope with another fault family
  * and states the resubmission order itself once, covering both; true (default) preserves
  * the standalone envelope's own held-draft order.
- * @param traceDirection - Trace direction of the owning exploration. Upstream: the missing column
- * is named directly as `out_col`. Downstream: the focus's own `out_col` may be a rename/derivation
- * of the missing column, which is instead accounted for by naming it inside `upstream_columns` —
- * so the repair text differs. Defaults to `upstream` so every pre-existing call site keeps today's
- * wording byte-identical.
- * @returns The narrow held-content retry envelope.
+ * @param traceDirection - Upstream names the missing column directly as `out_col`; downstream
+ * accounts for it inside `upstream_columns` since the focus's own `out_col` may be a
+ * rename/derivation. Defaults to `upstream` to keep every pre-existing call site's wording
+ * byte-identical.
  */
 export function buildIncompleteRejection(
   focusId: string,

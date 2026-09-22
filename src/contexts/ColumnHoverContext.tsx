@@ -46,7 +46,6 @@ const ColumnHoverContext = createContext<ColumnHoverState>({
 /**
  * Publishes the column-view thread to the node renderers below it.
  *
- * @param props - Component properties.
  * @param props.value - Current thread and the row hover/select reporters.
  * @param props.children - The nested React component tree, including the React Flow canvas.
  */

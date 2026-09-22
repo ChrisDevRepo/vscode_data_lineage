@@ -67,14 +67,9 @@ export type NodeNeighborSplitContext = {
  * Transforms a database node into a compact, token-optimized JSON representation.
  *
  * @remarks
- * Keys are intentionally abbreviated (`s`=schema, `n`=name, `t`=type, `deg`=degree)
- * to minimize the footprint in search results and BFS discovery payloads.
- *
- * `deg` alone cannot answer "which side" — a caller that also needs the direction of a node's
- * neighbors (the `get_scope_bundle` origin, so a positional edge triple is never the only way to
- * read direction) passes `splitContext` to get `in`/`out` arrays in the exact shape
- * `buildHopFocusNode` already emits for the hop_context route, via the same {@link presentNeighbor}.
- * Omitted for every other caller/node, so the payload only grows where a split was requested.
+ * Keys are abbreviated (`s`=schema, `n`=name, `t`=type, `deg`=degree) to minimize payload size.
+ * `deg` alone cannot answer "which side"; passing `splitContext` adds `in`/`out` neighbor arrays in
+ * the shape `buildHopFocusNode` emits for hop_context, omitted elsewhere so payload only grows where requested.
  *
  * @param node - The node to transform.
  * @param neighborIndex - Optional index to calculate connection density (degree).

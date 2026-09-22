@@ -16,9 +16,6 @@ import { Logger } from './log';
  * The migration supports DACPAC and database connections, removes the legacy keys after
  * processing, and is safe to call when no legacy state exists.
  *
- * @param context - The VS Code extension context for state access.
- * @param PROJECT_STORE_KEY - Global-state key for the project store.
- * @param outputChannel - The log channel for reporting migration progress.
  * @param onProjectsDropped - Receives the drop report when persisted records fail validation.
  *   This path rewrites global state, so anything validation discards here is lost permanently —
  *   the host reports it through the same single-notification channel as a normal load.

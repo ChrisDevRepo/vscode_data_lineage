@@ -16,7 +16,7 @@ export type InvestigationTaskInput = {
   nodeId?: string;
   /** Task this one was split from, so a resolved child rolls up to its parent. */
   parentTaskId?: string;
-  /** Initial status; defaults to open. */
+  /** Initial status; defaults to pending. */
   status?: InvestigationTask['status'];
   /** Hop at which the task was raised. */
   createdHop: number;
@@ -81,10 +81,9 @@ export class TaskLedger {
   }
 
   /**
-   * Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: an
-   * identity hit and a fresh insert behave differently per caller (`onHit` / `buildRecord`), but
-   * the id lookup, `stableId` derivation, and same-id-different-identity collision guard are
-   * identical for both.
+   * Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: the id
+   * lookup, `stableId` derivation and collision guard are identical; only the identity-hit and
+   * fresh-insert behavior (`onHit` / `buildRecord`) differs per caller.
    */
   private upsertByIdentity<T extends { id: string }>(
     store: Map<string, T>,
@@ -110,7 +109,6 @@ export class TaskLedger {
   /**
    * Creates or returns the task with the same normalized identity tuple.
    * @param input - Typed task content without its derived ID.
-   * @returns Existing or newly stored task.
   */
   public ensureTask(input: InvestigationTaskInput): InvestigationTask {
     const rawInput = input as { kind: string; activeColumns?: unknown };
@@ -160,7 +158,6 @@ export class TaskLedger {
 
   /**
    * Applies a valid task lifecycle transition.
-   * @param taskId - Task to update.
    * @param status - New engine-owned lifecycle state.
    * @param hop - Resolution hop when applicable.
    * @returns Whether the task existed.
@@ -177,7 +174,6 @@ export class TaskLedger {
   /**
    * Creates or updates the lead for a deferred task and boundary.
    * @param input - Lead content without its derived ID.
-   * @returns Existing or newly stored lead.
    */
   public ensureLead(input: Omit<PendingLead, 'id' | 'status'> & { status?: PendingLead['status'] }): PendingLead {
     const identity = leadIdentity(input);

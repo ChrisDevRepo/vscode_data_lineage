@@ -28,9 +28,6 @@ interface UseGraphologyReturn {
   /**
    * Rebuilds the graph from the database model based on the current filter and configuration.
    *
-   * @param model - The database model to filter and build from.
-   * @param filter - The current UI filter state.
-   * @param config - Optional configuration overrides.
    * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
    * @returns The total number of nodes in the resulting graph.
    */
@@ -82,9 +79,7 @@ export function useGraphology(): UseGraphologyReturn {
     const count = allowlistFiltered.nodes.length;
     setFilteredCount(count);
 
-    // Derive visible schemas from filtered nodes — schemas containing only external objects
-    // are included here to keep them selectable in the filter, but will be filtered out
-    // in the visual Legend component in GraphCanvas.
+    // Schemas with only external objects stay here so they're selectable in the filter; Legend filters them out for display.
     const schemas = [...new Set(
       allowlistFiltered.nodes.map(n => n.schema)
     )].filter(s => !!s && s.trim().length > 0).sort();
@@ -103,9 +98,7 @@ export function useGraphology(): UseGraphologyReturn {
         };
       });
 
-    // Guard 1: full-object render limit. Keep the graphology model available for schema
-    // overview, expanded schema view, trace/path, and analysis surfaces; only the full object
-    // React Flow surface is blocked by render-limit mode.
+    // Guard 1: full-object render limit blocks only the React Flow surface; the graphology model stays available to other surfaces.
     if (count > config.renderLimit) {
       log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
       const result = buildGraphNoLayout(allowlistFiltered, config);
@@ -119,8 +112,7 @@ export function useGraphology(): UseGraphologyReturn {
 
     setRenderLimitHit(0);
 
-    // Guard 2: schema/object surface. App owns the initial threshold decision on load/reset;
-    // this hook skips layout only when the caller explicitly asks for Schema View.
+    // Guard 2: this hook skips layout only when the caller explicitly asks for Schema View.
     if (skipLayout) {
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));

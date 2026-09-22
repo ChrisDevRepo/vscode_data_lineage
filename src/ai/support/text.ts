@@ -4,8 +4,7 @@
  *
  * @remarks
  * VS Code-free on purpose so the core framework and the `vscode.lm` runner share **one** copy.
- * Secret
- * redaction lives here too so every provider-error path can sanitize before logging/emitting.
+ * Secret redaction lives here too so every provider-error path can sanitize before logging/emitting.
  */
 
 /** Max characters retained from a provider error before truncation (avoid dumping a body). */
@@ -154,10 +153,9 @@ const TRANSPORT_ERROR_CODES = new Set([
  *
  * @remarks
  * Inside the extension host the request travels over Electron's network stack, which reports
- * `net::ERR_*` and attaches **no** `code` property — the token exists only inside the message. A
- * dropped connection therefore looked like a provider verdict and ended the turn. Listed
- * explicitly rather than matched by prefix so a Chromium error meaning "the provider answered and
- * the answer was refused" is never silently retried.
+ * `net::ERR_*` and attaches **no** `code` property — the token exists only inside the message.
+ * Listed explicitly rather than matched by prefix so a Chromium error meaning "the provider
+ * answered and the answer was refused" is never silently retried.
  */
 const CHROMIUM_TRANSPORT_ERRORS = new Set([
   'net::ERR_CONNECTION_TIMED_OUT', 'net::ERR_CONNECTION_RESET', 'net::ERR_CONNECTION_CLOSED',
@@ -207,18 +205,13 @@ function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): strin
  * Renders a sanitized provider diagnostic as the single user-facing chat error line.
  *
  * @remarks
- * Classification is code-based only (never message-prose matching) and is delegated to
- * {@link isTransportProviderError}: a known connection-level code anywhere in the cause chain
- * names the failure a temporary network/service interruption so the user knows a retry is
- * reasonable; anything else stays a plain provider error.
- *
- * The transport branch reports the code chain and deliberately **not** the provider's own message.
- * The host's network-layer prose is boilerplate attached to every network-class failure — one UAT
- * session carried the identical "check your firewall rules" sentence with both a connection timeout
- * and an HTTP/2 protocol error — so relaying it inside this line offered the user two contradictory
- * remedies for one event. The full message stays in the debug log and the trace diagnostic, which is
- * where a firewall would actually be diagnosed. A provider *verdict* keeps its message: there the
- * prose is the answer itself, not advice about the connection.
+ * Classification is code-based only (never message-prose matching), via
+ * {@link isTransportProviderError}: a known connection-level code names the failure a temporary
+ * network/service interruption; anything else stays a plain provider error. The transport branch
+ * reports the code chain, not the provider's own message — that prose is boilerplate shared across
+ * every network-class failure and can offer a contradictory remedy. The full message stays in the
+ * debug log and trace diagnostic. A provider *verdict* keeps its message, since there the prose is
+ * the answer itself.
  */
 export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic): string {
   const codes = providerErrorCodeChain(diagnostic);
@@ -230,8 +223,7 @@ export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic
   return `The AI provider reported an error (${detail}).`;
 }
 
-// `:` is allowed so a Chromium `net::ERR_*` token survives intact; it is still a strict allowlist
-// with no whitespace, quotes, or control characters.
+// `:` is allowed so a Chromium `net::ERR_*` token survives intact; still a strict allowlist with no whitespace, quotes, or control characters.
 function safeDiagnosticToken(value: string, fallback: string): string {
   return sanitizeProviderError(value).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 100) || fallback;
 }
@@ -241,11 +233,9 @@ function safeDiagnosticToken(value: string, fallback: string): string {
  * replayed into a chat surface as plain text.
  *
  * @remarks
- * `#focus-node:` links only resolve inside the graph webview's own React tree (they zoom/focus a
- * node on the canvas); a chat surface — the native Copilot panel — has no such target, so the link
- * markup would render as dead or broken-looking links. The engine's `### Objects` transport line
- * (a footnote in the webview renderer) is demoted to a small italic line so chat never renders a
- * heading-scale object list.
+ * `#focus-node:` links only resolve inside the graph webview's own React tree; a chat surface has
+ * no such target, so the markup would render as dead links. The `### Objects` transport line is
+ * demoted to small italic text so chat never renders a heading-scale object list.
  *
  * @param description - The full assembled markdown from `AiSession.lastPresentResultDescription`.
  * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label` and

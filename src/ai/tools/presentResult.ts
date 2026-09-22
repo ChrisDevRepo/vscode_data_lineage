@@ -753,18 +753,13 @@ export function validatePresentResult(
   nodeIdState?: PresentNodeIdStateLookup,
 ): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
-  // Structural classification — the failed field AND repairability are set once per addError call
-  // at the exact site the error is known, never re-derived later by matching error TEXT
-  // (see PresentResultError.repairable). A message rewording can therefore never desync the
-  // repair-hint field list.
+  // Structural classification — the failed field AND repairability are set once per addError call at the exact site the error is known, never re-derived later by matching error TEXT (see PresentResultError.repairable). A message rewording can therefore never desync the repair-hint field list.
   let allRepairable = true;
   const repairFields = new Set<PresentResultRepairField>();
   const failedFields = new Set<PresentResultFailedField>();
-  // Offending entry paths, collected at the same call sites for the same reason the field list is:
-  // a rejection that names a rule but not the offender costs a repair round to locate.
+  // Offending entry paths, collected at the same call sites for the same reason the field list is: a rejection that names a rule but not the offender costs a repair round to locate.
   const issuePaths = new Set<string>();
-  // Offending node ids per path — the same reason the paths are collected, one level finer, so
-  // `detail` states which id failed where instead of leaving the model to intersect two lists.
+  // Offending node ids per path — the same reason the paths are collected, one level finer, so `detail` states which id failed where instead of leaving the model to intersect two lists.
   const pathUnlinkableIds = new Map<string, readonly string[]>();
   const addError = (
     field: PresentResultFailedField,
@@ -782,22 +777,17 @@ export function validatePresentResult(
       if (unlinkableIdsAtPath.length > 0) pathUnlinkableIds.set(path, unlinkableIdsAtPath);
     }
   };
-  // Set only at the unexplained-highlight addError call below — drives a bespoke hint override
-  // instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
+  // Set only at the unexplained-highlight addError call below — drives a bespoke hint override instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
   let hasUnexplainedHighlightGap = false;
 
-  // Findings computed by callers that hold context this function does not — the cached discovery
-  // answer, the result graph. Reported first so their messages keep the priority they had when each
-  // owned its own early return, but through this accumulator so a payload carrying one of them plus
-  // a structural defect reports both in one round instead of one per round.
+  // Findings computed by callers that hold context this function does not — the cached discovery answer, the result graph. Reported first so their messages keep the priority they had when each owned its own early return, but through this accumulator so a payload carrying one of them plus a structural defect reports both in one round instead of one per round.
   const soleHints = externalViolations.flatMap(violation => violation.soleHint ?? []);
   for (const violation of externalViolations) {
     for (const message of violation.messages) {
       addError(violation.field, message, violation.repairFields, violation.paths);
     }
   }
-  // How many of `errors` came from callers — lets a caller's own hint stand while it is the only
-  // thing wrong, without assuming one violation means one message.
+  // How many of `errors` came from callers — lets a caller's own hint stand while it is the only thing wrong, without assuming one violation means one message.
   const externalErrorCount = errors.length;
 
   /**
@@ -1021,10 +1011,9 @@ export function validatePresentResult(
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }
     // The unexplained-highlight-coverage gap authorizes three repair fields (sections, notes,
-    // highlight_groups — see the addError call above), and its node ids are already resolved, so
-    // both the generic single-field template ("keep highlight_groups exactly as submitted") and
-    // the unknown-ID hint above misfire for this class. Override when it is the sole reported
-    // failure; a mixed batch (e.g. alongside a non-repairable field) keeps the generic hint.
+    // highlight_groups), and its node ids are already resolved, so the generic single-field and
+    // unknown-ID hints above both misfire for it. Override only when it is the sole failure; a
+    // mixed batch keeps the generic hint.
     if (hasUnexplainedHighlightGap && errors.length === 1) {
       hint = "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a note naming it, or drop it from highlight_groups[] if it is uncolored plumbing.";
     }

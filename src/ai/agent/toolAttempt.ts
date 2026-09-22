@@ -88,8 +88,8 @@ const NO_RETRY_REJECTION_CODES: ReadonlySet<string> = new Set([
  * The session/state codes share the budget guards' exact justification. Each one reports that the
  * host's own session, turn lease or focus has moved — the engine is in the wrong status, the focus
  * is not the one dispatched, the run memory or the turn epoch is gone. No correction the model
- * could write would change any of them, so the strike they used to charge came out of the budget
- * for real semantic repairs and spent it on the host's bookkeeping.
+ * could write would change any of them, so charging a strike for one would spend the budget for
+ * real semantic repairs on the host's bookkeeping instead.
  */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
@@ -103,9 +103,7 @@ const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.staleProposalRevision,
   REJECTION_CODES.alreadyStarted,
   REJECTION_CODES.supplementRequiresCompleteEngine,
-  // Local literals: these three are emitted only by `submitFindings` and shown on no second
-  // surface, so `rejectionCodes.ts`'s own rule ("a code belongs there as soon as a second surface
-  // shows it to the model") keeps them out of that table.
+  // Local literals: emitted only by `submitFindings` and shown on no second surface, so they stay out of `rejectionCodes.ts`'s shared table.
   'invalid_status',
   'invalid_focus_node',
   'focus_mismatch',
@@ -407,7 +405,7 @@ interface ToolGenerationAttemptInput {
    * The phase's whole rejection history, when a prior attempt exists. Extends
    * {@link priorRejection} for unproductive-resend accounting: an identity's repeat count is its
    * whole history, so a model alternating between two duplicate reads cannot reset the bound by
-   * switching (recorded 2026-09-20, m24-close run-T5 spun to the provider-call cap that way).
+   * switching.
    */
   readonly priorRejections?: readonly ToolAttemptRejection[];
   /** Recognizes a successful registry result that opens consent. */
@@ -621,9 +619,8 @@ function isUnproductiveResend(
  * Unproductive-resend streak for one call identity: the larger of (a) how many times this exact
  * (tool, payload) was already rejected in this phase, and (b) the consecutive-only streak a
  * last-rejection comparison yields. (b) alone resets when the model alternates between two
- * non-converging identities — m24-close run-T5 (2026-09-20) alternated two duplicate reads whose
- * streak never exceeded 1 and spun to the provider-call cap the free allowance exists to prevent —
- * so (a) counts the identity's whole history and the bound holds under interleave.
+ * non-converging identities, so (a) counts the identity's whole history and the bound holds under
+ * interleave.
  */
 function unproductiveResendStreak(
   priorRejections: readonly ToolAttemptRejection[] | undefined,
@@ -645,8 +642,7 @@ function unproductiveResendStreak(
 /**
  * Consecutive unproductive resends absorbed without a semantic-failure strike. Beyond this streak
  * every further unproductive resend charges again, because a model that keeps resending the same
- * rejected payload is not converging — without the bound it spins to the provider-call cap
- * (a recorded 2026-08-19 turn resent one rejected payload 8 times until the user cancelled).
+ * rejected payload is not converging — without the bound it spins to the provider-call cap.
  */
 const MAX_FREE_UNPRODUCTIVE_RESENDS = 2;
 
@@ -979,10 +975,8 @@ function collapseHeldDraftDuplicateFragments(
  *
  * @remarks
  * A later correction must never evict an earlier one's repair data, because the continuation note
- * tells the model to act on "the correction above" — all of it must be above (measured 2026-09-20,
- * m30 T24: the output-limit correction replaced the column correction, its available-column list
- * and hold order vanished from the request, and the model resent the identical rejected payload).
- * The byte-budgeted digest for the detect-entry phase remains
+ * tells the model to act on "the correction above" — all of it must be above. The byte-budgeted
+ * digest for the detect-entry phase remains
  * {@link renderToolAttemptContext}. Rejection fields are already bounded at construction
  * ({@link capRejectionText}, {@link MAX_REJECTION_HINT_BYTES}, {@link MAX_REJECTION_DETAIL_BYTES},
  * {@link MAX_CORRECTION_FRAGMENT_BYTES}), so rendering the stack needs no further shrink ladder;
@@ -1029,12 +1023,7 @@ function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: st
       const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
       messages.push(modelAssistantMessage(rejection.attemptedText ?? ''), modelUserMessage(note));
     } else {
-      // A dispatched rejection whose tool matches the held draft is the rejection that put the
-      // draft on hold — its own correction fragments are therefore the draft's current
-      // sections/notes/highlight_groups verbatim, and collapse rather than repeat. A
-      // pre-dispatch rejection never reached the draft (schema prevalidation runs before the handler),
-      // so its payload — possibly new content the draft does not yet hold — is not known to duplicate
-      // anything and replays in full.
+      // A dispatched rejection whose tool matches the held draft is the rejection that put the draft on hold, so its own correction fragments collapse rather than repeat the draft's current sections/notes/highlight_groups. A pre-dispatch rejection never reached the draft and replays in full.
       const fragments = rejection.toolName === draftHeldFor && !rejection.preDispatch
         ? collapseHeldDraftDuplicateFragments(rejection.correctionFragments)
         : rejection.correctionFragments;
@@ -1057,10 +1046,7 @@ function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: st
       );
     }
   }
-  // One continuation note, after the newest exchange only: per-exchange notes would stack
-  // "resend" instructions mid-history, and the trailing user note must stay last for the
-  // provider turn boundary (see rejectionContinuationMessage). A callId-less newest exchange
-  // already closed with its own correction note, so it takes none.
+  // One continuation note, after the newest exchange only (see rejectionContinuationMessage); a callId-less newest exchange already closed with its own correction note.
   const newest = state.rejections[state.rejections.length - 1];
   if (newest.callId) messages.push(rejectionContinuationMessage(newest.code));
   return messages;
@@ -1200,31 +1186,21 @@ function rejectionFromInvalid(
   registry: IToolRegistry<string>,
 ): ToolOutcomeData {
   const issuePaths = call.issuePaths ?? [];
-  // A prevalidation reject never reaches a held draft, so the same bounded structural projection
-  // the dispatcher path uses ({@link correctionFragments}) is what stands between the model and a
-  // blind full-envelope rewrite. Never the raw payload: only flagged
-  // structural entries, byte-bounded, prose and result fields excluded.
+  // A prevalidation reject never reaches a held draft, so the same bounded structural projection the dispatcher path uses ({@link correctionFragments}) stands between the model and a blind full-envelope rewrite; never the raw payload.
   const fragments = replayFragments(call.input, issuePaths);
   return {
     status: 'rejected',
     code: call.code,
     message: capRejectionText(call.reason),
     correction: {
-      // Schema-invalid calls carry a repair instruction: only the bounded fragments above are
-      // replayed, so without an explicit directive the model regenerates blind instead of editing
-      // the one offending field. `call.hint` is the issue-derived instruction the producer
-      // (`rejectionFromZodError`) already resolved — e.g. removal for an unrecognized key, since
-      // the standing resend-unchanged sentence is the wrong repair for a key the schema rejects
-      // outright; it falls back to that standing sentence when the producer had no more specific
-      // repair to name.
+      // Schema-invalid calls carry a repair instruction so the model edits the offending field instead of regenerating blind; `call.hint` is the issue-derived instruction (`rejectionFromZodError`), falling back to the standing sentence when none is more specific.
       ...(call.code === 'invalid_tool_input' ? { hint: call.hint ?? INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
       ...(call.code === 'unknown_tool' ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
       ...(fragments.length > 0 ? { fragments } : {}),
     },
-    // The valid tool-name set is the fact a hallucinated tool name needs; kept as data alongside the
-    // fixed hint sentence rather than folded into it, so the sentence never grows with the catalog.
+    // The valid tool-name set is kept as data alongside the fixed hint sentence rather than folded into it, so the sentence never grows with the catalog.
     ...(call.code === 'unknown_tool'
       ? { detail: { allowedTools: registry.getTools().map((tool) => tool.name) } }
       : {}),
@@ -1241,14 +1217,11 @@ const PRESENT_RESULT_TOOL = 'lineage_present_result';
  * @remarks
  * A `present_result` answer-body list (`sections`, `notes`, `highlight_groups`) and a
  * `submit_findings` per-hop list (`column_flow`, `route_requests`, `prune_neighbors`) share the
- * same resend shape: the model emits the full array again, not a patch at the flagged index. A
- * replay that shows only the flagged element leaves every other element to be reconstructed from
- * memory — for `present_result` that drops captured formulas and risks from an already-correct
- * section; for `submit_findings` the positional fragment builder left the unflagged indices as
- * `null` holes (or missing past the highest flagged index), which the model then omitted outright
- * on its next resend. Every root here replays complete, within {@link WHOLE_LIST_CORRECTION_BYTES}
- * — an element that cannot fit its byte share collapses to the same size-only stub
- * {@link boundListElementFragment} already uses, never a hole and never a dropped index.
+ * same resend shape: the model emits the full array again, not a patch at the flagged index, so a
+ * replay showing only the flagged element would leave every other element reconstructed from
+ * memory or dropped as a hole. Every root here replays complete, within
+ * {@link WHOLE_LIST_CORRECTION_BYTES} — an element that cannot fit its byte share collapses to the
+ * same size-only stub {@link boundListElementFragment} already uses, never a hole.
  */
 const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set([
   'sections',
@@ -1267,8 +1240,7 @@ const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set([
  * without a `text` body is bounded exactly as a `submit_findings` entry is.
  */
 function boundListElementFragment(element: unknown, elementBytes: number): unknown {
-  // An unmeasurable element leaves no text budget, so it collapses to the same size-only stub
-  // `boundStructuredValue` records for it — one owner for the unserializable case.
+  // An unmeasurable element leaves no text budget, so it collapses to the same size-only stub `boundStructuredValue` records for it.
   const overhead = serializedJson(truncateHeldDraftSection(element, 0));
   const overheadBytes = overhead === undefined ? elementBytes : Buffer.byteLength(overhead);
   const textBudget = Math.max(0, elementBytes - overheadBytes);
@@ -1930,7 +1902,7 @@ export async function executeToolGenerationAttempt(
       // Storage decision for the one body this call produced, taken here because this is where the
       // held evidence and the candidate are both known. What is stored is what the next attempt
       // delivers, so a body that does not fit alongside the held ones is not shrunk to fit: the
-      // read is handed to the hop-by-hop path (2026-09-06 ruling) and the held bodies stay whole.
+      // read is handed to the hop-by-hop path and the held bodies stay whole.
       let storedResult = resultText;
       if (observe) {
         const candidateBytes = Buffer.byteLength(resultText);
@@ -1986,9 +1958,7 @@ export async function executeToolGenerationAttempt(
       // mistake means the call was written as message text; a length cut means no call was ever
       // reached because deliberation consumed the budget. Naming the channel repair for a length
       // cut tells the model to fix something it did not do, and leaves the thing it did do
-      // unaddressed — measured on a hop that spent its whole output limit weighing one routing
-      // choice and retried into the same loop. The reason above already branches here; the hint
-      // must branch with it.
+      // unaddressed. The reason above already branches here; the hint must branch with it.
       hint: truncatedBeforeRequiredCall
         ? `Deliberation reached the output limit before ${input.requiredTerminalTool} was called. Decide from the evidence already in this hop and emit ${input.requiredTerminalTool} first, before any further reasoning; a question this hop cannot settle is reported in the call's own fields and carried forward, never resolved by weighing it again here.`
         : `Emit ${input.requiredTerminalTool} through the tool-call channel: a fenced JSON body, or a <function=...> block with <parameter=...> pairs, is message text and is not a call. Same fields, correct channel.`,

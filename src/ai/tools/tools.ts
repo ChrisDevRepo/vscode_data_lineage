@@ -193,10 +193,9 @@ export function getContext(
  * The one wording for "list a whole schema", shared by both rejections that offer that repair.
  *
  * @remarks
- * "Send an empty query" was read as the two-character literal `""`. Naming that reading in
- * order to forbid it made it the most salient token in the hint, and the next call sent exactly it:
- * the repair is therefore the arguments object and nothing else, with no value left to infer from
- * prose and no wrong value named for a reader to copy.
+ * The repair is the arguments object and nothing else, with no value left to infer from prose and
+ * no wrong value named for a reader to copy — naming a forbidden reading in prose only makes it the
+ * most salient token in the hint.
  */
 const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]}.';
 
@@ -208,11 +207,9 @@ const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "",
  * Recognized only together with an explicit `schemas[]` scope, where "list everything in this
  * schema" is the one meaning available (the same precondition `listAllInSchemas` already uses
  * for an empty query); without a schema scope "everything" is unbounded and the token is left to
- * fail exactly as any other invalid pattern would. Three recorded terminal discovery failures
- * (search-objects-hint) reached this exact token from regex mode (`invalid_regex`, `*` has
- * nothing to repeat) and from substring mode (`query_not_a_name`, punctuation matches no name)
- * before the rejection hint could steer the caller to the empty-query shape — an unambiguous
- * request should not need two rejections to resolve.
+ * fail exactly as any other invalid pattern would, in either regex mode (`invalid_regex`, `*` has
+ * nothing to repeat) or substring mode (`query_not_a_name`, punctuation matches no name) — an
+ * unambiguous request should not need two rejections to resolve.
  */
 const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 
@@ -221,16 +218,14 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
  *
  * @remarks
  * Only reached in substring mode, where the query is matched literally — so a query made of
- * nothing but regex punctuation matches nothing at all, which is what the second rejection says.
- * The wording used to claim the opposite ("matches everything"), which is only true of a pattern
- * in regex mode and sent the model chasing a narrower query instead of the right mode.
+ * nothing but regex punctuation matches nothing at all, which is what the second rejection says;
+ * "matches everything" is only true of a pattern in regex mode.
  *
  * Length is the other axis, and one character is a servable substring: `searchCatalog` matches it
  * like any longer one and this tool hands it no result cap, so volume is owned by the evidence-share
- * measurement that answers an oversized result with `result_too_large`, never by a minimum here. A
- * former minimum of two refused `i` and `.` with a length complaint — a repair neither caller
- * could make. Punctuation-only
- * queries still land on `query_not_a_name` below, which names the mode that serves them.
+ * measurement that answers an oversized result with `result_too_large`, never by a minimum here.
+ * Punctuation-only queries still land on `query_not_a_name` below, which names the mode that serves
+ * them.
  *
  * @param query - The user-provided search string.
  * @returns Success status or an error with a hint.

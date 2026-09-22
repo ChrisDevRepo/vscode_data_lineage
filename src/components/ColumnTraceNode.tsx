@@ -57,10 +57,9 @@ function rowCenter(index: number): number {
  * Handle anchor and circle geometry for a transform super node.
  *
  * @remarks
- * The circle is the node's whole body and has a fixed size, so the invisible port handles are fanned
- * across its arc — at {@link COLUMN_TRANSFORM_PORT_SPREAD} apart while that fits, closer when more
- * ports run through the hub — so every handle sits ON the circle and each column edge meets the
- * visible stroke rather than the invisible box edge.
+ * The circle is the node's whole body with a fixed size, so port handles fan across its arc — at
+ * {@link COLUMN_TRANSFORM_PORT_SPREAD} apart while that fits, closer as more ports run through the
+ * hub — so every handle sits ON the circle and each edge meets the visible stroke, not the box edge.
  */
 function transformPortGeometry(portCount: number, width: number, height: number) {
   const cx = width / 2;
@@ -79,11 +78,9 @@ const HANDLE_HALF = 4;
  * Absolute offset of one row's edge-attachment handle.
  *
  * @remarks
- * A transform super node's ports fan across the circle arc, so `left` places the handle at the arc's
- * x for that row — that is what makes the line meet the visible stroke rather than stopping at the
- * invisible box edge. A table card's ports sit on its rows and take the row centre alone. Either way
- * the handle is invisible: it is only the edge attachment point, and both sides read the same
- * geometry so an inbound and an outbound line meet the same arc.
+ * A transform node's ports fan across the circle arc, so `left` places the handle at that row's arc
+ * x — what makes the line meet the visible stroke rather than the invisible box edge. A table card's
+ * ports sit on the row centre alone; either way the handle itself stays invisible.
  */
 function portHandleStyle(view: ColumnTraceNodeData['view'], index: number, side: 'source' | 'target'): CSSProperties {
   if (!view.isTransformNode) return { top: rowCenter(index) };
@@ -133,8 +130,8 @@ function ColumnTraceRowLine({
     opacity: isDeemphasised ? COLUMN_ROW_DIM_OPACITY : 1,
     // A row on the thread takes the colour its lit edges carry, so rows and lines read as one thread.
     backgroundColor: isHoveredRow ? THREAD_ROW_BACKGROUND : 'transparent',
-    // Focus ring for the keyboard position; the pinned row keeps the yellow the object view gives a
-    // clicked node, marking where the thread starts; every other thread row gets the thread's bar.
+    // Focus ring for the keyboard position; the pinned row keeps the object view's clicked-node
+    // yellow, marking where the thread starts, and every other thread row gets the thread's bar.
     boxShadow: focused ? 'inset 0 0 0 2px var(--ln-focus-border)'
       : isPinnedRow ? 'inset 0 0 0 2px var(--ln-highlight-yellow)'
       : isHoveredRow ? 'inset 3px 0 0 var(--ln-focus-border)'
@@ -142,8 +139,8 @@ function ColumnTraceRowLine({
     transition: ROW_TRANSITION,
   };
 
-  // The state dot is aria-hidden, so the row's own label is the only thing announced; it names the
-  // object as well as the column, since a bare column name is ambiguous across a multi-node trace.
+  // The state dot is aria-hidden, so the row's label is the only thing announced; it names the object
+  // as well as the column, since a bare column name is ambiguous across a multi-node trace.
   const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}`;
 
   return (
@@ -151,9 +148,8 @@ function ColumnTraceRowLine({
       ref={el => registerRef(row.name, el)}
       style={style}
       role="listitem"
-      // Roving tabindex: the node is one tab stop and the arrow keys move within it. Making every
-      // row focusable put one stop per column in the page order, so a forty-column table cost forty
-      // presses to tab past — and a trace holds many such nodes.
+      // Roving tabindex: the node is one tab stop and the arrow keys move within it — making every
+      // row focusable cost a forty-column table forty tab presses to pass, across many such nodes.
       tabIndex={isTabStop ? 0 : -1}
       aria-label={ariaLabel}
       onKeyDown={event => {
@@ -167,7 +163,7 @@ function ColumnTraceRowLine({
         onKeyDown(event, row.name);
       }}
       // Claimed before the canvas sees it: React Flow would otherwise read the same click as a node
-      // click and select the object, replacing the column thread with the object's neighbourhood.
+      // click, replacing the column thread with the object's neighbourhood.
       onClick={event => { event.stopPropagation(); onColumnSelect(nodeId, row.name); }}
       onMouseEnter={() => onColumnHover(nodeId, row.name)}
       onMouseLeave={() => onColumnHover(nodeId, null)}
@@ -222,10 +218,9 @@ function GearGlyph() {
  * The transform super node: a circle-and-gear hub for a procedure or scalar function.
  *
  * @remarks
- * The circle is the whole node; no card is drawn around it, so its stroke carries the selection
- * colour. The node keeps its id, click and context-menu wiring, and its invisible port handles, so
- * neighbours, SQL and the column thread behave exactly as on a column card. The name strip sits
- * under the circle; the AI badge and note toolbars keep their slots above and below the node box.
+ * The circle is the whole node with no card drawn around it, so its stroke carries the selection
+ * colour; it keeps its id, click/context-menu wiring and invisible port handles so neighbours, SQL
+ * and the column thread behave exactly as on a column card. The name strip sits under the circle.
  */
 function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
   view: ColumnTraceNodeData['view'];
@@ -307,8 +302,8 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
     ));
   };
 
-  // Which row currently holds the node's single tab stop. Null until the user moves within the
-  // node, so the first row is the default entry point and a re-render never steals the position.
+  // Which row currently holds the node's single tab stop; null until the user moves within the node,
+  // so the first row is the default entry point and a re-render never steals the position.
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const rowElements = useRef(new Map<string, HTMLDivElement>());
   const registerRowRef = useCallback((name: string, el: HTMLDivElement | null) => {
@@ -331,8 +326,8 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       : event.key === 'End' ? names.length - 1
       : -1;
     if (to < 0) return;
-    // Claimed before the canvas sees it: React Flow binds the arrow keys to pan the viewport, which
-    // would scroll the graph out from under a keyboard user stepping through a node's columns.
+    // Claimed before the canvas sees it: React Flow binds arrow keys to pan the viewport, which would
+    // scroll the graph out from under a keyboard user stepping through a node's columns.
     event.preventDefault();
     event.stopPropagation();
     const target = names[to];
@@ -347,18 +342,16 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
-  // A column thread carries the same answer one level down as an object selection does: the objects
-  // it runs through are the answer and the rest is context, so an object off the thread takes the
-  // object view's dim rather than staying at full weight with only its rows faded.
+  // A column thread carries the same answer one level down as an object selection does, so an object
+  // off the thread takes the object view's dim rather than staying full weight with only rows faded.
   const offThread = !!threadPath && !view.rows.some(r => threadPath.has(columnRowKey(id, r.name)));
   // The card holding the clicked row takes the object view's yellow click-highlight, so a click at
-  // column level reads exactly like a click at object level one level up; every other card the
-  // pinned thread runs through takes the thread's blue.
+  // column level reads like a click at object level; every other card the pinned thread runs through
+  // takes the thread's blue.
   const ownsPin = !!pinnedRow && view.rows.some(r => columnRowKey(id, r.name) === pinnedRow);
   const onPinnedThread = !!pinnedRow && !!threadPath && !offThread;
-  // Shared with CustomNode via resolveNodeHighlightStyle, so a node reads the same in both views.
-  // The scale it adds is dropped here: edges attach to row handles, and a scaled card moves its rows
-  // off the lines that end on them.
+  // Shared with CustomNode via resolveNodeHighlightStyle; the scale it adds is dropped here since
+  // edges attach to row handles and a scaled card would move its rows off the lines that end on them.
   const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, zIndex } =
     resolveNodeHighlightStyle(ownsPin ? 'yellow' : onPinnedThread || data.highlighted, data.aiHighlight, data.dimmed || offThread);
 
@@ -377,9 +370,8 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       )}
       {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
       {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
-    {/* The trace +/- buttons sit outside the card edge, so they live on this unclipped box; the card
-        inside keeps `overflow: hidden` for its rounded header and rows. The dim sits here too, so an
-        off-thread card's buttons fade with it. */}
+    {/* The trace +/- buttons sit outside the card edge, so they live on this unclipped box; the dim
+        sits here too, so an off-thread card's buttons fade with it. */}
     <div
       className="transition duration-300 ease-in-out"
       style={{
@@ -404,9 +396,9 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         position: 'relative',
         width: '100%',
         height: '100%',
-        // A procedure is a process, not a table: the circle IS the node, so it carries no card
-        // chrome around it — the box stays as the layout and port geometry only, and the circle's
-        // own stroke takes the selection colour the card border would have taken.
+        // A procedure is a process, not a table: the circle IS the node, so it carries no card chrome
+        // — the box stays as layout and port geometry only, and the circle's stroke takes the
+        // selection colour the card border would have taken.
         ...(view.isTransformNode ? {} : {
           borderWidth: COLUMN_NODE_BORDER_WIDTH,
           borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
@@ -451,8 +443,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
               flexShrink: 0,
               backgroundColor: 'var(--ln-bg-elevated)',
               // A double-weight divider is the boundary between the object the card is about and the
-              // columns it carries — the two halves of the card read as separate zones, not as one
-              // list with a title.
+              // columns it carries, so the two halves read as separate zones, not one list with a title.
               borderBottom: '2px solid var(--ln-border-light)',
             }}
           >

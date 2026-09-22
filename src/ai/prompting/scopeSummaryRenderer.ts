@@ -50,8 +50,7 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
     : '';
   const tracing = summary.analysisMode === 'ct' ? `Column-Trace${columns}` : 'Blackboard';
 
-  // A depth the user stated binds the run; one the assistant inferred does not. The block a line
-  // sits in is what tells the user which it is — so the same fact is never rendered ambiguously.
+  // A depth the user stated binds the run, one the assistant inferred does not; the block a line sits in tells the user which it is.
   const intent = summary.depthIntent;
   const depthIsBinding = intent.kind === 'explicit' || intent.kind === 'asymmetric';
   const stated: string[] = [];
@@ -67,9 +66,7 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
     depthTarget.push(depthLine(summary.depth, depthSide, depthIsBinding));
   }
 
-  // A filter is the assistant's mechanization of the request, never the request itself. Rendering
-  // it beside the user's own words under one "from your question" heading claims an origin the
-  // engine cannot know, so a field the assistant picked reads as one the user asked for.
+  // A filter is the assistant's mechanization, never the request itself, so it stays out of the "from your question" heading — that origin belongs only to the user's own words.
   const readAs: string[] = [];
   const filters = summary.activeFilters;
   if (filters.nodeIds.length > 0) {
@@ -84,10 +81,7 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
   if (filters.types.length > 0) {
     readAs.push(`- Types excluded: ${filters.types.map(x => `\`${x}\``).join(', ')}`);
   }
-  // The user's own words, verbatim. Placed next to the mechanization above so a misreading is
-  // visible side by side while the user can still correct it — after approval the run is autonomous.
-  // Collapsed to one line: a model-supplied newline would otherwise open a heading or list that
-  // breaks the card's own structure.
+  // The user's own words, verbatim, next to the mechanization above so a misreading is visible before approval; collapsed to one line so a model-supplied newline cannot open a heading or list that breaks the card.
   for (const note of summary.scopeNotes) {
     stated.push(`- Noted: "${note.replace(/\s+/g, ' ').trim()}"`);
   }
@@ -132,9 +126,7 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
         return passSet.has(fq) ? `${name} _(pass)_` : name;
       }).join(', ');
       const omitted = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
-      // A type group with no bodied node is auto-passed by the engine — it carries no body to read,
-      // so it stays in the graph unanalysed whether or not anyone asked. Saying so here is what
-      // makes "keep it but skip it" visibly already satisfied, instead of an edit the user retries.
+      // A type group with no bodied node is auto-passed by the engine, so saying so here shows "keep it but skip it" as already satisfied instead of an edit the user retries.
       const autoPassed = leaf.hops === 0 ? ' · kept, not analysed' : '';
       lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}${autoPassed}): ${names}${omitted}`);
     }

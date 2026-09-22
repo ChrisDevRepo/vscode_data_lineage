@@ -182,10 +182,9 @@ export function App() {
    */
   const rebuild = useCallback(
     (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false, modeOverride?: GraphMode): number => {
-      // `forceLayout` controls *scheduling* (synchronous vs. transition); `skipLayout` controls
-      // *what* is built (Schema View skips Dagre). They are orthogonal — derive skipLayout from the
-      // intended mode so a synchronous rebuild in Schema View does not fall back to full Dagre.
-      // Callers that flip the mode in the same tick must pass `modeOverride` (state is still stale here).
+      // `forceLayout` controls scheduling (synchronous vs. transition); `skipLayout` controls what
+      // is built (Schema View skips Dagre) — derived from `modeOverride` since callers that flip
+      // mode in the same tick pass it because `graphMode` state is still stale here.
       const mode = modeOverride ?? graphMode;
       const skipLayout = mode === 'overview';
       // When forceLayout is true, run synchronously for callers that need the count immediately.
@@ -248,8 +247,7 @@ export function App() {
       setView('visualizing');
       setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
-      // Panel restore: projects-list was sent before dacpac-model, so lastOpenedId is current.
-      // Demo: isDemo=true → skip, demo has no project.
+      // Panel restore: projects-list was sent before dacpac-model, so lastOpenedId is current; skipped for the demo, which has no project.
       if (!dacpacLoader.isDemo && lastOpenedId) setActiveProjectId(lastOpenedId);
       dacpacLoader.clearAutoVisualize();
     } else if (dacpacLoader.pendingVisualize) {
@@ -445,13 +443,10 @@ export function App() {
   // ── Graph state ─────────────────────────────────────────────────────────────
 
   const [isRebuilding, setIsRebuilding] = useState(false);
-  // Bumped by either Refresh button to remount the React Flow provider. A remount is the one repair
-  // that does not depend on knowing what went wrong: it discards React Flow's internal store and
-  // every node element, so the next mount re-measures from scratch.
+  // Bumped by either Refresh button to remount the React Flow provider, discarding its internal store and every node element so the next mount re-measures from scratch.
   const [canvasResetKey, setCanvasResetKey] = useState(0);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
-  // Expanded schema view expands selected schemas to individual objects while other schemas remain
-  // collapsed as schema clusters. `focusNodeId` is only the highlight/centre target.
+  // Expanded schema view expands selected schemas to individual objects; `focusNodeId` is only the highlight/centre target.
   const [expandedSchemaView, setExpandedSchemaView] = useState<ExpandedSchemaViewState | null>(null);
   const [showExpandedSchemaClusters, setShowExpandedSchemaClusters] = useState(true);
   const [viewportPreserveVersion, setViewportPreserveVersion] = useState(0);
@@ -489,7 +484,7 @@ export function App() {
   const isModeLocked = modeCapabilities.isModeLocked;
 
   // ── Mode-lock filter save/restore ─────────────────────────────────────────
-  // Refs to access current values inside the effect without re-firing on every change
+  // Refs to access current values inside the effect without re-firing on every change.
   const filterRef = useRef(filter);
   filterRef.current = filter;
   const modelRef = useRef(model);
@@ -498,8 +493,7 @@ export function App() {
   configRef.current = config;
   const rebuildRef = useRef(rebuild);
   rebuildRef.current = rebuild;
-  // True between the user clicking Refresh and receiving the 'rebuild-config' reply;
-  // causes that reply to do a full filter reset rather than just a config sync.
+  // True between the user clicking Refresh and receiving the 'rebuild-config' reply; causes that reply to do a full filter reset rather than just a config sync.
   const pendingRefreshReset = useRef(false);
   const prevIsModeLocked = useRef(false);
   const preserveViewportOnNextGraphChange = useCallback(() => {
@@ -529,14 +523,10 @@ export function App() {
    * Resets filters and pulls fresh extension settings from the host.
    *
    * @remarks
-   * Posts `rebuild` to the extension and sets {@link pendingRefreshReset} so that
-   * the arriving `rebuild-config` reply performs a full filter reset and re-derives
-   * the graph view mode (snapping to schema view when the graph is large).
-   * Does not exit active trace, analysis, or AI preview modes.
-   *
-   * Also remounts the canvas ({@link canvasResetKey}), so the button repairs a stuck rendering
-   * state even when the host never replies. The remount discards the viewport and any manual node
-   * drags — positions the filter reset regenerates anyway.
+   * Posts `rebuild` and sets {@link pendingRefreshReset} so the arriving `rebuild-config` reply
+   * performs a full filter reset and re-derives the graph view mode. Does not exit active trace,
+   * analysis, or AI preview modes. Also remounts the canvas ({@link canvasResetKey}), so the button
+   * repairs a stuck rendering state even when the host never replies.
    */
   const handleRefresh = useCallback(() => {
     setExpandedSchemaView(null);
@@ -667,8 +657,7 @@ export function App() {
       }
       if (node.type === 'columnTraceNode') {
         const { view } = node.data as ColumnTraceNodeData;
-        // Column rows carry no fullName/external fields of their own; resolve them from the loaded
-        // model so the menu matches what the object-view path shows for the same node.
+        // Column rows carry no fullName/external fields of their own; resolve them from the loaded model so the menu matches what the object-view path shows for the same node.
         const modelNode = modelRef.current?.nodes.find(n => n.id === view.id);
         setContextMenu({
           kind: 'object',
@@ -1047,12 +1036,7 @@ export function App() {
   const handleApplyView = useCallback((profile: FilterProfile) => {
     setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
-    // View shape first, so the restored layout is built once instead of rebuilt after a mode flip.
-    // A scoped bookmark (allowlist) renders its node set, never schema clusters, so it always
-    // restores into object-level mode. Otherwise the saved shape is restored only when it can
-    // render as saved: a bookmark written before these fields existed carries no `graphMode`, and
-    // a saved 'overview' is not forced onto a host whose overview setting is off — each of those
-    // keeps the view as it is, exactly as before the fields existed.
+    // View shape first, so the restored layout is built once instead of rebuilt after a mode flip; a scoped bookmark always restores into object-level mode.
     const shapeMode: GraphMode | undefined = isAdvanced
       ? 'full'
       : profile.graphMode
@@ -1071,10 +1055,7 @@ export function App() {
     }
     // `rebuild` reads `graphMode` from state, which is still stale in this tick.
     const targetMode = shapeMode ?? graphMode;
-    // Saved positions are consumed by the canvas on the first `flowNodes` change after they are
-    // set. A deferred rebuild would commit the filter/mode state first and the new graph later,
-    // producing two changes — the first spends the positions on stale nodes, the second lands the
-    // default layout and auto-fit. Building synchronously commits everything in one render.
+    // Saved positions are consumed by the canvas on the first `flowNodes` change after they are set; building synchronously commits filter, mode and graph in one render instead of two.
     const hasPositions = !!profile.positions && Object.keys(profile.positions).length > 0;
     if (hasPositions) {
       setPendingPositions(profile.positions);
@@ -1099,10 +1080,7 @@ export function App() {
     const handler = (e: MessageEvent) => {
       const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, e.data);
       if (!frame.ok) {
-        // Host→webview frames are stamped unconditionally by the `postValidated` send choke point, so
-        // anything that parses as a contract message but carries the wrong (or no) version came from
-        // a host bundle this view cannot trust. Fail loudly through the existing error funnel rather
-        // than rendering a message whose shape we are only guessing at.
+        // A message that parses but carries the wrong (or no) version came from a host bundle this view cannot trust; fail loudly rather than render a shape only guessed at.
         if (frame.reason === 'version') {
           window.vscode?.postMessage({
             type: 'error',
@@ -1197,8 +1175,7 @@ export function App() {
             hideIsolated: false,
           };
           if (renderModel) {
-            // AI previews always render in the classic full Object View — the curated allowlist is
-            // small by construction, so schema-overview clustering has nothing to summarize.
+            // AI previews always render in the classic full Object View — the curated allowlist is small by construction, so schema-overview clustering has nothing to summarize.
             setGraphMode('full');
             rebuildRef.current(renderModel, next, configRef.current, false, 'full');
           }
@@ -1241,8 +1218,7 @@ export function App() {
       graphMode,
       filteredCount,
       renderLimitHit,
-      // Mode state the GraphCanvas render-state sync does not carry, so the debug dump can
-      // explain analytics/bookmark views standalone (trace/selection ride render-state).
+      // Mode state the GraphCanvas render-state sync does not carry, so the debug dump can explain analytics/bookmark views standalone (trace/selection ride render-state).
       screenState: {
         analytics: analysisMode
           ? {
@@ -1289,10 +1265,7 @@ export function App() {
   ) => {
     if (!activeProjectId) return;
 
-    // Every save — create or update — records the view shape it was taken in, so reopening the
-    // bookmark restores schema clusters, individual objects, or the mixed state rather than
-    // whatever happens to be on screen. All three fields overwrite unconditionally: an update
-    // taken after collapsing every schema must clear the saved expansion, not keep it.
+    // Every save records the view shape it was taken in; all three fields overwrite unconditionally, so an update after collapsing every schema clears the saved expansion rather than keeping it.
     const stamped: FilterProfile = {
       ...profile,
       graphMode,

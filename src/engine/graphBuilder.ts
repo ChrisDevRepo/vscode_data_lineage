@@ -86,12 +86,8 @@ const GRID_CELL_PADDING = 40;
  * Collects every edge whose endpoints both sit inside the traced node set.
  *
  * @remarks
- * Direction governs which nodes a trace admits, not which edges are drawn between them. A
- * one-direction trace previously filtered edges by the depth gradient as well, which hid real
- * dependencies between two objects already on screen — an upstream-only trace holding both `A` and
- * `S` omitted `A → S`. Bidirectional traces never applied that filter, and the AI scope bundle
- * does not either, so the same scope was drawn two different ways. Membership is now the only
- * rule, matching both.
+ * Direction governs which nodes a trace admits, not which edges are drawn between two nodes
+ * already in that set — an upstream-only trace holding both `A` and `S` still draws `A → S`.
  *
  * @param graph - The underlying computational graph.
  * @param nodeIds - Set of node identifiers within the trace scope.
@@ -601,8 +597,7 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
   try {
     dagre.layout(g);
   } catch (e) {
-    // Dagre coordinate assignment crashes on disconnected graphs with longest-path ranker.
-    // Return empty positions; toFlowResult falls back to {x:0,y:0} per-node.
+    // Dagre's longest-path ranker crashes on disconnected graphs; return empty positions so toFlowResult falls back to {x:0,y:0}.
     logSink('warn', `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}`);
     return new Map();
   }
@@ -773,8 +768,7 @@ export function buildSchemaGraph(
   try {
     dagre.layout(g);
   } catch (e) {
-    // Disconnected schema singletons can trigger the same longest-path crash as regular nodes.
-    // Fall through: g.node() returns undefined per node → positions fallback to {x:0,y:0}.
+    // Disconnected schema singletons hit the same longest-path crash; g.node() then returns undefined and positions fall back to {x:0,y:0}.
     logSink('warn', `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}`);
   }
 
@@ -832,10 +826,9 @@ export function buildSchemaGraph(
  * Computes spatial layout for the object graph.
  *
  * @remarks
- * Nodes with no edges (disconnected singletons — e.g. cross-DB virtual nodes
- * whose only counterpart is outside the current schema filter) are positioned
- * in a row below the main Dagre layout instead of being passed to Dagre.
- * Dagre's longest-path ranker crashes on fully disconnected components.
+ * Disconnected singletons (e.g. cross-DB virtual nodes whose only counterpart is outside the
+ * current schema filter) are placed in a row below the Dagre layout rather than passed to
+ * Dagre, whose longest-path ranker crashes on fully disconnected components.
  */
 function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): Map<string, { x: number; y: number }> {
   const seen = new Set<string>();
@@ -1063,14 +1056,9 @@ function buildExpandedSchemaViewFlowEdges(
  * Builds the expanded schema view flow graph.
  *
  * @remarks
- * Objects whose schema is in `expandedSchemas` are shown in full (individual); every remaining
- * schema is collapsed into one schema-cluster node (the regular schema-view node, flagged
- * `isExpandedSchemaViewCluster`), joined
- * to the individual nodes or other schema clusters by aggregated bridge edges.
- * One dagre pass positions the connected core;
- * isolated individual nodes and unconnected clusters drop into a peripheral row (same as
- * {@link computeLayout}). The filter is never consulted — the caller passes the already-filtered
- * working-set graph.
+ * Objects whose schema is in `expandedSchemas` render individually; every other schema collapses
+ * into one cluster node joined by aggregated bridge edges. Isolated nodes and unconnected clusters
+ * drop into a peripheral row (same as {@link computeLayout}); the caller's graph is pre-filtered.
  *
  * @param graph - The filtered working-set graphology graph.
  * @param expandedSchemas - Schemas shown as individual objects; all others collapse per schema.
@@ -1087,8 +1075,7 @@ export function buildExpandedSchemaViewGraph(
   config: ExtensionConfig = DEFAULT_CONFIG,
   options: ExpandedSchemaViewRenderOptions = {},
 ): { flowNodes: FlowNode[]; flowEdges: FlowEdge[] } {
-  // Always include clusters so Dagre receives the same node set regardless of visibility —
-  // cache key stays stable → positions don't shift when the hide toggle fires.
+  // Always include clusters so the layout cache key stays stable and positions don't shift when the hide toggle fires.
   const projection = projectExpandedSchemaView(graph, expandedSchemas,
     { ...options, includeCollapsedSchemaClusters: true });
   const hideClusters = options.hideClusters ?? false;

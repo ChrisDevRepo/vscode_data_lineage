@@ -2,15 +2,9 @@
  * Single owner for rejection codes that appear on more than one surface.
  *
  * @remarks
- * Most rejection codes live only where they are emitted; a code belongs here as soon as a second
- * surface shows its wire `error` literal to the model (a hint payload, instruction prose that
- * names the code). Prose that teaches a refusal without naming its code is not a second
- * surface: `route_columns_flow_conflict` is taught by the `route_requests[].columns`
- * `.describe()` yet emitted only from `ROUTE_REJECTION_CODE` in `smRouteValidation.ts`,
- * so the map stays its single owner.
- * Both surfaces then interpolate the same constant, so a rename cannot silently drift between the
- * emitting guard and the prompt that teaches the recovery. Provider-pure: no `vscode` / AI-SDK
- * imports.
+ * A code belongs here only once a second surface (a hint payload, instruction prose) shows its
+ * wire `error` literal to the model — most codes live only where they are emitted. Both surfaces
+ * then interpolate this constant, so a rename cannot drift between the guard and the prompt.
  */
 export const REJECTION_CODES = {
   /** `submit_findings` carries a CT-only field (`column_flow`) in a BB session. */
@@ -55,6 +49,8 @@ export const REJECTION_CODES = {
   noActiveSession: 'no_active_session',
   /** A `prune_neighbors` entry would orphan a node kept by already-committed work. */
   pruneWouldOrphanNoted: 'prune_would_orphan_noted',
+  /** A `prune_neighbors` entry names the immutable exploration origin. */
+  pruneOriginForbidden: 'prune_origin_forbidden',
   /** `proposalRevision` no longer matches the pending approval gate under refine. */
   staleProposalRevision: 'stale_proposal_revision',
 } as const;

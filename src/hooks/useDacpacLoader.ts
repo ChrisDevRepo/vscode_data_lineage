@@ -81,10 +81,9 @@ export interface DacpacLoaderState {
  * Orchestrates the project loading lifecycle: from file picking to full lineage extraction.
  *
  * @remarks
- * This hook handles the multi-phase extraction process used for both DACPACs and live databases.
- * Phase 1: Rapid metadata extraction to show a schema selector.
- * Phase 2: Full DDL parsing and graph building for the selected scope.
- * It communicates with the VS Code extension host via `postMessage`.
+ * Two-phase extraction for both DACPACs and live databases: Phase 1 shows a schema selector,
+ * Phase 2 does the full DDL parse and graph build. Communicates with the extension host via
+ * `postMessage`.
  *
  * @param onConfigReceived - Callback triggered when the extension host delivers updated configuration.
  * @returns The project loader state and interactive actions.
@@ -103,9 +102,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
-  // Auto-clear transient info messages after 6s (progress, connecting, loading...).
-  // Success messages persist until the next action — they carry meaningful summary information.
-  // Warning/error messages are always kept visible until explicitly replaced.
+  // Info messages auto-clear after 6s; success/warning/error messages persist until replaced.
   useEffect(() => {
     if (status && status.type === 'info' && !isLoading) {
       const timer = setTimeout(() => setStatus(null), 6000);
@@ -148,9 +145,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       // Single validated inbound dispatcher — host→webview messages are Zod-checked here, never read raw.
       const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, event.data);
       if (!frame.ok) {
-        // Same protocol-version gate as the App.tsx and DetailApp.tsx listeners: a frame with the
-        // wrong (or no) version came from a host bundle this view cannot trust — reject it instead
-        // of applying a model whose shape we are only guessing at.
+        // Same protocol-version gate as the App.tsx/DetailApp.tsx listeners — reject rather than apply a model from an untrusted host bundle.
         if (frame.reason === 'version') {
           window.vscode?.postMessage({
             type: 'error',
@@ -200,7 +195,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // Dacpac Phase 1: schema preview (extraction now runs in extension host)
+      // Dacpac Phase 1: schema preview (extraction runs in extension host)
       if (msg.type === 'dacpac-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
@@ -265,10 +260,8 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   // Phase 2: trigger full extraction for selected schemas
   const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
-    // Dacpac path: request Phase 2 extraction from extension host
-    // (dacpac-model response handled above — sets model + pendingVisualize)
-    // A blank name is spread away rather than sent as an empty string: the contract's
-    // `projectName` is optional, and the host reads "absent" as "keep the existing label".
+    // Dacpac path: request Phase 2 extraction (dacpac-model response handled above).
+    // A blank name is spread away rather than sent empty: the host reads "absent" as "keep the existing label".
     const named = projectName ? { projectName } : {};
     if (schemaPreview !== null && model === null && loadingContext !== 'database') {
       vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named });

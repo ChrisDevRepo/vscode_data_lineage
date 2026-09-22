@@ -15,8 +15,7 @@ const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+\/-]{8,4096}/i,
   /\b(?:sk|key)-[A-Za-z0-9_-]{12,4096}/i,
   /https?:\/\/\S{0,4096}(?:api[_-]?key|token|secret|password|authorization)=\S{1,4096}/i,
-  // Connection-string credentials. ADO.NET, ODBC and JDBC all spell it `Password=` or `pwd=` and
-  // none of them quote the value, so the secret runs to the next delimiter.
+  // Connection-string credentials: ADO.NET, ODBC and JDBC spell it `Password=`/`pwd=`, unquoted, so the secret runs to the next delimiter.
   /\b(?:password|pwd)\s*=\s*[^;&"'\s]{4,512}/i,
   // JSON Web Tokens: three dot-separated base64url runs whose header decodes from `{"` — `eyJ`.
   /\beyJ[A-Za-z0-9_-]{6,4096}\.[A-Za-z0-9_-]{6,4096}\.[A-Za-z0-9_-]{6,4096}/,
@@ -78,8 +77,7 @@ function normalizedKey(key: string): string {
   return key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_');
 }
 
-// Env is process-static for our purposes (secrets land before any trace runs); caching avoids
-// re-scanning all of process.env on every evidence item of every traced call.
+// Env is process-static here (secrets land before any trace runs); caching avoids re-scanning process.env per evidence item.
 let cachedSecrets: string[] | undefined;
 
 function configuredSecrets(): string[] {

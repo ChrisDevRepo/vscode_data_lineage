@@ -48,22 +48,16 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           ? input as SubmitFindingsInputObject
           : {};
 
-      // Pre-Zod mode guard — fires before schema parse so the AI gets an unambiguous
-      // mode-specific error rather than a generic `.strict()` failure.
+      // Pre-Zod mode guard — fires before schema parse so the AI gets an unambiguous mode-specific error rather than a generic `.strict()` failure.
       if (!engine.columnAspect && rawInput.column_flow !== undefined) {
         return s.logAndReturn('submit_findings', {
           error: REJECTION_CODES.bbFieldUnknown,
           hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
         }, rawInput);
       }
-      // `route_requests[].columns` is a column-trace-only decision. BB's dispatched schema
-      // (`SubmitFindingsBbInputSchema` -> `BbRouteRequestSchema`, `toolSchemas.ts`) never advertises
-      // it, so a BB hop naming it anyway fails `.strict()` in the parse below and rejects through the
-      // generic invalid-input path with a hint naming the field — the same treatment every other
-      // unrecognized BB field gets. Nothing here rewrites the model's payload.
+      // `route_requests[].columns` is a column-trace-only decision; BB's dispatched schema never advertises it, so a BB hop naming it anyway fails `.strict()` below and gets the same generic invalid-field treatment as any other unrecognized BB field. Nothing here rewrites the model's payload.
 
-      // Middleware: normalize identifier encodings into a local copy only. The raw model payload
-      // stays immutable; strict mode-specific Zod parses the normalized copy below.
+      // Middleware: normalize identifier encodings into a local copy only; the raw model payload stays immutable, strict mode-specific Zod parses the normalized copy below.
       const modelNodeMap = getModelNodeMap(s.requireModel());
       const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
       const normalizedInput = normalized.input;
@@ -73,16 +67,8 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         );
       }
 
-      // Structure only. `badge_label` and `column_flow[].upstream_columns[].note` advertise their
-      // cap without parsing it (`advertisedMax`, `toolSchemas.ts`); the engine enforces both ahead
-      // of every mutation, so an overrun holds the draft and is repaired as one corrected field
-      // instead of failing the hop. One contract for advertise and validate: this is the exact
-      // schema `instructionPlan.ts` dispatched for this mode/classification (mode-and-classification
-      // narrowed `sections[].angle`), not just the mode-only base — a provider that does not enforce
-      // the advertised schema is still held to it here.
-      // The HOP's mode, not the session's: `instructionPlan` dispatched the form for this hop, and a
-      // hop carrying none of the traced columns was dispatched the BB form. Parsing it back against
-      // the CT form would demand a `column_flow` the model was never shown a field for.
+      // Structure only. `badge_label` and `column_flow[].upstream_columns[].note` advertise their cap without parsing it (`advertisedMax`, `toolSchemas.ts`); the engine enforces both, so an overrun holds the draft and is repaired as one field instead of failing the hop — the exact schema `instructionPlan.ts` dispatched for this mode/classification, not just the mode-only base.
+      // The HOP's mode, not the session's: `instructionPlan` dispatched the form for this hop, so a hop carrying none of the traced columns was dispatched the BB form, and parsing it back against the CT form would demand a `column_flow` the model was never shown a field for.
       const hopMode = engine.currentHopAnalysisMode;
       const parsed = submitFindingsSchemaForMode(hopMode, sess.classification)
         .safeParse(normalizedInput);
@@ -103,20 +89,9 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         const summary = fieldErrors.length > 0
           ? `Invalid ${modeLabel} submit_findings input — ${fieldErrors.join('; ')}.`
           : `Invalid ${modeLabel} submit_findings input: ${parsed.error.issues[0]?.message ?? 'validation failed'}. Required: focus_node_id, sections[], summary, verdict.`;
-        // The bare per-field Zod message above (e.g. "column_flow: Invalid input: expected array,
-        // received undefined") never says whether the field was sent with the wrong type or omitted
-        // entirely — the same envelope on a genuine omission (m17-head-azure-foundry run-T7,
-        // `column_flow` x5) gives a model nothing but a byte-identical string to regenerate against.
-        // Reuses the same schema-derived, field-name-agnostic chain `rejectionFromZodError` already
-        // applies to every other invalid_tool_input reject, so an omitted required field states the
-        // addition repair here too instead of a second, drifting implementation of the same gap.
+        // The bare per-field Zod message above never says whether the field was sent with the wrong type or omitted entirely, so a genuine omission gives the model nothing but a byte-identical string to regenerate against. Reuses the same schema-derived, field-name-agnostic chain `rejectionFromZodError` already applies to every other invalid_tool_input reject, so an omitted required field states the addition repair here too instead of a second, drifting implementation of the same gap.
         const repairHint = zodFieldRepairHint(parsed.error, normalizedInput);
-        // Collect the classification-lock angle gap in the same pass instead of waiting for a
-        // second, separate rejection after the schema issue above is fixed: a submission missing
-        // both a well-formed section shape and a locked angle would otherwise cost the model two
-        // rejections for one root-cause submission (m57-close-azure-azure-foundry run-T8
-        // host.log:151-187 — a stray `sections[].#` key and a missing angle="technical" section,
-        // refused once for the key, resent, then refused again for the angle).
+        // Collect the classification-lock angle gap in the same pass instead of waiting for a second, separate rejection after the schema issue above is fixed, so a submission missing both a well-formed section shape and a locked angle costs the model one rejection, not two.
         const rawAngles = extractRawSectionAngles((normalizedInput as { sections?: unknown }).sections);
         const rawVerdict = (normalizedInput as { verdict?: unknown }).verdict;
         const rawFocus = (normalizedInput as { focus_node_id?: unknown }).focus_node_id;
@@ -133,18 +108,11 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         }, normalizedInput);
       }
 
-      // Hold-and-amend restores authored prose when only routing/column completeness or a field-scoped
-      // reference needed a retry.
+      // Hold-and-amend restores authored prose when only routing/column completeness or a field-scoped reference needed a retry.
       const finding = engine.applyHeldContent(parsed.data);
 
-      // The agreement-phase gate locks `sess.classification`. `submitFindingsSchemaForMode`
-      // (`toolSchemas.ts`) already narrowed the dispatched `sections[].angle` enum to the angle(s)
-      // this lock keeps, so an off-lock angle fails Zod parsing above and never reaches here — this
-      // check only catches a locked angle the model omitted (e.g. `both` submitted business only)
-      // and not already archived from an earlier visit.
-      // A CT reopen revisits a node `storeDetail` already wrote once; credit the angles that
-      // earlier visit archived (appended, never replaced) so this submission is not held to
-      // re-carry an angle the archive already holds for this focus node.
+      // The agreement-phase gate locks `sess.classification`; `submitFindingsSchemaForMode` already narrowed the dispatched `sections[].angle` enum to the locked angle(s), so an off-lock angle fails Zod parsing above and never reaches here — this check only catches a locked angle the model omitted (e.g. `both` submitted business only) and not already archived from an earlier visit.
+      // A CT reopen revisits a node `storeDetail` already wrote once; credit the angles that earlier visit archived (appended, never replaced) so this submission is not held to re-carry an angle the archive already holds for this focus node.
       const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
       const violation = validateSectionsAgainstClassification(finding.sections, sess.classification, finding.verdict, archivedAngles);
       if (violation) {
@@ -198,11 +166,9 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       if (nextHop.done) {
         const finalResult = engine.getResult();
         sess.storeSmResult(finalResult, s.turnEpoch(sess));
-        // `classification` is a Zod-required enum on `start_exploration`, so it is always locked
-        // before synthesis — a miss here means the start contract broke upstream. Hard-fail, no default.
+        // `classification` is a Zod-required enum on `start_exploration`, so it is always locked before synthesis — a miss here means the start contract broke upstream. Hard-fail, no default.
         if (!sess.classification) throw new Error('classification missing at synthesis handoff — start_exploration contract violated');
-        // Single source of truth for the synthesis evidence surface (shared with the host-graph
-        // synthesis node), so the terminal tool result and synthesis call receive the same CT chain.
+        // Single source of truth for the synthesis evidence surface (shared with the host-graph synthesis node), so the terminal tool result and synthesis call receive the same CT chain.
         const envelope = buildSmCompletionEnvelope(
           finalResult,
           sess.memory.getUserQuestion(),
@@ -210,8 +176,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         );
         return s.logAndReturn('submit_findings', envelope, normalizedInput);
       }
-      // Minimal ack only: the next worker user message's <hop_context> is the single carrier of the
-      // full hop payload — returning nextHop here too doubled the focus DDL+neighbors every hop.
+      // Minimal ack only: the next worker user message's <hop_context> is the single carrier of the full hop payload — returning nextHop here too doubled the focus DDL+neighbors every hop.
       return s.logAndReturn('submit_findings', {
         ok: true,
         done: false,

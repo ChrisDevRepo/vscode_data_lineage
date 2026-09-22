@@ -14,8 +14,6 @@ const VsCodeContext = createContext<VsCodeAPI | null>(null);
 /**
  * Provider component for the VS Code Webview API context.
  *
- * @param props - Component properties.
- * @param props.children - The nested React component tree.
  * @param props.api - The acquired VS Code API instance (or null in external browsers/tests).
  */
 export const VsCodeProvider = ({ children, api }: { children: ReactNode; api: VsCodeAPI | null }) => {

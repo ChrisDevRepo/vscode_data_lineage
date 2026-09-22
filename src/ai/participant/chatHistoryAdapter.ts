@@ -84,8 +84,7 @@ export function chatHistoryToModelMessages(
   budget: TurnTokenBudget,
   debug?: (msg: string) => void,
 ): ModelMessage[] {
-  // One group per native request turn (the request plus every response message that follows it),
-  // so eviction always removes whole turns and never splits a tool-call/tool-result pair.
+  // One group per native request turn (the request plus every response message that follows it), so eviction always removes whole turns and never splits a tool-call/tool-result pair.
   const groups: ModelMessage[][] = [];
   let current: ModelMessage[] = [];
 
@@ -276,8 +275,7 @@ function stringify(value: unknown, debug?: (msg: string) => void): string {
   try {
     return JSON.stringify(value) ?? '';
   } catch (err) {
-    // Circular structure / BigInt in a history value: the empty-string fallback keeps the turn
-    // alive, but the degradation must be observable, not a silent skip.
+    // Circular structure / BigInt in a history value: the empty-string fallback keeps the turn alive, but the degradation must be observable, not a silent skip.
     debug?.(`history value not serializable — dropped (${err instanceof Error ? err.message : String(err)})`);
     return '';
   }

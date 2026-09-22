@@ -3,17 +3,10 @@
  *
  * @remarks
  * A bookmark saved from an AI-authored view records the run that produced it, so a later turn can
- * answer "what did this view come from" without replaying the exploration. The record is written on
- * bookmark save and read back by `lineage_get_screen_state`; every consumer treats a missing or
- * older record as absent rather than as an error.
- *
- * One record per saved view, and the view owns its lifetime: `delete-view` clears that view's
- * record and `delete-project` clears one per profile it takes with it, both in
- * `src/bridge/messageHandlers.ts`. There is no separate eviction policy and none is wanted — a
- * count that grows with the bookmarks the user chose to keep is not a leak, and a sweep that
- * decided on its own which records to drop could take run memory the user still has a view for.
- * A new route that removes a saved view without going through those two handlers is the one thing
- * that would orphan a record; that route must clear it too.
+ * answer "what did this view come from" without replaying the exploration. One record per saved
+ * view, and the view owns its lifetime: `delete-view` and `delete-project`
+ * (`src/bridge/messageHandlers.ts`) clear their records — a new route that removes a saved view
+ * without going through those two must clear its record too.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -74,10 +67,9 @@ type RunStoreReader = {
  * @remarks
  * Tolerant where the record can degrade and strict where it cannot. A top-level key from a newer
  * build is carried through rather than treated as corruption; an unreadable `origin` or
- * `ddlHashes` costs only the staleness annotation, so each falls back to its empty value instead
- * of dropping a whole run's memory. The snapshot is the one field a consumer walks structurally,
- * so it is validated by the same schema the engine restores from — a damaged checkpoint answers
- * "no run memory" rather than reaching the presenter as a half-shaped object.
+ * `ddlHashes` costs only the staleness annotation. The snapshot is validated by the same schema
+ * the engine restores from, so a damaged checkpoint answers "no run memory" rather than reaching
+ * the presenter as a half-shaped object.
  */
 const StoredAiRunSchema = z.object({
   schemaVersion: z.literal(1),

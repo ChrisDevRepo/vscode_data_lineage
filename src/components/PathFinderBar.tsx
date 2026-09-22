@@ -14,11 +14,7 @@ interface PathFinderBarProps {
   allNodes: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   /** The result of the last path-finding operation, if any. */
   pathResult: { found: boolean; nodeCount: number; edgeCount: number } | null;
-  /**
-   * Callback to execute the path search.
-   * @param targetNodeId - ID of the destination node.
-   * @returns Whether a path was found.
-   */
+  /** Callback to execute the path search; returns whether a path was found. */
   onFindPath: (targetNodeId: string) => boolean;
   /** Callback fired when the user closes the path finder interface. */
   onClose: () => void;

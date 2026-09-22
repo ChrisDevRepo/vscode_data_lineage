@@ -139,9 +139,7 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
         </GlyphSvg>
       );
     case 'compute':
-      // `fx` — formula notation, the mark a data reader meets on every calculated field. Drawn as
-      // text rather than paths: the two letters ARE the convention, and stroking them by hand at
-      // 24 units would only make them harder to read.
+      // `fx` — formula notation, the mark a data reader meets on every calculated field; drawn as text since the two letters ARE the convention.
       return (
         <GlyphSvg transformClass={transformClass}>
           <text
@@ -168,8 +166,7 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
         </GlyphSvg>
       );
     case 'combine':
-      // Two overlapping circles: the join Venn, the one shape a SQL reader already reads as a
-      // join, drawn in merge dialogs and join documentation alike.
+      // Two overlapping circles: the join Venn, the one shape a SQL reader already reads as a join.
       return (
         <GlyphSvg transformClass={transformClass}>
           <circle cx="9" cy="12" r="6" />
@@ -245,8 +242,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const opacity = lit ? 1 : COLUMN_EDGE_DIM_OPACITY;
   const classes = markedTransformClasses(transforms);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
-  // Broken line for a relation that never carried the value — the same edge the tooltip calls out
-  // as shaping which rows reach here.
+  // Broken line for a relation that never carried the value — the same edge the tooltip calls out as shaping which rows reach here.
   const indirect = classes.length > 0 && classes.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
   const showChip = !identityOnly && (state === 'transformation' || classes.length > 0);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);

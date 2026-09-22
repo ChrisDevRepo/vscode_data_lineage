@@ -54,12 +54,7 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
   onToggleFullModel,
   filteredOutCount,
 }: TracedFilterBannerProps) {
-  /**
-   * Formats the level depth for display.
-   *
-   * @param levels - The depth number, or {@link TRACE_ALL_LEVELS} for 'All'.
-   * @returns A string representation of the depth.
-   */
+  // levels may be TRACE_ALL_LEVELS, displayed as 'All'.
   const formatLevels = (levels: number) =>
     levels === TRACE_ALL_LEVELS ? 'All' : levels.toString();
 

@@ -184,10 +184,7 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
   }
   if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
   if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
-  // Every consumer of a rule pattern needs the global flag, and each fails differently without it:
-  // `extractExternalRefs` scans with `exec` and never advances `lastIndex`, so it spins forever;
-  // `collectMatchesWith` spins until its iteration cap; a preprocessing `replace` silently rewrites
-  // only the first occurrence and under-cleans the body. One check covers all three.
+  // Every consumer needs the global flag or it fails differently: a scan spins forever or hits its iteration cap, and a preprocessing `replace` silently rewrites only the first occurrence.
   if (!r.flags.includes('g')) {
     return { valid: false, name, error: `${name}: flags '${r.flags}' must include 'g' — a non-global pattern hangs or silently under-matches` };
   }

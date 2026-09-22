@@ -381,9 +381,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');
 
-  // Capture phase, so the open panel consumes Esc before the document-level mode handlers
-  // registered through `useKeyboardShortcut` see it — closing Help never also exits the
-  // trace, analysis, or AI-preview mode behind it.
+  // Capture phase, so the open panel consumes Esc before the document-level mode handlers registered through `useKeyboardShortcut` see it — closing Help never also exits the mode behind it.
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {

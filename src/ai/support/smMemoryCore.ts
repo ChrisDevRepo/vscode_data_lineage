@@ -2,12 +2,9 @@
  * Pure SM sliding-memory policy for the native LangGraph host.
  *
  * @remarks
- * The host runs active analysis as serial LangGraph worker calls. On the success path the graph
- * reseeds the thread to a single continuation anchor (`[RESET_HISTORY, anchor]`) at approval and
- * after every committed hop, so nothing needs trimming there. This module answers the one case
- * where the accumulated thread is still worth a tail — the active loop stopping incomplete — by
- * keeping the anchor plus the last well-formed tool pair. Provider-neutral, no VS Code calls and
- * no session state, so it is deterministically unit-testable without a live model.
+ * The graph reseeds the thread to a single continuation anchor at approval and after every
+ * committed hop, so nothing needs trimming there. This module handles the one remaining case —
+ * the active loop stopping incomplete — by keeping the anchor plus the last well-formed tool pair.
  */
 
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -38,7 +35,6 @@ function assistantCallIds(msg: ModelMessage): Set<string> {
  * `tool`-role message whose tool-call ids are all answered by the assistant message immediately
  * before it.
  *
- * @param messages - The array of history messages to search.
  * @returns The index pair, or `null` when no well-formed adjacency exists (so the caller keeps
  * neither half — there is no path that produces an orphaned tool-result).
  */
@@ -61,14 +57,9 @@ function findLastToolPair(messages: readonly ModelMessage[]): ToolPairIndices | 
  * @remarks
  * The stable prefix (mission brief, contract, discovery summary) rides in the re-rendered `system`
  * override, not in `messages`; the rolling `<short_term_memory>` block rides in the per-hop user
- * message. The extracted array needs only the user anchor
- * (so the conversation still leads with a user turn, which strict providers require) and the most
- * recent `(tool-call, tool-result)` pair for continuity. When no pair exists the array degrades to the anchor
- * alone; it never emits an orphaned tool-result.
+ * message.
  *
- * @param messages - The in-flight accumulated history for the upcoming step.
  * @param anchor - The synthesized leading user message (host-owned continuation directive).
- * @returns The sliced `ModelMessage[]` to send for this step.
  */
 export function extractShortTermMemory(messages: readonly ModelMessage[], anchor: ModelMessage): ModelMessage[] {
   const pair = findLastToolPair(messages);

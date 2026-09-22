@@ -111,8 +111,7 @@ function assertExternalTracingDisabled(): void {
   const enabled = EXTERNAL_TRACING_FLAGS.filter((name) => {
     const value = process.env[name];
     if (value === undefined) return false;
-    // LangChain's LANGCHAIN_TRACING switch treats every defined value as enabled; the other
-    // flags are enabled only by the literal "true".
+    // LangChain's LANGCHAIN_TRACING switch treats every defined value as enabled; the other flags are enabled only by the literal "true".
     return name === 'LANGCHAIN_TRACING' || value.toLowerCase() === 'true';
   });
   if (enabled.length > 0) {
@@ -166,21 +165,18 @@ export class AgentRuntime {
     const session = this.getSession();
     // Advance the round counter so parallel-start guards can distinguish same-turn from cross-turn calls.
     session.currentRoundId += 1;
-    // Retain the verbatim user prompt for canonical-question resolution at start_exploration.
-    // Host-seeded marker prompts are runtime re-entry envelopes, not user-authored questions.
+    // Retain the verbatim user prompt for canonical-question resolution at start_exploration; host-seeded marker prompts are runtime re-entry envelopes, not user-authored questions.
     session.currentTurnPrompt = prompt.startsWith(PREVIEW_REQUEST_MARKER) || prompt.startsWith(TRACE_REQUEST_MARKER)
       ? null
       : prompt;
     try {
-      // Seed the retained discovery turns ahead of the current prompt so discovery has cross-turn memory.
-      // History rides in `messages` (after the cached system prefix), preserving prompt caching.
+      // Seed the retained discovery turns ahead of the current prompt so discovery has cross-turn memory; history rides in `messages` (after the cached system prefix), preserving prompt caching.
       let input: AgentStateUpdate | Command = this.priorMessages.length > 0
         ? { prompt, messages: [...this.priorMessages, modelUserMessage(prompt)] }
         : { prompt };
       const config = {
         configurable: { thread_id: this.threadId },
-        // An explicit empty callback set prevents application-owned tracing. The environment guard
-        // in the loop rejects LangChain's ambient tracer switches before any graph/model invocation.
+        // An explicit empty callback set prevents application-owned tracing; the environment guard in the loop rejects LangChain's ambient tracer switches before any graph/model invocation.
         callbacks: [],
         // Derived from the active-loop cap so the recursion budget can't desync (see turnRecursionLimit).
         recursionLimit: turnRecursionLimit(this.maxRounds),
@@ -188,8 +184,7 @@ export class AgentRuntime {
 
       for (;;) {
         if (this.signal?.aborted) return this.close('cancelled');
-        // Re-checked before EVERY invoke, not once per turn: a consent gate can hold the turn open
-        // for minutes, and ambient tracing flags must fail closed before any graph or model call.
+        // Re-checked before EVERY invoke, not once per turn: a consent gate can hold the turn open for minutes, and ambient tracing flags must fail closed before any graph or model call.
         assertExternalTracingDisabled();
         const result = await this.graph.invoke(input as never, config);
         const interruptPayload = extractInterruptPayload(result);
@@ -199,8 +194,7 @@ export class AgentRuntime {
           input = new Command({ resume: decision });
           continue;
         }
-        // An abort that fired mid-invoke can still surface a completed state — the user's Stop wins
-        // over whatever outcome the graph carried across the abort.
+        // An abort that fired mid-invoke can still surface a completed state — the user's Stop wins over whatever outcome the graph carried across the abort.
         if (this.signal?.aborted) return this.close('cancelled');
 
         const state = result as {
@@ -213,8 +207,7 @@ export class AgentRuntime {
         return this.close(outcome, state.error ?? undefined, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
       }
     } catch (err) {
-      // A thrown cancellation is a clean stop, not a failure: without this, a pre-aborted model
-      // call surfacing as a throw would close the turn as 'error' and toast the user.
+      // A thrown cancellation is a clean stop, not a failure: without this, a pre-aborted model call surfacing as a throw would close the turn as 'error' and toast the user.
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
         this.logger?.debug('[AI] turn aborted — closed as cancelled');
         return this.close('cancelled');
@@ -267,18 +260,15 @@ export class AgentRuntime {
         ? this.sink.fail(error)
         : this.sink.result(status, error);
     } catch (cause) {
-      // Terminal methods claim before invoking the sink. A throw therefore still belongs to this
-      // winning close and must not skip the runtime/session bookkeeping below.
+      // Terminal methods claim before invoking the sink. A throw therefore still belongs to this winning close and must not skip the runtime/session bookkeeping below.
       claimed = true;
       sinkFailure = { cause };
     }
     if (!claimed) return this.sink.terminalStatus ?? status;
 
-    // Only the terminal winner may mutate runtime/session close state. A racing duplicate close is
-    // now a read of the sink's authoritative outcome, not a second bookkeeping pass.
+    // Only the terminal winner may mutate runtime/session close state. A racing duplicate close is now a read of the sink's authoritative outcome, not a second bookkeeping pass.
     this.lastFailureDetail = status !== 'ok' && error ? { message: error, code: detail?.code, stop: detail?.stop } : undefined;
-    // If the turn ended abnormally, reset the session phase so the next turn is not misrouted
-    // through a stale exploring/awaiting_gate state (cancelled paths in graph.ts don't call enterIdle).
+    // If the turn ended abnormally, reset the session phase so the next turn is not misrouted through a stale exploring/awaiting_gate state (cancelled paths in graph.ts don't call enterIdle).
     if (status === 'cancelled' || status === 'error') {
       const sess = this.getSession();
       if (sess.phase.kind === 'exploring' || sess.phase.kind === 'awaiting_gate') {

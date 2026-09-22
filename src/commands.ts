@@ -12,13 +12,6 @@ import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
  *
- * @param context - The extension context.
- * @param getSession - Factory to retrieve the active AI session.
- * @param outputChannel - Log channel for reporting command execution and errors.
- * @param openPanel - Function to open the primary lineage webview.
- * @param buildDebugDump - Function to generate diagnostic information.
- * @param traceWriter - Session-scoped AI diagnostic writer.
- *
  * @returns An array of disposables representing the registered commands.
  */
 export function registerCommands(
@@ -42,12 +35,10 @@ export function registerCommands(
      * sync without reloading data.
      *
      * @remarks
-     * Equivalent to clicking the toolbar Refresh button, but without the full
-     * filter reset — suitable for programmatic callers and keyboard shortcuts.
-     * Does not exit active trace, analysis, or AI preview modes.
-     *
-     * The column store is left intact: it is a pure projection of the session model,
-     * which a settings push does not touch, so nothing here would refill it.
+     * Equivalent to clicking the toolbar Refresh button, but without the full filter reset —
+     * suitable for programmatic callers and keyboard shortcuts; does not exit active trace,
+     * analysis, or AI preview modes. The column store is left intact since a settings push
+     * does not touch the session model it projects.
      */
     vscode.commands.registerCommand('dataLineageViz.refresh', () => {
       const panel = getActivePanel();
@@ -90,7 +81,7 @@ export function registerCommands(
 
       const traceRoot = vscode.Uri.joinPath(workspaceFolder.uri, 'tmp').fsPath;
       try {
-        // Origin stays the writer's `extension-host` default; the file's trace-open record is the
+        // Origin stays the writer's `extension-host` default; the trace-open record is the
         // single durable stamp of the producer.
         const tracePath = await traceWriter.enable(traceRoot);
         notifyInfo(
@@ -114,8 +105,7 @@ export function registerCommands(
 
     /**
      * Dumps the current AI State Machine (SM) state to a JSON file under the workspace's
-     * `tmp/sm-dumps` directory. Used for debugging deep-trace behavior and non-deterministic
-     * AI failures.
+     * `tmp/sm-dumps` directory, for debugging deep-trace and non-deterministic AI failures.
      *
      * @returns The SM state, also when no workspace folder is open to write it to;
      *   `undefined` only when there is no state machine or the write failed.
@@ -274,12 +264,6 @@ export function registerCommands(
 
 /**
  * Creates a YAML configuration file in the workspace root by copying a template from the extension assets.
- *
- * @param context - The extension context.
- * @param logger - Logger used for command diagnostics and notifications.
- * @param fileName - The name of the file to create in the workspace.
- * @param sourceAsset - The name of the template file in the extension's `assets/` folder.
- * @param settingName - The name of the extension setting associated with this file.
  */
 async function createYamlScaffold(
   context: vscode.ExtensionContext, logger: Logger, fileName: string, sourceAsset: string, settingName: string
@@ -293,7 +277,7 @@ async function createYamlScaffold(
   const targetUri = vscode.Uri.joinPath(folder.uri, fileName);
 
   // The command still fails — this only guarantees the detail and stack reach the Output channel,
-  // which VS Code's own generic command-failure toast does not do.
+  // which VS Code's generic command-failure toast does not do.
   try {
     try {
       // Preserve an existing scaffold.

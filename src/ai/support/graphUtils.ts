@@ -34,13 +34,8 @@ export interface NodeSnapshotStore {
  * Constructs a minimal, directed topology-only graph from a DatabaseModel.
  *
  * @remarks
- * This graph is optimized for algorithmic traversal (e.g., BFS/DFS) and does not include
- * layout information (Dagre/React Flow) or rich visual metadata. It is intentionally
- * decoupled from the primary `graphBuilder.ts` to ensure the AI's structural reasoning
- * is performed on a clean, performance-oriented model.
- *
- * @param model - The current database model containing nodes and edges extracted from DDL/Metadata.
- * @returns A directed `graphology` instance representing the logical dependencies of the model.
+ * Decoupled from `graphBuilder.ts` so the AI's structural reasoning runs on a clean,
+ * performance-oriented model — no layout (Dagre/React Flow) or visual metadata.
  */
 export function buildBareGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
@@ -62,9 +57,6 @@ export function buildBareGraph(model: DatabaseModel): Graph {
 
 /**
  * Builds a lookup map for nodes by their ID.
- *
- * @param model - The full database model.
- * @returns A map of node IDs to their respective LineageNode objects.
  */
 export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   const m = new Map<string, LineageNode>();
@@ -74,11 +66,6 @@ export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
 
 /**
  * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
- *
- * @param nodeId - The unique identifier of the node.
- * @param nodeMap - The ground-truth map of all nodes.
- * @param store - Optional column store for high-fidelity metadata.
- * @returns An array of column definitions, or `undefined` if the node is not found.
  */
 export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
@@ -89,11 +76,6 @@ export function getNodeColumns(
 
 /**
  * Retrieves the stored DDL for a specific node (blank lines dropped, tabs expanded).
- *
- * @param nodeId - The unique identifier of the node.
- * @param nodeMap - The ground-truth map of all nodes.
- * @param store - Optional column store for high-fidelity DDL.
- * @returns The normalized DDL string, or `undefined` if not available.
  */
 export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,

@@ -1,12 +1,8 @@
 /**
- * ─── SQL Regex Builder ──────────────────────────────────────────────────────
- *
  * Centralized repository for SQL regex fragments and compositional builders.
  *
  * @remarks
- * This module ensures ReDoS safety and readability across the parsing engine
- * by using shared regex constants and descriptive building blocks for complex
- * SQL patterns.
+ * Shared regex constants and building blocks keep the parsing engine's patterns ReDoS-safe.
  *
  * @packageDocumentation
  */
@@ -19,59 +15,21 @@
  * or are reserved keywords. A literal `]` inside the name is written `]]`, so
  * `[a]]b]` is the single identifier `a]b`; ending the name at the first `]`
  * truncates it and leaves the rest of the statement misread.
- *
- * @constant
- * @readonly
  */
 const BRACKET_IDENT = /\[(?:[^\]]|\]\])+\]/;
 
-/**
- * Matches a plain word identifier (no brackets), consisting only of word characters.
- *
- * @remarks
- * Standard identifiers must start with a letter and contain only alphanumeric
- * characters or underscores.
- *
- * @constant
- * @readonly
- */
+/** Matches a plain word identifier (no brackets), consisting only of word characters. */
 const WORD_IDENT = /\w+/;
 
-/**
- * Matches either a bracketed or plain identifier.
- *
- * @remarks
- * Composed using {@link BRACKET_IDENT} and {@link WORD_IDENT}.
- *
- * @constant
- * @readonly
- */
+/** Matches either a bracketed or plain identifier. */
 export const ANY_IDENT = new RegExp(`(?:${BRACKET_IDENT.source}|${WORD_IDENT.source})`);
 
-/**
- * Matches a schema-qualified name like `[s].[t]`, `s.t`, `[s].t`, or `s.[t]`.
- *
- * @remarks
- * Represents a multi-part identifier separated by dots. Used as a core building
- * block for identifying table and view references.
- *
- * @constant
- * @readonly
- */
+/** Matches a schema-qualified name like `[s].[t]`, `s.t`, `[s].t`, or `s.[t]`. */
 export const QUALIFIED_NAME = new RegExp(
   `(?:${ANY_IDENT.source}\\.)+${ANY_IDENT.source}`
 );
 
-/**
- * SQL keywords that should never be mistaken for identifiers in certain contexts.
- *
- * @remarks
- * This list is used for validation and to prevent accidental extraction of
- * keywords as table names during parsing.
- *
- * @constant
- * @readonly
- */
+/** SQL keywords that should never be mistaken for identifiers in certain contexts. */
 const SQL_KEYWORDS: string[] = [
   'select', 'insert', 'update', 'delete', 'from', 'join', 'where', 'set',
   'begin', 'end', 'values', 'exec', 'execute', 'top', 'distinct', 'all',
@@ -80,15 +38,7 @@ const SQL_KEYWORDS: string[] = [
   'declare', 'table', 'index', 'view', 'proc', 'procedure', 'with'
 ];
 
-/**
- * Regex to match any of the protected keywords as a distinct word boundary.
- *
- * @remarks
- * Performs a case-insensitive match on the full word against {@link SQL_KEYWORDS}.
- *
- * @constant
- * @readonly
- */
+/** Regex to match any of the protected keywords as a distinct word boundary. */
 export const KEYWORDS_RE = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})\\b$`, 'i');
 
 /**
@@ -102,9 +52,6 @@ export const KEYWORDS_RE = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})\\b$`, '
  * 2. Double-quoted identifiers: identified for bracket conversion; `""` is an escaped quote
  * 3. Single-quoted strings: identified for neutralization; `''` is an escaped quote
  * 4. Comments: identified for removal
- *
- * @constant
- * @readonly
  */
 export const PASS1_CLEANSE_RE = new RegExp(
   `${BRACKET_IDENT.source}|"(?:""|[^"])*"|'(?:''|[^'])*'|--[^\\r\\n]*`, 'g'
@@ -116,20 +63,12 @@ export const PASS1_CLEANSE_RE = new RegExp(
  * @remarks
  * Matches a fully qualified table reference, optionally followed by an alias.
  * Used during the normalization of comma-joins into explicit `JOIN` syntax.
- *
- * @constant
- * @readonly
  */
 export const TABLE_REF_WITH_ALIAS = new RegExp(
   `${ANY_IDENT.source}\\.${ANY_IDENT.source}(?:\\s+(?:AS\\s+)?${WORD_IDENT.source})?`
 );
 
-/**
- * Keywords that terminate a `FROM` clause in SQL statements.
- *
- * @remarks
- * Private constant used to build {@link FROM_TERMINATOR_RE}.
- */
+/** Keywords that terminate a `FROM` clause in SQL statements, used to build {@link FROM_TERMINATOR_RE}. */
 const FROM_KEYWORDS: string[] = [
   'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER',
   'ON', 'ORDER', 'GROUP', 'HAVING', 'WITH', 'SET'
@@ -145,11 +84,7 @@ const FROM_PUNCTUATION: string[] = [';', '\\)', '$'];
  *
  * @remarks
  * Word-boundary `\b` is applied only to keyword terminators; punctuation
- * and anchors do not use word boundaries. This pattern detects where a
- * table list in a `FROM` clause ends.
- *
- * @constant
- * @readonly
+ * and anchors do not use word boundaries.
  */
 export const FROM_TERMINATOR_RE = new RegExp(
   `\\s*(?:${FROM_KEYWORDS.map(k => k + '\\b').join('|')}|${FROM_PUNCTUATION.join('|')})`, 'i'

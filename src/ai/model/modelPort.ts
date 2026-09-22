@@ -490,11 +490,7 @@ export interface RepetitionStrike {
   readonly line: string;
 }
 
-// Occurrences of one line that make a generation degenerate: the 3rd identical repeat, not the
-// 50,000th character (PM 2026-09-16). Calibration over the 341 archived wire responses of
-// 2026-09-16 (m17-head, m15-local-score, m14-head, m16-close): every one of the 9 degenerate
-// loop bodies (33-172 observed repeats each) trips at 3, and no tool-bearing or `stop`-finished
-// response trips at all.
+// Occurrences of one line that make a generation degenerate: the 3rd identical repeat, not the 50,000th character. Calibrated so every degenerate loop body trips at 3, and no tool-bearing or `stop`-finished response trips at all.
 const REPETITION_STRIKE = 3;
 // Shortest repeated unit in any recorded loop is 37 chars; noise lines (`</parameter>`, `GO`,
 // table rules) are 12 chars or fewer. 32 splits the two, and keeps markdown table rows and DDL

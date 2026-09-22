@@ -36,8 +36,7 @@ const OverBudgetResultView = z.object({
   scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
 }).loose();
 
-// Canonical object-detail output always carries a nonblank id; anything else is malformed engine
-// output and must surface observably instead of being skipped in silence.
+// Canonical object-detail output always carries a nonblank id; anything else is malformed engine output and must surface observably instead of being skipped in silence.
 const ObjectDetailIdView = z.object({ id: z.string().trim().min(1) }).loose();
 
 /**
@@ -63,8 +62,7 @@ export function captureDiscoveryWalkFromObservations(
       onMalformed?.(observation.toolName, observation.callId);
       continue;
     }
-    // An error envelope in an observation slot is a read that inspected nothing — the engine's own
-    // reply (a body refused storage, a dispatcher rejection), never malformed canonical output.
+    // An error envelope in an observation slot is a read that inspected nothing — the engine's own reply, never malformed canonical output.
     if (readToolError(raw)) continue;
     const view = ObjectDetailIdView.safeParse(raw);
     if (!view.success) {
