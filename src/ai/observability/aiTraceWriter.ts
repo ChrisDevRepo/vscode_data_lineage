@@ -93,6 +93,11 @@ export type RuntimeLifecycleRecord =
       readonly outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed';
       /** Enumerated cause when `outcome` is `refused`; never free text. */
       readonly refusedBy?: 'gate_id_mismatch' | 'gate_kind_mismatch' | 'no_pending_gate';
+      /**
+       * When the action was received. The record's own `at` stamps an accepted approval only after
+       * the released turn finishes, so the pair separates decision wait from released work.
+       */
+      readonly decidedAt?: string;
     }
   | {
       readonly type: 'phase';

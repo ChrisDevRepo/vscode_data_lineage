@@ -42,9 +42,10 @@ import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolProvider';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
-import { captureDiscoveryWalkFromObservations, captureRejectedScopeOffer, emitDiscoveryBudgetNotice } from './discoveryCapture';
+import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, emitDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
 import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, trunc as truncStatusLabel, type ProviderErrorDiagnostic } from '../support/text';
@@ -68,7 +69,6 @@ import {
 import {
   executeToolAttempt,
   initialToolPhaseAttemptState,
-  MAX_ABANDONED_HOPS_PER_RUN,
   MAX_TOOL_PROVIDER_CALLS,
   MAX_TOOL_SEMANTIC_FAILURES,
   recordToolAttempt,
@@ -149,22 +149,25 @@ const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
 };
 
 /**
- * Chat-facing short form of a rejection code for repair-progress lines.
+ * Chat-facing text for each {@link RejectionChatGroup}, derived once from
+ * {@link classifyRejectionCode}'s id so the group id (used in debug `group=`/`classes=` fields) and
+ * its chat wording can never drift apart.
  *
  * @remarks
- * One fixed label per observed code — the raw `reason` prose stays in the debug channel; an
- * unmapped code falls through verbatim rather than being guessed at.
+ * `correction` is the fallback every unmapped code resolves to — no rejection code ever reaches the
+ * user raw, whatever new guard is added later.
  */
-const REJECTION_SHORT_LABELS: Readonly<Record<string, string>> = {
-  missing_required_tool_call: 'no required tool call',
-  validation: 'invalid tool arguments',
-  empty_structured_output: 'empty output',
+const REJECTION_GROUP_CHAT_TEXT: Readonly<Record<RejectionChatGroup, string>> = {
+  column_mapping: 'column mapping',
+  source_selection: 'source selection',
+  answer_format: 'answer format',
+  correction: 'correction',
 };
 
-/** Short cause of an attempt's latest rejection, for repair-progress chat lines. */
+/** Chat-facing group text for an attempt's latest rejection, for repair-progress chat lines. */
 function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>): string {
   const last = attempt.rejections[attempt.rejections.length - 1];
-  return last ? REJECTION_SHORT_LABELS[last.code] ?? last.code : 'rejected call';
+  return last ? REJECTION_GROUP_CHAT_TEXT[classifyRejectionCode(last.code)] : 'rejected call';
 }
 
 /**
@@ -274,19 +277,19 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   // `buildActiveInstruction` is documented byte-identical across the active hop it renders for
   // (stable mission/rules prefix only), yet `activeWorkerNode` self-loops back into itself once per
   // provider attempt within that hop. Memoize on the hop's own advance key — `activeHopCount` only
-  // moves forward on a committed submit, and `focusId`/`isCtMode` change in lockstep with it — so
+  // moves forward on a committed submit, and `focusId`/`hopMode` change in lockstep with it — so
   // wall time or attempt count never drives invalidation, only the hop genuinely advancing.
   let activeInstructionCache: { readonly key: string; readonly instruction: StageSystemInstruction } | null = null;
   const getActiveInstructionCached = (
     state: AgentStateType,
     sess: AiSession,
     ctx: StagePromptContext,
-    isCtMode: boolean,
+    hopMode: 'bb' | 'ct',
     focusId: string,
   ): StageSystemInstruction => {
-    const key = `${state.activeHopCount}:${focusId}:${isCtMode}`;
+    const key = `${state.activeHopCount}:${focusId}:${hopMode}`;
     if (activeInstructionCache?.key !== key) {
-      activeInstructionCache = { key, instruction: buildActiveInstruction(sess, ctx, isCtMode) };
+      activeInstructionCache = { key, instruction: buildActiveInstruction(sess, ctx, hopMode) };
     }
     return activeInstructionCache.instruction;
   };
@@ -403,6 +406,48 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject}…`;
     const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
     deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.semanticFailures} — ${rejectionCauseLabel(nextAttempt)})`);
+  };
+
+  /**
+   * Debug-only per-hop convergence summary, emitted once an active hop that recorded at least one
+   * rejection reaches a terminal disposition (committed, salvaged with the focus left
+   * undispositioned, or failed the turn outright).
+   *
+   * @remarks
+   * Complements the per-attempt `[AI] [Attempt]` line and toolProvider's `[Reject]` line with the
+   * one line support needs to correlate a chat retry count ({@link emitRepairProgress}) with what
+   * the hop actually did: the ordered chain of rejection GROUPS — never raw codes, the same rule the
+   * chat line follows — and whether the model was converging on one fault category or bouncing
+   * between unrelated ones.
+   *
+   * `converging` compares only the final two recorded rejections, the model's most recent correction
+   * against the one immediately before it: equal groups mean the retry stayed on the SAME category
+   * of fault (still working the issue), a changed group means it moved to a different one. A hop
+   * with only one rejection has no prior group to diverge from, so it reads as converging by default.
+   *
+   * `charged=` is intentionally absent — {@link isChargeableRejection}'s accounting lives in
+   * `toolAttempt.ts`, a file this package does not own.
+   *
+   * @param hop - The hop number this attempt state belongs to, matching the chat "Hop X/Y" counter.
+   * @param focusId - The hop's focus node id, `[schema].[object]` form.
+   * @param attempt - The hop's cumulative attempt state at its terminal disposition.
+   * @param outcome - How the hop concluded.
+   */
+  const emitHopConvergenceSummary = (
+    hop: number,
+    focusId: string,
+    attempt: Pick<ToolPhaseAttemptState, 'rejections' | 'providerCalls'>,
+    outcome: 'committed' | 'kept_undispositioned' | 'failed',
+  ): void => {
+    if (attempt.rejections.length === 0) return;
+    const classes = attempt.rejections.map(rejection => classifyRejectionCode(rejection.code));
+    const last = classes[classes.length - 1];
+    const secondLast = classes.length > 1 ? classes[classes.length - 2] : undefined;
+    const converging = secondLast === undefined || secondLast === last;
+    deps.logger?.debug(
+      `[Retry] hop=${hop} focus=${focusId} attempts=${attempt.rejections.length} classes=${classes.join('→')}`
+      + ` providerCalls=${attempt.providerCalls}/${MAX_TOOL_PROVIDER_CALLS} converging=${converging ? 'yes' : 'no'} outcome=${outcome}`,
+    );
   };
 
   const failEngineRestore = (err: unknown): AgentStateUpdate => {
@@ -781,15 +826,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messages,
       system: discoveryInstruction.system,
       detectGate: detectGateFromToolResult,
-      // Oversized `get_scope_bundle` stays on this path: the envelope is a rejection (never
-      // charged) the model recovers from with a narrower read. Only `/trace` and the offer pill
-      // enter SM via entryRouting, not this overflow.
-      onToolResult: (toolName, input, _isError, resultText) => {
-        const seed = captureRejectedScopeOffer(toolName, input, resultText);
-        if (seed) {
-          deps.getSession().seedSmOfferFromRejectedOrigin(seed.origin, seed.walkCount, state.prompt, '');
-        }
-      },
+      detectReroute: detectOverBudgetFromResult,
       requiresToolEvidence: priorAttempt.observations.length === 0,
       proseGate: 'buffer-until-tool',
     }, ['Discovery failed', 'Discovery', 'without an answer']);
@@ -798,10 +835,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') {
       return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     }
+    // An oversized scope is not an inline answer: the guard trips, discovery is cut, and the turn
+    // routes to SM entry, where `lineage_start_exploration` opens the consent gate.
+    if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'discover' };
     if (res.stop !== 'final') return { ...fail('Discovery ended without an accepted answer.'), toolAttempt: nextAttempt };
 
-    // A multi-object discovery walk — or an oversized scope that stayed in chat — enables the SM-offer pill.
+    // A multi-object discovery walk enables the deeper-analysis suggestion.
     const sess = deps.getSession();
     const scope = sess.discoveryScopeArtifact;
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
@@ -810,14 +850,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       sess.recordDiscovery(scope.origin, scope.nodeIds.length, state.prompt, res.text);
     } else if (walk) {
       sess.recordDiscovery(walk.origin, walk.walkCount, state.prompt, walk.answer);
-    } else if (sess.lastDiscoveryOrigin) {
-      sess.recordDiscovery(
-        sess.lastDiscoveryOrigin,
-        sess.lastDiscoveryWalkCount,
-        state.prompt,
-        res.text,
-        sess.lastDiscoveryOverBudget,
-      );
     }
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
@@ -1144,8 +1176,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { engineSnapshot: engine.toJSON(), phase: 'active_coordinator' };
     }
 
-    const isCtMode = !!engine.columnAspect;
-    const systemInstruction = getActiveInstructionCached(state, sess, getCtx(state), isCtMode, focusId);
+    // One read of the hop's mode, used for the prompt assembly, the LM stage and the plan facts
+    // alike. The engine owns the determination (`currentHopAnalysisMode`); deriving it twice here is
+    // exactly the divergence `compileInstructionPlan` refuses to compile.
+    const hopMode = engine.currentHopAnalysisMode;
+    const systemInstruction = getActiveInstructionCached(state, sess, getCtx(state), hopMode, focusId);
 
     // Status-only: emit the hop-progress counter (Hop X/Y) here, and the previous hop's committed digest
     // once it lands below. The worker buffers planning prose, so no worker chatter reaches the
@@ -1201,7 +1236,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ...hopInstruction.classificationGatedKeys,
     ]);
 
-    const activeStage = { kind: 'active', mode: activeModeOf(isCtMode) } as const;
+    const activeStage = { kind: 'active', mode: activeModeOf(hopMode === 'ct') } as const;
     const hopStartedAt = Date.now();
     const res = await withLmStage(activeStage, () => runToolAttempt(compileInstructionPlan({
       kind: 'converse',
@@ -1209,7 +1244,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       registry: deps.registry,
       // Merge system + hop provenance (as templateKeys does): the stable prefix's memos and the
       // per-hop message's task/capture/memory blocks are both delivered to this active call.
-      facts: explorationFacts(engine.currentAnalysisMode, engine.currentTargetColumns ?? undefined, {
+      facts: explorationFacts(hopMode, hopMode === 'ct' ? engine.currentTargetColumns ?? undefined : undefined, {
         classification,
         templateKeys: [...systemInstruction.templateKeys, ...hopInstruction.templateKeys],
         memorySections: [...systemInstruction.memorySections, ...hopInstruction.memorySections],
@@ -1234,20 +1269,31 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${state.activeHopCount + 1}`, hopStartedAt);
+    // Engine-dispatched hop number; a supplement enters with the engine already advanced.
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${safeHopCount(engine)}`, hopStartedAt);
 
     /**
      * Routes the exploration's submitted hops to synthesis with a user-visible partial-coverage
      * note. Submitted hops are finished work; the archive render (`advanceToSynthesis`) presents
      * them as partial coverage instead of discarding the exploration.
      */
-    const salvageSubmittedHops = (reason: string): AgentStateUpdate => {
+    /**
+     * Ends the exploration on the hops already submitted instead of discarding them.
+     *
+     * @param reason - The attempt-budget or transport stop that ended the active hop.
+     * @param stoppedOnLabel - Display label of the focus the run stopped on, when the stop names
+     *   one. Included in the user-visible line so the notice says WHERE coverage ends, not just
+     *   that it does — a bare "stopped early" leaves the reader unable to tell which part of the
+     *   graph is incomplete.
+     */
+    const salvageSubmittedHops = (reason: string, stoppedOnLabel?: string): AgentStateUpdate => {
       deps.logger?.debug(
         `[AI] [Salvage] ${reason} after ${state.activeHopCount} submitted hop(s)`
         + ' — synthesising partial coverage instead of discarding the exploration',
       );
+      const where = stoppedOnLabel ? ` on ${stoppedOnLabel}` : '';
       deps.sink.stream(
-        `\n\n_⚠️ Exploration stopped early — presenting partial coverage from ${state.activeHopCount} completed hop(s)._`,
+        `\n\n_⚠️ Exploration stopped early${where} — presenting partial coverage from ${state.activeHopCount} completed hop(s)._`,
       );
       return { ...advanceToSynthesis(sess, engine), toolAttempt: null };
     };
@@ -1267,36 +1313,24 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (deps.signal?.aborted) return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration active hop', 'without submitting findings');
     if (stopped) {
-      // A repeated semantic failure abandons THAT hop and continues the agenda — it does not end
-      // the run — as long as the run-level abandon budget is not exhausted and the engine accepts
-      // dropping this one focus (structural refusals like `prune_origin_forbidden` fall through to
-      // salvage below, same as any other stop this loop cannot recover from).
-      if (stopped.reason === 'semantic_failures' && countAbandonedHops(engine) < MAX_ABANDONED_HOPS_PER_RUN) {
-        if (tryAbandonStuckFocus(engine, focusId, stopped.reason)) {
-          const abandonedCount = countAbandonedHops(engine);
-          deps.logger?.debug(
-            `[AI] [Abandon] phase=active focus=${focusId} reason=${stopped.reason}`
-            + ` abandoned=${abandonedCount}/${MAX_ABANDONED_HOPS_PER_RUN} — exploration continues`,
-          );
-          deps.sink.status('scoping', `_⛔ ${focusLabel} skipped — repeated ${stopped.reason}, exploration continues_`);
-          const hop = safeHopCount(engine);
-          observeWrite(sess.recordMemoryWipeEvent(deps.turnEpoch, {
-            kind: 'sliding',
-            trigger: 'abandoned_hop',
-            hop,
-            messagesBefore: state.messages.length,
-          }));
-          return {
-            engineSnapshot: engine.toJSON(),
-            messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
-            toolAttempt: null,
-            phase: 'active_coordinator',
-          };
-        }
-      }
+      // ONE repeated-error guard, one disposition. An exhausted attempt budget is handled here
+      // exactly as it is in every other phase (`detect_entry`, exploration entry, scope refinement,
+      // synthesis): the stop stands, completed work salvages, and the turn ends. The active hop
+      // deliberately owns no private recovery — it previously converted this same stop into a
+      // host-authored `verdict: 'prune'` on the stuck focus, which both destroyed a node the model
+      // never voted to remove (the engine validates verdicts, it does not author them — see
+      // `docs/ARCHITECTURE.md`) and gave one condition two behaviours depending on which phase hit
+      // it. The stuck focus is left UNDISPOSITIONED and is retained by result assembly, alongside
+      // anything behind it the walk never reached.
       if (shouldSalvageActiveStop(stopped.reason, state.activeHopCount)) {
-        return salvageSubmittedHops(stopped.reason);
+        deps.logger?.debug(
+          `[AI] [Stop] phase=active reason=${stopped.reason} focus=${focusId}`
+          + ` submittedHops=${state.activeHopCount} disposition=salvage — focus left undispositioned`,
+        );
+        emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'kept_undispositioned');
+        return salvageSubmittedHops(stopped.reason, focusLabel);
       }
+      emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'failed');
       return {
         ...failActiveIncomplete(state, engine, stopped.reason, stopped.message),
         ...(stopped.errorCode ? { errorCode: stopped.errorCode } : {}),
@@ -1315,6 +1349,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       };
     }
 
+    emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'committed');
     const hop = safeHopCount(engine);
     observeWrite(sess.setHopCount(deps.turnEpoch, hop));
     const wipeTrigger = 'submit_ok';
@@ -1422,6 +1457,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       // Read on every provider step: a repairable rejection in step N makes only step N+1 expose
       // the strict patch schema. The live fact is never persisted as InstructionPlan policy.
       presentResultRepairFields: () => sess.presentResultRepairDraft.getAuthorization(),
+      // A supplement round re-enters synthesis over a report this run already committed; only then
+      // may the render keep sections it does not resend.
+      presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       // Builder measures the memo blocks it assembled; the completion envelope's archive sections
       // (the call's user message, buildSmCompletionEnvelope) are declared inline at this assembly site.
       facts: explorationFacts(engine.currentAnalysisMode, engine.currentTargetColumns ?? undefined, {
@@ -1486,6 +1524,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'completed', {
       stage: { kind: 'completed' },
       toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationSupplementProviderInputSchema]]),
+      presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       // Follow-up context is the retained conversation, which carries the rendered result;
       // no separate archive block is assembled into this call.
       facts: { memorySections: ['conversation_history'] },
@@ -1501,8 +1540,22 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       // follow-up (no tool) flushes its prose so the user still gets the answer.
       proseGate: 'buffer-until-tool',
     }, ['Follow-up failed', 'Follow-up', 'without completing', () => sess.presentResultRepairDraft.clear()]);
-    if (attempt.terminal) return attempt.terminal;
+    if (attempt.terminal) {
+      // The phase is over and the graph is unchanged, but the answer to the user's question may
+      // already have been written and suppressed by `proseGate`. Deliver it rather than replacing
+      // it with an error, and say plainly that the graph did not change so the prose — which may
+      // have promised one — cannot mislead.
+      const salvaged = sess.bufferedFollowUpProse;
+      if (salvaged) {
+        deps.logger?.debug(`[AI] [Follow-up] breaker tripped with ${salvaged.length} chars of buffered prose — delivering it instead of the error`);
+        const answer = `${salvaged}\n\n_The graph was not changed — that step did not complete._`;
+        deps.sink.stream('\n\n' + answer);
+        return { outcome: 'ok', messages: [modelAssistantMessage(answer)], toolAttempt: null, phase: 'done' };
+      }
+      return attempt.terminal;
+    }
     const { result: res, nextAttempt } = attempt;
+    sess.bufferFollowUpProse(res.text);
     if (res.stop === 'gate') return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     if (res.stop === 'reroute') {
       const live = sess.stateMachine as NavigationEngine | null;
@@ -1511,6 +1564,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return {
         engineSnapshot: live ? live.toJSON() : state.engineSnapshot,
         activeHopCount: live ? safeHopCount(live) : state.activeHopCount,
+        // Blinkered like the gate-approval entry and the per-hop wipe: the hop reads focus,
+        // neighbours and memory from the engine, never the completed-phase conversation.
+        messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
         toolAttempt: null,
         phase: 'active_coordinator',
       };
@@ -1871,89 +1927,6 @@ export function shouldSalvageActiveStop(
 }
 
 /**
- * Sentinel prefix on a force-abandoned focus's archived summary.
- *
- * @remarks
- * {@link countAbandonedHops} greps it back out of the engine's own pruned-detail archive
- * ({@link NavigationEngine.getPrunedDetails}) so the run-level {@link MAX_ABANDONED_HOPS_PER_RUN}
- * governor needs no dedicated state channel — the abandonment is already durable, engine-owned
- * lifecycle data (a `DetailSlot`) the moment {@link tryAbandonStuckFocus} lands it, and it is
- * carried into the run's own archive exactly like any other pruned node.
- */
-export const ABANDONED_HOP_SUMMARY_PREFIX = '[engine-abandoned]';
-
-/**
- * Counts hops this run has already force-abandoned for repeated semantic failure.
- *
- * @param engine - The live exploration engine.
- * @returns The number of previously abandoned hops, read back via {@link ABANDONED_HOP_SUMMARY_PREFIX}.
- */
-export function countAbandonedHops(engine: NavigationEngine): number {
-  return engine.getPrunedDetails().filter(
-    (detail) => detail.summary.startsWith(ABANDONED_HOP_SUMMARY_PREFIX),
-  ).length;
-}
-
-/**
- * Force-abandons the engine's current focus after it exhausted {@link MAX_TOOL_SEMANTIC_FAILURES}
- * within one hop, so a single unreachable node cannot end a run whose agenda still holds other
- * work.
- *
- * @remarks
- * Dispatches through the SAME `verdict: 'prune'` path the model's own `lineage_submit_findings`
- * tool call uses ({@link NavigationEngine.submitFindings}) — no new engine mechanism, and no
- * branch on CT vs. BB (the prune path is already mode-uniform). The engine may refuse
- * structurally — `prune_origin_forbidden` on the immutable origin, `prune_would_orphan_noted`
- * when the topology still needs this node reachable — and both are genuine "cannot make progress
- * here" signals, so the caller falls back to the existing salvage-to-synthesis path on `false`.
- * On success this also calls {@link NavigationEngine.getHopContext} to dequeue the next agenda
- * entry immediately, mirroring the tool handler's own post-commit call (`submitFindings.ts`), so
- * the coordinator sees a fresh focus — or a drained agenda — on its very next pass instead of
- * re-offering the just-abandoned node.
- *
- * @remarks
- * T7-DETAIL-SLOT-STARVATION: when the abandoned focus was the sole live bridge to an unvisited
- * bodied subtree, draining the agenda here forecloses that subtree — its nodes stay `kept` from
- * the initial BFS scope but never get hopped, so they never earn a detail slot. The focus's own
- * {@link NavigationEngine.requiredNeighborIds} (the same directional-neighbor set `submitFindings`
- * demands an account for) is captured before the forced prune and, only when the prune drains the
- * agenda to `'complete'`, handed to {@link NavigationEngine.supplementAgenda} — the same
- * host-initiated re-entry path `startExploration.ts`'s own `supplement` branch already uses — so
- * the bipartite `enqueueHop` rule gives those successors the same one chance a normal routed hop
- * would have. No new engine mechanism: both calls are pre-existing public API, and nothing changes
- * when the agenda still holds other work (the case this repair does not need to touch).
- *
- * @param engine - The live exploration engine.
- * @param focusId - The engine's current focus (the node that exhausted its semantic budget).
- * @param reason - The attempt-stop reason driving the abandonment, folded into the archived note.
- * @returns Whether the focus was abandoned and the agenda advanced.
- */
-export function tryAbandonStuckFocus(engine: NavigationEngine, focusId: string, reason: string): boolean {
-  // Captured before the prune commits: a directional neighbor's own visited/agenda/removed status
-  // decides membership here, not the focus's, so pre- vs. post-prune capture is equivalent — but
-  // capturing before keeps this read beside the still-current focus, matching every other reader
-  // of `requiredNeighborIds` (the completeness guard inside `submitFindings` itself).
-  const strandedSuccessorIds = engine.requiredNeighborIds(focusId);
-  const result = engine.submitFindings({
-    focus_node_id: focusId,
-    sections: [],
-    summary: `${ABANDONED_HOP_SUMMARY_PREFIX} ${focusId} — repeated ${reason}, exploration continues without it`,
-    verdict: 'prune',
-  });
-  if ('error' in result) return false;
-  engine.getHopContext();
-  // Only the drained-to-complete case forecloses anything — otherwise the agenda already holds
-  // other live work and these successors are no worse off for the abandoned hop.
-  if (engine.status === 'complete' && strandedSuccessorIds.length > 0) {
-    const supplement = engine.supplementAgenda(strandedSuccessorIds);
-    if ('ok' in supplement && supplement.agendaed + supplement.contracted > 0) {
-      engine.getHopContext();
-    }
-  }
-  return true;
-}
-
-/**
  * Whether a synthesis breaker trip can be salvaged by rendering the already-held
  * `lineage_present_result` draft instead of discarding it.
  *
@@ -1979,8 +1952,7 @@ export function canSalvageSynthesisDraft(repairFields: readonly PresentResultRep
  * canonical dispatch surface (`dispatchRegistryTool`, `toolAttempt.ts`, is literally
  * `registry.invoke(name, input)`), the handler's existing hold-and-amend branch
  * (`presentResult.ts`), and the existing `validatePresentResult` pipeline. No new rendering path,
- * no new tool, no second validation — mirrors {@link tryAbandonStuckFocus}'s "call the existing
- * mechanism directly instead of through another model round" shape for the active phase.
+ * no new tool, no second validation.
  *
  * Dispatched only when {@link canSalvageSynthesisDraft} allows it, so the one patch sent is always
  * `{ is_update: true, notes: [] }`: the held draft's sole outstanding repair field, resent empty.

@@ -1,20 +1,22 @@
 /**
- * BUDGET-STAY-DISCOVERY: an oversized `lineage_get_scope_bundle` stays in discovery.
+ * BUDGET-REROUTE-DISCOVERY: an oversized `lineage_get_scope_bundle` cuts discovery short.
  *
- * The envelope is a rejection (never charged) the model recovers from with a narrower read; the
- * existing SM-offer pill is the opt-in. Only `/trace` (with or without a named column) opens
- * SM-entry immediately via entryRouting; a free-text `column_trace` verdict runs discovery first.
+ * The guard trips on either metric (node cap or token budget), graph dispatch treats that result as
+ * a reroute terminal, and the turn leaves discovery for SM entry — where `lineage_start_exploration`
+ * opens the consent gate. The model never gets another discovery attempt to answer inline from the
+ * rejection, so no summary-then-offer contract can be ignored.
  */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
 import { TurnEventSink, type NativeGateEvent, type TurnEvent } from '../../../src/ai/runtime/turnEventSink';
 import { AiSession } from '../../../src/ai/session/session';
+import { EntryDetectionSchema } from '../../../src/ai/agent/state';
 import {
   checkScopeBudget,
   DEFAULT_TURN_TOKEN_BUDGET,
 } from '../../../src/ai/support/tokenBudget';
-import { captureRejectedScopeOffer, emitDiscoveryBudgetNotice, readOverBudgetNotice } from '../../../src/ai/agent/discoveryCapture';
+import { detectOverBudgetFromResult, emitDiscoveryBudgetNotice, readOverBudgetNotice } from '../../../src/ai/agent/discoveryCapture';
 import {
   ScriptedModelPort,
   scriptedRegistry,
@@ -22,7 +24,6 @@ import {
 } from './helpers/scriptedModelPort';
 
 const ORIGIN = '[ai].[FactSalesReport]';
-const SUMMARY = 'FactSalesReport is a large neighbourhood. A detailed analysis would be needed.';
 
 const GATE_RESULT = JSON.stringify({
   error: 'action_required',
@@ -65,31 +66,20 @@ function makeGateSink() {
   return { events, sink, nextGate };
 }
 
-describe('captureRejectedScopeOffer', () => {
-  it('reads origin from scope_proposal and keeps the projected walkCount', () => {
-    const seed = captureRejectedScopeOffer(
-      'lineage_get_scope_bundle',
-      { origin: ORIGIN },
-      overBudgetEnvelope(),
-    );
-    expect(seed?.origin).toBe(ORIGIN);
-    expect(seed?.walkCount).toBe(48);
+describe('detectOverBudgetFromResult', () => {
+  it('reroutes an oversized scope bundle', () => {
+    expect(detectOverBudgetFromResult('lineage_get_scope_bundle', overBudgetEnvelope())).toBe(true);
   });
 
-  it('falls back to the tool-call origin when the envelope omitted scope_proposal', () => {
-    const admission = checkScopeBudget(DEFAULT_TURN_TOKEN_BUDGET, 11, 0);
-    if (admission.ok) throw new Error('test fixture must overflow');
-    const seed = captureRejectedScopeOffer(
-      'lineage_get_scope_bundle',
-      { origin: ORIGIN },
-      JSON.stringify(admission),
-    );
-    expect(seed?.origin).toBe(ORIGIN);
-    expect(seed?.walkCount).toBe(11);
+  it('never reroutes another catalog surface carrying the same shared envelope', () => {
+    // `checkScopeBudget` is shared: an oversized stored-run recall must stay a narrowing hint, not
+    // become a fresh exploration approval gate.
+    expect(detectOverBudgetFromResult('lineage_get_screen_state', overBudgetEnvelope())).toBe(false);
   });
 
-  it('ignores a non-scope tool even when the envelope reason matches', () => {
-    expect(captureRejectedScopeOffer('lineage_get_screen_state', { origin: ORIGIN }, overBudgetEnvelope())).toBeNull();
+  it('returns false for non-budget envelopes and malformed JSON', () => {
+    expect(detectOverBudgetFromResult('lineage_get_scope_bundle', JSON.stringify({ error: 'not_found' }))).toBe(false);
+    expect(detectOverBudgetFromResult('lineage_get_scope_bundle', 'not json')).toBe(false);
   });
 });
 
@@ -104,36 +94,42 @@ describe('readOverBudgetNotice', () => {
   it('falls back to the default hint when the envelope omitted it', () => {
     const admission = checkScopeBudget(DEFAULT_TURN_TOKEN_BUDGET, 11, 0);
     if (admission.ok) throw new Error('test fixture must overflow');
-    const notice = readOverBudgetNotice('lineage_get_object_detail', JSON.stringify({ ...admission, scope_proposal: undefined }));
+    const notice = readOverBudgetNotice('lineage_get_object_detail', JSON.stringify({ ...admission, hint: undefined }));
     expect(notice?.nodes).toBe(11);
-    expect(notice?.hint).toContain('a detailed analysis');
+    expect(notice?.hint).toContain('Narrow the request');
   });
 
   it('returns null for non-budget envelopes and malformed JSON', () => {
-    expect(readOverBudgetNotice('lineage_get_scope_bundle', JSON.stringify({ error: 'not_found' }))).toBeNull();
-    expect(readOverBudgetNotice('lineage_get_scope_bundle', 'not json')).toBeNull();
+    expect(readOverBudgetNotice('lineage_get_object_detail', JSON.stringify({ error: 'not_found' }))).toBeNull();
+    expect(readOverBudgetNotice('lineage_get_object_detail', 'not json')).toBeNull();
   });
 });
 
 describe('emitDiscoveryBudgetNotice', () => {
-  it('emits one recoverable inline notice per turn, deduped across rejections', () => {
+  it('stays silent for a scope bundle — the reroute and its approval gate are the signal', () => {
     const { sink, events } = collectingSink();
     emitDiscoveryBudgetNotice(sink, 'lineage_get_scope_bundle', overBudgetEnvelope());
+    expect(events).toHaveLength(0);
+  });
+
+  it('emits one recoverable inline notice per turn on the surfaces that stay inline', () => {
+    const { sink, events } = collectingSink();
     emitDiscoveryBudgetNotice(sink, 'lineage_get_screen_state', overBudgetEnvelope());
+    emitDiscoveryBudgetNotice(sink, 'lineage_get_object_detail', overBudgetEnvelope());
     const notices = events.filter(event => event.type === 'error');
     expect(notices).toHaveLength(1);
     const first = notices[0];
     if (first.type !== 'error') throw new Error('unreachable');
     expect(first.recoverable).not.toBe(false);
     expect(first.message).toContain('Discovery budget reached');
-    expect(first.message).toContain('lineage_get_scope_bundle');
+    expect(first.message).toContain('lineage_get_screen_state');
   });
 
   it('marks nodes only when the envelope carried a count and stays silent for other results', () => {
     const { sink, events } = collectingSink();
     emitDiscoveryBudgetNotice(sink, 'lineage_search_objects', JSON.stringify({ matches: [] }));
     expect(events).toHaveLength(0);
-    emitDiscoveryBudgetNotice(sink, 'lineage_get_scope_bundle', JSON.stringify({
+    emitDiscoveryBudgetNotice(sink, 'lineage_get_screen_state', JSON.stringify({
       reason: 'over_discovery_budget',
       hint: 'Scope exceeds the discovery budget.',
     }));
@@ -143,8 +139,8 @@ describe('emitDiscoveryBudgetNotice', () => {
   });
 });
 
-describe('oversized discovery stays in chat', () => {
-  it('finishes discovery with a summary and seeds the existing SM-offer from the rejected origin', async () => {
+describe('oversized discovery cuts to the approval process', () => {
+  it('reroutes to SM entry and opens the consent gate instead of answering inline', async () => {
     const session = new AiSession();
     const epoch = session.beginTurn();
     const model = new ScriptedModelPort([
@@ -155,21 +151,24 @@ describe('oversized discovery stays in chat', () => {
           downstream_depth: 'all',
         })],
       },
-      // The budget envelope is a rejection, not held evidence: the recovery the layer teaches is a
-      // narrower per-object read, which lands the observation a text-only summary needs.
+      // SM entry: the reroute handed the turn here, and the only valid action is the start call
+      // that opens the gate.
       {
-        toolCalls: [validCall('detail-1', 'lineage_get_object_detail', { id: ORIGIN })],
+        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
+          origin: ORIGIN,
+          analysisMode: 'bb' as const,
+          classification: 'business' as const,
+        })],
       },
-      { text: SUMMARY },
     ]);
     const { registry, invocations } = scriptedRegistry([
       { name: 'lineage_get_scope_bundle', result: overBudgetEnvelope() },
       { name: 'lineage_get_object_detail', result: JSON.stringify({ id: ORIGIN, definition: 'CREATE VIEW ai.FactSalesReport AS SELECT 1;' }) },
       { name: 'lineage_start_exploration', result: GATE_RESULT },
     ]);
-    const { sink, events } = collectingSink();
+    const { sink, events, nextGate } = makeGateSink();
     const runtime = new AgentRuntime({
-      threadId: 'budget-stay-discovery',
+      threadId: 'budget-reroute-discovery',
       getSession: () => session,
       model: model as unknown as ModelPort,
       registry,
@@ -178,19 +177,20 @@ describe('oversized discovery stays in chat', () => {
       maxRounds: 4,
     });
 
-    await expect(runtime.run(`/search What feeds ${ORIGIN}?`)).resolves.toBe('ok');
+    const running = runtime.run(`/search What feeds ${ORIGIN}?`);
+    const gate = await nextGate();
+    expect(gate.gate, 'the over-budget cut opens the exploration approval gate').toBe('confirm_sm_start');
+    runtime.resumeGate(gate.gateId, { kind: 'cancel' });
+    await expect(running).resolves.toBe('ok');
 
-    expect(invocations.map(call => call.toolName)).toEqual(['lineage_get_scope_bundle', 'lineage_get_object_detail']);
-    expect(events.some(event => event.type === 'gate'), 'oversized discovery must not open SM-entry').toBe(false);
-    expect(session.phase.kind).toBe('idle');
-    expect(session.pendingExploration).toBeNull();
-    expect(session.smOfferAvailable()).toBe(true);
-    expect(session.lastDiscoveryOrigin).toBe(ORIGIN);
-    expect(session.lastDiscoveryAnswer).toBe(SUMMARY);
-    expect(events.filter(event => event.type === 'text').map(event => event.type === 'text' ? event.delta : '')).toContain(SUMMARY);
-    const notices = events.filter(event => event.type === 'error');
-    expect(notices, 'the budget rejection must reach the user, not only the model').toHaveLength(1);
-    expect(notices[0].type === 'error' ? notices[0].message : '').toContain('Discovery budget reached');
+    expect(invocations.map(call => call.toolName)).toEqual(['lineage_get_scope_bundle', 'lineage_start_exploration']);
+    expect(model.requests[0]?.phase).toBe('discover');
+    expect(model.requests[1]?.phase).toBe('sm_entry');
+    expect(
+      events.filter(event => event.type === 'error'),
+      'the reroute speaks through the gate — no inline budget notice on this path',
+    ).toHaveLength(0);
+    expect(session.smOfferAvailable(), 'a cut discovery never records a walk for the offer pill').toBe(false);
   });
 
   it.each([
@@ -208,7 +208,7 @@ describe('oversized discovery stays in chat', () => {
     ]);
     const { sink, nextGate } = makeGateSink();
     const runtime = new AgentRuntime({
-      threadId: 'budget-stay-slash-trace',
+      threadId: 'budget-reroute-slash-trace',
       getSession: () => session,
       model: model as unknown as ModelPort,
       registry,
@@ -224,11 +224,16 @@ describe('oversized discovery stays in chat', () => {
     await expect(running).resolves.toBe('ok');
   });
 
-  it('a free-text column_trace verdict runs discovery first and offers instead of gating', async () => {
-    // The detector verdict observed live: column_trace with a string-encoded object name.
+  it('a free-text column_trace verdict runs discovery first, then cuts on the guard', async () => {
+    // The detector verdict observed live: column_trace with a string-encoded object name, decoded
+    // here through the same schema the real detector call is validated by. The semantic verdict
+    // never selects the stage — discovery runs, and only the guard routes to SM.
     class ColumnTraceVerdictPort extends ScriptedModelPort {
       public override generateStructured<T>(): Promise<T> {
-        return Promise.resolve({ entry: 'column_trace', targetColumns: `["${ORIGIN}"]` } as T);
+        return Promise.resolve(EntryDetectionSchema.parse({
+          entry: 'column_trace',
+          targetColumns: `["${ORIGIN}"]`,
+        }) as T);
       }
     }
     const session = new AiSession();
@@ -242,18 +247,21 @@ describe('oversized discovery stays in chat', () => {
         })],
       },
       {
-        toolCalls: [validCall('detail-1', 'lineage_get_object_detail', { id: ORIGIN })],
+        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
+          origin: ORIGIN,
+          analysisMode: 'ct' as const,
+          classification: 'business' as const,
+          targetColumns: [ORIGIN],
+        })],
       },
-      { text: SUMMARY },
     ]);
     const { registry, invocations } = scriptedRegistry([
       { name: 'lineage_get_scope_bundle', result: overBudgetEnvelope() },
-      { name: 'lineage_get_object_detail', result: JSON.stringify({ id: ORIGIN, definition: 'CREATE VIEW ai.FactSalesReport AS SELECT 1;' }) },
       { name: 'lineage_start_exploration', result: GATE_RESULT },
     ]);
-    const { sink, events } = collectingSink();
+    const { sink, nextGate } = makeGateSink();
     const runtime = new AgentRuntime({
-      threadId: 'budget-stay-free-text-column-trace',
+      threadId: 'budget-reroute-free-text-column-trace',
       getSession: () => session,
       model: model as unknown as ModelPort,
       registry,
@@ -262,14 +270,14 @@ describe('oversized discovery stays in chat', () => {
       maxRounds: 4,
     });
 
-    await expect(runtime.run(`review the obj. ${ORIGIN} the all way up what sources and explain business logic.`)).resolves.toBe('ok');
+    const running = runtime.run(`review the obj. ${ORIGIN} the all way up what sources and explain business logic.`);
+    const gate = await nextGate();
+    expect(gate.gate).toBe('confirm_sm_start');
+    runtime.resumeGate(gate.gateId, { kind: 'cancel' });
+    await expect(running).resolves.toBe('ok');
 
     expect(model.requests[0]?.phase).toBe('discover');
     expect(model.requests[0]?.tools.map(tool => tool.name)).not.toContain('lineage_start_exploration');
-    expect(invocations.map(call => call.toolName)).toEqual(['lineage_get_scope_bundle', 'lineage_get_object_detail']);
-    expect(events.some(event => event.type === 'gate'), 'free text never opens the approval gate directly').toBe(false);
-    expect(session.pendingExploration).toBeNull();
-    expect(session.smOfferAvailable()).toBe(true);
+    expect(invocations.map(call => call.toolName)).toEqual(['lineage_get_scope_bundle', 'lineage_start_exploration']);
   });
-
 });

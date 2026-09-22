@@ -1,5 +1,5 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
-import { SubmitFindingsBbInputSchema } from '../../../src/ai/tools/toolSchemas';
+import { SUBMIT_FINDINGS_BADGE_LABEL_MAX, SubmitFindingsBbInputSchema } from '../../../src/ai/tools/toolSchemas';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
 import { driveEngine, makeActiveFilter, makeModel, makeNode } from './helpers/fixtures';
@@ -66,21 +66,26 @@ describe("Scope Extension + Hold-and-Amend", () => {
     const second = engine.getHopContext() as any;
     expect(second.focus_node?.id === 'm', 'second focus is m').toBe(true);
   }
-  it("Test 3: hold-and-amend — forgetting one required neighbor holds the finding; the amend restores prose.", () => {
+  // A label two words over the cap: a field-scoped fault that leaves the authored prose valid, so
+  // the engine holds the draft. Forgetting a required neighbor no longer produces one — the engine
+  // fills that omission instead of refusing the hop (see `required-neighbor-out-of-scope.test.ts`).
+  const OVERLONG_BADGE = 'x'.repeat(SUBMIT_FINDINGS_BADGE_LABEL_MAX + 1);
+
+  it("Test 3: hold-and-amend — a field-scoped fault holds the finding; the amend restores prose.", () => {
   const engine = new NavigationEngine(fanModel, fanGraph, () => {}, {});
   engine.init({ origin: 'p', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   advanceToM(engine);
 
-  // Submit for m with only ONE of the two required neighbors → missing_required_route.
   const rej = engine.submitFindings({
     focus_node_id: 'm',
     sections: [{ angle: 'business' as const, text: 'the authored analysis of m — expensive prose' }],
     summary: 'm summary',
     verdict: 'analyze',
+    badge_label: OVERLONG_BADGE,
     route_requests: [{ nodeId: 'a', question: 'trace a' }],
   }) as any;
-  expect('error' in rej, 'forgetting neighbor b is rejected').toBe(true);
-  expect(engine.heldFindingFocus === 'm', 'finding for m is held after incompleteness reject').toBe(true);
+  expect('error' in rej, 'the over-length label is rejected').toBe(true);
+  expect(engine.heldFindingFocus === 'm', 'finding for m is held after the field-scoped reject').toBe(true);
 
   const merged = engine.applyHeldContent({
     focus_node_id: 'm',
@@ -259,9 +264,10 @@ describe("Scope Extension + Hold-and-Amend", () => {
     sections: [{ angle: 'business' as const, text: 'first draft' }],
     summary: 'first',
     verdict: 'analyze',
+    badge_label: OVERLONG_BADGE,
     route_requests: [{ nodeId: 'a', question: 'trace a' }],
   });
-  expect(engine.heldFindingFocus === 'm', 'held after first incompleteness reject').toBe(true);
+  expect(engine.heldFindingFocus === 'm', 'held after the first field-scoped reject').toBe(true);
   const reauthored = engine.applyHeldContent({
     focus_node_id: 'm',
     sections: [{ angle: 'business' as const, text: 'revised draft' }],

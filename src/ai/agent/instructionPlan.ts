@@ -143,6 +143,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly toolSchemaOverrides?: ReadonlyMap<string, z.ZodType>;
   /** Live ephemeral session fact read at each provider step; never copied into frame/context state. */
   readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
+  /** Whether a committed report from this run exists for `present_result` to amend; read live. */
+  readonly presentResultRetainableSections?: () => boolean;
 };
 
 type TextPlanDraft = Omit<CompleteTextInput, 'phase' | 'instructionContext'> & {
@@ -320,6 +322,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     facts,
     toolSchemaOverrides,
     presentResultRepairFields,
+    presentResultRetainableSections,
     ...input
   } = draft;
   const phase = phaseOf(stage);
@@ -345,7 +348,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
   if ((stage.kind === 'completed' || stageSupportsPresentResultRepair(stage)) && !liveRepairResolver) {
-    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind));
+    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false));
   }
   let registry = schemaOverrides.size
     ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
@@ -353,7 +356,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (liveRepairResolver) {
     registry = resolveRegistrySchemas(registry, new Map([[
       'lineage_present_result',
-      () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields()),
+      () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields(), presentResultRetainableSections?.() ?? false),
     ]]));
   }
   const toolNames = registry.getTools().map(tool => tool.name);

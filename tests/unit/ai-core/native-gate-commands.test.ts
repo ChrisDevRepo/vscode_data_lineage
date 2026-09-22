@@ -304,6 +304,7 @@ describe('native gate commands', () => {
       gate: 'confirm_sm_start',
       action: 'approve',
       outcome: 'accepted',
+      decidedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/) as unknown as string,
     });
   }, 20_000);
 

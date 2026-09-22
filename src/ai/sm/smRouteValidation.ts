@@ -11,6 +11,7 @@
 
 import type { InvalidRouteKind, InvalidRoute, SubmitResult } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { buildIncompleteRejection } from './smCompleteness';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
@@ -34,7 +35,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_out_col:
     'Declare column_flow only for an active tracked column this node carries. Every active tracked column still needs its own entry — continued with its upstream sources, or ended here with upstream_columns: []. Submit column_flow: [] only where this node declares none of them.',
   untracked_out_col:
-    'Set column_flow[].out_col to a tracked column from detail.available_columns - the named column exists on this node but the trace does not follow it - or submit column_flow: [] if this node carries no tracked column.',
+    'Set column_flow[].out_col to a tracked column from the `<column_trace> Active columns` list this hop was given, repeated in detail.available_columns — the named column exists on this node but the trace does not follow it — or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
     'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
   missing_required_route:
@@ -59,6 +60,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Pruning this node would orphan a committed node from the origin. Keep it and remove it from prune_neighbors.',
   prune_route_conflict:
     'This id appears in both route_requests and prune_neighbors — a node cannot be routed and pruned in one submit. Keep one verdict: remove it from prune_neighbors to route it (a required neighbor resolves by route), or remove it from route_requests when the prune verdict applies to this node.',
+  route_columns_flow_conflict:
+    'Make route_requests[].columns for this neighbor agree with this submission\'s column_flow[].upstream_columns: list the columns detail.available_columns names, or remove the upstream_columns entries that name it. Detail names the neighbor and the conflicting columns.',
 };
 
 /**
@@ -84,6 +87,14 @@ const HELD_CORRECTION_ORDER =
  */
 export const FULL_RESUBMIT_ORDER =
   'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.';
+/**
+ * Resubmission order for a rejection carrying several fault families at once, all of them
+ * field-scoped. Stated once for the whole envelope: the repairs differ, the prose does not, and a
+ * model that re-authored its sections because a second fault rode along would pay for the
+ * co-report the co-report exists to save.
+ */
+const MULTI_FAULT_HELD_ORDER =
+  'Your analysis is held: resend submit_findings with `sections: []` and every repair above applied in the same submission, to reuse your original sections and summary verbatim.';
 
 /**
  * True for a correctable field-scoped content error: a fatal kind that is neither neighbor
@@ -115,6 +126,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_origin_forbidden: 'prune_origin_forbidden',
   prune_would_orphan: REJECTION_CODES.pruneWouldOrphanNoted,
   prune_route_conflict: 'prune_route_conflict',
+  route_columns_flow_conflict: 'route_columns_flow_conflict',
 };
 
 /**
@@ -173,5 +185,118 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], appendHold
         ? { available_routes: e.available_routes }
         : {}),
     })),
+  };
+}
+
+/**
+ * Every fault one `submit_findings` payload carries, accumulated by the guard chain.
+ *
+ * @remarks
+ * Four independent families, each of which used to own an immediate `return` inside the chain.
+ * A family is present iff that fault is true of the payload; `repairWouldOwe` is disclosure, never
+ * a fault, and never decides whether a rejection is produced.
+ */
+export interface SubmissionFaults {
+  /** Route, prune-topology and column-reference faults; nonfatal notice kinds already removed. */
+  routes: InvalidRoute[];
+  /** `verdict:'prune'` submitted on the immutable exploration origin. */
+  originPrune?: { focusId: string; keepClause: string };
+  /** `verdict:'prune'` whose removal would disconnect a protected node from the origin. */
+  focusOrphan?: { focusId: string; orphanId: string; keepClause: string };
+  /** CT column-chain completeness: tracked columns the payload left unaccounted. */
+  columnChain?: { focusId: string; unaccounted: string[]; available: string[]; contradicted: readonly string[] };
+  /**
+   * Required neighbours a non-prune repair of this payload would bring into play. Stated because a
+   * `verdict:'prune'` payload is exempt from the neighbour demand: repairing the verdict is what
+   * raises the obligation, so a rejection that hides it hands the model an obligation set that
+   * appears only on the turn after the repair.
+   */
+  repairWouldOwe?: readonly string[];
+}
+
+/**
+ * Composes ONE rejection envelope naming every fault the payload carries.
+ *
+ * @remarks
+ * The guard chain accumulates and reports once instead of returning at the first fault. A first
+ * fault that hides the rest makes the model repair one defect, resubmit, and be told about the
+ * next — a cascade that spends the whole semantic budget on a payload with three faults in it.
+ * `docs/AI_PROMPTS.md` already promises one complete rejection per submission; this is where the
+ * promise is kept.
+ *
+ * A single-family payload keeps the exact code, hint and `detail` shape that family had as a
+ * standalone rejection, so nothing about the established envelopes changes. A multi-family payload
+ * reports under the first family's code, carries each family's `detail` under its own key, states
+ * the resubmission order once, and holds nothing — another repair rides along, so the sections have
+ * to come back with it, the same stricter policy a mixed route rejection already uses.
+ *
+ * @param faults - The accumulated faults; an empty set means the payload passed this chain.
+ * @returns The envelope plus whether the finding draft is held for the retry, or `null` when there
+ * is no fault to report.
+ */
+export function buildSubmissionRejection(
+  faults: SubmissionFaults,
+): { rejection: SubmitResult & { error: string }; hold: boolean } | null {
+  const familyCount = (faults.routes.length > 0 ? 1 : 0)
+    + (faults.originPrune ? 1 : 0) + (faults.focusOrphan ? 1 : 0) + (faults.columnChain ? 1 : 0);
+  if (familyCount === 0) return null;
+  const single = familyCount === 1;
+
+  const codes: string[] = [];
+  const hints: string[] = [];
+  const detail: Record<string, unknown> = {};
+  let soleDetail: unknown;
+
+  if (faults.originPrune) {
+    codes.push('prune_origin_forbidden');
+    hints.push(`Submit a complete analyze or passthrough finding for this focus. The exploration origin is immutable.${faults.originPrune.keepClause}`);
+  }
+  if (faults.focusOrphan) {
+    const { focusId, orphanId, keepClause } = faults.focusOrphan;
+    codes.push(REJECTION_CODES.pruneWouldOrphanNoted);
+    hints.push(`Use verdict='passthrough' to keep it without pruning. Marking [${focusId}] prune would orphan node [${orphanId}], which nothing else keeps reachable from the origin.${keepClause}`);
+  }
+  if (faults.routes.length > 0) {
+    const envelope = buildRouteValidationRejection(faults.routes, single);
+    if ('error' in envelope) {
+      codes.push(envelope.error);
+      if (envelope.hint) hints.push(envelope.hint);
+      detail.route = envelope.detail;
+      soleDetail = envelope.detail;
+    }
+  }
+  if (faults.columnChain) {
+    const { focusId, unaccounted, available, contradicted } = faults.columnChain;
+    const envelope = buildIncompleteRejection(focusId, unaccounted, available, contradicted, single);
+    if ('error' in envelope) {
+      codes.push(envelope.error);
+      if (envelope.hint) hints.push(envelope.hint);
+      detail.column_chain = envelope.detail;
+      soleDetail = envelope.detail;
+    }
+  }
+  // Field-scoped in every family it is granted for, so the authored sections and summary stay
+  // valid whether one family fired or three. Holding across a co-report is the point of the
+  // co-report: a model told about two faults at once must not pay to re-author prose it already
+  // wrote because the second fault arrived with the first.
+  const holdEligible = (faults.originPrune === undefined && faults.focusOrphan === undefined)
+    && (faults.routes.length === 0
+      || faults.routes.every(r => isContentKind(r.kind))
+      || faults.routes.every(r => r.kind === 'missing_required_route'));
+
+  if (faults.repairWouldOwe && faults.repairWouldOwe.length > 0) {
+    hints.push(
+      `A prune verdict owes no account of this focus's own neighbors. Repairing the verdict to 'analyze' or 'passthrough' brings [${faults.repairWouldOwe.join(', ')}] into play: route them, prune them, or leave them to the engine, which fills an unaccounted required neighbor rather than refusing the hop.`,
+    );
+  }
+  if (!single) hints.push(holdEligible ? MULTI_FAULT_HELD_ORDER : FULL_RESUBMIT_ORDER);
+
+  return {
+    rejection: {
+      error: codes[0],
+      hint: hints.filter(Boolean).join(' '),
+      ...(single ? (soleDetail === undefined ? {} : { detail: soleDetail }) : { detail }),
+    },
+    hold: holdEligible,
   };
 }

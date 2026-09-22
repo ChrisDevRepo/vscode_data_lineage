@@ -191,31 +191,41 @@ describe("Supplement Agenda", () => {
     expect(!!lead, 'ext1 recorded as a pending schema-boundary lead').toBe(true);
     return { engine, leadId: lead!.id };
   }
-  it("(skippedDetails reason=out_of_allowlist) and leaves session state unchanged (side-effect-free).", () => {
+  // The approve gate authorizes one hop-by-hop run and is spent when its result is presented, so a
+  // follow-up naming an object is the user's own consent to add it. The session allowlist is no
+  // longer a refusal axis for a named id — it still bounds everything the user did NOT name, which
+  // the sibling case below pins.
+  it("a follow-up target outside the session allowlist is admitted because the user named it.", () => {
   const { engine } = makeCompletedExtEngine();
   const scopeBefore = engine.scopeSize;
-  const inScopeBefore = engine.toJSON().scopeNodeIds.includes('ext1');
+  expect(engine.toJSON().scopeNodeIds.includes('ext1') === false, 'ext1 was outside the approved scope').toBe(true);
   const res = engine.supplementAgenda(['ext1']) as any;
-  expect('ok' in res && res.ok === true, 'supplementAgenda returns ok for an out-of-allowlist id').toBe(true);
-  expect(res.skipped === 1, 'out-of-allowlist id ext1 is refused (skipped)').toBe(true);
-  expect(res.agendaed === 0, 'out-of-allowlist id is not agendaed').toBe(true);
-  expect(res.skippedDetails.length === 1, 'skippedDetails has exactly one entry').toBe(true);
-  expect(res.skippedDetails[0]?.nodeId === 'ext1', 'skippedDetails names the refused id').toBe(true);
-  expect(res.skippedDetails[0]?.reason === 'out_of_allowlist', 'skippedDetails reason is out_of_allowlist').toBe(true);
-  expect(engine.scopeSize === scopeBefore, 'scope size unchanged by the rejected supplement').toBe(true);
-  expect(engine.toJSON().scopeNodeIds.includes('ext1') === inScopeBefore, 'ext1 never merged into scope (side-effect-free reject)').toBe(true);
-  expect(!inScopeBefore, 'ext1 was never in scope to begin with').toBe(true);
+  expect('ok' in res && res.ok === true, 'supplementAgenda accepts the named out-of-allowlist id').toBe(true);
+  expect(res.agendaed === 1, `the named target is agendaed (got ${JSON.stringify(res)})`).toBe(true);
+  expect(res.skipped === 0 && res.skippedDetails.length === 0, 'nothing is refused').toBe(true);
+  expect(engine.toJSON().scopeNodeIds.includes('ext1'), 'the named target joined the existing graph').toBe(true);
+  expect(engine.scopeSize === scopeBefore + 1, 'exactly the one named id joined the scope').toBe(true);
 });
 
-  it("succeeds and the hop total increments (mirrors followUpNode's admit-then-supplement ordering).", () => {
+  // Admission lives inside `supplementAgenda`, past its last reject, so a refused call never leaves
+  // a widened allowlist behind for the next one to trip over.
+  it("a rejected supplement admits nothing (side-effect-free reject).", () => {
+  const { engine } = makeCompletedExtEngine();
+  const allowedBefore = (engine.toJSON().engineInternals?.sessionAllowedNodeIds ?? []).length;
+  const res = engine.supplementAgenda(['ext1'], ['no-such-lead']);
+  expect('error' in res && res.error === 'invalid_pending_lead', 'the bad lead id rejects the whole call').toBe(true);
+  expect((engine.toJSON().engineInternals?.sessionAllowedNodeIds ?? []).length === allowedBefore, 'the refused call admitted nothing').toBe(true);
+  expect(engine.toJSON().scopeNodeIds.includes('ext1') === false, 'ext1 never merged into scope').toBe(true);
+  expect(engine.status === 'complete', 'the refused call leaves engine status unchanged').toBe(true);
+});
+
+  it("a host-selected pending lead supplements, and the hop total increments.", () => {
   const { engine, leadId } = makeCompletedExtEngine();
   const totalBefore = engine.hopProgress.total;
-  const lead = engine.pendingLeads.find(l => l.id === leadId)!;
-  expect(engine.admitSupplementTargets([lead.nodeId]).length === 1, 'the clicked lead target is admitted by id').toBe(true);
   const res = engine.supplementAgenda([], [leadId]) as any;
-  expect('ok' in res && res.ok === true, 'supplement succeeds after pill-approved allowlist extension').toBe(true);
+  expect('ok' in res && res.ok === true, 'supplement succeeds for a host-selected lead').toBe(true);
   expect(res.agendaed === 1, 'the approved ext1 lead is agendaed').toBe(true);
-  expect(res.skipped === 0, 'nothing skipped once the schema is approved').toBe(true);
+  expect(res.skipped === 0, 'the lead target is admitted by the call itself').toBe(true);
   expect(engine.hopProgress.total === totalBefore + 1, 'hop total increments for the newly-approved node').toBe(true);
   expect(engine.toJSON().scopeNodeIds.includes('ext1'), 'ext1 is now in scope').toBe(true);
 });
@@ -231,22 +241,6 @@ describe("Supplement Agenda", () => {
   expect('ok' in res && res.ok === true, 'supplementAgenda returns ok for an excluded in-allowlist id').toBe(true);
   expect(res.skipped === 1, 'excluded id mid is refused despite being in the allowlist').toBe(true);
   expect(res.skippedDetails[0]?.reason === 'excluded', 'exclusion takes priority over the allowlist axis').toBe(true);
-});
-
-  // `admitSupplementTargets` is the consent step the host runs before supplementing, mirroring
-  // the approve gate's extend-then-supplement ordering, so a schema-boundary lead is not a dead end.
-  it("admitSupplementTargets admits an out-of-allowlist follow-up target.", () => {
-  // A supplement flips the engine out of 'complete', so the with/without comparison needs two.
-  const before = makeCompletedExtEngine().engine.supplementAgenda(['ext1']) as any;
-  expect(before.skipped === 1, 'without consent the target is still refused').toBe(true);
-
-  const { engine } = makeCompletedExtEngine();
-  engine.admitSupplementTargets(['ext1']);
-  const after = engine.supplementAgenda(['ext1']) as any;
-  expect(after.ok === true, 'supplement succeeds once the target has been admitted').toBe(true);
-  expect(after.agendaed === 1, `the admitted target is agendaed (got ${JSON.stringify(after)})`).toBe(true);
-  expect(after.skipped === 0, 'nothing is skipped once the schema is admitted').toBe(true);
-  expect(engine.toJSON().scopeNodeIds.includes('ext1'), 'ext1 is now in scope').toBe(true);
 });
 
   // A target that breaches BOTH the allowlist and the stated depth defers as 'schema_and_depth'.
@@ -283,21 +277,21 @@ describe("Supplement Agenda", () => {
   expect(dboOnly === undefined, 'the composite breach produced no separate depth-boundary lead').toBe(true);
 });
 
-  it("admitSupplementTargets never overrides an exclusion, and ignores unresolvable ids.", () => {
+  it("a follow-up never reopens an exclusion, and ignores unresolvable ids.", () => {
   const engine = new NavigationEngine(extModel, extGraph, () => {}, {
     activeFilter: makeActiveFilter({ schemas: ['dbo'] }),
   });
   engine.init({ origin: 'o', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 }, excludeNodeIds: ['mid'] });
   drainExt(engine);
-  engine.admitSupplementTargets(['mid', '[dbo].[doesNotExist]']);
-  const res = engine.supplementAgenda(['mid']) as any;
-  expect(res.skipped === 1, 'consent does not reopen a node the user excluded').toBe(true);
-  expect(res.skippedDetails[0]?.reason === 'excluded', 'the exclusion axis still refuses it').toBe(true);
+  const res = engine.supplementAgenda(['mid', '[dbo].[doesNotExist]']) as any;
+  expect(res.skipped === 2, 'naming them does not reopen a node the user excluded, nor invent one').toBe(true);
+  expect(res.skippedDetails.find((d: { nodeId: string }) => d.nodeId === 'mid')?.reason === 'excluded', 'the exclusion axis still refuses it').toBe(true);
+  expect(res.skippedDetails.find((d: { nodeId: string }) => d.nodeId === '[dbo].[doesNotExist]')?.reason === 'unresolved', 'an id that resolves to nothing is reported as unresolved').toBe(true);
 });
 
-  // Consent is read only from ids the exclusion set still allows, never from an excluded id's
-  // own schema, or naming an excluded sibling would open a border the user never approved.
-  it("admitSupplementTargets does not widen the allowlist on behalf of an excluded id.", () => {
+  // An excluded id is refused AND never admitted, so naming it cannot open the border on its
+  // behalf. Its sibling is added only because the user named the sibling itself.
+  it("an excluded id is refused on a follow-up and admits nothing in its place.", () => {
   const siblingNodes: LineageNode[] = [
     makeNode({ id: 'o',    schema: 'dbo', name: 'o',    type: 'view' }),
     makeNode({ id: 'mid',  schema: 'dbo', name: 'mid',  type: 'view' }),
@@ -315,17 +309,17 @@ describe("Supplement Agenda", () => {
   drainExt(engine);
   expect(engine.status === 'complete', 'sibling engine completes').toBe(true);
 
-  engine.admitSupplementTargets(['ext1']);
-  const res = engine.supplementAgenda(['ext2']) as any;
-  expect(res.skipped === 1, 'the sibling is still refused (got ' + JSON.stringify(res) + ')').toBe(true);
-  expect(res.agendaed === 0, 'the sibling is not agendaed').toBe(true);
-  expect(res.skippedDetails[0]?.reason === 'out_of_allowlist', 'the ext schema was never admitted').toBe(true);
+  const res = engine.supplementAgenda(['ext1', 'ext2']) as any;
+  expect(res.skipped === 1, 'the excluded id is refused (got ' + JSON.stringify(res) + ')').toBe(true);
+  expect(res.skippedDetails[0]?.nodeId === 'ext1' && res.skippedDetails[0]?.reason === 'excluded', 'the refusal names the excluded id on the exclusion axis').toBe(true);
+  expect(res.agendaed === 1, 'the sibling the user named in the same call is still added').toBe(true);
+  expect((engine.toJSON().engineInternals?.sessionAllowedNodeIds ?? []).includes('ext1') === false, 'the excluded id was never admitted').toBe(true);
+  expect(engine.toJSON().scopeNodeIds.includes('ext1') === false, 'the excluded id stays out of scope').toBe(true);
 });
 
-  // Consent is per node: naming one follow-up target admits that target, never its schema
-  // siblings. A sibling the user never named stays behind the border and remains a lead the
-  // user can approve on its own.
-  it('admitSupplementTargets admits the named ids only, never their schema siblings.', () => {
+  // The id list is the bound: adding one object adds that object, never a sibling riding along
+  // behind it. The unnamed sibling stays a lead the user can ask for on its own.
+  it('a supplement adds the ids it names, and nothing that rides along behind them.', () => {
   const siblingNodes: LineageNode[] = [
     makeNode({ id: 'o',    schema: 'dbo', name: 'o',    type: 'view' }),
     makeNode({ id: 'mid',  schema: 'dbo', name: 'mid',  type: 'view' }),
@@ -333,8 +327,6 @@ describe("Supplement Agenda", () => {
     makeNode({ id: 'ext2', schema: 'ext', name: 'ext2', type: 'view' }),
   ];
   const siblingEdges: Array<[string, string]> = [['o', 'mid'], ['mid', 'ext1'], ['mid', 'ext2']];
-  // A supplement flips the engine out of 'complete', so naming one target and then probing the
-  // sibling takes two engines — the same with/without pattern the consent case above uses.
   function completedSiblingEngine(): NavigationEngine {
     const engine = new NavigationEngine(
       makeModel(siblingNodes, siblingEdges, ['dbo', 'ext']),
@@ -350,26 +342,20 @@ describe("Supplement Agenda", () => {
   }
 
   const named = completedSiblingEngine();
-  const admitted = named.admitSupplementTargets(['ext1']);
-  expect(admitted.join(','), 'admission reports exactly the ids it opened').toBe('ext1');
   const namedRes = named.supplementAgenda(['ext1']) as any;
-  expect(namedRes.agendaed === 1, `the named target is admitted (got ${JSON.stringify(namedRes)})`).toBe(true);
-
-  const siblingEngine = completedSiblingEngine();
-  siblingEngine.admitSupplementTargets(['ext1']);
-  const sibling = siblingEngine.supplementAgenda(['ext2']) as any;
-  expect(sibling.skipped === 1, `the sibling the user never named stays outside the border (got ${JSON.stringify(sibling)})`).toBe(true);
-  expect(sibling.skippedDetails[0]?.reason === 'out_of_allowlist', 'the sibling is refused on the allowlist axis').toBe(true);
-  expect(siblingEngine.pendingLeads.some(l => l.nodeId.toLowerCase() === 'ext2'), 'the sibling remains a lead the user can approve on its own').toBe(true);
+  expect(namedRes.agendaed === 1, `the named target is added (got ${JSON.stringify(namedRes)})`).toBe(true);
+  expect(named.toJSON().scopeNodeIds.includes('ext1'), 'the named target joined the scope').toBe(true);
+  expect(named.toJSON().scopeNodeIds.includes('ext2') === false, 'the sibling the user never named did not ride along').toBe(true);
+  expect((named.toJSON().engineInternals?.sessionAllowedNodeIds ?? []).includes('ext2') === false, 'admission is id-scoped, never schema-scoped').toBe(true);
+  expect(named.pendingLeads.some(l => l.nodeId.toLowerCase() === 'ext2'), 'the sibling remains a lead the user can ask for on its own').toBe(true);
 });
 
-  // The supplement nodeIds arrive in a model tool payload, so the admit step is not a blank cheque:
-  // it opens only a route this run itself deferred and named in the answer. An out-of-allowlist id
-  // the model produces with no lead behind it stays refused, exactly as it was before the admit
-  // step existed — otherwise `out_of_allowlist` would be unreachable on the supplement path.
-  it('admitSupplementTargets refuses an out-of-allowlist id that no pending lead offered.', () => {
-  // 'far' sits in the ext schema but off the traced route, so the run never defers it and it
-  // never becomes a lead — the shape of an id a model invented rather than read off the answer.
+  // The object the user asks about is often one the completed run never deferred — found afterwards
+  // by searching DDL. Requiring a pending lead behind every supplement target refused exactly that
+  // case, which is the one the user asked for, so the lead list is not the bound; the id list is.
+  it('a follow-up target no pending lead offered is added and analysed.', () => {
+  // 'far' sits in the ext schema off the traced route, so the run never defers it and it never
+  // becomes a lead — the shape of an id found after the fact rather than read off the answer.
   const farNodes: LineageNode[] = [
     makeNode({ id: 'o',    schema: 'dbo', name: 'o',    type: 'view' }),
     makeNode({ id: 'mid',  schema: 'dbo', name: 'mid',  type: 'view' }),
@@ -388,14 +374,11 @@ describe("Supplement Agenda", () => {
   expect(engine.status === 'complete', 'far-fixture engine completes').toBe(true);
   expect(engine.pendingLeads.some(l => l.nodeId.toLowerCase() === 'far') === false, "'far' was never deferred, so no lead offers it").toBe(true);
 
-  expect(engine.admitSupplementTargets(['far']).length === 0, 'an id with no lead behind it is not admitted').toBe(true);
   const res = engine.supplementAgenda(['far']) as any;
-  expect(res.skipped === 1, `the unoffered id is still refused (got ${JSON.stringify(res)})`).toBe(true);
-  expect(res.skippedDetails[0]?.reason === 'out_of_allowlist', 'refused on the allowlist axis, the reason main reported').toBe(true);
-  expect(engine.toJSON().scopeNodeIds.includes('far') === false, 'nothing merged into scope').toBe(true);
-
-  // The lead-backed id in the same payload is unaffected — the refusal is per id, not per call.
-  expect(engine.admitSupplementTargets(['far', 'ext1']).join(','), 'only the offered id is admitted').toBe('ext1');
+  expect(res.agendaed === 1, `the unoffered id is added (got ${JSON.stringify(res)})`).toBe(true);
+  expect(res.skipped === 0, 'having no lead behind it is not a refusal').toBe(true);
+  expect(engine.toJSON().scopeNodeIds.includes('far'), 'it joined the existing scope').toBe(true);
+  expect(engine.status === 'awaiting_findings', 'the engine re-enters analysis for it, in the same graph').toBe(true);
 });
 
   it("supplement_empty names the input the model owns, and the exit for having no node to name", () => {
@@ -412,27 +395,28 @@ describe("Supplement Agenda", () => {
   expect(hint !== 'supplementAgenda requires at least one node id or pending lead id.', 'the lead id is no longer offered as an alternative input').toBe(true);
 });
 
-  it("supplement_target_pruned reports every pruned id at once and names the empty-list exit", () => {
-  // Prune both leaf views so a two-id supplement has two invalid targets: reporting only the first
-  // charged one rejection per pruned id, and dropping the only target lands on supplement_empty.
+  // A prune records what the AI took out of the current picture; it is not a standing veto on a
+  // later addition, which is the user's decision to make. Asking for a pruned object back adds it.
+  it("a pruned target named in a follow-up is added back, not refused", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.init({ origin: 'sp', question: 'test', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
   driveEngine(engine, { prune: new Set(['viewa', 'viewb']), limit: 20 });
   expect(engine.status === 'complete', 'engine completes with both leaf views pruned').toBe(true);
+  expect(engine.toJSON().removedSet.includes('viewa') && engine.toJSON().removedSet.includes('viewb'), 'both pruned ids start out removed').toBe(true);
+  const totalBefore = engine.hopProgress.total;
 
-  const both = engine.supplementAgenda(['viewa', 'viewb']);
-  expect('error' in both && both.error === 'supplement_target_pruned', 'an all-pruned supplement rejects').toBe(true);
-  const bothHint = 'error' in both && typeof both.hint === 'string' ? both.hint : '';
-  expect(bothHint.includes('viewa') && bothHint.includes('viewb'), 'every pruned id is named in one rejection, not just the first').toBe(true);
-  expect(bothHint.includes('leaves nothing to supplement'), 'the hint names what dropping the only targets produces').toBe(true);
-  expect(!bothHint.includes('Drop it from the supplement request'), 'the drop-it-and-resend repair is no longer offered where it empties the list').toBe(true);
-
-  const mixed = engine.supplementAgenda(['viewa', 'viewb', 'viewc']);
-  expect('error' in mixed && mixed.error === 'supplement_target_pruned', 'a mixed supplement still rejects atomically').toBe(true);
-  const mixedHint = 'error' in mixed && typeof mixed.hint === 'string' ? mixed.hint : '';
-  expect(mixedHint.includes('viewa') && mixedHint.includes('viewb'), 'both pruned ids are named where a valid target remains').toBe(true);
-  expect(mixedHint.includes('keeping the other 1 id'), 'the hint names the surviving target count so the resend is not empty').toBe(true);
-  expect(engine.status === 'complete', 'both pruned-target rejections leave engine status unchanged').toBe(true);
+  const res = engine.supplementAgenda(['viewa', 'viewb']) as any;
+  expect('ok' in res && res.ok === true, 'an all-pruned supplement is accepted').toBe(true);
+  expect(res.agendaed === 2, `both pruned targets are agendaed (got ${JSON.stringify(res)})`).toBe(true);
+  expect(res.skipped === 0, 'a prune is not a refusal axis').toBe(true);
+  const after = engine.toJSON();
+  expect(after.removedSet.includes('viewa') === false && after.removedSet.includes('viewb') === false, 'both are out of removedSet, so enqueueHop no longer drops them').toBe(true);
+  expect(after.nodeStates.some(s => s.nodeId === 'viewa' && s.action === 'prune') === false, "the stale prune state is dropped, so it cannot outrank the coming hop's verdict").toBe(true);
+  // Each added node buys exactly one hop, credited once. Both were pruned as their own focus, so
+  // they were visited and never debited; `enqueueHop`'s reactivation credit is the only one that
+  // fires, and `unprune`'s own credit — which mirrors the neighbour-prune debit — must not fire
+  // on top of it.
+  expect(engine.hopProgress.total === totalBefore + 2, `the two hops about to run are counted once each (got ${engine.hopProgress.total} from ${totalBefore})`).toBe(true);
 });
 
 });

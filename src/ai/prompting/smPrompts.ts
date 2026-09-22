@@ -13,20 +13,33 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 
 
 /**
- * Shared route-question requirement (DRY across BB and CT).
+ * Route-question requirement, one per mode.
  *
  * @remarks
  * The structural A→B part is engine-derivable (CT auto-generates it via
  * `getColumnLineageQuestionsByNode`, the per-node source of record); the analytical
  * part — what business/technical logic a node applies — is NOT derivable from metadata and
- * must be authored by the AI. This bullet is the single source for
- * that requirement, rendered in both the BB and CT decision contracts. In CT it feeds the
- * capture narration only; `column_flow[].upstream_columns` stays structural (see the CT-safety
- * bullet in {@link BLOCK.hopDecisionContractCt}) so it stays the sole structural channel for column
- * precision and the column-precision regression cannot re-enter.
+ * must be authored by the AI. This is the single source for that requirement, rendered in both
+ * the BB and CT decision contracts.
+ *
+ * The two differ in what the logic is asked to explain, because that is the only thing the modes
+ * disagree about. CT names the traced value, and the question is answerable: a traced value exists.
+ * BB has none, so a question anchored on one is unsatisfiable, and a model asked it writes the
+ * dead end it can answer — "confirm it contributes no columns" — instead of reading the node.
+ * The BB form anchors on the row set, which every routed node acts on whether or not it supplies a
+ * value. Both read the node against the same {@link ANALYTICAL_LOGIC_VOCABULARY}: CT is BB plus
+ * columns, never a narrower reading.
+ *
+ * In CT the analytical answer feeds the capture narration only; `column_flow[].upstream_columns`
+ * stays structural (see the CT-safety bullet in {@link BLOCK.hopDecisionContractCt}) so it stays
+ * the sole structural channel for column precision and the column-precision regression cannot
+ * re-enter.
  */
-const ANALYTICAL_ROUTE_QUESTION =
-  `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it.`;
+const ANALYTICAL_ROUTE_QUESTION = {
+  bb: `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what the routed node does to the ROW SET the answer returns — the joins, filters, predicates and thresholds that decide which rows survive it, and the ${ANALYTICAL_LOGIC_VOCABULARY} it applies to them — not only which sources feed it.`,
+  ct: `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it.
+- A neighbor routed with \`columns: "none"\` supplies no traced value, so anchor its question on the row set instead: the joins, filters, predicates and thresholds that decide which rows survive it. A question anchored on a traced value it does not carry has only a dead end for an answer.`,
+} as const;
 
 /**
  * One resolution rule for `<required_neighbors>`, composed by both hop decision contracts so the
@@ -38,11 +51,12 @@ const REQUIRED_NEIGHBOR_RESOLUTION =
   '- Resolve every ID in `<required_neighbors>` through `route_requests` this hop; they are approved in-scope continuation nodes.';
 
 /**
- * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (same
- * instruction, same pruning, same routing in BB and CT — each contract adds only its own framing
- * line, its verdict wording, and its mode additions).
+ * The neighbor decision core, composed by BOTH hop contracts — same instruction, same pruning,
+ * same routing in BB and CT. Only the route question's analytical anchor is mode-scoped
+ * ({@link ANALYTICAL_ROUTE_QUESTION}); each contract adds its own framing line, its verdict
+ * wording, and its mode additions.
  */
-const NEIGHBOR_DECISION_CORE = [
+const neighborDecisionCore = (mode: 'bb' | 'ct'): readonly string[] => [
   '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
   '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.',
   REQUIRED_NEIGHBOR_RESOLUTION,
@@ -52,8 +66,8 @@ const NEIGHBOR_DECISION_CORE = [
   '  - Add it to `prune_neighbors` when current evidence proves it is off the answer path — outside the approved exploration scope, or inside it with nothing the answer needs. A neighbor that supplies no value but decides which rows the answer returns — a join, filter or predicate source — is not \"nothing the answer needs\": route or retain it. An executed prune must never orphan committed work.',
   '- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.',
   '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
-  ANALYTICAL_ROUTE_QUESTION,
-] as const;
+  ANALYTICAL_ROUTE_QUESTION[mode],
+];
 
 
 /**
@@ -65,12 +79,16 @@ const NEIGHBOR_DECISION_CORE = [
  * so the suffix names that provenance and points the question at the new focus. The
  * business-logic nudge is the shared text — an inherited provenance framing otherwise thins
  * capture depth by making the focus re-answer column provenance instead of its own rules, and CT
- * is BB plus columns, so CT reads the same nudge and adds its column clause to it. The wording is
+ * is BB plus columns, so a CT branch reads the same nudge and adds its column clause to it. The
+ * clause is gated on the branch: a branch carrying none of the traced columns has no column to
+ * ground an answer in, and asking it for one is the dead-end instruction. The wording is
  * a tuned lever — changes go through prompt-change; the forwarding mechanics stay engine-owned.
  *
  * @param passthroughId - The non-bodied node the question was inherited through.
  * @param focusId - The bodied neighbor the question re-anchors onto.
- * @param mode - The gate-locked session mode (`bb` xor `ct`).
+ * @param mode - The mode of the BRANCH this question is forwarded on, not of the session: the
+ *   column clause is answerable only where a traced column is actually carried, and a CT session
+ *   reaches branches that carry none.
  * @returns The suffix to append to the forwarded question (leading newline included).
  */
 export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct'): string {
@@ -121,22 +139,23 @@ const COLUMN_FLOW_VERDICT_RIDER =
   '- Every verdict carries `column_flow`: the real upstream columns behind each tracked output, and `[]` when the value originates here or the node carries none.';
 
 /**
- * The one hop decision contract, composed by both modes. CT renders it unchanged and appends
+ * The one hop decision contract, composed by both modes. CT renders it with its own route-question
+ * anchor ({@link ANALYTICAL_ROUTE_QUESTION}) and appends
  * {@link COLUMN_DECISION_ADDENDUM} — the frame line, the verdict line, the neighbor core, the
  * derive-from-DDL rule and the tool boundary are the same instruction in both modes, so a CT
  * paraphrase of any of them is a second contract, not a column aspect.
  */
-const HOP_DECISION_CONTRACT = [
+const hopDecisionContract = (mode: 'bb' | 'ct'): readonly string[] => [
   '## Neighbor Decision Contract (Current Hop Only)',
   'BB is node-first: decide the focus node and each current-hop neighbor from the current task and current evidence.',
   '- Emit explicit `verdict` for the focus node every hop.',
-  ...NEIGHBOR_DECISION_CORE,
+  ...neighborDecisionCore(mode),
   '- Derive neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
   `${NEIGHBOR_COLUMNS_TRIGGER}.`,
-] as const;
+];
 
 /**
- * The column aspect of the hop decision, appended to {@link HOP_DECISION_CONTRACT} in CT.
+ * The column aspect of the hop decision, appended to {@link hopDecisionContract} in CT.
  *
  * @remarks
  * `column_flow[].upstream_columns` stays the sole structural channel for column precision (see
@@ -183,8 +202,8 @@ const BLOCK = {
   ].join('\n'),
 
   /** Canonical hop-local routing/pruning contract (single source, no duplicates across surfaces). */
-  hopDecisionContract: HOP_DECISION_CONTRACT.join('\n'),
-  hopDecisionContractCt: [...HOP_DECISION_CONTRACT, ...COLUMN_DECISION_ADDENDUM].join('\n'),
+  hopDecisionContract: hopDecisionContract('bb').join('\n'),
+  hopDecisionContractCt: [...hopDecisionContract('ct'), ...COLUMN_DECISION_ADDENDUM].join('\n'),
 } as const;
 
 
@@ -623,32 +642,6 @@ const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|cr
 /** The opening word of a filter condition — it decides which rows survive, whatever it is nested in. */
 const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
 
-/**
- * True when `text` carries at least one {@link CAPTURED_ARTIFACT} that counts as evidence rather
- * than prose — the same lexical bound {@link buildCapturedFormulaFacts} enumerates for the answer,
- * asked as a yes/no question instead of a list. A `$$ … $$` math block always qualifies; a fenced
- * or inline span qualifies only under the same {@link CALL_TOKEN} / {@link PREDICATE_START} /
- * {@link STATEMENT_START} filter, so "captured" means the same thing at submission time as it does
- * at synthesis time — one governor, asked twice.
- *
- * @param text - One `sections[].text` body to test.
- * @returns Whether the text contains a qualifying artifact.
- */
-export function sectionTextHasCapturedArtifact(text: string): boolean {
-  const collapse = (s: string): string => s.split(/\s+/).filter(Boolean).join(' ');
-  const isEnumerable = (artifact: string): boolean =>
-    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
-  for (const match of text.matchAll(CAPTURED_ARTIFACT)) {
-    const [, math, fenced, inline] = match;
-    if (math !== undefined) return true;
-    if (fenced !== undefined) {
-      if (fenced.split('\n').some(line => isEnumerable(collapse(line)))) return true;
-      continue;
-    }
-    if (isEnumerable(collapse(inline ?? ''))) return true;
-  }
-  return false;
-}
 
 /**
  * Enumerates the value computations and filter conditions the hops captured — `$$ … $$` blocks plus

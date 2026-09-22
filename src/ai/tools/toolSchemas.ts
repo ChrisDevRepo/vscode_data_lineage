@@ -420,7 +420,9 @@ export const ROUTE_COLUMNS_DESCRIPTION =
   'Column-trace sessions only. Which traced columns travel to this neighbor: list them to carry exactly '
   + 'those, or send the word "none" when the neighbor supplies no traced value and only decides which rows '
   + 'the answer returns (a filter, a join key) — it is then explored as a whole object, with no column '
-  + 'question attached. Omit the field to carry whatever the trace already carries.';
+  + 'question attached. State one or the other for every routed neighbor — an undecided neighbor is '
+  + 'rejected, not defaulted, and so is a contradicted one: "none" is refused when column_flow in this '
+  + 'same submission names the neighbor as a real contributor; list at least those columns instead.';
 
 /**
  * Per-route column decision. A word rather than an empty array for the row-role case, so an
@@ -441,6 +443,18 @@ const RouteRequestSchema = z.object({
     'current focus; "analyze this node" carries no decision and is not a usable sub-question.',
   ),
   columns: RouteColumnsSchema.optional().describe(ROUTE_COLUMNS_DESCRIPTION),
+}).strict();
+
+/**
+ * CT-mode `route_requests[]` shape: {@link RouteRequestSchema} with `columns` required.
+ *
+ * @remarks
+ * A CT hop states a column decision for every routed neighbor — a non-empty list, or the literal
+ * `"none"` — never an omitted field; an omission has no engine-side "carry whatever the trace
+ * already carries" fallback to resolve to.
+ */
+const CtRouteRequestSchema = RouteRequestSchema.extend({
+  columns: RouteColumnsSchema.describe(ROUTE_COLUMNS_DESCRIPTION),
 }).strict();
 
 /**
@@ -636,13 +650,14 @@ export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
  * @remarks
  * CT is BB plus column tracking, so every BB field — including `prune_neighbors` — is present on
  * the CT form; `column_flow`'s own contract is documented on {@link ColumnFlowSchema}. Its
- * `route_requests[]` entries additionally carry the per-neighbor `columns` decision
- * ({@link RouteRequestSchema}), which BB's form omits.
+ * `route_requests[]` entries additionally require the per-neighbor `columns` decision
+ * ({@link CtRouteRequestSchema}) — a non-empty list or `"none"`, never omitted — which BB's form
+ * omits entirely.
  */
 export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('ct'),
   column_flow: ColumnFlowSchema,
-  route_requests: coercedStringArray(RouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
+  route_requests: coercedStringArray(CtRouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
   prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
 }).strict();
 
@@ -876,6 +891,33 @@ export const PresentResultModelSchema = z.object({
   is_update: coercedBoolean().optional().describe('True only when updating an existing presentation.'),
 }).strict();
 
+/**
+ * One section of a report that is already committed: `text` may be omitted to keep the committed
+ * body under that label.
+ */
+const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
+  text: z.string().optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
+});
+
+/**
+ * Projects a `present_result` schema onto a render that amends a committed report.
+ *
+ * @remarks
+ * DERIVED by `.extend()` from whichever stage schema the caller passes, so a stage projection and
+ * its retaining counterpart cannot drift. Retention is resolved by the dispatcher against the
+ * committed sections before validation, which therefore still sees a complete section array — this
+ * relaxes what the model must resend, never what a render must contain.
+ *
+ * @param schema - The stage schema to relax.
+ * @returns The same schema with `sections` optional and each section's `text` optional.
+ */
+function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T) {
+  return schema.extend({
+    sections: coercedStringArray(PresentResultRetainedSectionSchema, { min: 1 }).optional()
+      .describe('Final report sections. Omit entirely to keep the committed report; list a label with no text to keep that section unchanged.'),
+  });
+}
+
 /** Preview reuses discovery prose; the model supplies only structure and graph decoration. */
 const PresentResultVisualPreviewModelSchema = PresentResultModelSchema.omit({
   name: true,
@@ -913,14 +955,27 @@ function recoverPresentResultPayload(value: unknown): unknown {
  * {@link recoverPresentResultPayload} is unconditionally safe to run ahead of the chosen schema's
  * own parse — see {@link hoistSectionNotes} and {@link repairArrayBoundaryArtifacts} for the
  * measured defects this closes.
+ *
+ * `retainable` is a live session fact, not a stage property: a render amends a committed report
+ * only while the run that authored it is still the one rendering. Preview never amends.
+ *
+ * @param phase - Stage the call will be dispatched in.
+ * @param repairFields - Fields a held draft authorizes for repair, when one is held.
+ * @param retainable - Whether a committed report from this run exists to amend.
+ * @returns The schema this stage offers the model.
  */
 export function presentResultSchemaForPhase(
   phase?: string,
   repairFields: readonly PresentResultRepairField[] | null = null,
+  retainable = false,
 ): z.ZodType {
   if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields);
   if (phase === 'visual_preview') return z.preprocess(recoverPresentResultPayload, PresentResultVisualPreviewModelSchema);
-  return z.preprocess(recoverPresentResultPayload, phase === 'synthesis' ? PresentResultSynthesisModelSchema : PresentResultModelSchema);
+  const synthesis = phase === 'synthesis';
+  const schema = retainable
+    ? (synthesis ? PresentResultRetainingSynthesisModelSchema : PresentResultRetainingModelSchema)
+    : (synthesis ? PresentResultSynthesisModelSchema : PresentResultModelSchema);
+  return z.preprocess(recoverPresentResultPayload, schema);
 }
 
 /**
@@ -974,12 +1029,15 @@ const PresentResultLockedGraphBoundarySchema = PresentResultBoundarySchema.omit(
  * projection.
  *
  * @param phase - Stage the call was dispatched in.
+ * @param retainable - Whether a committed report from this run exists to amend; mirrors the same
+ * argument to {@link presentResultSchemaForPhase} so the offered and validated contracts match.
  * @returns The full boundary schema on the completed stage, else the locked-graph projection.
  */
-export function presentResultBoundarySchemaForPhase(phase?: PresentResultStage): z.ZodType {
-  return phase === 'completed'
-    ? PresentResultBoundarySchema
-    : PresentResultLockedGraphBoundarySchema;
+export function presentResultBoundarySchemaForPhase(phase?: PresentResultStage, retainable = false): z.ZodType {
+  if (phase === 'completed') {
+    return retainable ? PresentResultRetainingBoundarySchema : PresentResultBoundarySchema;
+  }
+  return retainable ? PresentResultRetainingLockedGraphBoundarySchema : PresentResultLockedGraphBoundarySchema;
 }
 
 /**
@@ -1108,6 +1166,20 @@ export const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({
   add_node_ids: true,
   is_update: true,
 }).strict();
+
+/**
+ * The four stage projections a render that amends a committed report is offered and parsed against.
+ *
+ * @remarks
+ * Declared here rather than beside each source because {@link PresentResultSynthesisModelSchema} is
+ * the last source to exist; the two selectors read them, so each is built once per process.
+ * A supplement round exits through synthesis, not the completed stage, so both stages have a
+ * retaining projection.
+ */
+const PresentResultRetainingModelSchema = withRetainableSections(PresentResultModelSchema);
+const PresentResultRetainingSynthesisModelSchema = withRetainableSections(PresentResultSynthesisModelSchema);
+const PresentResultRetainingBoundarySchema = withRetainableSections(PresentResultBoundarySchema);
+const PresentResultRetainingLockedGraphBoundarySchema = withRetainableSections(PresentResultLockedGraphBoundarySchema);
 
 /**
  * Model-facing `lineage_submit_findings` input schema (the permissive BB∪CT superset).

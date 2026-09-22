@@ -26,9 +26,9 @@ export interface AgendaEntry {
   /**
    * The router's per-neighbor column decision for this hop, as authored — distinct from
    * `activeColumns`, which is the engine's resolved projection and is rewritten at dispatch.
-   * Only `row_role_only` changes what dispatch does; `inherit` and `carry` are already fully
-   * expressed by `activeColumns`, so a checkpoint written before this field existed restores as
-   * the `inherit` it was written under.
+   * Only `row_role_only` changes what dispatch does; `carry` is already fully expressed by
+   * `activeColumns`. Absent on a checkpoint written before this field existed, or on a BB entry,
+   * which carries no column state at all.
    */
   columnCarry?: ColumnCarry;
   /**
@@ -43,17 +43,26 @@ export interface AgendaEntry {
  * Resolves the carry decision when two enqueues land on one node.
  *
  * @remarks
- * A stated decision beats an unstated one, and the later statement wins between two stated ones:
- * `inherit` (or an absent field) is "no opinion" and never overwrites what is already recorded,
- * while a router that names columns or names a row role has judged this exact neighbor and its
- * word stands until the router says otherwise.
+ * The one surviving cross-hop column-carry conflict rule in the engine (see `smBase.ts`
+ * `routeCarryFor`'s remarks for the same-hop rule, which is a rejection, not a merge). A stated
+ * decision beats an unstated one, and the later statement wins between two stated ones: an absent
+ * carry is "no opinion" and never overwrites what is already recorded, while a router that names
+ * columns or names a row role has judged this exact neighbor and its word stands until the router
+ * says otherwise.
+ *
+ * This is how a route's `columns: 'none'` against a node an EARLIER hop already committed
+ * `column_flow` columns to is honored rather than rejected: neither statement is wrong for the
+ * hop that made it, so the later one simply supersedes on the shared agenda entry. The column the
+ * earlier hop committed is not re-padded back on by this merge — see `smBase.ts`
+ * `getHopContext`'s remarks for where that committed column can still resurface at dispatch, and
+ * the follow-up that resolution is left waiting on.
  *
  * @param existing - Carry already on the queued entry, if any.
  * @param incoming - Carry supplied by the re-push, if any.
  * @returns The carry to record, or `undefined` when neither side stated one.
  */
 function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): ColumnCarry | undefined {
-  if (incoming === undefined || incoming.kind === 'inherit') return existing;
+  if (incoming === undefined) return existing;
   return incoming;
 }
 
@@ -109,8 +118,8 @@ export class AgendaManager {
       if (carry) existing.columnCarry = carry;
       if (carry?.kind === 'row_role_only') {
         // The router stated this neighbor carries no traced value. That replaces whatever a BFS
-        // seed or an earlier inherit put on the entry, rather than unioning with it — a union
-        // would re-pad the very columns the statement removed.
+        // seed or an earlier unstated carry put on the entry, rather than unioning with it — a
+        // union would re-pad the very columns the statement removed.
         if (entry.activeColumns !== undefined) existing.activeColumns = [...entry.activeColumns];
       } else if (entry.activeColumns) {
         existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns);

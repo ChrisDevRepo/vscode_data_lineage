@@ -168,10 +168,14 @@ const SEARCH_REGEX_FLAGS = 'im';
  * `compileSearchRegex` always compiles with `i` and `m`, so a leading `(?i)`, `(?m)` or `(?im)`
  * asks for exactly the behavior already in force — a no-op, so stripping it is lossless. Any other
  * flag letter (`(?s)`, `(?x)`, ...) changes matching semantics the engine does not otherwise apply,
- * so those groups are left untouched and still fail to compile. The scoped form `(?i:...)` is a
- * different construct — it is not a simple prefix, and rewriting it would require re-deriving the
- * subgroup boundary — so it is left untouched too, and still fails to compile like any other
- * unsupported inline-flag syntax.
+ * so those groups are left untouched and fail to compile.
+ *
+ * The scoped form `(?i:...)` is a different construct — it is not a simple prefix, and rewriting it
+ * would require re-deriving the subgroup boundary — so the pattern above requires the closing `)`
+ * immediately after the flags and never matches it. The scoped form therefore reaches the engine
+ * byte-for-byte, and what happens next is the engine's to decide, not this function's: a V8 with
+ * ES2025 regexp modifiers compiles it, an older one raises a `SyntaxError` that
+ * {@link regexRejectHint} turns into advice. Both outcomes are correct here; do not pin either.
  *
  * When the group is the entire pattern, stripping it would leave an empty pattern, and an empty
  * regex matches every string — trading a refused search for a silent match-everything. That case is
@@ -223,10 +227,12 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
  * @remarks
  * The repair is read off the rejection rather than re-derived, so the advice always describes the
  * measurement that rejected the pattern. Every search regex compiles with {@link SEARCH_REGEX_FLAGS},
- * so patterns never need — and JavaScript regular expressions never support — an inline flag group.
- * A redundant `(?i)`/`(?m)`/`(?im)` never reaches this function: `compileSearchRegex` strips it
- * before compiling, so what lands here asks for semantics (`(?s)`, a scoped `(?i:...)`, ...) the
- * engine does not otherwise apply.
+ * so a pattern never needs an inline flag group. A redundant `(?i)`/`(?m)`/`(?im)` never reaches
+ * this function: `compileSearchRegex` strips it before compiling, so what lands here asks for
+ * semantics the engine does not otherwise apply (`(?s)`) or syntax it does not recognize at all.
+ * Which forms those are is the engine's answer, not a fixed list: a V8 with ES2025 regexp modifiers
+ * accepts the scoped `(?i:...)` and `(?-i:...)` forms, so on that host they compile instead of
+ * arriving here. The advice below is keyed on V8's own message for exactly that reason.
  */
 export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexResult, { ok: false }>): string {
   if (rejection.reason === 'syntax') {

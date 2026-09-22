@@ -24,11 +24,10 @@ import type { InvestigationTask } from '../sm/smTypes';
 export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis' | 'completed';
 
 /**
- * The analytical vocabulary a node's logic is read against — shared verbatim between
- * `ANALYTICAL_ROUTE_QUESTION` (`smPrompts.ts`, BB's route-question requirement) and the CT
- * row_role_only hop-specific focus line below, so the two homes cannot drift apart. CT is BB plus
- * columns: a node kept for what it does to the row set is read for the same logic BB reads for,
- * never a narrower "structure only" subset.
+ * The analytical vocabulary a node's logic is read against — the one home, consumed by both forms
+ * of `ANALYTICAL_ROUTE_QUESTION` (`smPrompts.ts`) so the BB and CT route questions cannot drift
+ * apart on what counts as logic. CT is BB plus columns: a node kept for what it does to the row
+ * set is read for the same logic BB reads for, never a narrower "structure only" subset.
  */
 export const ANALYTICAL_LOGIC_VOCABULARY =
   'rules, transformations, thresholds, guards, and lifecycle';
@@ -180,12 +179,13 @@ export const CHAT_MARKDOWN_FORMAT = [
  * line leads the list because it selects the evidence source before the kind of ask picks a tool:
  * a question about a bookmarked graph is a read of a run already stored, and answering it with a
  * scope walk is what turned "what do I see here" into a fresh approval gate. No restated
- * phase/state framing, no routing taxonomy. The `over_discovery_budget` envelope is returned by
- * `lineage_get_scope_bundle` and stays on the discovery path: the hint on that envelope is the one
- * instruction (answer briefly from the partial data the envelope carries; say the full question
- * needs a detailed analysis and offer it — never start it). The existing
- * SM-offer pill is the opt-in. Only `/trace` and that pill enter SM via entryRouting, not this
- * overflow. Tool parameter routing and filter-boundary semantics live in each tool's
+ * phase/state framing, no routing taxonomy. The `over_discovery_budget` guard is deliberately
+ * unmentioned — `lineage_get_scope_bundle` is the only place it can fire, that call site always
+ * wires the mechanical `detectReroute` detector (`detectOverBudgetFromResult`,
+ * `agent/discoveryCapture.ts`), and graph dispatch treats the tool result as a reroute terminal
+ * that hands the turn to SM entry and its consent gate, so the model does not receive another
+ * discovery attempt to act on it — therefore no prose describing that path is ever reachable.
+ * Tool parameter routing and filter-boundary semantics live in each tool's
  * modelDescription — including the scope-depth mechanics this list used to restate, which now have
  * one home in `lineage_get_scope_bundle`'s description and its `.describe()` texts.
  *
@@ -227,6 +227,8 @@ function buildActivePhasePrompt(): string {
     '2. ANALYZE: Issue a verdict for this node against that task.',
     '3. FILE: Submit `sections[]` in capture-recipe shape (long memory) and a one-sentence `summary` (short-term memory).',
     '4. OPEN: For each routed neighbor, write a self-contained `route_requests[].question` — it becomes that node\'s `<current_task>`.',
+    '',
+    'Each `neighbors[]` entry carries the decisions already taken about it. `prune_protected`: an accepted route or `column_flow` named it earlier, so pruning it is refused for the rest of the run and the refusal costs a correction. `already_visited` / `already_removed`: a prune of either is dropped as a no-op. `attributed_columns`: a committed `column_flow` edge already attributes these columns to it, so a route stating them continues that chain in one hop, and `"none"` for a neighbor THIS submission also names in `column_flow[].upstream_columns` is refused as a self-contradiction. Read them before choosing an action.',
   ].join('\n');
 }
 
@@ -743,8 +745,10 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * sub-question. Prior tasks live in structured memory rather than being encoded
  * into and reparsed from a delimiter-bearing string.
  *
- * When CT is active, a `<column_trace>` block is appended with only the
- * per-hop active column set and column-source inspection hint. The invariant
+ * A hop tracking at least one column gets a `<column_trace>` block carrying only that per-hop set
+ * and the column-source inspection hint. A hop tracking none is dispatched under the BB contract
+ * and gets no such block: its submission form has no `column_flow` field for the block to ask for,
+ * and its mode reaches the model as `hop_context.analysis_mode` instead. The invariant
  * CT rules live in the stable system prompt and CT capture template so sliding
  * memory wipes do not duplicate the same rulebook every hop. When the engine
  * routed this focus node to continue an earlier hop's column_flow, a
@@ -753,7 +757,7 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * focus's own, carried on its AgendaEntry, never a different node's.
  *
  * @param currentTasks - Structured tasks assigned to the active node.
- * @param columnTraceColumns - Active CT target columns for this hop; omit when CT is inactive.
+ * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.
  * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
  * @returns Structured `<current_task>` XML block, or an empty string if `currentTask` is absent.
  */
@@ -768,22 +772,14 @@ export function buildCurrentTaskBlock(
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
     lines.push(`  <${tag}>${escapePromptText(task.question.trim())}</${tag}>`);
   }
-  // Presence, not length: an empty array is the CT engine stating that this node declares none of
-  // the traced columns, and that is the hop the block matters most on. Omitting it there left the
-  // submit contract asking for `column_flow` with nothing on screen explaining what to put in it.
-  if (columnTraceColumns) {
+  // Length, not presence: the block states a tracked set, and a hop with none is dispatched under
+  // the BB contract, whose submission carries no `column_flow` field for this block to ask for.
+  if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
       `  <column_trace>`,
-      ...(columnTraceColumns.length > 0
-        ? [
-            `    Active columns: [${columnTraceColumns.join(', ')}]`,
-            `    Hop-specific focus: account for these columns in column_flow using the CT system/capture contract.`,
-          ]
-        : [
-            `    Active columns: none — this node declares none of the traced columns.`,
-            `    It is on the lineage path for what it does to the rows, not for a value it supplies.`,
-            `    Hop-specific focus: submit column_flow: [] and describe in sections[].text what this node does to the row set — joins, filters, predicates, set operations, and any ${ANALYTICAL_LOGIC_VOCABULARY} it applies — then route upstream as usual. The node is kept in the answer.`,
-          ]),
+      `    Active columns: [${columnTraceColumns.join(', ')}]`,
+      `    This list is the whole tracked set for this hop, and it outranks the sub-question above: a column the sub-question names but this list omits is not tracked here — \`column_flow\` may not name it, and what the node does with it belongs in sections[].text.`,
+      `    Hop-specific focus: account for these columns in column_flow using the CT system/capture contract.`,
       `    To inspect upstream column schemas before declaring upstream_columns, call lineage_get_neighbor_columns for current-hop neighbors.`,
       `  </column_trace>`,
     );

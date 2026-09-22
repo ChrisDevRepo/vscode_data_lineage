@@ -233,6 +233,16 @@ export interface HopContext {
   sm_status?: SmStatus;
   /** The current hop index. */
   hop?: number;
+  /**
+   * The contract this hop is dispatched under — mode as data, not as prose the model must infer.
+   *
+   * @remarks
+   * `ct` when this hop carries at least one traced column, `bb` otherwise, including a branch of a
+   * CT run that carries none. Per hop, therefore per edge: the same node reached on a carrying edge
+   * and on a row-shaping edge is dispatched under each contract in turn. Sourced from
+   * `NavigationEngine.currentHopAnalysisMode`, the single owner of that determination.
+   */
+  analysis_mode?: 'bb' | 'ct';
   /** Count of nodes still on the agenda. */
   agenda_remaining?: number;
   /** The node currently being analyzed. */
@@ -311,10 +321,11 @@ interface RouteRequest {
   /** The specific question or sub-goal the AI intends to answer at this node. */
   question: string;
   /**
-   * Per-neighbor column decision for this route, absent when the router states none.
-   * Wire spelling of {@link ColumnCarry}: omitted is `inherit`, a non-empty list is `carry`,
-   * and the literal `'none'` is `row_role_only`. Three states, never an empty array — an
-   * omitted field and an empty list would otherwise read alike.
+   * Per-neighbor column decision for this route. Required on every CT route request — a
+   * non-empty list, or the literal `'none'` — never an empty array or an omitted field, so a
+   * reader never has to guess a column opinion from silence. Optional here only because this
+   * interface also backs BB's wire shape, whose form carries no `columns` field at all; see
+   * {@link columnCarryFromRoute} for the resulting {@link ColumnCarry}.
    */
   columns?: RouteColumns;
 }
@@ -333,45 +344,36 @@ export type RouteColumns = string[] | 'none';
  * The per-neighbor column decision travelling with one queued hop.
  *
  * @remarks
- * Three states, discriminated so no reader infers meaning from an empty array:
- * `inherit` — the caller stated no column opinion, so the session's traced targets apply, which
- * is the behavior every pre-existing caller relies on;
+ * Two states, discriminated so no reader infers meaning from an empty array:
  * `carry` — exactly these columns travel to the neighbor (an empty list is the engine's own
  * resolution "none of the traced columns bind on this node", which the tracer may still recover
- * at dispatch, exactly as before);
+ * at dispatch);
  * `row_role_only` — the router judged the neighbor to shape rows and carry no traced value, so it
  * is dispatched as a plain whole-object neighbor and no target set is padded back onto it.
+ * Every CT route states one of the two explicitly ({@link CtRouteRequestSchema} in
+ * `tools/toolSchemas.ts`); nothing constructs a "no opinion" carry.
  */
 export type ColumnCarry =
-  | { readonly kind: 'inherit' }
   | { readonly kind: 'carry'; readonly columns: readonly string[] }
   | { readonly kind: 'row_role_only' };
-
-/** Shared `inherit` carry — the stateless default, safe to hand out by reference. */
-export const INHERIT_CARRY: ColumnCarry = { kind: 'inherit' };
 
 /** Shared `row_role_only` carry — the stateless row-role decision, safe to hand out by reference. */
 const ROW_ROLE_ONLY_CARRY: ColumnCarry = { kind: 'row_role_only' };
 
 /**
- * Lifts the legacy `string[] | undefined` column argument into a {@link ColumnCarry}.
- *
- * @param columns - Columns the caller resolved, or `undefined` when it has no column opinion.
- * @returns `inherit` for `undefined`, otherwise `carry` over the given list.
- */
-export function columnCarryOf(columns: readonly string[] | undefined): ColumnCarry {
-  return columns === undefined ? INHERIT_CARRY : { kind: 'carry', columns };
-}
-
-/**
  * Translates one route request's wire column decision into a {@link ColumnCarry}.
  *
+ * @remarks
+ * `columns` is required on every CT route request; an `undefined` input can only originate from
+ * a BB-mode route, whose wire shape carries no `columns` field at all because BB traces no
+ * columns. That structural absence names no traced value, so it maps to the same carry a CT
+ * router reaches by writing the literal `'none'`.
+ *
  * @param columns - The route request's `columns` field as submitted.
- * @returns The discriminated carry decision; `inherit` when the field was omitted.
+ * @returns The discriminated carry decision.
  */
 export function columnCarryFromRoute(columns: RouteColumns | undefined): ColumnCarry {
-  if (columns === undefined) return INHERIT_CARRY;
-  if (columns === 'none') return ROW_ROLE_ONLY_CARRY;
+  if (columns === undefined || columns === 'none') return ROW_ROLE_ONLY_CARRY;
   return { kind: 'carry', columns };
 }
 
@@ -430,11 +432,11 @@ export interface SupplementSkip {
    * - `unresolved` — node id does not exist in the loaded graph model.
    * - `excluded` — node exists but is outside the user's approved exclude filters
    *   (`excludedNodeIds` / `excludedTypes` / `excludedSchemas`).
-   * - `out_of_allowlist` — node exists but its schema is outside the session allowlist. The
-   *   border widens only through user consent (the follow-up pill pre-extends the allowlist);
-   *   an AI-initiated supplement cannot self-approve a new schema.
+   *
+   * The session allowlist is not a refusal axis here: a follow-up request is itself the user's
+   * consent, so every named id that is not excluded is admitted before the border is read.
    */
-  reason: 'excluded' | 'unresolved' | 'out_of_allowlist';
+  reason: 'excluded' | 'unresolved';
 }
 
 /**
@@ -980,7 +982,7 @@ export interface SmState {
     activeColumns?: string[];
     /** CT chain-continuation questions opened for this node by an earlier hop, owned by this entry. */
     lineageQuestions?: string[];
-    /** Per-neighbour column-carry decision that survived contraction (`inherit` / `carry` / `row_role_only`). */
+    /** Per-neighbour column-carry decision that survived contraction (`carry` / `row_role_only`). */
     columnCarry?: ColumnCarry;
   }>;
   /** ID of the node currently under analysis, if any. */
@@ -1059,7 +1061,8 @@ export type InvalidRouteKind = | 'absent_route'
       | 'prune_noop_queued'
       | 'prune_origin_forbidden'
       | 'prune_would_orphan'
-      | 'prune_route_conflict';
+      | 'prune_route_conflict'
+      | 'route_columns_flow_conflict';
 
 /**
  * Represents an invalid route returned during validation.

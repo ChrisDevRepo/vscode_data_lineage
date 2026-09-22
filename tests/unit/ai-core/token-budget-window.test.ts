@@ -62,7 +62,8 @@ describe('bounded prompt blocks follow the model window', () => {
 
 /**
  * `checkScopeBudget` is the one gate that rejects an oversized discovery catalog request with
- * `over_discovery_budget`. Discovery stays in chat; the existing SM-offer pill is the opt-in.
+ * `over_discovery_budget`. On the scope surface that rejection cuts discovery short and routes the
+ * turn to SM entry, where the consent gate is the opt-in.
  * The boundary is documented (`DEFAULT_DISCOVERY_NODE_CAP` = 10, `DEFAULT_DISCOVERY_TOKEN_BUDGET`
  * = 10_000 tokens) but was asserted nowhere: pin it exactly at the cap, one over on each axis
  * independently, and confirm neither axis leaks into the other.
@@ -86,9 +87,10 @@ describe('checkScopeBudget escalates at the documented discovery caps', () => {
     if (!result.ok) {
       expect(result.reason).toBe('over_discovery_budget');
       expect(result.limits).toEqual({ node_cap: DEFAULT_DISCOVERY_NODE_CAP, token_budget: DEFAULT_DISCOVERY_TOKEN_BUDGET });
-      expect(result.hint).toMatch(/a detailed analysis/i);
+      // The hint names the route the host takes, not a recovery the model performs: the scope
+      // surface is a reroute terminal into the consent-gated exploration path.
+      expect(result.hint).toMatch(/consent-gated exploration path/i);
       expect(result.hint).not.toMatch(/hop-by-hop/i);
-      expect(result.hint).not.toMatch(/consent-gated/i);
     }
   });
 

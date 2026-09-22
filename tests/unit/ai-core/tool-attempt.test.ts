@@ -1008,8 +1008,29 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     const last = replayed[replayed.length - 1];
     expect(last.getType()).toBe('human');
     expect(String(last.content)).toContain('Continue the current task');
+    expect(String(last.content)).toContain('resend the corrected tool call');
     // The correction itself still rides the paired tool result, and the pair stays well formed.
     expect(replayedToolResult(replayed).code).toBe('validation');
+    expect(() => assertToolPairingWellFormed(replayed)).not.toThrow();
+  });
+
+  it('closes a rejection that has no corrective call with a stop note, not a resend order', async () => {
+    // UAT sess_1789702959746_3m3q1: a hint reading "do not resend" arrived beside the standing note
+    // "resend the corrected tool call". With no legal move the model improvised, and each
+    // improvisation charged a strike until the breaker ended the turn with no answer delivered.
+    const { replayed } = await replayAfterRejection({
+      toolName: 'lineage_start_exploration',
+      input: { supplement: { nodeIds: [] } },
+      envelope: JSON.stringify({
+        error: REJECTION_CODES.supplementEmpty,
+        hint: 'supplement requires at least one node id in supplement.nodeIds — if no node is left to extend, do not resend an empty supplement.',
+      }),
+    });
+
+    const last = replayed[replayed.length - 1];
+    expect(last.getType()).toBe('human');
+    expect(String(last.content)).toContain('No corrective call is available');
+    expect(String(last.content)).not.toContain('resend the corrected tool call');
     expect(() => assertToolPairingWellFormed(replayed)).not.toThrow();
   });
 

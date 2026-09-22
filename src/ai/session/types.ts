@@ -68,6 +68,12 @@ export interface ResultGraph {
   /** AI-supplied report sections from `present_result.input.sections[]`. */
   sections?: Array<{ label: string; node_ids?: string[]; text?: string }>;
   /**
+   * The `explorationRunId` that authored {@link sections}. A newly approved exploration replaces
+   * the engine without clearing this graph, so the stamp is what distinguishes sections a later
+   * render may retain from ones left over from the previous run.
+   */
+  sectionsRunId?: string;
+  /**
    * Column lineage chain from a CT session, serialized into AI metadata for React canvas
    * rendering. `ctPrunedNodeIds` identifies visited nodes that contributed no flow edges.
    */

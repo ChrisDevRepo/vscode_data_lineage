@@ -233,7 +233,7 @@ describe("Submit Findings Handler", () => {
       out_col: 'amount',
       upstream_columns: [{ node: 'base_table', col: 'raw_amount', note: 'N'.repeat(COLUMN_FLOW_NOTE_MAX + 1) }],
     }],
-    route_requests: engine.requiredNeighborIds('origin').map(id => ({ nodeId: id, question: 'what does this contribute?' })),
+    route_requests: engine.requiredNeighborIds('origin').map(id => ({ nodeId: id, question: 'what does this contribute?', columns: ['amount'] })),
   }, services);
 
   const rejected = result() as { error?: string; hint?: string; detail?: Array<{ path?: string }> };
@@ -367,7 +367,7 @@ describe("Submit Findings Handler", () => {
     column_flow: [
       { out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount' }], bogus_field: 'nope' },
     ],
-    route_requests: engine.requiredNeighborIds('origin').map(id => ({ nodeId: id, question: 'what does this contribute?' })),
+    route_requests: engine.requiredNeighborIds('origin').map(id => ({ nodeId: id, question: 'what does this contribute?', columns: ['amount'] })),
   };
   executeSubmitFindings(raw, services);
   const accepted = result() as { error?: string };

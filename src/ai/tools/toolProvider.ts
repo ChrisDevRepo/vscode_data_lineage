@@ -56,6 +56,73 @@ import type { ModelPort } from '../model/modelPort';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /**
+ * Retry-messaging group for a rejection code, shared by this module's `[Reject]` debug line and
+ * `graph.ts`'s chat-facing `Retry N — <group>` line — ONE classification, read by both surfaces, so
+ * a debug trace and what the user saw can never disagree about which group a code belongs to.
+ *
+ * @remarks
+ * Deliberately five groups, not six: there is no "scope limit" group. The chat retry line fires only
+ * when `semanticFailures` increases, and the two budget codes
+ * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}) are
+ * non-chargeable (`NON_CHARGEABLE_REJECTION_CODES` in `toolAttempt.ts`), so neither ever reaches it;
+ * `result_too_large` is a stored observation body, never a member of `rejections[]`. Adding a group
+ * those codes route to would be unreachable and would misrepresent a budget refusal as a model
+ * correction.
+ */
+export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'correction';
+
+/**
+ * Explicit membership for the three non-fallback groups. Every rejection code NOT listed here —
+ * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
+ * `correction` fallback, so an unmapped code can never surface to the user as a raw machine string.
+ *
+ * Membership follows the approved plan's Package 4 table:
+ * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
+ * - `source_selection` — routing and prune-topology guards.
+ * - `answer_format` — structural/schema violations of the tool envelope itself.
+ *
+ * Session/state codes (`no_active_session`, `stale_turn`, …), transport artifacts
+ * (`duplicate_call_id`, `empty_generation`), the budget guards, and control-flow markers
+ * (`action_required`, `off_policy`) are deliberately absent — none says anything about the model's
+ * semantic accuracy, so they fall to `correction` rather than borrowing one of the three named groups.
+ */
+const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
+  // Column mapping
+  out_col_not_tracked: 'column_mapping',
+  bad_out_col: 'column_mapping',
+  bad_contributor_col: 'column_mapping',
+  self_loop_column: 'column_mapping',
+  pruned_contributor: 'column_mapping',
+  column_chain_incomplete: 'column_mapping',
+  // Source selection
+  [REJECTION_CODES.pruneWouldOrphanNoted]: 'source_selection',
+  missing_required_route: 'source_selection',
+  route_validation_failed: 'source_selection',
+  prune_route_conflict: 'source_selection',
+  prune_origin_forbidden: 'source_selection',
+  // Answer format
+  validation: 'answer_format',
+  [REJECTION_CODES.invalidInput]: 'answer_format',
+  [REJECTION_CODES.ctFieldRequired]: 'answer_format',
+  [REJECTION_CODES.ctFieldForbiddenInBb]: 'answer_format',
+  [REJECTION_CODES.bbFieldUnknown]: 'answer_format',
+  [REJECTION_CODES.missingField]: 'answer_format',
+  field_length_exceeded: 'answer_format',
+  empty_structured_output: 'answer_format',
+  missing_required_tool_call: 'answer_format',
+  classification_lock_violation: 'answer_format',
+};
+
+/**
+ * Resolves a rejection code to its retry-messaging group, defaulting an unmapped code to the
+ * `correction` fallback. See {@link REJECTION_GROUPS} for the membership this implements and why a
+ * "scope limit" group is intentionally absent.
+ */
+export function classifyRejectionCode(code: string): RejectionChatGroup {
+  return REJECTION_GROUPS[code] ?? 'correction';
+}
+
+/**
  * Private handler for AI tool execution.
  *
  * Owns the shared VS Code host services and thin read-tool handlers. Mutating
@@ -118,14 +185,19 @@ class ToolHandler implements ToolServices {
     sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     const rejection = readToolError(data);
     if (rejection) {
-      const reason = trunc(sanitizeForLog(rejection.reason), LOG_TRUNC_REJECTION);
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';
       const paths = rejectionIssuePaths(rejection.detail);
       const pathPart = paths.length > 0 ? ` issuePaths=${paths.join(',')}` : '';
       // The consent gate shares the rejection envelope but is the gate firing on plan — labelling
       // it `[Reject]` made a healthy refine round read as a retry loop in the log.
-      const label = isConsentGateRejection(rejection.code) ? '[Gate]' : '[Reject]';
-      this.logger.debug(`${label} tool=${toolName} code=${rejection.code} reason=${reason}${hintPart}${pathPart}`);
+      const isGate = isConsentGateRejection(rejection.code);
+      const label = isGate ? '[Gate]' : '[Reject]';
+      // `group=` only for a genuine rejection — a gate is not a retry-messaging concern, and
+      // classifying it would misleadingly imply a consent gate is a model correction.
+      const groupPart = isGate ? '' : ` group=${classifyRejectionCode(rejection.code)}`;
+      // `reason=` dropped: it duplicated `code=` verbatim on every observed rejection — the code
+      // IS the reason, at debug granularity; the prose sentence rides the `hint=` field instead.
+      this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code}${hintPart}${pathPart}`);
     } else {
       this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
     }
@@ -193,7 +265,7 @@ class ToolHandler implements ToolServices {
     const phase = sess.phase.kind;
     const engine = sess.stateMachine;
     if (phase === 'exploring' && engine) {
-      const mode = activeModeOf(engine.columnAspect !== null);
+      const mode = activeModeOf(engine.currentHopAnalysisMode === 'ct');
       return { kind: 'active', mode };
     }
     if (phase === 'completed') return { kind: 'completed' };

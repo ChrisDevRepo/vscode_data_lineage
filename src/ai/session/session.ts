@@ -327,15 +327,9 @@ export class AiSession {
   /**
    * Number of distinct nodes inspected via `lineage_get_object_detail`
    * in the most recent discovery turn. The SM-offer follow-up pill renders
-   * when this count is ≥ 2, or when {@link lastDiscoveryOverBudget} is set.
+   * when this count is ≥ 2.
    */
   public lastDiscoveryWalkCount = 0;
-
-  /**
-   * True when the last discovery seed came from an oversized scope that stayed in chat.
-   * {@link smOfferAvailable} uses this instead of inventing a walk count of 2.
-   */
-  public lastDiscoveryOverBudget = false;
 
   /**
    * The user's verbatim discovery-turn prompt — stored so the
@@ -533,7 +527,6 @@ export class AiSession {
     this.classification = undefined;
     this.lastDiscoveryOrigin = null;
     this.lastDiscoveryWalkCount = 0;
-    this.lastDiscoveryOverBudget = false;
     this.lastDiscoveryQuestion = null;
     this.lastDiscoveryAnswer = null;
   }
@@ -558,6 +551,26 @@ export class AiSession {
   public beginTurnState(): void {
     this.resetMemoryWipeDiagnostics();
     this.resetPresentResultTurnState();
+    this._bufferedFollowUpProse = null;
+  }
+
+  /**
+   * The newest follow-up prose held back by `proseGate: 'buffer-until-tool'`, turn-scoped.
+   *
+   * @remarks
+   * A follow-up generation that pairs prose with a tool call has that prose suppressed until the
+   * call is known good, and a rejected call discards it. When the phase then trips its breaker the
+   * user is left with an error and nothing else, though the answer to their question may already
+   * have been written — the observed case delivered a complete one and discarded it. Held here so
+   * the terminal path can still deliver it; superseded on every later generation, because only the
+   * newest prose describes the state the turn actually reached.
+   */
+  private _bufferedFollowUpProse: string | null = null;
+  /** The newest buffered follow-up prose, or null when this turn produced none. */
+  public get bufferedFollowUpProse(): string | null { return this._bufferedFollowUpProse; }
+  /** Holds one generation's suppressed prose, replacing any earlier one. Blank text clears nothing. */
+  public bufferFollowUpProse(text: string): void {
+    if (text.trim().length > 0) this._bufferedFollowUpProse = text;
   }
 
   /** Enters the exact tool-policy stage for one model call. */
@@ -598,29 +611,11 @@ export class AiSession {
    * @param question - The user's verbatim discovery prompt.
    * @param answer - The AI's final discovery answer (markdown).
    */
-  public recordDiscovery(origin: string, walkCount: number, question: string, answer: string, overBudget = false): void {
+  public recordDiscovery(origin: string, walkCount: number, question: string, answer: string): void {
     this.lastDiscoveryOrigin = origin;
     this.lastDiscoveryWalkCount = walkCount;
     this.lastDiscoveryQuestion = question;
     this.lastDiscoveryAnswer = answer;
-    this.lastDiscoveryOverBudget = overBudget;
-  }
-
-  /**
-   * Seeds the existing post-discovery SM-offer from an oversized scope that stayed in chat.
-   *
-   * @remarks
-   * Same pill as a completed multi-object walk — not a new offer. Marks the seed as over-budget
-   * so {@link smOfferAvailable} still fires when the envelope omitted a walk count, without
-   * inventing a count of 2.
-   *
-   * @param origin - Canonical id from the rejected `lineage_get_scope_bundle` call.
-   * @param nodeCount - Projected node count that overflowed the discovery cap.
-   * @param question - The user's verbatim discovery prompt.
-   * @param answer - The AI's discovery chat answer (markdown); empty until the turn finishes.
-   */
-  public seedSmOfferFromRejectedOrigin(origin: string, nodeCount: number, question: string, answer: string): void {
-    this.recordDiscovery(origin, nodeCount, question, answer, true);
   }
 
   /**
@@ -628,15 +623,14 @@ export class AiSession {
    *
    * @remarks
    * The single predicate for every surface that renders the offer, so their trigger conditions
-   * cannot drift. Call it — never re-state the three conditions at a render site. A completed
-   * walk of ≥2 objects and an oversized scope that stayed in chat both seed
-   * {@link lastDiscoveryOrigin} through {@link recordDiscovery} (the latter via
-   * {@link seedSmOfferFromRejectedOrigin}), so the same pill is the opt-in either way.
+   * cannot drift. Call it — never re-state the three conditions at a render site. An oversized
+   * scope never reaches this offer: the discovery budget guard cuts that turn into SM entry and
+   * the consent gate, so the pill is the opt-in only after a completed walk of ≥ 2 objects.
    */
   public smOfferAvailable(): boolean {
     return this.phase.kind === 'idle'
       && Boolean(this.lastDiscoveryOrigin)
-      && (this.lastDiscoveryWalkCount >= 2 || this.lastDiscoveryOverBudget);
+      && this.lastDiscoveryWalkCount >= 2;
   }
 
   /** Whether a completed bounded BFS chat answer can offer a visual-preview action. */
@@ -1043,6 +1037,7 @@ export class AiSession {
       intro: prior?.intro,
       closing: prior?.closing,
       sections: prior?.sections,
+      sectionsRunId: prior?.sectionsRunId,
       ...(fullResult.columnAspect ? {
         columnAspect: {
           edges: fullResult.columnAspect.edges,
@@ -1051,6 +1046,25 @@ export class AiSession {
       } : {}),
     };
     return guard;
+  }
+
+  /**
+   * The committed report sections a further render of this same run may keep instead of resending.
+   *
+   * @remarks
+   * Three facts have to hold together, so they are decided here once rather than at each caller:
+   * sections exist, an approved exploration is behind them, and that run is the one still
+   * rendering. The last is load-bearing — {@link storeSmResult} carries sections forward and an
+   * approval does not clear {@link resultGraph}, so an unstamped check would let a fresh
+   * exploration inherit the previous run's report. A discovery-turn render has no run id and never
+   * retains.
+   *
+   * @returns The retainable sections, or `null` when this render must author its own.
+   */
+  public retainableReportSections(): NonNullable<ResultGraph['sections']> | null {
+    const sections = this.resultGraph?.sections;
+    if (!sections?.length || !this.explorationRunId) return null;
+    return this.resultGraph?.sectionsRunId === this.explorationRunId ? sections : null;
   }
 
   /**

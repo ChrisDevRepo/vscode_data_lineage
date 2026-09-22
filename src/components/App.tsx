@@ -22,6 +22,7 @@ import { computeSchemas } from '../engine/modelBuilder';
 import { reconcileAiView } from './aiViewReconcile';
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
+import { notifyUser } from '../utils/notify';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
@@ -50,6 +51,14 @@ const DACPAC_TIMEOUT_MS = 20_000;
 const DB_TIMEOUT_MS = 60_000;
 /** Minimum time to show the loading spinner to prevent visual flickering. */
 const MIN_SPINNER_MS = 1200;
+/**
+ * How long the rebuild spinner waits for the host's `rebuild-config` reply before giving up.
+ *
+ * @remarks
+ * The spinner is cleared only by that reply, so a dropped message would otherwise pin the toolbar
+ * in a rebuilding state with no way out.
+ */
+const REBUILD_TIMEOUT_MS = 15_000;
 
 /**
  * Computes the set of schemas that are immediate neighbors of a target schema.
@@ -436,6 +445,10 @@ export function App() {
   // ── Graph state ─────────────────────────────────────────────────────────────
 
   const [isRebuilding, setIsRebuilding] = useState(false);
+  // Bumped by either Refresh button to remount the React Flow provider. A remount is the one repair
+  // that does not depend on knowing what went wrong: it discards React Flow's internal store and
+  // every node element, so the next mount re-measures from scratch.
+  const [canvasResetKey, setCanvasResetKey] = useState(0);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   // Expanded schema view expands selected schemas to individual objects while other schemas remain
   // collapsed as schema clusters. `focusNodeId` is only the highlight/centre target.
@@ -520,10 +533,15 @@ export function App() {
    * the arriving `rebuild-config` reply performs a full filter reset and re-derives
    * the graph view mode (snapping to schema view when the graph is large).
    * Does not exit active trace, analysis, or AI preview modes.
+   *
+   * Also remounts the canvas ({@link canvasResetKey}), so the button repairs a stuck rendering
+   * state even when the host never replies. The remount discards the viewport and any manual node
+   * drags — positions the filter reset regenerates anyway.
    */
   const handleRefresh = useCallback(() => {
     setExpandedSchemaView(null);
     pendingRefreshReset.current = true;
+    setCanvasResetKey((k) => k + 1);
     vscodeApi.postMessage({ type: 'rebuild' });
   }, [vscodeApi]);
 
@@ -543,14 +561,40 @@ export function App() {
   }, [model, config, rebuild, clearTrace]);
 
   const rebuildStartRef = useRef(0);
-  /** Forces a complete rebuild of the graph structure. */
+  const rebuildTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Stops the {@link REBUILD_TIMEOUT_MS} watchdog once a reply has arrived. */
+  const clearRebuildTimeout = useCallback(() => {
+    if (rebuildTimeoutRef.current) {
+      clearTimeout(rebuildTimeoutRef.current);
+      rebuildTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearRebuildTimeout, [clearRebuildTimeout]);
+
+  /**
+   * Forces a complete rebuild of the graph structure, keeping the current filter.
+   *
+   * @remarks
+   * Remounts the canvas ({@link canvasResetKey}) before the round trip, so the button repairs a
+   * stuck rendering state whether or not the host replies, and arms a watchdog so a lost reply
+   * cannot pin the spinner.
+   */
   const handleRebuild = useCallback(() => {
     if (model) {
       setIsRebuilding(true);
       rebuildStartRef.current = Date.now();
+      clearRebuildTimeout();
+      rebuildTimeoutRef.current = setTimeout(() => {
+        rebuildTimeoutRef.current = null;
+        setIsRebuilding(false);
+        notifyUser('Refresh timed out waiting for the extension. The view was reset; try again.');
+      }, REBUILD_TIMEOUT_MS);
     }
+    setCanvasResetKey((k) => k + 1);
     vscodeApi.postMessage({ type: 'rebuild' });
-  }, [vscodeApi, model]);
+  }, [vscodeApi, model, clearRebuildTimeout]);
 
   // ── Derived state: effective graph and nodes matching what's rendered ──────
   const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
@@ -1080,6 +1124,8 @@ export function App() {
           setActiveProjectId(msg.lastOpenedId);
         }
       } else if (msg.type === 'rebuild-config') {
+        // The reply arrived — the watchdog armed by handleRebuild has nothing left to guard.
+        clearRebuildTimeout();
         if (!msg.config) {
           setIsRebuilding(false);
         } else {
@@ -1164,7 +1210,7 @@ export function App() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [view, graphMode, handleApplyView]);
+  }, [view, graphMode, handleApplyView, clearRebuildTimeout]);
 
   // ── Saved Views ─────────────────────────────────────────────────────────────
 
@@ -1499,7 +1545,7 @@ export function App() {
   };
 
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={canvasResetKey}>
       <GraphCanvas
         flowNodes={renderNodes}
         flowEdges={renderEdges}

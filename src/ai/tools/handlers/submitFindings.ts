@@ -78,10 +78,14 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       // schema `instructionPlan.ts` dispatched for this mode/classification (mode-and-classification
       // narrowed `sections[].angle`), not just the mode-only base — a provider that does not enforce
       // the advertised schema is still held to it here.
-      const parsed = submitFindingsSchemaForMode(engine.columnAspect ? 'ct' : 'bb', sess.classification)
+      // The HOP's mode, not the session's: `instructionPlan` dispatched the form for this hop, and a
+      // hop carrying none of the traced columns was dispatched the BB form. Parsing it back against
+      // the CT form would demand a `column_flow` the model was never shown a field for.
+      const hopMode = engine.currentHopAnalysisMode;
+      const parsed = submitFindingsSchemaForMode(hopMode, sess.classification)
         .safeParse(normalizedInput);
       if (!parsed.success) {
-        const isCtMode = !!engine.columnAspect;
+        const isCtMode = hopMode === 'ct';
         // Surface specific field paths so the model can correct the right field on retry.
         const seen = new Set<string>();
         const fieldErrors: string[] = [];

@@ -178,7 +178,6 @@ const InitSnapshotSchema = z.discriminatedUnion('analysisMode', [
 ]);
 
 const ColumnCarrySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('inherit') }).strict(),
   z.object({ kind: z.literal('carry'), columns: z.array(NonEmptyString) }).strict(),
   z.object({ kind: z.literal('row_role_only') }).strict(),
 ]);
@@ -195,7 +194,7 @@ const AgendaEntrySchema = z.object({
   // The router's authored per-neighbor decision, kept beside the resolved projection because only
   // it can say "this neighbor carries no traced value" — `activeColumns: []` is also what an
   // engine-resolved empty bind looks like. Absent in a checkpoint written before per-neighbor carry
-  // existed, which restores as the `inherit` those checkpoints were written under.
+  // existed, which restores from `activeColumns` alone.
   columnCarry: ColumnCarrySchema.optional(),
   lineageQuestions: NonEmptyStrings.optional(),
 }).strict();

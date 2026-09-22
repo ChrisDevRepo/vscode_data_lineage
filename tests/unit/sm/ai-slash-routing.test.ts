@@ -79,14 +79,15 @@ describe('ai-slash-routing', () => {
   it('routes every AgentEntryRoute x AgentExecutionTrigger pair per docs/ARCHITECTURE.md §Discovery and visual preview', () => {
     const ROUTING_TABLE: Record<AgentEntryRoute, Record<AgentExecutionTrigger, InitialAgentStage>> = {
       // docs/ARCHITECTURE.md §Discovery and visual preview — "Only a mechanical trigger opens SM
-      // entry": a free-text column_trace verdict runs discovery first, so an oversized scope is
-      // summarized and the detailed analysis offered instead of gated. The escalation stays keyed on
-      // the trigger, never on size.
+      // entry": a free-text column_trace verdict runs discovery first, and reaches SM only if the
+      // discovery budget guard trips there and hands the turn on as `discovery_budget`. The
+      // escalation stays keyed on the trigger, never on the semantic verdict.
       column_trace: {
         free_text: 'discover',
         slash_trace: 'sm_entry',
         run_trace: 'sm_entry',
         preview_button: 'visual_preview',
+        discovery_budget: 'sm_entry',
       },
       // docs/ARCHITECTURE.md:154-155 — a render request "does not grant SM authority": it enters
       // discover, and only an explicit preview_button trigger on a later turn opens the preview.
@@ -95,6 +96,7 @@ describe('ai-slash-routing', () => {
         slash_trace: 'sm_entry',
         run_trace: 'sm_entry',
         preview_button: 'visual_preview',
+        discovery_budget: 'sm_entry',
       },
       // docs/ARCHITECTURE.md:148 — "Discovery is the default read-only chat state."
       discovery: {
@@ -102,6 +104,7 @@ describe('ai-slash-routing', () => {
         slash_trace: 'sm_entry',
         run_trace: 'sm_entry',
         preview_button: 'visual_preview',
+        discovery_budget: 'sm_entry',
       },
     };
 

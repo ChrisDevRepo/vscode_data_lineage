@@ -35,9 +35,8 @@ const SECTION_RULES: Record<ClassificationValue, {
  *
  * @remarks
  * A `prune` verdict carries no analysis into the lineage answer — its sections are discarded
- * either way (accepted content is refused separately by `prune_sections_conflict`) — so a prune
- * is exempt from the angle requirement below, the same way the unlocked branch already exempts
- * it from the non-empty requirement.
+ * either way — so a prune is exempt from the angle requirement below, the same way the unlocked
+ * branch already exempts it from the non-empty requirement.
  *
  * @param sections - The captured sections to validate.
  * @param classification - The locked classification for the session.

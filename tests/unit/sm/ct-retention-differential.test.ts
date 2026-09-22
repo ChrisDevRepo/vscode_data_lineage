@@ -44,6 +44,14 @@ interface RetentionCase {
    * existed and what each of them still asserts.
    */
   readonly expectRenderDropped?: readonly string[];
+  /**
+   * Per-node verdict override for {@link driveCt}; every node not listed submits `analyze`. A node
+   * whose active columns bind to none of its own declared columns (a non-bodied carrier handed a
+   * real upstream column name under which it has no column of its own) has no valid `out_col` to
+   * name — `passthrough` with an empty `column_flow` is the one declared escape for that shape
+   * (`declaresNoTrackedColumns`, `smBase.ts`).
+   */
+  readonly verdictOverride?: Readonly<Record<string, 'analyze' | 'passthrough'>>;
 }
 
 const V = 'view' as const, T = 'table' as const, P = 'procedure' as const, F = 'function' as const;
@@ -238,9 +246,17 @@ const CASES: readonly RetentionCase[] = [
     measuredLost: [],
   },
   {
-    // `[ct].[stgorders]` declares none of the traced column; the walk still continues through it
-    // exactly as BB's does, reaching `[ct].[vworderfeed]`, which is handed the real column it
-    // declares rather than an empty carried set.
+    // `[ct].[stgorders]` is a bare table with one column, `RawAmount` — the real DDL name the
+    // origin's own `column_flow` names it under, and own-provenance always wins over a route's
+    // stated carry (`routeCarryFor`). That real name is what a non-bodied carrier mechanically
+    // forwards to the node behind it: `[ct].[vworderfeed]` is dispatched with `RawAmount`, not with
+    // `NetAmount` (the session's traced column spelling, and vworderfeed's own declared column) —
+    // there is no bodied hop between the two that could reassert the value under vworderfeed's own
+    // name, and the engine no longer bridges that gap by re-deriving each node's active set from
+    // the session's target-column spelling. vworderfeed's own `RawAmount` binds to none of its
+    // declared columns (`declaredActiveColumns` empty), so `column_flow:[]` under `passthrough` is
+    // its one honest account (`declaresNoTrackedColumns`, `smBase.ts`) — it still must be traversed,
+    // exactly as BB's walk does, but commits no column edge of its own.
     id: 'C15 — a carrier that declares none of the traced columns must still be traversed',
     origin: '[ct].[vwordertotals]', tracedColumn: 'NetAmount',
     nodes: [
@@ -257,13 +273,10 @@ const CASES: readonly RetentionCase[] = [
     reachRequired: ['[ct].[stgorders]', '[ct].[vworderfeed]', '[ct].[orders]'],
     flow: {
       '[ct].[vwordertotals]': [{ out_col: 'NetAmount', upstream_columns: [{ node: '[ct].[stgorders]', col: 'RawAmount' }] }],
-      // Both halves of the acceptance pair are asserted on this node: it is handed the real column
-      // it declares (see `expectActiveColumns`), and a flow naming that column commits instead of
-      // being refused as `out_col_not_on_node`. The carrier's own empty projection annotates the
-      // carrier; it no longer decides what the node behind it is allowed to carry.
-      '[ct].[vworderfeed]': [{ out_col: 'NetAmount', upstream_columns: [{ node: '[ct].[orders]', col: 'OrderAmount' }] }],
+      '[ct].[vworderfeed]': [],
     },
-    expectActiveColumns: { '[ct].[vworderfeed]': ['NetAmount'] },
+    verdictOverride: { '[ct].[vworderfeed]': 'passthrough' },
+    expectActiveColumns: { '[ct].[vworderfeed]': ['RawAmount'] },
     measuredLost: [],
   },
   {
@@ -334,6 +347,29 @@ function expectedDrops(testCase: RetentionCase, recorded: readonly string[] | un
 }
 
 /**
+ * The per-neighbor `route_requests[].columns` decision {@link driveCt} states for `id`, read off
+ * the SAME `column_flow` entries the hop submits: a neighbor the flow names as an `upstream_columns`
+ * supplier or a `writes_to` target carries exactly the real column name(s) named for it there — the
+ * model's own evidence, not the session's generic target-column spelling, which a non-bodied
+ * carrier's real DDL column name may not share (`C15`). A neighbor the flow names nowhere carries
+ * `'none'`: a row-shaping dependency the walk still must visit, but not as a column question.
+ *
+ * @param columnFlow - The column_flow this hop is about to submit.
+ * @param id - The routed neighbor id.
+ * @returns The route's `columns` decision for `id`.
+ */
+function routeColumnsFor(columnFlow: FlowEntry[] | undefined, id: string): string[] | 'none' {
+  const named = new Set<string>();
+  for (const entry of columnFlow ?? []) {
+    for (const ref of entry.upstream_columns) {
+      if (ref.node === id) named.add(ref.col);
+    }
+    if (entry.writes_to?.node === id) named.add(entry.out_col);
+  }
+  return named.size > 0 ? [...named] : 'none';
+}
+
+/**
  * Drives a CT walk, submitting the case's scripted column_flow at each dispatched focus and routing
  * every neighbour the engine requires an account for.
  *
@@ -361,11 +397,12 @@ function driveCt(engine: NavigationEngine, testCase: RetentionCase): void {
       focus_node_id: focusId,
       sections: [{ angle: 'business' as const, text: `capture for ${focusId}` }],
       summary: `${focusId} carries ${testCase.tracedColumn}`,
-      verdict: 'analyze',
+      verdict: testCase.verdictOverride?.[focusId] ?? 'analyze',
       column_flow: columnFlow,
       route_requests: engine.requiredNeighborIds(focusId).map(id => ({
         nodeId: id,
         question: `What does ${id} decide about the rows ${focusId} admits?`,
+        columns: routeColumnsFor(columnFlow, id),
       })),
     });
     expect('error' in outcome, `${testCase.id}: the scripted hop at ${focusId} is accepted, not rejected`).toBe(false);
@@ -515,9 +552,12 @@ interface RouteOutcome { nodeId: string; accepted: boolean; deferred?: boolean; 
 interface SubmitOk { ok?: true; error?: string; route_outcomes?: RouteOutcome[] }
 
 /** Starts a CT trace of `Amount` at the origin and commits the one value-carrying hop. */
-function startZeroColumnTrace(excludeNodeIds?: string[]): NavigationEngine {
+function startZeroColumnTrace(
+  excludeNodeIds?: string[],
+  log: (level: string, msg: string) => void = () => {},
+): NavigationEngine {
   const { model, graph } = buildWorld(ZERO_COLUMN_CASE);
-  const engine = new NavigationEngine(model, graph, () => {}, {});
+  const engine = new NavigationEngine(model, graph, log, {});
   const init = engine.init({
     origin: ZERO_COLUMN_ORIGIN,
     question: 'trace Amount',
@@ -537,6 +577,13 @@ function startZeroColumnTrace(excludeNodeIds?: string[]): NavigationEngine {
     summary: 'origin',
     verdict: 'analyze',
     column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[valuesrc]', col: 'Amount' }] }],
+    // The BFS seed at `init` carries the session's full target set onto every directional
+    // neighbour by default; this explicit route is the router's OWN column opinion for
+    // `ZERO_COLUMN_FOCUS`, stated because the focus declares none of the traced columns (only
+    // `Flag`) — the same "row-shaping, not value-carrying" decision the whole-object hop below
+    // makes about it. Restates the fact the origin's own `column_flow` already carries (naming
+    // only `valuesrc` as `Amount`'s supplier), rather than leaving the seed's default to stand.
+    route_requests: [{ nodeId: ZERO_COLUMN_FOCUS, question: 'is this a filter arm or a value supplier?', columns: 'none' }],
   }) as SubmitOk;
   expect(committed.error, 'the origin hop commits').toBeUndefined();
   return engine;
@@ -568,7 +615,7 @@ describe('CT zero-active-column focus — routes are evaluated, not blanket-refu
       summary: 'filter arm',
       verdict: 'analyze',
       column_flow: [],
-      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?', columns: 'none' }],
     }) as SubmitOk;
 
     expect(outcome.error, 'the zero-column hop commits').toBeUndefined();
@@ -592,7 +639,7 @@ describe('CT zero-active-column focus — routes are evaluated, not blanket-refu
       summary: 'filter arm',
       verdict: 'analyze',
       column_flow: [],
-      route_requests: required.map(id => ({ nodeId: id, question: `what does ${id} contribute to the admitted rows?` })),
+      route_requests: required.map(id => ({ nodeId: id, question: `what does ${id} contribute to the admitted rows?`, columns: 'none' })),
     }) as SubmitOk;
 
     expect(outcome.error, 'the hop commits').toBeUndefined();
@@ -611,7 +658,7 @@ describe('CT zero-active-column focus — routes are evaluated, not blanket-refu
       summary: 'filter arm',
       verdict: 'analyze',
       column_flow: [],
-      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?', columns: 'none' }],
     });
     const deepCtx = engine.getHopContext() as { focus_node?: { id: string } };
     expect(deepCtx.focus_node?.id).toBe(ZERO_COLUMN_REQUIRED);
@@ -640,8 +687,8 @@ describe('CT zero-active-column focus — routes are evaluated, not blanket-refu
       verdict: 'analyze',
       column_flow: [],
       route_requests: [
-        { nodeId: '[ct].[nosuchobject]', question: 'does this exist?' },
-        { nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' },
+        { nodeId: '[ct].[nosuchobject]', question: 'does this exist?', columns: 'none' },
+        { nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?', columns: 'none' },
       ],
     }) as SubmitOk;
 
@@ -663,7 +710,7 @@ describe('CT zero-active-column focus — routes are evaluated, not blanket-refu
       summary: 'filter arm',
       verdict: 'analyze',
       column_flow: [],
-      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?', columns: 'none' }],
     }) as SubmitOk;
 
     expect(outcome.error, 'the hop commits').toBeUndefined();
@@ -679,7 +726,7 @@ describe('CT zero-active-column focus — routes are evaluated, not blanket-refu
       summary: 'filter arm',
       verdict: 'analyze',
       column_flow: [],
-      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?', columns: 'none' }],
     });
 
     // No further hop is driven — the routed neighbour is queued and unvisited.
@@ -814,12 +861,15 @@ function driveSinkWalk(routeFromConsumer?: string): {
     expect(columnFlow, `the case scripts a column_flow for dispatched focus ${focusId}`).toBeDefined();
     // CT is held to the same neighbour accounting as BB: every id the guard demands an account
     // for is routed, plus the consumer the variant under test adds on top.
+    // `columns` is stated explicitly as the session's own traced target set, the same value the
+    // engine's omitted-field fallback used to supply.
     const routes = engine.requiredNeighborIds(focusId).map(id => ({
       nodeId: id,
       question: `What does ${id} decide about the rows ${focusId} admits?`,
+      columns: engine.columnAspect?.target_columns,
     }));
     if (routeFromConsumer && focusId === '[ct].[spbuildsalesreport]') {
-      routes.push({ nodeId: routeFromConsumer, question: 'what does this record?' });
+      routes.push({ nodeId: routeFromConsumer, question: 'what does this record?', columns: engine.columnAspect?.target_columns });
     }
     engine.submitFindings({
       focus_node_id: focusId,
@@ -992,6 +1042,7 @@ function drivePassthroughWalk(archiveFlow: FlowEntry[]): SmResult {
       route_requests: engine.requiredNeighborIds(focusId).map(id => ({
         nodeId: id,
         question: `What does ${id} decide about the rows ${focusId} admits?`,
+        columns: engine.columnAspect?.target_columns,
       })),
     }) as SubmitOk;
     expect(outcome.error, `the hop at ${focusId} commits`).toBeUndefined();
@@ -1245,13 +1296,14 @@ describe('CT neighbour accounting — the same checklist BB gets, shown and enfo
       summary: 'filter arm',
       verdict: 'analyze',
       column_flow: [],
-      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?' }],
+      route_requests: [{ nodeId: ZERO_COLUMN_REQUIRED, question: 'what restricts the rows this arm admits?', columns: ['Amount'] }],
     }) as SubmitOk;
     expect(outcome.error, 'routing the zero-column neighbour commits the hop').toBeUndefined();
   });
 
-  it('rejects a CT hop that leaves a required neighbour unaccounted', () => {
-    const engine = startZeroColumnTrace();
+  it('fills a required neighbour a CT hop left unaccounted, and never drops it', () => {
+    const logLines: string[] = [];
+    const engine = startZeroColumnTrace(undefined, (_level, msg) => { logLines.push(msg); });
     dispatchZeroColumnFocus(engine);
     const outcome = engine.submitFindings({
       focus_node_id: ZERO_COLUMN_FOCUS,
@@ -1262,10 +1314,18 @@ describe('CT neighbour accounting — the same checklist BB gets, shown and enfo
     }) as SubmitOk & { detail?: Array<{ id: string }> };
 
     // Silently accepted before the convergence: CT's strategy implemented the guard as an empty
-    // method body. The neighbour decision runs in both modes, and the column overlay is what CT
-    // adds on top of the shared BB accounting.
-    expect(outcome.error, 'the unaccounted required neighbour rejects in CT, as it does in BB').toBe('missing_required_route');
-    expect((outcome.detail ?? []).map(d => d.id), 'the rejection names the unaccounted neighbour').toContain(ZERO_COLUMN_REQUIRED);
+    // method body, so the neighbour was neither demanded nor kept. The demand now runs in both
+    // modes; what satisfies it is an engine-written route, not a refusal — the model is never
+    // charged a generation for an id the engine printed in that same hop's checklist.
+    expect(outcome.error, 'the unaccounted required neighbour no longer costs the hop').toBeUndefined();
+    expect(
+      engine.toJSON().scopeNodeIds,
+      'the neighbour is in scope after the fill, exactly as a model-authored route would leave it',
+    ).toContain(ZERO_COLUMN_REQUIRED);
+    expect(
+      logLines.some(l => l.includes('[AutoFill]') && l.includes(ZERO_COLUMN_REQUIRED)),
+      'CT logs the fill, so an engine-authored route stays auditable',
+    ).toBe(true);
   });
 });
 
@@ -1310,9 +1370,14 @@ function driveHopPruneWalk(mode: 'bb' | 'ct'): SmResult {
     const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
     if (ctx.done || !ctx.focus_node) return engine.getResult();
     const focusId = ctx.focus_node.id;
+    // CT states `columns` explicitly as the session's traced target set, the same value the
+    // engine's omitted-field fallback used to supply; BB's route shape carries no `columns` field.
     const routes = engine.requiredNeighborIds(focusId)
       .filter(id => id !== '[ct].[tbld]')
-      .map(id => ({ nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?` }));
+      .map(id => ({
+        nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?`,
+        ...(mode === 'ct' ? { columns: ['Amount'] } : {}),
+      }));
     const prunes = engine.requiredNeighborIds(focusId).includes('[ct].[tbld]') ? ['[ct].[tbld]'] : [];
     // The identical per-hop decision in both modes: every guard-demanded neighbour is routed
     // except `d`, which is pruned at the hop that owns it. CT adds only the column account —
@@ -1372,8 +1437,8 @@ describe('hop-level prune — the in-scope neighbour decision, both modes', () =
       summary: 'a', verdict: 'analyze',
       column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[tblc]', col: 'Amount' }] }],
       route_requests: [
-        { nodeId: '[ct].[vwb]', question: 'b transforms the amount' },
-        { nodeId: '[ct].[vwe]', question: 'e filters the rows' },
+        { nodeId: '[ct].[vwb]', question: 'b transforms the amount', columns: ['Amount'] },
+        { nodeId: '[ct].[vwe]', question: 'e filters the rows', columns: ['Amount'] },
       ],
     }) as SubmitOk;
     expect(origin.error, 'the origin hop commits').toBeUndefined();
@@ -1384,8 +1449,8 @@ describe('hop-level prune — the in-scope neighbour decision, both modes', () =
       summary: 'b', verdict: 'passthrough',
       column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: '[ct].[tblc]', col: 'Amount' }] }],
       route_requests: [
-        { nodeId: '[ct].[tblc]', question: 'c supplies the amount' },
-        { nodeId: '[ct].[tbld]', question: 'd is a logging sink' },
+        { nodeId: '[ct].[tblc]', question: 'c supplies the amount', columns: ['Amount'] },
+        { nodeId: '[ct].[tbld]', question: 'd is a logging sink', columns: ['Amount'] },
       ],
       prune_neighbors: ['[ct].[vwe]'],
     }) as SubmitOk;
@@ -1418,8 +1483,8 @@ describe('hop-level prune — the in-scope neighbour decision, both modes', () =
       summary: 'a', verdict: 'analyze',
       column_flow: [{ out_col: 'Amount', upstream_columns: [] }],
       route_requests: [
-        { nodeId: '[ct].[vwb2]', question: 'b transforms the amount' },
-        { nodeId: '[ct].[vwx2]', question: 'x is committed beyond the pruned table' },
+        { nodeId: '[ct].[vwb2]', question: 'b transforms the amount', columns: ['Amount'] },
+        { nodeId: '[ct].[vwx2]', question: 'x is committed beyond the pruned table', columns: ['Amount'] },
       ],
     }) as SubmitOk;
     expect(origin.error, 'the origin hop commits and queues x through the d-table path').toBeUndefined();
@@ -1513,11 +1578,15 @@ describe('beyond-scope contraction — a route to a node outside the origin\'s d
         const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
         if (ctx.done || !ctx.focus_node) break;
         const focusId = ctx.focus_node.id;
-        const routes = engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `q ${id}` }));
+        // CT states `columns` explicitly as the session's traced target set, the same value the
+        // engine's omitted-field fallback used to supply; BB's route shape carries no `columns` field.
+        const routes = engine.requiredNeighborIds(focusId).map(id => ({
+          nodeId: id, question: `q ${id}`, ...(mode === 'ct' ? { columns: ['Amount'] } : {}),
+        }));
         // `g` is beyond the seed scope, so the guard does not demand it; the model requests it
         // anyway, and `admitsRoute` refuses it as off-closure.
         if (focusId === '[ct].[vwb3]' && !routes.some(r => r.nodeId === '[ct].[tblg3]')) {
-          routes.push({ nodeId: '[ct].[tblg3]', question: 'g supplies the amount b joins' });
+          routes.push({ nodeId: '[ct].[tblg3]', question: 'g supplies the amount b joins', ...(mode === 'ct' ? { columns: ['Amount'] } : {}) });
         }
         const outcome = engine.submitFindings({
           focus_node_id: focusId,
@@ -1659,10 +1728,12 @@ describe('route-border demand — the guard demands only what the router admits 
 /**
  * The per-neighbour fork: at `A → C, D` the router carries traced columns through `C` and sends
  * `D` on as a plain whole-object neighbour because it supplies no value and only decides which
- * rows the answer returns. `[ct].[vwrowgate]` declares `Amount` itself, so an omitted decision
- * would otherwise re-pad it from the session's target set. The three states of
- * `route_requests[].columns` — not stated, stated as columns, stated as none — separate "the
- * router had no opinion" from "the router said none", and only the third suppresses the pad.
+ * rows the answer returns. `[ct].[vwrowgate]` declares `Amount` itself, which is exactly why the
+ * two decisions must produce the same dispatch: without a route decision saying otherwise, nothing
+ * pads the session's target set back onto it. `route_requests[].columns` has two states — a
+ * non-empty list, or the literal `'none'` — and an omitted field (`columnCarryFromRoute`) reads as
+ * the same `row_role_only` carry as a stated `'none'`, not as "the router had no opinion, so the
+ * session's traced targets apply".
  */
 const FORK_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
   ['[ct].[vwforktop]', V, ['Amount']],
@@ -1679,6 +1750,7 @@ const FORK_EDGES: ReadonlyArray<readonly [string, string]> = [
 ];
 const FORK_ORIGIN = '[ct].[vwforktop]';
 const FORK_CARRIER = '[ct].[vwvaluefeed]';
+const FORK_VALUE_SRC = '[ct].[forkvaluesrc]';
 const FORK_ROW_GATE = '[ct].[vwrowgate]';
 
 const FORK_CASE: RetentionCase = {
@@ -1771,7 +1843,11 @@ function driveForkHops(engine: NavigationEngine): Map<string, string[]> {
       verdict: 'analyze',
       // Terminal form: this hop accounts for each active column and names no upstream real column.
       column_flow: active.map(col => ({ out_col: col, upstream_columns: [] })),
-      route_requests: engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `what does ${id} contribute?` })),
+      // `columns` is stated explicitly as the session's traced target set, the same value the
+      // engine's omitted-field fallback used to supply for these downstream, incidental routes.
+      route_requests: engine.requiredNeighborIds(focusId).map(id => ({
+        nodeId: id, question: `what does ${id} contribute?`, columns: engine.columnAspect?.target_columns,
+      })),
     }) as SubmitOk;
     expect(outcome.error, `${focusId} commits`).toBeUndefined();
   }
@@ -1779,13 +1855,13 @@ function driveForkHops(engine: NavigationEngine): Map<string, string[]> {
 }
 
 describe('CT per-neighbour column carry — three states of route_requests[].columns', () => {
-  it('not stated inherits the traced columns, exactly as before the channel existed', () => {
+  it('not stated is row_role_only, never an inherited session target set', () => {
     const { engine } = startFork(undefined);
     const dispatched = driveForkHops(engine);
     expect(
       dispatched.get(FORK_ROW_GATE),
-      'an omitted decision still inherits the session target set — the pre-existing behaviour',
-    ).toEqual(['Amount']);
+      'an omitted decision carries no active column — the same dispatch a stated "none" produces, not a pad from the session target set',
+    ).toEqual([]);
   });
 
   it('stated columns carry exactly those columns', () => {
@@ -1807,24 +1883,100 @@ describe('CT per-neighbour column carry — three states of route_requests[].col
     ).toEqual(['Amount']);
   });
 
-  it('normalizes a none the same hop contradicted in column_flow, and says so in the log', () => {
-    // Two channels, one hop: `column_flow` attributes `Amount` to the carrier (a provenance
-    // assertion) while the route for the same node states `none` (an absence claim). The evidence
-    // wins. Without the normalization the carrier is dispatched with no active column and the very
-    // edge the same submit staged has nothing to continue from.
-    const logs: string[] = [];
-    const { engine } = startFork(undefined, { carrierColumns: 'none', log: (_l, m) => logs.push(m) });
+  it('rejects a none the same hop contradicted in its own column_flow', () => {
+    // Two channels, one submission: `column_flow` attributes `Amount` to the carrier (a provenance
+    // assertion) while the route for the same node states `none` (an absence claim). One payload
+    // contradicting itself is a repairable model error, so the engine refuses it and names both the
+    // neighbour and the columns rather than picking a winner behind the model's back.
+    //
+    // Built inline rather than through `startFork`, whose own precondition is that the origin hop
+    // commits — the refusal IS the subject here.
+    const { model, graph } = buildWorld(FORK_CASE);
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    engine.init({
+      origin: FORK_ORIGIN,
+      question: 'trace Amount',
+      direction: 'upstream',
+      analysisMode: 'ct',
+      targetColumns: ['Amount'],
+      depthIntent: { kind: 'explicit', levels: 6 },
+    });
+    engine.getHopContext();
+    const refused = engine.submitFindings({
+      focus_node_id: FORK_ORIGIN,
+      sections: [{ angle: 'business' as const, text: 'origin exposes Amount' }],
+      summary: 'origin',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: FORK_CARRIER, col: 'Amount' }] }],
+      route_requests: [
+        { nodeId: FORK_CARRIER, question: 'where does vwvaluefeed read Amount from?', columns: 'none' as const },
+        { nodeId: FORK_ROW_GATE, question: 'which rows does vwrowgate admit into vwforktop?', columns: 'none' as const },
+      ],
+    }) as { error?: string; detail?: Array<{ id?: string; path?: string; available_columns?: string[] }> };
+
+    expect(refused.error, 'the self-contradiction is refused, not normalized').toBe('route_columns_flow_conflict');
+    const conflict = refused.detail?.find(entry => entry.id === FORK_CARRIER);
+    expect(conflict, 'the refusal names the neighbour in conflict').toBeDefined();
+    expect(
+      conflict?.path,
+      'the repair points at the column decision, not the object id',
+    ).toBe('route_requests.0.columns');
+    expect(
+      conflict?.available_columns,
+      'and the columns its own column_flow attributed, so the repair needs no guessing',
+    ).toEqual(['Amount']);
+  });
+
+  it('rejects the same contradiction when BB would defer the neighbour as too deep', () => {
+    // Origin depth 0, explicit cap 1: the carrier is in range, its source is depth 2 and
+    // would defer. Naming that source as both `none` and an Amount supplier is still one
+    // payload contradicting itself — Amount must not land.
+    const { model, graph } = buildWorld(FORK_CASE);
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    engine.init({
+      origin: FORK_ORIGIN,
+      question: 'trace Amount',
+      direction: 'upstream',
+      analysisMode: 'ct',
+      targetColumns: ['Amount'],
+      depthIntent: { kind: 'explicit', levels: 1 },
+    });
+    engine.getHopContext();
+    const refused = engine.submitFindings({
+      focus_node_id: FORK_ORIGIN,
+      sections: [{ angle: 'business' as const, text: 'origin exposes Amount' }],
+      summary: 'origin',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: FORK_VALUE_SRC, col: 'Amount' }] }],
+      route_requests: [
+        { nodeId: FORK_VALUE_SRC, question: 'where does Amount originate?', columns: 'none' as const },
+        { nodeId: FORK_ROW_GATE, question: 'which rows does vwrowgate admit into vwforktop?', columns: 'none' as const },
+      ],
+    }) as { error?: string; detail?: Array<{ id?: string; path?: string }> };
+
+    expect(refused.error, 'too-deep does not skip the same-submit contradiction').toBe('route_columns_flow_conflict');
+    expect(
+      refused.detail?.find(entry => entry.id === FORK_VALUE_SRC)?.path,
+      'the repair still points at the column decision',
+    ).toBe('route_requests.0.columns');
+    expect(
+      engine.columnAspect?.edges ?? [],
+      'Amount is not stored from a neighbour the payload also marked as none',
+    ).toEqual([]);
+  });
+
+  it('accepts the same hop when the route states the columns its column_flow attributes', () => {
+    // The other half of the pair: the same fixture with the route agreeing rather than denying.
+    // Pins that the rejection above keys on the contradiction, not merely on column_flow being
+    // present alongside a stated decision.
+    const { engine } = startFork(undefined, { carrierColumns: ['Amount'] });
     const dispatched = driveForkHops(engine);
     expect(
       dispatched.get(FORK_CARRIER),
-      'the attributed column reaches the node the same hop said supplies it',
+      'the agreed column reaches the node the same hop said supplies it',
     ).toEqual(['Amount']);
     const states = new Map(engine.getResult().node_states.map(state => [state.nodeId, state]));
-    expect(states.get(FORK_CARRIER)?.columnRole, 'and it is realized as a carrier, not a row gate').toBe('carrier');
-    expect(
-      logs.some(line => line.includes('[Normalize] route carry') && line.includes(FORK_CARRIER) && line.includes('from=none')),
-      'the overridden claim is logged, never silently dropped',
-    ).toBe(true);
+    expect(states.get(FORK_CARRIER)?.columnRole, 'and it is realized as a carrier').toBe('carrier');
   });
 
   it('marks the two forks apart on the node state that reaches the snapshot and the result', () => {
@@ -1838,9 +1990,9 @@ describe('CT per-neighbour column carry — three states of route_requests[].col
   });
 
   it('a route stating none wins over the BFS seed already queued for that node', () => {
-    // The row gate is a direct neighbour, so `init` seeded it with the target set before the
-    // router ever saw it. The route merges onto that entry, and the stated decision replaces the
-    // seed's inherited columns rather than unioning with them.
+    // The row gate is a direct neighbour, so `init` seeded it with a `carry` over the target set
+    // before the router ever saw it. The route merges onto that entry, and the stated `none`
+    // decision replaces the seed's carried columns rather than unioning with them.
     const { engine } = startFork('none');
     const snapshot = engine.toJSON() as { agenda: Array<{ nodeId: string; activeColumns?: string[]; columnCarry?: { kind: string } }> };
     const queued = snapshot.agenda.find(entry => entry.nodeId === FORK_ROW_GATE);
@@ -1860,7 +2012,8 @@ describe('CT per-neighbour column carry — three states of route_requests[].col
 
   it('restores a checkpoint written before the channel existed, unchanged', () => {
     // Backward compatibility: strip the field the old writer never emitted. An entry with no
-    // authored decision is `inherit`, which is the behaviour that checkpoint was written under.
+    // `columnCarry` at all dispatches on its raw `activeColumns` (the `statedRowRole` base in
+    // `getHopContext`), which this pre-channel checkpoint already carried explicitly.
     const { engine, model, graph } = startFork('none');
     const legacy = JSON.parse(JSON.stringify(engine.toJSON())) as {
       agenda: Array<{ nodeId: string; activeColumns?: string[]; columnCarry?: unknown }>;
@@ -1882,17 +2035,17 @@ describe('CT per-neighbour column carry — three states of route_requests[].col
 });
 
 /**
- * The three carry states, separated on one topology by the set each one dispatches.
+ * A stated subset, separated from a `none` and from an omitted decision on one topology.
  *
- * The fork above proves `none` apart from the other two, but its traced set is a single column, so
- * "carry these columns" and "inherit the session's" name the same set there and either state
- * satisfies the other's assertion. Two traced columns and a stated subset separate them: a route
- * naming `GateFlag` alone must reach its neighbour as `GateFlag` alone, which an inherit cannot
- * produce and a `none` cannot either.
+ * The fork above proves `none` and an omitted decision dispatch identically (both `row_role_only`),
+ * but its traced set is a single column, so "carry these columns" and "carry the full traced set"
+ * name the same thing there. Two traced columns and a stated subset separate a real carry from
+ * both empty-handed states: a route naming `GateFlag` alone must reach its neighbour as `GateFlag`
+ * alone, which neither an omitted decision nor a stated `none` can produce — both dispatch empty.
  *
  * The narrowed neighbour sits at depth 2 on purpose. A direct neighbour is already on the agenda
  * from the origin seed, and a stated `carry` merges into that seeded entry as a union — the seed's
- * inherited set is not a competing opinion the router can narrow, only one it can add to.
+ * carried set is not a competing opinion the router can narrow, only one it can add to.
  */
 const NARROW_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
   ['[ct].[vwnarrowtop]', V, ['Amount', 'GateFlag']],
@@ -1962,10 +2115,16 @@ function driveNarrowWalk(decision: ForkColumns): Map<string, string[]> {
       summary: focusId,
       verdict: 'analyze',
       column_flow: columnFlow,
+      // Every route except the mid→gate edge under test states `columns` explicitly as the
+      // session's traced target set — the same value the engine's omitted-field fallback used to
+      // supply for these incidental routes. The mid→gate edge alone carries `decision` verbatim
+      // (including `undefined`, to omit the field), since that is the carry under test.
       route_requests: engine.requiredNeighborIds(focusId).map(id => ({
         nodeId: id,
         question: `what does ${id} contribute?`,
-        ...(focusId === NARROW_MID && id === NARROW_GATE && decision !== undefined ? { columns: decision } : {}),
+        ...(focusId === NARROW_MID && id === NARROW_GATE
+          ? (decision !== undefined ? { columns: decision } : {})
+          : { columns: engine.columnAspect?.target_columns }),
       })),
     }) as SubmitOk;
     expect(outcome.error, `${focusId} commits`).toBeUndefined();
@@ -1974,11 +2133,11 @@ function driveNarrowWalk(decision: ForkColumns): Map<string, string[]> {
 }
 
 describe('CT per-neighbour column carry — a stated subset is not an inherit', () => {
-  it('inherits both traced columns when the route states nothing', () => {
+  it('not stated is row_role_only, never an inherited session target set', () => {
     expect(
-      driveNarrowWalk(undefined).get(NARROW_GATE)?.slice().sort(),
-      'no opinion stated, so the session target set applies unchanged',
-    ).toEqual(['Amount', 'GateFlag']);
+      driveNarrowWalk(undefined).get(NARROW_GATE),
+      'an omitted decision carries no active column — the same dispatch a stated "none" produces',
+    ).toEqual([]);
   });
 
   it('carries only the stated subset, never the wider set it was queued under', () => {

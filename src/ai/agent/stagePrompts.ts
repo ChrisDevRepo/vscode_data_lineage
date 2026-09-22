@@ -135,20 +135,34 @@ export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptConte
 
 /**
  * Composes the active stable prefix and YAML provenance.
+ *
+ * @remarks
+ * The mode is the HOP's ({@link NavigationEngine.currentHopAnalysisMode}), not the session's. A CT
+ * session reaches branches carrying none of the traced columns, and a hop with no column to map
+ * assembles through the plain BB path here — the same path a BB session takes — rather than
+ * through a CT contract with its column blocks suppressed. Suppression would leave the mixed-mode
+ * surface that asks a column-less focus for a `column_flow` account it cannot give.
+ *
+ * The stable prefix is byte-identical for every hop of one mode, so the prefix cache still holds
+ * across each run of same-mode hops; a mode change is a genuine contract change and earns its miss.
+ *
  * @param sess - Active exploration session with a locked classification.
  * @param ctx - Grounded database/filter context.
- * @param isCtMode - Whether the engine is running CT.
+ * @param hopMode - The contract this hop is dispatched under.
  * @returns The stable prompt and its hop-invariant template keys.
  */
-export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext, isCtMode: boolean): StageSystemInstruction {
+export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext, hopMode: 'bb' | 'ct'): StageSystemInstruction {
   const engine = sess.stateMachine as NavigationEngine;
   const classification = sess.requireLockedClassification();
+  const isCtMode = hopMode === 'ct';
   const smProtocol = buildSmProtocol({
-    targetColumns: engine.columnAspect?.target_columns,
+    // The BB branch of `buildSmProtocol` keys on the absence of target columns; a BB-mode hop takes
+    // it by withholding them, so no CT block is composed and none needs suppressing.
+    targetColumns: isCtMode ? engine.columnAspect?.target_columns : undefined,
     classification,
   });
   // Stable scope: per-focus capture keys ride the hop message, so this block — and with it
-  // the whole system prompt — is byte-identical across hops (implicit prefix cache holds).
+  // the whole system prompt — is byte-identical across the hops of one mode.
   const stageBlock = resolveStage(sess, 'active', isCtMode, { scope: 'stable' });
   const stableContext = buildStableContextBlocks(sess, engine);
   // Stable prefix only — identical every hop so prompt caching holds across the trace. The per-hop
@@ -218,9 +232,15 @@ interface ActiveHopInstruction {
  * @returns The hop message and its selected capture-template keys.
  */
 export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
+  // The hop's own mode, read once and applied to every block this message composes, so the task
+  // block, the capture recipe and the `submit_findings` form this hop is held to state one
+  // contract. A BB-mode hop renders no `<column_trace>` block: the column form is not dispatched to
+  // it, so an instruction to submit `column_flow` names a field its own submission would be
+  // rejected for carrying.
+  const isCtMode = engine.currentHopAnalysisMode === 'ct';
   const currentTask = buildCurrentTaskBlock(
     engine.getCurrentTasks(),
-    engine.columnAspect?.active_columns,
+    isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
   );
   // Both modes: render the exact set the required-nodes guard will enforce, next to the data it
@@ -237,7 +257,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     : '';
   // Per-focus capture recipe: which template fires depends on THIS hop's focus type, so it is
   // per-hop volatile by definition and must never ride the (cached, byte-stable) system prompt.
-  const captureRecipe = resolveStage(sess, 'active', !!engine.columnAspect, {
+  const captureRecipe = resolveStage(sess, 'active', isCtMode, {
     scope: 'per_focus',
     focusKind: focusIsNonBodied(sess, engine) ? 'non_bodied' : 'bodied',
   });

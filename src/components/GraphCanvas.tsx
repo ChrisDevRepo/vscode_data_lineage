@@ -7,7 +7,6 @@ import {
   MiniMap,
   useReactFlow,
   useNodesInitialized,
-  useStore,
   applyNodeChanges,
   applyEdgeChanges,
   MarkerType,
@@ -550,10 +549,11 @@ export function GraphCanvas({
   collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getEdges } = useReactFlow();
+  // The one real measurement gate: true only once every node on stage has been measured, which the
+  // flow only manages against a pane that actually has a size. The flow store's own `width` is not
+  // a substitute — it falls back to 500 for a zero-sized pane and is left stale for an invisible
+  // one, so it never reads 0 and never reports the condition it appears to report.
   const nodesInitialized = useNodesInitialized();
-  // The pane's own measured width, straight from the flow store. A webview panel that is open but
-  // behind another tab lays out at zero, and a fit against a zero-width pane frames nothing.
-  const paneWidth = useStore(store => store.width);
   const vscodeApi = useVsCode();
 
   // Local state preserves drag positions across highlight changes. Declared above every callback
@@ -730,6 +730,32 @@ export function GraphCanvas({
   }, []);
   // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
   useEffect(() => clearPendingZoomTimer, [clearPendingZoomTimer]);
+
+  /**
+   * Arms a zoom for a node the expanded schema view has yet to reveal.
+   *
+   * @param nodeId - The node to zoom and click once it lands in `flowNodes`.
+   * @param searchTerm - Term the deferred click highlights in the detail panel.
+   *
+   * @remarks
+   * The single place that arms a pending zoom. The graph-change effect expires one against
+   * {@link pendingZoomSetAt}, so setting the ref without stamping it leaves the stamp at a previous
+   * search's time — or at 0 — and the expiry fires on the first graph change, discarding the zoom
+   * it was asked for before the expanded graph has had a chance to arrive.
+   */
+  const armPendingZoom = useCallback((nodeId: string, searchTerm?: string) => {
+    pendingZoomRef.current = nodeId;
+    pendingClickRef.current = { id: nodeId, searchTerm };
+    pendingZoomSetAt.current = Date.now();
+    // The expiry that does not depend on `flowNodes` changing again.
+    clearPendingZoomTimer();
+    pendingZoomTimerRef.current = window.setTimeout(() => {
+      if (!pendingZoomRef.current) return;
+      notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
+      pendingZoomRef.current = null;
+      pendingClickRef.current = null;
+    }, PENDING_ZOOM_TIMEOUT_MS);
+  }, [clearPendingZoomTimer]);
   // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
@@ -951,18 +977,7 @@ export function GraphCanvas({
         ? modelNodeNameLookup.bySchemaName.get(searchKey(schema, name))
         : modelNodeNameLookup.byName.get(name);
       if (modelNode) {
-        pendingZoomRef.current = modelNode.id;
-        pendingClickRef.current = { id: modelNode.id };
-        pendingZoomSetAt.current = Date.now();
-        // Active timeout — guarantees warning fires even if flowNodes stops changing
-        clearPendingZoomTimer();
-        pendingZoomTimerRef.current = window.setTimeout(() => {
-          if (pendingZoomRef.current) {
-            notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
-            pendingZoomRef.current = null;
-            pendingClickRef.current = null;
-          }
-        }, PENDING_ZOOM_TIMEOUT_MS);
+        armPendingZoom(modelNode.id);
         onOpenExpandedSchemaViewForNode?.(modelNode.id);
       } else {
         notifyUser(`"${label}" was not found in the loaded model.`);
@@ -970,7 +985,7 @@ export function GraphCanvas({
     } else {
       notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
-  }, [clearPendingZoomTimer, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
+  }, [armPendingZoom, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
 
   // Export object nodes in detail views and cluster nodes in schema overview; empty exports no-op.
   const handleExportDrawio = useCallback(() => {
@@ -1350,16 +1365,16 @@ export function GraphCanvas({
 
   // An AI view arrives on its own, not on a click: the graph is rebuilt while the user is still
   // reading the chat, and the graph-change fit runs a frame later against whatever the pane
-  // measured then. Framing it waits for measured nodes AND a pane with a width, so the first
-  // picture is the whole view — the same result the Objects/Detail buttons give.
+  // measured then. Framing it waits for measured nodes, so the first picture is the whole view —
+  // the same result the Objects/Detail buttons give.
   const fittedAiViewRef = useRef<string | null>(null);
   useEffect(() => {
     if (!aiDescription) { fittedAiViewRef.current = null; return; }
-    if (!nodesInitialized || paneWidth === 0 || fittedAiViewRef.current === aiDescription) return;
+    if (!nodesInitialized || fittedAiViewRef.current === aiDescription) return;
     fittedAiViewRef.current = aiDescription;
     const raf = fitGraph();
     return () => cancelAnimationFrame(raf);
-  }, [aiDescription, nodesInitialized, paneWidth, fitGraph]);
+  }, [aiDescription, nodesInitialized, fitGraph]);
 
   // Hand-placed column nodes and the pinned/hovered thread belong to the relation set that
   // produced them, so only a new relation set invalidates them — a bookmark→bookmark switch
@@ -1839,17 +1854,14 @@ export function GraphCanvas({
                           visibleNodeIds={visibleNodeIds}
                           collapsedSchemaNodeIds={collapsedSchemaNodeIds}
                           onResultClick={(nodeId, searchTerm) => {
-                            if (graphMode === 'overview') {
-                              if (modelNodeMap.has(nodeId)) {
-                              pendingZoomRef.current = nodeId;
-                              pendingClickRef.current = { id: nodeId, searchTerm };
+                            if (graphMode === 'overview' && modelNodeMap.has(nodeId)) {
+                              armPendingZoom(nodeId, searchTerm);
                               onOpenExpandedSchemaViewForNode?.(nodeId);
                               return;
                             }
-                          }
-                          onNodeClick(nodeId, searchTerm);
-                          zoomToNode(nodeId);
-                        }}
+                            onNodeClick(nodeId, searchTerm);
+                            zoomToNode(nodeId);
+                          }}
                       />
                     ) : null}
                   </Panel>

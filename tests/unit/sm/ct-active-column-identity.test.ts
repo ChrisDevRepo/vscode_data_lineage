@@ -67,11 +67,11 @@ function walkToConsumer(engine: NavigationEngine): void {
         upstream_columns: [{ node: SOURCE, col: 'OrderAmount' }],
         writes_to: { node: CONSUMER, col: DECLARED },
       }],
-      // The consumer is routed explicitly and with no `columns` field, exactly as the recorded
-      // run's model routed it — that is the `inherit` carry whose agenda pad re-adds the seed
-      // spelling to an entry the origin already seeded with the declared name.
+      // The consumer is routed with the seed's node-qualified spelling stated explicitly as its
+      // `columns` decision — the same identity the origin's own BFS seed already carried for that
+      // entry under the declared name, so the two carries must merge into one column, not two.
       route_requests: [...new Set([...engine.requiredNeighborIds(ORIGIN), CONSUMER])].map(id => ({
-        nodeId: id, question: `What does ${id} do with ${DECLARED}?`,
+        nodeId: id, question: `What does ${id} do with ${DECLARED}?`, columns: [SEED_TARGET],
       })),
     });
     expect('error' in outcome, `the origin hop is accepted: ${JSON.stringify(outcome)}`).toBe(false);

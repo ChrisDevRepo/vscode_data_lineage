@@ -71,6 +71,58 @@ function findUncoveredCtChainNodes(
   return required.filter(id => !linked.has(lc(id)));
 }
 
+/** Section labels match on their rendered form: leading AI numbering and case never distinguish two. */
+function sectionLabelKey(label: string): string {
+  return label.replace(/^\d+\.?\s+/, '').trim().toLowerCase();
+}
+
+/**
+ * Fills a render that amends a committed report back out to a complete section array.
+ *
+ * @remarks
+ * A section carrying no text asks to keep the committed body under that label, and an omitted
+ * `sections` array asks to keep the whole report; both resolve here, before validation, so every
+ * consumer downstream still sees the complete array a fresh render would have sent. Inherited
+ * `node_ids` are narrowed to the nodes this render actually shows — a retained section must not
+ * re-link a node the same call pruned. Supplied node ids are left alone: they are the model's own
+ * decision and answer to the normal node-id contract.
+ *
+ * @param supplied - Sections as sent, if any.
+ * @param committed - Sections of the report this run already rendered.
+ * @param renderedNodeIds - The node set this render resolved to.
+ * @returns The complete sections, or the labels that asked to retain a body that does not exist.
+ */
+function resolveRetainedSections(
+  supplied: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> | undefined,
+  committed: NonNullable<ResultGraph['sections']>,
+  renderedNodeIds: ReadonlySet<string>,
+): { sections: Array<{ label: string; node_ids?: string[]; text: string }>; unknownLabels: string[] } {
+  const byLabel = new Map(committed.map(sec => [sectionLabelKey(sec.label), sec]));
+  const source: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> = supplied?.length
+    ? supplied
+    : committed.map(sec => ({ label: sec.label }));
+  const sections: Array<{ label: string; node_ids?: string[]; text: string }> = [];
+  const unknownLabels: string[] = [];
+  for (const sec of source) {
+    if (typeof sec.text === 'string' && sec.text.trim().length > 0) {
+      sections.push({ ...sec, text: sec.text });
+      continue;
+    }
+    const kept = byLabel.get(sectionLabelKey(sec.label));
+    if (!kept?.text) {
+      unknownLabels.push(sec.label);
+      continue;
+    }
+    const nodeIds = sec.node_ids ?? kept.node_ids?.filter(id => renderedNodeIds.has(id));
+    sections.push({
+      label: sec.label,
+      ...(nodeIds && nodeIds.length > 0 ? { node_ids: nodeIds } : {}),
+      text: kept.text,
+    });
+  }
+  return { sections, unknownLabels };
+}
+
 function notePresentResultFailure(sess: AiSession, token: number, data: object): void {
   const rejection = readToolError(data);
   if (!rejection) return;
@@ -266,7 +318,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // A type/enum/shape violation rejects with field paths the model can self-heal from —
       // never silently nulled fields. Conditional rules and every length cap stay in
       // validatePresentResult, which can hold the draft and authorize a single-field repair.
-      const boundary = presentResultBoundarySchemaForPhase(presentResultStage).safeParse(input);
+      // The one fact that relaxes the contract, read once so the parse and the fill below cannot
+      // disagree: a render amends a committed report only while the run that authored it is still
+      // the one rendering. A preview has no committed report to amend.
+      const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
+
+      const boundary = presentResultBoundarySchemaForPhase(presentResultStage, retainableSections !== null).safeParse(input);
       if (!boundary.success) {
         const fieldErrors = boundary.error.issues.slice(0, 3)
           .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
@@ -357,6 +414,21 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           }, { clearDraft: true });
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
+        // A presentation add reveals analysed scope; extending the lineage is the state machine's
+        // to record. No engine attached means no scope to enforce against.
+        const scopeSnapshot = sess.stateMachine?.toJSON() ?? null;
+        const outOfScope = scopeSnapshot
+          ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
+          : [];
+        if (outOfScope.length > 0) {
+          return reject({
+            success: false,
+            errors: [
+              `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope, 5)}.`,
+              'Rendering reveals analysed objects only. Add them with lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses and records them — then render.',
+            ],
+          }, { clearDraft: true });
+        }
         resolvedNodeIds.push(...toAdd);
         const newSet = new Set(resolvedNodeIds);
         resolvedEdges = model.edges
@@ -393,6 +465,25 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             ],
           }, { clearDraft: true });
         }
+      }
+
+      if (retainableSections) {
+        const retained = resolveRetainedSections(presentInput.sections, retainableSections, new Set(resolvedNodeIds));
+        if (retained.unknownLabels.length > 0) {
+          return reject({
+            success: false,
+            errors: [
+              `sections[] asks to keep text for ${quoteIds(retained.unknownLabels, 5)}, which the committed report has no body for.`,
+              'Send that section with its own text, or use a label from the committed report to keep its text.',
+            ],
+            hint: 'Fix the listed section labels and call lineage_present_result again.',
+          }, { clearDraft: true });
+        }
+        const keptCount = retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string' && sec.text.trim().length > 0).length;
+        if (keptCount > 0) {
+          s.logger.debug(`[Presentation] ${keptCount} of ${retained.sections.length} section(s) kept from the committed report — run=${sess.explorationRunId ?? '(none)'}`);
+        }
+        presentInput.sections = retained.sections;
       }
 
       s.logger.debug(`presentResult section[0] preview: ${trunc(presentInput.sections?.[0]?.text ?? '(empty)', 200)}`);
@@ -606,6 +697,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             node_ids: sec.node_ids,
             text: sec.text,
           }));
+          // Stamped with the authoring run so a later render can tell these sections from ones a
+          // superseded exploration left behind (see AiSession.retainableReportSections).
+          resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
         }
       }
       if (previewGraph) sess.resultGraph = resultGraph;

@@ -43,8 +43,12 @@ describe("Column Flow Validation", () => {
   }
   // Convergence: CT is held to BB's neighbour accounting, so scripted submits route every
   // required neighbour the guard demands — exactly what `<required_neighbors>` renders to a model.
+  // `columns` is stated explicitly as the session's own traced target set, the same value the
+  // engine's omitted-field fallback used to supply.
   const requiredRoutes = (engine: NavigationEngine, focusId = 'origin') =>
-    engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: 'what does this contribute?' }));
+    engine.requiredNeighborIds(focusId).map(id => ({
+      nodeId: id, question: 'what does this contribute?', columns: engine.columnAspect?.target_columns,
+    }));
   function durableCtSnapshot(engine: NavigationEngine): string {
     const state = JSON.parse(JSON.stringify(engine.toJSON())) as {
       memory: { recentRejections: unknown[] };
@@ -432,7 +436,7 @@ describe("Column Flow Validation", () => {
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'orphan_mid', col: 'amount' }] }],
-    route_requests: [{ nodeId: 'orphan_leaf', question: 'trace amount to the leaf' }],
+    route_requests: [{ nodeId: 'orphan_leaf', question: 'trace amount to the leaf', columns: ['amount'] }],
   });
   // orphan_leaf is committed and reaches the origin only through orphan_mid, so pruning the mid hop
   // is refused on topology — and the passthrough it offers instead is itself refused unless it
@@ -486,7 +490,7 @@ describe("Column Flow Validation", () => {
       summary: 'ok',
       verdict: 'analyze',
       column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'topo_mid', col: 'amount' }] }],
-      route_requests: [{ nodeId: 'topo_mid', question: 'trace amount to the mid' }],
+      route_requests: [{ nodeId: 'topo_mid', question: 'trace amount to the mid', columns: ['amount'] }],
     });
     const ctx = engine.getHopContext() as { focus_node?: { id: string } };
     expect(ctx.focus_node?.id, 'the mid is dispatched next').toBe('topo_mid');
@@ -677,7 +681,7 @@ describe("Column Flow Validation", () => {
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'zerocolsrc', col: 'AnyClaimedColumn' }] }],
-    route_requests: engine.requiredNeighborIds('ctorigin2').map(id => ({ nodeId: id, question: `what does ${id} contribute?` })),
+    route_requests: engine.requiredNeighborIds('ctorigin2').map(id => ({ nodeId: id, question: `what does ${id} contribute?`, columns: ['amount'] })),
   });
   expect(!('error' in result), `engine wiring: zero-column contributor is accepted through the full submit path, not rejected (${'error' in result ? result.error : ''})`).toBe(true);
 
@@ -845,7 +849,7 @@ describe("Column Flow Validation", () => {
       summary: 'ok',
       verdict: 'analyze',
       column_flow: [{ out_col: 'amount', upstream_columns: [] }],
-      route_requests: [{ nodeId: 'ct_down', question: 'Does ct_down forward amount unchanged?' }],
+      route_requests: [{ nodeId: 'ct_down', question: 'Does ct_down forward amount unchanged?', columns: ['amount'] }],
     });
     expect(!('error' in result), 'route to a bodied downstream neighbor with no column_flow back-reference is accepted').toBe(true);
     return engine;
@@ -859,11 +863,11 @@ describe("Column Flow Validation", () => {
   } catch {
     threw = true;
   }
-  expect(!threw, 'toJSON() succeeds after routing a CT neighbor with columns omitted (was issuePaths=[agenda.0.activeColumns])').toBe(true);
+  expect(!threw, 'toJSON() succeeds after routing a CT neighbor with columns stated (was issuePaths=[agenda.0.activeColumns])').toBe(true);
   const downEntry = snapshot?.agenda.find(e => e.nodeId === 'ct_down');
   expect(!!downEntry, 'ct_down was enqueued').toBe(true);
   expect(!!downEntry?.activeColumns?.length, 'ct_down agenda entry carries a non-empty activeColumns projection').toBe(true);
-  expect(JSON.stringify(downEntry?.activeColumns), 'the projected activeColumns equal the tracer targetColumns fallback').toBe(JSON.stringify(engine.columnAspect?.target_columns));
+  expect(JSON.stringify(downEntry?.activeColumns), 'the projected activeColumns equal the stated route columns').toBe(JSON.stringify(engine.columnAspect?.target_columns));
 });
 
   it("a BB snapshot with any agenda activeColumns still REJECTS", () => {
@@ -983,8 +987,8 @@ describe("Column Flow Validation", () => {
         ],
       }],
       route_requests: [
-        { nodeId: 'lq_node_a', question: 'Does lq_node_a compute ColA directly?' },
-        { nodeId: 'lq_node_b', question: 'Does lq_node_b compute ColB directly?' },
+        { nodeId: 'lq_node_a', question: 'Does lq_node_a compute ColA directly?', columns: ['TargetCol'] },
+        { nodeId: 'lq_node_b', question: 'Does lq_node_b compute ColB directly?', columns: ['TargetCol'] },
       ],
     });
     expect(!('error' in result), 'routing two real upstream column contributors is accepted').toBe(true);
@@ -1116,9 +1120,9 @@ describe("CT active columns through contracted tables", () => {
         ],
       }],
       route_requests: [
-        { nodeId: 'staging', question: 'Trace OrderAmount as upstream input for Discount.' },
-        { nodeId: 'rules', question: 'Trace DiscountPct as upstream input for Discount.' },
-        { nodeId: 'consumer_proc', question: 'Does consumer_proc consume Discount unchanged?' },
+        { nodeId: 'staging', question: 'Trace OrderAmount as upstream input for Discount.', columns: ['Discount'] },
+        { nodeId: 'rules', question: 'Trace DiscountPct as upstream input for Discount.', columns: ['Discount'] },
+        { nodeId: 'consumer_proc', question: 'Does consumer_proc consume Discount unchanged?', columns: ['Discount'] },
       ],
     });
     expect(!('error' in result), `origin_view commit accepted (${'error' in result ? result.error : ''})`).toBe(true);
@@ -1127,8 +1131,12 @@ describe("CT active columns through contracted tables", () => {
 
   // Convergence: CT is held to BB's neighbour accounting, so every scripted submit routes
   // the required set the guard demands — the same list `<required_neighbors>` renders to a model.
+  // `columns` is stated explicitly as the session's own traced target set, the same value the
+  // engine's omitted-field fallback used to supply.
   const j23RequiredRoutes = (engine: NavigationEngine, focusId: string) =>
-    engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?` }));
+    engine.requiredNeighborIds(focusId).map(id => ({
+      nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?`, columns: engine.columnAspect?.target_columns,
+    }));
 
   /** Terminal submission covering every column the engine reports active at the current focus. */
   function j23TerminalSubmit(engine: NavigationEngine, focusId: string) {

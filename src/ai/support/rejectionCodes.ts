@@ -33,6 +33,8 @@ export const REJECTION_CODES = {
   notFound: 'not_found',
   /** `supplement` was requested without a prior exploration in `complete` status to extend. */
   supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
+  /** `supplement` named no node to extend; the repair is to answer, never to resend an empty list. */
+  supplementEmpty: 'supplement_empty',
   /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
   invalidRegex: 'invalid_regex',
   /** A discovery-phase scope-expanding catalog request exceeded the turn's node/token budget. */

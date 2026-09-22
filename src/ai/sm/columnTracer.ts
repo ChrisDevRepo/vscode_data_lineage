@@ -116,7 +116,16 @@ export class ColumnTracer {
    * Every committed edge is a column demand on the node that supplies it, and a node consumes one
    * hop, so a non-empty spine is returned whole: the active set is the union of those demands,
    * whatever order the routes that reached the node arrived in. A route's own column list (or its
-   * row-role `none`) describes that one edge and never narrows a demand another edge placed.
+   * row-role `none`) describes that one edge and never narrows a demand another edge placed. Two
+   * edges both naming real columns for the same candidate are compatible demands, not a conflict,
+   * and are always unioned here regardless of caller.
+   *
+   * A row-role `none` is a different case: it is the model's own routing statement for the
+   * candidate, and this method still returns the full committed spine over it whenever one is
+   * called at `smBase.ts`'s `getHopContext` dispatch-time bind — the one place in the engine that
+   * still promotes a node past a stated `'none'` onto its committed columns. That call site's own
+   * remarks record why it is still there (the reverse-order conflict's re-ask half is not yet
+   * wired) and why it is not simply removed.
    *
    * - spine-derived empty (candidate's upstream edges not yet staged — freshly-routed first
    *   appearance, e.g. a terminal source) → trust `entryColumns` so the node is still dispatched.

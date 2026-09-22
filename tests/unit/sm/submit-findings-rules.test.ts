@@ -57,16 +57,15 @@ describe("Submit Findings Rules", () => {
 
   it("a prune verdict is exempt from the angle requirement under a both lock", () => {
   // A pruned node contributes no analysis to the lineage answer, so it has no angles to
-  // require — `sections: []` must reach the engine's own `prune_sections_conflict` check
-  // instead of being rejected here first.
+  // require. The exemption is unconditional: nothing downstream re-imposes an angle rule on a
+  // prune, so rejecting here would be the only refusal and there is no rule to refuse against.
   const violation = validateSectionsAgainstClassification([], 'both', 'prune');
   expect(violation === null, 'a prune verdict with sections:[] is not a classification_lock_violation').toBe(true);
 });
 
   it("a prune verdict with a single business-only prose section is exempt under a both lock", () => {
-  // The exemption is not conditioned on sections being empty — a prune carrying only one
-  // angle (no captured artifact, so the engine's own prune_sections_conflict does not fire
-  // either) must reach commit without a spurious classification_lock_violation demanding the
+  // The exemption is not conditioned on sections being empty — a prune carrying a single
+  // angle must reach commit without a spurious classification_lock_violation demanding the
   // technical angle a pruned node was never going to produce.
   const violation = validateSectionsAgainstClassification([
     { angle: 'business', text: 'Off the trace — display-only rationale.' },

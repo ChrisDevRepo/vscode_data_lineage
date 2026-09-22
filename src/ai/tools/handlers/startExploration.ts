@@ -127,24 +127,21 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         if (!priorEngine) {
           throw new Error('[start_exploration] supplement prerequisite passed without a prior engine');
         }
-        // Screened before `admitSupplementTargets`/`supplementAgenda`: both widen the allowlist
-        // and extend the agenda of the completed engine, so a CT target list refused after them
-        // would leave those mutations behind and make the corrected resend a no-op supplement.
+        // Screened before `supplementAgenda`, which widens the allowlist and extends the agenda of
+        // the completed engine, so a CT target list refused after it would leave those mutations
+        // behind and make the corrected resend a no-op supplement.
         if (data.analysisMode === 'ct' && data.targetColumns?.length) {
           const columnTargetReject = priorEngine.checkColumnTargets(data.targetColumns);
           if (columnTargetReject) return s.logAndReturn('start_exploration', columnTargetReject, loggedInput);
         }
         const supplementIds = data.supplement.nodeIds ?? [];
-        // Admit-then-supplement, the same ordering the approve gate uses. `supplementAgenda` stays a
-        // side-effect-free reject, so without this step a schema-boundary lead was a dead end — the
-        // target came straight back as `out_of_allowlist` with nothing on this path able to admit
-        // it. `supplementIds` is model-supplied, so the admit step trusts none of it on its own: it
-        // opens only ids this run already deferred as a pending lead and named in the answer the
-        // user read. Anything else the model puts here is still refused on the allowlist axis, and
-        // exclusions stay a hard wall either way.
-        const admittedIds = priorEngine.admitSupplementTargets(supplementIds);
+        // Admission happens inside `supplementAgenda`, past its last reject — the one ordering that
+        // keeps the reject side-effect-free.
         const res = priorEngine.supplementAgenda(supplementIds);
         if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
+        const admittedIds = supplementIds.filter(
+          id => !res.skippedDetails.some(skip => skip.nodeId.toLowerCase() === id.toLowerCase()),
+        );
         applyFollowUpContext(priorEngine);
         // Unguarded by design: tool dispatch runs synchronously inside the owning turn's graph-owned
         // generation attempt, so the live `turnEpoch` is always this turn's — the guard would always accept.

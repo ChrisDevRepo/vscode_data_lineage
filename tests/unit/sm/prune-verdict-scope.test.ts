@@ -1,19 +1,20 @@
 /**
- * P1: a `verdict='prune'` submission whose own `sections` carry a captured computed-value or
- * filter-condition artifact contradicts its own verdict — the model wrote analyze-grade evidence
- * (a `$$ … $$` formula, or SQL that computes a value or filters rows), then discarded it under a
- * `prune` label. `submitFindings` refuses this the same way it refuses the two existing
- * topology-only prune checks (`prune_origin_forbidden`, `prune_would_orphan_noted`): same call
- * site, same envelope shape (`{ error, hint }`), no new rejection mechanism.
+ * The prune verdict stays exactly as available as it was — this file is the guard against the
+ * "stop the wrong prune" work quietly narrowing prune in general.
  *
- * The predicate is structural, not a magic number: `sectionTextHasCapturedArtifact`
- * (`src/ai/prompting/smPrompts.ts`) is the SAME `CAPTURED_ARTIFACT` lexical bound
- * `buildCapturedFormulaFacts` already uses at synthesis to enumerate captured formulas/predicates
- * for the answer — one governor for "what counts as captured evidence", asked as a yes/no question
- * at submission time instead of a list at synthesis time. `sections[]` itself is not required to be
- * empty on a prune: a plain rationale sentence (no `$$`, no fence, no qualifying inline span) still
- * commits unchanged, matching every other prune call site in this suite that carries a one-line
- * "off the trace" rationale.
+ * What changed: `prune_sections_conflict` is gone. It tried to detect a wrong verdict by
+ * regex-scanning the submission's own prose for a `$$ … $$` block or a predicate-shaped fence,
+ * which caught some wrong prunes and, worse, silently ACCEPTED the rest — a prose-only rationale
+ * or a whole `SELECT` quoted in a fence both walked through and deleted the node with no rejection
+ * (reproduced in `ct-columnless-focus-silent-prune.test.ts`). A verdict rule that depends on how
+ * the author happened to format a paragraph is not a rule. It is replaced by
+ * `prune_declared_kept_focus`, which keys off what the engine itself told that hop, not off prose.
+ *
+ * What did NOT change, and is pinned below: an ordinary self-prune commits — with no sections, or
+ * with a plain rationale, or with sections that would once have tripped the lexical probe. The two
+ * topology refusals (`prune_origin_forbidden`, `prune_would_orphan_noted`) are untouched. And a CT
+ * focus that DOES carry a traced column may still prune itself, which is what keeps
+ * `prune_declared_kept_focus` narrow: it is about a focus the engine declared kept, not about CT.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
@@ -21,10 +22,12 @@ import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 
-describe("submitFindings — prune verdict contradicted by its own captured evidence", () => {
-  // A 3-node chain: origin -> mid -> leaf. `mid` is neither the origin nor load-bearing for any
-  // committed/queued node, so pruning it alone trips neither existing topology refusal — isolating
-  // the new content-vs-verdict check.
+describe("submitFindings — the prune verdict is unchanged outside the declared-kept focus", () => {
+  // A 3-node chain: origin -> mid -> leaf. `leaf` reaches the origin only through `mid`, so each
+  // self-prune of `mid` below removes the branch as a unit (`prune_neighbors: ['leaf']`) and trips
+  // neither topology refusal — isolating the content-vs-verdict question these cases are about.
+  // Pruning `mid` alone is refused: it would orphan `leaf`, a supplier the render would keep, and
+  // (c2) pins that refusal.
   const nodes: LineageNode[] = [
     makeNode({ id: 'origin', schema: 'dbo', name: 'origin', type: 'procedure' }),
     makeNode({
@@ -74,20 +77,6 @@ describe("submitFindings — prune verdict contradicted by its own captured evid
     return engine;
   }
 
-  it("(a) BB: a prune submission carrying a captured formula is refused with prune_sections_conflict", () => {
-    const engine = bbEngineAtMid();
-    const rejected = engine.submitFindings({
-      focus_node_id: 'mid',
-      sections: [{ angle: 'business' as const, text: CAPTURED_FORMULA_TEXT }],
-      summary: 'display dead end',
-      verdict: 'prune',
-    });
-    expect('error' in rejected && rejected.error === 'prune_sections_conflict', `expected prune_sections_conflict, got ${JSON.stringify(rejected)}`).toBe(true);
-    const hint = 'error' in rejected && typeof rejected.hint === 'string' ? rejected.hint : '';
-    expect(hint.includes("verdict='analyze'") && hint.includes("'passthrough'"), 'the hint names both reconciliation repairs').toBe(true);
-    expect(hint.includes('sections:[]'), 'the hint names the alternative repair — resubmitting prune without the captured evidence').toBe(true);
-    expect(hint.includes('[mid]'), 'the hint names the contradicted focus').toBe(true);
-  });
 
   it("(b1) BB: a prune submission with no sections at all is still accepted, unchanged", () => {
     const engine = bbEngineAtMid();
@@ -96,6 +85,7 @@ describe("submitFindings — prune verdict contradicted by its own captured evid
       sections: [],
       summary: 'off the answer path',
       verdict: 'prune',
+      prune_neighbors: ['leaf'],
     });
     expect('ok' in accepted && accepted.ok === true, `expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
     const state = engine.toJSON();
@@ -111,6 +101,7 @@ describe("submitFindings — prune verdict contradicted by its own captured evid
       sections: [{ angle: 'business' as const, text: 'Off the trace — display-only, no revenue link.' }],
       summary: 'off the answer path',
       verdict: 'prune',
+      prune_neighbors: ['leaf'],
     });
     expect('ok' in accepted && accepted.ok === true, `expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
   });
@@ -168,20 +159,6 @@ describe("submitFindings — prune verdict contradicted by its own captured evid
     expect(result?.error === 'prune_would_orphan_noted', `pruning mid rejects on topology (got ${JSON.stringify(rejected)})`).toBe(true);
   });
 
-  it("(d1) CT: the new refusal fires identically under CT — same code, same hint shape", () => {
-    const engine = ctEngineAtMid();
-    const rejected = engine.submitFindings({
-      focus_node_id: 'mid',
-      sections: [{ angle: 'business' as const, text: CAPTURED_FORMULA_TEXT }],
-      summary: 'display dead end',
-      verdict: 'prune',
-      column_flow: [],
-    });
-    expect('error' in rejected && rejected.error === 'prune_sections_conflict', `CT expected prune_sections_conflict, got ${JSON.stringify(rejected)}`).toBe(true);
-    const hint = 'error' in rejected && typeof rejected.hint === 'string' ? rejected.hint : '';
-    expect(hint.includes("verdict='analyze'") && hint.includes("'passthrough'"), 'CT hint names both reconciliation repairs').toBe(true);
-    expect(hint.includes('[mid]'), 'CT hint names the contradicted focus').toBe(true);
-  });
 
   it("(d2) CT: a prune submission with no sections is still accepted, unchanged", () => {
     const engine = ctEngineAtMid();
@@ -191,6 +168,35 @@ describe("submitFindings — prune verdict contradicted by its own captured evid
       summary: 'off the answer path',
       verdict: 'prune',
       column_flow: [],
+      prune_neighbors: ['leaf'],
+    });
+    expect('ok' in accepted && accepted.ok === true, `CT expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
+  });
+
+  it("(a) BB: a prune whose sections carry a captured formula now COMMITS — formatting is not a verdict rule", () => {
+    const engine = bbEngineAtMid();
+    const accepted = engine.submitFindings({
+      focus_node_id: 'mid',
+      sections: [{ angle: 'business' as const, text: CAPTURED_FORMULA_TEXT }],
+      summary: 'display dead end',
+      verdict: 'prune',
+      prune_neighbors: ['leaf'],
+    });
+    expect('ok' in accepted && accepted.ok === true, `expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
+  });
+
+  it("(d1) CT: a focus that DOES carry a traced column may still prune itself", () => {
+    // `mid` declares [amount] and the origin's column_flow routed it here, so this hop's active
+    // set is non-empty and `prune_declared_kept_focus` must not fire. This is the assertion that
+    // keeps the new rule narrow: it is scoped to a focus the engine declared kept, not to CT.
+    const engine = ctEngineAtMid();
+    const accepted = engine.submitFindings({
+      focus_node_id: 'mid',
+      sections: [{ angle: 'business' as const, text: 'Off the trace — display-only.' }],
+      summary: 'off the answer path',
+      verdict: 'prune',
+      column_flow: [],
+      prune_neighbors: ['leaf'],
     });
     expect('ok' in accepted && accepted.ok === true, `CT expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
   });

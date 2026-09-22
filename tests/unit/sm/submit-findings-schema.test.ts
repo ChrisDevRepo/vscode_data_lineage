@@ -132,7 +132,7 @@ describe("Submit Findings Schema", () => {
   expect(parsed.success, 'BB accepts route_requests without columns').toBe(true);
 });
 
-  it("CT route_requests[].columns states all three carry decisions, and never an empty array", () => {
+  it("CT route_requests[].columns is required, states two carry decisions, and never an empty array", () => {
   const submit = (columns?: unknown) => SubmitFindingsCtInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
     sections: [{ angle: 'business', text: 'ok' }],
@@ -141,24 +141,26 @@ describe("Submit Findings Schema", () => {
     column_flow: [],
     route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', ...(columns === undefined ? {} : { columns }) }],
   });
-  expect(submit().success, 'not stated — the field is optional').toBe(true);
+  // Omitted has no engine-side fallback to resolve to on the CT form — rejected, not inherited.
+  expect(submit().success, 'not stated — CT requires an explicit decision on every route').toBe(false);
   expect(submit(['amount']).success, 'stated as these columns').toBe(true);
   expect(submit('none').success, 'stated as none — a row-role-only neighbour').toBe(true);
-  // The third state is a word, not an empty list: `[]` and an omitted field would otherwise be one
-  // payload with two meanings.
+  // The row-role state is a word, not an empty list: `[]` and the omitted field would otherwise be
+  // two payloads both rejected for looking like the same "no opinion" shape.
   expect(submit([]).success, 'an empty column list is not a way to say "none"').toBe(false);
   expect(submit('all').success, 'no other word is accepted').toBe(false);
 });
 
-  it("both route schema surfaces accept the same route payloads", () => {
-  // The strict per-mode schemas and the permissive registered union share one `RouteRequestSchema`,
-  // and this pins that they cannot drift apart on the column channel.
-  const routes = [
-    { nodeId: '[dbo].[vStaging]', question: 'trace' },
+  it("both route schema surfaces accept the same stated route payloads; the registered union alone still tolerates omission", () => {
+  // The strict CT schema and the permissive registered union share one `RouteRequestSchema` shape,
+  // but the strict CT form narrows `columns` to required (`CtRouteRequestSchema`) while the
+  // registered union — the broader, non-mode-locked surface — keeps it optional. This pins that the
+  // two surfaces agree on every STATED decision and diverge only on omission, on purpose.
+  const statedRoutes = [
     { nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] },
     { nodeId: '[dbo].[vStaging]', question: 'trace', columns: 'none' },
   ];
-  for (const route of routes) {
+  for (const route of statedRoutes) {
     const strict = SubmitFindingsCtInputSchema.safeParse({
       focus_node_id: '[dbo].[vSales]',
       sections: [{ angle: 'business', text: 'ok' }],
@@ -177,6 +179,17 @@ describe("Submit Findings Schema", () => {
     expect(strict.success, `strict CT accepts ${JSON.stringify(route.columns)}`).toBe(true);
     expect(registered.success, `registered union accepts ${JSON.stringify(route.columns)}`).toBe(true);
   }
+  const omitted = { nodeId: '[dbo].[vStaging]', question: 'trace' };
+  const strictOmitted = SubmitFindingsCtInputSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]', sections: [{ angle: 'business', text: 'ok' }], summary: 'ok',
+    verdict: 'analyze', column_flow: [], route_requests: [omitted],
+  });
+  const registeredOmitted = SubmitFindingsModelSchema.safeParse({
+    focus_node_id: '[dbo].[vSales]', sections: [{ angle: 'business', text: 'ok' }], summary: 'ok',
+    verdict: 'analyze', route_requests: [omitted],
+  });
+  expect(strictOmitted.success, 'strict CT refuses an omitted columns decision').toBe(false);
+  expect(registeredOmitted.success, 'the registered union still tolerates omission').toBe(true);
   const rejected = { nodeId: '[dbo].[vStaging]', question: 'trace', columns: [] };
   expect(SubmitFindingsCtInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]', sections: [{ angle: 'business', text: 'ok' }], summary: 'ok',
@@ -195,7 +208,7 @@ describe("Submit Findings Schema", () => {
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: '[dbo].[vStaging]', col: 'amount' }] }],
-    route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace amount' }],
+    route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace amount', columns: ['amount'] }],
   });
   expect(parsed.success, 'CT accepts upstream_columns in column_flow with plain route_requests').toBe(true);
 });

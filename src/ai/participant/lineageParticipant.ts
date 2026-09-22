@@ -172,9 +172,11 @@ export class LineageParticipant {
         ? { kind: 'hold' }
         : { kind: 'cancel' };
     this.pendingGate = null;
+    // Captured before the await: an approved gate resolves only after the released turn finishes.
+    const decidedAt = new Date().toISOString();
     try {
       const resolved = await this.runtime.resumeGate(gateId, decision);
-      this.traceGateResolution(pending, gateId, action, resolved ? 'accepted' : 'no_owning_turn');
+      this.traceGateResolution(pending, gateId, action, resolved ? 'accepted' : 'no_owning_turn', undefined, decidedAt);
       if (resolved) return true;
       // No owning runtime claimed the id: put the card's state back so its buttons keep working.
       if (this.pendingGate === null) this.pendingGate = pending;
@@ -184,7 +186,7 @@ export class LineageParticipant {
       );
       return false;
     } catch (error) {
-      this.traceGateResolution(pending, gateId, action, 'failed');
+      this.traceGateResolution(pending, gateId, action, 'failed', undefined, decidedAt);
       if (this.pendingGate === null) this.pendingGate = pending;
       notifyWarning(
         this.logger,
@@ -204,6 +206,7 @@ export class LineageParticipant {
    * @param action - Action the card requested.
    * @param outcome - How the participant answered the action.
    * @param refusedBy - Enumerated deciding condition, supplied only for a refusal.
+   * @param decidedAt - ISO time the action arrived, before any turn it released was awaited.
    *
    * @remarks
    * Gate resolution happens in a VS Code command handler, outside the turn that raised the gate and
@@ -217,6 +220,7 @@ export class LineageParticipant {
     action: NativeGateAction,
     outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed',
     refusedBy?: 'gate_id_mismatch' | 'gate_kind_mismatch' | 'no_pending_gate',
+    decidedAt?: string,
   ): void {
     void this.traceWriter?.write({
       type: 'gate-resolution',
@@ -226,6 +230,7 @@ export class LineageParticipant {
       action,
       outcome,
       ...(refusedBy ? { refusedBy } : {}),
+      ...(decidedAt ? { decidedAt } : {}),
     }).catch(() => {});
   }
 

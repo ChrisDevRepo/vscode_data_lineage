@@ -15,18 +15,20 @@ interface DiscoveryWalk {
   readonly answer: string;
 }
 
-/** Origin captured from an oversized `lineage_get_scope_bundle` so the existing SM-offer pill can still fire. */
-export interface RejectedScopeOffer {
-  /** Canonical origin id from the rejected call or its `scope_proposal`. */
-  readonly origin: string;
-  /** Projected node count that overflowed the discovery cap (may be 0 when the envelope omitted it). */
-  readonly walkCount: number;
-}
-
 const OBJECT_DETAIL_TOOL = 'lineage_get_object_detail';
+
+/**
+ * The one tool whose over-budget rejection means "this scope is too large to answer inline".
+ *
+ * @remarks
+ * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
+ * returns it for an oversized stored-run recall. Only an oversized *scope* request carries the
+ * routing meaning: the user asked for a neighbourhood that has to be walked hop-by-hop. Matching on
+ * the envelope alone turned "what did this run prune?" into a fresh exploration approval gate
+ * instead of the narrowing hint the rejection already carries.
+ */
 const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 
-const ScopeBundleOriginView = z.object({ origin: z.string().trim().min(1) }).loose();
 const OverBudgetResultView = z.object({
   reason: z.literal(REJECTION_CODES.overDiscoveryBudget),
   counts: z.object({ nodes: z.number() }).loose().optional(),
@@ -77,31 +79,19 @@ export function captureDiscoveryWalkFromObservations(
 }
 
 /**
- * Extracts the SM-offer origin from an oversized `lineage_get_scope_bundle` result.
+ * Whether one tool result means "this scope is too large to answer inline — reroute to SM".
  *
- * @param toolName - Tool that produced `resultText`.
- * @param input - Provider-emitted tool arguments (origin lives here when the envelope omitted `scope_proposal`).
- * @param resultText - Serialized tool result.
- * @returns The rejected origin and walk count, or `null` when this is not an oversized scope bundle.
+ * @param toolName - Name of the tool that produced `resultText`.
+ * @param resultText - The tool's serialized result.
+ * @returns True only for an oversized scope-bundle request.
  */
-export function captureRejectedScopeOffer(
-  toolName: string,
-  input: unknown,
-  resultText: string,
-): RejectedScopeOffer | null {
-  if (toolName !== SCOPE_BUNDLE_TOOL) return null;
-  let raw: unknown;
+export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
+  if (toolName !== SCOPE_BUNDLE_TOOL) return false;
   try {
-    raw = JSON.parse(resultText);
+    return OverBudgetResultView.safeParse(JSON.parse(resultText)).success;
   } catch {
-    return null;
+    return false;
   }
-  const view = OverBudgetResultView.safeParse(raw);
-  if (!view.success) return null;
-  const fromInput = ScopeBundleOriginView.safeParse(input);
-  const origin = (view.data.scope_proposal?.origin ?? (fromInput.success ? fromInput.data.origin : '')).trim();
-  if (!origin) return null;
-  return { origin, walkCount: view.data.counts?.nodes ?? 0 };
 }
 
 /** A parsed `over_discovery_budget` rejection from any catalog tool — drives the user-visible notice. */
@@ -114,13 +104,13 @@ export interface OverBudgetNotice {
   readonly hint: string;
 }
 
-const DEFAULT_OVER_BUDGET_HINT = 'Scope exceeds the discovery budget, so only partial data could be loaded. Answer the user briefly from the partial data this result carries, say the full question needs a detailed analysis, and offer to continue with lineage_start_exploration once the user confirms — do not start it yourself.';
+const DEFAULT_OVER_BUDGET_HINT = 'Scope exceeds the discovery budget. Narrow the request, or ask about a smaller part of the lineage.';
 
 /**
  * Reads an `over_discovery_budget` rejection from any tool result.
  *
  * @remarks
- * Unlike {@link captureRejectedScopeOffer} this is tool-agnostic: every catalog surface shares
+ * Unlike {@link detectOverBudgetFromResult} this is tool-agnostic: every catalog surface shares
  * `checkScopeBudget`, so the same envelope can arrive from scope bundles, DDL detail, group
  * requests, or screen recall. Returns `null` for anything else, including malformed JSON.
  *
@@ -147,21 +137,27 @@ const budgetNoticeShown = new WeakSet<TurnEventSink>();
  * Emits the user-visible discovery-budget notice, once per turn.
  *
  * @remarks
- * The envelope itself is model-facing (an observation the model summarizes); without this notice
- * a budget rejection is silent to the user whenever the model does not mention it. Recoverable,
- * so it renders inline rather than claiming the turn's error presentation.
+ * The envelope itself is model-facing (an observation the model narrows against); without this
+ * notice a budget rejection is silent to the user whenever the model does not mention it.
+ * Recoverable, so it renders inline rather than claiming the turn's error presentation.
+ *
+ * {@link SCOPE_BUNDLE_TOOL} is excluded: an oversized scope is not a rejection the user has to read
+ * about, it is the mechanical reroute into the consent-gated exploration path
+ * ({@link detectOverBudgetFromResult}), and the approval gate that opens next is the user-visible
+ * signal. A notice there would announce an inline answer the turn is not going to give.
  *
  * @param sink - The turn's event sink.
  * @param toolName - Tool that produced `resultText`.
  * @param resultText - The tool's serialized result.
  */
 export function emitDiscoveryBudgetNotice(sink: TurnEventSink, toolName: string, resultText: string): void {
+  if (toolName === SCOPE_BUNDLE_TOOL) return;
   if (budgetNoticeShown.has(sink)) return;
   const notice = readOverBudgetNotice(toolName, resultText);
   if (!notice) return;
   budgetNoticeShown.add(sink);
   const scope = notice.nodes !== null && notice.nodes > 0 ? ` (${notice.nodes} projected nodes)` : '';
   sink.error(
-    `**Discovery budget reached** — \`${notice.toolName}\` could not load the full result${scope}: the requested scope exceeds what one turn can load. The assistant will answer from what was returned; ask about a narrower part of the lineage, or start a detailed analysis, to cover the rest.`,
+    `**Discovery budget reached** — \`${notice.toolName}\` was rejected${scope}: the requested scope exceeds what one turn can load. The assistant will continue with what is already loaded; ask about a narrower part of the lineage, or start a detailed analysis, to cover the rest.`,
   );
 }

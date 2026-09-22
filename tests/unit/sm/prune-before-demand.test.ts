@@ -185,8 +185,8 @@ describe('PRUNE-BEFORE-DEMAND', () => {
       verdict: 'analyze',
       column_flow: [{ out_col: 'Total', upstream_columns: [] }],
       route_requests: [
-        { nodeId: 'decoy', question: 'is this a join/filter source?' },
-        { nodeId: 'source', question: 'what supplies Total?' },
+        { nodeId: 'decoy', question: 'is this a join/filter source?', columns: 'none' },
+        { nodeId: 'source', question: 'what supplies Total?', columns: ['Total'] },
       ],
     }) as { ok?: unknown; error?: string };
     expect('ok' in hop1, `hop1 commits: ${JSON.stringify(hop1)}`).toBe(true);

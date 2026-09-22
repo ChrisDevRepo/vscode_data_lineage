@@ -78,7 +78,9 @@ describe('provider tool-call compatibility', () => {
     // The tool-less false error is one semantic failure: its repair retry is announced on the
     // transient status line only (the repair-progress contract) — never as permanent transcript
     // content, so a retry the phase goes on to resolve leaves no machinery ahead of the answer.
-    expect(statusLabels.some(label => label.includes('(Retry 1 — missing_required_evidence)'))).toBe(true);
+    // `missing_required_evidence` is unmapped, so it prints the `correction` fallback, never the
+    // raw code.
+    expect(statusLabels.some(label => label.includes('(Retry 1 — correction)'))).toBe(true);
     expect(text).not.toContain('retrying');
     expect(text).toContain('There is 1 object in the loaded snapshot.');
     expect(text).not.toContain('DB Error');

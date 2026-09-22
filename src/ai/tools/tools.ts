@@ -602,39 +602,22 @@ export function getScopeBundle(
     walkWithCap('outbound', downstreamDepth!, downstreamDistance);
   }
 
-  // The origin's in/out split needs the edge-type map here already (hoisted from the node loop
-  // below) because the over-budget reply presents the origin node too.
-  const edgeTypeMap = buildEdgeTypeMap(model);
-
-  // The over-budget reply is a partial bundle, not a bare rejection: the unchanged checkScopeBudget
-  // envelope (wire value `over_discovery_budget`) carries the origin node — metadata plus its DDL
-  // served whole when that body alone fits the discovery budget, metadata-only when it does not —
-  // the origin's full in/out counts, and the scope_proposal. Never a slice: a different bounded
-  // payload, per the zero-truncation guarantee in tokenBudget.ts.
+  // The over-budget reply is the bare checkScopeBudget envelope (wire value
+  // `over_discovery_budget`) plus the `scope_proposal` SM entry re-proposes for approval. No
+  // partial payload: the graph treats this result as a reroute terminal, so the model never gets
+  // another discovery attempt to answer from it.
   const overBudgetScopeReply = (
     admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
-  ): Record<string, unknown> => {
-    const originDdl = getNodeDdl(origin, nodeMap, store);
-    const neighbors = model.neighborIndex[origin];
-    return {
-      ...admission,
-      partial: true,
-      message: 'Partial answer: the requested scope exceeded the discovery budget, so this is not a complete answer.',
-      origin: {
-        ...presentNode(originNode, model.neighborIndex, { nodeMap, edgeTypeMap }),
-        ...(originDdl && checkScopeBudget(budget, 0, originDdl.length).ok ? { ddl: originDdl } : {}),
-      },
-      up: neighbors?.in.length ?? 0,
-      dn: neighbors?.out.length ?? 0,
-      scope_proposal: {
-        origin: originNode.id,
-        direction,
-        depth: singleDepth,
-        upstream_depth: upstreamDepth,
-        downstream_depth: downstreamDepth,
-      },
-    };
-  };
+  ): Record<string, unknown> => ({
+    ...admission,
+    scope_proposal: {
+      origin: originNode.id,
+      direction,
+      depth: singleDepth,
+      upstream_depth: upstreamDepth,
+      downstream_depth: downstreamDepth,
+    },
+  });
 
   if (nodeBudgetExceeded) {
     const admission = checkScopeBudget(budget, scopeIds.size, 0);
@@ -681,6 +664,7 @@ export function getScopeBundle(
   // whole-scope: every node carries the scalar hop count(s) for the side(s) it was reached on
   // (never both unless reached on both sides), read straight off the BFS `depth` that already
   // enforces the walk's cap above — no second traversal, no array, no re-derivation from `edges[]`.
+  const edgeTypeMap = buildEdgeTypeMap(model);
   const nodes = [...scopeIds]
     .map(id => nodeMap.get(id))
     .filter((n): n is LineageNode => !!n)

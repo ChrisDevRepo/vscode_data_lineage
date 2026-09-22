@@ -190,9 +190,9 @@ describe('repair-progress chat emissions', () => {
     expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
 
     // The retry is announced on the transient status line with the bracketed retry counter and
-    // cause — the synthetic rejection's code is deliberately unmapped, pinning the verbatim
-    // fallthrough — and nowhere else: no permanent text delta repeats it into the transcript.
-    expect(statusLabels(turn.events)).toContain('Building lineage preview… (Retry 1 — synthetic_test_semantic_failure)');
+    // cause — the synthetic rejection's code is deliberately unmapped, pinning the fallback group
+    // (never the raw code) — and nowhere else: no permanent text delta repeats it into the transcript.
+    expect(statusLabels(turn.events)).toContain('Building lineage preview… (Retry 1 — correction)');
     expect(textDeltas(turn.events).some(delta => delta.includes('retrying'))).toBe(false);
     // No announcement without a new failure: the accepted attempt emits no second repair line.
     expect(statusLabels(turn.events).filter(label => label.includes('(Retry')).length).toBe(1);
@@ -266,11 +266,12 @@ describe('repair-progress chat emissions', () => {
 
     // Hop 2 was entered twice: the header once, then one (Retry 1 — cause) line where the rejected
     // submit was recorded — the two lines are never identical (the observed duplicate), and the
-    // cause rides that transient status line only, never a permanent transcript line.
+    // cause rides that transient status line only, never a permanent transcript line. The synthetic
+    // rejection's code is deliberately unmapped, pinning the fallback group.
     const hop2 = statusLabels(turn.events).filter(label => label.startsWith('Hop 2/'));
     expect(hop2.length).toBe(2);
     expect(hop2[0]).toMatch(/^Hop 2\/\d+ — analysing Leaf0$/);
-    expect(hop2[1]).toMatch(/^Hop 2\/\d+ — analysing Leaf0 \(Retry 1 — synthetic_test_semantic_failure\)$/);
+    expect(hop2[1]).toMatch(/^Hop 2\/\d+ — analysing Leaf0 \(Retry 1 — correction\)$/);
     expect(textDeltas(turn.events).some(delta => delta.includes('retrying'))).toBe(false);
   });
 

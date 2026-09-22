@@ -128,7 +128,7 @@ describe('CT carrier contraction — the traced column continues on the far side
       summary: 'ok',
       verdict: 'passthrough',
       column_flow: [{ out_col: 'Discount', writes_to: { node: 'fact', col: 'Discount' }, upstream_columns: [{ node: 'calc', col: 'Discount' }] }],
-      route_requests: [{ nodeId: 'fact', question: 'Which objects read fact.Discount?' }],
+      route_requests: [{ nodeId: 'fact', question: 'Which objects read fact.Discount?', columns: ['Discount'] }],
     });
     expect(hop).not.toHaveProperty('error');
     const factview = engine.toJSON().agenda.find(e => e.nodeId === 'factview');

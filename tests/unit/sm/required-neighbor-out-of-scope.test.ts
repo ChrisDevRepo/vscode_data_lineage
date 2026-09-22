@@ -4,8 +4,15 @@
  * is derived from `admitsRoute` alone, never gated on prior scope membership. Under
  * `depthEnforcement: 'silent'` (the production default for an omitted depth — see
  * `depth-derivation-silent.test.ts`), `admitsRoute` never refuses on depth, so an admittable
- * neighbor one hop past the initial BFS seed is exactly the shape this guards: a finding that names
- * such a neighbor as a source without routing or pruning it must be refused, not silently dropped.
+ * neighbor one hop past the initial BFS seed is exactly the shape this guards.
+ *
+ * The demand is unchanged; what satisfies it moved. Such a neighbor left unaccounted is pure
+ * bookkeeping — the engine printed the id in that hop's own `<required_neighbors>`, the router has
+ * already ruled it admittable, and the only missing account is a route the engine can write itself.
+ * So the engine fills it and the hop commits, instead of spending a generation to be handed back
+ * the id it supplied. What must never happen is the neighbor being dropped: it enters scope, gets
+ * an engine-authored question, and the fill is logged. A neighbor the model named in
+ * `prune_neighbors` is never filled — the model stated an intent there.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
@@ -47,28 +54,32 @@ function advanceTo(engine: NavigationEngine, path: string[]): void {
 }
 
 describe('required-neighbor completeness reaches an admittable out-of-scope neighbor (BB)', () => {
-  it('a finding naming n4 as a source but not routing it is refused — the obligation fires', () => {
+  it('a finding naming n4 as a source but not routing it is completed by the engine, never dropped', () => {
     const { model, graph } = buildChain(false);
-    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const logLines: string[] = [];
+    const engine = new NavigationEngine(model, graph, (_level, msg) => { logLines.push(msg); }, {});
     engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'default_start' } });
     advanceTo(engine, ['n0', 'n1', 'n2', 'n3']);
 
     const before = engine.toJSON();
     expect(!before.scopeNodeIds.includes('n4'), 'n4 has not yet entered scope at n3').toBe(true);
 
-    const rejection = engine.submitFindings({
+    const committed = engine.submitFindings({
       focus_node_id: 'n3',
       sections: [{ angle: 'business' as const, text: 'n3 reads its rows from n4, the upstream source' }],
       summary: 'n3 sources from n4 but nothing routes it',
       verdict: 'analyze',
       // route_requests deliberately omits n4, the neighbor the prose just named.
       route_requests: [],
-    }) as { error?: string; detail?: Array<{ id?: string }> };
+    }) as { error?: string };
 
-    expect('error' in rejection, `naming n4 without routing it must be rejected, got ${JSON.stringify(rejection)}`).toBe(true);
-    expect(rejection.error === 'missing_required_route', `rejection code is missing_required_route, got ${rejection.error}`).toBe(true);
-    const ids = (rejection.detail ?? []).map(d => d.id);
-    expect(ids.includes('n4'), `n4 is named in the rejection detail, got ${JSON.stringify(ids)}`).toBe(true);
+    expect(!('error' in committed), `the omission is bookkeeping, not a fault: ${JSON.stringify(committed)}`).toBe(true);
+    const after = engine.toJSON();
+    expect(after.scopeNodeIds.includes('n4'), 'the engine-filled route puts n4 in scope — it is never dropped').toBe(true);
+    expect(
+      logLines.some(l => l.includes('[AutoFill]') && l.includes('n4')),
+      `the fill is logged so an engine-authored route stays auditable, got ${JSON.stringify(logLines.filter(l => l.includes('[AutoFill]')))}`,
+    ).toBe(true);
   });
 
   it('a finding that routes what it names commits normally — unaffected', () => {
@@ -92,9 +103,10 @@ describe('required-neighbor completeness reaches an admittable out-of-scope neig
 });
 
 describe('required-neighbor completeness reaches an admittable out-of-scope neighbor (CT)', () => {
-  it('CT: a finding naming n4 as a source but not routing it is refused — the obligation fires unconditionally', () => {
+  it('CT: a finding naming n4 as a source but not routing it is completed by the engine, as in BB', () => {
     const { model, graph } = buildChain(true);
-    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const logLines: string[] = [];
+    const engine = new NavigationEngine(model, graph, (_level, msg) => { logLines.push(msg); }, {});
     const init = engine.init({
       origin: 'n0', question: 'trace X', direction: 'downstream',
       analysisMode: 'ct', targetColumns: ['X'],
@@ -120,19 +132,19 @@ describe('required-neighbor completeness reaches an admittable out-of-scope neig
     const before = engine.toJSON();
     expect(!before.scopeNodeIds.includes('n4'), 'n4 has not yet entered scope at n3').toBe(true);
 
-    const rejection = engine.submitFindings({
+    const committed = engine.submitFindings({
       focus_node_id: 'n3',
       sections: [{ angle: 'business' as const, text: 'n3 reads its rows from n4, the upstream source' }],
       summary: 'n3 sources from n4 but nothing routes it',
       verdict: 'analyze',
       column_flow: [],
       route_requests: [],
-    }) as { error?: string; detail?: Array<{ id?: string }> };
+    }) as { error?: string };
 
-    expect('error' in rejection, `naming n4 without routing it must be rejected in CT too, got ${JSON.stringify(rejection)}`).toBe(true);
-    expect(rejection.error === 'missing_required_route', `rejection code is missing_required_route, got ${rejection.error}`).toBe(true);
-    const ids = (rejection.detail ?? []).map(d => d.id);
-    expect(ids.includes('n4'), `n4 is named in the rejection detail, got ${JSON.stringify(ids)}`).toBe(true);
+    expect(!('error' in committed), `CT fills the same omission BB fills: ${JSON.stringify(committed)}`).toBe(true);
+    const after = engine.toJSON();
+    expect(after.scopeNodeIds.includes('n4'), 'the engine-filled route puts n4 in scope in CT too').toBe(true);
+    expect(logLines.some(l => l.includes('[AutoFill]') && l.includes('n4')), 'the CT fill is logged too').toBe(true);
   });
 
   it('CT: a finding that routes what it names commits normally — unaffected', () => {

@@ -135,14 +135,12 @@ describe("Navigation Engine Task Ledger", () => {
   expect('error' in invalid && invalid.error === 'invalid_pending_lead', 'unknown lead id rejects').toBe(true);
   expect(restored.status === 'complete', 'unknown lead rejection leaves engine state unchanged').toBe(true);
 
-  // The lead target `x` is in the out-of-allowlist `external` schema. The follow-up pill click is the
-  // user consent that opens the border: mirror followUpNode by admitting the clicked lead's target
-  // id BEFORE supplementing, so the border check passes for exactly this node and nothing else.
-  const approvedLead = restored.pendingLeads.find(lead => lead.id === leadId)!;
-  const admitted = restored.admitSupplementTargets([approvedLead.nodeId]);
-  expect(admitted.join(','), 'admission names the lead target itself, never its schema').toBe('x');
+  // The lead target `x` is in the out-of-allowlist `external` schema. The follow-up pill click is
+  // the user consent that opens the border, and the supplement call admits exactly that node —
+  // never its schema — as its own first step.
   const scheduled = restored.supplementAgenda([], [leadId]);
-  expect('ok' in scheduled && scheduled.agendaed === 1, 'valid lead schedules a supplement hop after pill-approved admission').toBe(true);
+  expect('ok' in scheduled && scheduled.agendaed === 1, 'valid lead schedules a supplement hop').toBe(true);
+  expect((restored.toJSON().engineInternals?.sessionAllowedNodeIds ?? []).join(','), 'admission names the lead target itself, never its schema').toBe('x');
   const leadHop = restored.getHopContext() as any;
   expect(restored.getCurrentTasks().some(task => task.question === 'Trace x to the end of the external branch.'), 'supplement preserves the original lead question').toBe(true);
   restored.submitFindings({
@@ -159,7 +157,7 @@ describe("Navigation Engine Task Ledger", () => {
   expect('error' in repeated && repeated.error === 'invalid_pending_lead', 'resolved lead id cannot be scheduled again').toBe(true);
 });
 
-  it("A supplement targeting a pruned node rejects structurally and mutates nothing (zombie-lead guard).", () => {
+  it("A supplement targeting a pruned node adds it back and queues exactly one task for it.", () => {
   const engine = newEngine();
   const first = engine.getHopContext() as any;
   engine.submitFindings({
@@ -190,14 +188,15 @@ describe("Navigation Engine Task Ledger", () => {
     });
   }
   expect(next?.done === true && engine.status === 'complete', 'exploration completes with m pruned').toBe(true);
-  const statusBefore = engine.status;
   const leadsBefore = engine.pendingLeads.length;
-  const tasksBefore = engine.getCurrentTasks().length;
-  const rejected = engine.supplementAgenda(['m']);
-  expect('error' in rejected && rejected.error === 'supplement_target_pruned', 'supplement targeting a pruned node rejects with the structured error').toBe(true);
-  expect(engine.status === statusBefore, 'pruned-target rejection leaves engine status unchanged').toBe(true);
-  expect(engine.pendingLeads.length === leadsBefore, 'pruned-target rejection creates no zombie lead').toBe(true);
-  expect(engine.getCurrentTasks().length === tasksBefore, 'pruned-target rejection queues nothing').toBe(true);
+  const res = engine.supplementAgenda(['m']) as any;
+  expect('ok' in res && res.agendaed === 1, `the pruned node is added back for its own hop (got ${JSON.stringify(res)})`).toBe(true);
+  expect(engine.toJSON().removedSet.includes('m') === false, 'm is no longer removed').toBe(true);
+  expect(engine.pendingLeads.length === leadsBefore, 'adding it back creates no zombie lead').toBe(true);
+  const mTasks = snapshotTasks(engine).filter(task => task.nodeId === 'm' && task.status !== 'resolved');
+  expect(mTasks.length === 1, `exactly one open task carries the re-added node (got ${mTasks.length})`).toBe(true);
+  const hop = engine.getHopContext() as any;
+  expect(hop.focus_node?.id === 'm', 'the re-added node is dispatched as the next focus').toBe(true);
 });
 
   it("A successfully pruned focus resolves its active task instead of leaving pending ledger work.", () => {
@@ -331,15 +330,19 @@ describe("Navigation Engine Task Ledger", () => {
   expect(deferred[0].nodeId === lead.nodeId && deferred[0].fromFocusNodeId === lead.fromNodeId, 'deferred projection retains lead route identity').toBe(true);
 });
 
-  it("BB enqueue tolerates an explicit empty columns array (normalized to omitted, no throw).", () => {
+  // `enqueueHop`'s `carry` option is required (no `inherit`/default state remains); this pins the
+  // narrower fact the title still names: a BB engine tolerates a `carry: { kind: 'carry', columns:
+  // [] }` decision (an empty list, not a throw) — only a NON-empty column list on a BB agenda task
+  // throws ("BB agenda tasks must not carry active columns").
+  it("BB enqueue tolerates an explicit empty columns array (no throw).", () => {
   const engine = newEngine();
   let threw = false;
   try {
-    (engine as any).enqueueHop('m', 'probe m', 1, 2, []);
+    (engine as any).enqueueHop('m', 'probe m', 1, 2, { carry: { kind: 'carry', columns: [] } });
   } catch {
     threw = true;
   }
-  expect(!threw, 'BB enqueueHop normalizes an empty columns array instead of throwing').toBe(true);
+  expect(!threw, 'BB enqueueHop tolerates an empty columns list instead of throwing').toBe(true);
 });
 
 });

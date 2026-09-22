@@ -48,6 +48,7 @@ import {
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { IToolRegistry } from '../tools/registry';
 import type { ConverseInstructionPlan, InstructionPhase } from './instructionPlan';
+import { classifyRejectionCode } from '../tools/toolProvider';
 import { sanitizeForLog } from '../../utils/log';
 import { isCancellationOutcome } from '../support/cancellation';
 import { safeIdentifier } from '../support/logIdentifier';
@@ -59,15 +60,36 @@ import { compileSearchRegex } from '../../utils/modelSearch';
 export const MAX_TOOL_SEMANTIC_FAILURES = 3;
 
 /**
+ * Rejection codes whose own hint tells the model to stop calling tools, so the continuation note
+ * must not ask for a resend.
+ *
+ * @remarks
+ * The note is a provider contract and always ships ({@link rejectionContinuationMessage}); only its
+ * wording varies. Where a hint says "do not resend" and the note says "resend the corrected tool
+ * call", the model has no legal move and improvises — each improvisation charging a strike against
+ * {@link MAX_TOOL_SEMANTIC_FAILURES} until the breaker ends the turn. A code belongs here only when
+ * no corrective call exists at all; a code whose repair is a *different* call does not.
+ */
+const NO_RETRY_REJECTION_CODES: ReadonlySet<string> = new Set([
+  REJECTION_CODES.supplementEmpty,
+]);
+
+/**
  * Rejection codes exempt from the model's semantic budget: provider/transport artifacts
  * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration});
  * {@link REJECTION_CODES.duplicateRead}, a deliberate policy exemption for a model resending a
  * call it already has the answer to — not a transport artifact, bounded by the shared
  * unproductive-resend absorption (past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive identical
- * resends the duplicate charges a strike); and the budget guards
+ * resends the duplicate charges a strike); the budget guards
  * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}),
  * which refuse a well-formed request for its size alone and so say nothing about the model's
- * semantic accuracy.
+ * semantic accuracy; and the session/state codes below.
+ *
+ * The session/state codes share the budget guards' exact justification. Each one reports that the
+ * host's own session, turn lease or focus has moved — the engine is in the wrong status, the focus
+ * is not the one dispatched, the run memory or the turn epoch is gone. No correction the model
+ * could write would change any of them, so the strike they used to charge came out of the budget
+ * for real semantic repairs and spent it on the host's bookkeeping.
  */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
@@ -75,6 +97,18 @@ const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateRead,
   REJECTION_CODES.overDiscoveryBudget,
   REJECTION_CODES.overActiveScopeBudget,
+  REJECTION_CODES.noActiveSession,
+  REJECTION_CODES.noRunMemory,
+  REJECTION_CODES.staleTurn,
+  REJECTION_CODES.staleProposalRevision,
+  REJECTION_CODES.alreadyStarted,
+  REJECTION_CODES.supplementRequiresCompleteEngine,
+  // Local literals: these three are emitted only by `submitFindings` and shown on no second
+  // surface, so `rejectionCodes.ts`'s own rule ("a code belongs there as soon as a second surface
+  // shows it to the model") keeps them out of that table.
+  'invalid_status',
+  'invalid_focus_node',
+  'focus_mismatch',
 ]);
 
 /**
@@ -137,23 +171,6 @@ function isChargeableRejection(code: string): boolean {
 }
 /** Physical provider requests allowed in one logical phase/hop, including explicit future retries. */
 export const MAX_TOOL_PROVIDER_CALLS = 10;
-
-/**
- * Run-level cap on hops the active phase may force-abandon (via a synthetic `verdict: 'prune'`)
- * after a single focus exhausts {@link MAX_TOOL_SEMANTIC_FAILURES}, before giving up on the
- * remaining agenda and salvaging to synthesis instead.
- *
- * @remarks
- * Independent governor from {@link MAX_TOOL_SEMANTIC_FAILURES} (per-hop attempts before that ONE
- * hop is abandoned) and from `maxRounds` (submitted hops only — an abandoned hop is never
- * "submitted"). Without this cap a pathologically-failing model could still burn one generation
- * batch per remaining agenda node before the agenda naturally drained; this bounds that cost to a
- * handful of forced abandonments and hands the rest to salvage. Sized to absorb a couple of
- * genuinely unreachable nodes (bad DDL, a malformed neighbor) without mistaking that for a
- * systemic failure, while stopping well short of walking the whole agenda one abandonment at a
- * time.
- */
-export const MAX_ABANDONED_HOPS_PER_RUN = 5;
 
 /**
  * Per-string byte bound on an engine-produced rejection reason/hint re-projected into retry context.
@@ -1000,7 +1017,7 @@ function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: st
       rejection.toolName,
       JSON.stringify(output),
     ),
-    rejectionContinuationMessage(),
+    rejectionContinuationMessage(rejection.code),
   ];
 }
 
@@ -1017,9 +1034,17 @@ function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: st
  * belongs to, so the replayed call is no longer signature-validated. Every other provider accepts
  * user content after a tool result unchanged; the rejection's own correction keeps riding the
  * paired tool result, and the note only directs the model to act on it.
+ *
+ * The note always ships, for the reason above; what varies is whether it asks for a resend. For a
+ * {@link NO_RETRY_REJECTION_CODES} rejection there is no call to correct, and asking for one
+ * contradicts the hint the model just read.
+ *
+ * @param code - The rejection's code, which decides which of the two directions is given.
  */
-function rejectionContinuationMessage(): ModelMessage {
-  return modelUserMessage('Continue the current task: act on the correction above and resend the corrected tool call.');
+function rejectionContinuationMessage(code: string): ModelMessage {
+  return modelUserMessage(NO_RETRY_REJECTION_CODES.has(code)
+    ? 'No corrective call is available. Answer the user from the completed exploration; do not call a tool again this turn.'
+    : 'Continue the current task: act on the correction above and resend the corrected tool call.');
 }
 
 /** Serializes and escapes the exact delimited message delivered to the model. */
@@ -1403,8 +1428,10 @@ function logSyntheticRejection(
     + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
     + ` callId=${safeCallId(call.callId)}`
     + ` code=${safeLogIdentifier(code, 'unknown')}`
+    + ` group=${classifyRejectionCode(code)}`
     + ` reason=${sanitizeForLog(reason)}`
-    + ' issuePaths=none',
+    + ' issuePaths=none'
+    + ` charged=${isChargeableRejection(code)}`,
   );
 }
 
@@ -1539,8 +1566,10 @@ function emitSynthesizedRejection(
     + ` tool=${safeLogIdentifier(rejection.toolName, 'unknown')}`
     + ' callId=none'
     + ` code=${rejection.code}`
+    + ` group=${classifyRejectionCode(rejection.code)}`
     + ` reason=${sanitizeForLog(rejection.reason)}`
-    + ' issuePaths=none',
+    + ' issuePaths=none'
+    + ` charged=${isChargeableRejection(rejection.code)}`,
   );
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
   return isChargeableRejection(rejection.code) ? 1 : 0;
@@ -1735,10 +1764,11 @@ export async function executeToolGenerationAttempt(
         + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
         + ` callId=${safeCallId(call.callId)}`
         + ` code=${safeLogIdentifier(call.code, 'unknown')}`
+        + ` group=${classifyRejectionCode(call.code)}`
         + ` reason=${sanitizeForLog(rejection.reason)}`
         + ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}`
         + ` unproductiveStreak=${unproductiveStreak}`
-        + ` chargeable=${isChargeableRejection(call.code) && !freeBoundedRepairResend}`,
+        + ` charged=${isChargeableRejection(call.code) && !freeBoundedRepairResend}`,
       );
       if (isChargeableRejection(call.code) && !freeBoundedRepairResend) {
         chargeableFailures++;

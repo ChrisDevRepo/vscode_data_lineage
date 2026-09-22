@@ -151,14 +151,17 @@ When accepted observations show at least two distinct objects inspected
 through `lineage_get_object_detail`, the walk is treated as multi-object and
 the SM-offer pill is seeded from its first object and final answer.
 
-Only a mechanical trigger opens SM entry: the `/trace` command or the user's
-SM-offer pill. Every free-text request, including one the detector classifies
-as `column_trace`, runs discovery first. When the scope exceeds the discovery
-budget, `lineage_get_scope_bundle` returns a partial payload (the origin with
-its whole DDL and the neighbor counts). The answer summarizes it, says the full
-question needs a detailed analysis, and seeds the SM-offer pill; the user may
-accept or ask something else. Tool availability is defined only in
-[`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
+Only a mechanical trigger opens SM entry: the `/trace` command, the user's
+SM-offer pill, or the discovery budget guard. Every free-text request, including
+one the detector classifies as `column_trace`, runs discovery first. When the
+scope exceeds the discovery budget on either metric — the node cap or the token
+budget — `lineage_get_scope_bundle` returns the bare `over_discovery_budget`
+rejection with the `scope_proposal` it measured. Graph dispatch treats that
+result as a reroute terminal: discovery is cut, the turn is handed to SM entry
+as `discovery_budget`, and `lineage_start_exploration` opens the consent gate
+there, where the user approves or cancels. The model is never given another
+discovery attempt to answer inline from the rejection. Tool availability is
+defined only in [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 
 Which traversal mode runs, BB or CT, is settled at the consent gate, never by
 this routing step.
@@ -211,6 +214,13 @@ purpose (seed BFS, routing, supplement, column-trace contraction, display),
 with the sole scope-add write site behind it. Naming an object in a follow-up
 admits that object, never its schema siblings.
 
+The consent gate authorizes one hop-by-hop run and is spent when that run's
+result is presented. A follow-up asking for an object is therefore the user's
+own consent to add it: the object is admitted by name, whether or not the run
+deferred it and whether or not the assistant pruned it. Objects the user
+excluded are the one exception — that removal was theirs, and it stays a hard
+wall.
+
 An instruction that maps to no filter field is carried as `scopeNotes` into
 every hop, but it is prose addressed to the model: the engine has no field to
 test, so nothing rejects a violation of it.
@@ -262,8 +272,14 @@ presented as deferred follow-up work.
 Completed follow-ups can update presentation, supplement the existing
 exploration with explicit nodes, begin a fresh exploration, or answer
 directly. Supplements retain the existing archive and return through the
-active loop. Fresh exploration follows the consent path and establishes new
-state.
+active loop, so a named object is analyzed as a hop in the same engine,
+against the same origin, with no second approval; only the ids named are
+added, and each object beyond them defers as its own follow-up. Fresh
+exploration follows the consent path and establishes new state.
+
+A follow-up that exhausts its correction budget still delivers the answer it
+already wrote, with a plain statement that the graph did not change — the
+mirror of synthesis's held-draft salvage.
 
 ## Memory and state ownership
 
@@ -320,14 +336,45 @@ per-hop instruction surface, the whole-object instruction always ships, and a
 neighbor that carries traced columns earns the column-trace rider on top; a
 neighbor that only shapes rows gets the whole-object instruction alone.
 
-`route_requests[].columns` states the per-neighbor decision in three
-distinguishable states (`ColumnCarry` in `smTypes.ts`): the field omitted is
-`inherit`, a non-empty list is `carry`, and the word `none` is
-`row_role_only`. Only `row_role_only` suppresses the target-set fallback, so
-a neighbor sent on as a plain object is not handed the columns it declined.
-The decision persists on the agenda entry (`columnCarry`). Provenance beats
-an absence claim: a `none` on a node the same hop named in
-`column_flow[].upstream_columns` is normalized to the attributed columns.
+`route_requests[].columns` is required on every CT route request
+(`CtRouteRequestSchema` in `toolSchemas.ts`): a non-empty list, or the word
+`none`, never an omitted field. `ColumnCarry` (`smTypes.ts`) has exactly two
+states — `carry` (the listed columns) and `row_role_only` (the neighbor
+carries no traced value and is dispatched as a plain object). There is no
+silent default; a CT route that skips the decision is rejected before
+commit. BB's route form carries no `columns` field at all — the channel does
+not exist in that mode — and when a BB-mode hop inside a CT run is read for
+its (structurally absent) decision, it resolves to `row_role_only`, the same
+as an explicit `none`.
+
+The decision persists on the agenda entry (`columnCarry`). At dispatch, a
+dequeued CT candidate's base active-column set is `[]` when the carry is
+`row_role_only`, otherwise the entry's own recorded `activeColumns`; spine
+recovery — the accumulated committed `column_flow` edges, bound against the
+node's own declared columns — overrides that base only when it resolves
+non-empty. No other fallback exists: a stale seed-target set is never
+re-applied to a node several hops from where it was resolved.
+
+Where the two channels disagree, the engine does not pick a winner. A route
+stating `columns: 'none'` for a node the SAME submission names in
+`column_flow[].upstream_columns` is one payload contradicting itself, so it is
+refused (`route_columns_flow_conflict`) with the neighbour and the attributed
+columns named, and the model repairs whichever half it meant. That is a CT
+content fact on the submit, not a BB admission fact: a neighbour BB would
+defer or exclude is still refused when the same payload names it both ways,
+and the repair path is `route_requests[].columns`. The refusal is scoped to
+model-authored routes: the engine synthesizes its own routes from
+`column_flow` and from the required-neighbour fill, and states their columns at
+the point of synthesis rather than leaving them to be resolved later.
+
+The reverse order — a `'none'` contradicted by an edge committed at an EARLIER
+hop — is not a contradiction in one payload: each statement was correct when it
+was made. `routeCarryFor` honours the stated `'none'` and enqueues it as
+submitted. The committed column is not dropped: the dispatch-time spine bind in
+`getHopContext` still binds it, and that bind is the one remaining place the
+engine resolves a column disagreement on the model's behalf. It stands until
+the outstanding column can be booked and re-asked; removing it first would drop
+the column silently rather than ask about it later.
 
 A column edge carries an optional multi-select transform classification.
 `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts` is the
@@ -346,13 +393,27 @@ DIRECT means the upstream value reaches the output; INDIRECT means no value
 crosses the edge and the node only decided which rows appear. The field is
 optional on both contracts, and the engine never fills it in.
 
-Neighbor visibility is the same in both modes. CT presents the focus node's
-neighbors, and permits routing to them, exactly as BB does — including a
-neighbor that carries none of the traced columns. Column state annotates a
-hop; it never gates one. For the same question, origin, direction and depth
-the two modes walk the same node set. Neighbor prune is the same
-topology-safe engine path in both modes; CT adds column-flow verification on
-top of that path.
+Neighbor visibility is the same in both modes, structurally: CT presents the
+focus node's full neighbor set, exactly as BB does, and routing eligibility
+is never filtered by column state — a neighbor that carries none of the
+traced columns is still routable, dispatched under the whole-object contract.
+Neighbor prune is the same topology-safe engine path in both modes; CT adds
+column-flow verification on top of that path.
+
+Given identical routing decisions, the two modes reach an identical node set:
+nothing in CT's column handling can silently exclude a neighbor BB would
+keep, because every CT route now states an explicit column decision (`carry`
+or `row_role_only`) and no fallback exists to reinterpret a missing one. This
+is pinned by `tests/unit/sm/bb-ct-node-set-parity.test.ts`, which drives one
+fixture through independent BB and CT engine instances and asserts their
+`getResult().fullNodes` id sets are equal, including a column-less branch
+reachable only through a `row_role_only` hop. That two independently-run
+traces of the *same question* issue matching routing decisions in the first
+place is a property of the model's own behaviour, not something any engine
+mechanism enforces. `tests/unit/sm/ct-chain-connectivity.test.ts` pins a
+related but distinct invariant — that the committed `column_flow` edges form
+one connected component reaching the origin, so a column chain can never start
+detached from the traced origin.
 
 The webview renders the result through engine-owned node types
 (`CustomNodeData`, `ColumnTraceNodeData` in

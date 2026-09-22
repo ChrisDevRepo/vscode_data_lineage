@@ -1,16 +1,21 @@
 /**
- * F1 — two routes, one queued node: a later `columns: "none"` must not subtract a proven column.
+ * F1 — two routes, one queued node, and where the engine stops resolving the disagreement.
  *
  * A CT node two siblings both reach consumes one hop, so both routes land on one agenda entry. One
  * sibling commits a `column_flow` edge naming the node as the supplier of a traced column; the
- * other reaches the same node on a row-filtering branch and states `columns: "none"`. The absence
- * claim must not overturn the committed assertion, or the node is dispatched with no column
- * question, the completeness guard demands no `column_flow` there, and the chain ends at a node
- * already proven to carry the value — a subtraction with no counterpart in BB.
+ * other reaches the same node on a row-filtering branch and states `columns: "none"`. The two
+ * statements were each correct when made — an earlier hop's evidence, and a later hop's own
+ * routing intent — so neither is an error, and the engine no longer picks a winner at enqueue
+ * time: the stated `"none"` is honoured on the agenda entry exactly as submitted.
  *
- * The boundary is evidence, not order: a `none` the committed spine says nothing about still
- * dispatches a plain whole-object hop (pinned below, and on the seeded route in
- * `ct-retention-differential.test.ts`).
+ * The committed column is not dropped either. The dispatch-time spine bind in `getHopContext`
+ * still binds it, which is what keeps the chain from ending at a node already proven to carry the
+ * value. That bind is the LAST remaining place the engine resolves this disagreement on the AI's
+ * behalf; it stands until the reverse-order case books the outstanding column and re-asks for it,
+ * because removing it first would drop the column silently rather than ask about it later.
+ *
+ * A `"none"` no committed edge contradicts is untouched at both layers (pinned below, and on the
+ * seeded route in `ct-retention-differential.test.ts`).
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
@@ -106,16 +111,20 @@ describe('F1 — a filter sibling routing "none" and a carrier meeting on one ag
     return engine;
   }
 
-  it('F1: the row-role route does not subtract the column question a committed edge opened', () => {
+  it('F1: the stated row role is honoured on the agenda entry, not overturned by the committed edge', () => {
     const engine = drivenFork();
 
     const shared = agendaOf(engine, 'f1_shared');
-    expect(shared?.activeColumns?.join(','), 'F1: the queued entry keeps the proven column').toBe('TargetCol');
-    expect(shared?.columnCarry?.kind, 'F1: and stays a carrier, so dispatch asks the column question').toBe('carry');
+    expect(shared?.columnCarry?.kind, 'F1: the later route said "none" and the entry records "none"').toBe('row_role_only');
+    expect(shared?.activeColumns?.length ?? 0, 'F1: no column is padded back on at enqueue time').toBe(0);
+  });
+
+  it('F1: the dispatch-time spine bind still asks the column question the committed edge opened', () => {
+    const engine = drivenFork();
 
     engine.getHopContext();
     expect(engine.currentFocus, 'F1: the shared node dispatches').toBe('f1_shared');
-    expect(engine.columnAspect?.active_columns.join(','), 'F1: the hop is asked about TargetCol').toBe('TargetCol');
+    expect(engine.columnAspect?.active_columns.join(','), 'F1: the proven column is not dropped').toBe('TargetCol');
   });
 
   it('F1: a row-role route the committed spine says nothing about still dispatches with no column', () => {
@@ -126,16 +135,26 @@ describe('F1 — a filter sibling routing "none" and a carrier meeting on one ag
     expect(gate?.activeColumns?.length, 'F1: and no target set is padded back onto it').toBe(0);
   });
 
-  it('F1: the overturned absence claim is logged, never applied silently', () => {
+  it('F1: no enqueue-time normalization happens, so none is logged', () => {
     const logs: string[] = [];
     drivenFork((_level, message) => logs.push(message));
     expect(
-      logs.some(line => line.includes('[Normalize] route carry') && line.includes('f1_shared') && line.includes('from=none')),
-      'F1: the normalization names the node and the claim it overturned',
+      logs.some(line => line.includes('[Normalize] route carry')),
+      'F1: the enqueue-time override is gone, for the evidenced node and the unevidenced one alike',
+    ).toBe(false);
+  });
+
+  it('F1: the dispatch-time bind still names the node and the claim it overrides', () => {
+    const logs: string[] = [];
+    const engine = drivenFork((_level, message) => logs.push(message));
+    engine.getHopContext();
+    expect(
+      logs.some(line => line.includes('[Normalize] dispatch carry') && line.includes('f1_shared') && line.includes('from=none')),
+      'F1: the one surviving override is never applied silently',
     ).toBe(true);
     expect(
-      logs.some(line => line.includes('[Normalize] route carry') && line.includes('f1_gate')),
-      'F1: an unevidenced row role is not normalized, so it is not logged',
+      logs.some(line => line.includes('[Normalize] dispatch carry') && line.includes('f1_gate')),
+      'F1: an unevidenced row role has nothing to bind, so it is not logged',
     ).toBe(false);
   });
 });

@@ -262,12 +262,10 @@ was at run time, so the prompt contract is to confirm a stale object with
 
 The response carries a `_token_estimate` and is never truncated: a recall over
 the discovery token budget is hard-rejected with the standard
-`over_discovery_budget` envelope. Under that envelope's referral contract the
-reply carries partial data and a hint directing the model to answer briefly
-from what was returned and offer a detailed analysis
-(`lineage_start_exploration` is the named continuation — offered, never
-started); on this recall path the hint stays the narrowing one naming how far
-to narrow `ids`, and no partial bundle is attached. When
+`over_discovery_budget` envelope and a hint naming how far to narrow `ids`. Only
+`lineage_get_scope_bundle` reroutes on that shared envelope; this recall path
+stays inline, so the model narrows and re-reads rather than leaving discovery.
+When
 no bookmark is applied, the applied bookmark is not AI-authored, or no run was
 stored for it, the call answers `no_run_memory` with the repair.
 
@@ -290,7 +288,10 @@ classification, and columns are inherited mechanically. The refine stage may
 search objects to resolve a typo, pattern, ambiguity, or newly named object, but
 does not re-resolve the unchanged origin or rerun discovery;
 completed-session supplements carry explicit node IDs and reuse the existing
-archive.
+archive. A supplement ID needs no lead behind it and no second approval — the
+user's request is the consent — but an ID the user excluded is still refused,
+and a rejection that has no corrective call tells the model to answer rather
+than to resend.
 
 Every fresh SM exploration passes through the consent gate. A bounded visual
 preview is a separate discovery path and does not grant SM mutation authority.
@@ -321,18 +322,30 @@ preview is a separate discovery path and does not grant SM mutation authority.
   unclassified. The value set and its DIRECT / INDIRECT split have one home,
   `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`, shared by
   the tool schema, the wire contract and the webview.
-- A routing request may carry `columns`, which states per neighbor whether the
-  traced columns follow it. Three states, kept apart end to end: the field
-  omitted means the neighbor inherits whatever the trace already carries; a
-  non-empty list names the columns to trace through it; the literal `none` marks
-  a neighbor that only decides which rows the answer returns, so it is explored
-  as a whole object and is not asked about columns it does not supply. `none` is
-  a word rather than an empty array because an empty array and an omitted field
-  would be one payload with two meanings. The field is BB-unknown and is refused
+- A CT routing request must state `columns` for every routed neighbor — a
+  non-empty list, or the literal `none` — never an empty array and never an
+  omitted field. Two states, kept apart end to end: a non-empty list names the
+  columns to trace through that neighbor; `none` marks a neighbor that only
+  decides which rows the answer returns, so it is explored as a whole object
+  and is not asked about columns it does not supply. `none` is a word rather
+  than an empty array because an empty array and a stated "no columns" would
+  be one payload with two meanings. There is no default reading of an omitted
+  field: a CT route that skips the decision is rejected before commit, and no
+  fallback reapplies the session's original target columns to a node several
+  hops from where they were resolved. The field is BB-unknown and is refused
   in a BB session by the same rejection that refuses `column_flow` there. A
-  `none` on a node the same hop named in `column_flow[].upstream_columns` is
-  normalized to the attributed columns with a log — the positive provenance
-  assertion outranks the absence claim.
+  `none` on a node the SAME submission names in `column_flow[].upstream_columns`
+  is one payload contradicting itself, so it is refused
+  (`route_columns_flow_conflict`) with the neighbor and the attributed columns
+  named — the engine states the conflict rather than picking a winner. The
+  check is on the submit, not on whether BB would admit the neighbor; the
+  repair path is `route_requests[].columns`. The refusal is scoped to
+  model-authored routes: the engine synthesizes routes of
+  its own from `column_flow` and from the required-neighbor fill, and states
+  their columns at the point of synthesis. A `none` contradicted by an edge
+  committed at an EARLIER hop is not refused — each statement was correct for
+  the hop that made it — and is honored as submitted; the committed column is
+  recovered at dispatch rather than dropped.
 
 The locked answer classification determines which section angles are required.
 Validation requires the locked angles to be present; off-classification
