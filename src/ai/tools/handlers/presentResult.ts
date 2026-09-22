@@ -545,6 +545,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ],
           repairFields: ['sections', 'highlight_groups', 'notes'],
           paths: ['sections', 'highlight_groups', 'notes'],
+          // Carried into `detail` only, for a later attempt's rejection to be compared against this
+          // one's — `paths` above is a fixed structural root shared by every offender and never
+          // shrinks as the model covers individual nodes.
+          entryIds: uncoveredCtNodes,
           soleHint: 'Fix CT node coverage only. Keep existing section text where possible; add each named node to a section, a highlight group, or notes[].',
         });
       }
@@ -561,6 +565,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ],
           repairFields: ['sections'],
           paths: ['sections'],
+          // Carried into `detail` only — see the CT-coverage violation above for why `paths` cannot
+          // serve this role: `sections` is the fixed structural root, not the shrinking offender set.
+          entryIds: unrenderedSlotIds,
           soleHint: 'Fix detail-slot coverage only. Keep existing section text where possible; add each named node to a sections[].node_ids.',
         });
       }

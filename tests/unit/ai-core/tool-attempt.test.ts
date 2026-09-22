@@ -27,6 +27,7 @@ import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { createTurnTokenBudget, type TurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import type { IToolRegistry } from '../../../src/ai/tools/registry';
+import { validatePresentResult, type PresentResultInput } from '../../../src/ai/tools/presentResult';
 import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import {
   ScriptedModelPort,
@@ -2320,6 +2321,249 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     );
 
     expect(result.semanticFailures).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (g.1) shrinking violation-set repair exemption — m60-followup-prune-slots (host.log:266,279,289):
+// three convergent present_result validation rejections (12 -> 7 -> 2 uncovered detail slots) were
+// each charged as a fresh semantic failure, so the breaker stopped the turn at attempt 3 without
+// ever letting the model land its repair. A same-tool rejection whose issue-path violation set is a
+// non-empty strict subset of the immediately prior rejection's is repair progress, not a repeat.
+// ---------------------------------------------------------------------------
+
+describe('executeToolGenerationAttempt / executeToolAttempt — shrinking violation-set repair exemption', () => {
+  /**
+   * Same-tool rejection envelope naming one issue path per entry in `paths` — the `detail: [{path}]`
+   * shape `buildRejectionDetail` (`presentResult.ts`) emits for a set of offending entries (e.g. the
+   * uncovered detail slots in the m60 hop read). Deliberately carries no `repairFields`: that would
+   * feed the unrelated no-repair-field-touched pre-check (`touchesNoRepairField`) once each attempt
+   * below sends a distinct, non-`sections` payload, and this test isolates the violation-set check
+   * from that pre-check on purpose.
+   */
+  function violationSetEnvelope(paths: readonly string[]): string {
+    return JSON.stringify({
+      success: false,
+      errors: [`Detail slot(s) reached no section: ${paths.join(', ')}.`],
+      hint: 'Fix sections only.',
+      detail: paths.map((path) => ({ path })),
+    });
+  }
+
+  it('does not charge repair attempts whose violation set strictly shrinks, and the next valid call completes the turn', async () => {
+    const responses = [
+      violationSetEnvelope(['sections.slot0', 'sections.slot1', 'sections.slot2']),
+      violationSetEnvelope(['sections.slot0', 'sections.slot1']),
+      violationSetEnvelope(['sections.slot0']),
+      '{"success":true}',
+    ];
+    let attemptIndex = 0;
+    const { state, results } = await runAttemptSequence(
+      [
+        { toolCalls: [validCall('call-1', 'lineage_present_result', { attempt: 1 })] },
+        { toolCalls: [validCall('call-2', 'lineage_present_result', { attempt: 2 })] },
+        { toolCalls: [validCall('call-3', 'lineage_present_result', { attempt: 3 })] },
+        { toolCalls: [validCall('call-4', 'lineage_present_result', { attempt: 4 })] },
+      ],
+      [{ name: 'lineage_present_result', result: () => responses[attemptIndex++] }],
+    );
+
+    // Attempt 1 has no prior rejection to shrink against and charges normally; attempts 2 and 3 each
+    // strictly shrink the violation set left by the one before it and spend no strike; attempt 4 is
+    // the model's fourth try landing cleanly — the exact try the breaker denied in the m60 run.
+    expect(results.map((result) => result.semanticFailures)).toEqual([1, 0, 0, 0]);
+    expect(results[3].calls[0]?.status).toBe('executed');
+    expect(state.semanticFailures).toBe(1);
+    expect(state.stopReason).toBeNull();
+  });
+
+  it('charges three attempts whose violation set stays the same, and the phase still stops at the budget', async () => {
+    const envelope = violationSetEnvelope(['sections.slot0', 'sections.slot1']);
+    const { state, results } = await runAttemptSequence(
+      [
+        { toolCalls: [validCall('call-1', 'lineage_present_result', { attempt: 1 })] },
+        { toolCalls: [validCall('call-2', 'lineage_present_result', { attempt: 2 })] },
+        { toolCalls: [validCall('call-3', 'lineage_present_result', { attempt: 3 })] },
+      ],
+      [{ name: 'lineage_present_result', result: envelope }],
+    );
+
+    // Every attempt sends different (non-resent) input, so the unproductive-resend pre-check never
+    // fires; an unchanged violation set is not shrinking, so termination is unaffected and today's
+    // charge-every-time behaviour still ends the phase at the budget.
+    expect(results.map((result) => result.semanticFailures)).toEqual([1, 1, 1]);
+    expect(state.semanticFailures).toBe(3);
+    expect(state.stopReason).toBe('semantic_failures');
+  });
+
+  it('charges an attempt whose violation set grows relative to the prior rejection', async () => {
+    const { result: first } = await runAttempt(
+      [{ toolCalls: [validCall('call-1', 'lineage_present_result', { attempt: 1 })] }],
+      [{ name: 'lineage_present_result', result: violationSetEnvelope(['sections.slot0']) }],
+    );
+    expect(first.semanticFailures).toBe(1);
+
+    const { result: second } = await runAttempt(
+      [{ toolCalls: [validCall('call-2', 'lineage_present_result', { attempt: 2 })] }],
+      [{ name: 'lineage_present_result', result: violationSetEnvelope(['sections.slot0', 'sections.slot1']) }],
+      { priorRejection: first.rejections[0] },
+    );
+
+    expect(second.semanticFailures).toBe(1);
+  });
+
+  it('charges an attempt whose violation set changes without being a subset of the prior rejection', async () => {
+    const { result: first } = await runAttempt(
+      [{ toolCalls: [validCall('call-1', 'lineage_present_result', { attempt: 1 })] }],
+      [{ name: 'lineage_present_result', result: violationSetEnvelope(['sections.slot0', 'sections.slot1']) }],
+    );
+    expect(first.semanticFailures).toBe(1);
+
+    const { result: second } = await runAttempt(
+      [{ toolCalls: [validCall('call-2', 'lineage_present_result', { attempt: 2 })] }],
+      [{ name: 'lineage_present_result', result: violationSetEnvelope(['sections.slot0', 'sections.slot9']) }],
+      { priorRejection: first.rejections[0] },
+    );
+
+    expect(second.semanticFailures).toBe(1);
+  });
+
+  it('does not charge a pre-dispatch schema rejection whose issue-path violation set strictly shrinks from the prior rejection', async () => {
+    const { result: first } = await runAttempt(
+      [{
+        toolCalls: [invalidCall(
+          'call-1',
+          'lineage_submit_findings',
+          'invalid_tool_input',
+          'column_flow.0.to_col: Required; column_flow.1.to_col: Required',
+          ['column_flow.0.to_col', 'column_flow.1.to_col'],
+        )],
+      }],
+      [{ name: 'lineage_submit_findings', result: '{"ok":true}' }],
+    );
+    expect(first.semanticFailures).toBe(1);
+
+    const { result: second } = await runAttempt(
+      [{
+        toolCalls: [invalidCall(
+          'call-2',
+          'lineage_submit_findings',
+          'invalid_tool_input',
+          'column_flow.0.to_col: Required',
+          ['column_flow.0.to_col'],
+        )],
+      }],
+      [{ name: 'lineage_submit_findings', result: '{"ok":true}' }],
+      { priorRejection: first.rejections[0] },
+    );
+
+    expect(second.semanticFailures).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (g.2) shrinking violation-set repair exemption, built from the real validatePresentResult — the
+// coordinator's rejection of (g.1) as unreachable in production: the detail-slot and CT-coverage
+// violations both carry the fixed path `sections` (handlers/presentResult.ts:539-550, 555-566), so
+// `issuePaths` alone never shrinks for the real m60 defect. `PresentResultViolation.entryIds`
+// (presentResult.ts:250-272) carries the shrinking offender-id set into `detail.entry_ids` instead;
+// this proves that identity against the real accumulator (`validatePresentResult`), never a
+// hand-written envelope.
+// ---------------------------------------------------------------------------
+
+describe('executeToolGenerationAttempt / executeToolAttempt — shrinking violation-set repair exemption (real validatePresentResult)', () => {
+  const ANCHOR = '[ai].[vwAnchor]';
+  const baseInput: PresentResultInput = {
+    name: 'Order Load',
+    summary: 'Three views feed the consolidated report.',
+    sections: [{ label: 'Overview', node_ids: [ANCHOR], text: 'Introduces the anchor view.' }],
+    highlight_groups: [{ label: 'Feeds', color: 'source', node_ids: [ANCHOR] }],
+  };
+
+  /**
+   * Builds the exact JSON `lineage_present_result` returns for a detail-slot-coverage rejection by
+   * running the real accumulator (`validatePresentResult`) with the same `PresentResultViolation`
+   * shape `executePresentResult` passes for `findUnrenderedDetailSlotIds`'s output
+   * (`handlers/presentResult.ts:559-572`) — `detail` here is never hand-written.
+   */
+  function detailSlotRejectionEnvelope(uncoveredEntryIds: readonly string[]): string {
+    const result = validatePresentResult(
+      baseInput,
+      [ANCHOR],
+      undefined,
+      'engine-assembled description',
+      false,
+      uncoveredEntryIds.length > 0 ? [{
+        field: 'sections',
+        messages: [`Detail slot(s) reached no section: ${uncoveredEntryIds.join(', ')}.`],
+        repairFields: ['sections'],
+        paths: ['sections'],
+        entryIds: uncoveredEntryIds,
+        soleHint: 'Fix detail-slot coverage only. Keep existing section text where possible; add each named node to a sections[].node_ids.',
+      }] : [],
+      'synthesis',
+    );
+    return JSON.stringify(result);
+  }
+
+  it('carries entry_ids in the real validator detail, and does not charge a repair whose uncovered set strictly shrinks 3 -> 2 -> 1, landing the fourth try', async () => {
+    const A = '[ai].[vwSlotA]';
+    const B = '[ai].[vwSlotB]';
+    const C = '[ai].[vwSlotC]';
+    const responses = [
+      detailSlotRejectionEnvelope([A, B, C]),
+      detailSlotRejectionEnvelope([B, C]),
+      detailSlotRejectionEnvelope([C]),
+      detailSlotRejectionEnvelope([]),
+    ];
+    let attemptIndex = 0;
+    // Each attempt's own input actually touches `sections` (the rejection's authorized repair
+    // field), with distinct content every time — isolating the shrinking-entryIds exemption under
+    // test from the unrelated, pre-existing free-resend absorption (`touchesNoRepairField` /
+    // byte-identical resend), which would otherwise silently also explain an unfired charge.
+    const { state, results } = await runAttemptSequence(
+      [
+        { toolCalls: [validCall('call-1', 'lineage_present_result', { sections: [{ label: 'Overview', node_ids: [ANCHOR], text: 'v1' }] })] },
+        { toolCalls: [validCall('call-2', 'lineage_present_result', { sections: [{ label: 'Overview', node_ids: [ANCHOR, A], text: 'v2' }] })] },
+        { toolCalls: [validCall('call-3', 'lineage_present_result', { sections: [{ label: 'Overview', node_ids: [ANCHOR, A, B], text: 'v3' }] })] },
+        { toolCalls: [validCall('call-4', 'lineage_present_result', { sections: [{ label: 'Overview', node_ids: [ANCHOR, A, B, C], text: 'v4' }] })] },
+      ],
+      [{ name: 'lineage_present_result', result: () => responses[attemptIndex++] }],
+    );
+
+    // The real validator's own `detail[].entry_ids` — never hand-written — carries the shrinking
+    // identity `isShrinkingViolationRepair` compares, since `sections` alone (issuePaths) does not.
+    expect(results[0].rejections[0]?.entryIds).toEqual([A, B, C]);
+    expect(results[1].rejections[0]?.entryIds).toEqual([B, C]);
+    expect(results[2].rejections[0]?.entryIds).toEqual([C]);
+    // Attempt 1 has no prior rejection to shrink against and charges normally; attempts 2 and 3 each
+    // strictly shrink the uncovered set left by the one before and spend no strike; attempt 4 is the
+    // model's fourth try landing cleanly — the exact try the breaker denied in the m60 run.
+    expect(results.map((result) => result.semanticFailures)).toEqual([1, 0, 0, 0]);
+    expect(results[3].calls[0]?.status).toBe('executed');
+    expect(state.semanticFailures).toBe(1);
+    expect(state.stopReason).toBeNull();
+  });
+
+  it('still stops at the budget when the real validator reports the same uncovered entry-id set three times', async () => {
+    const B = '[ai].[vwSlotB]';
+    const C = '[ai].[vwSlotC]';
+    const envelope = detailSlotRejectionEnvelope([B, C]);
+    // Distinct inputs, each touching `sections`, for the same reason as the test above: an
+    // unfired charge here must be attributable only to the (absent) shrink, never to the unrelated
+    // free-resend absorption.
+    const { state, results } = await runAttemptSequence(
+      [
+        { toolCalls: [validCall('call-1', 'lineage_present_result', { sections: [{ label: 'Overview', node_ids: [ANCHOR], text: 'v1' }] })] },
+        { toolCalls: [validCall('call-2', 'lineage_present_result', { sections: [{ label: 'Overview', node_ids: [ANCHOR], text: 'v2' }] })] },
+        { toolCalls: [validCall('call-3', 'lineage_present_result', { sections: [{ label: 'Overview', node_ids: [ANCHOR], text: 'v3' }] })] },
+      ],
+      [{ name: 'lineage_present_result', result: envelope }],
+    );
+
+    expect(results.map((result) => result.semanticFailures)).toEqual([1, 1, 1]);
+    expect(state.semanticFailures).toBe(3);
+    expect(state.stopReason).toBe('semantic_failures');
   });
 });
 

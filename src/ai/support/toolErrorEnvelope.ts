@@ -201,6 +201,48 @@ export function rejectionIssuePaths(detail: unknown): string[] {
 }
 
 /**
+ * Extracts exact offending entry ids from structured rejection detail without interpreting reason
+ * prose — the sibling of {@link rejectionIssuePaths} for a violation whose offender is an id rather
+ * than a field path (e.g. an uncovered detail-slot or CT-chain node id, `PresentResultViolation.entryIds`
+ * in `presentResult.ts`). Any tool's `detail` naming `entry_ids` (a string array) at any nesting
+ * contributes, so a producer opts in by emitting that one field — no per-tool reader, no path
+ * grammar: unlike a dotted path, a node id may legally carry brackets, dots, `%`, or spaces.
+ *
+ * @param detail - The rejection's `detail` field, in any nesting the producing tool chose.
+ * @returns Deduped ids, in first-seen order; bounded (64 nodes, 64 ids, 200 chars each); empty when
+ *   the detail names none.
+ */
+export function rejectionEntryIds(detail: unknown): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const queue: unknown[] = [detail];
+  let visited = 0;
+  while (queue.length > 0 && visited < 64 && ids.length < 64) {
+    const value = queue.shift();
+    visited++;
+    if (!value || typeof value !== 'object') continue;
+    if (Array.isArray(value)) {
+      queue.push(...value.slice(0, 32));
+      continue;
+    }
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.entry_ids)) {
+      for (const id of record.entry_ids) {
+        if (ids.length >= 64) break;
+        if (typeof id === 'string' && id.length <= 200 && !seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(record)) {
+      if (key !== 'entry_ids' && child && typeof child === 'object') queue.push(child);
+    }
+  }
+  return ids;
+}
+
+/**
  * Narrowed view of a Zod v4 `invalid_union` issue. Its `errors` field holds one sub-issue array per
  * union branch — the raw material {@link describeInvalidUnion} expands into a per-branch required-
  * field breakdown. (Zod v4 renamed the v3 `unionErrors: ZodError[]` shape to `errors: $ZodIssue[][]`.)

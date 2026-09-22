@@ -35,6 +35,7 @@ import {
   DUPLICATE_CALL_ID_REPAIR_HINT,
   INVALID_TOOL_INPUT_REPAIR_HINT,
   readToolError,
+  rejectionEntryIds,
   rejectionIssuePaths,
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
@@ -267,6 +268,12 @@ interface ToolAttemptRejection {
   readonly hint?: string;
   readonly detail?: unknown;
   readonly issuePaths?: readonly string[];
+  /**
+   * Offending entry ids the rejection carries ({@link rejectionEntryIds}'s mining of `detail`'s
+   * `entry_ids`) — the sibling identity {@link isShrinkingViolationRepair} prefers over
+   * {@link issuePaths} when present, since an id survives a repair unlike a fixed structural path.
+   */
+  readonly entryIds?: readonly string[];
   readonly correctionFragments?: readonly ToolCorrectionFragment[];
   /**
    * The model's own buffered turn text for a synthesized (`callId`-less) rejection, capped by
@@ -313,6 +320,7 @@ type ToolOutcomeData =
     readonly correction: {
       readonly hint?: string;
       readonly issuePaths?: readonly string[];
+      readonly entryIds?: readonly string[];
       readonly fragments?: readonly ToolCorrectionFragment[];
     };
     readonly detail?: unknown;
@@ -637,6 +645,66 @@ function unproductiveResendStreak(
     ? (prior?.unproductiveStreak ?? 0) + 1
     : 0;
   return Math.max(sameIdentity, consecutive);
+}
+
+/**
+ * Reports whether one candidate identity set is a non-empty strict subset of another — the shared
+ * comparison {@link isShrinkingViolationRepair} applies to whichever identity (entry ids or issue
+ * paths) both sides of a rejection pair actually carry.
+ */
+function isStrictNonEmptySubset(current: ReadonlySet<string>, prior: ReadonlySet<string>): boolean {
+  if (current.size === 0 || current.size >= prior.size) return false;
+  for (const value of current) {
+    if (!prior.has(value)) return false;
+  }
+  return true;
+}
+
+/**
+ * Reports whether a same-tool rejection about to be recorded is repair progress on the immediately
+ * prior rejection in this phase/hop, rather than a repeat of it: its violation identity is a
+ * non-empty strict subset of `prior`'s.
+ *
+ * @remarks
+ * Two identities a rejection may already carry are compared, in preference order, and never mixed
+ * across sides:
+ * - {@link ToolAttemptRejection.entryIds} ({@link rejectionEntryIds}'s mining of a dispatched
+ *   validator's `detail.entry_ids`) — the exact offending entries (e.g. an uncovered detail-slot or
+ *   CT-chain node id) when the producing tool named them. Preferred because a violation's `paths`
+ *   is often a fixed structural root shared by every offender (e.g. `sections`) and so never shrinks
+ *   as the model repairs individual entries, while the entries themselves do.
+ * - {@link ToolAttemptRejection.issuePaths} (a Zod issue path pre-dispatch, or
+ *   {@link rejectionIssuePaths}'s mining of `detail`) — used only when either side has no entry-id
+ *   set, so a genuinely id-less structural rejection (a route or prune refusal) still benefits.
+ *
+ * Both are read generically off whatever the rejection already carries; no new wire field is
+ * invented and no tool or violation kind is named here. A tool whose rejection carries neither
+ * identity is simply never exempted. Termination still holds: a strict, non-empty subset relation
+ * on a finite set can hold for at most that set's own size many consecutive steps before nothing is
+ * left to drop, so this exemption cannot extend a repair loop unboundedly — it only stops the budget
+ * from charging for the steps that were shrinking it anyway.
+ *
+ * @param prior - The phase's immediately preceding rejection, when one exists.
+ * @param toolName - The tool of the rejection about to be recorded.
+ * @param currentIssuePaths - The issue paths the about-to-be-recorded rejection carries.
+ * @param currentEntryIds - The entry ids the about-to-be-recorded rejection carries.
+ * @returns `true` only when both sides name the same tool and, for one shared identity, the current
+ *   set is strictly smaller than and fully contained in `prior`'s set.
+ */
+function isShrinkingViolationRepair(
+  prior: ToolAttemptRejection | undefined,
+  toolName: string,
+  currentIssuePaths: readonly string[] | undefined,
+  currentEntryIds: readonly string[] | undefined,
+): boolean {
+  if (!prior || prior.toolName !== toolName) return false;
+  if (prior.entryIds && prior.entryIds.length > 0 && currentEntryIds && currentEntryIds.length > 0) {
+    return isStrictNonEmptySubset(new Set(currentEntryIds), new Set(prior.entryIds));
+  }
+  if (prior.issuePaths && prior.issuePaths.length > 0 && currentIssuePaths && currentIssuePaths.length > 0) {
+    return isStrictNonEmptySubset(new Set(currentIssuePaths), new Set(prior.issuePaths));
+  }
+  return false;
 }
 
 /**
@@ -1337,6 +1405,7 @@ function rejectionFromResult(
     const rejection = readToolError(JSON.parse(resultText));
     if (!rejection) return null;
     const issuePaths = rejectionIssuePaths(rejection.detail);
+    const entryIds = rejectionEntryIds(rejection.detail);
     const fragments = replayFragments(call.input, issuePaths);
     return {
       status: 'rejected',
@@ -1348,6 +1417,7 @@ function rejectionFromResult(
       correction: {
         ...(rejection.hint ? { hint: capUtf8Text(rejection.hint, MAX_REJECTION_HINT_BYTES) } : {}),
         ...(issuePaths.length > 0 ? { issuePaths } : {}),
+        ...(entryIds.length > 0 ? { entryIds } : {}),
         ...(fragments.length > 0 ? { fragments } : {}),
       },
     };
@@ -1389,6 +1459,7 @@ function recordToolOutcome(
       ...(outcome.correction.hint ? { hint: outcome.correction.hint } : {}),
       ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
       ...(outcome.correction.issuePaths ? { issuePaths: outcome.correction.issuePaths } : {}),
+      ...(outcome.correction.entryIds ? { entryIds: outcome.correction.entryIds } : {}),
       ...(outcome.correction.fragments ? { correctionFragments: outcome.correction.fragments } : {}),
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
@@ -1787,6 +1858,9 @@ export async function executeToolGenerationAttempt(
       // The repair-turn exemption, bounded: free only while the resend is not a beyond-absorption
       // unproductive repeat of the just-rejected payload.
       const freeBoundedRepairResend = isRepairTurnPresentResultPrevalidation && !repairResendBeyondAbsorption;
+      // Repair progress on the same tool's immediately prior rejection — its violation set strictly
+      // shrank — spends no strike either, on the same footing as the free-resend absorption above.
+      const shrinkingRepair = isShrinkingViolationRepair(input.priorRejection, call.toolName, rejection.issuePaths, rejection.entryIds);
       input.debugLog?.(
         `[Reject] source=${call.code === 'invalid_tool_input' ? 'provider_prevalidation' : 'provider_generation'}`
         + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
@@ -1796,10 +1870,12 @@ export async function executeToolGenerationAttempt(
         + ` group=${classifyRejectionCode(call.code)}`
         + ` reason=${sanitizeForLog(rejection.reason)}`
         + ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}`
+        + ` entryIds=${rejectionPathsForLog(rejection.entryIds)}`
         + ` unproductiveStreak=${unproductiveStreak}`
-        + ` charged=${isChargeableRejection(call.code) && !freeBoundedRepairResend}`,
+        + ` shrinkingRepair=${shrinkingRepair}`
+        + ` charged=${isChargeableRejection(call.code) && !freeBoundedRepairResend && !shrinkingRepair}`,
       );
-      if (isChargeableRejection(call.code) && !freeBoundedRepairResend) {
+      if (isChargeableRejection(call.code) && !freeBoundedRepairResend && !shrinkingRepair) {
         chargeableFailures++;
         if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
       }
@@ -1885,7 +1961,11 @@ export async function executeToolGenerationAttempt(
         // strike charges again, so a non-converging model closes the phase instead of spinning to
         // the provider-call cap.
         const unproductiveStreak = unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, candidateHash);
-        if (unproductiveStreak === 0 || unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS) {
+        // Repair progress on the same tool's immediately prior rejection — its violation set
+        // strictly shrank — spends no strike either: it is neither an identical resend nor a
+        // repeat, it is the correction converging.
+        const shrinkingRepair = isShrinkingViolationRepair(input.priorRejection, call.toolName, rejection.issuePaths, rejection.entryIds);
+        if (!shrinkingRepair && (unproductiveStreak === 0 || unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS)) {
           chargeableFailures++;
           if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
         }

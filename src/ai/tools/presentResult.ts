@@ -212,6 +212,8 @@ export type PresentResultError = {
     readonly unlinkable_node_ids?: ReadonlyArray<{ readonly node_id: string; readonly state: string }>;
     /** The complete current result-graph id set, stated once per rejection. */
     readonly accepted_node_ids?: readonly string[];
+    /** See {@link PresentResultViolation.entryIds} — carried through verbatim, id offenders only. */
+    readonly entry_ids?: readonly string[];
   }>;
 };
 
@@ -256,6 +258,18 @@ export interface PresentResultViolation {
   readonly repairFields: readonly PresentResultRepairField[];
   /** Exact offending entry paths, empty when the violation is about the payload as a whole. */
   readonly paths: readonly string[];
+  /**
+   * The offending entries this violation names (e.g. an uncovered detail-slot or CT-chain node id),
+   * when the violation's offender is an id rather than a field path.
+   *
+   * @remarks
+   * `paths` here is a fixed structural root (e.g. `sections`) shared by every offender, so it never
+   * shrinks as the model repairs individual entries — a cross-attempt comparison needs the entries
+   * themselves. Carried into `detail` (never into `messages` or `hint`, which already state them,
+   * capped) purely so a later attempt's rejection can be compared against this one's; never read by
+   * the model or the repair-patch machinery.
+   */
+  readonly entryIds?: readonly string[];
   /**
    * Replaces the generic field-list hint when this is the only reported failure.
    *
@@ -761,12 +775,17 @@ export function validatePresentResult(
   const issuePaths = new Set<string>();
   // Offending node ids per path — the same reason the paths are collected, one level finer, so `detail` states which id failed where instead of leaving the model to intersect two lists.
   const pathUnlinkableIds = new Map<string, readonly string[]>();
+  // Offending entries per path for an id-shaped violation (see `PresentResultViolation.entryIds`) —
+  // never a node-resolution offender, so kept out of `pathUnlinkableIds`, whose `state` label does
+  // not apply to an already-resolved entry that is merely uncovered.
+  const pathEntryIds = new Map<string, readonly string[]>();
   const addError = (
     field: PresentResultFailedField,
     message: string,
     authorizedFields: readonly PresentResultRepairField[] = [],
     paths: readonly string[] = [],
     unlinkableIdsAtPath: readonly string[] = [],
+    entryIds: readonly string[] = [],
   ): void => {
     errors.push(message);
     failedFields.add(field);
@@ -775,6 +794,7 @@ export function validatePresentResult(
     for (const path of paths) {
       issuePaths.add(path);
       if (unlinkableIdsAtPath.length > 0) pathUnlinkableIds.set(path, unlinkableIdsAtPath);
+      if (entryIds.length > 0) pathEntryIds.set(path, entryIds);
     }
   };
   // Set only at the unexplained-highlight addError call below — drives a bespoke hint override instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
@@ -784,7 +804,7 @@ export function validatePresentResult(
   const soleHints = externalViolations.flatMap(violation => violation.soleHint ?? []);
   for (const violation of externalViolations) {
     for (const message of violation.messages) {
-      addError(violation.field, message, violation.repairFields, violation.paths);
+      addError(violation.field, message, violation.repairFields, violation.paths, [], violation.entryIds);
     }
   }
   // How many of `errors` came from callers — lets a caller's own hint stand while it is the only thing wrong, without assuming one violation means one message.
@@ -988,13 +1008,15 @@ export function validatePresentResult(
     let acceptedStated = false;
     return [...issuePaths].map(path => {
       const ids = pathUnlinkableIds.get(path);
-      if (!ids) return { path };
+      const entryIds = pathEntryIds.get(path);
+      if (!ids && !entryIds) return { path };
       const entry = {
         path,
-        unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })),
-        ...(acceptedStated ? {} : { accepted_node_ids: [...resolvedNodeIds] }),
+        ...(ids ? { unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })) } : {}),
+        ...(ids && !acceptedStated ? { accepted_node_ids: [...resolvedNodeIds] } : {}),
+        ...(entryIds ? { entry_ids: entryIds } : {}),
       };
-      acceptedStated = true;
+      if (ids) acceptedStated = true;
       return entry;
     });
   };
