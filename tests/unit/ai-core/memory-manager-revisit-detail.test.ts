@@ -2,13 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AiMemoryManager, appendUniqueSectionText } from '../../../src/ai/session/memoryManager';
 import type { LineageNode } from '../../../src/engine/types';
 
-/**
- * A revisit of an already-analyzed node (a reopened column chain re-enqueues a visited node,
- * `smBase.ts` route enqueue with `openColumnEnd`) commits a second accepted finding through
- * `storeDetail`. The slot must keep what the first visit captured: a Map overwrite dropped a
- * first-visit risk from the synthesis archive while the revisit, re-anchored to another question,
- * never restated it.
- */
+/** A revisit's `storeDetail` call appends to the slot rather than overwriting the first visit's content. */
 
 function makeNode(id: string): LineageNode {
   return { id, schema: 'dbo', name: id, fullName: `[dbo].[${id}]`, type: 'procedure' };

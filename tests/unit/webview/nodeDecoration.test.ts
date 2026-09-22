@@ -448,7 +448,7 @@ describe('projectColumnNodes', () => {
   }
 
   function dataFor(nodes: ColumnTraceViewNode[]): Map<string, ColumnTraceNodeData> {
-    return new Map(nodes.map(view => [view.id, { view, rowsVisible: true, rowLineStates: {} }]));
+    return new Map(nodes.map(view => [view.id, { view, rowLineStates: {} }]));
   }
 
   it('declares the view box so the node counts as measured', () => {

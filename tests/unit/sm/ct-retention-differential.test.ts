@@ -1,15 +1,8 @@
 /**
- * CT retention differential — a measured defect, reproduced deterministically.
- *
- * Recorded runs measured 10 required dependencies lost across 8 of 11 real-model cases, with BB
- * losing none. Every loss had the same signature: the node was in `scopeNodeIds`, absent from
- * `removedSet`, and absent from the result — admitted, never pruned, and gone. These cases
- * reproduce that signature with no model and no network, one minimal topology per measured
- * case, so the fix can be developed and regression-guarded offline.
- *
- * Each case keeps only what decides retention: the traced column's value supplier, and the
- * dependency that supplies no value to it. `flow` is the column_flow the measured run's model
- * submitted at each bodied focus.
+ * CT retention — a node admitted to scope and never pruned (in `scopeNodeIds`, absent from
+ * `removedSet`) must survive to the render, matching BB. Each case keeps only what decides
+ * retention: the traced column's value supplier, and the dependency that supplies no value to it.
+ * `flow` is the column_flow submitted at each bodied focus.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { ColumnEdge, SmResult } from '../../../src/ai/sm/smTypes';
@@ -26,7 +19,7 @@ interface ColumnRef { node: string; col: string }
 interface FlowEntry { out_col: string; upstream_columns: ColumnRef[]; writes_to?: ColumnRef }
 
 interface RetentionCase {
-  /** Case id as recorded in CR section 6. */
+  /** Case id. */
   readonly id: string;
   readonly origin: string;
   readonly tracedColumn: string;
@@ -37,7 +30,7 @@ interface RetentionCase {
   readonly reachRequired: readonly string[];
   /** column_flow submitted at each bodied focus, as the measured run's model submitted it. */
   readonly flow: Readonly<Record<string, FlowEntry[]>>;
-  /** Required nodes the measured CT run lost and the BB run kept (CR section 6). */
+  /** Required nodes CT must retain in this case. */
   readonly measuredLost: readonly string[];
   /** Active column set the hop at this node must be dispatched with, asserted at dequeue. */
   readonly expectActiveColumns?: Readonly<Record<string, readonly string[]>>;
@@ -245,12 +238,9 @@ const CASES: readonly RetentionCase[] = [
     measuredLost: [],
   },
   {
-    // `[ct].[stgorders]` is the non-bodied carrier between the origin and the rest of the chain,
-    // and it declares none of the traced column. The carrier's bind empties the projection; the
-    // walk continues through it exactly as BB's does, so `[ct].[vworderfeed]` is reached on the
-    // first path and re-derives its own `NetAmount` at dispatch. This case carries the acceptance
-    // pair for that: the node is handed the real column it declares, and the rejection hint fires
-    // only for a column that genuinely is not on the node.
+    // `[ct].[stgorders]` declares none of the traced column; the walk still continues through it
+    // exactly as BB's does, reaching `[ct].[vworderfeed]`, which is handed the real column it
+    // declares rather than an empty carried set.
     id: 'C15 — a carrier that declares none of the traced columns must still be traversed',
     origin: '[ct].[vwordertotals]', tracedColumn: 'NetAmount',
     nodes: [
@@ -277,14 +267,9 @@ const CASES: readonly RetentionCase[] = [
     measuredLost: [],
   },
   {
-    // Every case above traces upstream, where each scope node supplies the one below it, so the
-    // render's sink trim has no candidate and the drop stage of this suite never runs. This case
-    // gives it one. `[audit].[loadlog]` is a write sink outside the user's schema filter: the BFS
-    // seed deliberately keeps out-of-allowlist reachables (they are the gate classes a user can
-    // approve), while the route path refuses them, so no hop is ever demanded to account for it
-    // and it reaches `getResult` in scope, unpruned and dispositioned by nobody. Supplying nothing
-    // the render keeps, it is a side-effect sink, not answer evidence — and CT drops it for the
-    // same reason BB does, which is what the paired arms below check.
+    // `[audit].[loadlog]` is a write sink outside the user's schema filter: the BFS seed keeps it
+    // reachable, the route path refuses it, so no hop ever dispositions it and it must drop from
+    // the render — the first case in this suite that exercises the drop stage at all.
     id: 'C16 — an out-of-filter write sink no hop dispositioned is dropped, in both modes',
     origin: '[ct].[vwsalesfeed]', tracedColumn: 'Amount',
     direction: 'downstream',
@@ -727,15 +712,10 @@ describe('CT origin seeding — the origin\'s neighbours are always seeded', () 
 });
 
 /**
- * Scope-resident sinks and filter leaves no hop dispositioned.
- *
- * Measured shape (T8, `[ai].[vwDiscountCalc]` / `Discount`, bidirectional): scope admitted 21
- * nodes and exactly four of them carried no `nodeStates` entry, no investigation task and no
- * column edge — `dimcalendar` (read by the loader, never for `Discount`), `errorlog` and
- * `auditlog` (write sinks), `splogaudit` (EXEC-only, and the only path to `auditlog`). Scope
- * admits a node; only a hop dispositions one, so these four are reachability artifacts, not
- * answer evidence. `customermaster` has the same "carries no traced value" shape but was
- * contracted through at hop 1 — dispositioned, therefore kept.
+ * Scope admits a node; only a hop dispositions one. `dimcalendar`, `errorlog`, `auditlog` and
+ * `splogaudit` carry no traced value and no disposition — reachability artifacts, not answer
+ * evidence. `customermaster` carries no traced value either but is contracted through at hop 1,
+ * so it is dispositioned and kept.
  */
 const SINK_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
   ['[ct].[vwdiscountcalc]', V, ['Discount']],
@@ -770,7 +750,7 @@ const SINK_CASE: RetentionCase = {
   reachRequired: [],
   flow: {
     // `Discount` comes from SalesStaging.OrderAmount; CustomerMaster supplies only the join key,
-    // so the model never names it — the acda2ff9 shape.
+    // so the model never names it.
     '[ct].[vwdiscountcalc]': [{ out_col: 'Discount', upstream_columns: [{ node: '[ct].[salesstaging]', col: 'OrderAmount' }] }],
     '[ct].[spbuildsalesreport]': [{
       out_col: 'Discount',
@@ -792,7 +772,7 @@ const SINK_CASE: RetentionCase = {
   measuredLost: [],
 };
 
-/** Runs the measured T8 walk: every bodied node the column spine reaches, and nothing else. */
+/** Runs the walk: every bodied node the column spine reaches, and nothing else. */
 function driveSinkWalk(routeFromConsumer?: string): {
   engine: NavigationEngine;
   model: DatabaseModel;
@@ -853,7 +833,7 @@ function driveSinkWalk(routeFromConsumer?: string): {
   throw new Error('sink walk did not terminate within 25 hops');
 }
 
-/** The render the measured T8 walk produces. */
+/** The render the sink walk produces. */
 function sinkWalkResult(routeFromConsumer?: string): SmResult {
   return driveSinkWalk(routeFromConsumer).engine.getResult();
 }
@@ -861,12 +841,8 @@ function sinkWalkResult(routeFromConsumer?: string): SmResult {
 describe('CT render bound — scope admits, only a hop dispositions', () => {
   it('drops the logging sinks the walk can disposition — routed-and-deferred sinks stay, as in BB', () => {
     const rendered = new Set(sinkWalkResult().fullNodes.map(n => n.id));
-    // Convergence: the guard demands every in-scope directional neighbour, so `errorlog` is
-    // routed (accepted, contracted to no unvisited bodied neighbour, deferred as a lead) and stays
-    // in the render exactly as a BB walk on this topology renders it. What still drops:
-    // `splogaudit`, dispatched and verdict-pruned (a logging sink is off the answer path),
-    // and `auditlog`, which no hop ever dispositioned. The old pin (all three sinks dropped) was
-    // CT-specific: CT's guard used to be a no-op, so `errorlog` was never routed at all.
+    // The guard demands every in-scope directional neighbour, so `errorlog` is routed and stays;
+    // `splogaudit` is dispatched and verdict-pruned; `auditlog` is dispositioned by no hop.
     expect(rendered.has('[ct].[splogaudit]'), 'the dispatched logging proc is pruned at its focus and dropped').toBe(false);
     expect(rendered.has('[ct].[auditlog]'), 'the sink no hop dispositioned is trim-dropped with its pruned supplier').toBe(false);
     expect(rendered.has('[ct].[errorlog]'), 'a guard-demanded sink is routed and renders, the same graph BB produces here').toBe(true);
@@ -912,12 +888,9 @@ describe('CT snapshot provenance — the render records the drop it made', () =>
     const snapshot = engine.toJSON();
     const dropped = snapshot.renderDroppedNodeIds ?? [];
 
-    // Convergence: `auditlog` is the one sink the render itself drops (no hop dispositioned
-    // it). `splogaudit` left via an explicit verdict prune (removedSet, not a render drop), and
-    // `errorlog` was guard-demanded, routed, and deferred as a contracted lead — it renders, as in
-    // BB. The old pin named all three because CT's guard used to demand nothing, so all three sat
-    // undispositioned; the snapshot now names exactly the render's own drops instead of leaving a
-    // reader to infer them from scope minus the rendered set.
+    // `auditlog` is the one sink the render itself drops (no hop dispositioned it). `splogaudit`
+    // left via an explicit verdict prune (removedSet, not a render drop); `errorlog` was
+    // guard-demanded, routed, and deferred as a contracted lead, so it renders.
     expect([...dropped].sort(), 'the snapshot names every sink the render dropped').toEqual(
       ['[ct].[auditlog]'],
     );
@@ -949,13 +922,10 @@ describe('CT snapshot provenance — the render records the drop it made', () =>
 });
 
 /**
- * A submitted passthrough is not evidence the render needs the node.
- *
- * Measured shape (T8, `[ai].[sparchiveoldorders]`): a hop dispatched the archive proc, the model
- * returned `verdict=passthrough` — its own assertion that the focus transforms nothing on the
- * traced path — and the node stayed in the render on the strength of that entry alone, with its
- * one render-internal outgoing edge pointing at its own log writer. C12 is the counter-case: the
- * same verdict at a focus the tracer did place on a column edge keeps the node.
+ * A hop verdict of `passthrough` keeps a node in the render on its own, even with no column edge
+ * pointing anywhere but a log writer. C12 is the counter-case: the same verdict at a focus the
+ * tracer did place on a column edge also keeps the node — a column edge is additive, not the
+ * retention reason.
  */
 const PASSTHROUGH_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
   ['[ct].[vwsrc]', V, ['Amount']],
@@ -1064,15 +1034,10 @@ describe('CT render bound — a submitted passthrough is a hop verdict, same as 
 });
 
 /**
- * A carrier proc is a column edge's `hop_node`, never its endpoint.
- *
- * Measured shape (T8S @ 37875e19, `[ai].[spbuildsalesreport]`): the question asked for the traced
- * column's direct consumers, the hop dispatched the consumer proc, the model returned
- * `verdict=passthrough`, and the proc's own `writes_to` target sat outside the depth border — so its
- * only render-internal outgoing edges were absent and the sink trim deleted the one node that
- * answered the question. A procedure appears in `ColumnAspect.edges` only as `hop_node`
- * (`from_node`/`to_node` carry the columns it moved between), so the endpoint exemption structurally
- * cannot reach it.
+ * A carrier proc is a column edge's `hop_node`, never its endpoint (`from_node`/`to_node` carry
+ * the columns it moved between). A passthrough proc whose `writes_to` target sits outside the
+ * depth border has no render-internal outgoing edge, so the endpoint exemption cannot reach it —
+ * the sink trim must not delete it on that basis alone.
  */
 const CARRIER_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
   ['[ct].[vwcarriersrc]', V, ['Amount']],
@@ -1100,7 +1065,7 @@ const CARRIER_CASE: RetentionCase = {
 
 /**
  * Runs the walk at a one-level border, so the carrier proc's write target stays outside the render
- * and the proc is left with no render-internal outgoing edge — the measured T8S shape.
+ * and the proc is left with no render-internal outgoing edge.
  *
  * @remarks
  * Returns the committed chain beside the result because the two are different surfaces: the render
@@ -1305,23 +1270,11 @@ describe('CT neighbour accounting — the same checklist BB gets, shown and enfo
 });
 
 /**
- * The hop-level prune proofs — the `a → b → (c, d, e)`, `c → f` shape, as the PM drew it: `b`'s
- * neighbours `c`, `d`, `e` are all inside the origin-rooted scope, so the guard demands an
- * account for each at hop `b` in BOTH modes. At hop `b` the model decides per neighbour: `c` is
- * routed BB-style (a table — the route contracts through to `f`), `e` is routed with the CT
- * column overlay (it carries the traced Amount onward), and `d` — in scope, guard-demanded, and
- * provably off the answer path — is PRUNED at the hop. The converged contract: the prune
- * executes (don't-orphan-guarded), the hop commits, and `d` never renders. Both modes, identical
- * behaviour, identical render.
- *
- * The amount chain is real and checkable end to end — the origin produces it, `b` carries it
- * from `a`, `e` from `b`, `f` from `c` — so every CT column_flow names a column its named
- * upstream really declares (nothing the rejection would refuse), and no hop needs the
- * passthrough escape: every focus either carries or produces the traced column.
- *
- * Red reproductions (written before the fix): in-scope prune targets were protected no-ops, so the
- * required-neighbour guard rejected the hop with `missing_required_route` and `d` could never be
- * dropped — the one decision the shared BB/CT contract could not express.
+ * The `a → b → (c, d, e)`, `c → f` shape: `b`'s neighbours `c`, `d`, `e` are all in the
+ * origin-rooted scope, so the guard demands an account for each at hop `b` in both modes. `c` is
+ * routed (contracts through to `f`), `e` is routed carrying the traced Amount, and `d` — in
+ * scope, guard-demanded, and off the answer path — is pruned at the hop. The contract: the prune
+ * executes, the hop commits, `d` never renders — identically in both modes.
  */
 const HOP_PRUNE_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
   ['[ct].[vwa]', V, ['Amount']],
@@ -1526,20 +1479,11 @@ describe('hop-level prune — the in-scope neighbour decision, both modes', () =
 
 describe('beyond-scope contraction — a route to a node outside the origin\'s directed closure is refused identically in both modes', () => {
   /**
-   * The table row of the decision space: a route to a table beyond the seed scope only used to be
-   * accepted because `isReachableInApprovedDirection` treated every `bidirectional` target as
-   * reachable (P1-13). `g` feeds `b` (`g` → `b`), and `b` is downstream of the origin `a` — the
-   * same co-parent-of-a-downstream-consumer shape as the P1-13 off-path cluster (`vwPriceList` →
-   * `spBuildSalesReport`): `g` is reached only by crossing sideways into one of `b`'s *other*
-   * inputs, never by a directed walk from `a` on either side, so it is outside the upstream ∪
-   * downstream closure `computeBfsScope` seeds. Fixed at `isReachableInApprovedDirection`
-   * (smBase.ts:1090), the route is now refused `out_of_direction` — mode-neutral (same check, no
-   * `mode.kind` branch), so BB and CT still agree; the corrected shared answer is "refuse", not
-   * "admit". Pre-fix this admission was CT-only (BB silently dropped the writer while CT admitted
-   * it) — the same-graph contract (both modes agree) still holds, only the agreed value changed.
-   *
-   * Topology: `a` (origin) → `b`; `g` (table) feeds `b`; `w` (procedure) writes `g`. The seed scope
-   * from `a` is {a, b} — `g` and `w` are beyond it and neither upstream nor downstream of `a`.
+   * `g` is reached only by crossing sideways into one of `b`'s other inputs, never by a directed
+   * walk from `a` on either side, so it sits outside the upstream ∪ downstream closure
+   * `computeBfsScope` seeds. Topology: `a` (origin) → `b`; `g` (table) feeds `b`; `w` (procedure)
+   * writes `g`. The seed scope from `a` is {a, b} — `g` and `w` are beyond it. A route to `g` is
+   * refused `out_of_direction`, mode-neutral, in both modes.
    */
   for (const mode of ['bb', 'ct'] as const) {
     it(`${mode.toUpperCase()}: routing the off-closure table at hop b is refused out_of_direction, so its writer never contracts in`, () => {
@@ -1570,9 +1514,8 @@ describe('beyond-scope contraction — a route to a node outside the origin\'s d
         if (ctx.done || !ctx.focus_node) break;
         const focusId = ctx.focus_node.id;
         const routes = engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `q ${id}` }));
-        // The BB-style arm: `g` is beyond the seed scope, so the guard does not demand it — the
-        // model reads it off the focus's own dependencies and requests it anyway (an off-closure
-        // co-parent of `b`, so `admitsRoute` now refuses it, same as a bare `route_requests` ask).
+        // `g` is beyond the seed scope, so the guard does not demand it; the model requests it
+        // anyway, and `admitsRoute` refuses it as off-closure.
         if (focusId === '[ct].[vwb3]' && !routes.some(r => r.nodeId === '[ct].[tblg3]')) {
           routes.push({ nodeId: '[ct].[tblg3]', question: 'g supplies the amount b joins' });
         }
@@ -1600,17 +1543,11 @@ describe('beyond-scope contraction — a route to a node outside the origin\'s d
 
 describe('route-border demand — the guard demands only what the router admits (G3)', () => {
   /**
-   * The no-unmeetable-demand invariant of the decision space: the completeness guard may demand
-   * an account only for neighbours the router would actually admit. A schema the user filtered on
-   * keeps out-of-allowlist neighbours in the seed scope (the seed deliberately skips the allowlist
-   * so they become `schema:` gate classes) but the route border refuses them — a route to one is
-   * deferred as a lead, never accepted — so demanding it is a demand the model cannot meet: the
-   * hop could never commit. `requiredNeighborIds` must therefore filter on the router's own
-   * admission test (`admitsRoute`), of which this is the border axis; the depth axis is the case
-   * below (validated shape on record in `0852aadb`).
-   *
-   * Red pre-fix: the guard demanded the out-of-allowlist neighbour and rejected the hop with
-   * `missing_required_route` however the model accounted for it.
+   * The completeness guard may demand an account only for neighbours the router would actually
+   * admit. A schema the user filtered on keeps out-of-allowlist neighbours in the seed scope, but
+   * the route border refuses them — deferred as a lead, never accepted — so `requiredNeighborIds`
+   * must filter on the router's own admission test (`admitsRoute`); the depth axis is the case
+   * below.
    */
   const borderNodes: LineageNode[] = [
     makeNode({ id: '[ai].[vwbase]', schema: 'ai', name: 'vwbase', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
@@ -1660,19 +1597,11 @@ describe('route-border demand — the guard demands only what the router admits 
   });
 
   /**
-   * The same invariant on the **depth** axis. Route admission is border AND depth: `checkBorder`
-   * carries no depth axis for any purpose, so a neighbour inside the schema allowlist but past a
-   * level count the user stated clears the border and is still deferred as a lead, never accepted.
-   * Filtering the demand on the border alone therefore left the unmeetable demand standing on the
-   * axis it did not cover — `admitsRoute` states both axes once and both sites read it.
-   *
-   * The state is reached through a resumed checkpoint because every in-session scope-growth path
-   * depth-checks its own admission (route accept, contraction, `supplementAgenda`), while a
-   * snapshot persists `scopeNodeIds` and the depth ceiling independently — so a restored engine is
-   * where a scope member past the ceiling is actually observable, and the ceiling still binds.
-   *
-   * Red pre-fix: the guard demanded the past-the-ceiling neighbour and rejected the hop with
-   * `missing_required_route` however the model accounted for it.
+   * The same invariant on the depth axis: a neighbour inside the schema allowlist but past a
+   * level count the user stated clears the border and is still deferred as a lead, never
+   * accepted — `admitsRoute` states both the border and depth axes, and both sites read it. The
+   * state is reached through a resumed checkpoint because a snapshot persists the depth ceiling
+   * independently, so a restored engine is where a scope member past the ceiling is observable.
    */
   const depthNodes: LineageNode[] = [
     makeNode({ id: '[ai].[vwlvl0]', schema: 'ai', name: 'vwlvl0', type: 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }] }),
@@ -1730,13 +1659,10 @@ describe('route-border demand — the guard demands only what the router admits 
 /**
  * The per-neighbour fork: at `A → C, D` the router carries traced columns through `C` and sends
  * `D` on as a plain whole-object neighbour because it supplies no value and only decides which
- * rows the answer returns.
- *
- * `[ct].[vwrowgate]` declares `Amount` itself, so the engine has every reason to hand it the
- * traced column and did so before this channel existed: the omission was re-padded from the
- * session's target set at `agendaColumnsFor` and again at dispatch. The three states of
- * `route_requests[].columns` — not stated, stated as columns, stated as none — are what separates
- * "the router had no opinion" from "the router said none", and only the third suppresses the pad.
+ * rows the answer returns. `[ct].[vwrowgate]` declares `Amount` itself, so an omitted decision
+ * would otherwise re-pad it from the session's target set. The three states of
+ * `route_requests[].columns` — not stated, stated as columns, stated as none — separate "the
+ * router had no opinion" from "the router said none", and only the third suppresses the pad.
  */
 const FORK_NODES: ReadonlyArray<readonly [string, ObjectType, string[]]> = [
   ['[ct].[vwforktop]', V, ['Amount']],
@@ -2067,14 +1993,5 @@ describe('CT per-neighbour column carry — a stated subset is not an inherit', 
       driveNarrowWalk('none').get(NARROW_GATE),
       'a row-role neighbour declaring both traced columns is still dispatched with neither',
     ).toEqual([]);
-  });
-
-  it('gives the three states three different dispatches on one topology', () => {
-    // The discriminator, stated once: same graph, same question, same walk — only the `columns`
-    // field differs, and no two states may produce the same set. Collapsing any pair in the engine
-    // fails here rather than passing under the other's assertion.
-    const sets = [undefined, ['GateFlag'] as string[], 'none' as const]
-      .map(decision => (driveNarrowWalk(decision).get(NARROW_GATE) ?? []).slice().sort().join('|'));
-    expect(new Set(sets).size, `three states, three dispatched sets (got ${sets.join(' / ')})`).toBe(3);
   });
 });

@@ -5,12 +5,9 @@
  * declared-column) focus: a topology fault (a required neighbor left unrouted, unpruned —
  * `missing_required_route`) and a CT completeness fault (a tracked column left unaccounted —
  * `column_chain_incomplete`, deferred half: the focus declares none of the active columns, so
- * `contradicted` is empty and the hoisted/contradicted branch never fires). Before the repair,
- * the second pass returned only the topology fault and discarded the already-computed CT fault,
- * so the model spent turn 5 on the topology repair and turn 6 re-deriving the CT fault from
- * scratch — one payload, two turns, exactly the T8S shape that ends a run `hollow` once a
- * third payload spends the last breaker trip. This test submits that one payload and asserts both
- * faults are named in the single envelope it produces.
+ * `contradicted` is empty and the hoisted/contradicted branch never fires). Both faults from one
+ * payload must be named in the single rejection envelope it produces — discarding either one
+ * forces an extra turn re-deriving what was already computed, burning a retry budget for nothing.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode, ObjectType } from '../../../src/engine/types';

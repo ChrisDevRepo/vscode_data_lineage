@@ -1,29 +1,11 @@
 /**
- * Recorded run: at hop 9, focus `[ai].[sploadsalesstaging]`,
- * the model's own submitted finding text named `[ai].[vwraworders]` as a direct upstream source,
- * but `route_requests` named only two other neighbors — `vwraworders` was never routed, never
- * pruned, and never surfaced as a deferred lead. Two golden-required nodes two hops behind it
- * (`saporders`, `oracleorders`) were consequently never reached (HARD row
- * `errors.missing_required_data` 0/100).
- *
- * Root cause: {@link NavigationEngine.requiredNeighborIds} (smBase.ts) is the engine's own
- * required-nodes completeness guard — "every in-scope directional neighbor must be routed or
- * pruned before advance" (`submitFindings`, the `missing_required_route` check). Before this fix
- * its first filter step required `this.scopeNodeIds.has(nid)` — i.e. the demand only ever named a
- * neighbor ALREADY inside the engine's working scope. A depth-omitted trace runs with
- * `depthEnforcement: 'silent'` (the production default — see `depth-derivation-silent.test.ts`),
- * under which `admitsRoute` never refuses on depth (`depthBorderBreach` returns `null` unless
- * enforcement is `'strict'`), so a same-schema, same-direction neighbor one hop past the initial
- * BFS seed is a route the router would happily admit — yet the guard never demanded an account for
- * it, because it had not yet entered scope. That is exactly `vwraworders`'s shape: a real,
- * admittable, in-border directional neighbor of the focus, sitting one hop past the initial
- * default-depth-3 seed, silently skippable because nothing had routed it yet.
- *
- * These tests reproduce the gap on a small synthetic chain at the same depth (`default_start`,
- * depth 3, silent enforcement) and pin the fixed contract: an admittable current-hop neighbor is
- * required whether or not it has already entered scope. Written to FAIL against the pre-fix
- * `requiredNeighborIds` (which drops the out-of-scope neighbor from the demand and lets the hop
- * commit silently) and to PASS once the demand is derived from `admitsRoute` alone.
+ * {@link NavigationEngine.requiredNeighborIds} (smBase.ts) demands an account (route or prune) for
+ * every admittable current-hop neighbor, whether or not it has already entered scope — the demand
+ * is derived from `admitsRoute` alone, never gated on prior scope membership. Under
+ * `depthEnforcement: 'silent'` (the production default for an omitted depth — see
+ * `depth-derivation-silent.test.ts`), `admitsRoute` never refuses on depth, so an admittable
+ * neighbor one hop past the initial BFS seed is exactly the shape this guards: a finding that names
+ * such a neighbor as a source without routing or pruning it must be refused, not silently dropped.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';

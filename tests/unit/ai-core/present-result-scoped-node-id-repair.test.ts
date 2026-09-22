@@ -15,70 +15,43 @@ import {
 import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 
 describe('Present Result — scoped unknown-node-id repair', () => {
-  it('unknown node_ids in a section holds the draft repairable for sections only', () => {
-    const sections = [
-      { label: 'Source', node_ids: ['a', '[ai].[bogus]'], text: 'One.' },
-      { label: 'Output', node_ids: ['a'], text: 'Two.' },
-    ];
-    const assembled = orderAndAssemble(sections);
-    const result = validatePresentResult({
-      name: 'ok',
-      summary: 'ok',
-      sections,
-      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
-    }, ['a'], assembled.badges, assembled.description);
+  it.each([
+    {
+      field: 'sections' as const,
+      errorNeedle: 'unknown IDs',
+      draft: {
+        sections: [
+          { label: 'Source', node_ids: ['a', '[ai].[bogus]'], text: 'One.' },
+          { label: 'Output', node_ids: ['a'], text: 'Two.' },
+        ],
+        highlight_groups: [{ label: 'Flow', color: 'source' as const, node_ids: ['a'] }],
+      },
+    },
+    {
+      field: 'notes' as const,
+      errorNeedle: 'unknown ID',
+      draft: {
+        sections: [{ label: 'Source', node_ids: ['a'], text: 'One.' }],
+        highlight_groups: [{ label: 'Flow', color: 'source' as const, node_ids: ['a'] }],
+        notes: [{ node_id: '[ai].[bogus]', text: 'Bad note.' }],
+      },
+    },
+    {
+      field: 'highlight_groups' as const,
+      errorNeedle: 'unknown IDs',
+      draft: {
+        sections: [{ label: 'Source', node_ids: ['a'], text: 'One.' }],
+        highlight_groups: [{ label: 'Flow', color: 'source' as const, node_ids: ['a', '[ai].[bogus]'] }],
+      },
+    },
+  ])('unknown node_ids in $field holds the draft repairable for $field only', ({ field, errorNeedle, draft }) => {
+    const assembled = orderAndAssemble(draft.sections);
+    const result = validatePresentResult({ name: 'ok', summary: 'ok', ...draft }, ['a'], assembled.badges, assembled.description);
 
-    expect(!result.success && result.errors.some(e => e.includes('unknown IDs')), 'reports the unknown-ID rejection').toBe(true);
-    expect(!result.success && isRepairablePresentResultFailure(result), 'unknown section node_ids is now repairable').toBe(true);
-    expect(!result.success && result.repairFields.join(','), 'repair authorization names sections only').toBe('sections');
-  });
-
-  it('the repair hint names only the offending field', () => {
-    const sections = [{ label: 'Source', node_ids: ['a', '[ai].[bogus]'], text: 'One.' }];
-    const assembled = orderAndAssemble(sections);
-    const result = validatePresentResult({
-      name: 'ok',
-      summary: 'ok',
-      sections,
-      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
-    }, ['a'], assembled.badges, assembled.description);
-
-    expect(!result.success && result.hint.startsWith('Fix sections only.'), 'hint names only sections').toBe(true);
-    expect(!result.success && !result.hint.includes('notes') && !result.hint.includes('highlight_groups'),
-      'hint does not drag in notes or highlight_groups').toBe(true);
-  });
-
-  it('unknown node_id in a note holds the draft repairable for notes only', () => {
-    const sections = [{ label: 'Source', node_ids: ['a'], text: 'One.' }];
-    const assembled = orderAndAssemble(sections);
-    const result = validatePresentResult({
-      name: 'ok',
-      summary: 'ok',
-      sections,
-      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
-      notes: [{ node_id: '[ai].[bogus]', text: 'Bad note.' }],
-    }, ['a'], assembled.badges, assembled.description);
-
-    expect(!result.success && result.errors.some(e => e.includes('unknown ID')), 'reports the unknown note-ID rejection').toBe(true);
-    expect(!result.success && isRepairablePresentResultFailure(result), 'unknown note node_id is now repairable').toBe(true);
-    expect(!result.success && result.repairFields.join(','), 'repair authorization names notes only').toBe('notes');
-    expect(!result.success && result.hint.startsWith('Fix notes only.'), 'hint names only notes').toBe(true);
-  });
-
-  it('unknown node_id in a highlight group holds the draft repairable for highlight_groups only', () => {
-    const sections = [{ label: 'Source', node_ids: ['a'], text: 'One.' }];
-    const assembled = orderAndAssemble(sections);
-    const result = validatePresentResult({
-      name: 'ok',
-      summary: 'ok',
-      sections,
-      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a', '[ai].[bogus]'] }],
-    }, ['a'], assembled.badges, assembled.description);
-
-    expect(!result.success && result.errors.some(e => e.includes('unknown IDs')), 'reports the unknown highlight-ID rejection').toBe(true);
-    expect(!result.success && isRepairablePresentResultFailure(result), 'unknown highlight_groups node_ids is now repairable').toBe(true);
-    expect(!result.success && result.repairFields.join(','), 'repair authorization names highlight_groups only').toBe('highlight_groups');
-    expect(!result.success && result.hint.startsWith('Fix highlight_groups only.'), 'hint names only highlight_groups').toBe(true);
+    expect(!result.success && result.errors.some(e => e.includes(errorNeedle)), 'reports the unknown-ID rejection').toBe(true);
+    expect(!result.success && isRepairablePresentResultFailure(result), `unknown ${field} node_ids is now repairable`).toBe(true);
+    expect(!result.success && result.repairFields.join(','), `repair authorization names ${field} only`).toBe(field);
+    expect(!result.success && result.hint.startsWith(`Fix ${field} only.`), `hint names only ${field}`).toBe(true);
   });
 
   it('content in unauthorized fields survives the merge verbatim, and the merged draft still clears full re-validation', () => {

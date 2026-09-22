@@ -3,19 +3,15 @@
  * `prune_neighbors` targeting it directly.
  *
  * @remarks
- * Real-world shape (a recorded T8 run, `[ai].[vwDiscountCalc].Discount`): at the origin hop the model
- * accepted a route to `[ai].[customermaster]` (a table — non-bodied). The bipartite agenda rule
- * contracts a non-bodied route target on admission (`enqueueHop`, `smBase.ts:3048+`), so
- * CustomerMaster got no agenda entry and no detail slot. Ten hops later, from an unrelated focus
- * (`spCleanOrders`), the model submitted `prune_neighbors: ["customermaster"]`; nothing in
- * `committedConnectedIds()` (noted ∪ agenda) had a handle on it, so the prune was admitted and the
- * join-key dependency silently vanished from the delivered answer — `errors.missing_required_data`
- * FAILed the HARD row.
+ * The bipartite agenda rule contracts a non-bodied route target on admission (`enqueueHop`,
+ * `smBase.ts:3048+`), so an accepted route to a table gets no agenda entry and no detail slot.
+ * Nothing in `committedConnectedIds()` (noted ∪ agenda) then has a handle on it, so an unrelated
+ * later hop's `prune_neighbors` naming it directly is wrongly admitted.
  *
- * `[ct].[joinTable]` here is the same shape deliberately: a dead-end non-bodied node (no further
- * bodied neighbor to contract to) whose disappearance orphans nothing else, so the pre-existing
- * `firstDisconnectedAfterPrune` reachability walk can never catch it on its own — the direct,
- * declaration-membership check this fix adds is what a graph-connectivity walk cannot express.
+ * `[ct].[joinTable]` is a dead-end non-bodied node (no further bodied neighbor to contract to)
+ * whose disappearance orphans nothing else, so the pre-existing `firstDisconnectedAfterPrune`
+ * reachability walk can never catch it on its own — the direct, declaration-membership check
+ * this fix adds is what a graph-connectivity walk cannot express.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';

@@ -157,6 +157,32 @@ export function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
 }
 
 /**
+ * Key paths a raw tool payload carries that its parsed form does not — what {@link declaredKeysOnly}
+ * or a non-strict object schema stripped.
+ *
+ * @param raw - The payload as the model sent it.
+ * @param parsed - The same payload after a successful schema parse.
+ * @returns Dotted paths (`column_flow.0.bogus`), empty when nothing was dropped.
+ *
+ * @remarks
+ * The strip itself runs inside a schema, where no logger is reachable; the caller that holds both
+ * forms logs this list so a dropped parameter is never silent. Walks objects and arrays in step and
+ * stops where the parse changed a value's kind (a decoded JSON string, a coerced scalar). A raw
+ * `null` is not reported: {@link nullAsAbsent} maps it to absence by contract.
+ */
+export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): string[] {
+  const at = (key: string | number) => (path ? `${path}.${key}` : String(key));
+  if (Array.isArray(raw)) {
+    return Array.isArray(parsed) ? raw.flatMap((item, i) => droppedKeyPaths(item, parsed[i], at(i))) : [];
+  }
+  if (!raw || typeof raw !== 'object' || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+  return Object.entries(raw as Record<string, unknown>).flatMap(([key, value]) => {
+    if (!(key in parsed)) return value === null ? [] : [at(key)];
+    return droppedKeyPaths(value, (parsed as Record<string, unknown>)[key], at(key));
+  });
+}
+
+/**
  * Attempts to decode a JSON-string-encoded object (e.g. `"{\"upstream\": 1}"`) back into the
  * object.
  *

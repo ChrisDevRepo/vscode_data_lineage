@@ -115,21 +115,11 @@ describe('AgentRuntime cancellation truth', () => {
     expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();
   });
 
-  it('classifies a port cancellation as cancelled even when the runtime signal never fired', async () => {
-    graph.invoke.mockImplementation(async () => {
-      throw new ModelPortError('cancelled', 'Language model request was cancelled.');
-    });
-    const runtime = makeRuntime(new AbortController().signal);
-    await expect(runtime.run('q')).resolves.toBe('cancelled');
-    expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();
-  });
-
-  it('classifies an AbortError-named throw as cancelled even when the runtime signal never fired', async () => {
-    graph.invoke.mockImplementation(async () => {
-      const err = new Error('This operation was aborted');
-      err.name = 'AbortError';
-      throw err;
-    });
+  it.each([
+    ['a port cancellation', () => new ModelPortError('cancelled', 'Language model request was cancelled.')],
+    ['an AbortError-named throw', () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })],
+  ])('classifies %s as cancelled even when the runtime signal never fired', async (_title, makeError) => {
+    graph.invoke.mockImplementation(async () => { throw makeError(); });
     const runtime = makeRuntime(new AbortController().signal);
     await expect(runtime.run('q')).resolves.toBe('cancelled');
     expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();

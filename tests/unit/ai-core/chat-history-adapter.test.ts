@@ -255,6 +255,66 @@ describe('native chat history adapter', () => {
     expect(String(toolResult.content).length).toBeLessThanOrEqual(8_192);
     expect(String(toolResult.content)).toContain('truncated to history memory bound');
   });
+
+  // m16: `capHistoryToolResult` cut the model-facing text and marked it there, but never logged the
+  // cut — its sibling shrink, `boundReplayedHistory`, logs every eviction; a reader reconstructing
+  // a hop from `host.log` could not tell prior-turn evidence was shortened.
+  it('logs a replayed tool result capped by the history byte ceiling, naming the tool and the drop', () => {
+    const logged: string[] = [];
+    const turns = history([
+      { prompt: 'Inspect the big object' },
+      {
+        response: [{ value: { value: 'Rendered answer' } }],
+        result: {
+          metadata: {
+            toolCallsMetadata: {
+              toolCallRounds: [{
+                response: 'Checking.',
+                toolCalls: [{ callId: 'call-1', name: 'lineage_get_object_detail', input: { id: 'dbo.Big' } }],
+              }],
+              toolCallResults: {
+                'call-1': { content: [{ value: 'd'.repeat(60_000) }] },
+              },
+            },
+          },
+        },
+      },
+    ]);
+
+    chatHistoryToModelMessages(turns, BUDGET, (message) => logged.push(message));
+
+    const capLogs = logged.filter((message) => message.includes('history tool result capped'));
+    expect(capLogs).toHaveLength(1);
+    expect(capLogs[0]).toContain('tool=lineage_get_object_detail');
+    expect(capLogs[0]).toContain('bytes=60000');
+    expect(capLogs[0]).toContain('cap=8192');
+  });
+
+  it('never logs a capped tool result for a replayed result under the byte ceiling', () => {
+    const logged: string[] = [];
+    const messages = chatHistoryToModelMessages(history([
+      { prompt: 'Inspect a small object' },
+      {
+        response: [{ value: { value: 'Rendered answer' } }],
+        result: {
+          metadata: {
+            toolCallsMetadata: {
+              toolCallRounds: [{
+                response: 'Checking.',
+                toolCalls: [{ callId: 'call-1', name: 'lineage_get_object_detail', input: { id: 'dbo.Small' } }],
+              }],
+              toolCallResults: {
+                'call-1': { content: [{ value: 'small result' }] },
+              },
+            },
+          },
+        },
+      },
+    ]), BUDGET, (message) => logged.push(message));
+
+    expect(messages).toHaveLength(3);
+    expect(logged.some((message) => message.includes('history tool result capped'))).toBe(false);
+  });
 });
 
 function history(

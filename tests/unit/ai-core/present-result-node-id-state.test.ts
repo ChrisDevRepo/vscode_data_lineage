@@ -6,10 +6,6 @@
  * a state the engine already records. The two need different repairs, and the model only ever sees
  * the first reason line (the rejection replay caps it and drops `detail`), so both the per-id state
  * and the accepted set must ride in the message itself.
- *
- * Measured shape (T8S @ 37875e19): `[ai].[vwraworders]` (border-cut) and `[ai].[spbuildsalesreport]`
- * (analysed, then dropped by the render bound) drew the same "unknown IDs" text as an invented id,
- * were resubmitted three times, and ended the run on the semantic-failure breaker.
  */
 import { describe, expect, it } from 'vitest';
 import {

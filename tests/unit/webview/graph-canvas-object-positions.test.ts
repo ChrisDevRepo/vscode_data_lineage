@@ -80,14 +80,11 @@ describe('GraphCanvas — bookmarks and exports read object-space positions', ()
   });
 
   for (const name of POSITION_CONSUMERS) {
-    it(`${name} reads objectNodes() and not getNodes()`, () => {
+    it(`${name} reads and depends on objectNodes(), never getNodes()`, () => {
       const body = callbackSource(name);
       expect(body, `${name} must read positions through objectNodes()`).toContain('objectNodes()');
       expect(body, `${name} must not read the mounted nodes directly`).not.toContain('getNodes()');
-    });
-
-    it(`${name} depends on objectNodes rather than getNodes`, () => {
-      const deps = callbackSource(name).slice(callbackSource(name).lastIndexOf('}, ['));
+      const deps = body.slice(body.lastIndexOf('}, ['));
       expect(deps, `${name} lists objectNodes as a dependency`).toContain('objectNodes');
       expect(deps, `${name} no longer lists getNodes as a dependency`).not.toContain('getNodes');
     });

@@ -40,6 +40,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Account for each required neighbor listed in detail by adding it to `route_requests`.',
   self_loop_column:
     'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (see detail for the offending node.col). Keep the rest of column_flow, sections, and summary as submitted.',
+  pruned_contributor:
+    'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
   prune_absent:
     'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
   prune_noop_removed:
@@ -103,6 +105,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   bad_contributor_col: 'contributor_col_not_on_source',
   missing_required_route: 'missing_required_route',
   self_loop_column: 'column_self_loop',
+  pruned_contributor: 'pruned_contributor',
   prune_absent: 'route_validation_failed',
   prune_noop_removed: 'route_validation_failed',
   prune_noop_visited: 'route_validation_failed',

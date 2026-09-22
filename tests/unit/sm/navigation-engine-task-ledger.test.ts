@@ -244,71 +244,31 @@ describe("Navigation Engine Task Ledger", () => {
   it("Incomplete and internally inconsistent checkpoints fail closed instead of reconstructing state.", () => {
   const engine = newEngine();
   engine.getHopContext();
-  const snapshot = JSON.parse(JSON.stringify(engine.toJSON()));
-  delete snapshot.engineInternals.currentFocusTaskIds;
-  let missingFieldRejected = false;
-  try {
-    NavigationEngine.fromJSON(snapshot, model, makeGraph(nodes, edges), () => {});
-  } catch {
-    missingFieldRejected = true;
-  }
-  expect(missingFieldRejected, 'snapshot missing currentFocusTaskIds rejects without reconstruction').toBe(true);
+  const base = () => JSON.parse(JSON.stringify(engine.toJSON()));
+  const rejects = (mutate: (snap: any) => void): boolean => {
+    const snap = base();
+    mutate(snap);
+    try {
+      NavigationEngine.fromJSON(snap, model, makeGraph(nodes, edges), () => {});
+      return false;
+    } catch {
+      return true;
+    }
+  };
 
-  const dangling = JSON.parse(JSON.stringify(engine.toJSON()));
-  dangling.engineInternals.currentFocusTaskIds = ['task_missing'];
-  let danglingRejected = false;
-  try {
-    NavigationEngine.fromJSON(dangling, model, makeGraph(nodes, edges), () => {});
-  } catch {
-    danglingRejected = true;
-  }
-  expect(danglingRejected, 'snapshot with a dangling current task reference rejects').toBe(true);
+  expect(rejects((s) => { delete s.engineInternals.currentFocusTaskIds; }), 'snapshot missing currentFocusTaskIds rejects without reconstruction').toBe(true);
+  expect(rejects((s) => { s.engineInternals.currentFocusTaskIds = ['task_missing']; }), 'snapshot with a dangling current task reference rejects').toBe(true);
+  expect(rejects((s) => { s.engineInternals.deferredQuestions = []; }), 'removed persisted deferredQuestions field rejects as stale state').toBe(true);
+  expect(rejects((s) => { s.snapshotVersion = 2; }), 'unknown snapshot version rejects without migration').toBe(true);
+  expect(rejects((s) => { s.compatibilityMode = true; }), 'unknown snapshot field rejects at the strict boundary').toBe(true);
+  expect(rejects((s) => { s.engineInternals.initSnapshot.targetColumns = ['amount']; }), 'BB snapshot rejects target-column state').toBe(true);
 
-  const staleProjection = JSON.parse(JSON.stringify(engine.toJSON()));
-  staleProjection.engineInternals.deferredQuestions = [];
-  let unknownFieldRejected = false;
-  try {
-    NavigationEngine.fromJSON(staleProjection, model, makeGraph(nodes, edges), () => {});
-  } catch {
-    unknownFieldRejected = true;
-  }
-  expect(unknownFieldRejected, 'removed persisted deferredQuestions field rejects as stale state').toBe(true);
-
-  const legacyGuardFlag = JSON.parse(JSON.stringify(engine.toJSON()));
+  // Legacy qualityGuards field is accepted (not runtime-dead) but never re-persisted.
+  const legacyGuardFlag = base();
   legacyGuardFlag.engineInternals.qualityGuards = false;
   const restoredLegacy = NavigationEngine.fromJSON(legacyGuardFlag, model, makeGraph(nodes, edges), () => {});
   expect(restoredLegacy.status === engine.status, 'legacy qualityGuards checkpoint field is accepted but runtime-dead').toBe(true);
   expect(!('qualityGuards' in restoredLegacy.toJSON().engineInternals), 'legacy qualityGuards field is not re-persisted').toBe(true);
-
-  const unknownVersion = JSON.parse(JSON.stringify(engine.toJSON()));
-  unknownVersion.snapshotVersion = 2;
-  let unknownVersionRejected = false;
-  try {
-    NavigationEngine.fromJSON(unknownVersion, model, makeGraph(nodes, edges), () => {});
-  } catch {
-    unknownVersionRejected = true;
-  }
-  expect(unknownVersionRejected, 'unknown snapshot version rejects without migration').toBe(true);
-
-  const unknownRootField = JSON.parse(JSON.stringify(engine.toJSON()));
-  unknownRootField.compatibilityMode = true;
-  let unknownRootFieldRejected = false;
-  try {
-    NavigationEngine.fromJSON(unknownRootField, model, makeGraph(nodes, edges), () => {});
-  } catch {
-    unknownRootFieldRejected = true;
-  }
-  expect(unknownRootFieldRejected, 'unknown snapshot field rejects at the strict boundary').toBe(true);
-
-  const bbWithTargets = JSON.parse(JSON.stringify(engine.toJSON()));
-  bbWithTargets.engineInternals.initSnapshot.targetColumns = ['amount'];
-  let bbTargetRejected = false;
-  try {
-    NavigationEngine.fromJSON(bbWithTargets, model, makeGraph(nodes, edges), () => {});
-  } catch {
-    bbTargetRejected = true;
-  }
-  expect(bbTargetRejected, 'BB snapshot rejects target-column state').toBe(true);
 });
 
   it("live Zod boundary and engine init already accept.", () => {

@@ -37,6 +37,13 @@ const RAIL_TOGGLE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
   bottom: '\u25B2',
 };
 
+/** The collapse arrow points toward the edge the panel folds into — the reverse of the rail's reopen arrow. */
+const COLLAPSE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
+  right: '\u25B6',
+  left: '\u25C0',
+  bottom: '\u25BC',
+};
+
 /**
  * Panel-dock icon: a frame with the docked edge filled, modelled on VS Code's
  * `layout-panel-left` / `layout-panel` / `layout-panel-right` codicons so each position reads
@@ -356,7 +363,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
               onClick={handleCollapse}
               aria-label="Collapse description"
             >
-              &#x25B6;
+              {COLLAPSE_GLYPH[dockPosition]}
             </button>
           </div>
         </div>

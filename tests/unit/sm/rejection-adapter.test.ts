@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { makeRejection, readToolError, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, readToolError, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 
 describe('rejection-adapter', () => {
   describe('makeRejection', () => {
@@ -143,6 +143,47 @@ describe('rejection-adapter', () => {
           expect(rejection.reason).toContain('Too big: expected string to have <=50 characters');
           expect(rejection.reason).not.toContain('sent:');
         }
+      });
+    });
+
+    describe('invalid_tool_input hint: unrecognized-key repair names removal, never the resend-unchanged sentence', () => {
+      // Reproduces the semantic-breaker class (issues.py search semantic-breaker, 2026-09-16 T7):
+      // a strict-schema element carries a key the schema does not accept at all (`notes` inside a
+      // `sections[]` entry, where `notes[]` is a correct top-level sibling). Any tool/schema stands
+      // in for it here — the fix is generic over the issue class, not this one field name.
+      const strictLeaf = z.object({ label: z.string(), text: z.string() }).strict();
+
+      it('an unrecognized_keys issue yields a hint naming the offending key(s) for removal', () => {
+        const input = { label: 'Overview', text: 'x', notes: ['nested-note'] };
+        const result = strictLeaf.safeParse(input);
+        expect(result.success, 'strict schema rejects the unrecognized key').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input });
+        // RED before the fix: rejectionFromZodError never populated `.hint` for `invalid_tool_input`
+        // absent an explicit `opts.hint`, so this was `undefined` and every assertion below failed.
+        expect(rejection.hint, 'hint names the offending key').toContain('"notes"');
+        expect(rejection.hint, 'hint directs removal, not a resend').toMatch(/removed entirely/i);
+        expect(rejection.hint, 'hint is not the standing resend-unchanged sentence').not.toBe(INVALID_TOOL_INPUT_REPAIR_HINT);
+        expect(rejection.hint, 'hint directs the key never be resent under any name').toMatch(/do not resend it under any name/);
+      });
+
+      it('a non-unrecognized-key invalid_tool_input rejection keeps the standing sentence verbatim', () => {
+        const result = z.object({ node_id: z.string() }).safeParse({});
+        expect(result.success, 'missing required field fails as expected').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input' });
+        expect(rejection.hint, 'non-unrecognized-key shapes keep the original sentence, unchanged').toBe(INVALID_TOOL_INPUT_REPAIR_HINT);
+      });
+
+      it('a mixed rejection (unrecognized key + another issue) states both repairs without contradiction', () => {
+        const input = { text: 'x', notes: ['nested-note'] }; // label missing AND notes unrecognized
+        const result = strictLeaf.safeParse(input);
+        expect(result.success, 'mixed shape fails on both issues').toBe(false);
+        if (result.success) return;
+        const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input });
+        expect(rejection.hint, 'mixed hint still names the unrecognized key for removal').toContain('"notes"');
+        expect(rejection.hint, 'mixed hint still directs removal').toMatch(/removed entirely/i);
+        expect(rejection.hint, 'mixed hint also directs correcting the other flagged field(s)').toMatch(/other offending field/i);
       });
     });
   });

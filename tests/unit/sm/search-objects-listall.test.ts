@@ -5,7 +5,7 @@
  * legitimate "list everything in schema X" request — it must enumerate the schema, not
  * reject with `query_too_short` and not hand an empty string to `searchCatalog` (which
  * matches nothing). An EMPTY query with NO schema scope still rejects; a one-character one is a
- * servable substring and is not (IB3-T2).
+ * servable substring and is not.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -77,8 +77,8 @@ describe('search-objects-listall', () => {
   });
 
   it('one-char query without schema is served, not refused for its length', () => {
-    // IB3-T2: `i` and `.` were both refused as too short, which is a repair the caller cannot make
-    // for a substring that matches. Volume is owned by the evidence share, not by a minimum here.
+    // A short query that matches is a repair the caller cannot make for itself; volume is owned
+    // by the evidence share, not by a minimum here.
     const res = searchObjects(model, 'a', undefined, undefined) as Record<string, unknown>;
     expect('error' in res, 'a one-character substring is served').toBe(false);
     const results = res.results as Array<Record<string, unknown>>;

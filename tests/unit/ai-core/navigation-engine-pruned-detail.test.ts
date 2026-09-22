@@ -4,12 +4,7 @@ import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from '../sm/helpers/fixtures';
 
-/**
- * Regression test for A31 — pins the `submit_findings` prune-branch call site in `smBase.ts`
- * against the `AiMemoryManager` retention contract covered by `memory-manager-pruned-detail.test.ts`.
- * A self-pruned focus node's captured `sections`/`summary` must reach `getPrunedDetails()`, and must
- * never appear in `getDetailSlots()` (the synthesis-visible archive) — additive-only, observe-only.
- */
+/** A self-pruned focus node's captured sections/summary reach `getPrunedDetails()` but never `getDetailSlots()` (synthesis-visible). */
 
 describe('NavigationEngine — self-prune retains captured content (A31)', () => {
   const nodes: LineageNode[] = [

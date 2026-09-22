@@ -118,7 +118,7 @@ function errorText(result: Record<string, unknown>): string {
 }
 
 describe('executePresentResult — detail-slot section coverage', () => {
-  it('rejects a BB render whose only detail slot reaches no section and no note (T7 real-loss shape)', async () => {
+  it('rejects a BB render whose only detail slot reaches no section and no note', async () => {
     const result = await run(seedBbSession(), {
       name: 'Order Load',
       summary: 'Raw orders load into staging and feed the consolidated view.',
@@ -227,8 +227,7 @@ describe('executePresentResult — detail-slot section coverage', () => {
 
   it('does not require coverage of a detail slot whose node the render dropped', async () => {
     // Memory still holds the hop's slot; getResult already removed the node from the result
-    // graph. Requiring a section/note link then forbidding that same id is the synthesis trap
-    // that burned three semantic failures on `[ai].[splogaudit]`.
+    // graph. Requiring a section/note link then forbidding that same id is the synthesis trap.
     const DROPPED = '[ai].[splogaudit]';
     const session = seedBbSession();
     session.memory.storeDetail(node(DROPPED, 'spLogAudit', 'procedure'), [], 'Writes one audit row.');

@@ -1,5 +1,6 @@
 /**
- * One traced column, one active-column entry — the T8S hop-4 defect, reproduced offline.
+ * One traced column must produce one active-column entry, not two spellings unioned by raw
+ * string identity.
  *
  * The entry classifier hands `start_exploration` the column as the user wrote it,
  * node-qualified (`[ai].[vwDiscountCalc].[Discount]`). The origin resolves that against its own
@@ -7,9 +8,7 @@
  * queued node arrives with no column opinion, so `agendaColumnsFor` pads the raw target spelling
  * back on and `AgendaManager.push` unions the two spellings by raw string identity. The next
  * bodied focus with no declared column surface — a procedure — passes both through unresolved and
- * `computeUnaccounted` then demands BOTH as an `out_col`, which no submission can satisfy: on the
- * recorded run every retry accounted for one spelling
- * and was rejected `column_chain_incomplete` for the other until the breaker fired.
+ * `computeUnaccounted` then demands BOTH as an `out_col`, which no submission can satisfy.
  *
  * `[ai].[spBuildSalesReport]` has no `Discount` column of its own: it reads `dc.Discount` from the
  * view into a temp table, so the two entries are one column in two spellings, not two columns.

@@ -335,6 +335,50 @@ export const INVALID_TOOL_INPUT_REPAIR_HINT
   = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
 
 /**
+ * Repair hint for an `invalid_tool_input` rejection carrying at least one `unrecognized_keys` Zod
+ * issue. The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} tells the model to "keep every other
+ * field unchanged" and resend — the wrong repair for a key the schema does not accept at all,
+ * since resending it (under the same name) reproduces the identical rejection. Naming the exact
+ * offending key(s) and directing removal is the repair the issue itself already states; nothing
+ * here is keyed to any one tool, field name, or fixture (`issue.keys` names whatever key the
+ * schema rejected on whatever call it rejected).
+ *
+ * Mixed with another issue in the same reject (e.g. an unrecognized key alongside a missing
+ * required field), both repairs are stated together rather than choosing one, so neither
+ * instruction contradicts the other: remove the named key(s), and separately correct the
+ * remaining flagged field(s) per the standing instruction's resend-whole-list rule.
+ *
+ * Naming the accepted keys at that path would need the source schema, not just the issue — the
+ * issue carries only the rejected object (`$ZodIssueUnrecognizedKeys.input`), whose own keys are
+ * the ones already accepted *in this instance*, not the schema's full accepted set. Deriving the
+ * latter would mean threading the schema itself through every call site of
+ * {@link rejectionFromZodError}, which is the contortion this hint is not authorized to add — every
+ * caller already has this rejection reason. Note removal alone.
+ *
+ * @param error - The Zod validation failure under {@link rejectionFromZodError}.
+ * @returns The removal-directed hint when any issue is `unrecognized_keys`; `undefined` otherwise,
+ * so the caller falls back to {@link INVALID_TOOL_INPUT_REPAIR_HINT} unchanged.
+ */
+function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
+  const offendingKeys = [...new Set(
+    error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? issue.keys : [])),
+  )];
+  if (offendingKeys.length === 0) return undefined;
+
+  const plural = offendingKeys.length > 1;
+  const keyList = offendingKeys.map((key) => `"${key}"`).join(', ');
+  const removal = `Resend the tool call with the unrecognized field${plural ? 's' : ''} ${keyList} removed entirely — `
+    + `${plural ? 'they are' : 'it is'} not part of this tool's input schema at all, so do not resend `
+    + `${plural ? 'them' : 'it'} under any name or nesting; keep every other field unchanged.`;
+
+  const hasOtherIssues = error.issues.some((issue) => issue.code !== 'unrecognized_keys');
+  return hasOtherIssues
+    ? `${removal} Separately, correct the other offending field(s) named above; resend every element of a corrected `
+      + 'list, repeating the unflagged elements exactly as first sent.'
+    : removal;
+}
+
+/**
  * Standing repair instruction for a provider call naming a tool outside this phase's catalog. The
  * valid names ride in the rejection's `detail.allowedTools`, not this sentence, so the instruction
  * stays one fixed sentence regardless of how many tools the phase offers.
@@ -443,10 +487,17 @@ export function rejectionFromZodError(
     }
     return path ? `${path}: ${message}` : message;
   });
+  // The standing invalid_tool_input hint tells the model to resend every field unchanged, which
+  // is the wrong repair for an unrecognized key: the fix is removal, and reproducing exactly that
+  // rejection three times running (Unrecognized key: "notes") is what an unstated repair looks
+  // like in a live transcript. An explicit `opts.hint` (a caller-specific override) always wins.
+  const hint = opts.code === 'invalid_tool_input'
+    ? (opts.hint ?? unrecognizedKeyRepairHint(error) ?? INVALID_TOOL_INPUT_REPAIR_HINT)
+    : opts.hint;
   return makeRejection({
     code: opts.code,
     reason: lines.join('; '),
-    hint: opts.hint,
+    hint,
     issuePaths,
   });
 }

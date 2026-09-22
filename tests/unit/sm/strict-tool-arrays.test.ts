@@ -1,5 +1,5 @@
 import { EntryDetectionSchema } from '../../../src/ai/agent/state';
-import { normalizeStartExplorationInput } from '../../../src/ai/support/inputNormalization';
+import { droppedKeyPaths, normalizeStartExplorationInput } from '../../../src/ai/support/inputNormalization';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import {
   PresentResultModelSchema,
@@ -118,9 +118,7 @@ describe("strict-tool-arrays tests", () => {
 
 });
 
-// `sections` arriving JSON-string-encoded is the same shape `targetColumns` already absorbs, seen
-// on the local OpenAI-compatible lane: a 5045-char `"[{\"angle\": \"business\", ...}]"` reached
-// submit_findings, was rejected as invalid tool input, and the run ended hollow at 87 answer chars.
+// `sections` arriving JSON-string-encoded is the same shape `targetColumns` already absorbs.
 describe("string-encoded sections", () => {
   const encodedSubmit = SubmitFindingsBbInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
@@ -219,5 +217,14 @@ describe("string-encoded route_requests and prune_neighbors", () => {
     expect(arrayForm.success && stringEncoded.success && JSON.stringify(stringEncoded.data.route_requests) === JSON.stringify(arrayForm.data.route_requests)
       && JSON.stringify(stringEncoded.data.prune_neighbors) === JSON.stringify(arrayForm.data.prune_neighbors),
       'string-encoded and array forms parse to the same value').toBe(true);
+  });
+});
+
+describe('droppedKeyPaths', () => {
+  it('names every key a parse stripped, and nothing a parse only normalized', () => {
+    const raw = { column_flow: [{ out_col: 'a', bogus: 1, writes_to: null }], note: '{"x":1}' };
+    const parsed = { column_flow: [{ out_col: 'a' }], note: { x: 1 } };
+    expect(droppedKeyPaths(raw, parsed)).toEqual(['column_flow.0.bogus']);
+    expect(droppedKeyPaths(parsed, parsed)).toEqual([]);
   });
 });

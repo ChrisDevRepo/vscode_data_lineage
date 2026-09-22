@@ -135,24 +135,16 @@ describe('executePresentResult — CT column-chain coverage', () => {
   });
 
   // A highlight group clears CT coverage on its own, but the pre-existing unexplained-highlight rule
-  // still owns the payload: a highlighted node needs a section link or a note. These two pin that the
+  // still owns the payload: a highlighted node needs a section link or a note. These pin that the
   // CT check no longer contributes a violation, and that highlight colour is immaterial to it.
-  it('stops flagging the mid-chain node once a source-coloured highlight group carries it', async () => {
-    const result = await run(ctInput({
-      highlight_groups: [{ label: 'Feeds', color: 'source', node_ids: [RAW, STAGING] }],
-    }));
-
-    expect(errorText(result)).not.toMatch(/CT column-chain node\(s\) missing/);
-    expect(errorText(result)).toMatch(/must be explained by sections\[\]\.node_ids or notes\[\]/);
-  });
-
-  it('stops flagging the mid-chain node once a non-source highlight group carries it', async () => {
-    const result = await run(ctInput({
-      highlight_groups: [
-        { label: 'Feeds', color: 'source', node_ids: [RAW] },
-        { label: 'Staging', color: 'transform', node_ids: [STAGING] },
-      ],
-    }));
+  it.each([
+    ['a source-coloured highlight group', [{ label: 'Feeds', color: 'source', node_ids: [RAW, STAGING] }]],
+    ['a non-source highlight group', [
+      { label: 'Feeds', color: 'source', node_ids: [RAW] },
+      { label: 'Staging', color: 'transform', node_ids: [STAGING] },
+    ]],
+  ])('stops flagging the mid-chain node once %s carries it', async (_title, highlight_groups) => {
+    const result = await run(ctInput({ highlight_groups }));
 
     expect(errorText(result)).not.toMatch(/CT column-chain node\(s\) missing/);
     expect(errorText(result)).toMatch(/must be explained by sections\[\]\.node_ids or notes\[\]/);

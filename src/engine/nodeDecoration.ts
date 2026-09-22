@@ -125,7 +125,11 @@ export function resolveBaseSelectionState(
   return { highlighted, dimmed };
 }
 
-function isTraceOriginNode(nodeId: string, inputs: NodeDecorationInputs): boolean {
+/** Whether `nodeId` is the origin of an applied, filtered, or path trace — shared by both canvas views. */
+export function isTraceOriginNode(
+  nodeId: string,
+  inputs: Pick<NodeDecorationInputs, 'traceSelectedNodeId' | 'traceMode'>,
+): boolean {
   return nodeId === inputs.traceSelectedNodeId && (
     inputs.traceMode === 'applied' || inputs.traceMode === 'filtered' || inputs.traceMode === 'path-applied'
   );

@@ -109,34 +109,40 @@ export class ColumnTracer {
    * The spine for a candidate is the set of columns that flow *from* it into the tracked chain —
    * `from_col` on accumulated edges whose `from_node` is the candidate (staged by the routing hop's
    * `column_flow` before the candidate is dispatched). Off-spine sibling columns the AI lists in
-   * a route candidate (`entryColumns`) are dropped by intersecting against that spine —
-   * mechanical enforcement of the CT "route only upstream columns" contract, so a model that
-   * over-declares carrier columns cannot drag off-trace edges across later hops.
+   * a route candidate (`entryColumns`) are dropped — mechanical enforcement of the CT "route only
+   * upstream columns" contract, so a model that over-declares carrier columns cannot drag off-trace
+   * edges across later hops.
    *
-   * - `entryColumns` empty → use the full spine-derived set (engine derives the continuation).
+   * Every committed edge is a column demand on the node that supplies it, and a node consumes one
+   * hop, so a non-empty spine is returned whole: the active set is the union of those demands,
+   * whatever order the routes that reached the node arrived in. A route's own column list (or its
+   * row-role `none`) describes that one edge and never narrows a demand another edge placed.
+   *
    * - spine-derived empty (candidate's upstream edges not yet staged — freshly-routed first
    *   appearance, e.g. a terminal source) → trust `entryColumns` so the node is still dispatched.
-   * - otherwise → the intersection; if it is empty (AI named only off-spine columns) the
-   *   spine-derived set wins (never carry a column that is not on the tracked chain).
+   * - otherwise → the full spine-derived set.
+   *
+   * An edge whose `from_node` is a non-bodied carrier the candidate writes is on the candidate's
+   * spine too: a carrier is never analysed, so the column an edge leaves open there is owed by the
+   * carrier's producers, the same side the reopen of an open column end is offered to.
    *
    * @param candidateNodeId - The id of the node being considered.
    * @param entryColumns - The columns declared for entry by the AI.
+   * @param writtenCarrierIds - Non-bodied carriers the candidate writes; empty when it writes none.
    * @returns The resolved active columns for the candidate node.
    */
-  determineActiveColumnsForCandidate(candidateNodeId: string, entryColumns: string[]): string[] {
-    const spineDerived = Array.from(
-      new Set(
-        this.aspect.edges
-          .filter(e => e.from_node === candidateNodeId)
-          .map(e => e.from_col)
-          .filter((c): c is string => !!c),
-      ),
-    );
-    if (entryColumns.length === 0) return spineDerived;
-    if (spineDerived.length === 0) return entryColumns;
-    const spineSet = new Set(spineDerived.map(normalizeColName));
-    const intersection = entryColumns.filter(c => spineSet.has(normalizeColName(c)));
-    return intersection.length > 0 ? intersection : spineDerived;
+  determineActiveColumnsForCandidate(
+    candidateNodeId: string,
+    entryColumns: string[],
+    writtenCarrierIds: ReadonlySet<string> = new Set(),
+  ): string[] {
+    const spineByNorm = new Map<string, string>();
+    for (const e of this.aspect.edges) {
+      if (!e.from_col || (e.from_node !== candidateNodeId && !writtenCarrierIds.has(e.from_node))) continue;
+      const key = normalizeColName(e.from_col);
+      if (!spineByNorm.has(key)) spineByNorm.set(key, e.from_col);
+    }
+    return spineByNorm.size > 0 ? [...spineByNorm.values()] : entryColumns;
   }
 
   /**
@@ -192,6 +198,12 @@ export class ColumnTracer {
    * @param store - Optional column store for checking declared column lists.
    * @param log - Optional logger; a neighbour with zero declared columns cannot be verified, so
    * the acceptance is logged at `debug` instead of passing silently.
+   * @param removedSet - Node ids already pruned this run (PRUNE-BEFORE-DEMAND). Optional and
+   * defaults to empty so every pre-existing direct-call site (tests, and any future caller that
+   * has no removal state to offer) keeps validating exactly as before. Naming an already-removed
+   * node as an `upstream_columns` supplier is rejected here, at declare time — the alternative
+   * (staging the edge anyway) hands `enqueueHop` a demand on a node that stays removed by
+   * invariant ({@link reopensColumnChain}), which can only drop it silently.
    * @returns Validation result containing any error, invalid routes, or successfully staged edges.
    */
   validateColumnFlow(
@@ -200,7 +212,8 @@ export class ColumnTracer {
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
     store: ColumnStore | null,
-    log?: (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void
+    log?: (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void,
+    removedSet?: ReadonlySet<string>,
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
@@ -262,6 +275,16 @@ export class ColumnTracer {
         const neighbor = neighborId ? nodeMap.get(neighborId) : null;
         if (!neighbor) {
           invalidRoutes.push({ kind: 'absent_contributor', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" is absent from the loaded model.` });
+          continue;
+        }
+
+        // PRUNE-BEFORE-DEMAND, order (a): the supplier was pruned on an earlier hop, before this
+        // edge names it. A removed node stays removed by invariant (reopensColumnChain never
+        // clears removedSet), so staging this edge would hand enqueueHop a demand on a node that
+        // can never be dispatched to answer it — content-kind, rejected here instead of dropped
+        // silently three steps downstream.
+        if (removedSet?.has(neighbor.id)) {
+          invalidRoutes.push({ kind: 'pruned_contributor', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" was already pruned earlier this run and cannot supply column "${cont.col}" — a removed node stays removed.` });
           continue;
         }
 

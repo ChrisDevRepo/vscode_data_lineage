@@ -9,8 +9,6 @@
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
 import {
-  COLUMN_FLOW_ENTRY_KEYS,
-  COLUMN_FLOW_WRITES_TO_KEYS,
   submitFindingsSchemaForMode,
 } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
@@ -24,32 +22,6 @@ import {
   validateSectionsAgainstClassification,
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
-
-// `declaredKeysOnly` (`inputNormalization.ts`) strips undeclared `column_flow[].*` keys inside
-// `ColumnFlowEntrySchema` — silently, since it also backs `SubmitFindingsModelSchema`, the
-// permissive registered union `vscodeModelPort` parses first, ahead of this handler, where no logger
-// is reachable. This strip runs on the actual submit path so each drop is named
-// (entry index, dropped keys); the key sets are the schema's own, so a new field cannot go missing.
-function stripUndeclaredColumnFlowKeys(columnFlow: unknown[], logger: ToolServices['logger']): unknown[] {
-  const dropped: string[] = [];
-  const stripKeys = (rec: Record<string, unknown>, declared: ReadonlySet<string>, label: string) => {
-    const surplus = Object.keys(rec).filter(key => !declared.has(key));
-    if (surplus.length === 0) return rec;
-    dropped.push(`${label}: ${surplus.join(', ')}`);
-    return Object.fromEntries(Object.entries(rec).filter(([key]) => declared.has(key)));
-  };
-  const next = columnFlow.map((entry, index) => {
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return entry;
-    const result = stripKeys(entry as Record<string, unknown>, COLUMN_FLOW_ENTRY_KEYS, `column_flow[${index}]`);
-    const writesTo = result.writes_to;
-    if (writesTo === null || typeof writesTo !== 'object' || Array.isArray(writesTo)) return result;
-    return { ...result, writes_to: stripKeys(writesTo as Record<string, unknown>, COLUMN_FLOW_WRITES_TO_KEYS, `column_flow[${index}].writes_to`) };
-  });
-  if (dropped.length > 0) {
-    logger.debug(`[submit_findings] dropped undeclared column_flow key(s): ${dropped.join('; ')}`);
-  }
-  return next;
-}
 
 /**
  * Validates and submits findings for the current exploration focus.
@@ -73,7 +45,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           ? input as SubmitFindingsInputObject
           : {};
 
-      // Pre-Zod mode guards — fire before schema parse so the AI gets an unambiguous
+      // Pre-Zod mode guard — fires before schema parse so the AI gets an unambiguous
       // mode-specific error rather than a generic `.strict()` failure.
       if (!engine.columnAspect && rawInput.column_flow !== undefined) {
         return s.logAndReturn('submit_findings', {
@@ -81,36 +53,16 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
         }, rawInput);
       }
-      // `route_requests[].columns` rides on the shared route schema BB also advertises, so a BB hop
-      // can fill a field its own mode cannot read. The engine serves that hop perfectly by ignoring
-      // the field, so it is dropped from a local copy and logged — never rejected. A rejection here
-      // would spend a generation on a field that carries no meaning in the mode.
-      let bbColumnRoutes = 0;
-      let stripped: SubmitFindingsInputObject = rawInput;
-      if (!engine.columnAspect && Array.isArray(rawInput.route_requests)) {
-        const routes = rawInput.route_requests.map(req => {
-          if (req === null || typeof req !== 'object' || Array.isArray(req) || !('columns' in req)) return req;
-          bbColumnRoutes++;
-          const { columns: _bbHasNoTracedColumns, ...rest } = req as Record<string, unknown>;
-          return rest;
-        });
-        if (bbColumnRoutes > 0) {
-          stripped = { ...rawInput, route_requests: routes };
-          s.logger.debug(`[submit_findings] dropped route_requests[].columns on ${bbColumnRoutes} route(s): BB mode traces no columns`);
-        }
-      }
-
-      // `column_flow[].*` entries are `.strict()` (`toolSchemas.ts`) and already stripped silently
-      // by `declaredKeysOnly` there (needed for the pre-handler registered union). Strip here too,
-      // on this local copy, so the actual submit path logs the drop instead of losing it silently.
-      if (Array.isArray(stripped.column_flow)) {
-        stripped = { ...stripped, column_flow: stripUndeclaredColumnFlowKeys(stripped.column_flow, s.logger) };
-      }
+      // `route_requests[].columns` is a column-trace-only decision. BB's dispatched schema
+      // (`SubmitFindingsBbInputSchema` -> `BbRouteRequestSchema`, `toolSchemas.ts`) never advertises
+      // it, so a BB hop naming it anyway fails `.strict()` in the parse below and rejects through the
+      // generic invalid-input path with a hint naming the field — the same treatment every other
+      // unrecognized BB field gets. Nothing here rewrites the model's payload.
 
       // Middleware: normalize identifier encodings into a local copy only. The raw model payload
       // stays immutable; strict mode-specific Zod parses the normalized copy below.
       const modelNodeMap = getModelNodeMap(s.requireModel());
-      const normalized = normalizeSubmitFindingsInputIds(stripped, modelNodeMap);
+      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
       const normalizedInput = normalized.input;
       for (const event of normalized.normalizations) {
         s.logger.debug(

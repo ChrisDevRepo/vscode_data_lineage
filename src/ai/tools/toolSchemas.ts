@@ -444,6 +444,19 @@ const RouteRequestSchema = z.object({
 }).strict();
 
 /**
+ * BB-mode `route_requests[]` shape: {@link RouteRequestSchema} without `columns`.
+ *
+ * @remarks
+ * `columns` is a column-trace decision (which traced columns carry to a neighbor); a BB session
+ * traces no columns, so BB never advertises the field — mirroring the per-mode narrowing
+ * {@link capturedSectionSchemaForClassification} already performs for `sections[].angle`. A BB
+ * payload naming `columns` anyway fails `.strict()` here and rejects through the same generic
+ * invalid-input path every other unrecognized BB field takes, instead of being silently dropped at
+ * the handler.
+ */
+const BbRouteRequestSchema = RouteRequestSchema.omit({ columns: true });
+
+/**
  * Single source for the `route_requests` field describe text, shared by the strict per-mode
  * schemas and the permissive registered union so the contract cannot drift between them.
  */
@@ -547,10 +560,6 @@ const ColumnFlowEntryObject = z.object({
 
 const ColumnFlowEntrySchema = declaredKeysOnly(ColumnFlowEntryObject);
 
-/** Declared keys of one `column_flow[]` entry, for a caller that logs what `declaredKeysOnly` strips. */
-export const COLUMN_FLOW_ENTRY_KEYS: ReadonlySet<string> = new Set(Object.keys(ColumnFlowEntryObject.shape));
-/** Declared keys of `column_flow[].writes_to`, for a caller that logs what `declaredKeysOnly` strips. */
-export const COLUMN_FLOW_WRITES_TO_KEYS: ReadonlySet<string> = new Set(Object.keys(ColumnFlowWritesToObject.shape));
 
 /**
  * Mode-locked `verdict` field description for `submit_findings`.
@@ -599,11 +608,6 @@ const HopFindingBaseSchema = z.object({
     'Example: "vwRateA carries StdRateA through unchanged and feeds spBuildCircA with UnitRateA." ' +
     'Aim for one line; length is never a rejection axis.',
   ),
-  /**
-   * Optional list of neighbors to queue for the next hops. Each entry's
-   * `nodeId` must already be a real id you have seen.
-   */
-  route_requests: coercedStringArray(RouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
   badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
@@ -616,10 +620,13 @@ const HopFindingBaseSchema = z.object({
  * @remarks
  * The node's self-status is `analyze` (carries lineage), `passthrough` (kept, not a key transform), or `prune` (entirely irrelevant focus node — orphan-guarded removal).
  * `prune_neighbors` removes topology-safe neighbors the evidence proves are off the answer path — out of scope, or in scope with nothing the answer needs; queued, visited, and removed targets are protected no-ops and every executed prune is don't-orphan-guarded.
- * BB does not carry CT-only `column_flow`.
+ * BB does not carry CT-only `column_flow`, and its `route_requests[]` entries do not carry the
+ * CT-only `columns` decision ({@link BbRouteRequestSchema}) — a BB session traces no columns, so
+ * the field is never advertised here.
  */
 export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('bb'),
+  route_requests: coercedStringArray(BbRouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
   prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
 }).strict();
 
@@ -628,11 +635,14 @@ export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
  *
  * @remarks
  * CT is BB plus column tracking, so every BB field — including `prune_neighbors` — is present on
- * the CT form; `column_flow`'s own contract is documented on {@link ColumnFlowSchema}.
+ * the CT form; `column_flow`'s own contract is documented on {@link ColumnFlowSchema}. Its
+ * `route_requests[]` entries additionally carry the per-neighbor `columns` decision
+ * ({@link RouteRequestSchema}), which BB's form omits.
  */
 export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
   verdict: hopVerdictSchema('ct'),
   column_flow: ColumnFlowSchema,
+  route_requests: coercedStringArray(RouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
   prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
 }).strict();
 
@@ -1009,7 +1019,19 @@ export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[numbe
  */
 const repairPatchSchemaCache = new Map<string, z.ZodType>();
 
-/** Builds the strict provider/runtime patch schema for exactly the authorized held-draft fields. */
+/**
+ * Builds the strict provider/runtime patch schema for exactly the authorized held-draft fields.
+ *
+ * @remarks
+ * `superRefine`s in one required-shape rule: a patch naming none of the authorized fields (only
+ * `is_update`, or nothing at all) rejects here, at the same Zod boundary as every other structural
+ * violation, with one issue per authorized field so `issuePaths` names the whole authorized set.
+ * Without this, an empty patch parsed successfully, merged nothing into the held draft, and
+ * re-ran the full held-draft validation — reproducing the identical prior rejection with no signal
+ * that the patch itself carried no correction (`toolAttempt.ts` issue log, m10 2026-09-15). This is
+ * a prevalidation reject (`vscodeModelPort.ts` / the harness port both `safeParse` against this
+ * exact schema object before dispatch), never a check added after the handler runs.
+ */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
 ): z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>> {
@@ -1020,7 +1042,17 @@ export function presentResultRepairPatchSchemaForFields(
   const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
   const schema = PresentResultRepairPatchSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultRepairPatchSchema.shape, true>>,
-  ).strict() as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
+  ).strict().superRefine((data, ctx) => {
+    if (keys.length === 0) return;
+    const touchesAuthorizedField = keys.some(
+      key => (data as Record<string, unknown>)[key] !== undefined,
+    );
+    if (touchesAuthorizedField) return;
+    const message = `Repair patch named no authorized field; send is_update:true plus at least one of: ${keys.join(', ')}.`;
+    for (const key of keys) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
+    }
+  }) as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   repairPatchSchemaCache.set(cacheKey, schema);
   return schema;
 }

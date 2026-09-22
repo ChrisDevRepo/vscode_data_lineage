@@ -1,19 +1,10 @@
 /**
- * Engine-level coverage for the active-hop abandonment repair in `src/ai/agent/graph.ts`.
- *
- * @remarks
- * The defect: `recordToolAttempt` (`toolAttempt.ts`) trips `stopReason='semantic_failures'` once a
- * SINGLE focus racks up `MAX_TOOL_SEMANTIC_FAILURES` rejections, and the active worker used to jump
- * the WHOLE run to synthesis on that stop — even when the agenda still held unrelated, perfectly
- * reachable nodes (T8, zai lane: 3 rejections on `[ai].[spCleanOrders]` ended a 23-node exploration
- * after 3 hops, so `orderamount_null_fill`/`orderamount_sum_strategy` were never rendered).
- *
- * `tryAbandonStuckFocus` repairs this by force-pruning the stuck focus through the SAME
- * `verdict: 'prune'` path the model's own `lineage_submit_findings` tool call uses, then dequeuing
- * the next entry exactly as the tool handler does after every accepted submission — no new engine
- * mechanism, no branch on CT vs. BB. `countAbandonedHops` + `MAX_ABANDONED_HOPS_PER_RUN` bound how
- * many times this may happen in one run, read back from the engine's own pruned-detail archive so
- * no dedicated state channel is needed.
+ * Engine-level coverage for `src/ai/agent/graph.ts`'s active-hop abandonment: a single focus
+ * racking up `MAX_TOOL_SEMANTIC_FAILURES` rejections must not abandon the whole run while the
+ * agenda still holds other reachable nodes. `tryAbandonStuckFocus` force-prunes the stuck focus
+ * through the same `verdict: 'prune'` path a model's own tool call uses, then dequeues the next
+ * entry; `countAbandonedHops` + `MAX_ABANDONED_HOPS_PER_RUN` bound how many times this may happen
+ * per run, read back from the engine's own pruned-detail archive.
  */
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
@@ -95,12 +86,11 @@ describe('tryAbandonStuckFocus', () => {
   });
 });
 
-describe('tryAbandonStuckFocus carries forward a stranded bridge (T7-DETAIL-SLOT-STARVATION)', () => {
+describe('tryAbandonStuckFocus carries forward a stranded bridge', () => {
   /**
    * Builds a chain `successor -> focus -> origin` (upstream direction) where `focus` is the ONLY
-   * agenda entry and `successor` is a bodied node no hop has visited or queued yet — the exact
-   * shape of `run-T7`'s `[ai].[vwraworders]`: the sole surviving thread and the sole bridge to an
-   * unvisited bodied subtree.
+   * agenda entry and `successor` is a bodied node no hop has visited or queued yet — the sole
+   * surviving thread and the sole bridge to an unvisited bodied subtree.
    */
   function buildBridgeEngine(): NavigationEngine {
     const nodes: LineageNode[] = [
@@ -136,9 +126,8 @@ describe('tryAbandonStuckFocus carries forward a stranded bridge (T7-DETAIL-SLOT
     const abandoned = tryAbandonStuckFocus(engine, 'focus', 'semantic_failures');
 
     expect(abandoned).toBe(true);
-    // Before the fix: `successor` was never routed by anyone (the only route to it lived behind
-    // `focus`'s own, never-committed submission), so the drained agenda reports `'complete'` and
-    // `successor` stays kept-but-never-hopped forever — no detail slot, no formula, no label.
+    // The abandon must re-enqueue successor rather than let the agenda drain to complete with it
+    // kept-but-never-hopped.
     expect(engine.status).toBe('awaiting_findings');
     expect(engine.currentFocus).toBe('successor');
   });

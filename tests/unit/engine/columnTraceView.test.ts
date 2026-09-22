@@ -279,6 +279,22 @@ describe('columnTraceView', () => {
     }
   });
 
+  it('merges the notes with the classes on a leg two relations share', () => {
+    // Both relations reach dbo.t.Total through dbo.p, so their outbound halves are one line: every
+    // class on its chip keeps the note that explains it.
+    const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.r'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total', transforms: ['compute'], note: 'Qty * 2' },
+      { hopNode: 'dbo.p', fromNode: 'dbo.r', fromCol: 'Flag', toNode: 'dbo.t', toCol: 'Total', transforms: ['filter'], note: 'WHERE Flag = 1' },
+    ];
+
+    const shared = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }).edges
+      .filter(e => e.source === 'dbo.p' && e.target === 'dbo.t');
+    expect(shared).toHaveLength(1);
+    expect(shared[0].transforms).toEqual(['compute', 'filter']);
+    expect(shared[0].note).toBe('Qty * 2\nWHERE Flag = 1');
+  });
+
   it('sizes a transform super node as a compact circle box, not a port card', () => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'));
     const relations: ColumnTraceRelation[] = [

@@ -1,24 +1,8 @@
 /**
- * Unit coverage for N-14: `lineage_get_scope_bundle`'s node payload could not answer "which side".
- *
- * @remarks
- * `edges` in the bundle response is a list of bare positional `[source, target, type]` triples —
- * no direction key. Two captured arms of the same question on the same graph showed a model
- * reading tuple POSITION as direction: with `origin=[ai].[spimportorders]`, two of three edges
- * started at the origin, and the model concluded "no upstream source objects" against the graph's
- * own `spimportorders -> raworderimport` write edge sitting in the same payload (scored 0). The
- * `hop_context` route (`buildHopFocusNode`) never has this problem — it always serves an explicit
- * `in`/`out` split per node via `presentNeighbor` (scored 100 on the same question).
- *
- * The repair: `presentNode` (src/ai/support/aiPresenter.ts) now accepts an optional
- * `splitContext` and, when given one alongside a `neighborIndex` entry, adds `in`/`out` arrays in
- * the exact shape `buildHopFocusNode` already emits — same `presentNeighbor` call, same
- * `{id, s, n, t, e}` per-neighbor shape. `getScopeBundle` (src/ai/tools/tools.ts) passes that
- * context only for the origin node, so every other node keeps the scalar `deg` it always had.
- *
- * This suite proves: (1) the origin's node entry now distinguishes its upstream neighbor from its
- * downstream neighbor without any recourse to edge-tuple position, and (2) no other node in the
- * bundle grows a payload it did not have before.
+ * `lineage_get_scope_bundle`'s origin node entry carries an explicit `in`/`out` split (same shape
+ * as `buildHopFocusNode`/`presentNeighbor`), so a consumer never has to infer direction from bare
+ * `[source, target, type]` edge-tuple position. Every other node in the bundle keeps the scalar
+ * `deg` it always had — the split is origin-only.
  */
 import { describe, expect, it } from 'vitest';
 import { getScopeBundle } from '../../../src/ai/tools/tools';
@@ -28,11 +12,9 @@ import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import type { GetScopeBundleInput } from '../../../src/ai/tools/toolSchemas';
 
 /**
- * Mirrors the captured wire evidence: origin `raworderimport` reads INTO `spcleanorders`
- * (raworderimport is the source, so that edge is raworderimport's OUT side) and is written INTO
- * BY `spimportorders` (spimportorders is the source, so that edge is raworderimport's IN side).
- * Two of the model's three edges start at the origin — the exact shape that made tuple position
- * look like a direction signal in the captured defect.
+ * Origin `raworderimport` reads INTO `spcleanorders` (OUT side) and is written INTO BY
+ * `spimportorders` (IN side) — both edges start at the origin, so tuple position alone cannot
+ * distinguish them.
  */
 function makeSplitModel(): DatabaseModel {
   const nodes: LineageNode[] = [
@@ -75,10 +57,10 @@ describe('get_scope_bundle origin node serves an explicit in/out split (N-14)', 
   const upstreamPayload = res.nodes.find(n => n.id === '[ai].[spimportorders]')!;
   const downstreamPayload = res.nodes.find(n => n.id === '[ai].[spcleanorders]')!;
 
-  it('sanity: the fixture reproduces the captured shape — two of three edges start at the origin', () => {
+  it('sanity: both fixture edges start at the origin, so tuple position cannot signal direction', () => {
     const startingAtOrigin = res.edges.filter(([source]) => source === '[ai].[raworderimport]');
-    expect(startingAtOrigin.length, 'two of three edges in this fixture start at the origin, exactly like the captured payload').toBe(1);
-    expect(res.edges.length, 'fixture carries exactly the two edges from the captured evidence').toBe(2);
+    expect(startingAtOrigin.length).toBe(1);
+    expect(res.edges.length).toBe(2);
   });
 
   it("origin node entry carries an explicit in/out split naming which side each neighbor is on", () => {
@@ -91,11 +73,7 @@ describe('get_scope_bundle origin node serves an explicit in/out split (N-14)', 
   });
 
   it('a consumer reading only the origin in/out split (never edge-tuple position) recovers the correct side', () => {
-    // This is the exact defect from the captured evidence: a consumer that only had the bare
-    // edge triples read POSITION as direction and declared "no upstream source objects" against
-    // an edge that was in fact the origin's upstream side. Prove the served split makes that
-    // misreading impossible by deriving direction from the split alone, ignoring `res.edges`
-    // entirely, and checking it lands on the correct side.
+    // Derives direction from the split alone, ignoring `res.edges` entirely.
     const inIds = new Set((originPayload.in as Array<Record<string, unknown>>).map(n => n.id));
     const outIds = new Set((originPayload.out as Array<Record<string, unknown>>).map(n => n.id));
     expect(inIds.has('[ai].[spimportorders]'), 'the write-source neighbor is recoverable as upstream from the split alone').toBe(true);

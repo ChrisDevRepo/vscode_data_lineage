@@ -74,6 +74,11 @@ const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, strin
   filter: 'Filter',
 };
 
+/** The distinct non-identity classes an edge marks — one glyph and one label per class. */
+function markedTransformClasses(transforms: readonly ColumnTransformClass[] | undefined): ColumnTransformClass[] {
+  return [...new Set(transforms ?? [])].filter(c => c !== 'pass_through');
+}
+
 /**
  * Builds the marker chip's tooltip text: the class names first, then the model's own one-clause
  * note when it offered one, else the structural description of the line.
@@ -85,7 +90,7 @@ const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, strin
  * Exported so the tooltip contract is testable without simulating hover.
  */
 export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
-  const classes = (data.transforms ?? []).filter(c => c !== 'pass_through');
+  const classes = markedTransformClasses(data.transforms);
   if (classes.length === 0) {
     return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
   }
@@ -238,7 +243,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
     targetPosition,
   });
   const opacity = lit ? 1 : COLUMN_EDGE_DIM_OPACITY;
-  const classes = (transforms ?? []).filter(c => c !== 'pass_through');
+  const classes = markedTransformClasses(transforms);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
   // Broken line for a relation that never carried the value — the same edge the tooltip calls out
   // as shaping which rows reach here.
@@ -247,6 +252,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
   const stroke = lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)';
+  const description = showChip ? describeColumnEdge({ sourceColumn, targetColumn, transforms, note }) : '';
 
   return (
     <>
@@ -263,7 +269,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
       {showChip && (
         <EdgeLabelRenderer>
           <Tooltip
-            content={describeColumnEdge({ sourceColumn, targetColumn, transforms, note })}
+            content={description}
             placement="top"
             delay={200}
             multiline
@@ -271,6 +277,8 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
           >
             <div
               className="nodrag nopan ln-column-edge-chip"
+              tabIndex={0}
+              aria-label={description}
               style={{
                 position: 'absolute',
                 transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,

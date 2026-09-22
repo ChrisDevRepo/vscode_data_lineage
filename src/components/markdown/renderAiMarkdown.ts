@@ -39,8 +39,9 @@ const marked = new Marked({ gfm: true, breaks: false })
     },
   });
 
-// KaTeX exposes each expression's source through `data-latex`; `style` is in DOMPurify's default allowlist.
-const SANITIZE_CONFIG = { ADD_ATTR: ['data-latex'] };
+// KaTeX's `data-latex` and `style` are already in DOMPurify's default allowlist. `name` is forbidden
+// for the same clobbering reason `id` is filtered below: `<img name=…>` shadows a `window` global.
+const SANITIZE_CONFIG = { FORBID_ATTR: ['name'] };
 
 // Default DOMPurify allows `id` on every tag. Only numbered section headings need it
 // (`ln-ai-sec-N`); any other id is stripped so a model-supplied attribute cannot clobber

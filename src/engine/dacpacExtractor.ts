@@ -465,8 +465,9 @@ function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources:
     return `${normalizeName(owner)}::${normalizeColName(column)}`;
   };
 
-  const MAX_PASSES = 5;
-  for (let pass = 0; pass < MAX_PASSES; pass++) {
+  // Each pass resolves at least one still-unresolved column or stops, so view chains of any depth
+  // settle in at most one pass per column.
+  for (;;) {
     let resolved = 0;
     for (const obj of objects) {
       const objectId = normalizeName(obj.fullName);

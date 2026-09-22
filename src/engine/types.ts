@@ -813,8 +813,6 @@ export type AiBadge = {
 export type ColumnTraceNodeData = {
   /** Positioned view node computed by `buildColumnTraceView` (`src/engine/columnTraceView.ts`). */
   view: ColumnTraceViewNode;
-  /** Whether the row list renders; false collapses the node to a single summary line. */
-  rowsVisible?: boolean;
   /** Whether the scoped-view remove control is shown — same chrome as {@link CustomNodeData}. */
   showRemoveButton?: boolean;
   /** Removes the node from the active allowlist-backed view. */

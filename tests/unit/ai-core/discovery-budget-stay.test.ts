@@ -193,17 +193,14 @@ describe('oversized discovery stays in chat', () => {
     expect(notices[0].type === 'error' ? notices[0].message : '').toContain('Discovery budget reached');
   });
 
-  it('/trace still opens SM-entry immediately', async () => {
+  it.each([
+    ['plain origin', ORIGIN, { origin: ORIGIN, analysisMode: 'bb' as const, classification: 'business' as const }],
+    ['a named column', `${ORIGIN}.[Amount]`, { origin: ORIGIN, analysisMode: 'ct' as const, classification: 'business' as const, targetColumns: ['Amount'] }],
+  ])('/trace with %s still opens SM-entry immediately', async (_title, commandTail, startArgs) => {
     const session = new AiSession();
     const epoch = session.beginTurn();
     const model = new ScriptedModelPort([
-      {
-        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
-          origin: ORIGIN,
-          analysisMode: 'bb',
-          classification: 'business',
-        })],
-      },
+      { toolCalls: [validCall('start-1', 'lineage_start_exploration', startArgs)] },
     ]);
     const { registry } = scriptedRegistry([
       { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
@@ -220,7 +217,7 @@ describe('oversized discovery stays in chat', () => {
       maxRounds: 2,
     });
 
-    const running = runtime.run(`/trace ${ORIGIN}`);
+    const running = runtime.run(`/trace ${commandTail}`);
     const gate = await nextGate();
     expect(gate.gate).toBe('confirm_sm_start');
     runtime.resumeGate(gate.gateId, { kind: 'cancel' });
@@ -275,38 +272,4 @@ describe('oversized discovery stays in chat', () => {
     expect(session.smOfferAvailable()).toBe(true);
   });
 
-  it('/trace with a named column still opens SM-entry immediately', async () => {
-    const session = new AiSession();
-    const epoch = session.beginTurn();
-    const model = new ScriptedModelPort([
-      {
-        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
-          origin: ORIGIN,
-          analysisMode: 'ct',
-          classification: 'business',
-          targetColumns: ['Amount'],
-        })],
-      },
-    ]);
-    const { registry } = scriptedRegistry([
-      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
-      { name: 'lineage_start_exploration', result: GATE_RESULT },
-    ]);
-    const { sink, nextGate } = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'budget-stay-column-trace',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink,
-      turnEpoch: epoch,
-      maxRounds: 2,
-    });
-
-    const running = runtime.run(`/trace ${ORIGIN}.[Amount]`);
-    const gate = await nextGate();
-    expect(gate.gate).toBe('confirm_sm_start');
-    runtime.resumeGate(gate.gateId, { kind: 'cancel' });
-    await expect(running).resolves.toBe('ok');
-  });
 });

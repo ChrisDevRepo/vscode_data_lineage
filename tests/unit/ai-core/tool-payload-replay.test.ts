@@ -3,22 +3,14 @@ import { SUBMIT_FINDINGS_BADGE_LABEL_MAX, SubmitFindingsBbInputSchema } from '..
 import { loadToolPayloadFixture, replayToolPayload } from './helpers/toolPayloadReplay';
 
 /**
- * T10b (B2) — replay harness for archived tool-call payloads.
- *
- * @remarks
- * `submit-findings-badge-label-overflow.json` is shaped from an archived UAT payload (the archived
- * UAT trace, n15 spLoadSalesStaging) whose only defect is a `badge_label` of 55 characters against a
- * 50-character cap. `replayToolPayload` runs the identical schema + Zod-error reader
- * `VscodeModelPort.generateToolTurn` applies at dispatch, without a provider, session, or graph.
- *
- * That cap is a CONTENT cap, and content caps are advertised in the JSON schema the model reads but
- * enforced by `NavigationEngine.submitFindings` — which rejects the field alone, states the measured
- * length, and holds the draft so the retry need not re-author the analysis. The archived payload
- * therefore clears this boundary and is judged by the engine; the engine-side rejection is pinned in
- * `tests/unit/sm/submit-findings-handler.test.ts`. A STRUCTURAL defect in the same archived payload
- * still reproduces here as the rejection class it always was.
+ * Replay harness for archived tool-call payloads: `replayToolPayload` runs the identical schema +
+ * Zod-error reader `VscodeModelPort.generateToolTurn` applies at dispatch, without a provider,
+ * session, or graph. `submit-findings-badge-label-overflow.json`'s only defect is a `badge_label`
+ * of 55 characters against a 50-character cap — a CONTENT cap, advertised in the JSON schema but
+ * enforced by `NavigationEngine.submitFindings`, so the payload clears this boundary and is judged
+ * by the engine (engine-side rejection pinned in `tests/unit/sm/submit-findings-handler.test.ts`).
  */
-describe('tool payload replay (T10b/B2)', () => {
+describe('tool payload replay', () => {
   it('carries the archived over-long badge_label through the boundary to the engine that owns it', () => {
     const payload = loadToolPayloadFixture('submit-findings-badge-label-overflow') as Record<string, unknown>;
     expect(String(payload.badge_label), 'the archived label is still over the cap').toHaveLength(SUBMIT_FINDINGS_BADGE_LABEL_MAX + 5);

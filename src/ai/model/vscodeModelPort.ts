@@ -30,6 +30,8 @@ import {
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { rejectionFromZodError } from '../support/toolErrorEnvelope';
+import { droppedKeyPaths } from '../support/inputNormalization';
+import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
   STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
@@ -245,25 +247,35 @@ export class VscodeModelPort implements ModelPort {
           };
         } else {
           const parsed = definition.inputSchema.safeParse(part.input);
-          call = parsed.success
-            ? {
-                valid: true,
-                callId: part.callId,
-                toolName: part.toolName,
-                input: parsed.data,
-              }
-            : {
-                valid: false,
-                callId: part.callId,
-                toolName: part.toolName,
-                input: part.input,
-                code: 'invalid_tool_input',
-                reason: rejectionFromZodError(
-                  parsed.error,
-                  { code: 'invalid_tool_input', input: part.input },
-                ).reason,
-                issuePaths: parsed.error.issues.map((issue) => issue.path.join('.')),
-              };
+          const dropped = parsed.success ? droppedKeyPaths(part.input, parsed.data) : [];
+          if (dropped.length > 0) {
+            this.options.debugLog?.(
+              `[AI] tool-input-keys-dropped tool=${part.toolName} paths=${trunc(sanitizeForLog(dropped.join(',')), 200)}`,
+            );
+          }
+          if (parsed.success) {
+            call = {
+              valid: true,
+              callId: part.callId,
+              toolName: part.toolName,
+              input: parsed.data,
+            };
+          } else {
+            const rejection = rejectionFromZodError(
+              parsed.error,
+              { code: 'invalid_tool_input', input: part.input },
+            );
+            call = {
+              valid: false,
+              callId: part.callId,
+              toolName: part.toolName,
+              input: part.input,
+              code: 'invalid_tool_input',
+              reason: rejection.reason,
+              hint: rejection.hint,
+              issuePaths: parsed.error.issues.map((issue) => issue.path.join('.')),
+            };
+          }
         }
         toolCalls.push(call);
         content.push({ type: 'tool-call', call });
@@ -492,12 +504,13 @@ export class VscodeModelPort implements ModelPort {
       if (signal?.aborted) throw cancelledError();
       // A cancelled underlying stream may end through the normal return path instead of throwing.
       if (watchdogFired) throw firstOutputTimeoutError();
-      // UAT turns n15/n16 (minimax-m3) answered with a complete, schema-valid tool payload fenced
-      // as prose seven times in a row; each drew a synthetic `missing_required_tool_call` rejection
-      // because the provider never emitted a native tool-call chunk. Promotion recovers that call
-      // before it is measured, so a payload the tool's own schema accepts never pays for the miss.
+      // A provider that emits no native tool-call chunk can still answer with a complete,
+      // schema-valid tool payload as prose; without promotion each such answer draws a synthetic
+      // `missing_required_tool_call` rejection. Promotion recovers that call before it is measured,
+      // so a payload the tool's own schema accepts never pays for the miss. Text cut at the stream
+      // ceiling is never promoted: it is retried as `output_limit`, not dispatched as a call.
       // The recognizer is shared with the harness port so a measured lane cannot diverge from it.
-      const promotion = parts.some((part) => part.type === 'tool-call')
+      const promotion = hitCeiling || parts.some((part) => part.type === 'tool-call')
         ? { kind: 'none' as const }
         : matchProseToolCall(
             parts

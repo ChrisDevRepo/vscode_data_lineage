@@ -8,9 +8,8 @@
  * `scriptedRegistry`'s fake `lineage_submit_findings` handler below calls the REAL
  * `NavigationEngine.submitFindings`/`getHopContext` on the session's live engine (proxying exactly
  * what the production tool handler, `src/ai/tools/handlers/submitFindings.ts`, does — not owned by
- * this fix and not edited here) so the agenda genuinely advances hop to hop, the same way it did in
- * the captured defect (T8, zai lane: `[ai].[spCleanOrders]` racked up 3 rejections and ended a
- * 23-node exploration after 3 hops even though 20 nodes remained unvisited).
+ * this fix and not edited here) so the agenda genuinely advances hop to hop: a node that racks up
+ * repeated rejections must not end the exploration early while agenda nodes remain unvisited.
  */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';

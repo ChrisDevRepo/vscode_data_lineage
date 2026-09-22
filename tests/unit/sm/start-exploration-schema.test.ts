@@ -71,10 +71,8 @@ describe("start-exploration-schema tests", () => {
 
   it("entry detection rejects unknown fields", () => { expect(!EntryDetectionSchema.safeParse({ entry: 'discovery', targetColumns: null, intentText: 'trace this' }).success, 'entry detection rejects unknown fields').toBe(true); });
 
-  // Class: a provider emitting a JSON number quoted as a string. Symmetric depth now normalizes
-  // the encoding exactly as the asymmetric sibling already did — observed 2026-09-03 (T4, T8S,
-  // local-mlx), where `depth: "1"`/`"2"` was rejected three times and stopped the turn at
-  // `sm_entry` while `{upstream:"1"}` was accepted. Value semantics are unchanged: only a
+  // A provider emitting a JSON number quoted as a string: symmetric depth normalizes the
+  // encoding exactly as the asymmetric sibling does. Value semantics are unchanged — only a
   // canonical unsigned integer literal is unwrapped, and the bounds still decide.
   const dvNum = StartExplorationInputSchema.safeParse({ origin: 'a', analysisMode: 'bb', classification: 'business', depth: '2' });
   it("string \"2\" normalizes to the number 2", () => { expect(dvNum.success && dvNum.data.depth === 2, 'string "2" normalizes to the number 2').toBe(true); });
@@ -200,8 +198,8 @@ describe("start-exploration-schema tests", () => {
 
   it("provider refine branch rejects asymmetric depth paired with an explicit non-bidirectional direction", () => { expect(!StartExplorationProviderInputSchema.safeParse({ origin: 'a', proposalRevision: 1, direction: 'downstream', depth: upstreamOnly }).success, 'provider refine branch rejects asymmetric depth paired with an explicit non-bidirectional direction').toBe(true); });
 
-  // Turn 14 (T14/A30) attempt 1, verbatim from turn-14-0b0d92e0.ndjson: a quoted digit on one
-  // side of an asymmetric depth, next to the quoted literal "all" on the other side.
+  // A quoted digit on one side of an asymmetric depth, next to the quoted literal "all" on the
+  // other side.
   const turn14Attempt1 = {
     analysisMode: 'bb', classification: 'business',
     depth: { downstream: '1', upstream: 'all' },
@@ -220,9 +218,8 @@ describe("start-exploration-schema tests", () => {
   });
   it("turn 14 attempt 1 validates against the exact production fresh-BB dispatch schema", () => { expect(StartExplorationFreshProviderInputSchema.safeParse(turn14Attempt1).success, 'turn 14 attempt 1 validates against the exact production fresh-BB dispatch schema').toBe(true); });
 
-  // Attempts 2 and 3 regressed to a pseudo-XML-encoded depth string; the numeric-string coercion
-  // must not accept it — the whole field is a string, never structurally a number, "all", or the
-  // asymmetric {upstream,downstream} object.
+  // A pseudo-XML-encoded depth string must not be accepted by the numeric-string coercion — the
+  // whole field is a string, never structurally a number, "all", or the asymmetric object.
   const turn14Attempt2Depth = '<downstream>1</downstream><upstream>all</upstream>';
   const turn14Attempt3Depth = '<upstream>all</upstream><downstream>1</downstream>';
   it("turn 14 attempt 2 pseudo-XML depth string is still rejected", () => { expect(!StartExplorationInputSchema.safeParse({ ...turn14Attempt1, depth: turn14Attempt2Depth }).success, 'turn 14 attempt 2 pseudo-XML depth string is still rejected').toBe(true); });
@@ -303,10 +300,9 @@ describe("start-exploration-schema tests", () => {
     expect(/named object/.test(description), 'the scopeNotes describe keeps an agnostic object example').toBe(true);
   });
 
-  // T-2/T-3 (tooltext sweep): `depth` used to restate its describe as a second literal on the
-  // dispatcher schema, and that copy understated a per-side 0 as a one-time seed skip rather than
-  // the permanent border `ExplorationDepthSideSchema` and `isReachableInApprovedDirection`
-  // (smBase.ts) actually enforce. Consolidated to `StartDepthSchema`, referenced by both surfaces.
+  // `depth` describes permanence — `ExplorationDepthSideSchema` and
+  // `isReachableInApprovedDirection` (smBase.ts) enforce a per-side 0 as a permanent border, not
+  // a one-time seed skip — via one `StartDepthSchema` referenced by both surfaces.
   const depthDescriptions = [
     StartExplorationInputSchema,
     StartExplorationFreshProviderInputSchema,
@@ -346,7 +342,7 @@ describe("start-exploration-schema tests", () => {
     });
   it("payload without origin rejected cleanly", () => { expect(!missingOrigin.success, 'payload without origin rejected cleanly').toBe(true); });
 
-  it("scenario 68", () => {
+  it("rejection for a missing origin names a self-correctable shape", () => {
     expect(!missingOrigin.success, 'payload without origin rejected cleanly').toBe(true);
     if (missingOrigin.success) return;
     // The rejection must name either valid start shape so the AI can self-correct.

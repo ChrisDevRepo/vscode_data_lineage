@@ -5,17 +5,12 @@ import { z } from 'zod';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 
 /**
- * Regression coverage for B3/T15/A4: a provider that streams pseudo-tool-call prose instead of a
- * real tool call must not drain unbounded. UAT turn 24 (deepseek-v4-flash) streamed 3,638,544
- * characters of `<｜DSML｜tool_calls>` markup before anything bounded the drain.
- *
- * The per-phase calibration (issue runaway-text-toolcall) extends the same guard: tool-bearing
- * phases carry a tighter ceiling than the 200,000-char outer bound, derived from the per-phase
- * legitimate text maxima observed on the wire traces. The outer-bound tests below run in a phase
- * mapped to the outer bound (`compose`) so they keep proving the 200,000 behavior byte-identically.
+ * A provider streaming pseudo-tool-call prose instead of a real tool call must not drain unbounded.
+ * Tool-bearing phases carry a tighter ceiling than the 200,000-char outer bound (`compose` maps to
+ * the outer bound, so the tests below keep proving that 200,000 behavior byte-identically).
  */
 
-// The exact recorded turn-24 signature: marker at char offset 168, `invoke name=` at offset 202.
+// A recorded pseudo-tool-call signature: marker at char offset 168, `invoke name=` at offset 202.
 const DSML_MARKER = '<｜DSML｜tool_calls>';
 const INVOKE_TOKEN = 'invoke name="lineage_present_result">';
 const STREAM_TEXT_CHAR_CEILING = 200_000;
@@ -99,7 +94,6 @@ describe('VscodeModelPort stream ceiling (B3/T15/A4)', () => {
     expect(result).toMatchObject({ finishReason: 'length', toolCalls: [] });
     expect(result.text.length).toBeGreaterThan(0);
     expect(result.text.length).toBeGreaterThanOrEqual(STREAM_TEXT_CHAR_CEILING);
-    // Bounded: the poison chunk's ~4M-char analog (3,638,544 in the recorded incident) never lands.
     expect(result.text).not.toContain('POISON-SHOULD-NOT-STREAM');
     expect(result.text.length).toBeLessThan(chunks.reduce((sum, c) => sum + c.length, 0));
 

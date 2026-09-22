@@ -1,11 +1,8 @@
 /**
- * The render bound is the single source of node identity at synthesis.
- *
- * Measured shape (T8S @ 37875e19): the envelope reduced the linkable set to `scope: {nodes: 7}` and
- * named none of it, while `node_states[]` and the CT terminal-source candidate line both advertised
- * ids the render had dropped or the depth border had cut — and the synthesis prompt makes linking a
- * named terminal source mandatory. Every surface that names a node must therefore name only nodes
- * `present_result` will accept.
+ * The render bound is the single source of node identity at synthesis. `node_states[]` and the
+ * CT terminal-source candidate line must never advertise an id the render dropped or the depth
+ * border cut, since the synthesis prompt makes linking a named terminal source mandatory: every
+ * surface that names a node must name only nodes `present_result` will accept.
  */
 import { buildSmCompletionEnvelope } from '../../../src/ai/prompting/smPrompts';
 import type { SmResult } from '../../../src/ai/sm/smTypes';
@@ -19,7 +16,7 @@ const DROPPED = '[ai].[spbuildsalesreport]';
 /** Cut by the depth border; reached only as a column-edge endpoint, so a terminal-source candidate. */
 const BORDER_CUT = '[ai].[vwraworders]';
 
-/** The T8S completion result: three rendered nodes, two named-but-unlinkable ones. */
+/** Three rendered nodes, two named-but-unlinkable ones. */
 function makeResult(): SmResult {
   return {
     status: 'complete',

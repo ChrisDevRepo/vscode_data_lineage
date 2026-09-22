@@ -1,14 +1,10 @@
 /**
- * P1-13: a `bidirectional` session's route border must stay inside the origin's directed closure
+ * A `bidirectional` session's route border must stay inside the origin's directed closure
  * (upstream ancestors ∪ downstream descendants) — the same definition {@link computeBfsScope}
- * seeds the approved scope with. Pre-fix, `isReachableInApprovedDirection` (smBase.ts:1090)
- * returned `true` unconditionally for `bidirectional`, so a downstream consumer's *other* inputs
- * (a co-parent, reached only by crossing sideways, never by a directed walk from the origin) were
- * offered as `requiredNeighborIds` and admitted through `route_requests` — measured on T8
- * (`[ai].[vwDiscountCalc]`/`Discount`): `vwPriceList`, `CustomerSegmentMap`, `RegionLookup` (inputs
- * of the downstream consumer `spBuildSalesReport`) walked in, and outside the approved 21-node
- * scope. This suite pins the fixed behavior at the same shape, scaled down: `co_parent` feeds
- * `consumer` (downstream of `origin`) but is neither upstream nor downstream of `origin` itself.
+ * seeds the approved scope with. A downstream consumer's *other* inputs (a co-parent, reached
+ * only by crossing sideways, never by a directed walk from the origin) must never be offered as
+ * `requiredNeighborIds` or admitted through `route_requests`: `co_parent` feeds `consumer`
+ * (downstream of `origin`) but is neither upstream nor downstream of `origin` itself.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
@@ -82,7 +78,7 @@ describe('bidirectional route border — a downstream consumer\'s off-closure co
     expect(required.includes('co_parent'), 'co_parent (neither upstream nor downstream of origin) is not required').toBe(false);
 
     // The model asks for co_parent anyway (it read the edge off consumer's own dependencies) —
-    // the same shape as the T8 auto-add: the router must refuse it, not silently admit it.
+    // the router must refuse it, not silently admit it.
     const outcome = engine.submitFindings({
       focus_node_id: 'consumer',
       sections: [{ angle: 'business' as const, text: 'consumer' }],

@@ -402,10 +402,8 @@ describe('output-template rendering rules — captured ⚠️ callouts are deliv
   });
 });
 
-// local-mlx T5/T6: the exact DDL expression was present at the hop and re-rendered into a
-// `$$ … $$` block with corrupted terms (DATEADD operands swapped). `business_capture` bound
-// fidelity only to "Quoted SQL witnesses" — the formula bullet ordered every derived expression
-// rendered as LaTeX with no term-for-term fidelity clause. This pins that the gap is closed.
+// A `$$ … $$` block must preserve the DDL expression term for term — a prior gap let a rendered
+// formula corrupt terms (e.g. swapped DATEADD operands) with no fidelity clause to catch it.
 describe('business_capture — a $$ … $$ block preserves the DDL expression term for term', () => {
   const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
   const businessCapture = asset.slice(asset.indexOf('\nbusiness_capture:'), asset.indexOf('\ntechnical_capture:'));

@@ -52,16 +52,13 @@ function railToggle(): HTMLElement {
 }
 
 describe('collapsed AI report rail', () => {
-  it('carries no dock modifier on the right dock, so the base right-edge rule is what applies', () => {
-    mount(<AiDescriptionOverlay {...PROPS} dockPosition="right" />);
+  it.each([
+    ['explicit right dock', 'right' as const],
+    ['no dock position named (defaults to right)', undefined],
+  ])('carries no dock modifier — %s, so the base right-edge rule applies', (_label, dockPosition) => {
+    mount(<AiDescriptionOverlay {...PROPS} dockPosition={dockPosition} />);
     expect(railwrap().className).toBe('ln-ai-description-railwrap');
     expect(railToggle().textContent, 'a right rail reopens leftwards').toBe('◀');
-  });
-
-  it('defaults to the right dock when the caller names none', () => {
-    mount(<AiDescriptionOverlay {...PROPS} />);
-    expect(railwrap().className).toBe('ln-ai-description-railwrap');
-    expect(railToggle().textContent).toBe('◀');
   });
 
   it('moves to the left edge, mirroring the glyph, when the report was docked left', () => {

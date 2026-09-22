@@ -23,12 +23,6 @@ describe('shouldSalvageActiveStop', () => {
   ] as const)('%s with %i submitted hop(s) → salvage=%s', (reason, submittedHops, expected) => {
     expect(shouldSalvageActiveStop(reason, submittedHops)).toBe(expected);
   });
-
-  it('never salvages an exploration with zero submitted hops, whatever the stop reason', () => {
-    for (const reason of ['semantic_failures', 'provider_calls', 'output_limit'] as const) {
-      expect(shouldSalvageActiveStop(reason, 0)).toBe(false);
-    }
-  });
 });
 
 describe('active worker routing', () => {

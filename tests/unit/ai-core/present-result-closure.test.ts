@@ -139,58 +139,23 @@ describe('Present Result Closure', () => {
     expect(!result.success && result.errors.some(e => e.includes('missing text')), 'rejects empty section text').toBe(true);
   });
 
-  it('accepts block math the KaTeX renderer cannot parse (turn-9 payload 1 — formatting never rejects)', () => {
-    const sections = [{
-      label: 'Deduplication',
-      node_ids: ['a'],
-      text: '$$\\text{DupRank} = \\text{ROW_NUMBER() OVER (PARTITION BY ColA)}$$',
-    }];
+  // Formatting never rejects: renderer-hostile text (unparseable block math, strict-KaTeX escaping,
+  // an unmatched inline-code delimiter) still passes validation.
+  it.each([
+    ['block math the KaTeX renderer cannot parse', 'Deduplication', '$$\\text{DupRank} = \\text{ROW_NUMBER() OVER (PARTITION BY ColA)}$$'],
+    ['strict KaTeX failures such as unescaped percent signs', 'Validation', "$$\\text{'%Unknown region%'}$$"],
+    ['an unmatched inline-code delimiter', 'Discount Inputs', 'Uses `dbo.DiscountRules without closing the inline code span.'],
+  ])('accepts %s (formatting never rejects)', (title, label, text) => {
+    const sections = [{ label, node_ids: ['a'], text }];
     const assembled = orderAndAssemble(sections);
     const result = validatePresentResult({
-      name: 'katex-underscore',
-      summary: 'katex underscore',
+      name: 'ok',
+      summary: 'ok',
       sections,
       highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
-      notes: [{ node_id: 'a', text: 'Deduplication input node.' }],
+      notes: [{ node_id: 'a', text: 'Input node explanation.' }],
     }, ['a'], assembled.badges, assembled.description);
-    expect(result.success,
-      'accepts block math the KaTeX renderer cannot parse (turn-9 payload 1 — formatting never rejects)').toBe(true);
-  });
-
-  it('accepts strict KaTeX failures such as unescaped percent signs (turn-9 payload 2)', () => {
-    const sections = [{
-      label: 'Validation',
-      node_ids: ['a'],
-      text: "$$\\text{'%Unknown region%'}$$",
-    }];
-    const assembled = orderAndAssemble(sections);
-    const result = validatePresentResult({
-      name: 'katex-percent',
-      summary: 'katex percent',
-      sections,
-      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
-      notes: [{ node_id: 'a', text: 'Validation input node.' }],
-    }, ['a'], assembled.badges, assembled.description);
-    expect(result.success,
-      'accepts strict KaTeX failures such as unescaped percent signs (turn-9 payload 2)').toBe(true);
-  });
-
-  it('accepts an unmatched inline-code delimiter (formatting never rejects)', () => {
-    const sections = [{
-      label: 'Discount Inputs',
-      node_ids: ['a'],
-      text: 'Uses `dbo.DiscountRules without closing the inline code span.',
-    }];
-    const assembled = orderAndAssemble(sections);
-    const result = validatePresentResult({
-      name: 'inline-code',
-      summary: 'inline code',
-      sections,
-      highlight_groups: [{ label: 'Flow', color: 'source', node_ids: ['a'] }],
-      notes: [{ node_id: 'a', text: 'Discount rules input node.' }],
-    }, ['a'], assembled.badges, assembled.description);
-    expect(result.success,
-      'accepts an unmatched inline-code delimiter (formatting never rejects)').toBe(true);
+    expect(result.success, `accepts ${title} (formatting never rejects)`).toBe(true);
   });
 
   // A node genuinely participating in two steps is a correct answer, not a repairable defect: one

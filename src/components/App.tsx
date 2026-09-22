@@ -625,7 +625,7 @@ export function App() {
         const { view } = node.data as ColumnTraceNodeData;
         // Column rows carry no fullName/external fields of their own; resolve them from the loaded
         // model so the menu matches what the object-view path shows for the same node.
-        const modelNode = model?.nodes.find(n => n.id === view.id);
+        const modelNode = modelRef.current?.nodes.find(n => n.id === view.id);
         setContextMenu({
           kind: 'object',
           x,

@@ -279,15 +279,17 @@ describe("Submit Findings Handler", () => {
   expect((result() as { error?: string }).error, 'BB preserves the established CT-field rejection envelope').toBe('bb_field_unknown');
 });
 
-  it("BB normalizes away a per-neighbour column decision instead of rejecting the hop", () => {
-  // `route_requests[].columns` parses on the shared base schema BB itself advertises, so a BB hop
-  // can fill a field its own mode cannot read. The engine serves that hop perfectly by ignoring the
-  // field, so the field is dropped and logged — a rejection would spend a generation on a field
-  // that carries no meaning in the mode, and a CT-only rule may never fail a BB run.
+  // BB's dispatched schema (`SubmitFindingsBbInputSchema` -> `BbRouteRequestSchema`,
+  // `toolSchemas.ts`) never advertises the CT-only `route_requests[].columns` decision, so a BB
+  // hop naming it anyway fails `.strict()` and rejects through the generic invalid-input path —
+  // the same treatment every other unrecognized BB field gets (see the `repair:true` case above).
+  // A prior revision of this handler silently deleted the field from a local copy instead; that
+  // was a call-site rewrite of an AI decision, forbidden by `.claude/rules/ai-surface.md`, and this
+  // is its regression pin: the field must never reach the engine AND the hop must never commit as
+  // if the field had been honoured.
+  it("BB rejects a per-neighbour column decision instead of silently stripping it", () => {
   const { engine, services, result } = setup();
-  const logs: string[] = [];
-  (services as unknown as { logger: { debug: (line: string) => void } }).logger.debug =
-    (line: string) => { logs.push(line); };
+  const before = engine.toJSON();
   const reachedEngine: Array<{ route_requests?: Array<Record<string, unknown>> }> = [];
   const engineSubmit = engine.submitFindings.bind(engine);
   (engine as unknown as { submitFindings: (finding: never) => unknown }).submitFindings = (finding: never) => {
@@ -305,26 +307,19 @@ describe("Submit Findings Handler", () => {
     ],
   };
   executeSubmitFindings(raw, services);
-  const accepted = result() as { error?: string };
-  expect(accepted.error, 'a field meaningless in the mode never costs a generation').toBeUndefined();
-  expect(engine.toJSON().memory.detailSlots.origin !== undefined, 'the accepted BB hop commits its authored detail').toBe(true);
-  expect(
-    reachedEngine[0]?.route_requests?.some(req => 'columns' in req),
-    'the mode-meaningless field never reaches the engine',
-  ).toBe(false);
-  expect(logs.some(line => /route_requests\[\]\.columns/.test(line)), 'the drop is logged, never silent').toBe(true);
+  const rejected = result() as { error?: string; hint?: string };
+  expect(rejected.error, 'a BB call naming the CT-only field rejects rather than being silently rewritten').toBe('invalid_input');
+  expect(rejected.hint ?? '', 'the rejection names the offending path').toMatch(/route_requests/);
+  expect(reachedEngine.length, 'a rejected hop never reaches the engine').toBe(0);
+  expect(engine.toJSON(), 'nothing commits from a rejected hop').toEqual(before);
   expect(raw.route_requests[0].columns, 'the raw model payload stays immutable').toBe('none');
 });
 
   it("CT strips an undeclared column_flow key instead of rejecting the hop", () => {
-  // `ColumnFlowEntrySchema` is `.strict()` (`toolSchemas.ts`); a provider surplus key is
-  // absence-equivalent to every reader (`columnTracer.ts`, `smBase.ts` only read the declared
-  // fields), so the handler drops it from a local copy and logs it — same pattern as the BB
-  // `route_requests[].columns` strip above — instead of spending a generation on a rejection.
+  // A provider surplus key is absence-equivalent to every reader (`columnTracer.ts`, `smBase.ts`
+  // only read the declared fields), so the schema drops it instead of spending a generation on a
+  // rejection; the model port logs the drop (`droppedKeyPaths`).
   const { engine, services, result } = setupCt();
-  const logs: string[] = [];
-  (services as unknown as { logger: { debug: (line: string) => void } }).logger.debug =
-    (line: string) => { logs.push(line); };
   const reachedEngine: Array<{ column_flow?: Array<Record<string, unknown>> }> = [];
   const engineSubmit = engine.submitFindings.bind(engine);
   (engine as unknown as { submitFindings: (finding: never) => unknown }).submitFindings = (finding: never) => {
@@ -348,7 +343,6 @@ describe("Submit Findings Handler", () => {
     reachedEngine[0]?.column_flow?.some(entry => 'bogus_field' in entry),
     'the undeclared key never reaches the engine',
   ).toBe(false);
-  expect(logs.some(line => /column_flow\[0\]/.test(line) && /bogus_field/.test(line)), 'the drop is logged, never silent').toBe(true);
   expect((raw.column_flow[0] as Record<string, unknown>).bogus_field, 'the raw model payload stays immutable').toBe('nope');
 });
 
@@ -363,11 +357,9 @@ describe("Submit Findings Handler", () => {
     prune_neighbors: ['base_table'],
   }, services);
   const outcome = result() as { error?: string };
-  // Overturned pin: `bb_field_forbidden_in_ct` was the old divergence — CT's strict form lacked the
-  // BB `prune_neighbors` key entirely. CT is BB plus column tracking, so the CT form carries the
-  // same field and the handler no longer rejects it. What the engine does with a given target
-  // (in-scope protection, required-neighbour routing) is the shared currentHopActionPolicy,
-  // pinned in the sm engine suites — the handler only proves the form accepts the key.
+  // CT is BB plus column tracking, so the CT form carries the same `prune_neighbors` field BB
+  // does; the handler only proves the form accepts the key, not what the engine does with a
+  // given target (pinned in the sm engine suites via currentHopActionPolicy).
   expect(outcome.error, 'CT no longer rejects prune_neighbors as a foreign field').not.toBe('bb_field_forbidden_in_ct');
 });
 

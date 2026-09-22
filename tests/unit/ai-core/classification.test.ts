@@ -34,21 +34,7 @@ describe('classification', () => {
     // resetExploration clears it
     sess.resetExploration();
     expect(sess.classification, 'cleared on resetExploration').toBe(undefined);
-    let missingThrew = false;
-    try {
-      sess.requireLockedClassification();
-    } catch {
-      missingThrew = true;
-    }
-    expect(missingThrew, 'missing locked classification fails closed').toBe(true);
-
-    // Zod rejects invalid
-    let threw = false;
-    try {
-      sess.setClassification('invalid' as any);
-    } catch {
-      threw = true;
-    }
-    expect(threw, 'invalid value throws').toBe(true);
+    expect(() => sess.requireLockedClassification(), 'missing locked classification fails closed').toThrow();
+    expect(() => sess.setClassification('invalid' as any), 'invalid value throws').toThrow();
   });
 });

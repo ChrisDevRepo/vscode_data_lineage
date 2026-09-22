@@ -159,6 +159,7 @@ export function invalidCall(
   reason: string,
   issuePaths?: readonly string[],
   input?: unknown,
+  hint?: string,
 ): InvalidGeneratedToolCall {
   return {
     valid: false,
@@ -168,6 +169,7 @@ export function invalidCall(
     reason,
     ...(issuePaths ? { issuePaths } : {}),
     ...(input !== undefined ? { input } : {}),
+    ...(hint !== undefined ? { hint } : {}),
   };
 }
 

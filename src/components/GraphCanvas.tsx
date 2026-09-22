@@ -55,7 +55,7 @@ import {
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
-import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes, resolveBaseSelectionState } from '../engine/nodeDecoration';
+import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes, resolveBaseSelectionState, isTraceOriginNode } from '../engine/nodeDecoration';
 import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
@@ -1409,13 +1409,10 @@ export function GraphCanvas({
       // Report-section focus is not in this channel: it emphasizes the section labels instead, so
       // it cannot overwrite what selection or the column thread is saying about the bodies.
       const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
-      const isTraceOrigin = view.id === trace.selectedNodeId && (
-        trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied'
-      );
+      const isTraceOrigin = isTraceOriginNode(view.id, { traceSelectedNodeId: trace.selectedNodeId, traceMode: trace.mode });
       const removable = isBookmarkMode && canRemoveNodeFromScopedView;
       byNode.set(view.id, {
         view,
-        rowsVisible: true,
         rowLineStates,
         highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : undefined,
         dimmed: dimmed && !isTraceOrigin,

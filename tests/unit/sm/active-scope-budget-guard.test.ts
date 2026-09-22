@@ -97,10 +97,8 @@ describe('NavigationEngine active-phase admission', () => {
     expect(typeof rejected.hint === 'string' && rejected.hint.includes('held'), 'hint tells the model its analysis is held').toBe(true);
     expect(rejected.detail?.node_cap === 4, 'detail carries the effective cap').toBe(true);
 
-    // exactly one route is staged, which is the shape that cost an earlier run its
-    // T8 answer. Every set-choosing repair is inapplicable here — the model judged its one route
-    // essential, kept it, and resubmitted byte-identical three times until the breaker. The hint
-    // must name the repair that exists at this shape, and only that one.
+    // With exactly one route staged, every set-choosing repair is inapplicable — the hint must
+    // name the repair that exists at this shape, and only that one.
     const singleHint = rejected.hint ?? '';
     expect(/route_requests:\[\]/.test(singleHint), 'with one staged route the hint names the repair that always exists — resend with route_requests:[]').toBe(true);
     expect(/no smaller set of routes exists/.test(singleHint), 'the hint says why choosing a subset is not open, so the model does not re-derive it by resubmitting').toBe(true);

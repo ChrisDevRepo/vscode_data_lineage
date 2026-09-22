@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compileSearchRegex,
   regexRejectHint,
+  scanBodyMatches,
   searchBodyScripts,
   searchCatalog,
   searchColumns,
@@ -187,6 +188,19 @@ describe('model search', () => {
     expect(hits.map(h => h.line), 'line 3 once, line 5 twice').toEqual([3, 5, 5]);
     expect(hits[0].text).toBe('SELECT o.OrderID, SUM(d.Quantity) AS TotalQuantity');
     expect(hits[2].text).toBe('JOIN Sales.OrderDetail d ON o.OrderID = d.OrderID');
+  });
+
+  it('scans once: full rows while the count is admitted, only counts once it is not', () => {
+    const compiled = compileSearchRegex('OrderID|Customer');
+    if (!compiled.ok) throw new Error('the pattern must compile');
+    const all = scanBodyMatches(nodes, compiled.regex, undefined, () => true);
+    expect(all.matches, 'an admitted count builds exactly what searchBodyScripts builds')
+      .toEqual(searchBodyScripts(nodes, compiled.regex));
+    expect([all.total, all.objects], '3 OrderID hits in the procedure, 3 Customer hits in the view').toEqual([6, 2]);
+
+    const capped = scanBodyMatches(nodes, compiled.regex, undefined, count => count <= 2);
+    expect([capped.total, capped.objects], 'counts cover every match past the ceiling').toEqual([6, 2]);
+    expect(capped.matches, 'no row is built past the ceiling').toHaveLength(2);
   });
 
   it('anchors ^ and $ per line like grep, and . never crosses a line break', () => {
@@ -403,6 +417,21 @@ describe('model search — enclosing predicate', () => {
     expect(hit).toEqual([[9, 'IF @ForceReimport = 0']]);
   });
 
+  it('does not open a frame for BEGIN TRAN, so the IF block closes on its own END', () => {
+    const hit = hits([
+      'BEGIN',                                     // 1
+      '    IF @Apply = 1',                         // 2
+      '    BEGIN',                                 // 3
+      '        BEGIN TRANSACTION',                 // 4
+      '        UPDATE Target SET x = 1',           // 5
+      '        COMMIT',                            // 6
+      '    END',                                   // 7
+      '    DELETE FROM Target',                    // 8 — after the IF block
+      'END',                                       // 9
+    ].join('\n'), 'Target');
+    expect(hit).toEqual([[5, 'IF @Apply = 1'], [8, undefined]]);
+  });
+
   it('reports the innermost predicate when IF blocks nest', () => {
     const hit = hits([
       'BEGIN',                                     // 1
@@ -489,6 +518,25 @@ describe('model search — enclosing predicate', () => {
       compiled.regex,
     );
     expect('enclosingPredicate' in live, 'the field is omitted, not undefined-but-present').toBe(false);
+  });
+});
+
+describe('compileSearchRegex — ReDoS guard', () => {
+  it('refuses exponential patterns without hanging on its own probe', () => {
+    // A single 200-character probe never returns for these; the guard must stop at a short input.
+    for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {
+      const start = performance.now();
+      const compiled = compileSearchRegex(pattern);
+      expect(compiled.ok, `${pattern} is refused`).toBe(false);
+      if (!compiled.ok) expect(compiled.reason).toBe('redos');
+      expect(performance.now() - start, `${pattern} is refused promptly`).toBeLessThan(2_000);
+    }
+  });
+
+  it('accepts ordinary search patterns', () => {
+    for (const pattern of ['total.*quantity', 'ON t\\.OrderDate', '\\bINSERT\\s+INTO\\b', '\\d{4}-\\d{2}']) {
+      expect(compileSearchRegex(pattern).ok, pattern).toBe(true);
+    }
   });
 });
 

@@ -15,24 +15,14 @@ import { driveEngine, makeModel, makeNode } from '../sm/helpers/fixtures';
  */
 describe('edge verb direction', () => {
   describe('edgeApiType — pure function contract', () => {
-    it('a body edge sourced from a procedure presents as write', () => {
-      expect(edgeApiType('body', 'procedure')).toBe('write');
-    });
-
-    it('a body edge sourced from a table presents as read', () => {
-      expect(edgeApiType('body', 'table')).toBe('read');
-    });
-
-    it('a body edge sourced from a view presents as read', () => {
-      expect(edgeApiType('body', 'view')).toBe('read');
-    });
-
-    it('an exec edge presents as exec regardless of source node type', () => {
-      expect(edgeApiType('exec', 'procedure')).toBe('exec');
-    });
-
-    it('an unrecognized edge type still falls back to read', () => {
-      expect(edgeApiType('SELECT', 'view')).toBe('read');
+    it.each([
+      ['body', 'procedure', 'write'],
+      ['body', 'table', 'read'],
+      ['body', 'view', 'read'],
+      ['exec', 'procedure', 'exec'],
+      ['SELECT', 'view', 'read'],
+    ] as const)('edgeApiType(%s, %s) presents as %s', (edgeType, sourceType, expected) => {
+      expect(edgeApiType(edgeType, sourceType)).toBe(expected);
     });
   });
 
@@ -60,20 +50,13 @@ describe('edge verb direction', () => {
   describe('buildEdgeTypeMap — tool-facing edge presentation', () => {
     const edgeTypeMap = buildEdgeTypeMap(model);
 
-    it('the procedure-sourced mutation presents as write', () => {
-      expect(edgeTypeMap.get('origin→error_log')).toBe('write');
-    });
-
-    it('the table-sourced dependency presents as read', () => {
-      expect(edgeTypeMap.get('error_log→archive_view')).toBe('read');
-    });
-
-    it('the view-sourced dependency presents as read', () => {
-      expect(edgeTypeMap.get('archive_view→report_view')).toBe('read');
-    });
-
-    it('the exec call presents as exec', () => {
-      expect(edgeTypeMap.get('origin→called_proc')).toBe('exec');
+    it.each([
+      ['origin→error_log', 'write', 'the procedure-sourced mutation'],
+      ['error_log→archive_view', 'read', 'the table-sourced dependency'],
+      ['archive_view→report_view', 'read', 'the view-sourced dependency'],
+      ['origin→called_proc', 'exec', 'the exec call'],
+    ])('%s presents as %s (%s)', (pair, expected) => {
+      expect(edgeTypeMap.get(pair)).toBe(expected);
     });
   });
 

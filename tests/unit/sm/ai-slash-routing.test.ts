@@ -69,28 +69,12 @@ describe('ai-slash-routing', () => {
     }
   });
 
-  it('only the mechanical trigger selects the first stage', () => {
-    // Every free-text verdict — discovery, visual_render, column_trace — runs the discovery loop;
-    // the bounded preview and SM entry stay reachable only through an explicit trigger.
-    expect(selectInitialAgentStage('free_text'), 'free text enters discovery, never gated SM').toBe('discover');
-    expect(selectInitialAgentStage('preview_button'), 'explicit preview action retains the bounded preview').toBe('visual_preview');
-    expect(selectInitialAgentStage('slash_trace'), '/trace mechanically enters SM').toBe('sm_entry');
-    expect(selectInitialAgentStage('run_trace'), 'the SM-offer pill mechanically enters SM').toBe('sm_entry');
-  });
-
   /**
-   * Specification-anchored contract test. `entryRouting.ts:23` routed `visual_render` to
-   * `sm_entry` for the whole 1.1.0 lifetime (`08204f6c`..`37b2ef26`) while
-   * `docs/ARCHITECTURE.md:154-155` already stated the opposite ("An explicit graph/render request
-   * can commit a bounded transient preview; this path does not grant SM authority"). The two tests
-   * that pinned the bug (`ai-slash-routing.test.ts`, `prompt-composition.test.ts`, both added in
-   * `08204f6c`) were written by reading `entryRouting.ts`, not `docs/ARCHITECTURE.md` — a test
-   * authored from the implementation can only ever confirm the implementation. This table is
-   * authored from the spec instead: every cell cites the `docs/ARCHITECTURE.md` line it
-   * implements, and the table is
-   * typed against the FULL `AgentEntryRoute` x `AgentExecutionTrigger` union
-   * (`src/ai/agent/state.ts:48,51`) so an added route or trigger fails to compile here rather than
-   * silently defaulting through the router's fallthrough `return 'discover'`.
+   * Specification-anchored contract test: every cell cites the `docs/ARCHITECTURE.md` line it
+   * implements, and the table is typed against the FULL `AgentEntryRoute` x
+   * `AgentExecutionTrigger` union (`src/ai/agent/state.ts:48,51`) so an added route or trigger
+   * fails to compile here rather than silently defaulting through the router's fallthrough
+   * `return 'discover'`.
    */
   it('routes every AgentEntryRoute x AgentExecutionTrigger pair per docs/ARCHITECTURE.md §Discovery and visual preview', () => {
     const ROUTING_TABLE: Record<AgentEntryRoute, Record<AgentExecutionTrigger, InitialAgentStage>> = {
@@ -104,11 +88,8 @@ describe('ai-slash-routing', () => {
         run_trace: 'sm_entry',
         preview_button: 'visual_preview',
       },
-      // Net routing contract after the repair:
-      // `visual_render -> discover (main loop), then the bounded preview renders the discovery
-      // answer` on a LATER turn via the explicit preview_button trigger only. docs/ARCHITECTURE.md
-      // :154-155 states the same boundary: the render request "does not grant SM authority".
-      // This is the exact cell that was wrong for the whole 1.1.0 lifetime (defect: 'sm_entry').
+      // docs/ARCHITECTURE.md:154-155 — a render request "does not grant SM authority": it enters
+      // discover, and only an explicit preview_button trigger on a later turn opens the preview.
       visual_render: {
         free_text: 'discover',
         slash_trace: 'sm_entry',

@@ -91,44 +91,16 @@ describe('provider transport-error classification', () => {
     expect(isTransportProviderError(diagnostic)).toBe(true);
   });
 
-  it('recovers the message token when the error carries an empty-string code', () => {
-    const diagnostic = sanitizeProviderErrorDiagnostic(
-      Object.assign(new Error('net::ERR_CONNECTION_RESET'), { code: '' }),
-      'active',
-    );
-
-    expect(diagnostic.code).toBe('net::ERR_CONNECTION_RESET');
-    expect(isTransportProviderError(diagnostic)).toBe(true);
-  });
-
-  it('prefers the message token over a numeric Chromium errno', () => {
-    const diagnostic = sanitizeProviderErrorDiagnostic(
-      Object.assign(new Error('net::ERR_CONNECTION_RESET'), { code: -101 }),
-      'active',
-    );
-
-    expect(diagnostic.code).toBe('net::ERR_CONNECTION_RESET');
-    expect(isTransportProviderError(diagnostic)).toBe(true);
-  });
-
-  it('keeps a numeric code when the message names no transport token', () => {
-    const diagnostic = sanitizeProviderErrorDiagnostic(
-      Object.assign(new Error('request failed'), { code: -2 }),
-      'active',
-    );
-
-    expect(diagnostic.code).toBe('-2');
-    expect(isTransportProviderError(diagnostic)).toBe(false);
-  });
-
-  it('skips an unlisted wrapper token and recovers the listed one after it', () => {
-    const diagnostic = sanitizeProviderErrorDiagnostic(
-      new Error('net::ERR_FAILED caused by net::ERR_CONNECTION_RESET'),
-      'active',
-    );
-
-    expect(diagnostic.code).toBe('net::ERR_CONNECTION_RESET');
-    expect(isTransportProviderError(diagnostic)).toBe(true);
+  it.each([
+    ['an empty-string code', 'net::ERR_CONNECTION_RESET', '' as unknown, 'net::ERR_CONNECTION_RESET', true],
+    ['a numeric Chromium errno', 'net::ERR_CONNECTION_RESET', -101, 'net::ERR_CONNECTION_RESET', true],
+    ['no transport token in the message', 'request failed', -2, '-2', false],
+    ['no code property, an unlisted wrapper token first', 'net::ERR_FAILED caused by net::ERR_CONNECTION_RESET', undefined, 'net::ERR_CONNECTION_RESET', true],
+  ])('recovers the right code with %s', (_title, message, code, expectedCode, transport) => {
+    const err = code === undefined ? new Error(message) : Object.assign(new Error(message), { code });
+    const diagnostic = sanitizeProviderErrorDiagnostic(err, 'active');
+    expect(diagnostic.code).toBe(expectedCode);
+    expect(isTransportProviderError(diagnostic)).toBe(transport);
   });
 });
 

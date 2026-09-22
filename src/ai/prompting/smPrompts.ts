@@ -8,6 +8,7 @@
  */
 
 import { ANALYTICAL_LOGIC_VOCABULARY, buildColumnAspectPrompt } from '../prompting/prompts';
+import { escapePromptText } from '../support/text';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 
 
@@ -46,7 +47,6 @@ const NEIGHBOR_DECISION_CORE = [
   '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
   '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.',
   REQUIRED_NEIGHBOR_RESOLUTION,
-  '- Retain-by-omission applies only to neighbors that are not in `<required_neighbors>`; a required ID always gets an explicit decision.',
   '- For each other current-hop neighbor:',
   '  - Route it when mission-relevant, using a concrete verification question.',
   '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays.',
@@ -247,7 +247,7 @@ export function buildSmProtocol({
 function buildSynthesisReminder(question: string): string {
   return [
     '## The document beside the graph — the shape of `lineage_present_result`',
-    `- User question: "${question}"`,
+    `- User question: "${escapePromptText(question)}"`,
     '- `intro`: one paragraph anchored to the question and the locked Mission type, no headings.',
     '- `sections[]`: the body, in graph order — terminal sources, then each transform, then the origin and what reads it. `section.label` is the heading, `section.node_ids[]` links the nodes that section documents, and `section.text` carries, for each linked node, the rules it applies, the predicates that shape its rows, its `$$` formulas and its ⚠️ callouts, with the short SQL that grounds them — drawn from `detail_slots[]`, `node_states[]` and the engine facts below.',
     '- `notes[]`: the caption line under a node — one sentence on what it does in this flow.',

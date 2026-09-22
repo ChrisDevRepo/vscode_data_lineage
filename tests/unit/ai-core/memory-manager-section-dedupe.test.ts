@@ -1,14 +1,7 @@
 /**
- * `AiMemoryManager.storeDetail` must not archive the same evidence twice.
- *
- * @remarks
- * A revisit (a reopened column chain or a supplement re-enqueues an already-analyzed node) commits
- * a second accepted finding for that node, and a re-analysis that reaches the same conclusion
- * re-emits the same section text. Appending it unconditionally duplicated the paragraph in the
- * archive synthesis reads, so the answer restated one fact twice and credited it to one node
- * visited once. Sections dedupe on the identity `appendUniqueSectionText` already uses for
- * `column_flow` notes — trimmed body text, matched by containment, angle ignored — so the two
- * write paths into one slot cannot disagree about what counts as the same clause.
+ * `AiMemoryManager.storeDetail` must not archive the same evidence twice: sections dedupe on the
+ * same identity `appendUniqueSectionText` uses for `column_flow` notes (trimmed text, containment
+ * match, angle ignored).
  */
 import { describe, expect, it } from 'vitest';
 import { AiMemoryManager, appendUniqueSectionText } from '../../../src/ai/session/memoryManager';

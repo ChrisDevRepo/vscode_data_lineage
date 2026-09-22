@@ -233,10 +233,8 @@ describe("Supplement Agenda", () => {
   expect(res.skippedDetails[0]?.reason === 'excluded', 'exclusion takes priority over the allowlist axis').toBe(true);
 });
 
-  // Regression: nothing on the production supplement path ever widened the allowlist, so a
-  // schema-boundary lead was a dead end — the follow-up target came straight back as
-  // out_of_allowlist. `admitSupplementTargets` is the consent step the host now runs first,
-  // mirroring the approve gate's extend-then-supplement ordering.
+  // `admitSupplementTargets` is the consent step the host runs before supplementing, mirroring
+  // the approve gate's extend-then-supplement ordering, so a schema-boundary lead is not a dead end.
   it("admitSupplementTargets admits an out-of-allowlist follow-up target.", () => {
   // A supplement flips the engine out of 'complete', so the with/without comparison needs two.
   const before = makeCompletedExtEngine().engine.supplementAgenda(['ext1']) as any;
@@ -297,9 +295,8 @@ describe("Supplement Agenda", () => {
   expect(res.skippedDetails[0]?.reason === 'excluded', 'the exclusion axis still refuses it').toBe(true);
 });
 
-  // Regression: admitSupplementTargets read every resolvable id's schema, so naming an excluded
-  // node widened sessionAllowedSchemas on its behalf and let a sibling in that schema through a
-  // border the user never opened. Consent is read only from ids the exclusion set still allows.
+  // Consent is read only from ids the exclusion set still allows, never from an excluded id's
+  // own schema, or naming an excluded sibling would open a border the user never approved.
   it("admitSupplementTargets does not widen the allowlist on behalf of an excluded id.", () => {
   const siblingNodes: LineageNode[] = [
     makeNode({ id: 'o',    schema: 'dbo', name: 'o',    type: 'view' }),

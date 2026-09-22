@@ -1,10 +1,7 @@
 /**
- * Every mandatory-carry class at synthesis is enumerated; formulas were the exception.
- *
- * Measured shape (T7 @ 739076f1): the hops captured 11 `$$` blocks — `OrderQty = COALESCE(r.RawQty,
- * 0)` among them — the compose request carried all 11 inside slot prose, and the delivered answer
- * rendered 2. Node ids, which the same payload enumerates as a checklist, were all accounted for.
- * The envelope therefore states the captured blocks in the same shape, keyed by node.
+ * Every mandatory-carry class at synthesis is enumerated; formulas must be too, not left buried
+ * in slot prose where synthesis can drop them while still enumerating node ids as a checklist.
+ * The envelope states the captured blocks in the same shape, keyed by node.
  */
 import { buildSmCompletionEnvelope } from '../../../src/ai/prompting/smPrompts';
 import type { SmResult } from '../../../src/ai/sm/smTypes';
@@ -59,7 +56,7 @@ describe('Completion envelope — captured formulas are enumerated, not left in 
     expect(reminder.includes(`- ${BUILDER} — $$ TotalRevenue = sb.Qty \\times sb.UnitPrice $$`),
       'the builder formula is listed under its own node').toBe(true);
     expect(reminder.includes(`- ${CLEANER} — $$ OrderQty = COALESCE(r.RawQty, 0) $$`),
-      'the Qty formula T7 dropped is listed under its own node').toBe(true);
+      'the Qty formula is listed under its own node').toBe(true);
     expect(reminder.includes(`- ${CLEANER} — $$ OrderQty = COALESCE(SUM(r.RawQty), 0) $$`),
       'the SUM variant is a separate block, not a duplicate').toBe(true);
   });

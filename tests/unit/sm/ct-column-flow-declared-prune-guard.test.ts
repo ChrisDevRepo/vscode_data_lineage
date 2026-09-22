@@ -18,10 +18,7 @@
  * and the completeness guard treats the column as accounted for. A node named only via
  * `writes_to` is therefore declared and evidenced in the trace but carries no route outcome at
  * all — accepted, deferred, or excluded — so it never reaches `ctDeclaredRouteIds` and a later
- * `prune_neighbors` on it is accepted. Real-world shape: `m8-head-bb-azure-foundry/run-T8`
- * (package B, `tmp/m8-head-t6-t8-trace.md`, `issues/p1-13.md`) — hop5 (focus
- * `[ai].[spcleanorders]`) pruned `[ai].[cleanedorders]` after an earlier hop's accepted
- * `column_flow` had already declared it as part of the traced-column continuation.
+ * `prune_neighbors` on it is wrongly accepted.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';

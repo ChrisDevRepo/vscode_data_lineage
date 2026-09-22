@@ -25,8 +25,9 @@ import type { ConverseInstructionPlan } from '../../../src/ai/agent/instructionP
 import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFormed';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
-import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
+import { createTurnTokenBudget, type TurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import type { IToolRegistry } from '../../../src/ai/tools/registry';
+import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import {
   ScriptedModelPort,
   collectingSink,
@@ -385,8 +386,9 @@ describe('executeToolGenerationAttempt — semantic-failure budget', () => {
 
     expect(state.rejections).toHaveLength(1);
     const drops = logged.filter((message) => message.includes('stored corrections dropped by budget'));
-    // The first record shrinks the single correction in place (nothing is lost, nothing logged);
-    // the second cannot hold both, so one is dropped and said so.
+    // The first record shrinks the single correction in place — a distinct "collapsed" log fires
+    // for that (see the in-place-collapse test below), not this count-delta one; the second record
+    // cannot hold both incoming rejections, so one is dropped outright and this log fires for it.
     expect(drops).toHaveLength(1);
     expect(drops[0]).toContain('dropped=1');
     expect(drops[0]).toContain('carried=2');
@@ -818,13 +820,22 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     };
   }
 
-  /** Runs one rejected submit_findings attempt, then a follow-up attempt that replays it. */
+  /**
+   * Runs one rejected submit_findings attempt, then a follow-up attempt that replays it.
+   *
+   * @param options.budget - Overrides the shipped-default turn budget for both scripted ports and
+   *   the intervening `recordToolAttempt`, so a case can force the stored-rejection budget collapse.
+   * @param options.debugLog - Diagnostic sink threaded to `recordToolAttempt`, so a case can assert
+   *   on the collapse log line.
+   */
   async function replayAfterRejection(options: {
     input: unknown;
     envelope: string;
     toolName?: string;
     presentResultRepairDraftHeld?: boolean;
     presentResultRepairDraftContext?: () => { sections?: unknown; notes?: unknown; highlight_groups?: unknown } | null;
+    budget?: TurnTokenBudget;
+    debugLog?: (message: string) => void;
   }): Promise<{ replayed: readonly BaseMessage[]; state: ToolPhaseAttemptState; first: ToolAttemptResult }> {
     const toolName = options.toolName ?? 'lineage_submit_findings';
     const { registry } = scriptedRegistry([{ name: toolName, result: options.envelope }]);
@@ -832,11 +843,11 @@ describe('executeToolAttempt — bounded rejection replay', () => {
 
     const firstPort = new ScriptedModelPort([{
       toolCalls: [validCall('call-1', toolName, options.input)],
-    }]);
+    }], [], options.budget);
     const first = await executeToolAttempt(firstPort, plan);
-    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first, options.budget, options.debugLog);
 
-    const secondPort = new ScriptedModelPort([{ text: 'Acknowledged.' }]);
+    const secondPort = new ScriptedModelPort([{ text: 'Acknowledged.' }], [], options.budget);
     await executeToolAttempt(secondPort, plan, {
       priorState: state,
       ...(options.presentResultRepairDraftHeld !== undefined
@@ -872,6 +883,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     input: unknown;
     reason: string;
     issuePaths: readonly string[];
+    hint?: string;
     presentResultRepairDraftContext?: () => { sections?: unknown; notes?: unknown; highlight_groups?: unknown } | null;
   }): Promise<{ replayed: readonly BaseMessage[]; first: ToolAttemptResult }> {
     const { registry } = scriptedRegistry([{ name: options.toolName, result: '{"ok":true}' }]);
@@ -881,7 +893,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
       : {};
 
     const firstPort = new ScriptedModelPort([{
-      toolCalls: [invalidCall('call-1', options.toolName, 'invalid_tool_input', options.reason, options.issuePaths, options.input)],
+      toolCalls: [invalidCall('call-1', options.toolName, 'invalid_tool_input', options.reason, options.issuePaths, options.input, options.hint)],
     }]);
     const first = await executeToolAttempt(firstPort, plan, draftHeld);
     const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
@@ -910,7 +922,13 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(() => assertToolPairingWellFormed(replayed)).not.toThrow();
   });
 
-  it('replays only the flagged correction fragment, never the original payload', async () => {
+  it('replays the whole column_flow list on a flagged entry, never a sparse array with null holes', async () => {
+    // column_flow is a submit_findings root: the model rewrites the whole list on a resend, so a
+    // replay that showed only the flagged index left the unflagged entries as positional `null`
+    // holes — a live capture (m13 T29) then saw the model drop column_flow entirely on its next
+    // resend rather than reconstruct the nulled entries. WHOLE_LIST_CORRECTION_ROOTS now covers
+    // column_flow (with route_requests, prune_neighbors) exactly as it already covered
+    // sections/notes/highlight_groups, so every entry rides the replay, never a hole.
     const { replayed, first } = await replayAfterRejection({
       input: {
         column_flow: [
@@ -934,20 +952,66 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     const args = replayedToolArgs(replayed);
     expect(Object.keys(args)).toEqual(['column_flow']);
     const flow = args.column_flow as unknown[];
-    expect(flow).toHaveLength(2);
-    expect(flow[0]).toBeUndefined();
+    expect(flow).toHaveLength(3);
+    expect(flow.some((entry) => entry === null || entry === undefined)).toBe(false);
+    expect(flow[0]).toEqual({ from_col: 'A', to_col: 'B', marker: 'ENTRY-0-RAW' });
     expect(flow[1]).toEqual({ from_col: 'C', to_col: 'D', marker: 'ENTRY-1-RAW' });
+    expect(flow[2]).toEqual({ from_col: 'E', to_col: 'F', marker: 'ENTRY-2-RAW' });
 
     const wire = JSON.stringify(replayed);
+    // Every entry rides the replay now, including the ones that were never flagged...
+    expect(wire).toContain('ENTRY-0-RAW');
     expect(wire).toContain('ENTRY-1-RAW');
-    expect(wire).not.toContain('ENTRY-0-RAW');
-    expect(wire).not.toContain('ENTRY-2-RAW');
+    expect(wire).toContain('ENTRY-2-RAW');
+    // ...but the raw prose/narrative field never does — that assertion still holds under the fix.
     expect(wire).not.toContain(RAW_PROSE_MARKER);
 
     const envelope = replayedToolResult(replayed);
     expect(envelope.code).toBe('validation');
     expect(envelope.hint).toBe('Resend column_flow entry 1 with a hop node from the archive.');
     expect(envelope.issuePaths).toEqual(['column_flow.1']);
+  });
+
+  it('replays a trailing unflagged column_flow entry too, not just up through the flagged index', async () => {
+    // The other corruption shape on record (m11 T8): a 2-entry column_flow flagged only at index 0
+    // replayed with length 1 — the unflagged trailing entry at index 1 was dropped outright, not
+    // even shown as null, because the old sparse array's length was `max(flagged index) + 1`.
+    const { replayed, first } = await replayAfterRejection({
+      input: {
+        column_flow: [
+          { from_col: 'A', to_col: 'B', marker: 'ENTRY-0-RAW' },
+          { from_col: 'C', to_col: 'D', marker: 'ENTRY-1-TRAILING' },
+        ],
+      },
+      envelope: rejectionEnvelope({
+        reason: 'column_flow entry 0 has no matching hop node.',
+        hint: 'Resend column_flow entry 0 with a hop node from the archive.',
+        detail: [{ path: 'column_flow.0', expected: 'known hop node' }],
+      }),
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['column_flow.0']);
+    const flow = replayedToolArgs(replayed).column_flow as unknown[];
+    expect(flow).toHaveLength(2);
+    expect(flow[0]).toEqual({ from_col: 'A', to_col: 'B', marker: 'ENTRY-0-RAW' });
+    expect(flow[1]).toEqual({ from_col: 'C', to_col: 'D', marker: 'ENTRY-1-TRAILING' });
+  });
+
+  it('replays the whole prune_neighbors list on a flagged entry, never a sparse array with null holes', async () => {
+    const { replayed, first } = await replayAfterRejection({
+      input: {
+        prune_neighbors: ['[dbo].[A]', '[dbo].[B]', '[dbo].[C]'],
+      },
+      envelope: rejectionEnvelope({
+        reason: 'prune_neighbors entry 1 would orphan committed work.',
+        hint: 'Remove [dbo].[B] from prune_neighbors.',
+        detail: [{ path: 'prune_neighbors.1', expected: 'not orphaning' }],
+      }),
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['prune_neighbors.1']);
+    const pruneNeighbors = replayedToolArgs(replayed).prune_neighbors as unknown[];
+    expect(pruneNeighbors).toEqual(['[dbo].[A]', '[dbo].[B]', '[dbo].[C]']);
   });
 
   it('caps the replayed correction envelope at the declared reason, hint, and detail bounds', async () => {
@@ -976,7 +1040,15 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(JSON.stringify(envelope)).not.toContain('PPPPPPPPPP');
   });
 
-  it('retains at most four correction fragments and stubs any fragment over its byte bound', async () => {
+  it('replays every column_flow entry inside the whole-list byte budget, stubbing only what does not fit', async () => {
+    // column_flow is a WHOLE_LIST_CORRECTION_ROOT, so entry count is never capped at
+    // MAX_CORRECTION_FRAGMENTS — that cap only bounds the single-fragment path, which the
+    // `correctionFragments` regex can no longer route column_flow/route_requests/prune_neighbors
+    // through now that all three are whole-list roots. Completeness is held by
+    // WHOLE_LIST_CORRECTION_BYTES instead: every element gets an equal byte share, and only an
+    // element over its share collapses to a stub — the array itself keeps every position, so a
+    // large column_flow still shows the model its full index range and entry count, with stubbed
+    // content only where an entry did not fit.
     const oversizedEntry = { from_col: 'A', to_col: 'B', marker: `OVERSIZED-${'z'.repeat(3_000)}` };
     const { replayed, first } = await replayAfterRejection({
       input: {
@@ -985,8 +1057,8 @@ describe('executeToolAttempt — bounded rejection replay', () => {
           { from_col: 'C', to_col: 'D', marker: 'KEEP-1' },
           { from_col: 'E', to_col: 'F', marker: 'KEEP-2' },
           { from_col: 'G', to_col: 'H', marker: 'KEEP-3' },
-          { from_col: 'I', to_col: 'J', marker: 'DROP-4' },
-          { from_col: 'K', to_col: 'L', marker: 'DROP-5' },
+          { from_col: 'I', to_col: 'J', marker: 'KEEP-4' },
+          { from_col: 'K', to_col: 'L', marker: 'KEEP-5' },
         ],
       },
       envelope: rejectionEnvelope({
@@ -998,18 +1070,22 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(first.rejections[0].issuePaths).toHaveLength(6);
     const args = replayedToolArgs(replayed);
     const flow = args.column_flow as unknown[];
-    const present = flow.filter((entry) => entry !== undefined);
-    expect(present).toHaveLength(MAX_CORRECTION_FRAGMENTS);
+    // Every position survives — six entries in, six entries out, none dropped for a count cap.
+    expect(flow).toHaveLength(6);
+    expect(flow.some((entry) => entry === null || entry === undefined)).toBe(false);
 
-    // Fragment 0 exceeded the 2KB per-fragment bound and became an atomic size-only stub.
+    // Entry 0 exceeded its equal share of the whole-list byte budget and became an atomic
+    // size-only stub — never a hole, never a drop.
     expect(flow[0]).toEqual({ omitted: true, bytes: expect.any(Number) });
     expect((flow[0] as { bytes: number }).bytes).toBeGreaterThan(MAX_BOUNDED_STRUCTURED_BYTES);
     expect(flow[1]).toEqual({ from_col: 'C', to_col: 'D', marker: 'KEEP-1' });
+    expect(flow[5]).toEqual({ from_col: 'K', to_col: 'L', marker: 'KEEP-5' });
 
     const wire = JSON.stringify(replayed);
     expect(wire).not.toContain('OVERSIZED-');
-    expect(wire).not.toContain('DROP-4');
-    expect(wire).not.toContain('DROP-5');
+    // The small entries that a count cap used to drop now ride the replay too.
+    expect(wire).toContain('KEEP-4');
+    expect(wire).toContain('KEEP-5');
   });
 
   it('replays every present_result section when only one is flagged, so an unflagged section is never rewritten', async () => {
@@ -1070,7 +1146,7 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(replayedToolArgs(replayed)).toEqual(input);
   });
 
-  it('replays a present_result rejection by name and call id only while the held draft carries the payload', async () => {
+  it('replays a present_result rejection by name and call id, collapsing the draft-duplicate field instead of blanking the call', async () => {
     const sections = [
       { label: 'Formula', text: 'HELD-SECTION-0', node_ids: ['[dbo].[Orders]'] },
       { label: 'Risk', text: 'HELD-SECTION-1', node_ids: ['[dbo].[Ghost]'] },
@@ -1086,8 +1162,10 @@ describe('executeToolAttempt — bounded rejection replay', () => {
       presentResultRepairDraftContext: () => ({ sections, notes: [], highlight_groups: [] }),
     });
 
-    // The draft block is the one carrier of the section text; the replayed call adds no second copy.
-    expect(replayedToolArgs(replayed)).toEqual({});
+    // The draft block is the one carrier of the section text; the replayed call is never blanked to
+    // {} (that reads as "your previous call carried nothing") — instead the field the draft already
+    // shows in full collapses to a count-only marker, so the call still names what it touched.
+    expect(replayedToolArgs(replayed)).toEqual({ sections: { collapsed: true, count: 2 } });
     const wire = JSON.stringify(replayed);
     expect(wire.split('HELD-SECTION-0').length - 1).toBe(1);
     expect(wire.split('HELD-SECTION-1').length - 1).toBe(1);
@@ -1172,6 +1250,28 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(JSON.stringify(replayed)).not.toContain(RAW_PROSE_MARKER);
   });
 
+  it('carries a producer-derived invalid_tool_input hint through to the rejection instead of the standing sentence', async () => {
+    // vscodeModelPort.ts now derives an unrecognized-key-specific hint from the ZodError via
+    // rejectionFromZodError (toolErrorEnvelope.ts) and stamps it on the GeneratedToolCall; this
+    // pins that toolAttempt.ts's rejectionFromInvalid() prefers `call.hint` over the fixed
+    // INVALID_TOOL_INPUT_REPAIR_HINT sentence. Before the fix, `rejectionFromInvalid` always
+    // applied the fixed sentence regardless of any hint the producer attached, so this assertion
+    // would see the standing "keep every other field unchanged" text instead.
+    const producerHint = 'Resend the tool call with the unrecognized field "notes" removed entirely'
+      + ' — it is not part of this tool\'s input schema at all, so do not resend it under any name'
+      + ' or nesting; keep every other field unchanged.';
+    const { first } = await replayAfterInvalidCall({
+      toolName: 'lineage_present_result',
+      input: { sections: [{ label: 'Overview', text: 'x', notes: ['n'] }] },
+      reason: 'sections.0: Unrecognized key: "notes"',
+      issuePaths: ['sections.0.notes'],
+      hint: producerHint,
+    });
+
+    expect(first.rejections[0].hint).toBe(producerHint);
+    expect(first.rejections[0].hint).not.toContain('keep every other field unchanged, and resend every element of a corrected list');
+  });
+
   it('replays the whole schema-invalid call when the flagged field is not a list, instead of empty arguments', async () => {
     // An out-of-enum `layout_direction` flags a scalar root no list projection covers; the standing
     // hint orders "keep every other field unchanged", so a replay of `{}` sent the model into a full
@@ -1215,6 +1315,37 @@ describe('executeToolAttempt — bounded rejection replay', () => {
 
     expect(first.rejections[0].issuePaths).toEqual(['column_flow']);
     expect(replayedToolArgs(replayed)).toEqual(input);
+  });
+
+  it('replays a dispatched rejection whose recorded input is an array or a raw string as a bounded raw_input fragment, never {} or []', async () => {
+    // rejectionFromResult()'s replayFragments() falls through correctionFragments() (object-only)
+    // to wholeCallFragments() for a dispatched call whose own recorded input was never a plain
+    // object. Before the fix wholeCallFragments() returned [] for exactly this shape, so
+    // boundedCorrectionArgs([]) rendered the replayed call as {} — the third/fourth {} source named
+    // in the semantic-breaker log (toolAttempt.ts non-object raw-input projection).
+    const arrayInput = ['unexpected', 'array', 'payload'];
+    const { replayed: arrayReplayed, first: arrayFirst } = await replayAfterRejection({
+      input: arrayInput,
+      envelope: rejectionEnvelope({ reason: 'submit_findings expected an object payload, not an array.' }),
+    });
+
+    expect(arrayFirst.rejections[0].correctionFragments).toEqual([{ path: 'raw_input', value: arrayInput }]);
+    const arrayArgs = replayedToolArgs(arrayReplayed);
+    expect(arrayArgs).toEqual({ raw_input: arrayInput });
+    expect(JSON.stringify(arrayArgs)).not.toBe('{}');
+    expect(JSON.stringify(arrayArgs)).not.toBe('[]');
+
+    const stringInput = '{"column_flow":[]';
+    const { replayed: stringReplayed, first: stringFirst } = await replayAfterRejection({
+      input: stringInput,
+      envelope: rejectionEnvelope({ reason: 'submit_findings expected an object payload, not a raw string.' }),
+    });
+
+    expect(stringFirst.rejections[0].correctionFragments).toEqual([{ path: 'raw_input', value: stringInput }]);
+    const stringArgs = replayedToolArgs(stringReplayed);
+    expect(stringArgs).toEqual({ raw_input: stringInput });
+    expect(JSON.stringify(stringArgs)).not.toBe('{}');
+    expect(JSON.stringify(stringArgs)).not.toBe('[]');
   });
 
   it('renders the held present_result repair draft as its own labeled message before the correction', async () => {
@@ -1265,6 +1396,92 @@ describe('executeToolAttempt — bounded rejection replay', () => {
 
     expect(replayed).toHaveLength(4);
     expect(JSON.stringify(replayed)).not.toContain('held_draft_repair_state');
+  });
+
+  // m16: the stored-rejection budget collapse (`boundStoredRejections` retaining
+  // `essentialCurrentRejection` when even the single newest rejection does not fit) used to drop
+  // `correctionFragments` outright, so `boundedCorrectionArgs(undefined)` rendered `{}` here —
+  // re-opening the empty-input replay ce6be3e15 closed on the dispatched-rejection path.
+  it('replays a rejection collapsed by the stored-rejection budget as non-empty arguments, never {}', async () => {
+    // A 1000-token model window floors `storedEvidenceKindBytes` at 0, so even the single newest
+    // rejection cannot fit and the in-place collapse branch fires on the very first record.
+    const budget = createTurnTokenBudget({ modelWindowTokens: 1_000 });
+    const { replayed, state } = await replayAfterRejection({
+      input: { column_flow: [{ from_col: 'A', to_col: 'B' }] },
+      envelope: rejectionEnvelope({ reason: 'Flow entry 0 is incomplete.', detail: [{ path: 'column_flow.0' }] }),
+      budget,
+    });
+
+    // Sanity: the collapse actually happened, so this proves the fix and not an untouched path.
+    expect(state.rejections[0].correctionFragments).toHaveLength(1);
+    expect(state.rejections[0].correctionFragments![0]).toMatchObject({ path: 'raw_input', value: { omitted: true } });
+
+    const args = replayedToolArgs(replayed);
+    expect(args).not.toEqual({});
+    expect(Object.keys(args).length).toBeGreaterThan(0);
+  });
+
+  it('keeps inputHash, preDispatch, and unproductiveStreak on a rejection collapsed by the stored-rejection budget', () => {
+    const budget = createTurnTokenBudget({ modelWindowTokens: 1_000 });
+    const attempt = {
+      stop: 'continue' as const,
+      providerCalls: 1,
+      semanticFailures: 1,
+      observations: [],
+      rejections: [{
+        callId: 'call-1',
+        toolName: 'lineage_present_result',
+        code: 'invalid_tool_input',
+        reason: 'layout_direction: Invalid option: expected one of "LR"|"TB"',
+        correctionFragments: [{ path: 'layout_direction', value: 'SIDEWAYS' }],
+        inputHash: 'hash-abc123',
+        preDispatch: true as const,
+        unproductiveStreak: 3,
+      }],
+    };
+
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), attempt, budget);
+
+    expect(state.rejections).toHaveLength(1);
+    const collapsed = state.rejections[0];
+    expect(collapsed.inputHash).toBe('hash-abc123');
+    expect(collapsed.preDispatch).toBe(true);
+    expect(collapsed.unproductiveStreak).toBe(3);
+    // The retry-ladder machinery these fields feed (unproductive-resend absorption, the
+    // pre-dispatch/dispatched distinction) reads exactly this collapsed object as `priorRejection`
+    // on the next attempt, so a dropped field here silently disables it there.
+    expect(collapsed.correctionFragments).toBeDefined();
+    expect(collapsed.correctionFragments!.length).toBeGreaterThan(0);
+  });
+
+  it('logs the in-place collapse of a single stored rejection under budget pressure, not just a count change', () => {
+    const logged: string[] = [];
+    const budget = createTurnTokenBudget({ modelWindowTokens: 1_000 });
+    const attempt = {
+      stop: 'continue' as const,
+      providerCalls: 1,
+      semanticFailures: 1,
+      observations: [],
+      rejections: [{
+        callId: 'call-1',
+        toolName: 'lineage_get_details',
+        code: 'validation',
+        reason: 'bad',
+        correctionFragments: [{ path: 'node_id', value: 'X' }],
+      }],
+    };
+
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), attempt, budget, (message) => logged.push(message));
+
+    // Retained count is unchanged (1 in, 1 out), so the existing count-delta log never fires...
+    expect(state.rejections).toHaveLength(1);
+    expect(logged.some((message) => message.includes('stored corrections dropped by budget'))).toBe(false);
+    // ...but the in-place shrink is still an observable event, naming the tool and callId it hit.
+    const collapseLogs = logged.filter((message) => message.includes('stored rejection collapsed by budget'));
+    expect(collapseLogs).toHaveLength(1);
+    expect(collapseLogs[0]).toContain('tool=lineage_get_details');
+    expect(collapseLogs[0]).toContain('callId=call-1');
+    expect(collapseLogs[0]).toContain('phase=active');
   });
 });
 
@@ -1557,8 +1774,8 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
   });
 
   it('stores the first body whole, answers the second that does not fit with a result_too_large reply, and still dedupes the repeat of the first', async () => {
-    // 2026-09-06 ruling: a body too large for the hop is not truncated and not silently dropped —
-    // the reply says so and hands the read to the hop-by-hop path. Held bodies are never touched.
+    // A body too large for the hop is not truncated and not silently dropped — the reply says so
+    // and hands the read to the hop-by-hop path. Held bodies are never touched.
     const bodies: Record<string, string> = {
       spimportorders: JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(28_000) }),
       spcleanorders: JSON.stringify({ id: 'spcleanorders', body: 'B'.repeat(21_000) }),
@@ -1657,8 +1874,8 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
   });
 
   it('restates the held error envelope instead of DUPLICATE_READ_HINT for a repeat whose stored body is a result_too_large reply', async () => {
-    // The held body of the repeated read is the too-big stand-in stored for it (2026-09-06 ruling) —
-    // an error envelope, so "Answer from it" would be false; the correction restates the held error.
+    // The held body of the repeated read is the too-big stand-in stored for it — an error envelope,
+    // so "Answer from it" would be false; the correction restates the held error.
     const bodies: Record<string, string> = {
       spimportorders: JSON.stringify({ id: 'spimportorders', body: 'A'.repeat(40_000) }),
       spcleanorders: JSON.stringify({ id: 'spcleanorders', body: 'B'.repeat(10_000) }),
@@ -1707,7 +1924,7 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(state.semanticFailures).toBe(0);
   });
 
-  it('replays turn 23: two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {
+  it('two identical no-op resends spend no strike, and the phase keeps going instead of exhausting the budget', async () => {
     const envelope = presentResultRejectionEnvelope({
       reason: 'highlight_groups node_ids must be explained by sections[].node_ids or notes[]: [dbo].[Orders]',
       hint: 'Fix sections, notes, or highlight_groups.',
@@ -1724,14 +1941,14 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     );
 
     // Only the first, real submission charges; the two `{"is_update":true}` resends that touch
-    // neither `sections` nor `notes` (turn 23's exact 19-byte payload) are absorbed by the pre-check.
+    // neither `sections` nor `notes` are absorbed by the pre-check.
     expect(results.map((result) => result.semanticFailures)).toEqual([1, 0, 0]);
     expect(state.semanticFailures).toBe(1);
     expect(state.stopReason).toBeNull();
     expect(state.rejections).toHaveLength(3);
   });
 
-  it('replays turn 9: a resend byte-identical to the payload just rejected spends no strike', async () => {
+  it('a resend byte-identical to the payload just rejected spends no strike', async () => {
     const envelope = presentResultRejectionEnvelope({
       reason: 'Section "Import Orchestrator" node_ids contains unknown IDs',
       hint: 'Fix sections only.',
@@ -1752,7 +1969,7 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     );
 
     // Attempt 2 is a genuine (different) repair and charges. Attempt 3 resends attempt 2's exact
-    // payload byte-for-byte — the recorded turn-9 defect — and must not charge a second time.
+    // payload byte-for-byte and must not charge a second time.
     expect(results.map((result) => result.semanticFailures)).toEqual([1, 1, 0]);
     expect(state.semanticFailures).toBe(2);
     expect(state.stopReason).toBeNull();
@@ -1796,10 +2013,9 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
       [{ name: 'lineage_present_result', result: envelope }],
     );
 
-    // The recorded 2026-08-19 deepseek turn resent one rejected payload 8 times until the user
-    // cancelled. Streak grace stays 2 (the turn-23 pin above), then strikes resume: the genuine
-    // rejection charges 1, no-ops 1-2 are free, no-ops 3-4 charge — semantic budget closes the
-    // phase at 5 provider calls instead of running to the 10-call cap.
+    // Streak grace stays 2 (the no-op-resend test above), then strikes resume: the genuine rejection
+    // charges 1, no-ops 1-2 are free, no-ops 3-4 charge — semantic budget closes the phase at 5
+    // provider calls instead of running to the 10-call cap.
     expect(results.map((result) => result.semanticFailures)).toEqual([1, 0, 0, 1, 1]);
     expect(state.semanticFailures).toBe(3);
     expect(state.stopReason).toBe('semantic_failures');
@@ -2022,5 +2238,42 @@ describe('executeToolGenerationAttempt — every non-dispatched rejection is tra
 
     expect(result.calls.map((call) => call.status)).toEqual(['rejected']);
     expect(traced).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (d) an empty present_result repair patch rejects at the Zod boundary, not by re-running the
+// held-draft validation with nothing new to say
+// ---------------------------------------------------------------------------
+
+describe('presentResultRepairPatchSchemaForFields — empty repair patch prevalidation', () => {
+  it('rejects a repair patch that touches no authorized field, naming every authorized field in the issue', () => {
+    // Before the fix an empty patch (only is_update, or nothing at all) parsed successfully, merged
+    // nothing into the held draft, and re-ran the full held-draft validation — reproducing the
+    // identical prior rejection with no signal that the patch itself carried no correction
+    // (toolAttempt.ts issue log, m10 2026-09-15). This is the Zod superRefine added at the schema
+    // boundary in presentResultRepairPatchSchemaForFields (toolSchemas.ts).
+    const schema = presentResultRepairPatchSchemaForFields(['sections', 'summary']);
+
+    const parsed = schema.safeParse({ is_update: true });
+
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const paths = parsed.error.issues.map((issue) => issue.path.join('.')).sort();
+    expect(paths).toEqual(['sections', 'summary']);
+    for (const issue of parsed.error.issues) {
+      expect(issue.message).toContain('sections');
+      expect(issue.message).toContain('summary');
+    }
+
+    // A patch with no fields at all (not even is_update) is the same defect.
+    const bareParsed = schema.safeParse({});
+    expect(bareParsed.success).toBe(false);
+  });
+
+  it('accepts a repair patch that touches at least one authorized field', () => {
+    const schema = presentResultRepairPatchSchemaForFields(['sections', 'summary']);
+    expect(schema.safeParse({ is_update: true, summary: 'Corrected summary.' }).success).toBe(true);
+    expect(schema.safeParse({ sections: [{ label: 'Overview', text: 'Corrected.' }] }).success).toBe(true);
   });
 });

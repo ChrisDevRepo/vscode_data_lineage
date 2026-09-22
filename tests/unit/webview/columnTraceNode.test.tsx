@@ -223,18 +223,14 @@ describe('ColumnTraceNode', () => {
     expect(document.activeElement).toBe(rows()[0]);
   });
 
-  it('claims the arrow keys so React Flow does not pan the canvas out from under the user', () => {
+  it.each([
+    ['ArrowDown', true, 'the row consumes the key'],
+    ['Tab', false, 'Tab still leaves the node'],
+  ] as const)('owns %s (defaultPrevented=%s) — claims the arrow keys, leaves the rest to the page', (key, expected, msg) => {
     mountNode(['A', 'B']);
-    const event = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
     act(() => { rows()[0].dispatchEvent(event); });
-    expect(event.defaultPrevented, 'the row consumes the key').toBe(true);
-  });
-
-  it('leaves keys it does not own to the rest of the page', () => {
-    mountNode(['A', 'B']);
-    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
-    act(() => { rows()[0].dispatchEvent(event); });
-    expect(event.defaultPrevented, 'Tab still leaves the node').toBe(false);
+    expect(event.defaultPrevented, msg).toBe(expected);
   });
 
   it('dims the rows off the hovered path and leaves the hovered one at full strength', () => {
@@ -277,42 +273,34 @@ describe('ColumnTraceNode', () => {
     expect(reachedWrapper, 'the click stops at the row').toBe(false);
   });
 
-  it('dims the whole card when no row of it is on the active thread', () => {
-    // An object off the thread is context, not answer — it takes the object view's dim rather than
-    // standing at full weight with only its rows faded.
+  // An object off the thread is context, not answer — it takes the object view's dim rather than
+  // standing at full weight with only its rows faded. The dim sits on the box that also holds the
+  // trace +/- buttons, so they fade with the card.
+  it.each([
+    ['no row of it is on the active thread', 'dbo.other', 'X', '0.25', 'a card with no row on the thread is dimmed'],
+    ['one row is on the active thread', 'dbo.orders', 'B', '1', 'one row on the thread keeps the card lit'],
+  ] as const)('card opacity — %s', (_label, seedNode, seedCol, expected, msg) => {
     mount(
       <ReactFlowProvider>
-        <HoverHarness seed={new Set([columnRowKey('dbo.other', 'X')])}>
+        <HoverHarness seed={new Set([columnRowKey(seedNode, seedCol)])}>
           <ColumnTraceNode id="dbo.orders" data={makeData(['A', 'B'])} />
         </HoverHarness>
       </ReactFlowProvider>,
     );
-    const card = host.querySelector<HTMLElement>('.ln-node-card')!;
-    expect(card.style.opacity, 'a card with no row on the thread is dimmed').toBe('0.25');
+    const nodeBox = host.querySelector<HTMLElement>('.ln-node-card')!.parentElement!;
+    expect(nodeBox.style.opacity, msg).toBe(expected);
   });
 
-  it('leaves a card carrying the thread at full strength', () => {
-    mount(
-      <ReactFlowProvider>
-        <HoverHarness seed={new Set([columnRowKey('dbo.orders', 'B')])}>
-          <ColumnTraceNode id="dbo.orders" data={makeData(['A', 'B'])} />
-        </HoverHarness>
-      </ReactFlowProvider>,
-    );
-    const card = host.querySelector<HTMLElement>('.ln-node-card')!;
-    expect(card.style.opacity, 'one row on the thread keeps the card lit').toBe('1');
-  });
-
-  it('summarises instead of listing rows when rows are hidden', () => {
+  it('pins the thread from the keyboard with Enter', () => {
     mount(
       <ReactFlowProvider>
         <HoverHarness>
-          <ColumnTraceNode id="dbo.orders" data={{ ...makeData(['A', 'B']), rowsVisible: false }} />
+          <ColumnTraceNode id="dbo.orders" data={makeData(['A', 'B', 'C'])} />
         </HoverHarness>
       </ReactFlowProvider>,
     );
-    expect(rows(), 'no row is focusable while they are collapsed').toHaveLength(0);
-    expect(host.textContent).toContain('2 traced columns');
+    act(() => { rows()[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+    expect(rows()[1].getAttribute('aria-current'), 'Enter pins the row a click would pin').toBe('true');
   });
 });
 

@@ -90,9 +90,8 @@ describe("Submit Findings Schema", () => {
     prune_neighbors: ['[dbo].[vStaging]'],
     column_flow: [],
   });
-  // Overturned pin: `prune_neighbors` was BB-only, narrowing CT's decision space below BB's — the
-  // divergence the convergence closes. CT is BB plus column tracking, so the CT form accepts every
-  // BB field; the topology-safe handling of a given prune target is the shared engine policy.
+  // CT is BB plus column tracking, so the CT form accepts every BB field; the topology-safe
+  // handling of a given prune target is the shared engine policy.
   expect(parsed.success, 'CT accepts the shared prune_neighbors field').toBe(true);
 });
 
@@ -106,10 +105,13 @@ describe("Submit Findings Schema", () => {
   expect(!parsed.success, 'CT requires column_flow field').toBe(true);
 });
 
-  it("route_requests[].columns parses on the shared base; BB-mode refusal is the handler's", () => {
-  // `HopFindingBaseSchema` is shared, so the field parses in both modes. A BB session has no traced
-  // columns for a route to carry, and the pre-Zod mode guard in `executeSubmitFindings` owns that
-  // refusal (`REJECTION_CODES.bbFieldUnknown`) — the same owner that refuses `column_flow` in BB.
+  it("route_requests[].columns is CT-only: BB's dispatched schema itself refuses it", () => {
+  // BB's `route_requests[]` shape (`BbRouteRequestSchema`, `toolSchemas.ts`) never advertises the
+  // CT-only `columns` decision, so a BB payload naming it fails right here, at the same schema the
+  // model is shown — not a call-site strip and not a separate handler-owned pre-Zod refusal layered
+  // in front of it. `column_flow` still uses the pre-Zod handler guard (a top-level field, cheap to
+  // check before parse); this nested per-route field is narrowed at the schema instead, the same
+  // mechanism `submitFindingsSchemaForMode` already uses to lock `sections[].angle`.
   const parsed = SubmitFindingsBbInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
     sections: [{ angle: 'business', text: 'ok' }],
@@ -117,7 +119,7 @@ describe("Submit Findings Schema", () => {
     verdict: 'analyze',
     route_requests: [{ nodeId: '[dbo].[vStaging]', question: 'trace', columns: ['amount'] }],
   });
-  expect(parsed.success, 'the shared base parses the per-neighbour column channel').toBe(true);
+  expect(!parsed.success, 'BB refuses the CT-only column channel at the schema, not at a handler call site').toBe(true);
 });
 
   it("BB accepts route_requests without columns", () => {
@@ -397,11 +399,9 @@ it("is_update describes only its own schema's meaning, not the other schema's re
   expect(repairIsUpdate.includes('held draft'), 'the repair patch schema keeps sole ownership of the repair scenario').toBe(true);
 });
 
-  it("CT column_flow.writes_to: null is accepted as absence (local-mlx T8S breaker repro)", () => {
-  // Reproduces the local-mlx T8S stop: the model emitted `writes_to: null` twice, both rejected
-  // as `expected object, received null`, and the run died on the semantic-failure breaker. The
-  // engine readers (columnTracer.ts, smBase.ts) already treat writes_to?.node/.col as absent for
-  // both null and undefined, so the schema must accept null as absence rather than reject it.
+  it("CT column_flow.writes_to: null is accepted as absence", () => {
+  // The engine readers (columnTracer.ts, smBase.ts) already treat writes_to?.node/.col as absent
+  // for both null and undefined, so the schema must accept null as absence rather than reject it.
   const parsed = SubmitFindingsCtInputSchema.safeParse({
     focus_node_id: '[dbo].[vSales]',
     sections: [{ angle: 'business', text: 'ok' }],

@@ -86,34 +86,56 @@ const DEAD_LINE_PREFIX = '--';
 const REDOS_BUDGET_MS = 5;
 
 /**
- * Bounded probe inputs for the ReDoS guard.
+ * Repeating units the ReDoS guard builds its probe inputs from.
  *
  * @remarks
  * Catastrophic backtracking is triggered by the character class the nested quantifier consumes,
  * so a single letter run passes patterns such as `(\s+)+$` or `(\[+)+\]` that blow up on the
- * whitespace- and bracket-heavy SQL they are then run over. Each sample covers one class that is
- * dense in DDL bodies.
+ * whitespace- and bracket-heavy SQL they are then run over. Each unit covers one class that is
+ * dense in DDL bodies: letters, whitespace, brackets, separators, and digit runs.
  */
-const REDOS_SAMPLES: readonly string[] = [
-  'a'.repeat(200),
-  ' \t'.repeat(100),
-  '['.repeat(200),
-  'a,'.repeat(100),
-  'a]'.repeat(100),
-];
+const REDOS_SAMPLE_UNITS: readonly string[] = ['a', ' \t', '[', 'a,', 'a]', '1'];
+
+/** Longest probe input, in characters, the ReDoS guard runs a pattern against. */
+const REDOS_SAMPLE_MAX_CHARS = 200;
 
 /**
- * Runs `regex` against each bounded sample and reports whether any run exceeded the ReDoS guard
+ * Growth step, in characters, between two probe inputs of the same unit.
+ *
+ * @remarks
+ * An exponential pattern roughly doubles its cost per added character, so a single 200-character
+ * probe never returns and hangs the extension host instead of measuring anything. Probing in
+ * short steps stops at the first input over budget, which a four-character step bounds to about
+ * sixteen times the budget.
+ */
+const REDOS_SAMPLE_STEP_CHARS = 4;
+
+/** Whether one probe run of `regex` over `sample` exceeds the ReDoS guard budget. */
+function probeExceedsBudget(regex: RegExp, sample: string): boolean {
+  const start = performance.now();
+  regex.test(sample);
+  return performance.now() - start > REDOS_BUDGET_MS;
+}
+
+/** Whether `regex` exceeds the ReDoS guard budget on `sample` twice in a row, so one garbage-collection pause cannot refuse a benign pattern. */
+function confirmedOverBudget(regex: RegExp, sample: string): boolean {
+  return probeExceedsBudget(regex, sample) && probeExceedsBudget(regex, sample);
+}
+
+/**
+ * Runs `regex` against growing probe inputs and reports whether any run exceeded the ReDoS guard
  * budget.
  *
  * @remarks
- * Uses `performance.now()` (sub-ms precision) instead of `Date.now()` (1ms / 15ms on Windows).
+ * Uses `performance.now()` (sub-ms precision) instead of `Date.now()` (1ms / 15ms on Windows). An
+ * over-budget run is confirmed by {@link confirmedOverBudget} before the pattern is refused.
  */
 function exceedsRedosBudget(regex: RegExp): boolean {
-  for (const sample of REDOS_SAMPLES) {
-    const start = performance.now();
-    regex.test(sample);
-    if (performance.now() - start > REDOS_BUDGET_MS) return true;
+  for (const unit of REDOS_SAMPLE_UNITS) {
+    for (let chars = REDOS_SAMPLE_STEP_CHARS; chars <= REDOS_SAMPLE_MAX_CHARS; chars += REDOS_SAMPLE_STEP_CHARS) {
+      const sample = unit.repeat(Math.ceil(chars / unit.length));
+      if (confirmedOverBudget(regex, sample)) return true;
+    }
   }
   return false;
 }
@@ -186,7 +208,7 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
   } catch (err) {
     return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
   }
-  // Heuristic ReDoS guard: reject patterns that take too long on a 200-char string.
+  // Heuristic ReDoS guard: reject patterns that take too long on a bounded probe input.
   if (exceedsRedosBudget(regex)) return { ok: false, reason: 'redos' };
   return { ok: true, regex };
 }
@@ -340,46 +362,130 @@ export function searchBodyScripts(
   let filtered = nodes;
   if (types && types.size > 0) filtered = filtered.filter(n => n.bodyScript && types.has(n.type));
 
-  // One allocation for the whole sweep, not one per node: `compileSearchRegex` fixes the flags, and
-  // walking every match in a body needs the `g` flag's `lastIndex` cursor.
-  const scanner = regex === null ? null : regex.global ? regex : new RegExp(regex.source, `${regex.flags}g`);
+  // One allocation for the whole sweep, not one per node.
+  const scanner = regex === null ? null : globalScanner(regex);
 
   const matches: BodyMatch[] = [];
   for (const node of filtered) {
     const body = node.bodyScript;
     if (!body) continue;
-    const lines = body.split('\n');
-    const lineStarts = buildLineStarts(lines);
-    // One pass per body, and only once a match exists: a body nobody hits is never scanned.
-    let commentMask: Uint8Array | null = null;
-    const comments = (): Uint8Array => (commentMask ??= scanComments(lines, lineStarts, body.length));
-    let deadMask: Uint8Array | null = null;
-    const deadLines = (): Uint8Array => (deadMask ??= markDeadLines(lines, lineStarts, comments()));
-    let predicateMask: (string | undefined)[] | null = null;
-    const predicates = (): (string | undefined)[] =>
-      (predicateMask ??= deriveEnclosingPredicates(lines, lineStarts, comments()));
+    const matchAt = bodyMatcher(node, body, contextLines, lineCap);
 
     if (scanner === null) {
       const idx = body.toLowerCase().indexOf(lower);
       if (idx < 0) continue;
-      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, comments(), deadLines(), predicates()));
+      matches.push(matchAt(idx, query as string));
       if (matches.length >= cap) break;
       continue;
     }
 
-    scanner.lastIndex = 0;
-    let hit: RegExpExecArray | null;
     let capped = false;
-    while ((hit = scanner.exec(body)) !== null) {
-      // A zero-length match (`x*`, `^`) advances nothing on its own: skip the position rather than
-      // the node, or the first empty match hides every real match later in the same body.
-      if (hit[0].length === 0) { scanner.lastIndex++; continue; }
-      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, comments(), deadLines(), predicates()));
-      if (matches.length >= cap) { capped = true; break; }
-    }
+    forEachNonEmptyMatch(scanner, body, hit => {
+      matches.push(matchAt(hit.index, hit[0]));
+      capped = matches.length >= cap;
+      return !capped;
+    });
     if (capped) break;
   }
   return matches;
+}
+
+/**
+ * Sweeps a compiled pattern over every body once, building match rows only while their count
+ * stays admissible and counting the rest.
+ *
+ * @param nodes - The catalog of nodes to search.
+ * @param regex - A pattern {@link compileSearchRegex} accepted.
+ * @param types - Optional set of allowed object types.
+ * @param admits - Whether a given match count may still be built; once it returns `false` for a
+ * count it must return `false` for every larger one.
+ * @returns The rows, the total match count and how many objects produced at least one match.
+ * `matches` holds every match exactly when `admits(total)` holds; otherwise it holds only the
+ * rows built before the count first failed, which the caller must not serve.
+ *
+ * @remarks
+ * Lets `lineage_search_ddl` answer an over-budget pattern from counts alone in the same regex pass
+ * that builds a fitting result: a pattern that matches nearly every character would otherwise
+ * allocate one row, snippet and mask set per character of every body, only for the budget check to
+ * discard them all.
+ */
+export function scanBodyMatches(
+  nodes: SearchableNode[],
+  regex: RegExp,
+  types: Set<ObjectType> | undefined,
+  admits: (count: number) => boolean,
+): { matches: BodyMatch[]; total: number; objects: number } {
+  const scanner = globalScanner(regex);
+  const matches: BodyMatch[] = [];
+  let building = true;
+  let total = 0;
+  let objects = 0;
+  for (const node of nodes) {
+    const body = node.bodyScript;
+    if (!body || (types && types.size > 0 && !types.has(node.type))) continue;
+    const matchAt = bodyMatcher(node, body, DEFAULT_SNIPPET_CONTEXT_LINES, Number.POSITIVE_INFINITY);
+    const before = total;
+    forEachNonEmptyMatch(scanner, body, hit => {
+      total++;
+      building &&= admits(total);
+      if (building) matches.push(matchAt(hit.index, hit[0]));
+    });
+    if (total > before) objects++;
+  }
+  return { matches, total, objects };
+}
+
+/**
+ * Binds one body's line split, line offsets and comment, dead-line and predicate masks to a match
+ * builder.
+ *
+ * @remarks
+ * Every piece is built on the first match and reused by the rest: a body nobody hits is never split
+ * or scanned.
+ */
+function bodyMatcher(
+  node: SearchableNode,
+  body: string,
+  contextLines: number,
+  lineCap: number,
+): (index: number, matchText: string) => BodyMatch {
+  let lines: string[] | null = null;
+  let lineStarts: number[] = [];
+  let commentMask: Uint8Array = new Uint8Array(0);
+  let deadMask: Uint8Array = new Uint8Array(0);
+  let predicateMask: (string | undefined)[] = [];
+  return (index, matchText) => {
+    if (lines === null) {
+      lines = body.split('\n');
+      lineStarts = buildLineStarts(lines);
+      commentMask = scanComments(lines, lineStarts, body.length);
+      deadMask = markDeadLines(lines, lineStarts, commentMask);
+      predicateMask = deriveEnclosingPredicates(lines, lineStarts, commentMask);
+    }
+    return makeMatch(node, lines, lineStarts, index, matchText, contextLines, lineCap, commentMask, deadMask, predicateMask);
+  };
+}
+
+/** A `g`-flagged form of `regex`: walking every match in a body needs the `lastIndex` cursor. */
+function globalScanner(regex: RegExp): RegExp {
+  return regex.global ? regex : new RegExp(regex.source, `${regex.flags}g`);
+}
+
+/**
+ * Visits every non-empty match of a `g`-flagged `scanner` in `body`, in order, until `visit`
+ * returns `false`.
+ *
+ * @remarks
+ * A zero-length match (`x*`, `^`) advances nothing on its own: the position is skipped rather than
+ * the body, or the first empty match would hide every real match later in the same body.
+ */
+function forEachNonEmptyMatch(scanner: RegExp, body: string, visit: (hit: RegExpExecArray) => boolean | void): void {
+  scanner.lastIndex = 0;
+  let hit: RegExpExecArray | null;
+  while ((hit = scanner.exec(body)) !== null) {
+    if (hit[0].length === 0) { scanner.lastIndex++; continue; }
+    if (visit(hit) === false) return;
+  }
 }
 
 /** Start offset of every line, so a match index resolves to its line without rescanning the body. */
@@ -494,8 +600,13 @@ function scanComments(lines: string[], lineStarts: number[], length: number): Ui
 /** Matches an `IF`/`WHILE` keyword opening a line, capturing the rest of the line as its condition. */
 const IF_WHILE_LINE_RE = /^(IF|WHILE)\b(.*)$/i;
 
-/** Every `BEGIN`, `END` or `CASE` keyword on a line, live-code only — see {@link deriveEnclosingPredicates}. */
-const BLOCK_KEYWORD_RE = /\b(BEGIN|END|CASE)\b/gi;
+/**
+ * Every block-opening `BEGIN`, block-closing `END` or `CASE` keyword on a line, live-code only — see
+ * {@link deriveEnclosingPredicates}. `BEGIN TRAN[SACTION]`, `BEGIN DISTRIBUTED TRANSACTION` and
+ * `BEGIN DIALOG`/`CONVERSATION` start statements no `END` closes, and `END CONVERSATION` closes no
+ * block, so none of them moves the frame stack.
+ */
+const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b)|END(?!\s+CONVERSATION\b)|CASE)\b/gi;
 
 /**
  * Derives, per line, the innermost `IF`/`WHILE` condition governing that line.
@@ -536,8 +647,8 @@ function deriveEnclosingPredicates(
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const base = lineStarts[i];
-    // The live-only view of the line: comment/string content replaced with spaces so a keyword
-    // inside either can neither open a block nor be mistaken for the line's own condition.
+    // The live-only view of the line: comment content replaced with spaces so a keyword inside a
+    // comment can neither open a block nor be mistaken for the line's own condition.
     let live = '';
     for (let c = 0; c < line.length; c++) live += commentMask[base + c] === 1 ? ' ' : line[c];
     const trimmed = live.trim();

@@ -18,7 +18,7 @@ import {
 import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
-import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, searchBodyScripts, type SearchableNode } from '../../utils/modelSearch';
+import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, scanBodyMatches, type SearchableNode } from '../../utils/modelSearch';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import {
@@ -193,7 +193,7 @@ export function getContext(
  * The one wording for "list a whole schema", shared by both rejections that offer that repair.
  *
  * @remarks
- * "Send an empty query" was read as the two-character literal `""` (IB3-T2). Naming that reading in
+ * "Send an empty query" was read as the two-character literal `""`. Naming that reading in
  * order to forbid it made it the most salient token in the hint, and the next call sent exactly it:
  * the repair is therefore the arguments object and nothing else, with no value left to infer from
  * prose and no wrong value named for a reader to copy.
@@ -229,7 +229,7 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
  * like any longer one and this tool hands it no result cap, so volume is owned by the evidence-share
  * measurement that answers an oversized result with `result_too_large`, never by a minimum here. A
  * former minimum of two refused `i` and `.` with a length complaint — a repair neither caller
- * could make — and spent a run’s three semantic failures on it (IB3-T2). Punctuation-only
+ * could make. Punctuation-only
  * queries still land on `query_not_a_name` below, which names the mode that serves them.
  *
  * @param query - The user-provided search string.
@@ -371,9 +371,8 @@ export function searchObjects(
 
   // Tag each result with in_user_filter so AI knows what the user currently sees, and tally the
   // type breakdown on that same pass: `by_type` is the list `total` summarises, counted once, so
-  // the two cannot disagree and no count is left to be tallied from the rows (IB3-T2: 32 rows
-  // served as 19 table / 8 procedure / 5 view were delivered as "17 tables … 7 views", with only
-  // the served `total` correct). One home, one pass, no second walk over the results.
+  // the two cannot disagree and no count is left to be tallied from the rows. One home, one pass,
+  // no second walk over the results.
   const filterSchemaSet = activeFilter?.schemas?.length
     ? new Set(activeFilter.schemas.map(s => s.toLowerCase()))
     : null;
@@ -842,6 +841,12 @@ function toLineRanges(lines: number[]): string {
 }
 
 /**
+ * Serialized size of the smallest row `lineage_search_ddl` can serve — every field present, every
+ * value empty. Derived from the row shape itself, so it cannot drift from what a row costs.
+ */
+const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({ id: '', name: '', type: '', line: 0, text: '', context: '' }).length;
+
+/**
  * Searches the DDL/source code of scriptable objects with a regular expression.
  *
  * @remarks
@@ -863,8 +868,7 @@ function toLineRanges(lines: number[]): string {
  * and — where anything is dead — `commented_hits` and the commented lines as ranges. A per-row
  * value is read row by row, while an answer composed by theme merges rows from several places into
  * one statement, so the counts an answer states per object are served rather than tallied from the
- * rows (M0-T3: a hand tally of 33 rows across two procedures was delivered as 17/16 against 22/11,
- * with only the served `total` correct). `objects` is this list's length, so the count and the
+ * rows. `objects` is this list's length, so the count and the
  * breakdown cannot disagree. Additive: every hit stays in `results` with its own flag.
  *
  * @param model - The database model.
@@ -904,8 +908,41 @@ export function searchDdl(
     ...n,
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
-  // No limit argument: a grep result is never sliced. Size is answered by the budget check below.
-  const matches = searchBodyScripts(searchableNodes, compiled.regex, typeSet);
+  // What was actually read, so a zero-match answer is a fact about the search rather than advice
+  // about the pattern: a wrong `types` filter and a genuinely absent string read differently here.
+  const searched = {
+    bodies: searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length,
+    types:  ddlTypes,
+  };
+
+  // Over budget → the counts WITHOUT the match list, never a sliced one: the model narrows the
+  // pattern or the types, and an oversized ask is the hand-off to the approval-gated path.
+  const overBudget = (
+    admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
+    total: number,
+    objects: number,
+  ) => ({
+    reason:          admission.reason,
+    counts:          admission.counts,
+    limits:          admission.limits,
+    total,
+    objects,
+    searched,
+    results_omitted: true as const,
+    hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
+  });
+
+  // Every served row costs at least its empty shape, so one sweep builds rows only while their empty
+  // shapes fit the budget and counts past that; a count that outgrew it is answered from the counts.
+  // A grep result is never sliced: size is answered by this check and the full one below.
+  const rowAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_ROW_CHARS);
+  const scanned = scanBodyMatches(searchableNodes, compiled.regex, typeSet, count => rowAdmission(count).ok);
+  const countAdmission = rowAdmission(scanned.total);
+  if (!countAdmission.ok) {
+    onDebug?.(`searchDdl: ${scanned.total} matches in ${scanned.objects} objects exceed the discovery token budget before every row is built — matches omitted, pattern="${query}"`);
+    return overBudget(countAdmission, scanned.total, scanned.objects);
+  }
+  const matches = scanned.matches;
 
   // `commented` is spread in only when the match sits inside a comment, so a live hit serializes
   // exactly as before; a dead one says so instead of reading as behaviour.
@@ -920,12 +957,6 @@ export function searchDdl(
     ...(m.enclosingPredicate ? { enclosing_predicate: m.enclosingPredicate } : {}),
   }));
 
-  // What was actually read, so a zero-match answer is a fact about the search rather than advice
-  // about the pattern: a wrong `types` filter and a genuinely absent string read differently here.
-  const searched = {
-    bodies: searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length,
-    types:  ddlTypes,
-  };
   if (results.length === 0) return { results, total: 0, objects: 0, searched };
 
   // One group per object, in first-hit order: how many hits it contributed, and which of them are
@@ -951,8 +982,6 @@ export function searchDdl(
   const objects = byObject.length;
 
   // Same discovery budget guard as the catalog listing and the pattern report, token axis only.
-  // Over budget → the counts WITHOUT the match list, never a sliced one: the model narrows the
-  // pattern or the types, and an oversized ask is the hand-off to the approval-gated path.
   const payload = {
     results,
     total: results.length,
@@ -964,16 +993,7 @@ export function searchDdl(
   const admission = checkScopeBudget(budget, 0, resultChars);
   if (!admission.ok) {
     onDebug?.(`searchDdl: ${results.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${admission.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
-    return {
-      reason:          admission.reason,
-      counts:          admission.counts,
-      limits:          admission.limits,
-      total:           results.length,
-      objects,
-      searched,
-      results_omitted: true as const,
-      hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
-    };
+    return overBudget(admission, results.length, objects);
   }
   return payload;
 }

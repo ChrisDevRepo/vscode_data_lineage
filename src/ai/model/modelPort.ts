@@ -245,6 +245,13 @@ export interface InvalidGeneratedToolCall {
     | typeof REJECTION_CODES.duplicateCallId;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
+  /**
+   * Repair instruction naming the fix for this specific rejection, when the producer derived one
+   * from the issue shape (e.g. an `unrecognized_keys` Zod issue names removal, never the standing
+   * resend-unchanged instruction). Absent for shapes with no producer-derived hint, in which case
+   * the dispatcher applies its own fixed per-code hint.
+   */
+  readonly hint?: string;
   /** Paths of the schema issues that rejected the input, when known. */
   readonly issuePaths?: readonly string[];
 }

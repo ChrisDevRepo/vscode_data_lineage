@@ -1986,6 +1986,7 @@ export class NavigationEngine implements IHopStateMachine {
         const spineBound = this.tracer.determineActiveColumnsForCandidate(
           candidate.nodeId,
           candidate.activeColumns ?? [],
+          this.writtenCarrierIds(candidate.nodeId),
         );
         const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
         // The spine carries a column under the spelling of the node that named it, and a
@@ -2006,7 +2007,9 @@ export class NavigationEngine implements IHopStateMachine {
         // the spine is only complete here, at dispatch. A row role stated about a NON-BODIED
         // carrier travels verbatim to every bodied node behind it, so honouring it unconditionally
         // erased the column question a committed edge had already opened and ended the chain at a
-        // node the engine itself had proven supplies the value.
+        // node the engine itself had proven supplies the value. The spine includes an edge left open
+        // at a non-bodied carrier this node writes: that is the edge a reopen was offered for, and a
+        // later row role from another router, merged onto the same entry, must not erase it.
         const carryDeterminedNone =
           candidate.columnCarry?.kind === 'carry' && candidate.columnCarry.columns.length === 0;
         const statedRowRole = candidate.columnCarry?.kind === 'row_role_only';
@@ -2459,7 +2462,7 @@ export class NavigationEngine implements IHopStateMachine {
     // path was reachable for prune); `validateColumnFlow` reads it as required, so the call is
     // guarded on presence the same way every other `column_flow`-conditional branch here already is.
     if (this.tracer && finding.column_flow) {
-      const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log);
+      const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet);
       if (valResult.error) {
         return valResult.error;
       }
@@ -2549,6 +2552,17 @@ export class NavigationEngine implements IHopStateMachine {
     // reads the staged `acceptedNids` / `prunedNeighborNids` and widens its scope by the staged
     // routes, which are not yet in `scopeNodeIds` until the commit below.
     if (finding.verdict === 'prune') {
+      // NOT a gap: a node the tracer already declared (route or column_flow) is free to prune
+      // ITSELF — `finding.verdict !== 'prune'` above already exempts a self-pruned focus from
+      // accounting for active columns ("leaving the graph, not continuing through it"), and the
+      // decision is recorded (`markNodeState`, `submitted_prune`, with its active columns attached)
+      // rather than silently dropped. Refusing this would block ordinary, AI-judged CT pruning of
+      // any already-routed node — confirmed by two protected suites this file must not regress
+      // (`prune-sections-conflict.test.ts` d2, `ct-retention-differential.test.ts` C11/C12).
+      // PRUNE-BEFORE-DEMAND's real gap is the OTHER direction: a LATER hop naming an
+      // already-removed node (self-pruned here, or pruned earlier by a neighbor) as a fresh
+      // `upstream_columns` supplier — closed at declare time in `ColumnTracer.validateColumnFlow`
+      // (`pruned_contributor`), not here.
       const requiredConnectedIds = this.committedConnectedIds();
       for (const nid of acceptedNids) requiredConnectedIds.add(nid);
       const stagedRemovedForFocus = new Set<string>(this.removedSet);
@@ -3302,7 +3316,19 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (this.visited.has(targetId) || this.removedSet.has(targetId)) {
       if (!this.reopensColumnChain(targetId, carry, openColumnEnd)) {
-        this.log('debug', `[Disposition] enqueue skip ${targetId} — already ${this.removedSet.has(targetId) ? 'removed' : 'visited'}`);
+        // PRUNE-BEFORE-DEMAND: `openColumnEnd` true beside `removedSet.has(targetId)` is the
+        // signature of a committed column demand landing on a node that stays removed by
+        // invariant (`reopensColumnChain` refuses to reopen a removed node on purpose — only a
+        // body can answer). `ColumnTracer.validateColumnFlow`'s `pruned_contributor` check rejects
+        // a `column_flow` entry naming an already-removed supplier at declare time, which is meant
+        // to make this combination unreachable; if it fires anyway the demand is genuinely lost,
+        // which is not a debug-level fact.
+        const lostDemand = openColumnEnd && this.removedSet.has(targetId);
+        this.log(
+          lostDemand ? 'warn' : 'debug',
+          `[Disposition] enqueue skip ${targetId} — already ${this.removedSet.has(targetId) ? 'removed' : 'visited'}`
+          + (lostDemand ? ' — a committed column_flow demand on this node is dropped, not reopened (PRUNE-BEFORE-DEMAND)' : ''),
+        );
         return;
       }
       // The earlier visit answered a different question: this node was dispatched without the
@@ -3399,15 +3425,19 @@ export class NavigationEngine implements IHopStateMachine {
     // dispatch still recovers a column a committed edge later attributes to it. Null in BB.
     const columnContinuation = this.tracer ? this.carrierColumnContinuation(targetId) : null;
     for (const nid of this.directionalNeighbors(targetId, this._direction)) {
-      // Re-anchor only when the question lands on a bodied focus — further non-bodied hops forward
+      // Re-anchor only when the question lands on a bodied focus AND this neighbor continues the
+      // carrier's column side (`continues`, same value that already gates neighborCarry/
+      // lineageQuestions below): a same-side neighbor cannot answer a question re-anchored to the
+      // sender's own logic, so it receives the plain, unanchored question instead — the same
+      // question every neighbor got before re-anchoring existed. Further non-bodied hops forward
       // the plain question and annotate at their own bodied leaves (no compounding). The suffix
       // wording is prompt-layer-owned: buildPassthroughReAnchor (smPrompts.ts).
       const neighbor = this.nodeMap.get(nid);
-      const reAnchor = neighbor && SCRIPT_TYPES.has(neighbor.type)
+      const continues = columnContinuation === null || columnContinuation.has(nid);
+      const reAnchor = continues && neighbor && SCRIPT_TYPES.has(neighbor.type)
         ? buildPassthroughReAnchor(targetId, nid, this.mode.kind)
         : '';
       const forwarded = `${question}${reAnchor}`;
-      const continues = columnContinuation === null || columnContinuation.has(nid);
       const neighborCarry = continues || forwardedCarry.kind === 'row_role_only' ? forwardedCarry : columnCarryOf([]);
       this.enqueueHop(nid, forwarded, depth + 1, priority, { carry: neighborCarry, lineageQuestions: continues ? lineageQuestions : undefined, visitedRefs, parentTaskId, admitContractedBodiedTarget, openColumnEnd: columnProducers?.has(nid) ?? false });
     }
@@ -3433,6 +3463,23 @@ export class NavigationEngine implements IHopStateMachine {
     const senderWrites = this.graph.hasDirectedEdge(senderId, carrierId);
     if (senderReads === senderWrites) return null;
     return new Set(senderReads ? this.graph.inNeighbors(carrierId) : this.graph.outNeighbors(carrierId));
+  }
+
+  /**
+   * CT: the non-bodied carriers a node writes — the carriers whose open column ends it owes, by the
+   * producer rule {@link enqueueHop} applies when it offers a reopen to a carrier's producers.
+   *
+   * @param nodeId - Canonical id of the node being dispatched.
+   * @returns The written non-bodied neighbour ids; empty when the node writes none.
+   */
+  private writtenCarrierIds(nodeId: string): Set<string> {
+    const carriers = new Set<string>();
+    if (!this.graph.hasNode(nodeId)) return carriers;
+    for (const nid of this.graph.outNeighbors(nodeId)) {
+      const neighbor = this.nodeMap.get(nid);
+      if (neighbor && !SCRIPT_TYPES.has(neighbor.type)) carriers.add(nid);
+    }
+    return carriers;
   }
 
   /**

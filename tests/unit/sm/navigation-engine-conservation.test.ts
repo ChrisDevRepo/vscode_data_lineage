@@ -244,7 +244,7 @@ describe("Navigation Engine — node conservation", () => {
   expect(state.status === 'awaiting_findings', 'origin prune rejection keeps the current hop active').toBe(true);
 });
 
-  it("would disconnect the already-analyzed c.", () => {
+  it("would disconnect the already-analyzed c, and the refusal logs under [Prune] (not [Reject]) with the same fields.", () => {
   const orphanNodes: LineageNode[] = [
     makeNode({ id: 'origin', schema: 'dbo', name: 'origin', type: 'procedure' }),
     makeNode({ id: 'a',      schema: 'dbo', name: 'a',      type: 'view' }),
@@ -255,7 +255,8 @@ describe("Navigation Engine — node conservation", () => {
   const orphanModel: DatabaseModel = makeModel(orphanNodes, orphanEdges, ['dbo']);
   const orphanGraph = makeGraph(orphanNodes, orphanEdges);
 
-  const engine = new NavigationEngine(orphanModel, orphanGraph, () => {}, {});
+  const logLines: string[] = [];
+  const engine = new NavigationEngine(orphanModel, orphanGraph, (level, msg) => { logLines.push(`${level}:${msg}`); }, {});
   engine.init({ origin: 'origin', question: 'orphan probe', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
 
   const focus1 = engine.getHopContext();
@@ -294,77 +295,17 @@ describe("Navigation Engine — node conservation", () => {
     verdict: 'analyze',
     prune_neighbors: ['b'],
   }) as any;
-  // Amended from the earlier pin (the orphaning prune died as missing_required_route before
-  // don't-orphan could speak): the hop-level prune is now expressible, so the don't-orphan guard
-  // is what refuses it. The refused prune also leaves the required id unaccounted, so the
-  // rejection mixes both facts — the generic code with the orphan reason carried in hint and
-  // detail, which is the repair-sufficient form.
+  // The hop-level prune is expressible, so the don't-orphan guard is what refuses it; the
+  // refused prune also leaves the required id unaccounted, so the rejection mixes both facts —
+  // the generic code with the orphan reason carried in hint and detail.
   expect('error' in rej && rej.error === 'route_validation_failed', 'the orphaning hop-level prune is rejected').toBe(true);
   expect(/orphan/i.test(rej.hint ?? ''), 'hint names the orphan refusal, not only a routing mandate').toBe(true);
   expect(/orphan/i.test(JSON.stringify(rej.detail ?? [])), 'detail attributes the refusal to the orphaned committed node').toBe(true);
   const state = engine.toJSON();
   expect(!state.removedSet.includes('b'), 'the refused prune leaves b unremoved').toBe(true);
   expect(JSON.stringify(state.memory.detailSlots.a) === detailBefore, 'the refused prune does not replace committed detail').toBe(true);
-});
-
-  it("a refused prune_neighbors candidate logs under [Prune], not [Reject], so host.log and the trace count the same rejections.", () => {
-  const orphanNodes: LineageNode[] = [
-    makeNode({ id: 'origin', schema: 'dbo', name: 'origin', type: 'procedure' }),
-    makeNode({ id: 'a',      schema: 'dbo', name: 'a',      type: 'view' }),
-    makeNode({ id: 'b',      schema: 'dbo', name: 'b',      type: 'table' }),
-    makeNode({ id: 'c',      schema: 'dbo', name: 'c',      type: 'view' }),
-  ];
-  const orphanEdges: Array<[string, string]> = [['origin', 'a'], ['a', 'b'], ['b', 'c']];
-  const orphanModel: DatabaseModel = makeModel(orphanNodes, orphanEdges, ['dbo']);
-  const orphanGraph = makeGraph(orphanNodes, orphanEdges);
-
-  const logLines: string[] = [];
-  const engine = new NavigationEngine(orphanModel, orphanGraph, (level, msg) => { logLines.push(`${level}:${msg}`); }, {});
-  engine.init({ origin: 'origin', question: 'orphan probe log labels', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 3 } });
-
-  const focus1 = engine.getHopContext();
-  expect('focus_node' in focus1 && focus1.focus_node?.id === 'origin', 'first focus is origin').toBe(true);
-  engine.submitFindings({
-    focus_node_id: 'origin',
-    sections: [{ angle: 'business' as const, text: 'o' }],
-    summary: 'o',
-    verdict: 'analyze',
-    route_requests: [{ nodeId: 'a', question: '?' }],
-  });
-
-  const focus2 = engine.getHopContext();
-  expect('focus_node' in focus2 && focus2.focus_node?.id === 'a', 'second focus is a').toBe(true);
-  engine.submitFindings({
-    focus_node_id: 'a',
-    sections: [{ angle: 'business' as const, text: 'a' }],
-    summary: 'a',
-    verdict: 'analyze',
-    route_requests: [{ nodeId: 'b', question: 'trace through b' }],
-  });
-
-  const focus3 = engine.getHopContext();
-  expect('focus_node' in focus3 && focus3.focus_node?.id === 'c', 'passive b contracts to c').toBe(true);
-  engine.submitFindings({ focus_node_id: 'c', sections: [{ angle: 'business' as const, text: 'c' }], summary: 'c', verdict: 'analyze' });
-  expect(engine.getHopContext().done === true, 'orphan setup completes before a reactivation').toBe(true);
-  const supplemented = engine.supplementAgenda(['a']);
-  expect('ok' in supplemented && supplemented.agendaed === 1, 'a is reactivated for the neighbor-prune probe').toBe(true);
-  const reactivated = engine.getHopContext();
-  expect('focus_node' in reactivated && reactivated.focus_node?.id === 'a', 'reactivated focus is a').toBe(true);
-
-  const rej = engine.submitFindings({
-    focus_node_id: 'a',
-    sections: [{ angle: 'business' as const, text: 'attempted a analysis' }],
-    summary: 'a summary',
-    verdict: 'analyze',
-    prune_neighbors: ['b'],
-  }) as any;
-
-  expect('error' in rej && rej.error === 'route_validation_failed', 'the orphaning hop-level prune is rejected').toBe(true);
-  expect(/orphan/i.test(rej.hint ?? ''), 'the returned rejection is unchanged by the log-label fix').toBe(true);
   expect(logLines.filter((l) => l.includes('[Reject]')).length, 'no dispatch-layer [Reject] line is emitted for the per-candidate prune refusal').toBe(0);
   expect(logLines.some((l) => l.includes('[Prune] prune_neighbor refused') && l.includes('reason=would_orphan_noted') && l.includes('id=b')), 'the refusal logs under [Prune], carrying the same fields').toBe(true);
-  const state = engine.toJSON();
-  expect(!state.removedSet.includes('b'), 'the refused prune leaves b unremoved').toBe(true);
 });
 
   it("A genuinely out-of-scope neighbor retains the prior topology-safe prune behavior.", () => {

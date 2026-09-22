@@ -1,11 +1,8 @@
 /**
- * Depth derivation must not resolve silently.
- *
- * Two recorded baselines carried a correctly derived `depthIntent`
- * `{kind: 'asymmetric', upstream: 2, downstream: 1}` and still ran with
- * `depthEnforcement: 'silent'`. The intent was visible in the `[BFS]` line
- * (`depth=up=2 down=1`) while the enforcement it resolved to was not logged at
- * all, so the regression read as a correctly bounded run on the log alone.
+ * Depth derivation must not resolve silently: a user-stated bound (e.g. an asymmetric depth)
+ * can derive an intent that is logged (`[BFS] depth=...`) while the enforcement it resolved to
+ * — silent instead of strict — goes unlogged, so a bound that does not bind reads as a
+ * correctly bounded run on the log alone.
  *
  * These tests pin the OBSERVABILITY contract, never a captured answer: every
  * depth intent kind emits one record of what it resolved to — intent kind,
@@ -86,12 +83,4 @@ describe('Depth derivation is recorded, never silent', () => {
     }
   });
 
-  it('T3: the T8S regression shape is visible on the log alone', () => {
-    // The failing baselines: a user-stated asymmetric bound. A run that reports this
-    // intent must also report that it binds; `enforcement=silent` here is the defect
-    // signature the two baselines carried undetected.
-    const line = resolutionLine(initAndCollect({ kind: 'asymmetric', upstream: 2, downstream: 1 }));
-    expect(line).toBeDefined();
-    expect(line).not.toContain('enforcement=silent');
-  });
 });

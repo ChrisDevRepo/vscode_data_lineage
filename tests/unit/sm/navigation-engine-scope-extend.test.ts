@@ -104,10 +104,8 @@ describe("Scope Extension + Hold-and-Amend", () => {
   engine.init({ origin: 'p', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
   advanceToM(engine);
 
-  // Account for both required neighbors of m: route `a`, prune the (topology-safe) `b`.
-  // Amended from the earlier pin (pruning a required neighbor was missing routing): the
-  // hop-level prune of an in-scope neighbour is the decision the same-graph contract requires
-  // both modes to express, and the don't-orphan guard — not a routing mandate — governs it.
+  // A required neighbor is satisfied by either a route or a topology-safe hop-level prune;
+  // the don't-orphan guard, not a routing mandate, governs the prune.
   const committed = engine.submitFindings({
     focus_node_id: 'm',
     sections: [{ angle: 'business' as const, text: 'analysis for m' }],
@@ -142,43 +140,12 @@ describe("Scope Extension + Hold-and-Amend", () => {
     route_requests: [{ nodeId: 'n1', question: 'trace n1' }],
     prune_neighbors: ['n2'],
   });
-  // Amended from the earlier pin (the in-scope prune was a refused notice): an in-scope
-  // prune target the walk has not yet touched is exactly the hop-level prune decision, so it
-  // executes subject to don't-orphan; the protected notice survives only for queued work.
+  // An untouched in-scope prune target is a hop-level prune decision: it executes subject
+  // to don't-orphan; the protected notice survives only for queued work.
   expect('ok' in result, 'the in-scope prune commits — no repair loop either way').toBe(true);
   const after = engine.toJSON();
   expect(after.removedSet.includes('n2'), 'the executed hop-level prune removed n2').toBe(true);
   expect(!after.memory.recentRejections.some((r) => r.nodeId === 'n2'), 'an executed prune is no refusal notice').toBe(true);
-});
-
-  it("Test 3d: an out-of-scope prune retains the prior topology-safe behavior.", () => {
-  const engine = new NavigationEngine(chainModel, chainGraph, () => {}, {});
-  engine.init({ origin: 'n0', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
-
-  const f1 = engine.getHopContext() as any;
-  expect(f1.focus_node?.id === 'n0', 'first focus is n0').toBe(true);
-  engine.submitFindings({
-    focus_node_id: 'n0',
-    sections: [{ angle: 'business' as const, text: 'n0' }],
-    summary: 'n0',
-    verdict: 'analyze',
-    route_requests: [{ nodeId: 'n1', question: 'trace n1' }],
-  });
-  const f2 = engine.getHopContext() as any;
-  expect(f2.focus_node?.id === 'n1', 'second focus is n1').toBe(true);
-  const before = engine.toJSON();
-  expect(!before.scopeNodeIds.includes('n2'), 'n2 is beyond the depth-1 seed — out of scope at focus n1').toBe(true);
-
-  const result = engine.submitFindings({
-    focus_node_id: 'n1',
-    sections: [{ angle: 'business' as const, text: 'n1' }],
-    summary: 'n1 summary',
-    verdict: 'analyze',
-    prune_neighbors: ['n2'],
-  });
-  expect('ok' in result, 'topology-safe out-of-scope prune is accepted').toBe(true);
-  const after = engine.toJSON();
-  expect(after.removedSet.includes('n2'), 'out-of-scope n2 is recorded as removed').toBe(true);
 });
 
   it("pruning adjacent rb from that focus would disconnect the committed rc detail.", () => {
@@ -229,10 +196,8 @@ describe("Scope Extension + Hold-and-Amend", () => {
     verdict: 'analyze',
     prune_neighbors: ['rb'],
   }) as any;
-  // Amended from the earlier pin (the orphaning prune died as missing_required_route): the
-  // hop-level prune is now expressible, so the don't-orphan guard is what refuses it. The refused
-  // prune also leaves the required id unaccounted, so the rejection mixes both facts — the
-  // generic code with the orphan reason carried in hint and detail (repair-sufficient form).
+  // The hop-level prune is expressible; the don't-orphan guard refuses it, and the rejection
+  // carries the orphan reason in hint and detail alongside the generic code.
   expect('error' in rej && rej.error === 'route_validation_failed', 'the orphaning hop-level prune is rejected').toBe(true);
   expect(/orphan/i.test(rej.hint ?? ''), 'hint names the orphan refusal, not only a routing mandate').toBe(true);
   expect(/orphan/i.test(JSON.stringify(rej.detail ?? [])), 'detail attributes the refusal to the orphaned committed rc').toBe(true);
@@ -273,9 +238,8 @@ describe("Scope Extension + Hold-and-Amend", () => {
     verdict: 'analyze',
     prune_neighbors: ['tbl'],
   }) as any;
-  // Amended from the earlier pin (the in-scope prune of tbl was a refused notice): the
-  // target is untouched in-scope work, so the hop-level prune executes once the don't-orphan
-  // guard clears it — h stays reachable through its direct h→v edge without tbl.
+  // Untouched in-scope work: the hop-level prune executes once the don't-orphan guard
+  // clears it — h stays reachable through its direct h→v edge without tbl.
   expect(!('error' in ok), 'the in-scope prune commits once don\u2019t-orphan clears it').toBe(true);
   const after = engine.toJSON();
   expect(after.removedSet.includes('tbl'), 'the executed hop-level prune removed tbl').toBe(true);

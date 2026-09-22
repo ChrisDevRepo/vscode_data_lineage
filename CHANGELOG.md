@@ -21,6 +21,8 @@
 - Assistant robustness: tool calls written as XML or unfenced JSON are read as calls without stalling the turn; a bookmark recalls the AI run it was saved from; a formula stored only as a column-flow note still reaches the report.
 - Parser and trace fixes: bracketed names with a `]]` escape, comments inside identifiers, and wildcard storage paths no longer drop or invent dependencies; a one-direction trace draws every edge between the objects it includes.
 - Display: large graphs stay responsive while dragging, a view past the render limit reports it, and saved views fit the graph on restore.
+- Column Detail: trace add/remove buttons are no longer clipped by the card, a column thread can be pinned with Enter or Space, and the context menu shows the object's full name and external link.
+- Assistant stability: a very broad or catastrophically backtracking SQL code search no longer exhausts memory or hangs the extension host; `BEGIN TRAN` no longer shifts the IF/WHILE condition reported for a match.
 
 ## [1.1.0] - 2026-08-20
 

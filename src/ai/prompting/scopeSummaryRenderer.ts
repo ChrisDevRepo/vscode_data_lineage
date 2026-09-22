@@ -86,8 +86,10 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
   }
   // The user's own words, verbatim. Placed next to the mechanization above so a misreading is
   // visible side by side while the user can still correct it — after approval the run is autonomous.
+  // Collapsed to one line: a model-supplied newline would otherwise open a heading or list that
+  // breaks the card's own structure.
   for (const note of summary.scopeNotes) {
-    stated.push(`- Noted: "${note}"`);
+    stated.push(`- Noted: "${note.replace(/\s+/g, ' ').trim()}"`);
   }
 
   const heading = revision && revision > 1

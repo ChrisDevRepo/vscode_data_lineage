@@ -46,7 +46,19 @@ describe('empty provider generation boundary', () => {
     expect(result.status).toBe('cancelled');
   });
 
-  it('generateStructured surfaces a pre-aborted signal as a cancelled ModelPortError before dispatch', async () => {
+  // A turn cancelled before the call started must classify as a clean cancel — never a bare
+  // retry-helper Error the runtime would log and close as a provider failure.
+  it.each([
+    ['generateStructured', (port: VscodeModelPort, signal: AbortSignal) => port.generateStructured({
+      messages: [new HumanMessage('classify')],
+      schema: z.object({ route: z.string() }),
+      signal,
+    })],
+    ['completeText', (port: VscodeModelPort, signal: AbortSignal) => port.completeText({
+      messages: [new HumanMessage('summarize')],
+      signal,
+    })],
+  ])('%s surfaces a pre-aborted signal as a cancelled ModelPortError before dispatch', async (_name, call) => {
     const controller = new AbortController();
     controller.abort();
     const sendRequest = vi.fn();
@@ -54,29 +66,7 @@ describe('empty provider generation boundary', () => {
 
     let err: unknown;
     try {
-      await port.generateStructured({
-        messages: [new HumanMessage('classify')],
-        schema: z.object({ route: z.string() }),
-        signal: controller.signal,
-      });
-    } catch (e) { err = e; }
-
-    // A turn cancelled before the call started must classify as a clean cancel — never a bare
-    // retry-helper Error the runtime would log and close as a provider failure.
-    expect(err).toBeInstanceOf(ModelPortError);
-    expect((err as ModelPortError).code).toBe('cancelled');
-    expect(sendRequest, 'no provider dispatch after pre-abort').not.toHaveBeenCalled();
-  });
-
-  it('completeText surfaces a pre-aborted signal as a cancelled ModelPortError before dispatch', async () => {
-    const controller = new AbortController();
-    controller.abort();
-    const sendRequest = vi.fn();
-    const port = new VscodeModelPort({ ...modelIdentity(), sendRequest } as never);
-
-    let err: unknown;
-    try {
-      await port.completeText({ messages: [new HumanMessage('summarize')], signal: controller.signal });
+      await call(port, controller.signal);
     } catch (e) { err = e; }
 
     expect(err).toBeInstanceOf(ModelPortError);

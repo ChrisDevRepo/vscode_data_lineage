@@ -10,12 +10,10 @@ import {
 import { describe, expect, it } from 'vitest';
 
 /**
- * Class: a local OpenAI-compatible provider (Qwen/oMLX lane) emitting an object-typed tool
- * argument as a JSON string. Reproduced 2026-08-30 on prompt T4 (local-mlx): the model sent
- * `depth: "{\"upstream\": 1, \"downstream\": 1}"` with every other argument valid, the strict
- * union rejected it as `invalid_tool_input` three times, and the turn stopped on cumulative
- * semantic failures. The provider repeats the identical encoding on every repair attempt —
- * the defect is transport-side, so the boundary must decode it, not ask the model to fix it.
+ * Some OpenAI-compatible providers emit an object-typed tool argument as a JSON string (e.g.
+ * `depth: "{\"upstream\": 1, \"downstream\": 1}"`) instead of a native object. The defect is
+ * transport-side and the provider repeats the identical encoding on every repair attempt, so the
+ * boundary must decode it rather than ask the model to fix it.
  */
 describe('coerced-string-object tests', () => {
   const T4_DEPTH_STRING = '{"upstream": 1, "downstream": 1}';
@@ -73,8 +71,7 @@ describe('coerced-string-object tests', () => {
     // '2' is not a JSON object, so coercedStringObject passes it through unchanged; it is
     // ExplorationDepthLimitSchema's own numericStringDepth preprocess (explorationDepthContract.ts)
     // that unwraps a canonical bare integer literal — one normalization policy for both depth
-    // encodings, fixing the local-mlx T4/T8S stop where `depth: "1"`/`"2"` was rejected three
-    // times while the asymmetric object form accepted the identical encoding.
+    // encodings.
     const parsed = StartExplorationInputSchema.safeParse(freshBb('2'));
     expect(parsed.success && parsed.data.depth).toBe(2);
   });

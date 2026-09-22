@@ -121,7 +121,8 @@ export interface ColumnTraceViewEdge {
   transforms?: ColumnTransformClass[];
   /**
    * One-clause model note for the relation ("SUM of line totals"), absent whenever the model
-   * offered none. Printed verbatim as the chip tooltip's second line.
+   * offered none. Printed verbatim as the chip tooltip's second line; a leg two relations share
+   * carries each distinct note on its own line.
    */
   note?: string;
 }
@@ -652,7 +653,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   });
 
   const edges: ColumnTraceViewEdge[] = [];
-  const seenLegs = new Set<string>();
+  const edgeByLeg = new Map<string, ColumnTraceViewEdge>();
 
   function pushEdge(
     index: number,
@@ -666,10 +667,16 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     note?: string,
   ): void {
     // Two relations through the same hop share a leg — the two inbound halves stay distinct, their
-    // outbound halves are one line. Drawing both would stack identical lines on the same handles.
+    // outbound halves are one line. Drawing both would stack identical lines on the same handles, so
+    // the shared line carries the union of both relations' transform classes and of their notes —
+    // a class on the chip is never left without the note that explains it.
     const legKey = `${source.toLowerCase()}::${normalizeColName(sourceCol)}->${target.toLowerCase()}::${normalizeColName(targetCol)}`;
-    if (seenLegs.has(legKey)) return;
-    seenLegs.add(legKey);
+    const shared = edgeByLeg.get(legKey);
+    if (shared) {
+      if (transforms) shared.transforms = [...new Set([...(shared.transforms ?? []), ...transforms])];
+      if (note && !shared.note?.split('\n').includes(note)) shared.note = shared.note ? `${shared.note}\n${note}` : note;
+      return;
+    }
     const edge: ColumnTraceViewEdge = {
       id: `${source}::${normalizeColName(sourceCol)}->${target}::${normalizeColName(targetCol)}#${index}${leg}`,
       source,
@@ -684,6 +691,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     // decision, and the value's story is one fact about the original endpoint pair.
     if (transforms) edge.transforms = transforms;
     if (note) edge.note = note;
+    edgeByLeg.set(legKey, edge);
     edges.push(edge);
   }
 

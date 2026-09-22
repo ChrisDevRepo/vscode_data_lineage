@@ -2,12 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HumanMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 
-/**
- * Regression coverage for the zero-output stall: UAT 2026-08-19 recorded a generation that
- * streamed nothing for 16m42s until the user cancelled manually — neither `vscode.lm` nor the
- * host bounds that path. The watchdog must abort a generation that produced no chunk at all,
- * surface it as a provider error (not a cancellation), and never fire once any chunk arrived.
- */
+/** The watchdog aborts a generation that produced no chunk at all, surfacing a provider error (not a cancellation), and never fires once any chunk arrived. */
 
 const FIRST_OUTPUT_TIMEOUT_MS = 600_000;
 

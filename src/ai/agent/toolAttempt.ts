@@ -78,8 +78,8 @@ const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
 
 /**
  * Hint paired with a `duplicate_read` rejection: the answer material is already in the observations.
- * Raised only while that body is still stored — an evicted body is re-served instead, so the hint
- * is a true statement in every state it reaches the model in, except when the held body is itself an
+ * The held body stays stored for the whole attempt, so the hint is a true statement in every state
+ * it reaches the model in, except when the held body is itself an
  * error envelope (e.g. a `result_too_large` reply), where
  * {@link heldErrorEnvelopeDuplicateHint} restates that error instead — "answer from it" is false
  * when the stored observation carries no answer material.
@@ -600,10 +600,20 @@ function prependedArrayBytes(itemBytesSum: number, itemCount: number, newItemByt
   return 2 + itemBytesSum + newItemBytes + itemCount;
 }
 
-/** Retains the newest corrections within a fixed checkpoint-memory share. */
+/**
+ * Retains the newest corrections within a fixed checkpoint-memory share.
+ *
+ * @param phase - Logical phase label for the collapse log line; not otherwise used.
+ * @param debugLog - Secret-safe single-line diagnostic sink. Dropping a rejection to its newest
+ *   member's essential projection shrinks that single entry in place without changing the
+ *   retained count, so the caller's own length-delta log ({@link recordToolAttempt}) cannot see
+ *   it — this is the one place that in-place collapse is observable.
+ */
 function boundStoredRejections(
   rejections: readonly ToolAttemptRejection[],
   budget: TurnTokenBudget,
+  phase: string,
+  debugLog?: (message: string) => void,
 ): ToolAttemptRejection[] {
   const retained: ToolAttemptRejection[] = [];
   let retainedBytesSum = 0;
@@ -611,7 +621,16 @@ function boundStoredRejections(
     const rejection = rejections[index];
     const rejectionBytes = Buffer.byteLength(JSON.stringify(rejection));
     if (prependedArrayBytes(retainedBytesSum, retained.length, rejectionBytes) > storedEvidenceKindBytes(budget)) {
-      if (retained.length === 0) retained.push(essentialCurrentRejection(rejection));
+      if (retained.length === 0) {
+        retained.push(essentialCurrentRejection(rejection));
+        debugLog?.(
+          `[AI] [Attempt] phase=${safeLogIdentifier(phase, 'unknown')} stored rejection collapsed by budget`
+          + ` tool=${safeLogIdentifier(rejection.toolName, 'unknown')}`
+          + ` callId=${safeCallId(rejection.callId)}`
+          + ` bytes=${rejectionBytes}`
+          + ` budget=${storedEvidenceKindBytes(budget)}`,
+        );
+      }
       break;
     }
     retained.unshift(rejection);
@@ -654,7 +673,7 @@ export function recordToolAttempt(
     ...state.rejections.filter((rejection) => !repairedTools.has(rejection.toolName)),
     ...attempt.rejections,
   ];
-  const rejections = boundStoredRejections(carried, budget);
+  const rejections = boundStoredRejections(carried, budget, state.phase, debugLog);
   if (rejections.length < carried.length) {
     debugLog?.(`[AI] [Attempt] phase=${state.phase} stored corrections dropped by budget — dropped=${carried.length - rejections.length} carried=${carried.length} retained=${rejections.length}`);
   }
@@ -827,7 +846,13 @@ function renderHeldDraftRepairContext(
   return [modelUserMessage(rendered)];
 }
 
-/** Reconstructs a bounded partial tool-call input from correction fragments only — never the raw rejected payload. */
+/**
+ * Reconstructs a bounded partial tool-call input from correction fragments only — never the raw
+ * rejected payload. Returns `{}` only when `fragments` is itself empty or absent, which — since
+ * every fragment producer ({@link correctionFragments}, {@link wholeCallFragments}) now emits at
+ * least one fragment for any non-`null`/`undefined` input, object or not — reflects a call whose own
+ * input was genuinely empty; it is never how a non-empty call collapses to nothing.
+ */
 function boundedCorrectionArgs(fragments: readonly ToolCorrectionFragment[] | undefined): Record<string, unknown> {
   if (!fragments || fragments.length === 0) return {};
   const result: Record<string, unknown> = {};
@@ -847,6 +872,50 @@ function boundedCorrectionArgs(fragments: readonly ToolCorrectionFragment[] | un
 }
 
 /**
+ * `present_result` fields {@link renderHeldDraftRepairContext} already renders in full whenever a
+ * draft is held for this same attempt.
+ */
+const HELD_DRAFT_DUPLICATE_ROOTS: ReadonlySet<string> = new Set(['sections', 'notes', 'highlight_groups']);
+
+/**
+ * Collapses every correction fragment rooted in a {@link HELD_DRAFT_DUPLICATE_ROOTS} field to one
+ * count-only placeholder per root, leaving every other fragment at its normal bound.
+ *
+ * @remarks
+ * Applied only when the rejected call's own tool matches the tool whose draft
+ * {@link renderHeldDraftRepairContext} rendered in full earlier in the same attempt: replaying one
+ * of these three fields here too would resend content already fully visible in the held-draft
+ * block, doubling the token cost of the exchange for no new information. Every other field
+ * (`name`, `summary`, `title`, `is_update`, ...) is not carried by that block, so it stays exactly
+ * what {@link boundedCorrectionArgs} would otherwise render — the model's own sent keys, never
+ * blanked to satisfy this collapse.
+ */
+function collapseHeldDraftDuplicateFragments(
+  fragments: readonly ToolCorrectionFragment[] | undefined,
+): readonly ToolCorrectionFragment[] | undefined {
+  if (!fragments || fragments.length === 0) return fragments;
+  const rootCounts = new Map<string, number>();
+  for (const fragment of fragments) {
+    const root = fragment.path.split('.')[0];
+    if (HELD_DRAFT_DUPLICATE_ROOTS.has(root)) rootCounts.set(root, (rootCounts.get(root) ?? 0) + 1);
+  }
+  if (rootCounts.size === 0) return fragments;
+  const collapsedRoots = new Set<string>();
+  const collapsed: ToolCorrectionFragment[] = [];
+  for (const fragment of fragments) {
+    const root = fragment.path.split('.')[0];
+    if (!rootCounts.has(root)) {
+      collapsed.push(fragment);
+      continue;
+    }
+    if (collapsedRoots.has(root)) continue;
+    collapsedRoots.add(root);
+    collapsed.push({ path: root, value: { collapsed: true, count: rootCounts.get(root)! } });
+  }
+  return collapsed;
+}
+
+/**
  * Renders the single most recent rejection as a native assistant tool-call + tool-result exchange.
  *
  * @remarks
@@ -858,9 +927,20 @@ function boundedCorrectionArgs(fragments: readonly ToolCorrectionFragment[] | un
  * {@link MAX_CORRECTION_FRAGMENT_BYTES}), so rendering exactly one rejection needs no further shrink
  * ladder. A synthetic `missing_required_tool_call` rejection carries no provider `callId` and cannot
  * form a valid assistant/tool pair — it falls back to one plain user-role note.
+ *
+ * This is the one renderer of the replayed assistant tool call: every rejection source (dispatched
+ * or pre-dispatch, held draft or none, object or non-object original input) reaches the model
+ * through this same {@link boundedCorrectionArgs} projection, so a replayed call is never an empty
+ * object while the rejected call itself was not. A dispatched rejection on the tool whose draft was
+ * just rendered in full IS that draft's own held content (it is the historical rejection that put
+ * the draft on hold), so its duplicate-carried fields collapse via
+ * {@link collapseHeldDraftDuplicateFragments} instead of repeating text already on screen. A
+ * pre-dispatch rejection on that same tool never reached the draft — its payload may be new content
+ * the draft does not yet hold — and replays in full, uncollapsed.
  * @param state - Cumulative typed state for the current logical phase or hop.
- * @param draftHeldFor - Tool whose held repair draft is rendered in the same attempt; its replayed
- * call carries no correction fragments because the draft block is the payload.
+ * @param draftHeldFor - Tool whose held repair draft is rendered in the same attempt; a dispatched
+ * rejection on this tool collapses the draft's own fields ({@link HELD_DRAFT_DUPLICATE_ROOTS})
+ * instead of repeating them.
  * @returns Zero messages when there is no rejection, one fallback user note for a callId-less
  * rejection, or one assistant tool-call and its paired tool result, closed by one user-role
  * continuation note (see {@link rejectionContinuationMessage}).
@@ -872,13 +952,16 @@ function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: st
     const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
     return [modelUserMessage(note)];
   }
-  // A dispatched rejection's payload is what the held draft rendered alongside this exchange carries,
-  // so that replayed call names the tool and call id only — the same text is never sent twice per
-  // attempt. A pre-dispatch rejection never reached the draft: its own fragments are the model's
-  // only view of the patch it sent.
-  const input = rejection.toolName === draftHeldFor && !rejection.preDispatch
-    ? {}
-    : boundedCorrectionArgs(rejection.correctionFragments);
+  // A dispatched rejection whose tool matches the held draft is guaranteed to be the historical
+  // rejection that PUT the draft on hold — its own correction fragments are therefore the draft's
+  // current sections/notes/highlight_groups verbatim, and collapse rather than repeat. A
+  // pre-dispatch rejection never reached the draft (schema prevalidation runs before the handler),
+  // so its payload — possibly new content the draft does not yet hold — is not known to duplicate
+  // anything and replays in full.
+  const fragments = rejection.toolName === draftHeldFor && !rejection.preDispatch
+    ? collapseHeldDraftDuplicateFragments(rejection.correctionFragments)
+    : rejection.correctionFragments;
+  const input = boundedCorrectionArgs(fragments);
   const output: Record<string, unknown> = { code: rejection.code, reason: rejection.reason };
   if (rejection.hint !== undefined) output.hint = rejection.hint;
   if (rejection.detail !== undefined) output.detail = rejection.detail;
@@ -962,6 +1045,32 @@ function rejectionSummary(count: number): RenderedRejection {
   };
 }
 
+/**
+ * Bounded stand-in for correction fragments a size collapse cannot retain in full: the same
+ * `raw_input` path {@link wholeCallFragments} already uses for a non-object payload, so
+ * {@link boundedCorrectionArgs} still projects a non-empty replayed call, carrying the
+ * {@link OmittedStructuredValue} shape so the size is visible instead of the field silently
+ * vanishing.
+ */
+function collapsedCorrectionFragment(fragments: readonly ToolCorrectionFragment[]): ToolCorrectionFragment {
+  return { path: 'raw_input', value: { omitted: true, bytes: Buffer.byteLength(serializedJson(fragments) ?? '') } };
+}
+
+/**
+ * Minimal projection of `rejection` retained when even one entry does not fit the stored-evidence
+ * share.
+ *
+ * @remarks
+ * `detail` is dropped — it is optional structural context, not required for a valid replay.
+ * Everything else survives: `correctionFragments` collapses to one bounded placeholder
+ * ({@link collapsedCorrectionFragment}) rather than disappearing, so
+ * {@link renderRejectionExchange}'s replayed tool call is never an empty object when the rejected
+ * call itself was not — the invariant that module states at its own top. `inputHash`,
+ * `preDispatch`, and `unproductiveStreak` are a hash, a boolean, and a small integer — fixed-size
+ * and bytes-negligible next to payload text — and are kept unconditionally so the next attempt's
+ * unproductive-resend absorption ({@link isUnproductiveResend}) and pre-dispatch/dispatched
+ * distinction still see the bookkeeping this same rejection would have carried uncollapsed.
+ */
 function essentialCurrentRejection(rejection: ToolAttemptRejection): ToolAttemptRejection {
   return {
     callId: capUtf8Text(rejection.callId, 128),
@@ -970,6 +1079,12 @@ function essentialCurrentRejection(rejection: ToolAttemptRejection): ToolAttempt
     reason: capUtf8Text(rejection.reason, MAX_REJECTION_TEXT_CHARS * 4),
     ...(rejection.hint !== undefined ? { hint: rejection.hint } : {}),
     ...(rejection.issuePaths !== undefined ? { issuePaths: rejection.issuePaths } : {}),
+    ...(rejection.correctionFragments && rejection.correctionFragments.length > 0
+      ? { correctionFragments: [collapsedCorrectionFragment(rejection.correctionFragments)] }
+      : {}),
+    ...(rejection.inputHash !== undefined ? { inputHash: rejection.inputHash } : {}),
+    ...(rejection.preDispatch !== undefined ? { preDispatch: rejection.preDispatch } : {}),
+    ...(rejection.unproductiveStreak !== undefined ? { unproductiveStreak: rejection.unproductiveStreak } : {}),
   };
 }
 
@@ -1002,10 +1117,14 @@ function rejectionFromInvalid(
     code: call.code,
     message: capRejectionText(call.reason),
     correction: {
-      // Schema-invalid calls carry the standing repair instruction: only the bounded fragments above
-      // are replayed, so without an explicit directive the model regenerates blind instead of
-      // editing the one offending field.
-      ...(call.code === 'invalid_tool_input' ? { hint: INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
+      // Schema-invalid calls carry a repair instruction: only the bounded fragments above are
+      // replayed, so without an explicit directive the model regenerates blind instead of editing
+      // the one offending field. `call.hint` is the issue-derived instruction the producer
+      // (`rejectionFromZodError`) already resolved — e.g. removal for an unrecognized key, since
+      // the standing resend-unchanged sentence is the wrong repair for a key the schema rejects
+      // outright; it falls back to that standing sentence when the producer had no more specific
+      // repair to name.
+      ...(call.code === 'invalid_tool_input' ? { hint: call.hint ?? INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
       ...(call.code === 'unknown_tool' ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
@@ -1019,20 +1138,33 @@ function rejectionFromInvalid(
   };
 }
 
-/**
- * Issue-path roots whose resend replaces the entire list — `lineage_present_result`'s answer body.
- *
- * @remarks
- * A `submit_findings` root (`column_flow`, `route_requests`, `prune_neighbors`) is a bag of
- * independent records: replaying the flagged entry alone is a complete correction. A present_result
- * list is not — the model rewrites the whole list on a resend, so a replay that shows only the
- * flagged element leaves it reconstructing the unflagged ones from memory, which is exactly how a
- * repair turn drops captured formulas and risks from an already-correct section.
- */
 /** The one tool whose rejected draft the session holds for repair (`presentResultRepairDraft`). */
 const PRESENT_RESULT_TOOL = 'lineage_present_result';
 
-const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set(['sections', 'notes', 'highlight_groups']);
+/**
+ * Issue-path roots whose resend replaces the entire list — every root here is rewritten whole by
+ * the model on a resend, never patched positionally.
+ *
+ * @remarks
+ * A `present_result` answer-body list (`sections`, `notes`, `highlight_groups`) and a
+ * `submit_findings` per-hop list (`column_flow`, `route_requests`, `prune_neighbors`) share the
+ * same resend shape: the model emits the full array again, not a patch at the flagged index. A
+ * replay that shows only the flagged element leaves every other element to be reconstructed from
+ * memory — for `present_result` that drops captured formulas and risks from an already-correct
+ * section; for `submit_findings` the positional fragment builder left the unflagged indices as
+ * `null` holes (or missing past the highest flagged index), which the model then omitted outright
+ * on its next resend. Every root here replays complete, within {@link WHOLE_LIST_CORRECTION_BYTES}
+ * — an element that cannot fit its byte share collapses to the same size-only stub
+ * {@link boundListElementFragment} already uses, never a hole and never a dropped index.
+ */
+const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set([
+  'sections',
+  'notes',
+  'highlight_groups',
+  'column_flow',
+  'route_requests',
+  'prune_neighbors',
+]);
 
 /**
  * Byte-bounds one whole-list element with the truncate-then-collapse policy
@@ -1063,33 +1195,27 @@ function boundListElementFragment(element: unknown, elementBytes: number): unkno
  */
 const WHOLE_LIST_CORRECTION_BYTES = MAX_CORRECTION_FRAGMENTS * MAX_CORRECTION_FRAGMENT_BYTES;
 
-/** Selects only correction-relevant structural array entries; prose and result sections are excluded. */
+/** Matches an issue path that flags one element of a {@link WHOLE_LIST_CORRECTION_ROOTS} list. */
+const WHOLE_LIST_ISSUE_PATH = new RegExp(`^(${[...WHOLE_LIST_CORRECTION_ROOTS].join('|')})\\.(\\d+)(?:\\.|$)`);
+
+/** Replays every list an issue path flags, each complete under the whole-list byte policy. */
 function correctionFragments(input: unknown, issuePaths: readonly string[]): ToolCorrectionFragment[] {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
   const record = input as Record<string, unknown>;
   const fragments: ToolCorrectionFragment[] = [];
-  const seen = new Set<string>();
+  const replayedRoots = new Set<string>();
   for (const issuePath of issuePaths) {
-    const match = /^(column_flow|route_requests|prune_neighbors|sections|notes|highlight_groups)\.(\d+)(?:\.|$)/.exec(issuePath);
+    const match = WHOLE_LIST_ISSUE_PATH.exec(issuePath);
     if (!match) continue;
     const root = match[1];
     const index = Number(match[2]);
     const values = record[root];
-    if (!Array.isArray(values) || !Number.isSafeInteger(index) || index < 0 || index >= values.length) continue;
-    if (seen.has(`${root}.${index}`)) continue;
-    if (WHOLE_LIST_CORRECTION_ROOTS.has(root)) {
-      const elementBytes = Math.floor(WHOLE_LIST_CORRECTION_BYTES / values.length);
-      values.forEach((element, position) => {
-        seen.add(`${root}.${position}`);
-        fragments.push({ path: `${root}.${position}`, value: boundListElementFragment(element, elementBytes) });
-      });
-      continue;
-    }
-    if (fragments.length + 1 > MAX_CORRECTION_FRAGMENTS) continue;
-    seen.add(`${root}.${index}`);
-    fragments.push({
-      path: `${root}.${index}`,
-      value: boundStructuredValue(values[index], MAX_CORRECTION_FRAGMENT_BYTES),
+    if (!Array.isArray(values) || !Number.isSafeInteger(index) || index >= values.length) continue;
+    if (replayedRoots.has(root)) continue;
+    replayedRoots.add(root);
+    const elementBytes = Math.floor(WHOLE_LIST_CORRECTION_BYTES / values.length);
+    values.forEach((element, position) => {
+      fragments.push({ path: `${root}.${position}`, value: boundListElementFragment(element, elementBytes) });
     });
   }
   return fragments;
@@ -1103,9 +1229,17 @@ function correctionFragments(input: unknown, issuePaths: readonly string[]): Too
  * `title`) orders a full resend with the untouched fields carried over, so the replay is the model's only view of what it sent: every list root is replayed
  * complete under the whole-list byte policy, every other field bounded as one fragment. Replaying
  * `{}` instead left the model rebuilding the call from memory and reintroducing repaired entries.
+ *
+ * A non-`null`/`undefined` input that is not a plain object — the raw unparsed `arguments` string a
+ * harness port carries on `argumentsIssue` (`openAiCompatiblePort.ts`), or any other scalar/array
+ * top-level payload — has no field names to project onto, but the call was not empty: it is bounded
+ * and replayed as one labeled fragment rather than silently dropped to `{}`.
  */
 function wholeCallFragments(input: unknown): ToolCorrectionFragment[] {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
+  if (input === undefined || input === null) return [];
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    return [{ path: 'raw_input', value: boundStructuredValue(input, MAX_CORRECTION_FRAGMENT_BYTES) }];
+  }
   const fragments: ToolCorrectionFragment[] = [];
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
     if (Array.isArray(value) && value.length > 0) {

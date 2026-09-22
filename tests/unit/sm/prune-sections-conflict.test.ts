@@ -40,8 +40,7 @@ describe("submitFindings — prune verdict contradicted by its own captured evid
   const model: DatabaseModel = makeModel(nodes, edges, ['dbo']);
   const graph = makeGraph(nodes, edges);
 
-  // Mirrors the real defect (a recorded run): a `$$ … $$` formula block
-  // inside a `prune`-verdict section.
+  // A `$$ … $$` formula block inside a `prune`-verdict section.
   const CAPTURED_FORMULA_TEXT =
     'SegmentName is derived on the way out. $$ SegmentName = CASE(Tier = \'Premium\' -> \'High\'; else \'Low\') $$';
 

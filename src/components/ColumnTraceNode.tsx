@@ -161,7 +161,16 @@ function ColumnTraceRowLine({
       // presses to tab past — and a trace holds many such nodes.
       tabIndex={isTabStop ? 0 : -1}
       aria-label={ariaLabel}
-      onKeyDown={event => onKeyDown(event, row.name)}
+      onKeyDown={event => {
+        // Enter/Space pin the thread, as a click does, so pinning never needs a pointer.
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          event.stopPropagation();
+          onColumnSelect(nodeId, row.name);
+          return;
+        }
+        onKeyDown(event, row.name);
+      }}
       // Claimed before the canvas sees it: React Flow would otherwise read the same click as a node
       // click and select the object, replacing the column thread with the object's neighbourhood.
       onClick={event => { event.stopPropagation(); onColumnSelect(nodeId, row.name); }}
@@ -282,7 +291,6 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
 function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceNodeData }) {
   const { view } = data;
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
-  const rowsVisible = data.rowsVisible !== false;
   const { hoveredPath: threadPath, pinnedRow } = useColumnHover();
   const [picker, setPicker] = useState<TraceNeighborPicker | null>(null);
 
@@ -341,10 +349,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const schemaColor = getSchemaColor(view.schema);
   const nodeTitle = `${view.schema}.${view.label}`;
 
-  // Only a column card lists rows — a transform super node renders its circle instead — so the
-  // collapsed stand-in is always the column count.
-  const summaryLine = `${view.rows.length} traced columns`;
-
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
   // A column thread carries the same answer one level down as an object selection does: the objects
@@ -373,12 +377,34 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       )}
       {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
       {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
+    {/* The trace +/- buttons sit outside the card edge, so they live on this unclipped box; the card
+        inside keeps `overflow: hidden` for its rounded header and rows. The dim sits here too, so an
+        off-thread card's buttons fade with it. */}
     <div
-      className={view.isTransformNode ? 'transition-all duration-300 ease-in-out' : 'rounded-lg border ln-node-card transition-all duration-300 ease-in-out'}
+      className="transition duration-300 ease-in-out"
       style={{
         position: 'relative',
         width: view.width || (view.isTransformNode ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH),
         height: view.height,
+        opacity,
+        transform,
+        zIndex,
+      }}
+    >
+      {data.traceControls && (
+        <>
+          <TraceActionButton action="add" side="in" options={data.traceControls.in.add} hasContext={data.traceControls.in.neighborCount > 0} disabledReason={data.traceControls.in.addDisabledReason} onAction={applyTraceAction} />
+          <TraceActionButton action="prune" side="in" options={data.traceControls.in.prune} hasContext={data.traceControls.in.visibleNeighborCount > 0} disabledReason={data.traceControls.in.pruneDisabledReason} onAction={applyTraceAction} />
+          <TraceActionButton action="add" side="out" options={data.traceControls.out.add} hasContext={data.traceControls.out.neighborCount > 0} disabledReason={data.traceControls.out.addDisabledReason} onAction={applyTraceAction} />
+          <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} hasContext={data.traceControls.out.visibleNeighborCount > 0} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
+        </>
+      )}
+    <div
+      className={view.isTransformNode ? 'transition-all duration-300 ease-in-out' : 'rounded-lg border ln-node-card transition-all duration-300 ease-in-out'}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
         // A procedure is a process, not a table: the circle IS the node, so it carries no card
         // chrome around it — the box stays as the layout and port geometry only, and the circle's
         // own stroke takes the selection colour the card border would have taken.
@@ -390,9 +416,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
           backgroundColor: 'var(--ln-node-bg)',
           boxShadow,
         }),
-        opacity,
-        transform,
-        zIndex,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -409,14 +432,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
             ×
           </button>
         </Tooltip>
-      )}
-      {data.traceControls && (
-        <>
-          <TraceActionButton action="add" side="in" options={data.traceControls.in.add} hasContext={data.traceControls.in.neighborCount > 0} disabledReason={data.traceControls.in.addDisabledReason} onAction={applyTraceAction} />
-          <TraceActionButton action="prune" side="in" options={data.traceControls.in.prune} hasContext={data.traceControls.in.visibleNeighborCount > 0} disabledReason={data.traceControls.in.pruneDisabledReason} onAction={applyTraceAction} />
-          <TraceActionButton action="add" side="out" options={data.traceControls.out.add} hasContext={data.traceControls.out.neighborCount > 0} disabledReason={data.traceControls.out.addDisabledReason} onAction={applyTraceAction} />
-          <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} hasContext={data.traceControls.out.visibleNeighborCount > 0} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
-        </>
       )}
       {view.isTransformNode ? (
         <TransformNodeBody
@@ -449,28 +464,22 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
             <span className="text-[8px]" style={{ color: 'var(--ln-fg-muted)', flexShrink: 0 }}>{typeLabel}</span>
           </div>
 
-          <div role={rowsVisible ? 'list' : undefined} style={{ position: 'relative', height: rowsBlockHeight, flexShrink: 0 }}>
-            {rowsVisible ? (
-              view.rows.map((row) => (
-                <ColumnTraceRowLine
-                  key={row.name}
-                  row={row}
-                  nodeId={id}
-                  nodeTitle={nodeTitle}
-                  lineState={data.rowLineStates?.[row.name]}
-                  focused={focusedRow === row.name}
-                  isTabStop={row.name === tabStopRow}
-                  registerRef={registerRowRef}
-                  onKeyDown={handleRowKeyDown}
-                  onFocusStart={() => { setFocusedRow(row.name); setActiveRow(row.name); }}
-                  onFocusEnd={() => setFocusedRow(null)}
-                />
-              ))
-            ) : (
-              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span className="text-[9px]" style={{ color: 'var(--ln-fg-muted)' }}>{summaryLine}</span>
-              </div>
-            )}
+          <div role="list" style={{ position: 'relative', height: rowsBlockHeight, flexShrink: 0 }}>
+            {view.rows.map((row) => (
+              <ColumnTraceRowLine
+                key={row.name}
+                row={row}
+                nodeId={id}
+                nodeTitle={nodeTitle}
+                lineState={data.rowLineStates?.[row.name]}
+                focused={focusedRow === row.name}
+                isTabStop={row.name === tabStopRow}
+                registerRef={registerRowRef}
+                onKeyDown={handleRowKeyDown}
+                onFocusStart={() => { setFocusedRow(row.name); setActiveRow(row.name); }}
+                onFocusEnd={() => setFocusedRow(null)}
+              />
+            ))}
           </div>
         </>
       )}
@@ -495,6 +504,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
           style={portHandleStyle(view, i, 'source')}
         />
       ))}
+    </div>
     </div>
     </>
   );

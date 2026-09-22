@@ -2,13 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AiMemoryManager } from '../../../src/ai/session/memoryManager';
 import type { LineageNode } from '../../../src/engine/types';
 
-/**
- * Regression test for A31 — a self-pruned focus node's already-captured `sections`/`summary`
- * were discarded at the `submit_findings` prune branch (`smBase.ts`) before the analyze/passthrough
- * path's `storeDetail` call ever ran, so later synthesis had nothing to cite for that node. Pins
- * the storage-only fix: `AiMemoryManager.storePrunedDetail` retains that content in a store
- * separate from `detailSlots`, so `getResult()` (the synthesis-visible archive) never sees it.
- */
+/** A self-pruned node's captured sections/summary are retained separately from `detailSlots`, so `getResult()` (synthesis-visible) never sees them. */
 
 function makeNode(id: string): LineageNode {
   return {

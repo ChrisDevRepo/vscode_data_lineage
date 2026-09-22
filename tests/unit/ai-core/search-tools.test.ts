@@ -1,30 +1,23 @@
 /**
- * Unit tests for the discovery search tools' grep contract.
- *
- * `lineage_search_ddl` and `lineage_search_objects` follow the shape models are trained on: a
- * regex in, every match out with its location and line text, an empty result stated as a plain
- * fact, an unusable pattern named as an error, and no truncation anywhere. What is guarded here:
+ * `lineage_search_ddl` and `lineage_search_objects` follow the grep contract: a regex in, every
+ * match out with its location and line text, an empty result stated as a plain fact (no repair
+ * advice), an unusable pattern named as an error, and no truncation anywhere. Covered here:
  *
  * - a hit carries the object, a 1-based line number, the matched line and its context;
  * - `(?i)` reaches the tool boundary and is a no-op, not a rejection;
- * - the empty result is `total: 0` plus what was searched — with NO repair advice, which is what
- *   drove the T3 retry loop ("try a shorter substring" on a regex tool) — and is structurally
- *   distinct from `{ error: 'invalid_regex' }`;
+ * - the empty result (`total: 0` plus what was searched) is structurally distinct from
+ *   `{ error: 'invalid_regex' }`;
  * - `^`, `$` and `.` keep their whole-body (non-multiline) meaning, as the tool sentence states;
  * - a pattern whose first match is empty still reports the real match later in the same body;
  * - `search_objects` in regex mode takes the pattern verbatim (no dotted-name splitting) and
  *   names an invalid pattern instead of answering with an empty list;
- * - `search_objects` serves `by_type` for the same rows `total` counts, and the two quote
- *   characters are named as a query rather than answered with `total: 0` (IB3-T2: 19/8/5 served
- *   per row was delivered as "17 tables … 7 views", and "send an empty query" cost a hop);
+ * - `search_objects` serves `by_type` for the same rows `total` counts, and punctuation-only
+ *   input is named as a query rather than answered with `total: 0`;
  * - an over-budget result hands off with the existing `over_discovery_budget` fact and omits the
  *   list entirely, never a partial one;
- * - a hit inside a SQL comment carries `commented: true` while a live hit's row is unchanged
- *   (M0-T3: the 3-line context window dropped the enclosing block, and dead SQL read as behaviour);
+ * - a hit inside a SQL comment carries `commented: true` while a live hit's row is unchanged;
  * - `by_object` states every matching object once with its `hits` total and, where anything is
- *   dead, its `commented_hits` and line ranges, and no hit is lost to the grouping (M0-T3: a
- *   per-row flag does not survive an answer composed by theme, and a per-object count tallied by
- *   hand from 33 rows was delivered as 17/16 against 22/11);
+ *   dead, its `commented_hits` and line ranges, and no hit is lost to the grouping;
  * - `package.json` `languageModelTools` is what the generator produces from `TOOL_DEFS`.
  *
  * The caps travel with the call as one immutable per-turn budget, so a case that needs a tight
@@ -181,10 +174,8 @@ describe('search tools — grep contract', () => {
   });
 
   it('marks every dead line of the context, including the one that matched nothing', () => {
-    // IB4-T3. `commented` answers for the matched line, and the window is wider than the match:
-    // the abandoned self-join's own `DELETE` produced no hit, so nothing carried its status and it
-    // reached the wire as bare SQL shaped exactly like the live read four lines above — the answer
-    // took it for behaviour and reported the procedure as mutating a table it only reads.
+    // `commented` answers for the matched line, and the window is wider than the match: a line
+    // that matches nothing itself must still read as dead when it sits inside the same block.
     const body = [
       'BEGIN',                                          // 1
       '    SELECT @DuplicateCount = COUNT(*)',          // 2
@@ -218,9 +209,8 @@ describe('search tools — grep contract', () => {
   });
 
   it('carries the governing IF predicate on a hit inside its block and appends it after `commented`', () => {
-    // IB3-T3-PREDICATE: the verification SELECT is ungated; the IF two lines below it gates only the
-    // warning that follows. A hit on the SELECT must report no predicate, and a hit inside the
-    // warning's block must report the IF that actually governs it — not a nearer, unrelated one.
+    // A hit outside any IF block reports no predicate; a hit inside one reports the IF that
+    // actually governs it, not a nearer, unrelated one.
     const body = [
       'CREATE PROCEDURE ai.spImportOrders',                            // 1
       'AS',                                                            // 2
@@ -369,7 +359,7 @@ describe('search tools — grep contract', () => {
     expect(res.objects).toBe(2);
 
     // One group per object, every object, in first-hit order — the per-object count is served, so
-    // no answer has to tally it from the rows (M0-T3: 17/16 delivered against an actual 22/11).
+    // no answer has to tally it from the rows.
     const groups = res.by_object ?? [];
     expect(groups.map(g => [g.id, g.hits]), 'every matching object, counted, no repeat')
       .toEqual([['[ai].[spimport]', 4], ['[ai].[vwlive]', 1]]);
@@ -421,6 +411,20 @@ describe('search tools — grep contract', () => {
     expect(inline.by_object?.length, 'and every object is counted beside it').toBe(201);
   });
 
+  it('a match-everything pattern over budget is answered from exact counts', () => {
+    // One match per character: the rows alone would dwarf the budget, so the reply is built from
+    // the counts, with the same over-budget shape and the same exact total an inlined list reports.
+    const body = 'x'.repeat(5_000);
+    const wide = makeModel([node({ id: '[ai].[vwwide]', name: 'vwWide', type: 'view', bodyScript: body })]);
+    const res = searchDdl(wide, '.', createTurnTokenBudget({ discoveryTokenBudget: 1000 })) as DdlResult;
+    expect(res.reason).toBe('over_discovery_budget');
+    expect(res.results_omitted).toBe(true);
+    expect('results' in res, 'never a partial list').toBe(false);
+    expect(res.total, 'every character of both bodies is one match').toBe(body.length + VIEW_BODY.replace(/\n/g, '').length);
+    expect(res.objects).toBe(2);
+    expect(res.searched?.bodies).toBe(2);
+  });
+
   it('search_objects regex mode takes the pattern verbatim and names an invalid one', () => {
     const dotted = searchObjects(model, 'sales\\..*order', undefined, undefined, 'regex') as {
       results?: { id?: string }[]; total?: number; error?: string; hint?: string;
@@ -434,9 +438,7 @@ describe('search tools — grep contract', () => {
   });
 
   it('search_objects serves the type breakdown of the list it counts', () => {
-    // IB3-T2: a 32-row payload carrying 19 table / 8 procedure / 5 view per row, with only `total`
-    // aggregated, was delivered as "17 tables … 7 views" — the rows were tallied by hand. The
-    // breakdown is measured on the same pass as the rows, so it cannot disagree with `total`.
+    // The breakdown is measured on the same pass as the rows, so it cannot disagree with `total`.
     const wide = makeModel([
       node({ id: '[ai].[spload]', name: 'spLoad', type: 'procedure', bodyScript: 'CREATE PROC ai.spLoad AS SELECT 1' }),
       node({ id: '[ai].[spclean]', name: 'spClean', type: 'procedure', bodyScript: 'CREATE PROC ai.spClean AS SELECT 1' }),
@@ -454,9 +456,7 @@ describe('search tools — grep contract', () => {
   });
 
   it('serves a one-character substring and names no repair it will not accept', () => {
-    // IB3-T2 terminated a run: `query:"i"` and `query:"."` were both refused as too short and the
-    // hint's trailing clause named the two quote characters in order to forbid them — which is
-    // what the next call sent. Three refusals in a row hit the breaker, no answer at all.
+    // A rejection hint must never quote a wrong value back as if it were an accepted example.
     const oneChar = searchObjects(model, 'v', undefined, ['ai']) as { error?: string; total?: number };
     expect(oneChar.error, 'one character is a substring like any other, and is served').toBeUndefined();
     expect(oneChar.total, 'vwSales carries a "v"').toBe(1);

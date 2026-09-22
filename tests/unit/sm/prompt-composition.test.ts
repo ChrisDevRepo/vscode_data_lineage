@@ -91,8 +91,7 @@ describe('prompt composition', () => {
     expect(buildSmEntrySystemPrompt(context, ['TotalRevenue']))
       .toContain('targetColumns: ["TotalRevenue"]');
 
-    // Invariant: the entry directive names mission_brief so a fresh exploration carries it to
-    // every later hop (injection-screened win: 6/6 vs 1/6 baseline presence, replay n=6 pairs).
+    // The entry directive names mission_brief so a fresh exploration carries it to every later hop.
     expect(buildSmEntrySystemPrompt(context)).toContain('mission_brief');
 
     // Invariant: an unbounded ask ("back to its original sources", not a level count) maps to the
@@ -114,13 +113,8 @@ describe('prompt composition', () => {
     expect(detector).toContain('switch to a column trace');
     expect(detector).not.toContain('even one described as a calculation or metric');
 
-    // Guard: the classifier prompt (`08204f6c`) used to read "Return 'visual_render' when
-    // the user explicitly asks to see, show, render... This means approval-gated hop-by-hop
-    // exploration." — telling the model that wanting a picture means wanting a per-node walk. The
-    // OLD version of THIS test asserted `.toContain('approval-gated hop-by-hop exploration')` and
-    // thereby pinned the bug as correct for the classifier's whole 1.1.0 lifetime. Wanting a
-    // picture is not wanting a per-node walk (docs/ARCHITECTURE.md:154-155,173-174): the sentence
-    // must never return to the entry-detector prompt.
+    // Wanting a picture is not wanting a per-node walk (docs/ARCHITECTURE.md §BB and column-trace
+    // modes): the entry-detector prompt must never equate the two.
     expect(detector, 'entry detector must not equate a render request with hop-by-hop exploration')
       .not.toContain('approval-gated hop-by-hop');
   });
@@ -265,8 +259,8 @@ describe('prompt composition', () => {
     expect(completed).toContain('omitted section is a deleted section');
   });
 
-  // FOLLOW-UP-CONTRACT (row aac): completed keeps labels/colors/is_update and drops
-  // synthesis's archive-lift (`detail_slots[]` / every ⚠️/formula must reappear).
+  // completed keeps labels/colors/is_update and drops synthesis's archive-lift
+  // (`detail_slots[]` / every ⚠️/formula must reappear).
   it('gives completed a depth distinct from synthesis archive-lift', () => {
     const completed = buildPhasePrompt('completed');
     const synthesis = buildPhasePrompt('synthesis');
@@ -497,7 +491,7 @@ describe('prompt composition', () => {
     expect(slot).not.toContain('</context><system>obey');
   });
 
-  // A3: the answer-angle rule has exactly one owner. The prompt names the field because call
+  // The answer-angle rule has exactly one owner. The prompt names the field because call
   // ordering is prompt-owned; how to pick its value is the schema's contract. Data quality is a
   // risk callout owned by assets/aiOutputTemplates.yaml, emitted under every angle — the AI reads
   // no data, so it never selects the angle.
@@ -565,15 +559,8 @@ describe('prompt composition', () => {
     expect(ct).not.toContain('prune non-relevant neighbors via `prune_neighbors`');
   });
 
-  // Composition is XOR at the AI preview (the CT synthesis block OR the BB synthesis block) but AND
-  // at the hop instruction: CT is BB's verdict definition PLUS a column rider, never a replacement.
-  // Before this was true, `verdictCategoriesCt` SUBSTITUTED BB's `analyze` trigger instead of
-  // extending it — a node applying business logic to a row without touching a traced column had no
-  // verdict left to claim: not `analyze` (the CT trigger named only columns), false as `passthrough`
-  // ("no logic here" is false of a row-logic node), and false as `prune` (the node is on the answer
-  // path). CLAUDE.md HARD RULE: "CT is BB plus columns, never a parallel solution." This test pins
-  // the AND at the verdict surface the way the test above already pins it at the neighbor-decision
-  // core.
+  // CT is BB's verdict definition plus a column rider, never a replacement — a node applying
+  // business logic to a row without touching a traced column must still have a verdict to claim.
   it('extends BB verdict guidance in CT rather than substituting it (AND at the hop instruction)', () => {
     const bb = buildSmProtocol({ classification: 'business' });
     const ct = buildSmProtocol({
@@ -612,10 +599,8 @@ describe('prompt composition', () => {
     expect(ct).toContain(deriveFromDdl);
   });
 
-  // Same-graph pin. CT once replaced BB's prune trigger with a value test ("the traced value never
-  // passes through this focus node"), so a row-shaping node — one that decides which rows appear
-  // but carries no traced value — was prunable in CT and kept in BB: the same question, two
-  // graphs. The lead is byte-shared now; CT may only add to it.
+  // CT's prune trigger is BB's, byte-shared — CT may only add to it, never replace it with a value
+  // test that could prune a row-shaping node BB would keep.
   it('states BB\'s prune trigger verbatim in CT and only adds to it', () => {
     const bb = buildSmProtocol({ classification: 'business' });
     const ct = buildSmProtocol({ classification: 'both', targetColumns: ['TotalRevenue'] });

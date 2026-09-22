@@ -129,21 +129,14 @@ describe('ColumnTraceEdge', () => {
   });
 
   // `ColumnLineState` is `'passthrough' | 'transformation' | 'unknown'` (src/engine/columnTraceView.ts).
-  // An unmarked line already reads as "unchanged", so `passthrough` earns no chip; `unknown` has
-  // nothing to assert either. Both are exercised by name, not inferred from the one positive case.
-  it('draws no chip for a passthrough edge', () => {
-    mountEdge(makeData({ state: 'passthrough' }));
-    expect(edgeChip(), 'an unremarkable line stays unmarked').toBeNull();
-  });
-
-  it('draws no chip for an edge whose state could not be determined', () => {
-    mountEdge(makeData({ state: 'unknown' }));
+  // An unmarked line already reads as "unchanged", so none of these three inputs earns a chip.
+  it.each<[string, Partial<ColumnTraceEdgeData>]>([
+    ['a passthrough edge', { state: 'passthrough' }],
+    ['an edge whose state could not be determined', { state: 'unknown' }],
+    ['a pass_through-only edge — identity is what an unmarked line already says', { transforms: ['pass_through'] }],
+  ])('draws no chip for %s', (_label, overrides) => {
+    mountEdge(makeData(overrides));
     expect(edgeChip(), 'nothing to assert is not the same as a transformation').toBeNull();
-  });
-
-  it('draws no chip for a pass_through-only edge — identity is what an unmarked line already says', () => {
-    mountEdge(makeData({ transforms: ['pass_through'] }));
-    expect(edgeChip(), 'marking a copy would spend attention to say nothing').toBeNull();
   });
 
   it('keeps the chip beside pass_through when a real class rides with it', () => {
@@ -187,25 +180,23 @@ describe('ColumnTraceEdge', () => {
     expect(svg.querySelectorAll('path'), 'no leftover arrowhead geometry').toHaveLength(0);
   });
 
-  it('names the class first, then the model note, in the tooltip', () => {
-    // The tooltip is the only surface left that names the class — the column-flow legend row was
-    // removed — so the enum text is the first line and the model's own clause the second.
-    expect(describeColumnEdge({ sourceColumn: 'A', targetColumn: 'B', transforms: ['combine'], note: 'JOIN on ProductId' }))
-      .toBe('Combine:\nJOIN on ProductId');
-  });
-
-  it('stacks every recorded class into the tooltip name', () => {
-    expect(describeColumnEdge({ sourceColumn: 'A', targetColumn: 'B', transforms: ['combine', 'filter'] }))
-      .toBe('Combine + Filter:\nA → B — shapes which rows reach here.');
-  });
-
-  it('falls back to the structural description when the model offered no note', () => {
-    expect(describeColumnEdge({ sourceColumn: 'OrderTotal', targetColumn: 'NetAmount', transforms: ['compute'] }))
-      .toBe('Compute:\nOrderTotal → NetAmount — the value changes here.');
-  });
-
-  it('describes an unclassified transformation without inventing a class', () => {
-    expect(describeColumnEdge({ sourceColumn: 'OrderTotal', targetColumn: 'NetAmount' }))
-      .toBe('OrderTotal → NetAmount — the value changes here.');
+  // The tooltip is the only surface left that names the class — the column-flow legend row was
+  // removed — so the enum text leads and the model's own clause, or a structural fallback when it
+  // offered none, follows.
+  it.each<[string, Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>, string]>([
+    ['names the class first, then the model note, when one was given',
+      { sourceColumn: 'A', targetColumn: 'B', transforms: ['combine'], note: 'JOIN on ProductId' },
+      'Combine:\nJOIN on ProductId'],
+    ['stacks every recorded class into the tooltip name',
+      { sourceColumn: 'A', targetColumn: 'B', transforms: ['combine', 'filter'] },
+      'Combine + Filter:\nA → B — shapes which rows reach here.'],
+    ['falls back to the structural description when the model offered no note',
+      { sourceColumn: 'OrderTotal', targetColumn: 'NetAmount', transforms: ['compute'] },
+      'Compute:\nOrderTotal → NetAmount — the value changes here.'],
+    ['describes an unclassified transformation without inventing a class',
+      { sourceColumn: 'OrderTotal', targetColumn: 'NetAmount' },
+      'OrderTotal → NetAmount — the value changes here.'],
+  ])('%s', (_label, data, expected) => {
+    expect(describeColumnEdge(data)).toBe(expected);
   });
 });

@@ -1,20 +1,9 @@
 /**
- * A column committed at one hop stays owed until some hop accounts for it — the T8 chain
- * termination, reproduced offline.
- *
- * On the recorded run the walk reached
- * `[ai].[spcleanorders]` early, carrying only the display column the hop that routed it named. The
- * amount column arrived three hops later, when `[ai].[vwraworders]` committed
- * `cleanedorders.OrderAmount` and routed the table it came from: that table is non-bodied, so the
- * question contracted onto its writer — already visited, therefore skipped. The column was dropped
- * at the one node that could say where it came from, `active_columns` emptied, and every node past
- * it (`spimportorders`, `vwexternalorders`) was accepted with `column_flow: []` because the
- * completeness check had nothing left to demand. Seven edges instead of eleven, and both delivered
- * channels still claimed the chain reached the external sources.
- *
- * The visited guard is a BB rule and correct for the same question; here the question is a new one.
- * The pin is the outcome, not the mechanism: the chain reaches the terminal source, and the hop
- * that reopens is dispatched with the amount column active so the completeness check demands it.
+ * A column committed at one hop stays owed until some hop accounts for it, even when the node
+ * that would carry it forward contracts onto an already-visited writer: a BB visited guard
+ * correctly skips re-dispatching that writer for the same question, but a later hop naming a new
+ * column on it is a new question and must reopen it with that column active, so the completeness
+ * check keeps demanding the column rather than accepting `column_flow: []` past it.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode, ObjectType } from '../../../src/engine/types';

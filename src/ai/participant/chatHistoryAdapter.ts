@@ -23,6 +23,7 @@ import {
 } from '../session/session';
 import { discoveryBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { longestPrefixFitting } from '../support/textTruncation';
+import { safeIdentifier } from '../support/logIdentifier';
 
 /**
  * Maximum UTF-8 bytes replayed from one historical tool result — a single 60 KB DDL payload in an
@@ -214,16 +215,28 @@ function pairedToolCalls(
       callId,
       toolName,
       input,
-      result: capHistoryToolResult(toolResultText(results[callId], debug)),
+      result: capHistoryToolResult(toolResultText(results[callId], debug), toolName, debug),
     });
   }
 
   return calls;
 }
 
-/** Caps one replayed tool result at {@link MAX_HISTORY_TOOL_RESULT_BYTES}, marking the cut. */
-function capHistoryToolResult(text: string): string {
-  if (utf8Bytes(text) <= MAX_HISTORY_TOOL_RESULT_BYTES) return text;
+/**
+ * Caps one replayed tool result at {@link MAX_HISTORY_TOOL_RESULT_BYTES}, marking the cut.
+ *
+ * @remarks
+ * Logged the same way its sibling shrink, {@link boundReplayedHistory}, logs a turn eviction: a
+ * reader reconstructing a hop from `host.log` must be able to tell that prior-turn evidence was
+ * shortened, not just that the model-facing text carries a marker.
+ */
+function capHistoryToolResult(text: string, toolName: string, debug?: (msg: string) => void): string {
+  const bytes = utf8Bytes(text);
+  if (bytes <= MAX_HISTORY_TOOL_RESULT_BYTES) return text;
+  debug?.(
+    `history tool result capped tool=${safeIdentifier(toolName, { extraChars: '.:-', replacement: '_', maxLength: 100, fallback: 'unknown' })}`
+    + ` bytes=${bytes} cap=${MAX_HISTORY_TOOL_RESULT_BYTES}`,
+  );
   const budget = MAX_HISTORY_TOOL_RESULT_BYTES - utf8Bytes(HISTORY_TRUNCATION_MARKER);
   return `${longestPrefixFitting(text, (prefix) => utf8Bytes(prefix) <= budget)}${HISTORY_TRUNCATION_MARKER}`;
 }

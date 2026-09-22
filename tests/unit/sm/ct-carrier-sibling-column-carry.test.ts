@@ -1,17 +1,9 @@
 /**
  * A traced column handed to a non-bodied carrier continues only on the carrier's far side from the
- * node that handed it over — never onto a sibling that reads (or writes) the same carrier.
- *
- * @remarks
- * Real shape: `m8-head-bb-azure-foundry/run-T8` hop 5. `vwDiscountCalc` declared
- * `CustomerMaster.CustomerTier` as an input to `Discount` and routed the table; the table's
- * contraction forwarded `[CustomerTier]` plus its `<lineage_questions>` to `spCleanOrders`, which
- * only READS `CustomerMaster`. The hop was served `Active columns: [CustomerTier]`, answered for the
- * tier alone and pruned `RawOrderImport` and `CleanedOrders` — the table its own OrderAmount
- * continuation runs through — so the later `vwRawOrders` route to `CleanedOrders` was skipped as
- * "already removed" and the column-chain reopen of `spCleanOrders` never fired. The same hop with no
- * column carry (`m8-t03-bb-azure-foundry/run-T8`, all fireworks T8 captures) routed both tables and
- * the reopen fired. Producers keep the column; the BB walk (which nodes are enqueued) is unchanged.
+ * node that handed it over — never onto a sibling that reads (or writes) the same carrier. A
+ * co-reader served the wrong active column can answer for it alone and prune a table that its own
+ * separate producer chain still needs, silently dropping that chain's reopen. Producers keep the
+ * column; the BB walk (which nodes are enqueued) is unchanged.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
