@@ -183,7 +183,7 @@ const BLOCK = {
    * injected separately by `templateRenderer.resolveStagePrompt(..., 'active', classification)`.
    *
    * Renders only the submission shape for the locked classification — no menu
-   * of inactive branches. See {@link buildSectionsShape}.
+   * of inactive branches.
    */
   buildSectionsShape: (classification: 'business' | 'technical' | 'both'): string => {
     const submitLine = classification === 'both'

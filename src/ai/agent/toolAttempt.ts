@@ -975,20 +975,23 @@ function collapseHeldDraftDuplicateFragments(
 }
 
 /**
- * Renders the single most recent rejection as a native assistant tool-call + tool-result exchange.
+ * Renders every pending rejection as a native assistant tool-call + tool-result exchange, oldest first.
  *
  * @remarks
- * Only the newest rejection is actionable as a native exchange: it is the one the model must repair
- * next, and replaying superseded corrections re-instructs it toward attempts it has already
- * abandoned. The accumulated history stays available through
- * {@link renderToolAttemptContext}. Rejection fields are already byte-bounded at construction
+ * A later correction must never evict an earlier one's repair data, because the continuation note
+ * tells the model to act on "the correction above" — all of it must be above (measured 2026-09-20,
+ * m30 T24: the output-limit correction replaced the column correction, its available-column list
+ * and hold order vanished from the request, and the model resent the identical rejected payload).
+ * The byte-budgeted digest for the detect-entry phase remains
+ * {@link renderToolAttemptContext}. Rejection fields are already bounded at construction
  * ({@link capRejectionText}, {@link MAX_REJECTION_HINT_BYTES}, {@link MAX_REJECTION_DETAIL_BYTES},
- * {@link MAX_CORRECTION_FRAGMENT_BYTES}), so rendering exactly one rejection needs no further shrink
- * ladder. A synthetic `missing_required_tool_call` rejection carries no provider `callId` — nothing
+ * {@link MAX_CORRECTION_FRAGMENT_BYTES}), so rendering the stack needs no further shrink ladder;
+ * at most {@link MAX_TOOL_PROVIDER_CALLS} rejections exist in one hop state. A synthetic
+ * `missing_required_tool_call` rejection carries no provider `callId` — nothing
  * was ever dispatched, so there is no call to attribute an id to — and cannot form a genuine
  * assistant-call/tool-result pair. It instead renders as a synthesized assistant turn (the model's
- * own buffered {@link ToolAttemptRejection.attemptedText}, already capped by
- * {@link capRejectionText} at construction, or empty when the generation carried no text at all)
+ * own buffered {@link ToolAttemptRejection.attemptedText}, capped at construction, or
+ * empty when the generation carried no text at all)
  * followed by one plain user-role correction note. Without that assistant turn the retry transcript
  * carried no `assistant` message for this failure at all (roles `['system','user','user','user']`
  * on the traced reference case) and the correction read as an unmotivated new instruction rather
@@ -1003,54 +1006,64 @@ function collapseHeldDraftDuplicateFragments(
  * {@link collapseHeldDraftDuplicateFragments} instead of repeating text already on screen. A
  * pre-dispatch rejection on that same tool never reached the draft — its payload may be new content
  * the draft does not yet hold — and replays in full, uncollapsed.
- * @param state - Cumulative typed state for the current logical phase or hop.
- * @param draftHeldFor - Tool whose held repair draft is rendered in the same attempt; a dispatched
- * rejection on this tool collapses the draft's own fields ({@link HELD_DRAFT_DUPLICATE_ROOTS})
- * instead of repeating them.
- * @returns Zero messages when there is no rejection; a synthesized assistant echo plus one
- * user-role correction note for a callId-less rejection; or one assistant tool-call and its paired
- * tool result, closed by one user-role continuation note (see
- * {@link rejectionContinuationMessage}), for a rejection with a real provider `callId`.
- */
+  * @returns Zero messages when there is no rejection; otherwise every pending rejection's exchange,
+  * oldest first — a synthesized assistant echo plus one user-role correction note for a callId-less
+  * rejection, one assistant tool-call and its paired tool result for a rejection with a real
+  * provider `callId` — with exactly one user-role continuation note (see
+  * {@link rejectionContinuationMessage}) after the newest exchange when it carries a `callId`.
+  * @param state - Cumulative typed state for the current logical phase or hop.
+  * @param draftHeldFor - Tool whose held repair draft is rendered in the same attempt; a dispatched
+  * rejection on this tool collapses the draft's own fields ({@link HELD_DRAFT_DUPLICATE_ROOTS})
+  * instead of repeating them.
+  */
 function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: string): ModelMessage[] {
   if (state.rejections.length === 0) return [];
-  const rejection = state.rejections[state.rejections.length - 1];
-  if (!rejection.callId) {
-    // No provider call was ever made, so there is nothing to replay as a genuine tool-call/result
-    // pair. The synthesized assistant turn echoes exactly what the model itself produced instead
-    // (already capped by capRejectionText at construction) — empty content when the generation was
-    // a true empty completion — so the correction that follows reads as feedback on that turn
-    // rather than an unmotivated new instruction.
-    const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
-    return [modelAssistantMessage(rejection.attemptedText ?? ''), modelUserMessage(note)];
+  const messages: ModelMessage[] = [];
+  for (const rejection of state.rejections) {
+    if (!rejection.callId) {
+      // No provider call was ever made, so there is nothing to replay as a genuine tool-call/result
+      // pair. The synthesized assistant turn echoes exactly what the model itself produced instead
+      // (capped by {@link capRejectionText} at construction) — empty content when the generation was
+      // a true empty completion — so the correction that follows reads as feedback on that turn
+      // rather than an unmotivated new instruction.
+      const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
+      messages.push(modelAssistantMessage(rejection.attemptedText ?? ''), modelUserMessage(note));
+    } else {
+      // A dispatched rejection whose tool matches the held draft is guaranteed to be the historical
+      // rejection that PUT the draft on hold — its own correction fragments are therefore the draft's
+      // current sections/notes/highlight_groups verbatim, and collapse rather than repeat. A
+      // pre-dispatch rejection never reached the draft (schema prevalidation runs before the handler),
+      // so its payload — possibly new content the draft does not yet hold — is not known to duplicate
+      // anything and replays in full.
+      const fragments = rejection.toolName === draftHeldFor && !rejection.preDispatch
+        ? collapseHeldDraftDuplicateFragments(rejection.correctionFragments)
+        : rejection.correctionFragments;
+      const input = boundedCorrectionArgs(fragments);
+      const output: Record<string, unknown> = { code: rejection.code, reason: rejection.reason };
+      if (rejection.hint !== undefined) output.hint = rejection.hint;
+      if (rejection.detail !== undefined) output.detail = rejection.detail;
+      if (rejection.issuePaths !== undefined) output.issuePaths = rejection.issuePaths;
+      messages.push(
+        modelToolCallMessage([{
+          callId: rejection.callId,
+          toolName: rejection.toolName,
+          input,
+        }]),
+        modelToolResultMessage(
+          rejection.callId,
+          rejection.toolName,
+          JSON.stringify(output),
+        ),
+      );
+    }
   }
-  // A dispatched rejection whose tool matches the held draft is guaranteed to be the historical
-  // rejection that PUT the draft on hold — its own correction fragments are therefore the draft's
-  // current sections/notes/highlight_groups verbatim, and collapse rather than repeat. A
-  // pre-dispatch rejection never reached the draft (schema prevalidation runs before the handler),
-  // so its payload — possibly new content the draft does not yet hold — is not known to duplicate
-  // anything and replays in full.
-  const fragments = rejection.toolName === draftHeldFor && !rejection.preDispatch
-    ? collapseHeldDraftDuplicateFragments(rejection.correctionFragments)
-    : rejection.correctionFragments;
-  const input = boundedCorrectionArgs(fragments);
-  const output: Record<string, unknown> = { code: rejection.code, reason: rejection.reason };
-  if (rejection.hint !== undefined) output.hint = rejection.hint;
-  if (rejection.detail !== undefined) output.detail = rejection.detail;
-  if (rejection.issuePaths !== undefined) output.issuePaths = rejection.issuePaths;
-  return [
-    modelToolCallMessage([{
-      callId: rejection.callId,
-      toolName: rejection.toolName,
-      input,
-    }]),
-    modelToolResultMessage(
-      rejection.callId,
-      rejection.toolName,
-      JSON.stringify(output),
-    ),
-    rejectionContinuationMessage(rejection.code),
-  ];
+  // One continuation note, after the newest exchange only: per-exchange notes would stack
+  // "resend" instructions mid-history, and the trailing user note must stay last for the
+  // provider turn boundary (see rejectionContinuationMessage). A callId-less newest exchange
+  // already closed with its own correction note, so it takes none.
+  const newest = state.rejections[state.rejections.length - 1];
+  if (newest.callId) messages.push(rejectionContinuationMessage(newest.code));
+  return messages;
 }
 
 /**
@@ -1560,6 +1573,18 @@ interface SynthesizedRejectionSpec {
   readonly nonEmptyReason: string;
   readonly hint: string;
   /**
+   * Whether this synthesized rejection counts against the semantic repair allowance.
+   *
+   * @remarks
+   * False only for the truncated-before-required-call class: an output-limit stop is a mechanical
+   * event that says nothing about the model's content accuracy, so it charges the physical
+   * provider-call budget alone ({@link MAX_TOOL_PROVIDER_CALLS} still bounds the retry loop) — the
+   * same precedent {@link REJECTION_CODES.emptyGeneration} already follows in
+   * {@link NON_CHARGEABLE_REJECTION_CODES}. A text-instead-of-call finish stays chargeable: that is
+   * an answer-format defect the correction exists to repair.
+   */
+  readonly chargeable: boolean;
+  /**
    * The raw generation text this attempt produced instead of the required call, whitespace and
    * all. Capped into {@link ToolAttemptRejection.attemptedText} via {@link capRejectionText}; never
    * pre-trimmed here so an all-whitespace generation is correctly treated as having no echoable
@@ -1602,10 +1627,10 @@ function emitSynthesizedRejection(
     + ` group=${classifyRejectionCode(rejection.code)}`
     + ` reason=${sanitizeForLog(rejection.reason)}`
     + ' issuePaths=none'
-    + ` charged=${isChargeableRejection(rejection.code)}`,
+    + ` charged=${spec.chargeable && isChargeableRejection(rejection.code)}`,
   );
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
-  return isChargeableRejection(rejection.code) ? 1 : 0;
+  return spec.chargeable && isChargeableRejection(rejection.code) ? 1 : 0;
 }
 
 /**
@@ -1946,9 +1971,11 @@ export async function executeToolGenerationAttempt(
   if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: input.requiredTerminalTool,
-      // A length cut is never an empty provider artifact, even when no text reached the channel:
-      // it charges the semantic budget so the retries stay bounded.
+      // A length cut is never an empty provider artifact, even when no text reached the channel.
+      // It is also never a content error: it charges the physical provider-call budget only,
+      // so one mechanical stop cannot spend the semantic repair allowance.
       emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
+      chargeable: !truncatedBeforeRequiredCall,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: 'missing_required_tool_call',
       emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
@@ -1977,6 +2004,7 @@ export async function executeToolGenerationAttempt(
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: 'lineage_evidence',
       emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
+      chargeable: !truncatedBeforeRequiredCall,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: 'missing_required_evidence',
       emptyReason: 'The provider returned an empty response instead of calling a lineage tool.',

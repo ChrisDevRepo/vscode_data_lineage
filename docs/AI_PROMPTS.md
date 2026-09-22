@@ -316,8 +316,8 @@ preview is a separate discovery path and does not grant SM mutation authority.
   adjacent objects outside the approved exploration scope; approved in-scope
   objects remain protected and can be removed only through their own validated
   focus verdict.
-- CT accepts the same focus verdicts, requires `column_flow`, and rejects the
-  BB-only neighbor-pruning field. Each active tracked column must be continued
+- CT accepts the same focus verdicts, requires `column_flow`, and keeps the
+  neighbor-pruning field with a per-neighbor column decision. Each active tracked column must be continued
   or marked terminal; an empty flow is valid only when the focus carries no
   active tracked-column interaction. CT is BB plus column tracking: the engine
   verifies every declared column against the loaded model and returns the repair
@@ -391,7 +391,9 @@ checks upfront — unique section labels, highlight legend labels, the 1-5
 highlight-group cap, and the held-draft repair convention — so a first rejection
 is no longer how a model discovers a rule. The CT terminal-source mandate
 (terminal sources must appear in a section's node ids or a source highlight
-group) is stated in the synthesis prompt, matching the validator.
+group) is stated in the synthesis prompt; no validator rejects its absence —
+the engine-owned Column Trace Chain block carries the terminal-source facts the
+prompt reasons from.
 
 Validation is field-scoped and runs before commit, and it is structural only.
 Markdown and math formatting never reject a call: an expression the renderer
@@ -491,9 +493,7 @@ preserves exact node IDs, parameter names, and formulas through compression.
 
 Static SQL may identify a candidate performance pattern only. Sargability,
 index benefit, join strategy, parameter sniffing, and statistics staleness
-need catalog or runtime evidence. On Synapse Dedicated SQL Pool and Fabric
-Warehouse, data movement (shuffle/broadcast) is established by distributed
-plans and runtime evidence, never by query text alone.
+need catalog or runtime evidence.
 
 ## Editing and verification
 

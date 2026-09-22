@@ -2566,7 +2566,9 @@ export class NavigationEngine implements IHopStateMachine {
     // path was reachable for prune); `validateColumnFlow` reads it as required, so the call is
     // guarded on presence the same way every other `column_flow`-conditional branch here already is.
     if (this.tracer && finding.column_flow) {
-      const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet);
+      // A bidirectional trace continues a column on its producing side, same as an upstream one.
+      const traceDirection = this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream';
+      const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection);
       if (valResult.error) {
         return valResult.error;
       }
@@ -2583,7 +2585,7 @@ export class NavigationEngine implements IHopStateMachine {
     // A declared node — named in an accepted route_request, or (CT) in a column_flow entry as an
     // upstream_columns contributor or writes_to target — is refused as a prune candidate outright,
     // split out ahead of the topology walk below: a declared dead end (no further bodied neighbor
-    // to contract to) orphans nothing else, so it never trips `firstDisconnectedAfterPrune`'s
+    // to contract to) orphans nothing else, so it never trips `firstDisconnectedRequiredNode`'s
     // reachability check on its own, and that walk is undirected, so a carrier with any second
     // path to the origin reads as safe to delete however central it is to the answer.
     // Mode-independent: gating this on the tracer let BB delete a routed, contracted carrier that
@@ -3502,7 +3504,7 @@ export class NavigationEngine implements IHopStateMachine {
     // to the tracer's target set before the bound, not left to escape the bound as `undefined`.
     // The bind annotates; it never gates. An empty result means this carrier declares none of the
     // traced columns, which is a fact about columns and not a reason to stop walking — the node
-    // behind it re-derives its own set at dispatch (see the column-spine bind in `runHop`).
+    // behind it re-derives its own set at dispatch (see the column-spine bind in `getHopContext`).
     const ctCarried = this.tracer
       ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(carry, activeColumns)) ?? []
       : undefined;

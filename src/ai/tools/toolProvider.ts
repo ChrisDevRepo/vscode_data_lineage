@@ -91,6 +91,7 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   out_col_not_tracked: 'column_mapping',
   bad_out_col: 'column_mapping',
   bad_contributor_col: 'column_mapping',
+  continuation_not_writer: 'column_mapping',
   self_loop_column: 'column_mapping',
   pruned_contributor: 'column_mapping',
   column_chain_incomplete: 'column_mapping',

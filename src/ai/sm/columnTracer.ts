@@ -1,7 +1,7 @@
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { resolveModelNodeId } from '../support/inputNormalization';
-import { getNodeColumns } from '../support/graphUtils';
+import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName } from '../../utils/sql';
@@ -237,6 +237,10 @@ export class ColumnTracer {
    * node as an `upstream_columns` supplier is rejected here, at declare time — the alternative
    * (staging the edge anyway) hands `enqueueHop` a demand on a node that stays removed by
    * invariant ({@link reopensColumnChain}), which can only drop it silently.
+   * @param traceDirection - Trace direction of the owning exploration; resolves which neighbour
+   * side a continuation may name at a body-less focus (producers for upstream, consumers for
+   * downstream). Defaults to `upstream` so direct-call sites without a direction keep today's
+   * behaviour shape.
    * @returns Validation result containing any error, invalid routes, or successfully staged edges.
    */
   validateColumnFlow(
@@ -247,6 +251,7 @@ export class ColumnTracer {
     store: ColumnStore | null,
     log?: TracerLogFn,
     removedSet?: ReadonlySet<string>,
+    traceDirection: 'upstream' | 'downstream' = 'upstream',
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
@@ -258,6 +263,18 @@ export class ColumnTracer {
 
     const focusNode = nodeMap.get(focusId);
     if (!focusNode) return { invalidRoutes, stagedEdges };
+
+    // A body-less focus (table, non-bodied) has no logic of its own to attribute from: what its
+    // column_flow declares is CONTINUATION — the tracked column passes through this node and is
+    // attributed on the writer's own hop, where the body is in view. This mirrors the engine's
+    // non-bodied contraction (smBase `non_bodied_passthrough`), which fans carried columns to the
+    // carrier's producers with no attribution demand, so the origin hop accepts the same shape a
+    // middle non-bodied route already produces for free.
+    const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
+    const continuationSide = traceDirection === 'downstream' ? 'out' : 'in';
+    const continuationNeighbors = focusIsCarrier
+      ? new Set((model.neighborIndex[focusId.toLowerCase()]?.[continuationSide] ?? []).map((id) => id.toLowerCase()))
+      : null;
 
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
     const activeNorm = this.aspect.active_columns.map(normalizeColName);
@@ -321,7 +338,45 @@ export class ColumnTracer {
           continue;
         }
 
-        if (neighbor.type === 'procedure') {
+        // A column can't be its own upstream source — checked before any
+        // continuation/column-surface validation so the degenerate self-loop keeps
+        // its own kind on carrier and bodied foci alike.
+        const fromNode = resolveModelNodeId(cont.node, nodeMap) ?? cont.node.toLowerCase();
+        if (fromNode === toNodeForEdge && normalizeColName(cont.col) === normalizeColName(toCol)) {
+          invalidRoutes.push({
+            kind: 'self_loop_column',
+            id: fromNode,
+            path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`,
+            reason: `upstream_columns entry "${fromNode}.${cont.col}" is identical to its own writes_to target "${toNodeForEdge}.${toCol}" - a column cannot be its own upstream source.`,
+          });
+          continue;
+        }
+
+        if (continuationNeighbors) {
+          // Continuation contract: the entry must name a neighbour on the focus's carrier side —
+          // a producer for an upstream trace, a consumer for a downstream one. The col value is
+          // the tracked column echoed onto the continuation edge and is taken literally (the same
+          // tolerance an unverifiable column already gets below); which inbound columns actually
+          // contribute is decided where the evidence is, on the writer's own hop.
+          if (continuationNeighbors.size === 0) {
+            // No recorded neighbours on the carrier side (fixture models carry an empty
+            // neighborIndex; a production model always populates it): nothing to verify against,
+            // so the edge is accepted unverified and logged, never rejected for lack of evidence.
+            log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded ${continuationSide === 'in' ? 'writers' : 'readers'}, accepting unverified`);
+          } else {
+            if (!continuationNeighbors.has(neighbor.id.toLowerCase())) {
+              invalidRoutes.push({
+                kind: 'non_writer_continuation',
+                id: cont.node,
+                path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`,
+                reason: `focus "${focusId}" has no body of its own, so upstream_columns declare continuation at the nodes that ${continuationSide === 'in' ? 'write it' : 'read from it'} — "${cont.node}" is not one of them`,
+                available_routes: Array.from(continuationNeighbors).sort(),
+              });
+              continue;
+            }
+            log?.('debug', `[CT] continuation edge "${cont.col}" on carrier "${focusId}" from "${cont.node}" — attributed on that node's own hop`);
+          }
+        } else if (neighbor.type === 'procedure') {
           const spInbound = model.neighborIndex[neighbor.id.toLowerCase()]?.in ?? [];
           const inboundCols = new Set<string>();
           for (const inId of spInbound) {
@@ -339,19 +394,6 @@ export class ColumnTracer {
             invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });
             continue;
           }
-        }
-
-        const fromNode = resolveModelNodeId(cont.node, nodeMap) ?? cont.node.toLowerCase();
-
-        // A column can't be its own upstream source - reject the degenerate self-loop before it stages.
-        if (fromNode === toNodeForEdge && normalizeColName(cont.col) === normalizeColName(toCol)) {
-          invalidRoutes.push({
-            kind: 'self_loop_column',
-            id: fromNode,
-            path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`,
-            reason: `upstream_columns entry "${fromNode}.${cont.col}" is identical to its own writes_to target "${toNodeForEdge}.${toCol}" - a column cannot be its own upstream source.`,
-          });
-          continue;
         }
 
         stagedEdges.push({

@@ -50,8 +50,13 @@ Model input crosses three layers, in this order:
   held draft, and no repairable classification.
 - **Policy rejection** — phase- and state-dependent checks a schema cannot
   express ([`src/ai/interaction/`](../src/ai/interaction/)), returned through
-  one shared error envelope. A code named from more than one site is one entry
-  in [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts).
+  one shared error envelope. A code belongs in
+  [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts) when
+  its wire `error` literal reaches the model on a second surface. Prose that
+  teaches a refusal without naming its code is not an emission site:
+  `route_columns_flow_conflict` is taught by the `route_requests[].columns`
+  `.describe()` but emitted only from `ROUTE_REJECTION_CODE` in
+  `smRouteValidation.ts`, so the map stays its single owner.
 
 Handlers assume a parsed payload and a resolved id. A defensive re-check
 further in points at a defect in the layer that owns the contract.
@@ -321,6 +326,14 @@ feed each output column, and that the engine tracks and verifies those
 records. CT is activated only for explicitly named target columns and
 requires structured `column_flow` at every active submission.
 
+A focus with no body of its own (a storage table) declares continuation, not attribution:
+its `column_flow` names the neighbours on its carrier side carrying the tracked column
+unchanged, and the column is attributed on the writer's own hop, where the body is in view.
+Continuation rides the existing route machinery — same routes, same prunes, same node set as
+BB — so the CT graph cannot diverge from the BB graph. Where the engine holds no carrier-side
+neighbour data the edge is accepted unverified and logged, the same tolerance an unverifiable
+column already gets.
+
 The engine's role over `column_flow` is verification, not authorship. It
 checks every declared column against the loaded model and rejects a reference
 the model cannot support. Validated upstream column edges drive continuation
@@ -456,9 +469,9 @@ otherwise correct. Nothing is silently truncated on either path;
 engine-authored prose is fitted to the cap where it is written, never submitted
 over it.
 
-In CT, validated terminal source nodes must remain visible in the final
-source presentation surface so the rendered answer cannot silently drop the
-root of a column chain.
+In CT, the synthesis prompt requires validated terminal source nodes to remain
+visible in the final source presentation surface so the rendered answer cannot
+silently drop the root of a column chain; no validator rejects an omission.
 
 ## History, privacy, and no-egress boundary
 

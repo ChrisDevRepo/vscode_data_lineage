@@ -558,7 +558,10 @@ describe('executeToolGenerationAttempt — truncated generation classification',
     expect(attempted.events.filter((event) => event.type === 'text')).toEqual([]);
   });
 
-  it('retries a tool-less length cut in a required-terminal-tool phase as a chargeable missing call', async () => {
+  it('retries a tool-less length cut in a required-terminal-tool phase as a non-chargeable missing call', async () => {
+    // A length cut is mechanical, not a content error: it charges the physical provider-call
+    // budget alone (MAX_TOOL_PROVIDER_CALLS still bounds the loop), never the semantic repair
+    // allowance — one truncated generation must not spend a repair slot (T24).
     const attempted = await runAttempt(
       [{ text: 'Wait, but the task says re-anchor. '.repeat(50), finishReason: 'length' }],
       [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
@@ -567,7 +570,8 @@ describe('executeToolGenerationAttempt — truncated generation classification',
 
     expect(attempted.result.stop).toBe('continue');
     expect(attempted.result.finishAnomaly).toBeUndefined();
-    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.semanticFailures).toBe(0);
+    expect(attempted.result.providerCalls).toBe(1);
     expect(attempted.result.rejections).toEqual([
       expect.objectContaining({
         code: 'missing_required_tool_call',
@@ -605,7 +609,7 @@ describe('executeToolGenerationAttempt — truncated generation classification',
     expect(stoppedHint).not.toContain('Deliberation reached the output limit');
   });
 
-  it('charges a text-free length cut in a required-terminal-tool phase, never as an empty generation', async () => {
+  it('charges a text-free length cut to the provider-call budget, never as an empty generation', async () => {
     const attempted = await runAttempt(
       [{ text: '', finishReason: 'length' }],
       [{ name: 'lineage_submit_findings', result: '{"success":true}' }],
@@ -613,11 +617,12 @@ describe('executeToolGenerationAttempt — truncated generation classification',
     );
 
     expect(attempted.result.stop).toBe('continue');
-    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.semanticFailures).toBe(0);
+    expect(attempted.result.providerCalls).toBe(1);
     expect(attempted.result.rejections).toEqual([expect.objectContaining({ code: 'missing_required_tool_call' })]);
   });
 
-  it('retries a tool-less length cut in an evidence-required phase as missing evidence', async () => {
+  it('retries a tool-less length cut in an evidence-required phase as non-chargeable missing evidence', async () => {
     const attempted = await runAttempt(
       [{ text: 'Thinking about the scope…', finishReason: 'length' }],
       [{ name: 'lineage_get_context', result: '{"visible_objects":32}' }],
@@ -625,7 +630,8 @@ describe('executeToolGenerationAttempt — truncated generation classification',
     );
 
     expect(attempted.result.stop).toBe('continue');
-    expect(attempted.result.semanticFailures).toBe(1);
+    expect(attempted.result.semanticFailures).toBe(0);
+    expect(attempted.result.providerCalls).toBe(1);
     expect(attempted.result.rejections).toEqual([
       expect.objectContaining({
         code: 'missing_required_evidence',

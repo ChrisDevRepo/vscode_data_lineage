@@ -58,7 +58,7 @@ interface InstructionFactsShared {
  * Mission/runtime facts from which observable plan metadata is derived.
  *
  * @remarks
- * A discriminated union on {@link InstructionFactsShared.classification | analysisMode} so the
+ * A discriminated union on `analysisMode` (with `classification` on {@link InstructionFactsShared}) so the
  * BB-forbids / CT-requires `targetColumns` invariant is enforced by the compiler, not a runtime
  * throw: BB (and the mode-absent discovery/entry shape) structurally cannot carry `targetColumns`,
  * and CT structurally must.

@@ -3,7 +3,11 @@
  *
  * @remarks
  * Most rejection codes live only where they are emitted; a code belongs here as soon as a second
- * surface shows it to the model (instruction prose, a hint payload, a `.describe()` contract).
+ * surface shows its wire `error` literal to the model (a hint payload, instruction prose that
+ * names the code). Prose that teaches a refusal without naming its code is not a second
+ * surface: `route_columns_flow_conflict` is taught by the `route_requests[].columns`
+ * `.describe()` yet emitted only from `ROUTE_REJECTION_CODE` in `smRouteValidation.ts`,
+ * so the map stays its single owner.
  * Both surfaces then interpolate the same constant, so a rename cannot silently drift between the
  * emitting guard and the prompt that teaches the recovery. Provider-pure: no `vscode` / AI-SDK
  * imports.

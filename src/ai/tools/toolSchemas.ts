@@ -572,7 +572,11 @@ const ColumnFlowWritesToObject = z.object({
 const ColumnFlowEntryObject = z.object({
   out_col: z.string().describe('Tracked output column on the current focus node.'),
   writes_to: nullAsAbsent(declaredKeysOnly(ColumnFlowWritesToObject).optional()).describe('Optional downstream write destination observed in the current node.'),
-  upstream_columns: z.array(ColumnRefSchema).describe('Real upstream columns that contribute to out_col; use [] only when none exists.'),
+  upstream_columns: z.array(ColumnRefSchema).describe(
+    'Two states by focus: at a bodied focus, the real upstream columns the node READS that contribute to out_col ' +
+    '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the nodes ' +
+    'that write this focus, carrying the tracked column unchanged; use [] only when out_col terminates here.',
+  ),
 }).strict();
 
 const ColumnFlowEntrySchema = declaredKeysOnly(ColumnFlowEntryObject);
@@ -599,7 +603,8 @@ const hopVerdictSchema = (mode: 'bb' | 'ct') =>
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_IDS).describe(
   'CT mode only: structural provenance for active tracked columns. Use column_flow: [] only when the focus has no active tracked-column interaction. ' +
-  'When a tracked output exists but has no upstream real column, emit its entry with upstream_columns: [].',
+  'When a tracked output exists but has no upstream real column, emit its entry with upstream_columns: []. ' +
+  'A focus with no body of its own applies no logic: declare continuation at its writers, not attribution.',
 );
 
 /**

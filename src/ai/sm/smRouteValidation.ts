@@ -37,7 +37,9 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   untracked_out_col:
     'Set column_flow[].out_col to a tracked column from the `<column_trace> Active columns` list this hop was given, repeated in detail.available_columns — the named column exists on this node but the trace does not follow it — or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
-    'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
+    'Set upstream_columns[].col to a real upstream column the contributor node itself READS — detail.available_columns lists them — never a column that node computes or writes out, even one named like out_col. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
+  non_writer_continuation:
+    'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours that write this focus — detail.available_routes lists them — carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
   missing_required_route:
     'Account for each required neighbor listed in detail by adding it to `route_requests`.',
   self_loop_column:
@@ -115,6 +117,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   bad_out_col: 'out_col_not_on_node',
   untracked_out_col: 'out_col_not_tracked',
   bad_contributor_col: 'contributor_col_not_on_source',
+  non_writer_continuation: 'continuation_not_writer',
   missing_required_route: 'missing_required_route',
   self_loop_column: 'column_self_loop',
   pruned_contributor: 'pruned_contributor',
