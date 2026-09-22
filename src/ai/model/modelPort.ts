@@ -484,7 +484,9 @@ export function matchProseToolCall(
 
 /** One degenerate-cycle finding: the repeated normalized line and its occurrence count. */
 export interface RepetitionStrike {
+  /** How many times the normalized line has repeated. */
   readonly repeats: number;
+  /** The repeated normalized line. */
   readonly line: string;
 }
 

@@ -112,6 +112,46 @@ describe('CT column_flow-declared prune guard', () => {
     expect(!engine.toJSON().removedSet.includes('sink'), 'sink stays unremoved through the rest of the run').toBe(true);
   });
 
+  it('(3) CT: a prune_neighbors id that intersects the SAME submit column_flow.writes_to target is refused — staged endpoints count as declared before the verdict', () => {
+    const nodes: LineageNode[] = [
+      makeNode({ id: 'origin', schema: 'ct', name: 'origin', type: 'procedure', columns: [{ name: 'Total', type: 'int', nullable: 'NULL', extra: '' }] }),
+      makeNode({ id: 'source', schema: 'ct', name: 'source', type: 'view', columns: [{ name: 'Total', type: 'int', nullable: 'NULL', extra: '' }] }),
+      makeNode({ id: 'sink', schema: 'ct', name: 'sink', type: 'table', columns: [{ name: 'Total', type: 'int', nullable: 'NULL', extra: '' }] }),
+    ];
+    const edges: Array<[string, string]> = [
+      ['source', 'origin'],
+      ['origin', 'sink'],
+    ];
+    const world = { model: makeModel(nodes, edges, ['ct']), graph: makeGraph(nodes, edges) };
+    const engine = new NavigationEngine(world.model, world.graph, () => {}, {});
+    const init = engine.init({
+      origin: 'origin', question: 'trace Total', direction: 'upstream',
+      analysisMode: 'ct', targetColumns: ['Total'],
+      depthIntent: { kind: 'explicit', levels: 5 },
+    });
+    expect('ok' in init, 'CT init succeeds').toBe(true);
+
+    engine.getHopContext();
+    // Same-submit contradiction (the T8S shape): the payload stages a column edge to
+    // `sink` via writes_to AND prunes `sink`. The staged endpoint must shield it.
+    const hop1 = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'origin reads Total from source and writes it to sink' }],
+      summary: 'origin computes Total',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'Total',
+        writes_to: { node: 'sink', col: 'Total' },
+        upstream_columns: [{ node: 'source', col: 'Total' }],
+      }],
+      prune_neighbors: ['sink'],
+    }) as any;
+
+    expect('error' in hop1, `the same-submit prune of the staged writes_to target is refused: ${JSON.stringify(hop1)}`).toBe(true);
+    expect(/orphan/i.test(hop1.hint ?? ''), 'the refusal reuses the existing prune_would_orphan hint').toBe(true);
+    expect(!engine.toJSON().removedSet.includes('sink'), 'the refused prune leaves sink unremoved').toBe(true);
+  });
+
   it('(2) BB parity: the same topology is unaffected — BB carries no column_flow field, and the equivalent prune commits as before', () => {
     const { model, graph } = buildWorld();
     const engine = new NavigationEngine(model, graph, () => {}, {});

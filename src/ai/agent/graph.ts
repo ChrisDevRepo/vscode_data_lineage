@@ -1316,12 +1316,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       // ONE repeated-error guard, one disposition. An exhausted attempt budget is handled here
       // exactly as it is in every other phase (`detect_entry`, exploration entry, scope refinement,
       // synthesis): the stop stands, completed work salvages, and the turn ends. The active hop
-      // deliberately owns no private recovery — it previously converted this same stop into a
-      // host-authored `verdict: 'prune'` on the stuck focus, which both destroyed a node the model
-      // never voted to remove (the engine validates verdicts, it does not author them — see
-      // `docs/ARCHITECTURE.md`) and gave one condition two behaviours depending on which phase hit
-      // it. The stuck focus is left UNDISPOSITIONED and is retained by result assembly, alongside
-      // anything behind it the walk never reached.
+      // owns no private recovery because the engine validates verdicts, it does not author them
+      // (see `docs/ARCHITECTURE.md`): a host-authored `verdict: 'prune'` would remove a node the
+      // model never voted to remove. The stuck focus is left UNDISPOSITIONED and is retained by
+      // result assembly, alongside anything behind it the walk never reached.
       if (shouldSalvageActiveStop(stopped.reason, state.activeHopCount)) {
         deps.logger?.debug(
           `[AI] [Stop] phase=active reason=${stopped.reason} focus=${focusId}`

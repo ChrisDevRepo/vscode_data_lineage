@@ -211,8 +211,7 @@ const EngineInternalsSchema = z.object({
     downstream: NonNegativeInt.nullable(),
   }).strict().optional(),
   depthFromOrigin: z.array(z.tuple([NonEmptyString, NonNegativeInt])),
-  // Written by a build that still carried the legacy depth-extension field; accepted only so a
-  // record from that build still restores, and transformed away before restore. Never written.
+  // Tolerated only so an older record still restores; transformed away before restore. Never written.
   extendedDepthCap: NonNegativeInt.optional(),
   budgetExpansions: z.array(z.object({ nodeId: NonEmptyString, depth: NonNegativeInt, atHop: NonNegativeInt }).strict()),
   bodiedScopeSize: NonNegativeInt,
@@ -350,8 +349,8 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     if (snapshot.ctPrunedNodeIds !== undefined) issue('BB snapshot cannot carry CT pruned nodes', ['ctPrunedNodeIds']);
     // `ctDeclaredRouteIds` is deliberately absent from this BB-purity list: an accepted route is a
     // routing decision, not a column fact, so the declared-route prune protection it feeds is
-    // mode-independent and a BB checkpoint carries it too. The `ct` key name is legacy — renaming
-    // it would break every stored run written under the current snapshotVersion.
+    // mode-independent and a BB checkpoint carries it too. The `ct` key name is frozen by
+    // every stored run written under the current snapshotVersion.
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
       if (task.kind === 'column_lineage') issue('BB snapshot cannot carry column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
     });

@@ -328,11 +328,10 @@ export class ColumnTracer {
           continue;
         }
 
-        // PRUNE-BEFORE-DEMAND, order (a): the supplier was pruned on an earlier hop, before this
-        // edge names it. A removed node stays removed by invariant (reopensColumnChain never
-        // clears removedSet), so staging this edge would hand enqueueHop a demand on a node that
-        // can never be dispatched to answer it — content-kind, rejected here instead of dropped
-        // silently three steps downstream.
+        // The supplier was pruned on an earlier hop, before this edge names it. A removed node
+        // stays removed by invariant (reopensColumnChain never clears removedSet), so staging
+        // this edge would hand enqueueHop a demand on a node that can never be dispatched to
+        // answer it — content-kind, rejected here instead of dropped silently downstream.
         if (removedSet?.has(neighbor.id)) {
           invalidRoutes.push({ kind: 'pruned_contributor', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" was already pruned earlier this run and cannot supply column "${cont.col}" — a removed node stays removed.` });
           continue;
@@ -389,6 +388,14 @@ export class ColumnTracer {
         } else {
           const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
           if (validNeighborCols.size === 0) {
+            // A T-SQL literal (single-quoted / N-quoted string, bare integer or decimal) can
+            // never name a column, so it is refused deterministically instead of staging an
+            // edge to a node that cannot answer the spawned continuation question. Genuine
+            // identifiers keep the unverified tolerance below.
+            if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
+              invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
+              continue;
+            }
             log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — neighbour declares no columns, accepting unverified`);
           } else if (!validNeighborCols.has(normalizeColName(cont.col))) {
             invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });

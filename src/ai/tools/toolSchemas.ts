@@ -89,6 +89,9 @@ function refineAsymmetricDepthDirection(
   }
 }
 
+const ANALYSIS_MODE_DESCRIPTION =
+  'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
+
 /**
  * Strict domain boundary for fresh, refine, and completed-session exploration requests.
  *
@@ -100,9 +103,6 @@ function refineAsymmetricDepthDirection(
  * supplied node ids are appended to the agenda, run through the SM hop loop, and new
  * `DetailSlot` entries merge into the existing archive for follow-up continuation.
  */
-const ANALYSIS_MODE_DESCRIPTION =
-  'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
-
 export const StartExplorationInputSchema = z.object({
   origin: z.string().min(1).optional().describe('Canonical object ID that anchors a fresh exploration.'),
   question: z.string().optional().describe('The user question this exploration must answer.'),

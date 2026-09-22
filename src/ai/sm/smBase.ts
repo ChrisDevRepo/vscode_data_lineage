@@ -2562,9 +2562,9 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
     // Column Aspect validation + completeness is delegated to ColumnTracer and pure set-difference checks.
-    // `column_flow` is optional on the wire (a prune verdict commonly omits it, same as before this
-    // path was reachable for prune); `validateColumnFlow` reads it as required, so the call is
-    // guarded on presence the same way every other `column_flow`-conditional branch here already is.
+    // `column_flow` is optional on the wire (a prune verdict commonly omits it);
+    // `validateColumnFlow` reads it as required, so the call is guarded on presence the same way
+    // every other `column_flow`-conditional branch here already is.
     if (this.tracer && finding.column_flow) {
       // A bidirectional trace continues a column on its producing side, same as an upstream one.
       const traceDirection = this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream';
@@ -2590,7 +2590,17 @@ export class NavigationEngine implements IHopStateMachine {
     // path to the origin reads as safe to delete however central it is to the answer.
     // Mode-independent: gating this on the tracer let BB delete a routed, contracted carrier that
     // CT keeps on the identical question — the divergence `CT is BB plus columns` forbids.
-    const declaredPruneIds = actionPolicy.acceptedPruneIds.filter((nid) => this.declaredRouteIds.has(nid));
+    // Same-submit staged endpoints count as declared: a column_flow entry staged in this
+    // payload already named the node as part of the traced path, but it only joins
+    // declaredRouteIds at commit time below — after this verdict. Without this, a
+    // prune_neighbors id intersecting its own submit's writes_to target is wrongly accepted.
+    const stagedRouteIds = new Set<string>();
+    for (const e of stagedColumnEdges) {
+      stagedRouteIds.add(e.from_node);
+      stagedRouteIds.add(e.to_node);
+    }
+    const isDeclared = (nid: string): boolean => this.declaredRouteIds.has(nid) || stagedRouteIds.has(nid);
+    const declaredPruneIds = actionPolicy.acceptedPruneIds.filter(isDeclared);
     for (const nid of declaredPruneIds) {
       this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${nid} reason=declared_route_protected`);
       invalidRoutes.push({
@@ -2600,7 +2610,7 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
     const prunablePruneIds = declaredPruneIds.length > 0
-      ? actionPolicy.acceptedPruneIds.filter((nid) => !this.declaredRouteIds.has(nid))
+      ? actionPolicy.acceptedPruneIds.filter((nid) => !isDeclared(nid))
       : actionPolicy.acceptedPruneIds;
     {
       // One shared predicate (`wouldOrphan`) decides the whole batch; the focus self-prune below
@@ -4085,7 +4095,8 @@ export class NavigationEngine implements IHopStateMachine {
       // Mode-independent: the sink trim bounds the render in BB and CT alike.
       ...(this.renderDroppedIds.size > 0 ? { renderDroppedNodeIds: Array.from(this.renderDroppedIds) } : {}),
       // Mode-independent: an accepted route declares its target in BB and CT alike, so the prune
-      // protection this set feeds has to survive a checkpoint in both. Legacy `ct`-prefixed key.
+      // protection this set feeds has to survive a checkpoint in both. `ct`-prefixed key name frozen
+      // by stored runs (see navigationSnapshotSchema.ts).
       ctDeclaredRouteIds: Array.from(this.declaredRouteIds),
       ...(this.tracer ? {
         // The in-flight hop's own questions (set from its AgendaEntry at dispatch), not a fresh
@@ -4255,8 +4266,8 @@ export class NavigationEngine implements IHopStateMachine {
     // session re-dispatches focus nodes the AI already pruned and drops the pending sub-questions.
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
-    // Absent on a checkpoint written before this set was persisted — restores as empty, which is
-    // today's live-engine-only protection rather than inventing declarations.
+    // Absent on a checkpoint written before this set was persisted — restores as empty rather
+    // than inventing declarations the run never made.
     engine.declaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
     // Absent on a checkpoint written before the field existed, and on one whose last render dropped
     // nothing — both mean "no recorded drop".

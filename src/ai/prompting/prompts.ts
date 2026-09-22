@@ -360,7 +360,8 @@ function buildVisualPreviewPrompt(): string {
  *
  * CT is BB plus the column-chain rider: the shared protocol always ships, and a
  * CT session additionally names the Column Trace Chain evidence surface and the
- * chain-linking contract. BB does not see those sentences.
+ * chain-linking contract. BB does not see those sentences. Depth is mode-independent:
+ * both modes answer at the same full detail; the rider adds provenance, never less.
  */
 function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
@@ -374,9 +375,10 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
       ? ['- the "Column Trace Chain" block in `synthesis_reminder`: CT provenance edges when tracing columns.']
       : []),
   ];
-  const detailEvidence = isCt
-    ? 'The detailed walkthrough belongs in `sections[].text`. Use `detail_slots[]` for analyzed-node explanation; the kept-passthrough flow facts and the "Column Trace Chain" block carry the nodes without detail text.'
-    : 'The detailed walkthrough belongs in `sections[].text`. Use `detail_slots[]` for analyzed-node explanation; the kept-passthrough flow facts carry the nodes without detail text.';
+  const detailEvidence =
+    'The detailed walkthrough belongs in `sections[].text` at the same full depth in both modes — column tracing adds column-provenance detail on top, it never thins object detail. Use `detail_slots[]` for analyzed-node explanation; the kept-passthrough flow facts' +
+    (isCt ? ' and the "Column Trace Chain" block' : '') +
+    ' carry the nodes without detail text.';
   const suggestedSections =
     'Use `suggested_sections` from the completion result as a starting skeleton when present.';
   const ctChainContract =

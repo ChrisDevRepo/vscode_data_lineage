@@ -1029,9 +1029,9 @@ function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: st
       const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
       messages.push(modelAssistantMessage(rejection.attemptedText ?? ''), modelUserMessage(note));
     } else {
-      // A dispatched rejection whose tool matches the held draft is guaranteed to be the historical
-      // rejection that PUT the draft on hold — its own correction fragments are therefore the draft's
-      // current sections/notes/highlight_groups verbatim, and collapse rather than repeat. A
+      // A dispatched rejection whose tool matches the held draft is the rejection that put the
+      // draft on hold — its own correction fragments are therefore the draft's current
+      // sections/notes/highlight_groups verbatim, and collapse rather than repeat. A
       // pre-dispatch rejection never reached the draft (schema prevalidation runs before the handler),
       // so its payload — possibly new content the draft does not yet hold — is not known to duplicate
       // anything and replays in full.

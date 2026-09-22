@@ -1,14 +1,13 @@
 /**
- * A column-border endpoint the AI explicitly prunes, in the same hop that also commits a column
- * edge naming it, stays withheld from the delivered chain.
+ * A column-border endpoint the AI prunes in the same hop that also commits a column edge naming
+ * it is REFUSED, not withheld: staged same-submit endpoints count as declared before the prune
+ * verdict (`smBase.ts` staged shield), so the contradiction never commits. The node stays
+ * reachable and its edge is delivered normally.
  *
- * `ct-border-endpoint-disposition.test.ts` covers the sink shape (a node with no state at all).
- * This is the other shape `undispositionedSinkIds`'s border extension missed: a `reachable`
- * render-set node can never carry `action='prune'` (a prune removes it from `reachable` itself,
- * via `removedSet`), so an existing node state there is always a retention verdict — the border
- * set does not route through that removal, so the same `bb_prune_neighbor` verdict that pulled a
- * node out of the render can still sit on a node a column edge names, and treating "has a state"
- * as blanket proof of retention let a pruned write sink stay on the delivered chain.
+ * This supersedes the earlier withhold-on-prune contract (the T8S false-terminal MUST miss:
+ * accepting the prune removed the sole consumer and the synthesis then correctly reported "no
+ * downstream consumers"). `ct-border-endpoint-disposition.test.ts` covers the sink shape (a node
+ * with no state at all).
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph } from '../helpers/testUtils';
@@ -60,10 +59,9 @@ describe('CT — a column-border endpoint the AI prunes is withheld, not deliver
 
     ctx = engine.getHopContext() as { focus_node?: { id: string } };
     expect(ctx.focus_node?.id, 'second hop dispatches spmove').toBe(SPMOVE);
-    // spmove both declares the write into `archive` — committing a column edge naming it — and
-    // prunes `archive` as a neighbor, in the same submission. `ctDeclaredRouteIds` only gains this
-    // edge's endpoints after this call commits, so the same-hop combination is not refused as
-    // pruning a declared node.
+    // spmove both declares the write into `archive` — staging a column edge naming it — and
+    // prunes `archive` as a neighbor, in the same submission. The staged endpoint counts as
+    // declared before the prune verdict, so the contradiction is refused outright.
     outcome = engine.submitFindings({
       focus_node_id: SPMOVE,
       sections: [{ angle: 'business', text: 'spmove writes Amt into archive' }],
@@ -75,29 +73,36 @@ describe('CT — a column-border endpoint the AI prunes is withheld, not deliver
         writes_to: { node: ARCHIVE, col: TRACED },
       }],
       prune_neighbors: [ARCHIVE],
+    }) as any;
+    expect('error' in outcome, `spmove hop with same-submit prune contradiction is refused: ${JSON.stringify(outcome)}`).toBe(true);
+    expect(/orphan/i.test((outcome as any).hint ?? ''), 'the refusal reuses the existing prune_would_orphan hint').toBe(true);
+
+    // The refused submit commits nothing: resubmit without the prune and the edge lands normally.
+    outcome = engine.submitFindings({
+      focus_node_id: SPMOVE,
+      sections: [{ angle: 'business', text: 'spmove writes Amt into archive' }],
+      summary: 'spmove writes Amt into archive',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: TRACED,
+        upstream_columns: [{ node: ORIGIN, col: TRACED }],
+        writes_to: { node: ARCHIVE, col: TRACED },
+      }],
     });
-    expect('error' in outcome, `spmove hop accepted: ${JSON.stringify(outcome)}`).toBe(false);
+    expect('error' in outcome, `clean resubmit commits: ${JSON.stringify(outcome)}`).toBe(false);
 
     const snapshot = engine.toJSON();
-    const archiveState = snapshot.nodeStates.find(s => s.nodeId === ARCHIVE);
-    expect(archiveState?.action, 'archive carries an explicit prune verdict, not an absent state').toBe('prune');
-    expect(archiveState?.source).toBe('ai');
+    expect(!snapshot.removedSet.includes(ARCHIVE), 'archive is never removed').toBe(true);
 
     const committed = snapshot.columnAspect?.edges ?? [];
-    expect(committed.some(e => e.to_node === ARCHIVE), 'the column edge into archive is still committed').toBe(true);
+    expect(committed.some(e => e.to_node === ARCHIVE), 'the column edge into archive is committed').toBe(true);
 
+    // Render membership needs routing (the model's recovery move on the refusal hint above);
+    // the engine guarantee under test is narrower and exact: the contradiction is refused, the
+    // node is never removed, and the staged edge survives in the checkpoint for the run that
+    // routes it. A never-routed node is not a render member — that admission gap is
+    // pre-existing and untouched by this fix.
     const result = engine.getResult();
-    expect(result.fullNodes.some(n => n.id === ARCHIVE), 'archive is not a render member').toBe(false);
-    const delivered = result.columnAspect?.edges ?? [];
-    expect(
-      delivered.some(e => e.to_node === ARCHIVE),
-      'a pruned column-border endpoint is withheld from the delivered chain',
-    ).toBe(false);
-
-    // Delivery is a projection, never a mutation: a resumed checkpoint still carries the full edge.
-    expect(
-      engine.toJSON().columnAspect?.edges.some(e => e.to_node === ARCHIVE),
-      'the committed edge survives in the checkpoint',
-    ).toBe(true);
+    expect(result.fullNodes.some(n => n.id === ARCHIVE), 'unrouted archive is not a render member').toBe(false);
   });
 });

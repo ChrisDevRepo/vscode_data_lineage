@@ -654,6 +654,43 @@ describe("Column Flow Validation", () => {
   expect(resNoLog.stagedEdges.length, 'no-log call: contributor still accepted').toBe(1);
 });
 
+  it("a literal as the contributor column is refused even on a zero-column neighbour — quotes and bare numerics are never column references", () => {
+  // The zero-column tolerance above exists for genuine columns the engine cannot verify.
+  // A T-SQL literal (single-quoted / N-quoted string, bare integer or decimal) can never name
+  // a column, so it is refused deterministically instead of staging an edge to a node that
+  // cannot answer the spawned continuation question.
+  const ctModel: DatabaseModel = makeModel([], [], ['dbo']);
+  const tracer = new ColumnTracer(['TotalRevenue']);
+  const nodeMap = new Map<string, any>([
+    ['vwtarget', { id: 'vwtarget', type: 'view', columns: [{ name: 'TotalRevenue' }] }],
+    ['zerocolsrc', { id: 'zerocolsrc', type: 'table' }],
+  ]);
+  for (const literal of [`N'UNKNOWN'`, `'EUR'`, '0', '1.0']) {
+    const finding = {
+      verdict: 'analyze' as const, summary: 's', sections: [],
+      column_flow: [{
+        out_col: 'TotalRevenue',
+        upstream_columns: [{ node: 'zerocolsrc', col: literal }],
+      }],
+    };
+    const res = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null);
+    expect(res.invalidRoutes.length, `literal ${literal}: one rejection`).toBe(1);
+    expect(res.invalidRoutes[0]?.kind, `literal ${literal}: bad_contributor_col`).toBe('bad_contributor_col');
+    expect(res.stagedEdges.length, `literal ${literal}: no edge staged`).toBe(0);
+  }
+  // A plausible identifier on the same neighbour keeps the tolerance (accept + log).
+  const okFinding = {
+    verdict: 'analyze' as const, summary: 's', sections: [],
+    column_flow: [{
+      out_col: 'TotalRevenue',
+      upstream_columns: [{ node: 'zerocolsrc', col: 'RegionName' }],
+    }],
+  };
+  const okRes = tracer.validateColumnFlow('vwtarget', okFinding as any, nodeMap, ctModel, null);
+  expect(okRes.invalidRoutes.length, 'identifier: still accepted unverified').toBe(0);
+  expect(okRes.stagedEdges.length, 'identifier: edge still staged').toBe(1);
+  });
+
   it("engine wiring: NavigationEngine forwards its own logger into validateColumnFlow, so the zero-column unverifiable notice reaches the host log, not just an inline tracer call", () => {
   // The tracer-level test above pins validateColumnFlow's own behavior when a `log` callback is
   // handed to it directly. This pins the wiring one layer up: smBase's sole call site passes
