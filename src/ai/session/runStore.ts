@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { NavigationSnapshotSchema } from '../sm/navigationSnapshotSchema';
 import type { SmState } from '../sm/smTypes';
-import { sanitizeForLog, type Logger } from '../../utils/log';
+import { sanitizeForLog, trunc, type Logger } from '../../utils/log';
 import type { FilterProfile } from '../../engine/shared/bridgeContract';
 import type { PresentationArtifact } from './types';
 
@@ -101,8 +101,8 @@ export function readStoredRun(
   if (record === undefined || record === null) return undefined;
   const parsed = StoredAiRunSchema.safeParse(record);
   if (parsed.success) return parsed.data;
-  const paths = Array.from(new Set(parsed.error.issues.map(issue => issue.path.join('.') || '(root)'))).slice(0, 3);
-  log?.debug(`[RunStore] discarded unreadable run record bookmark=${sanitizeForLog(bookmarkId)} paths=${paths.join(',')}`);
+  const paths = Array.from(new Set(parsed.error.issues.map(issue => issue.path.join('.') || '(root)')));
+  log?.debug(`[RunStore] discarded unreadable run record bookmark=${sanitizeForLog(bookmarkId)} paths=${trunc(paths, 3)}`);
   return undefined;
 }
 

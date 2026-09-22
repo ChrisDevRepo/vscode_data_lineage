@@ -208,21 +208,6 @@ export function rejectionIssuePaths(detail: unknown): string[] {
 type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 
 /**
- * Lists the dotted field paths named by one union branch's sub-issues, deduped in first-seen order
- * and prefixed with the union issue's own path so a nested union (e.g. inside an array element)
- * still reads as a full path from the payload root.
- */
-function unionBranchFieldPaths(branchIssues: readonly z.core.$ZodIssue[], basePath: readonly PropertyKey[]): string[] {
-  const fields: string[] = [];
-  for (const sub of branchIssues) {
-    const full = [...basePath, ...sub.path].join('.');
-    const field = full || '(root)';
-    if (!fields.includes(field)) fields.push(field);
-  }
-  return fields;
-}
-
-/**
  * Enriches one Zod issue's message with the received value: measured size against the bound for
  * `too_big`/`too_small` (models cannot count characters), and a bounded verbatim echo for scalar
  * leaves (the rejected call is replayed without arguments). All derived mechanically from the
@@ -237,24 +222,31 @@ function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): strin
 }
 
 /**
- * One union-branch sub-issue as model-facing prose: the dotted field path alone when the field was
- * absent (the missing name *is* the defect), or `"<path>: <enriched message>"` when a value was
+ * Describes one union branch: its deduped required-field names (first-seen order, prefixed with the
+ * union issue's own path so a nested union still reads as a full path from the payload root) and one
+ * model-facing descriptor line per sub-issue — the bare dotted field path when it was absent from
+ * `input` (the missing name *is* the defect), or `"<path>: <enriched message>"` when a value was
  * present but matched no branch (e.g. `depth: Invalid input: expected number, received string;
- * sent: "1"`). Without the defect message a scalar union — every variant naming the same single
- * field — collapses to `variant 1: depth; variant 2: depth`, which names the field but not the
- * defect, so the model regenerates the identical call blind.
+ * sent: "1"`). Both are derived from the same per-sub-issue full path in one pass. Without the
+ * defect message a scalar union — every variant naming the same single field — collapses to
+ * `variant 1: depth; variant 2: depth`, which names the field but not the defect, so the model
+ * regenerates the identical call blind.
  */
-function unionBranchFieldDescriptor(
-  sub: z.core.$ZodIssue,
+function describeUnionBranch(
+  branchIssues: readonly z.core.$ZodIssue[],
   basePath: readonly PropertyKey[],
   input: unknown,
-): string {
-  const full = [...basePath, ...sub.path];
-  const field = full.join('.') || '(root)';
-  if (input === undefined) return field;
-  const received = resolveAtPath(input, full);
-  if (received === undefined) return field;
-  return `${field}: ${enrichedIssueMessage(sub, received)}`;
+): { fields: string[]; descriptors: string[] } {
+  const fields: string[] = [];
+  const descriptors: string[] = [];
+  for (const sub of branchIssues) {
+    const full = [...basePath, ...sub.path];
+    const field = full.join('.') || '(root)';
+    if (!fields.includes(field)) fields.push(field);
+    const received = input === undefined ? undefined : resolveAtPath(input, full);
+    descriptors.push(received === undefined ? field : `${field}: ${enrichedIssueMessage(sub, received)}`);
+  }
+  return { fields, descriptors };
 }
 
 /**
@@ -304,9 +296,8 @@ function flattenUnionBranches(
 function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line: string; paths: string[] } {
   const allPaths: string[] = [];
   const branches = flattenUnionBranches(issue).map((branchIssues, i) => {
-    const fields = unionBranchFieldPaths(branchIssues, issue.path);
+    const { fields, descriptors } = describeUnionBranch(branchIssues, issue.path, input);
     for (const field of fields) if (!allPaths.includes(field)) allPaths.push(field);
-    const descriptors = branchIssues.map((sub) => unionBranchFieldDescriptor(sub, issue.path, input));
     return `variant ${i + 1}: ${descriptors.length ? descriptors.join(', ') : '(no field detail)'}`;
   });
   const prefix = issue.path.length ? `${issue.path.join('.')}: ` : '';

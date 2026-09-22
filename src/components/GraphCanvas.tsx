@@ -1062,14 +1062,24 @@ export function GraphCanvas({
   // Which mode the framing on screen belongs to; null until the first render settles. One fit per switch — a later node measurement must not re-frame the canvas.
   const fittedForColumnViewRef = useRef<boolean | null>(null);
 
+  // Latest-ref pattern: this effect fires only on a new node set, so pendingPositions, handleFitView
+  // and onPendingPositionsApplied are read fresh through refs instead of widening the deps array.
+  const pendingPositionsRef = useRef(pendingPositions);
+  pendingPositionsRef.current = pendingPositions;
+  const handleFitViewRef = useRef(handleFitView);
+  handleFitViewRef.current = handleFitView;
+  const onPendingPositionsAppliedRef = useRef(onPendingPositionsApplied);
+  onPendingPositionsAppliedRef.current = onPendingPositionsApplied;
+
   useEffect(() => {
-    if (pendingPositions && Object.keys(pendingPositions).length > 0) {
+    const pending = pendingPositionsRef.current;
+    if (pending && Object.keys(pending).length > 0) {
       setLocalNodes(flowNodes.map(n => {
-        const saved = pendingPositions[n.id];
+        const saved = pending[n.id];
         return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
       }));
-      requestAnimationFrame(handleFitView);
-      onPendingPositionsApplied?.();
+      requestAnimationFrame(() => handleFitViewRef.current());
+      onPendingPositionsAppliedRef.current?.();
     } else {
       setLocalNodes(flowNodes);
     }

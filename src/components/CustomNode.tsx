@@ -1,11 +1,12 @@
-import { memo, useEffect, useState } from 'react';
+import { memo } from 'react';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, SHORT_TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { Tooltip } from './ui/Tooltip';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { CloseIcon } from './ui/CloseIcon';
-import type { CustomNodeData, TraceNeighborOption } from '../engine/types';
+import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
+import type { CustomNodeData, TraceNeighborOption, TraceNodeControls } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
 
 /** User action supported by the interactive trace node controls. */
@@ -123,6 +124,40 @@ export function TraceNeighborPickerToolbar({
   );
 }
 
+/** Render the × control that removes a node from the active allowlist-backed view. */
+export function NodeRemoveButton({ id, onRemove }: { id: string; onRemove?: (nodeId: string) => void }) {
+  return (
+    <Tooltip content="Remove from view" placement="top" asChild>
+      <button
+        aria-label="Remove from view"
+        className="absolute flex items-center justify-center text-[9px] rounded-sm ln-node-remove-btn"
+        style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
+        onClick={(e) => { e.stopPropagation(); onRemove?.(id); }}
+      >
+        ×
+      </button>
+    </Tooltip>
+  );
+}
+
+/** Render the four add/prune neighbor buttons for a node's in/out trace sides; nothing without trace controls. */
+export function TraceControlsRail({
+  traceControls,
+  onAction,
+}: {
+  traceControls: TraceNodeControls | undefined;
+  onAction: (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => void;
+}) {
+  if (!traceControls) return null;
+  return (
+    <>
+      <TraceActionButton action="add" side="in" options={traceControls.in.add} hasContext={traceControls.in.neighborCount > 0} disabledReason={traceControls.in.addDisabledReason} onAction={onAction} />
+      <TraceActionButton action="prune" side="in" options={traceControls.in.prune} hasContext={traceControls.in.visibleNeighborCount > 0} disabledReason={traceControls.in.pruneDisabledReason} onAction={onAction} />
+      <TraceActionButton action="add" side="out" options={traceControls.out.add} hasContext={traceControls.out.neighborCount > 0} disabledReason={traceControls.out.addDisabledReason} onAction={onAction} />
+      <TraceActionButton action="prune" side="out" options={traceControls.out.prune} hasContext={traceControls.out.visibleNeighborCount > 0} disabledReason={traceControls.out.pruneDisabledReason} onAction={onAction} />
+    </>
+  );
+}
 
 function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData }) {
   const style = TYPE_COLORS[data.objectType] || TYPE_COLORS.table;
@@ -142,37 +177,12 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
 
   const tooltipContent: string = tooltipLines.join('\n');
 
-  const [picker, setPicker] = useState<TraceNeighborPicker | null>(null);
-
-  useEffect(() => {
-    if (!data.traceControls) setPicker(null);
-  }, [data.traceControls]);
-
-  const applyTraceAction = (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => {
-    if (!data.traceControls || options.length === 0) return;
-    if (options.length === 1) {
-      if (action === 'add') data.traceControls.onAdd(options[0].id);
-      else data.traceControls.onPrune(options[0].id);
-      setPicker(null);
-      return;
-    }
-    setPicker(prev => (
-      prev?.action === action && prev.side === side ? null : { action, side, options }
-    ));
-  };
+  const { picker, applyTraceAction, closePicker, selectPickerOption } = useTraceNeighborPicker(data.traceControls);
 
   return (
     <>
       {picker && (
-        <TraceNeighborPickerToolbar
-          picker={picker}
-          onClose={() => setPicker(null)}
-          onSelect={(option) => {
-            if (picker.action === 'add') data.traceControls?.onAdd(option.id);
-            else data.traceControls?.onPrune(option.id);
-            setPicker(null);
-          }}
-        />
+        <TraceNeighborPickerToolbar picker={picker} onClose={closePicker} onSelect={selectPickerOption} />
       )}
       {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
       {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
@@ -193,26 +203,8 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
             zIndex,
           }}
         >
-          {data.showRemoveButton && (
-            <Tooltip content="Remove from view" placement="top" asChild>
-              <button
-                aria-label="Remove from view"
-                className="absolute flex items-center justify-center text-[9px] rounded-sm ln-node-remove-btn"
-                style={{ top: 2, right: 2, width: 14, height: 14, lineHeight: 1, zIndex: 10 }}
-                onClick={(e) => { e.stopPropagation(); data.onRemoveFromView?.(id); }}
-              >
-                ×
-              </button>
-            </Tooltip>
-          )}
-          {data.traceControls && (
-            <>
-              <TraceActionButton action="add" side="in" options={data.traceControls.in.add} hasContext={data.traceControls.in.neighborCount > 0} disabledReason={data.traceControls.in.addDisabledReason} onAction={applyTraceAction} />
-              <TraceActionButton action="prune" side="in" options={data.traceControls.in.prune} hasContext={data.traceControls.in.visibleNeighborCount > 0} disabledReason={data.traceControls.in.pruneDisabledReason} onAction={applyTraceAction} />
-              <TraceActionButton action="add" side="out" options={data.traceControls.out.add} hasContext={data.traceControls.out.neighborCount > 0} disabledReason={data.traceControls.out.addDisabledReason} onAction={applyTraceAction} />
-              <TraceActionButton action="prune" side="out" options={data.traceControls.out.prune} hasContext={data.traceControls.out.visibleNeighborCount > 0} disabledReason={data.traceControls.out.pruneDisabledReason} onAction={applyTraceAction} />
-            </>
-          )}
+          {data.showRemoveButton && <NodeRemoveButton id={id} onRemove={data.onRemoveFromView} />}
+          <TraceControlsRail traceControls={data.traceControls} onAction={applyTraceAction} />
           <Handle type="target" position={Position.Left} className="w-2! h-2! ln-handle" />
           <div className="px-3 pt-1 pb-1 flex flex-col h-full">
             <div className="flex items-center justify-between gap-1.5 whitespace-nowrap" style={{ lineHeight: 1 }}>

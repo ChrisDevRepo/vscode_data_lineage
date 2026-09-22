@@ -158,6 +158,7 @@ export class TaskLedger {
 
   /**
    * Applies a valid task lifecycle transition.
+   * @param taskId - Task selected by the host.
    * @param status - New engine-owned lifecycle state.
    * @param hop - Resolution hop when applicable.
    * @returns Whether the task existed.

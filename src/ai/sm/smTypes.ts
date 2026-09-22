@@ -411,7 +411,9 @@ export interface RouteOutcome {
  * the end (`'all'`).
  */
 export interface SupplementChain {
+  /** Direction to walk from each named id. */
   direction: 'upstream' | 'downstream';
+  /** Steps to walk, or `'all'` to walk to the end of the chain. */
   depth: number | 'all';
 }
 
@@ -972,7 +974,9 @@ export interface SmState {
   agenda: Array<{
     /** All task ids answered by the node's single hop. */
     taskIds: string[];
+    /** The unique identifier of the node to visit. */
     nodeId: string;
+    /** The priority of this visit; higher dequeues first. */
     priority: number;
     /** Topological depth relative to origin. */
     depth: number;

@@ -70,11 +70,15 @@ export type SessionWriteOutcome =
   | { kind: 'accepted' }
   | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number };
 
+/** One recorded sliding-memory wipe: what fired it, at which hop, and how much history it discarded. */
 interface MemoryWipeEvent {
   /** Only `sliding` exists: the graph replaces history with a continuation anchor after an accepted hop submission. */
   kind: 'sliding';
+  /** What triggered the wipe. */
   trigger: string;
+  /** Hop at which the wipe fired. */
   hop: number;
+  /** Threaded message count discarded by the wipe. */
   messagesBefore: number;
 }
 
@@ -109,11 +113,15 @@ export interface DiscoveryEvidenceObservation {
   readonly result: string;
 }
 
+/** Bounded accepted discovery evidence retained for cross-turn grounding, parsed JSON kept as-is. */
 interface RetainedDiscoveryEvidence {
+  /** Name of the graph-owned tool that produced the result. */
   readonly toolName: string;
+  /** Parsed JSON result accepted as evidence. */
   readonly result: unknown;
 }
 
+/** One canonical user/final-assistant exchange retained in the bounded discovery transcript. */
 type DiscoveryTranscriptTurn = readonly [
   { readonly role: 'user'; readonly content: string },
   { readonly role: 'assistant'; readonly content: string },

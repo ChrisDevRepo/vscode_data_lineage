@@ -438,8 +438,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.userSchemas = new Set(schemas);
     this.sessionAllowedSchemas = new Set(schemas);
 
-    // GUI-hidden types captured for diagnostics (BFS log shows honored/ignored); schemas already
-    // flow through `sessionAllowedSchemas` so need no parallel structure.
+    // GUI-hidden types captured for diagnostics only (BFS log shows honored/ignored).
     const ALL_OBJECT_TYPES = ['table', 'view', 'procedure', 'function', 'external'] as const;
     const guiActiveTypes = config.activeFilter?.types?.map(t => t.toLowerCase()) ?? [];
     if (guiActiveTypes.length > 0) {
@@ -582,9 +581,7 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * The single home for the CT/BB task fork: a CT task is `column_lineage` carrying the columns the
-   * hop tracks, a BB task is the plain kind with no column state. Falls back to the frozen target
-   * set (copied, not shared) so the CT agenda invariant in `NavigationSnapshotSchema` stays
-   * satisfiable at {@link toJSON}.
+   * hop tracks, a BB task is the plain kind with no column state.
    *
    * @param preferredColumns - Columns this task tracks; the target set is used when empty.
    * @throws When column tracing is active but no column can be attributed to the task.
@@ -745,7 +742,7 @@ export class NavigationEngine implements IHopStateMachine {
    * Returns every self-pruned node's retained content, in insertion order.
    *
    * @remarks
-   * Diagnostics accessor for telemetry / eval extraction (A31). Distinct from
+   * Diagnostics accessor for telemetry / eval extraction. Distinct from
    * {@link getDetailSlots} — a pruned node's content never enters the synthesis-visible archive.
    */
   public getPrunedDetails(): DetailSlot[] {
@@ -848,8 +845,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (columns.length === 0) return [];
     const nodeColumns = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? [];
     if (nodeColumns.length === 0) {
-      // No declared surface (procedure/function): apply the same last-segment rule as the declared
-      // branch so one column reaches the completeness guard as one demand, not both spellings.
+      // No declared surface: apply the same last-segment rule as the declared branch below, one spelling only.
       const bare: string[] = [];
       const seen = new Set<string>();
       for (const requested of columns) {
@@ -864,8 +860,7 @@ export class NavigationEngine implements IHopStateMachine {
     const byNorm = new Map<string, string>(nodeColumns.map((c) => [normalizeColName(c.name), c.name]));
     const resolved: string[] = [];
     for (const requested of columns) {
-      // Resolve by exact name then last dot-segment, returning the DECLARED name so set-difference
-      // checks compare canonical identifiers, never the request spelling.
+      // Resolve by exact name then last dot-segment, returning the DECLARED name for canonical comparison.
       const exact = byNorm.get(normalizeColName(requested));
       const lastSegment = requested.split('.').pop() ?? requested;
       const suffix = exact === undefined ? byNorm.get(normalizeColName(lastSegment)) : undefined;
@@ -875,6 +870,11 @@ export class NavigationEngine implements IHopStateMachine {
     return resolved;
   }
 
+
+  /** Returns the column-trace side; a bidirectional session traces columns upstream. */
+  private columnTraceDirection(): 'upstream' | 'downstream' {
+    return this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream';
+  }
 
   /**
    * Collapses `this._direction` plus an asymmetric depth's per-side `0` into the single traversal
@@ -965,8 +965,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (resolved.length > 0) return Math.min(...resolved);
     if (fallbackDepth === undefined) return null;
-    // Without a resolved side the node is judged against the tighter of the two ceilings: a border
-    // the user fixed must not be crossed by a node whose side the traversal could not establish.
+    // Without a resolved side, judge against the tighter ceiling — an unestablished side must not bypass a fixed border.
     const limit = Math.min(this.depthLimits.upstream, this.depthLimits.downstream);
     return fallbackDepth > limit ? fallbackDepth : null;
   }
@@ -1005,8 +1004,7 @@ export class NavigationEngine implements IHopStateMachine {
    * @remarks
    * Consolidates the exclusion-set / direction / schema-allowlist checks every write path shares,
    * axes selected by `purpose` ({@link BorderPurpose}), check order fixed (exclusions → direction →
-   * allowlist). The allowlist axis admits via a filtered schema ({@link sessionAllowedSchemas}) or a
-   * user-named node ({@link sessionAllowedNodeIds}) — either admits the node, neither its siblings.
+   * allowlist).
    *
    * @param purpose - Which write path is asking, fixing the participating axes.
    */
@@ -1070,8 +1068,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Gets live hop progress: completed AI hops, queued nodes, display-safe total work, cumulative prunes, and the last hop's newly-routed (added) count. */
   public get hopProgress(): HopProgress {
-    // Every prune path marks node-state 'prune', the single source for the cumulative tally; `added`
-    // mirrors it via the per-hop new-route count (`lastRoutedNew`, reset each submit).
+    // Every prune path marks node-state 'prune', the single source for the cumulative tally.
     let pruned = 0;
     for (const s of this.nodeStates.values()) if (s.action === 'prune') pruned++;
     const open = this._agenda.length;
@@ -1326,9 +1323,7 @@ export class NavigationEngine implements IHopStateMachine {
     const wasRefine = this.initSnapshot !== null;
     const prevScopeSize = this.scopeNodeIds.size;
 
-    // Phase 1 — validate every payload reference before touching state so a rejected refine leaves
-    // the live engine unchanged. Unresolved ids would otherwise silently no-op at scope-build time,
-    // masking an invented wrong-schema id.
+    // Phase 1 — validate every payload reference before touching state, so a rejected refine leaves the live engine unchanged.
     const resolveId = (raw: string): string | null => resolveModelNodeId(raw, this.nodeMap);
     const partition = (raws: string[]): { resolved: string[]; unresolved: string[] } => {
       const resolved: string[] = [];
@@ -1365,12 +1360,10 @@ export class NavigationEngine implements IHopStateMachine {
 
     const analysisMode: 'bb' | 'ct' = params.analysisMode ?? ((params.targetColumns?.length ?? 0) > 0 ? 'ct' : 'bb');
     const effectiveTargetColumns = analysisMode === 'ct' ? params.targetColumns : undefined;
-    // Resolve CT columns against the origin's DDL now; store in a local so the tracer is built in
-    // phase 2 only after this (and every other) validation has passed.
+    // Resolve CT columns against the origin's DDL now, but hold it locally until phase 2 commits.
     let resolvedActiveColumns: string[] = [];
     if (analysisMode === 'ct' && effectiveTargetColumns && effectiveTargetColumns.length > 0) {
-      // Object references are rejected before any resolution — a node id can never be a column —
-      // side-effect-free like every phase-1 reject.
+      // Object references are rejected before any resolution — a node id can never be a column.
       const nodeRefs = this.nodeRefColumnTargets(effectiveTargetColumns);
       if (nodeRefs.length > 0) {
         this.log('debug', `[AI] [CT] target columns [${trunc(nodeRefs.join(','), 120)}] resolve to objects, not columns — rejecting start`);
@@ -1475,8 +1468,7 @@ export class NavigationEngine implements IHopStateMachine {
         throw new Error(`unhandled depth intent: ${JSON.stringify(_exhaustive)}`);
       }
     }
-    // Logged explicitly since the `[BFS]` line reports the INTENT, not what it bound to — a stated
-    // bound that never became enforced would otherwise be invisible.
+    // Logged explicitly since the `[BFS]` line reports the INTENT, not what it bound to.
     const capSide = (value: number): string => (Number.isFinite(value) ? String(value) : 'all');
     this.log(
       'debug',
@@ -1533,8 +1525,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('info', `[BFS] origin=${originNode.id} dir=${direction} depth=${depthLabel} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excludedTypesAnnotated}]${excludeNodeIdsLine}${guiHiddenLine}`);
     }
 
-    // [AI] [Contract] — a stable hash of the resolved scope contract so downstream hop logs can be
-    // cross-referenced against the originating filter snapshot.
+    // [AI] [Contract] — a stable hash of the resolved scope contract, cross-referenced by downstream hop logs.
     const contractParts = [
       originNode.id,
       params.direction || 'bidirectional',
@@ -1553,9 +1544,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.log('debug', `[Contract] hash=${contractHash} origin=${originNode.id} scope=${this.scopeNodeIds.size} filters=${filtersDigest} nl_interp=${nlInterp}`);
 
     this._direction = params.direction || 'bidirectional';
-    // Snapshot kept so the refine path (gate cycle) can re-run init with new filters without the
-    // AI re-sending origin / direction / depth / mission_brief. The depth verdict is stored
-    // verbatim so a refine round locks to the same intent unless the user corrects it at the gate.
+    // Snapshot kept so the refine path (gate cycle) can re-run init with new filters without the AI re-sending origin/direction/depth/mission_brief.
     this.initSnapshot = {
       question: params.question,
       origin: originNode.id,
@@ -1568,8 +1557,6 @@ export class NavigationEngine implements IHopStateMachine {
       mission_brief: params.mission_brief,
     };
     // Bipartite agenda rule: `enqueueHop` is the only code path that writes to the agenda.
-    // It pushes bodied nodes directly and contracts body-less nodes through to their bodied
-    // neighbors in the current exploration direction. Invariant holds by construction.
     const rootTask = this.taskLedger.ensureTask(this.taskInputFor({
       source: 'mission',
       question: params.question,
@@ -1617,9 +1604,8 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * `removedSet` is not a standing veto — adding only ever introduces edges, so it cannot orphan a
-   * committed node. The {@link nodeStates} entry is dropped rather than rewritten (a surviving
-   * `prune` entry would outrank the hop about to run); `_totalNodes` is credited back only under the
-   * same condition that debited it, so a focus prune (which never debited) is not double-counted.
+   * committed node. `_totalNodes` is credited back only under the same condition that debited it, so
+   * a focus prune (which never debited) is not double-counted.
    */
   private unprune(id: string): void {
     if (!this.removedSet.delete(id)) return;
@@ -1668,10 +1654,8 @@ export class NavigationEngine implements IHopStateMachine {
    * Extends a completed exploration with additional nodes for analysis.
    *
    * @remarks
-   * Only callable when `status === 'complete'`. Appends ids via {@link enqueueHop} so bodied nodes
-   * land on the agenda and non-bodied contract through to bodied neighbors. Side-effect-free on
-   * reject, and a prune this run made is not a veto here (see {@link unprune}) — only
-   * {@link excludedNodeIds} remains a hard wall.
+   * Only callable when `status === 'complete'`. A prune this run made is not a veto here (see
+   * {@link unprune}) — only {@link excludedNodeIds} remains a hard wall.
    *
    * @param leadIds - Host-selected pending leads; never accepted from a model tool payload.
    * @returns Counts for agendaed, contracted, and skipped ids, plus per-node `skippedDetails`
@@ -1725,8 +1709,7 @@ export class NavigationEngine implements IHopStateMachine {
         skipped++;
         continue;
       }
-      // A user-excluded node is a hard wall here; the allowlist axis cannot fire (already widened
-      // above for every non-excluded id), so `excluded` is the only refusal left.
+      // A user-excluded node is a hard wall here; the allowlist axis already widened above, so `excluded` is the only refusal left.
       const supNode = this.nodeMap.get(id);
       const supBorder = supNode ? this.checkBorder(id, supNode, 'supplement') : null;
       if (supBorder && supBorder.kind !== 'in_border') {
@@ -1735,8 +1718,7 @@ export class NavigationEngine implements IHopStateMachine {
         skipped++;
         continue;
       }
-      // Past the wall: a prune this run made no longer stands between the user and the object they
-      // asked for. Ordered before the visited reset below, which the debit condition reads.
+      // Past the wall: a prune this run made no longer stands between the user and the object they asked for.
       this.unprune(id);
       // Captured before mutation so enqueueHop can credit _totalNodes correctly.
       const wasNewToScope = !this.scopeNodeIds.has(id);
@@ -1781,9 +1763,8 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * CT resolves active columns from two base states (`carry`'s own list, or `[]` for
-   * `row_role_only`), with spine recovery from accumulated `column_flow` edges as the single
-   * override when it resolves non-empty — a stated `row_role_only` never narrows a demand an
-   * earlier hop's committed edge already placed on this node (bound via NORMALIZE-WITH-LOG).
+   * `row_role_only`), overridden by spine recovery from accumulated `column_flow` edges when that
+   * resolves non-empty — a stated `row_role_only` never narrows a demand an earlier committed edge already placed.
    */
   public getHopContext(): HopContext {
     let entry: AgendaEntry | undefined;
@@ -1792,14 +1773,12 @@ export class NavigationEngine implements IHopStateMachine {
         if (!candidate) break;
 
       if (this.visited.has(candidate.nodeId)) {
-        // Sound: no path queues a question onto a node visited at dequeue time — enqueueHop skips
-        // or clears the flag in the same call, and only dispatch sets it again (removing the entry).
+        // Sound: no path queues a question onto a node visited at dequeue time — enqueueHop skips or clears the flag in the same call.
         this.completeTasks(candidate.taskIds);
         continue;
       }
 
-      // User-requested auto-pass: keep in scope, skip the AI hop, contract through to bodied
-      // neighbours so descendants stay reachable.
+      // User-requested auto-pass: keep in scope, skip the AI hop, contract through to bodied neighbours so descendants stay reachable.
       if (this.passNodeIds.has(candidate.nodeId.toLowerCase())) {
         this.visited.add(candidate.nodeId);
         this.markNodeState(candidate.nodeId, 'passthrough', 'user', 'user_pass_filter', {
@@ -1820,7 +1799,7 @@ export class NavigationEngine implements IHopStateMachine {
           candidate.activeColumns ?? [],
           this.writtenCarrierIds(candidate.nodeId),
           this.log,
-          this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream',
+          this.columnTraceDirection(),
         );
         const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
         const statedRowRole = candidate.columnCarry?.kind === 'row_role_only';
@@ -1854,8 +1833,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (this.tracer) {
       this.tracer.setActiveColumns(entry.activeColumns || []);
     }
-    // Read continuation questions from THIS entry, not a global cache, so the render site sees only
-    // the questions opened for the node actually being dispatched.
+    // Read continuation questions from THIS entry, not a global cache, so the render site sees only the node actually being dispatched.
     this._pendingLineageQuestions = entry.lineageQuestions ? [...entry.lineageQuestions] : [];
 
     const node = this.nodeMap.get(entry.nodeId)!;
@@ -1934,10 +1912,7 @@ export class NavigationEngine implements IHopStateMachine {
   public requiredNeighborIds(focusId: string, budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET): string[] {
     return Array.from(this.directionalNeighbors(focusId, this._direction))
       .filter(nid => !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
-      // Exempt cases: a prune satisfies the demand without destroying what the border kept (a
-      // deferred schema/depth lead survives as a lead instead); a not-yet-scoped neighbor over the
-      // turn's active-scope budget is exempt since only a fresh addition is checked; an id absent
-      // from `nodeMap` can never be routed or pruned so is never demanded.
+      // Exempt: a prune (deferred lead survives it), a not-yet-scoped neighbor over budget, or an id absent from `nodeMap`.
       .filter(nid => {
         const node = this.nodeMap.get(nid);
         if (node === undefined || !this.admitsRoute(nid, node, focusId).admitted) return false;
@@ -2011,9 +1986,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (focusId !== this.currentFocusNodeId) {
       return { error: 'focus_mismatch', expected: this.currentFocusNodeId ?? undefined, got: focusId };
     }
-    // Enforced here (ahead of every mutation) rather than at the schema boundary, so a length
-    // violation holds the draft instead of costing a verbatim resend. Rejection code stays a local
-    // literal — this is its one emitting site.
+    // Enforced here (ahead of every mutation) so a length violation holds the draft instead of costing a verbatim resend.
     const lengthViolations: Array<{ path: string; chars: number; limit: number }> = [];
     if (finding.badge_label !== undefined && finding.badge_label.length > SUBMIT_FINDINGS_BADGE_LABEL_MAX) {
       lengthViolations.push({ path: 'badge_label', chars: finding.badge_label.length, limit: SUBMIT_FINDINGS_BADGE_LABEL_MAX });
@@ -2039,8 +2012,7 @@ export class NavigationEngine implements IHopStateMachine {
         detail: lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit })),
       };
     }
-    // Active columns the focus declares — feeds both the CT completeness guard (is an empty-flow
-    // claim checkably false) and every hint here that offers `passthrough` as the repair.
+    // Active columns the focus declares — feeds the CT completeness guard and every hint offering `passthrough` as the repair.
     let declaredActiveColumns: readonly string[] = [];
     if (this.tracer) {
       const declaredNorm = new Set(
@@ -2051,8 +2023,7 @@ export class NavigationEngine implements IHopStateMachine {
     const passthroughColumnClause = declaredActiveColumns.length > 0
       ? ` ${focusId} declares tracked column${declaredActiveColumns.length > 1 ? 's' : ''} [${declaredActiveColumns.join(', ')}], so that passthrough must carry a column_flow entry for each of them — column_flow:[] is refused here.`
       : '';
-    // Every fault below accumulates instead of returning, so one rejection names all of them. The
-    // focus's own orphan check runs after route/prune admission, reading the protected set post-commit.
+    // Every fault below accumulates instead of returning, so one rejection names all of them.
     let originPruneFault: SubmissionFaults['originPrune'];
     let focusOrphanFault: SubmissionFaults['focusOrphan'];
     let columnChainFault: SubmissionFaults['columnChain'];
@@ -2061,15 +2032,11 @@ export class NavigationEngine implements IHopStateMachine {
       if (focusId === this.originNodeId) {
         originPruneFault = { focusId, keepClause: passthroughColumnClause };
       }
-      // A prune carries no sections — findings belong on `analyze`. Structural shape only (present
-      // or not), never the prose content; verdict-level like the origin/orphan faults above.
+      // A prune carries no sections — findings belong on `analyze`. Structural shape only (present or not), never the prose content.
       if ((finding.sections ?? []).length > 0) {
         pruneSectionsFault = { focusId, sectionCount: (finding.sections ?? []).length };
       }
-      // Deliberately nothing else is checked: the AI decides WHAT is pruned, the engine only
-      // whether removal is structurally valid. Judging prose content or keying off column state (a
-      // columnless focus may be a keep-worthy row-shaper or a genuine dead end) belongs to the AI,
-      // guided by the hop instruction — not the engine.
+      // Deliberately nothing else is checked: the AI decides WHAT is pruned, the engine only whether removal is structurally valid.
     }
 
     const acceptedNids = new Set<string>();
@@ -2115,9 +2082,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
       const routed = new Set(routeRequests.map(req => (resolveModelNodeId(req.nodeId, this.nodeMap) ?? req.nodeId.toLowerCase())));
       for (const [nid, question] of routeQuestionsByNode) {
-        // Synthesized with columns already in hand — stating `routeColumnsByNode` here (rather than
-        // leaving `columns` absent) means it never reads as the model's own `'none'` and never
-        // collides with the column_flow entry that synthesized it.
+        // Stating `routeColumnsByNode` here (rather than leaving `columns` absent) means it never reads as the model's own `'none'`.
         if (!routed.has(nid)) routeRequests.push({ nodeId: nid, question, columns: [...routeColumnsByNode.get(nid)!] });
       }
     }
@@ -2129,14 +2094,11 @@ export class NavigationEngine implements IHopStateMachine {
     }));
     // pruneTargets is the submit's one resolution home; reading its canonical ids keeps every verdict true for any spelling the model sends.
     const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? t.raw.toLowerCase()));
-    // Computed for EVERY verdict: a self-pruned focus owes no account of its own un-routed
-    // neighbors, but the set is still needed on the rejection path — repairing a refused prune to
-    // `passthrough` is what raises the obligation.
+    // Computed for EVERY verdict: still needed on the rejection path, since repairing a refused prune to `passthrough` raises the obligation.
     const requiredNodeIds = this.requiredNeighborIds(focusId, budget);
     const owedNodeIds = finding.verdict === 'prune' ? [] : requiredNodeIds;
     const authoredRouteCount = finding.route_requests?.length ?? 0;
-    // Same-submit CT content: an authored `columns: 'none'` and this hop's own column_flow
-    // naming that neighbor. Independent of BB admission (defer / exclude / direction).
+    // Same-submit CT content: an authored `columns: 'none'` vs this hop's own column_flow naming that neighbor. Independent of BB admission.
     for (let routeIdx = 0; routeIdx < authoredRouteCount; routeIdx++) {
       const req = routeRequests[routeIdx];
       if (req.columns !== 'none') continue;
@@ -2154,15 +2116,9 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
     const flowSynthesizedCount = routeRequests.length;
-    // A required neighbor the payload neither routed nor pruned is pure bookkeeping: the engine
-    // printed the id in this hop's own `<required_neighbors>`, the router has already decided it is
-    // admissible (`requiredNeighborIds` filters on `admitsRoute` and the scope budget), and the one
-    // account the model withheld is a route the engine can write itself. Refusing the hop for it
-    // spends a generation to be handed back the ids the engine supplied. Filled here, on the same
-    // mechanism that already synthesizes routes from `column_flow` above, and logged at `info` so
-    // an engine-authored route is never mistaken for one the model asked for.
-    // A neighbor the model DID name in `prune_neighbors` is not filled: the model stated an intent
-    // there, and if that prune is refused the refusal is reported rather than overridden.
+    // A required neighbor the payload neither routed nor pruned is pure bookkeeping: it is already admissible, so the engine fills the
+    // route itself here rather than spending a generation to be handed back the ids it already supplied, logged at `info` for attribution.
+    // A neighbor the model DID name in `prune_neighbors` is not filled: if that prune is refused, the refusal is reported, not overridden.
     const routedIds = new Set(routeRequests.map(req => resolveModelNodeId(req.nodeId, this.nodeMap) ?? req.nodeId.toLowerCase()));
     for (const reqId of owedNodeIds) {
       if (routedIds.has(reqId) || pruneNeighborIds.has(reqId)) continue;
@@ -2217,10 +2173,7 @@ export class NavigationEngine implements IHopStateMachine {
 
         const schemaBlocked = routeBorder.kind === 'out_of_allowlist';
 
-        // An omitted depth leaves the approved depth an initial BFS seed the model may grow. A
-        // user-stated level count is a border: the route is still recorded, but as a deferred
-        // follow-up rather than an admission — exactly what the active-hop protocol promises.
-        // Both axes come from `admitsRoute`; only the deferral *reasons* are split here.
+        // An omitted depth leaves the approved depth an initial BFS seed the model may grow; a user-stated level count defers the route as a follow-up instead.
         const { depthBreach, candidateDepth } = admission;
         if (schemaBlocked || depthBreach !== null) {
           const deferReason: 'schema' | 'depth' | 'schema_and_depth' = schemaBlocked
@@ -2247,20 +2200,15 @@ export class NavigationEngine implements IHopStateMachine {
         acceptedNids.add(nid);
         routeOutcomes.push({ nodeId: nNode.id, accepted: true });
         if (!this.scopeNodeIds.has(nid)) scopeAddNids.add(nid);
-        // Symmetric with the prune/defer logs: record every neighbour ADD (kept in the chain) so the
-        // debug trace shows both sides of the agenda decision, not just rejections.
+        // Symmetric with the prune/defer logs: record every neighbour ADD so the debug trace shows both sides of the agenda decision.
         this.log('debug', `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${req.question ? trunc(req.question, 80) : '(none)'}`);
 
       }
     }
     // Column Aspect validation + completeness is delegated to ColumnTracer and pure set-difference checks.
-    // `column_flow` is optional on the wire (a prune verdict commonly omits it);
-    // `validateColumnFlow` reads it as required, so the call is guarded on presence the same way
-    // every other `column_flow`-conditional branch here already is.
-    // A bidirectional trace continues a column on its producing side, same as an upstream one.
-    // Hoisted (not only computed inside the block below) so the completeness guard further down —
-    // a separate `if`, same submit — reads the identical direction the edges were staged under.
-    const traceDirection = this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream';
+    // `column_flow` is optional on the wire (a prune verdict commonly omits it), so the call is guarded on presence.
+    // Hoisted so the completeness guard further down reads the identical direction the edges were staged under.
+    const traceDirection = this.columnTraceDirection();
     if (this.tracer && finding.column_flow) {
       const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection);
       if (valResult.error) {
@@ -2273,21 +2221,9 @@ export class NavigationEngine implements IHopStateMachine {
       stagedColumnEdges.push(...valResult.stagedEdges);
     }
 
-    // The pure policy has already selected the accepted prune targets, in scope or out
-    // (`prune_neighbors` may carry in-scope neighbors off the answer path); topology conservation
-    // is the final guard, and all mutations stay staged until completeness also passes.
-    // A declared node — named in an accepted route_request, or (CT) in a column_flow entry as an
-    // upstream_columns contributor or writes_to target — is refused as a prune candidate outright,
-    // split out ahead of the topology walk below: a declared dead end (no further bodied neighbor
-    // to contract to) orphans nothing else, so it never trips `firstDisconnectedRequiredNode`'s
-    // reachability check on its own, and that walk is undirected, so a carrier with any second
-    // path to the origin reads as safe to delete however central it is to the answer.
-    // Mode-independent: gating this on the tracer let BB delete a routed, contracted carrier that
-    // CT keeps on the identical question — the divergence `CT is BB plus columns` forbids.
-    // Same-submit staged endpoints count as declared: a column_flow entry staged in this
-    // payload already named the node as part of the traced path, but it only joins
-    // declaredRouteIds at commit time below — after this verdict. Without this, a
-    // prune_neighbors id intersecting its own submit's writes_to target is wrongly accepted.
+    // A declared node (an accepted route_request, or a column_flow upstream_columns/writes_to target) is refused as a prune candidate outright,
+    // split out ahead of the undirected topology walk below — that walk alone cannot see a declared dead end as unsafe to delete.
+    // Same-submit staged endpoints count too: they only join `declaredRouteIds` at commit time, after this verdict.
     const stagedRouteIds = new Set<string>();
     for (const e of stagedColumnEdges) {
       stagedRouteIds.add(e.from_node);
@@ -2307,34 +2243,20 @@ export class NavigationEngine implements IHopStateMachine {
       ? actionPolicy.acceptedPruneIds.filter((nid) => !isDeclared(nid))
       : actionPolicy.acceptedPruneIds;
     {
-      // One shared predicate (`wouldOrphan`) decides the whole batch; the focus self-prune below
-      // asks the same question through the same call.
+      // One shared predicate (`wouldOrphan`) decides the whole batch; the focus self-prune below asks the same question through the same call.
       const verdictByCandidate = this.wouldOrphan(prunablePruneIds, { extraProtected: [focusId] });
       for (const nid of verdictByCandidate.accepted) prunedNeighborNids.add(nid);
       for (const { id, orphanId } of verdictByCandidate.refused) {
-        // `[Reject]` counts tool dispatches (toolProvider/toolAttempt); this refusal is one id
-        // inside one call's array and is already carried by the `route_validation_failed` that
-        // follows it, so labelling it `[Reject]` counted one event twice in the log.
+        // `[Reject]` counts tool dispatches; this refusal is already carried by the `route_validation_failed` that follows, so `[Reject]` here double-counted.
         this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${id} reason=would_orphan_noted disconnected=${orphanId}`);
         invalidRoutes.push({ kind: 'prune_would_orphan', id, reason: `Pruning \`${id}\` would orphan \`${orphanId}\`, which nothing else keeps reachable from the origin. Prune both in one submission, or keep \`${id}\`.` });
       }
     }
 
-    // Focus prune check, after this payload's own routes and neighbor prunes are staged: the walk
-    // reads the staged `acceptedNids` / `prunedNeighborNids` and widens its scope by the staged
-    // routes, which are not yet in `scopeNodeIds` until the commit below.
+    // Focus prune check, after routes and neighbor prunes are staged: the walk reads the staged sets and widens scope by routes not yet in `scopeNodeIds`.
     if (finding.verdict === 'prune' && originPruneFault === undefined) {
-      // NOT a gap: a node the tracer already declared (route or column_flow) is free to prune
-      // ITSELF — `finding.verdict !== 'prune'` above already exempts a self-pruned focus from
-      // accounting for active columns ("leaving the graph, not continuing through it"), and the
-      // decision is recorded (`markNodeState`, `submitted_prune`, with its active columns attached)
-      // rather than silently dropped. Refusing this would block ordinary, AI-judged CT pruning of
-      // any already-routed node — confirmed by two protected suites this file must not regress
-      // (`prune-sections-conflict.test.ts` d2, `ct-retention-differential.test.ts` C11/C12).
-      // PRUNE-BEFORE-DEMAND's real gap is the OTHER direction: a LATER hop naming an
-      // already-removed node (self-pruned here, or pruned earlier by a neighbor) as a fresh
-      // `upstream_columns` supplier — closed at declare time in `ColumnTracer.validateColumnFlow`
-      // (`pruned_contributor`), not here.
+      // NOT a gap: a node the tracer already declared (route or column_flow) is free to prune ITSELF; the real gap (a later hop naming an
+      // already-removed node as a fresh contributor) is closed at declare time in `ColumnTracer.validateColumnFlow` (`pruned_contributor`), not here.
       const focusVerdict = this.wouldOrphan([focusId], {
         extraProtected: acceptedNids,
         extraRemoved: prunedNeighborNids,
@@ -2392,33 +2314,12 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // CT completeness guard. A focus that declares an active tracked column but leaves it
-    // unaccounted is `column_chain_incomplete` on a checkably false declaration; a focus that
-    // declares none of them has the empty-flow escape genuinely open. Both halves are computed
-    // here and reported once, with every other fault this payload carries.
-    // `verdict:'passthrough'` with an empty `column_flow` is the one exception, and only where the
-    // engine cannot disprove it. It is an account, not a gap: the focus states it carries none of
-    // the active columns onward, which is the escape `buildIncompleteRejection`'s hint offers and
-    // `ColumnTracer.unaccountedActiveColumns` documents.
-    //
-    // Checkable, so still rejected: the focus declares one of the active columns. The origin is
-    // always this case (`init` refuses `unknown_columns` unless the traced columns resolve on it),
-    // and a declared column contradicts the claim outright.
-    //
-    // Not checkable, so accepted with a log: the focus declares none of them, or declares no
-    // columns at all. A procedure exposes no column metadata, so `resolveActiveColumnsForNode`
-    // passes every requested column through — absence of metadata is not absence of the column —
-    // and a node the trace never touched still dispatches carrying the full active set. Demanding a
-    // terminal entry there asks the model to assert a column origin that does not exist, which is
-    // the fabrication class these guards exist to stop; the chain simply ends here and the node is
-    // retained for what it does to the row set.
-    // Same exemption as `owedNodeIds` above: a self-pruned focus does not owe a column_flow
-    // account of its own active columns either — it is leaving the graph, not continuing through it.
+    // CT completeness guard: a declared active column left unaccounted is `column_chain_incomplete`; declaring none of them is the empty-flow
+    // escape, genuinely open where the engine cannot disprove it (no column metadata, or the trace never touched this node — not fabrication).
+    // Same exemption as `owedNodeIds` above: a self-pruned focus owes no column_flow account either — it is leaving the graph, not continuing through it.
     if (this.tracer && finding.verdict !== 'prune') {
       const submittedFlow = finding.column_flow ?? [];
-      // `declaredActiveColumns` (computed above, shared with the prune hints) decides both halves:
-      // whether the empty-flow declaration is checkably false, and — when the hop is rejected for
-      // any reason — whether the hint may still offer that escape.
+      // `declaredActiveColumns` (computed above) decides both halves: is the empty-flow declaration checkably false, and may a rejection hint still offer it.
       const contradicted = declaredActiveColumns;
       const declaresNoTrackedColumns =
         finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
@@ -2439,14 +2340,8 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // Completeness guard, both modes: every in-scope directional neighbor must be routed or pruned
-    // before advance. CT is BB plus column tracking — neighbor accounting is the shared behaviour,
-    // so it runs unconditionally (in both modes a required neighbor is satisfied by a route
-    // OR by a prune that passed the don't-orphan check; `prune_neighbors` may carry in-scope
-    // neighbors off the answer path, not only out-of-scope ones).
-    // Only a neighbor the model itself put in `prune_neighbors` can reach this point unaccounted —
-    // everything else was filled above — and it reaches it only when that prune was refused, so the
-    // orphan refusal and the demand it leaves standing are reported in the same envelope.
+    // Completeness guard, both modes: every in-scope directional neighbor must be routed or pruned (via the don't-orphan check) before advance.
+    // Only a neighbor the model itself put in `prune_neighbors` can reach this point unaccounted, and only when that prune was refused.
     for (const reqId of owedNodeIds) {
       if (acceptedNids.has(reqId) || prunedNeighborNids.has(reqId)) continue;
       const invalidlyPruned = pruneNeighborIds.has(reqId);
@@ -2461,9 +2356,7 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
 
-    // ONE rejection per submission. Every fault this payload carries is now known, so the model
-    // gets all of them at once instead of repairing one, resubmitting, and being told the next —
-    // the cascade that spends a whole correction budget on a single hop.
+    // ONE rejection per submission: the model gets every known fault at once, instead of repairing one and being told the next on resubmit.
     const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
     const reported = buildSubmissionRejection({
       routes: fatalRoutes,
@@ -2475,23 +2368,19 @@ export class NavigationEngine implements IHopStateMachine {
       ...(finding.verdict === 'prune' && requiredNodeIds.length > 0 ? { repairWouldOwe: requiredNodeIds } : {}),
     });
     if (reported) {
-      // Counts the per-reference faults only. A verdict-level refusal (the focus is the origin, or
-      // pruning it would orphan) names no rejected reference and leaves the counter — and every
-      // other engine field — exactly as the submission found it.
+      // Counts the per-reference faults only; a verdict-level refusal (origin, or would-orphan) names no rejected reference.
       const rejectedRefs = fatalRoutes.length + (columnChainFault?.unaccounted.length ?? 0);
       if (rejectedRefs > 0) this.lastRoutedRejected = rejectedRefs;
       for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
       if (columnChainFault) {
         this.memory.recordRejection(focusId, `column_chain_incomplete: ${columnChainFault.unaccounted.join(', ')}`, this.hopCount);
       }
-      // Field-scoped faults leave the authored sections and summary valid, so holding them lets the
-      // correction carry the structured fields alone instead of a from-scratch re-author.
+      // Field-scoped faults leave the authored sections and summary valid, so holding them avoids a from-scratch re-author.
       if (reported.hold) this.heldFindingDraft.hold(structuredClone(finding));
       return reported.rejection;
     }
 
-    // Active-phase admission guard: staged scope growth must fit the exploration budget.
-    // Last fatal guard — runs before any durable mutation so a rejection leaves the hop unstaged.
+    // Active-phase admission guard: last fatal guard, runs before any durable mutation so a rejection leaves the hop unstaged.
     if (scopeAddNids.size > 0) {
       const projectedNodes = this.scopeNodeIds.size + scopeAddNids.size;
       const admission = checkActiveScopeAdmission(budget, projectedNodes, this.estimateScopeDdlChars(scopeAddNids));
@@ -2499,11 +2388,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.lastRoutedRejected = scopeAddNids.size;
         this.memory.recordRejection(focusId, `over_active_scope_budget: +${scopeAddNids.size} routes would exceed the exploration budget`, this.hopCount);
         this.heldFindingDraft.hold(structuredClone(finding));
-        // Every repair below must apply to the shape that produced the rejection. Choosing a
-        // subset presumes a set: with one staged route the model judges it essential, keeps it,
-        // and resubmits byte-identical until the breaker. Dropping the route is the repair that always
-        // exists, so it is named in both branches and is the only one named where it is the only
-        // one left.
+        // Dropping the route is the repair that always exists, so it is named in both branches — a subset presumes a set the model may not have.
         const staged = scopeAddNids.size;
         const budgets = `(nodes ${admission.counts.nodes}/${admission.limits.node_cap}, est. tokens ${admission.counts.tokens}/${admission.limits.token_budget})`;
         return {
@@ -2574,9 +2459,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
       this.log('debug', `[Prune] prune_neighbor hop=${this.hopCount}: ${nid}`);
     }
-    // Focus commit: a prune records via `storePrunedDetail` and the `submitted_prune` state (the
-    // detail slot and node-state shapes a pruned focus has always used); every other verdict keeps
-    // the analyze/pass path — commit the detail slot + CT edges — unchanged.
+    // Focus commit: a prune records via `storePrunedDetail` and the `submitted_prune` state; every other verdict keeps the analyze/pass path.
     if (finding.verdict === 'prune') {
       if (this.tracer) this.ctPrunedFocusIds.add(focusId);
       this.removedSet.add(focusId);
@@ -2604,21 +2487,13 @@ export class NavigationEngine implements IHopStateMachine {
 
       if (this.tracer && stagedColumnEdges.length > 0) {
         this.tracer.edges.push(...stagedColumnEdges);
-        // A staged edge's endpoints are the same declaration as an accepted route_request — the AI
-        // named this node as part of the traced-column continuation, either as an upstream_columns
-        // contributor (`from_node`) or a writes_to target (`to_node`, defaulting to focusId).
-        // `upstream_columns` targets are also separately re-offered as implicit route_requests
-        // above and land here via the accepted-route path when admitted; this covers the rest —
-        // writes_to targets (never synthesized as a route candidate) and any upstream_columns
-        // target the border/depth admission deferred or excluded rather than accepted. One
-        // protected set, fed from both declaration surfaces.
+        // A staged edge's endpoints are the same declaration as an accepted route_request; this covers what the accepted-route path above
+        // does not — writes_to targets and any upstream_columns target the border/depth admission deferred or excluded.
         for (const e of stagedColumnEdges) {
           this.declaredRouteIds.add(e.from_node);
           this.declaredRouteIds.add(e.to_node);
         }
-        // Group continuation questions NOW (focusId + hopCount still match these edges) by the
-        // upstream node that must answer each; the route loop below hands each group to that
-        // node's own AgendaEntry so it renders only there, never at an unrelated next hop.
+        // Group continuation questions NOW (focusId + hopCount still match these edges) so the route loop below renders each only at its own next hop.
         lineageQuestionsByNode = this.tracer.getColumnLineageQuestionsByNode(focusId, this.hopCount);
         this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this.tracer.edges.length} active_cols=${this.tracer.activeColumns.join(',')}`);
       }
@@ -2635,8 +2510,7 @@ export class NavigationEngine implements IHopStateMachine {
         columns: this.tracer?.activeColumns,
         atHop: this.hopCount,
       });
-      // Focus took an AI hop, so it counts towards hopCount. Do not decrement _totalNodes, which
-      // ensures x never exceeds y.
+      // Focus took an AI hop, so it counts towards hopCount; _totalNodes is not decremented, so hopCount never exceeds it.
       this.log('debug', `[Self-Prune] hop=${this.hopCount} id=${focusId} mode=${this.mode.kind}`);
     } else {
       this.markNodeState(
@@ -2646,10 +2520,7 @@ export class NavigationEngine implements IHopStateMachine {
         finding.verdict === 'analyze' ? 'submitted_analyze' : 'submitted_passthrough',
         {
           columns: this.tracer?.activeColumns,
-          // The hop's own dispatch decides the role: a focus that was handed traced columns is a
-          // carrier, one handed none was explored for what it does to the row set. Recorded here so
-          // the snapshot, the synthesis surface and the render read the fact instead of each
-          // re-deriving it from a column list that drops when empty.
+          // The hop's own dispatch decides the role: handed traced columns is a carrier, handed none was explored for its row-set effect.
           ...(this.tracer ? { columnRole: this.tracer.activeColumns.length > 0 ? 'carrier' as const : 'row_role_only' as const } : {}),
           atHop: this.hopCount,
         },
@@ -2671,18 +2542,12 @@ export class NavigationEngine implements IHopStateMachine {
         const targetNode = this.nodeMap.get(nid);
         const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
         const wasAlreadyVisited = this.visited.has(nid);
-        // An accepted route declares nid part of the traced path the moment it is admitted —
-        // before `enqueueHop` runs, since a non-bodied target ends that call contracted, with no
-        // agenda entry left for anything downstream to protect it. Both modes: the declaration is
-        // the model's routing decision, not a column fact.
+        // An accepted route declares nid part of the traced path the moment it is admitted — before `enqueueHop` runs, since a non-bodied
+        // target ends that call contracted, with no agenda entry left for anything downstream to protect it.
         this.declaredRouteIds.add(nid);
         const routeColumns = routeColumnsByNode.get(nid);
         const isFreshExpansion = freshlyExpandedIds.delete(nid);
-        // reactivated is always false here: a `supplementAgenda` re-analysis is the only caller
-        // that resets a visited flag itself. A route whose target this hop's own `column_flow`
-        // left as an open chain end is the one case the visited guard reopens, and it says so with
-        // `openColumnEnd` — the continuation questions are the evidence that an edge, not an
-        // opinion, put the column there.
+        // reactivated is always false here except when this hop's own column_flow left the route as an open chain end (`openColumnEnd`).
         const columnQuestions = lineageQuestionsByNode?.get(nid);
         this.enqueueHop(nid, req.question, 0, 2, {
           carry: this.routeCarryFor(nid, req.columns, routeColumns),
@@ -2786,9 +2651,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (direction === 'upstream' || direction === 'bidirectional') walk('inbound', limit('upstream'));
     if (direction === 'downstream' || direction === 'bidirectional') walk('outbound', limit('downstream'));
 
-    // Exclusion axes only — origin is never dropped (it anchors the trace). The `seed_bfs` purpose
-    // deliberately omits the schema allowlist: out-of-allowlist reachables must survive the seed so
-    // they become `schema:` gate classes the user can approve (see startExploration gate classes).
+    // Exclusion axes only — origin is never dropped. `seed_bfs` omits the schema allowlist so out-of-allowlist reachables survive as gate classes.
     const hasFilters = this.excludedTypes.size > 0 || this.excludedSchemas.size > 0 || this.excludedNodeIds.size > 0;
     if (hasFilters) {
       for (const id of Array.from(seen)) {
@@ -2865,13 +2728,11 @@ export class NavigationEngine implements IHopStateMachine {
   private contractThroughPassNode(entry: AgendaEntry): void {
     // Bound carried columns to this pass node's on-trace spine before propagation.
     const spineBound = this.tracer
-      ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [], new Set(), this.log, this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream')
+      ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [], new Set(), this.log, this.columnTraceDirection())
       : entry.activeColumns;
-    // Spine-empty candidates fall back to the requested set verbatim (determineActiveColumnsForCandidate
-    // above) — bound that result to the pass node's own declared columns too, same predicate as enqueueHop.
+    // Spine-empty candidates fall back to the requested set verbatim; bound that to the pass node's own declared columns, same as enqueueHop.
     const carried = this.tracer ? (this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []) : spineBound;
-    // Same rule as `enqueueHop`'s contraction: a stated row role belongs to the branch, not to the
-    // pass node, so it travels on rather than being re-resolved into a column question.
+    // Same rule as `enqueueHop`'s contraction: a stated row role belongs to the branch, not the pass node, so it travels on unresolved.
     const forwardedCarry: ColumnCarry = entry.columnCarry?.kind === 'row_role_only'
       ? entry.columnCarry
       : { kind: 'carry', columns: carried ?? [] };
@@ -2890,24 +2751,14 @@ export class NavigationEngine implements IHopStateMachine {
    * already-analyzed node PLUS every node still queued on the agenda.
    *
    * @remarks
-   * A prune (self or neighbor) is topology-safe only if it leaves every committed node reachable from
-   * the origin. Seeding that set from analyzed (`notedNodeIds`) alone missed **agenda-queued** nodes —
-   * a routed-but-unvisited node whose detail slot would silently vanish from the render if a prune
-   * disconnected it (its id survives in scope but `getResult`'s reachability recompute drops it). K
-   * makes the queued node visible to the orphan guard so the prune is rejected instead.
-   *
-   * A `declaredRouteIds` member counts only when it is in `scopeNodeIds`: the reachability walk
-   * this set feeds is scope-bounded (`bfsReachable`), so an out-of-scope `column_flow` endpoint —
-   * the border sink `columnEndpointsOutsideRender` withholds from the render — would read as
-   * disconnected after every prune and refuse unrelated ones. A direct prune of a declared node
-   * stays refused through `declaredPruneIds`.
+   * A prune is topology-safe only if it leaves every committed node reachable from the origin — analyzed nodes plus agenda-queued ones (a
+   * routed-but-unvisited node would otherwise silently vanish from the render). A `declaredRouteIds` member counts only when it is in
+   * `scopeNodeIds`, since the reachability walk it feeds is scope-bounded; an out-of-scope endpoint would read as disconnected and refuse unrelated prunes.
    */
   private committedConnectedIds(): Set<string> {
     const ids = new Set<string>(this.memory.notedNodeIds);
     for (const e of this._agenda.entries) ids.add(e.nodeId);
-    // A declaration — a route the bipartite rule contracted away (no agenda entry, no detail
-    // slot), or (CT) a column_flow entry naming a node for a traced column — still counts as
-    // committed, protecting anything reachable only behind it, in both modes.
+    // A declaration — a contracted route, or (CT) a column_flow entry — still counts as committed, protecting anything reachable only behind it.
     for (const id of this.declaredRouteIds) if (this.scopeNodeIds.has(id)) ids.add(id);
     return ids;
   }
@@ -2916,22 +2767,10 @@ export class NavigationEngine implements IHopStateMachine {
    * The nodes a prune must leave reachable from the origin: everything the render would keep.
    *
    * @remarks
-   * {@link committedConnectedIds} protects only what a hop already analyzed or queued, so a prune
-   * was free to orphan an in-scope node no hop had judged yet. Such a node leaves the render
-   * through `getResult`'s reachability bound carrying no prune of its own and no detail slot, so
-   * nothing in the answer records that it was removed or why. That drop is now load-bearing: a hop
-   * that exhausts its correction budget leaves its focus undispositioned, and the focus plus its
-   * whole unexplored subtree are exactly this class.
-   *
-   * The set is therefore every in-scope node, **less** the ones `getResult` drops anyway as
-   * undispositioned sinks ({@link undispositionedSinkIds}) — a node that supplies nothing the
-   * render keeps is not evidence, and refusing a prune to preserve a node the render discards on
-   * its own would make the two disagree. Reading the same predicate the render reads is what makes
-   * the guard and the drop one verdict instead of two: a prune is refused exactly when it would
-   * take a node the answer would otherwise show.
-   *
-   * Nothing here judges content. Orphaning is pure topology, the refusal names the node that would
-   * be cut off, and the AI decides whether to prune that node too, route it, or keep the candidate.
+   * {@link committedConnectedIds} protects only what a hop already analyzed or queued, leaving an in-scope but not-yet-judged node free to be
+   * orphaned silently. The set here is every in-scope node less the ones `getResult` drops anyway as undispositioned sinks
+   * ({@link undispositionedSinkIds}), so the guard and the render read the same predicate and a prune is refused exactly when it would
+   * take a node the answer would otherwise show. Nothing here judges content — orphaning is pure topology.
    *
    * @param extra - Nodes protected for this check alone (routes the same payload staged, which are
    *   not in {@link scopeNodeIds} until commit).
@@ -2950,17 +2789,9 @@ export class NavigationEngine implements IHopStateMachine {
    * Decides which prune candidates may be removed without orphaning a protected node.
    *
    * @remarks
-   * The one implementation of "would removing this disconnect something the answer keeps", shared by
-   * the neighbor prune batch, the focus self-prune and anything else that asks the question. The
-   * whole candidate set is exempt from the protected set, so a submission that removes a branch as
-   * a unit is judged as the unit it is; a candidate whose removal would cut off a node the payload
-   * does NOT remove is refused and the refusal names that node.
-   *
-   * The all-at-once walk is tried first and settles the common case in one BFS — reachability is
-   * monotone in the removal set, so a safe all-removed graph proves every candidate safe.
-   * Per-candidate walks run only to attribute a failure to the exact offending id; a candidate
-   * refused there returns to the protected set, so a later candidate that would orphan it is
-   * refused in turn.
+   * The one implementation of "would removing this disconnect something the answer keeps", shared by the neighbor prune batch and the focus
+   * self-prune. The whole candidate set is exempt from the protected set, so a branch submitted as a unit is judged as one. The all-at-once
+   * walk settles the common case in one BFS (reachability is monotone in the removal set); per-candidate walks run only to attribute a failure.
    *
    * @param candidates - Canonical ids the payload proposes to remove, in submission order.
    * @param opts - `extraProtected` widens the protected set and the traversal scope with ids this
@@ -2994,9 +2825,7 @@ export class NavigationEngine implements IHopStateMachine {
     const staged = new Set<string>(baseRemoved);
     for (const id of candidates) {
       undecided.delete(id);
-      // Still-undecided candidates stay exempt so a branch submitted as a unit is judged as one,
-      // whatever order its ids arrive in; a candidate already refused is back in the set and
-      // protects what sits behind it.
+      // Still-undecided candidates stay exempt so a branch submitted as a unit is judged as one; a refused candidate protects what sits behind it.
       const required = new Set<string>(protectedIds);
       for (const pending of undecided) required.delete(pending);
       const trial = new Set<string>(staged);
@@ -3016,14 +2845,8 @@ export class NavigationEngine implements IHopStateMachine {
    * Single funnel for all writes to the agenda.
    *
    * @remarks
-   * Enforces the **bipartite agenda rule** by construction: only bodied nodes
-   * (view / procedure / function) enter the agenda. Non-bodied nodes (tables,
-   * externals) are *contracted* — the authored question flows through them to
-   * their bodied neighbors in the current exploration direction, preserving the
-   * caller's intent.
-   *
-   * Cycle guard: `visitedRefs` prevents infinite recursion on graphs with
-   * reference-to-reference edges (e.g. a table that references another table).
+   * Enforces the **bipartite agenda rule** by construction: only bodied nodes (view/procedure/function) enter the agenda; non-bodied nodes
+   * are *contracted*, forwarding the authored question to their bodied neighbors. `visitedRefs` guards against reference-to-reference cycles.
    *
    * @param targetId - Node to enqueue (or contract).
    * @param question - Authored reason / sub-question for the visit. Preserved verbatim when forwarded.
@@ -3106,8 +2929,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[Disposition] enqueue drop ${targetId} — out-of-scope target (priority=${priority}, not deferred) via focus=${this.currentFocusNodeId ?? this.originNodeId ?? '(none)'}`);
         return;
       }
-      // A carrier is not a way around the stated border: the node behind it is judged on the same
-      // axis the route path uses, and a breach becomes a lead rather than a silent admission.
+      // A carrier is not a way around the stated border: the node behind it is judged on the same axis, and a breach becomes a lead, not a silent admission.
       const contractionBreach = this.depthBorderBreach(targetId, depth);
       if (contractionBreach !== null) {
         const via = this.currentFocusNodeId ?? this.originNodeId;
@@ -3121,8 +2943,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
       const admittedDepth = this.directedDepthFromOrigin(targetId)?.depth ?? depth;
       this.scopeNodeIds.add(targetId);
-      // Bodied by construction (canAdmitContraction asserts SCRIPT_TYPES) — mirror supplementAgenda
-      // so the bodied denominator stays source-measured, not stale on this admission path.
+      // Bodied by construction (canAdmitContraction asserts SCRIPT_TYPES) — mirror supplementAgenda so the denominator stays source-measured.
       this.bodiedScopeSize++;
       this.depthFromOrigin.set(targetId, admittedDepth);
       this.budgetExpansions.push({ nodeId: targetId, depth: admittedDepth, atHop: this.hopCount });
@@ -3130,13 +2951,8 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (this.visited.has(targetId) || this.removedSet.has(targetId)) {
       if (!this.reopensColumnChain(targetId, carry, openColumnEnd)) {
-        // PRUNE-BEFORE-DEMAND: `openColumnEnd` true beside `removedSet.has(targetId)` is the
-        // signature of a committed column demand landing on a node that stays removed by
-        // invariant (`reopensColumnChain` refuses to reopen a removed node on purpose — only a
-        // body can answer). `ColumnTracer.validateColumnFlow`'s `pruned_contributor` check rejects
-        // a `column_flow` entry naming an already-removed supplier at declare time, which is meant
-        // to make this combination unreachable; if it fires anyway the demand is genuinely lost,
-        // which is not a debug-level fact.
+        // PRUNE-BEFORE-DEMAND: `openColumnEnd` beside an already-removed node should be unreachable (`validateColumnFlow`'s `pruned_contributor`
+        // check rejects a column_flow naming a removed supplier at declare time) — if it fires anyway the demand is genuinely lost, not debug-level.
         const lostDemand = openColumnEnd && this.removedSet.has(targetId);
         this.log(
           lostDemand ? 'warn' : 'debug',
@@ -3145,11 +2961,7 @@ export class NavigationEngine implements IHopStateMachine {
         );
         return;
       }
-      // The earlier visit answered a different question: this node was dispatched without the
-      // column a committed edge has since attributed to it. Reopen through the same reactivation
-      // path `supplementAgenda` uses rather than dropping the column on the floor — a column
-      // committed at one hop stays owed until some hop accounts for it, and the node that produces
-      // it is the only surface that can.
+      // The earlier visit answered a different question: reopen (same path `supplementAgenda` uses) rather than drop a column that stays owed.
       this.visited.delete(targetId);
       reopened = true;
       this.log('debug', `[CT] reopen ${targetId} — open column chain end via focus=${this.currentFocusNodeId ?? this.originNodeId ?? '(none)'} hop=${this.hopCount}`);
@@ -3160,12 +2972,8 @@ export class NavigationEngine implements IHopStateMachine {
       return;
     }
 
-    // Two facts, kept apart by {@link ColumnCarry}: `carry: []` is "the engine determined that none
-    // of the traced columns resolve on this node" (the tracer may still recover them at dispatch),
-    // and `row_role_only` is the router's own statement that this neighbor carries no traced value
-    // at all. Collapsing the two would let the target set be re-padded onto a node the router
-    // excluded from it. `agendaColumnsFor` owns the mode projection, including BB's rule that an
-    // agenda entry carries no column state at all.
+    // Two facts, kept apart by {@link ColumnCarry}: `carry: []` is "none resolve here yet" (recoverable at dispatch), `row_role_only` is the
+    // router's own statement of no traced value at all. Collapsing them would let the target set be re-padded onto a node the router excluded.
     const activeColumns = carry.kind === 'carry' ? carry.columns.filter(Boolean) : undefined;
     if (!this.tracer && activeColumns?.length) {
       throw new Error('BB agenda tasks must not carry active columns');
@@ -3175,8 +2983,7 @@ export class NavigationEngine implements IHopStateMachine {
       const alreadyQueued = this._agenda.has(targetId);
       // Bodied node — push directly (or merge into existing entry).
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
-      // Only grow the denominator when the hop expands beyond the approved scope or reactivates a cycle,
-      // so that Y matches the approved scope "contract" for normal in-scope exploration.
+      // Only grow the denominator on out-of-scope expansion or reactivation, so it matches the approved scope "contract" for normal exploration.
       if (!alreadyQueued && (freshScopeExpansion || reactivated || reopened)) {
         this._totalNodes++;
         const agendaReason = freshScopeExpansion ? 'out-of-scope expansion' : reopened ? 'reopened column chain' : 'reactivated';
@@ -3188,9 +2995,8 @@ export class NavigationEngine implements IHopStateMachine {
     // Non-bodied origins still get an agenda slot; middle non-bodied routes stay contracted.
     if (priority === 3) {
       const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId);
-      // Agenda membership (not scope membership) is the correct "will this consume an uncounted
-      // hop" oracle here: a non-bodied origin/supplement target may already be in scopeNodeIds
-      // (contracted-through earlier) yet never have had its own agenda slot until now.
+      // Agenda membership, not scope membership, is the right "will this consume an uncounted hop" oracle: a non-bodied target may be in
+      // scope (contracted-through earlier) yet never have had its own agenda slot until now.
       const alreadyQueued = this._agenda.has(targetId);
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       if (!alreadyQueued && !SCRIPT_TYPES.has(node.type)) {
@@ -3200,26 +3006,17 @@ export class NavigationEngine implements IHopStateMachine {
       return;
     }
 
-    // Non-bodied (table, external). Contract the edge: forward the authored
-    // question to the target's bodied neighbors in the exploration direction.
+    // Non-bodied (table, external). Contract the edge: forward the authored question to the target's bodied neighbors in the direction.
     if (visitedRefs.has(targetId)) return;
     visitedRefs.add(targetId);
-    // CT-only: `columns` here is resolved against the ORIGIN (seed) or an earlier carrier, never
-    // against `targetId` itself — bound it to what this carrier actually declares before it can
-    // reach a bodied neighbour. `agendaColumnsFor` runs first so an omitted `columns` is resolved
-    // to the tracer's target set before the bound, not left to escape the bound as `undefined`.
-    // The bind annotates; it never gates. An empty result means this carrier declares none of the
-    // traced columns, which is a fact about columns and not a reason to stop walking — the node
-    // behind it re-derives its own set at dispatch (see the column-spine bind in `getHopContext`).
+    // CT-only: `columns` here resolves against the ORIGIN or an earlier carrier, never `targetId` itself — bind it to what this carrier
+    // actually declares before it reaches a bodied neighbour. The bind annotates, never gates; the node behind it re-derives its own set at dispatch.
     const ctCarried = this.tracer
       ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(carry, activeColumns)) ?? []
       : undefined;
     const carried = ctCarried ?? activeColumns;
-    // A stated row role survives the contraction: the router judged the whole branch behind this
-    // carrier to shape rows, and a carrier cannot upgrade that to a column question. Every other
-    // carry forwards its resolved columns, exactly as before. No role is claimed for those: an
-    // empty bind on a carrier means the carrier declares none of the traced columns, which is not
-    // the same statement as the router's.
+    // A stated row role survives the contraction: the router judged the whole branch to shape rows, and a carrier cannot upgrade that to a
+    // column question. Every other carry forwards its resolved columns as before.
     const forwardedCarry: ColumnCarry = carry.kind === 'row_role_only' ? carry : { kind: 'carry', columns: carried ?? [] };
     this.markNodeState(targetId, 'passthrough', 'engine', 'non_bodied_passthrough', {
       columns: carried,
@@ -3227,31 +3024,18 @@ export class NavigationEngine implements IHopStateMachine {
       viaNodeId: this.currentFocusNodeId ?? this.originNodeId ?? undefined,
       atHop: this.hopCount,
     });
-    // An open column end at a non-bodied carrier is answerable only by what writes into it, so the
-    // reopen offer travels to this carrier's producers and to no other neighbour: a consumer that
-    // reads the same carrier explains nothing about where the value came from.
+    // An open column end at a non-bodied carrier is answerable only by what writes into it, so the reopen offer travels to its producers only.
     const columnProducers = openColumnEnd ? new Set(this.graph.inNeighbors(targetId)) : null;
-    // The same rule holds for the carried column itself: it continues only on the carrier's far side
-    // from the node that handed it over. A neighbour on that node's own side — another reader, or
-    // another writer — shares the carrier and nothing else, so it is still walked (the contraction
-    // is the shared walk) but carries no traced column and no chain question; the spine bind at
-    // dispatch still recovers a column a committed edge later attributes to it. Null in BB.
+    // The carried column itself continues only on the carrier's far side from the node that handed it over; a same-side neighbour is still
+    // walked but carries no traced column or chain question (the spine bind at dispatch can still recover one later). Null in BB.
     const columnContinuation = this.tracer ? this.carrierColumnContinuation(targetId) : null;
     for (const nid of this.directionalNeighbors(targetId, this._direction)) {
-      // Re-anchor only when the question lands on a bodied focus AND this neighbor continues the
-      // carrier's column side (`continues`, the same value that gates `neighborCarry` and
-      // `lineageQuestions`): a same-side neighbor cannot answer a question re-anchored to the
-      // sender's own logic, so it receives the plain, unanchored question instead — the same
-      // question every neighbor got before re-anchoring existed. Further non-bodied hops forward
-      // the plain question and annotate at their own bodied leaves (no compounding). The suffix
-      // wording is prompt-layer-owned: buildPassthroughReAnchor (smPrompts.ts).
+      // Re-anchor only when the question lands on a bodied focus that continues the carrier's column side; a same-side neighbour gets the
+      // plain, unanchored question instead. Suffix wording is prompt-layer-owned: buildPassthroughReAnchor (smPrompts.ts).
       const neighbor = this.nodeMap.get(nid);
       const continues = columnContinuation === null || columnContinuation.has(nid);
       const neighborCarry = continues || forwardedCarry.kind === 'row_role_only' ? forwardedCarry : { kind: 'carry' as const, columns: [] };
-      // The suffix is gated on the BRANCH, not the session: it tells the neighbor to ground its
-      // answer in the traced column, which is unanswerable on a branch carrying none — the same
-      // dead-end instruction a whole-object hop must not receive. The carry this neighbor is
-      // enqueued with is that branch's mode, so the gate reads the value it is about.
+      // The suffix is gated on the BRANCH, not the session: it grounds the answer in a traced column, unanswerable on a branch carrying none.
       const reAnchor = continues && neighbor && SCRIPT_TYPES.has(neighbor.type)
         ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry))
         : '';
@@ -3304,21 +3088,10 @@ export class NavigationEngine implements IHopStateMachine {
    * chain, rather than skipped.
    *
    * @remarks
-   * The visited guard is a BB rule — one node, one question, one hop — and it is right whenever the
-   * question is the same one. In CT a committed `column_flow` edge can name a node the walk has
-   * already passed, and then the question is a new one: the earlier hop was dispatched with a
-   * different active set and its completeness check demanded nothing about this column, so nothing
-   * on the chain ever accounts for it and `active_columns` empties from that point on. Additive by
-   * construction — the aspect's presence is the first condition, and BB carries no columns at all,
-   * so the guard it had is the guard it keeps.
-   *
-   * Four facts must hold together, and each one is also the termination bound:
-   * `openColumnEnd` (a committed edge, not a routing opinion, left the column open here);
-   * the node is not the focus committing right now (it has just answered, and re-asking it with
-   * its own submission's carry is a cycle); it is bodied and not pruned (only a body can answer,
-   * and a removed node stays removed); and the column is one {@link nodeStates} shows it was never
-   * dispatched with — which a reopened hop records on commit, so each node/column pair reopens at
-   * most once and the walk still terminates.
+   * The visited guard is a BB rule — one node, one question, one hop. In CT a committed `column_flow` edge can name an already-passed node
+   * with a genuinely new question, since the earlier hop's completeness check demanded nothing about this column. Four facts gate the reopen
+   * and each is also the termination bound: a committed edge (not a routing opinion) left the column open; the node is not the focus
+   * committing right now; it is bodied and not pruned; and {@link nodeStates} shows it was never dispatched with this column.
    *
    * @param targetId - Canonical id of the already-visited node.
    * @param carry - The column decision this enqueue carries to it.
@@ -3341,46 +3114,22 @@ export class NavigationEngine implements IHopStateMachine {
    * Resolves the column decision one accepted route carries to its neighbor.
    *
    * @remarks
-   * The AI's stated decision is never overridden here; the two channels are combined only where
-   * they are not in tension.
+   * The AI's stated decision is never overridden here; the two channels are combined only where not in tension. `stated: 'none'` alongside a
+   * non-empty `flowColumns` is a same-hop self-contradiction rejected before commit (`route_columns_flow_conflict`), so a `row_role_only`
+   * carry here always paired with a non-empty `flowColumns` means `stated` was genuinely `undefined` — filled from this hop's own evidence.
+   * Actual columns on both channels for the same neighbor are non-conflicting and added together. A `'none'` that contradicts an EARLIER
+   * hop's committed spine is still honored as submitted — {@link getHopContext} rebinds the committed column at dispatch so it is not dropped.
    *
-   * `stated` reaching this function as the literal `'none'` never coincides with a non-empty
-   * `flowColumns`: that pairing is a same-hop self-contradiction — this hop's own `column_flow`
-   * naming the neighbor as a contributor while its own `route_requests` entry for the same
-   * neighbor states it carries none — and is rejected before commit
-   * ({@link InvalidRouteKind} `route_columns_flow_conflict`, checked on the authored
-   * `route_requests` of this submit, independent of BB admission). So when `flowColumns` is
-   * non-empty and `stated` produced a `row_role_only`
-   * carry, `stated` can only have been `undefined` — no opinion authored for this neighbor (a
-   * CT route with no per-neighbor `columns`, or a BB-mode route in a CT session) — and this hop's
-   * own evidence fills it, unioned with nothing since a genuine "no opinion" carries no columns of
-   * its own to combine.
-   *
-   * `stated` naming actual columns AND this hop's own `column_flow` also naming some (possibly
-   * different, possibly overlapping) columns for the same neighbor are two non-conflicting positive
-   * statements about the same edge, and are added together.
-   *
-   * A `'none'` the target's already-committed spine (an EARLIER hop's `column_flow`) contradicts is
-   * not resolved here either: the earlier hop was right when it ran, this hop's `'none'` is a
-   * legitimate statement about its own routing intent, and neither is an error to normalize away.
-   * `stated` is honored as submitted. {@link getHopContext} still binds a committed column at
-   * dispatch so it is not dropped.
-   *
-   * @param _nodeId - The resolved route target. Unused: with the spine-vs-`'none'` conflict
-   * rejected upstream and the reverse-order conflict left for the AI's own later statement to
-   * resolve, this function reads no per-node engine state — kept for call-site symmetry with
-   * {@link enqueueHop}'s other per-neighbor resolvers.
+   * @param _nodeId - The resolved route target. Unused — this function reads no per-node engine state, kept for call-site symmetry with
+   *   {@link enqueueHop}'s other per-neighbor resolvers.
    * @param stated - The route request's own `columns` field as submitted.
    * @param flowColumns - Columns this hop's `column_flow` attributed to the same target, if any.
    * @returns The carry decision to enqueue with.
    */
   private routeCarryFor(_nodeId: string, stated: RouteColumns | undefined, flowColumns: ReadonlySet<string> | undefined): ColumnCarry {
-    // `stated` is `undefined` only for a BB-mode route request (CT requires `columns` on every
-    // route). A BB-mode hop of a CT run still holds a tracer, and {@link columnCarryFromRoute} reads
-    // that structural absence as `row_role_only`. A plain BB session holds no tracer and no column
-    // channel at all; a `row_role_only` carry would tag its node with the CT-only `columnRole`
-    // ({@link markNodeState}'s `non_bodied_passthrough` case does not gate that on `this.tracer`),
-    // which the BB checkpoint schema refuses — so it carries an inert empty list instead.
+    // `stated` is `undefined` only for a BB-mode route (CT requires `columns` on every route). A BB-mode hop of a CT run still holds a
+    // tracer and reads that as `row_role_only`; a plain BB session holds no tracer, so a `row_role_only` carry (tagged CT-only `columnRole`,
+    // refused by the BB checkpoint schema) is replaced with an inert empty list.
     const carry = !this.tracer && stated === undefined
       ? { kind: 'carry' as const, columns: [] }
       : columnCarryFromRoute(stated);
@@ -3428,23 +3177,13 @@ export class NavigationEngine implements IHopStateMachine {
    * Projects the agenda entry's persisted `activeColumns` for one CT hop.
    *
    * @remarks
-   * Mirrors {@link ensureExecutableTask}'s task-ledger fallback: when the caller states no column
-   * opinion (a `route_requests` entry with no `columns`), the agenda entry must still carry the tracer's
-   * non-empty {@link ColumnTracer.targetColumns} so the CT checkpoint invariant in
-   * `NavigationSnapshotSchema` (agenda entries require a defined `activeColumns` in CT mode) is
-   * always satisfiable at {@link toJSON}. BB mode records no column set at all: the `!this.tracer`
-   * early return below yields `undefined`, which the snapshot schema requires of a BB agenda entry.
-   *
-   * The fallback is copied, never handed out by reference: an agenda entry's `activeColumns` is
-   * mutable per hop, and sharing the tracer's `target_columns` array would let one hop's edit
-   * rewrite the frozen target set that the snapshot invariant compares against.
+   * When the caller states no column opinion, the agenda entry still carries the tracer's non-empty target columns, copied (never handed
+   * out by reference) so one hop's edit cannot rewrite the frozen target set the CT checkpoint invariant compares against.
    */
   private agendaColumnsFor(carry: ColumnCarry, activeColumns: string[] | undefined): string[] | undefined {
     // The enqueue guard upstream throws before a BB entry can reach here with columns.
     if (!this.tracer) return undefined;
-    // A stated row role is the one carry the target set must not fill in: the router judged this
-    // neighbor to shape rows and carry no traced value, and `[]` keeps the CT snapshot invariant
-    // (a CT agenda entry projects a resolved column set) satisfied without padding one back on.
+    // A stated row role is the one carry the target set must not fill in: `[]` keeps the CT snapshot invariant satisfied without padding one back on.
     if (carry.kind === 'row_role_only') return [];
     if (activeColumns !== undefined) return activeColumns;
     const fallback = this.tracer.targetColumns;
@@ -3496,25 +3235,16 @@ export class NavigationEngine implements IHopStateMachine {
       const cols = (this.tracer?.state ?? null)
         ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name)
         : undefined;
-      // CT only: the spine already staged for this neighbour as an `upstream_columns` supplier on
-      // an earlier hop. The engine never resolves a conflict between this and the model's own
-      // stated decision for the node — a same-hop contradiction is rejected
-      // (`route_columns_flow_conflict`) and a cross-hop one is left standing — so this is
-      // surfaced ahead of the decision, not only after: the model sees the committed set here and
-      // can state `columns: 'none'` for the node knowing the consequence, or route with the
-      // attributed columns and avoid it. Empty (never `[]` on the wire; see the neighbor spread
-      // below) when nothing is staged.
+      // CT only: the spine already staged for this neighbour as an `upstream_columns` supplier on an earlier hop, surfaced ahead of the
+      // model's own decision so it can state `columns: 'none'` knowing the consequence, or route with the attributed columns and avoid it.
       const attributedColumns = this.tracer
-        ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log, this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream')
+        ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log, this.columnTraceDirection())
         : [];
       const neighbor: HopNeighborDisclosure = {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: inSet.has(nid) ? 'upstream' : 'downstream',
         edge_type: edgeVerb.get(nid) ?? 'read', boundary, ...(cols?.length ? { cols } : {}),
-        // The engine decisions already taken about this neighbour, stated before the model acts
-        // rather than as a rejection after it. `prune_protected` is the lock a route or
-        // `column_flow` on an earlier hop set; without it the model proposes a prune the engine has
-        // already decided to refuse, and learns the rule by spending a correction on it.
+        // Engine decisions already taken about this neighbour, stated before the model acts rather than as a rejection after it.
         ...(this.declaredRouteIds.has(nid) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
@@ -3525,15 +3255,10 @@ export class NavigationEngine implements IHopStateMachine {
       if (d !== undefined) neighbor.depth_from_origin = d;
       neighbor.in_budget = this.scopeNodeIds.has(nid);
 
-      // Display annotation: `display` tests type-exclusion + allowlist only (no direction / node /
-      // schema exclusion). A type-hidden neighbor forces the scope flag false; either block arms the
-      // action-required prompt. `out_of_allowlist` only fires when a schema filter is active.
+      // Display annotation: `display` tests type-exclusion + allowlist only. `out_of_allowlist` only fires when a schema filter is active.
       const displayBorder = this.checkBorder(nid, n, 'display');
 
-      // One statement of the allowlist axis — the same border read the annotation below uses, so
-      // the flag and the action-required signal cannot disagree. Both allowlist grants count: a
-      // node the user named in a follow-up is inside the approved scope even though its schema
-      // is not.
+      // One statement of the allowlist axis, so the flag and the action-required signal below cannot disagree.
       if (hasSchemaFilter) {
         neighbor.in_approved_scope = displayBorder.kind !== 'out_of_allowlist';
       }
@@ -3552,13 +3277,9 @@ export class NavigationEngine implements IHopStateMachine {
    * Collects the column-edge endpoints the render does not hold.
    *
    * @remarks
-   * A hop names its read source and its write target by node, and the neighbour one hop past the
-   * border is a correct answer to the question it was asked — the node is simply not a render
-   * member, so the delivered chain names something the panel never draws. Those endpoints are the
-   * one class the sink disposition above never sees, because it iterates the render; handing them
-   * to it is what makes the chain and the render one verdict instead of two. `hop_node` is a render
-   * member by construction (it is the focus the hop ran on), so the two endpoint positions are the
-   * whole set. Empty in BB, where there is no tracer at all.
+   * A hop's read source or write target one hop past the border is a correct answer that is simply not a render member, so the delivered
+   * chain can name something the panel never draws. These endpoints are the one class the sink disposition never sees on its own, since it
+   * only iterates the render. Empty in BB, where there is no tracer at all.
    *
    * @param render - The render set membership is tested against.
    * @returns Endpoint ids outside the render, usually empty.
@@ -3576,37 +3297,17 @@ export class NavigationEngine implements IHopStateMachine {
    * Selects the nodes no hop dispositioned that the render reaches only as a write sink.
    *
    * @remarks
-   * Scope admits a node; only a hop dispositions one. A node with no investigation task, no
-   * column-aspect edge endpoint, and no {@link nodeStates} entry was never analyzed, routed,
-   * contracted through or pruned — it is in the render because BFS reachability walked into it,
-   * nothing more. A hop verdict is BB retention in both modes: `submitted_passthrough` and
-   * `submitted_analyze` alike. CT adds column edges on top of that walk (`if (this.tracer)` is
-   * additive); it does not drop a visited write-sink BB would keep just because the tracer placed
-   * no column carriage. A recorded edge still exempts a node at any of its three positions, so a
-   * carrier proc that is only ever the `hop_node` stays when the tracer named it. Every other
-   * reason (`submitted_analyze`, a contraction's `non_bodied_passthrough`, a user filter) exempts
-   * the node outright, as does a task still open — routed or queued and never reached is not a
-   * verdict. Such a node that also supplies nothing the render keeps (every edge joining it to the
-   * render set points into it: written to, or EXEC'd) is a side-effect sink, not answer evidence.
-   * Peeling is iterative, so a sink chain — a logging proc whose only reader is its own log table
-   * — goes as a unit. An undispositioned node that *supplies* a rendered node stays: at this layer
-   * a filter join and a sibling-column feed are the same shape, and the value-carrying one is
-   * required (`ct-retention-differential` C8). A candidate carrying the only path to a kept node
-   * is a passthrough, not a sink, and is restored.
+   * Scope admits a node; only a hop dispositions one. A node with no investigation task, no column-aspect edge endpoint, and no
+   * {@link nodeStates} entry was never analyzed, routed, contracted through or pruned — it is in the render only because BFS reachability
+   * walked into it. Such a node that also supplies nothing the render keeps (every edge into it is written-to or EXEC'd) is a side-effect
+   * sink, not answer evidence; peeling is iterative, so a sink chain goes as a unit. A node that *supplies* a rendered node stays — a
+   * candidate carrying the only path to a kept node is a passthrough, not a sink, and is restored.
    *
    * @param reachable - The reachability-bounded render set to classify.
-   * @param columnBorder - Column-edge endpoints the render does not hold
-   *   ({@link columnEndpointsOutsideRender}), classified against the same contract with two
-   *   provenance differences from `reachable`. First: the engine writes `non_bodied_passthrough`
-   *   for both endpoints of a committed edge at the instant it commits it (`stagedCtNodeStates`),
-   *   so that record is not evidence of retention the way a hopped verdict is — treat it as the
-   *   sink check does an absent state. Second: a `reachable` node can never carry `action='prune'`
-   *   (a prune removes it from `reachable` itself, via `removedSet`), so an existing state there is
-   *   always retention; a border node's membership does not go through `removedSet` at all, so the
-   *   same AI prune that pulled it out of the render can still leave it named on a committed edge —
-   *   route that state through the sink check too, the one case a prune verdict does not already
-   *   answer for a node outside the render. Any other submitted verdict, and an open task, exempt
-   *   exactly as inside the render.
+   * @param columnBorder - Column-edge endpoints the render does not hold ({@link columnEndpointsOutsideRender}), classified against the
+   *   same contract with two differences from `reachable`: an engine-written `non_bodied_passthrough` on a committed edge is not retention
+   *   evidence (treated as absent), and a border node's membership bypasses `removedSet`, so a prune that pulled it out of the render can
+   *   still leave it named on a committed edge — routed through the sink check here, the one case a prune verdict does not already answer.
    * @returns Ids to drop; reachable ones leave the render, border ones leave the delivered chain.
    */
   private undispositionedSinkIds(reachable: ReadonlySet<string>, columnBorder: ReadonlySet<string>): Set<string> {
@@ -3617,10 +3318,7 @@ export class NavigationEngine implements IHopStateMachine {
       const onBorder = columnBorder.has(id);
       const engineRecord = onBorder && state?.source === 'engine';
       const borderPruned = onBorder && state?.action === 'prune';
-      // Any hop verdict (analyze or passthrough) is BB retention. `engineRecord` and `borderPruned`
-      // are the CT add: a column-border endpoint the engine auto-wrote or the AI pruned, neither a
-      // hop's own retention verdict for that node, classified by the same sink rule so the
-      // delivered chain cannot name a write sink the render refused to draw.
+      // Any hop verdict is BB retention; `engineRecord`/`borderPruned` are the CT add — neither is a hop's own retention verdict, but both classify by the same sink rule.
       if (state !== undefined && !engineRecord && !borderPruned) continue;
       if (this.taskLedger.investigationTasks.some(task => task.nodeId === id)) continue;
       if (!onBorder && this.tracer?.edges.some(edge =>
@@ -3663,27 +3361,19 @@ export class NavigationEngine implements IHopStateMachine {
   public getResult(): SmResult {
     const mem = this.memory.getResult();
 
-    // Result scope is the approved BFS scope in both modes. CT once rebuilt it from the tracer's
-    // value-edge set, which deleted every dependency that carried no value into the traced column —
-    // a filter, a grain setter, a sibling-column feed — after the AI had analyzed it and without a
-    // prune. The tracer's edges drive emphasis and flow-role grouping; they never bound the answer.
+    // Result scope is the approved BFS scope in both modes. The tracer's edges drive emphasis and flow-role grouping; they never bound the answer.
     const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
     const finalNodeIds = new Set<string>(reachableNodeIds);
     finalNodeIds.add(this.originNodeId!);
 
-    // Reachability alone once carried scope-resident write sinks into the answer, where the
-    // synthesis prompt then section-linked them. Drop the sinks no hop dispositioned — and classify
-    // the column-edge endpoints one hop past the border by the same contract, so the chain cannot
-    // name a terminal write sink the render already refused to draw.
+    // Drop the sinks no hop dispositioned, and classify the column-edge endpoints one hop past the border by the same contract, so the
+    // delivered chain cannot name a terminal write sink the render already refused to draw.
     const columnBorder = this.columnEndpointsOutsideRender(finalNodeIds);
     const undispositioned = this.undispositionedSinkIds(finalNodeIds, columnBorder);
-    // The two inputs are disjoint by construction — a border endpoint is one the render does not
-    // hold — so the verdict splits back apart exactly. The render's record stays the render's: a
-    // node that was never drawn is not a drop from the drawing.
+    // The two inputs are disjoint by construction, so the verdict splits back apart exactly: a node that was never drawn is not a drop from the drawing.
     const borderSinks = new Set<string>();
     for (const id of columnBorder) if (undispositioned.delete(id)) borderSinks.add(id);
-    // Recorded before the log line and on every call, so a snapshot taken after this one describes
-    // this render and not an earlier one.
+    // Recorded on every call so a snapshot taken after this one describes this render, not an earlier one.
     this.renderDroppedIds = new Set(undispositioned);
     if (borderSinks.size > 0) {
       this.log('debug', `[Disposition] getResult withholds ${borderSinks.size} column-chain endpoint(s) — ${trunc(Array.from(borderSinks).join(', '), 200)} (past the render border, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
@@ -3693,10 +3383,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Disposition] getResult drops ${undispositioned.size} undispositioned sink node(s) — ${trunc(Array.from(undispositioned).join(', '), 200)} (in scope, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
     }
 
-    // A prune can orphan a scope node the don't-orphan guard does not protect (never analyzed, never
-    // queued): it leaves the render through the reachability bound above, with no prune of its own and
-    // no detail slot, so neither the sink line nor the conservation delta below names it. The render
-    // owns its disposition — record and log it here, once.
+    // A prune can orphan a scope node the don't-orphan guard does not protect (never analyzed, never queued); such a node leaves the render
+    // through the reachability bound above with no prune of its own and no detail slot, so it is recorded and logged here, once.
     const orphaned = Array.from(this.scopeNodeIds).filter(
       id => !finalNodeIds.has(id) && !this.removedSet.has(id) && !undispositioned.has(id));
     if (orphaned.length > 0) {
@@ -3704,12 +3392,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Disposition] getResult drops ${orphaned.length} scope node(s) unreachable from origin under removedSet — ${trunc(orphaned.join(', '), 200)} (orphaned by a prune; never dispositioned themselves)`);
     }
 
-    // Conservation backstop: the render set is recomputed by reachability, which can disagree with
-    // the disposition ledger. Under the invariants (prune never orphans a committed node) this delta
-    // is empty; if it is not, an analyzed node's detail slot is about to be dropped from the render —
-    // log it (never a silent filter) so the loss is visible instead of vanishing. The sink trim above
-    // names its own drops in its own line; they are not counted here a second time as a conservation
-    // failure they are not.
+    // Conservation backstop: under the invariants this delta is empty; if not, an analyzed node's detail slot is about to be silently
+    // dropped from the render — log it. The sink trim above names its own drops, so they are not double-counted here.
     const droppedSlots = mem.detail_slots.filter(slot => !finalNodeIds.has(slot.nodeId) && !undispositioned.has(slot.nodeId));
     if (droppedSlots.length > 0) {
       this.log('debug', `[Disposition] getResult drops ${droppedSlots.length} analyzed detail slot(s) unreachable from origin under removedSet/scope — ${trunc(droppedSlots.map(s => s.nodeId).join(', '), 200)} (conservation delta; expected empty)`);
@@ -3722,13 +3406,9 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
-    // bfsDepthMap walks source->target only. On an upstream trace every retained node sits
-    // behind the origin, so that directed walk reaches depth 1 and stops — the whole ancestor
-    // chain sorts past maxDepth on the `?? 999` fallback and never lands in a bucket, collapsing
-    // a whole retained ancestor set into two buckets. The skeleton groups
-    // render stages, not a flow claim — direction is stated separately by buildDirectionLines
-    // in smPrompts.ts — so the grouping walk is fed both edge directions here; bfsDepthMap's own
-    // directed contract and tests are untouched.
+    // bfsDepthMap walks source->target only, so an undirected walk on an upstream trace would collapse the whole ancestor chain past
+    // maxDepth. The skeleton groups render stages, not a flow claim (direction is stated separately by buildDirectionLines), so the
+    // grouping walk here is fed both edge directions; bfsDepthMap's own directed contract and tests are untouched.
     const symmetrizedEdges: Array<[string, string, string]> = [];
     for (const [s, t, ty] of finalEdges) { symmetrizedEdges.push([s, t, ty], [t, s, ty]); }
     const depthMap = bfsDepthMap(symmetrizedEdges, this.originNodeId!);
@@ -3790,14 +3470,10 @@ export class NavigationEngine implements IHopStateMachine {
       engineInternals: this.serializeInternals(),
       // Mode-independent: the sink trim bounds the render in BB and CT alike.
       ...(this.renderDroppedIds.size > 0 ? { renderDroppedNodeIds: Array.from(this.renderDroppedIds) } : {}),
-      // Mode-independent: an accepted route declares its target in BB and CT alike, so the prune
-      // protection this set feeds has to survive a checkpoint in both. `ct`-prefixed key name frozen
-      // by stored runs (see navigationSnapshotSchema.ts).
+      // Mode-independent: an accepted route declares its target in BB and CT alike. `ct`-prefixed key name frozen by stored runs (navigationSnapshotSchema.ts).
       ctDeclaredRouteIds: Array.from(this.declaredRouteIds),
       ...(this.tracer ? {
-        // The in-flight hop's own questions (set from its AgendaEntry at dispatch), not a fresh
-        // recompute against `currentFocusNodeId` — that would describe the just-committed hop,
-        // not the one a mid-hop resume needs to keep showing.
+        // The in-flight hop's own questions (set from its AgendaEntry at dispatch), not a fresh recompute — that would describe the wrong hop on a mid-hop resume.
         lineageQuestionsLastHop: [...this._pendingLineageQuestions],
         ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds),
       } : {}),
@@ -3805,9 +3481,7 @@ export class NavigationEngine implements IHopStateMachine {
     try {
       return parseNavigationSnapshot(snapshot);
     } catch (err) {
-      // The engine's own state must always satisfy the strict checkpoint boundary; a rejection
-      // here is an internal invariant violation, not model/user behavior. issuePaths only (no
-      // checkpoint values) so the line stays safe to persist.
+      // A rejection here is an internal invariant violation, not model/user behavior. issuePaths only (no checkpoint values) so the line stays safe to persist.
       if (err instanceof InvalidEngineCheckpointError) {
         this.log('error', `[Checkpoint] serialize rejected — paths=${trunc(err.diagnostic, LOG_TRUNC_CONTENT)}`, err);
       }
@@ -3958,15 +3632,12 @@ export class NavigationEngine implements IHopStateMachine {
     engine.lastRoutedRejected = internals.lastRoutedRejected;
     engine.lastRoutedDeferred = internals.lastRoutedDeferred;
     engine.initSnapshot = internals.initSnapshot;
-    // CT continuation state lives at the top level, not in engineInternals; without it a resumed
-    // session re-dispatches focus nodes the AI already pruned and drops the pending sub-questions.
+    // CT continuation state lives at the top level, not in engineInternals; without it a resumed session re-dispatches pruned focus nodes.
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
-    // Absent on a checkpoint written before this set was persisted — restores as empty rather
-    // than inventing declarations the run never made.
+    // Absent on a checkpoint written before this set was persisted — restores as empty rather than inventing declarations the run never made.
     engine.declaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
-    // Absent on a checkpoint written before the field existed, and on one whose last render dropped
-    // nothing — both mean "no recorded drop".
+    // Absent on a checkpoint written before the field existed, or on one whose last render dropped nothing — both mean "no recorded drop".
     engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);
 
     return engine;

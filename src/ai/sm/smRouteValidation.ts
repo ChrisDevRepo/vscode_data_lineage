@@ -210,7 +210,7 @@ export interface SubmissionFaults {
   /** `verdict:'prune'` carrying non-empty `sections` — a prune archives to `prunedDetails`, which synthesis never reads, so those findings would be silently lost. */
   pruneSections?: { focusId: string; sectionCount: number };
   /** CT column-chain completeness: tracked columns the payload left unaccounted. */
-  columnChain?: { focusId: string; unaccounted: string[]; available: string[]; contradicted: readonly string[]; traceDirection?: 'upstream' | 'downstream' };
+  columnChain?: { focusId: string; unaccounted: string[]; available: string[]; contradicted: readonly string[]; traceDirection: 'upstream' | 'downstream' };
   /** Required neighbours a non-prune repair of this payload would bring into play — a prune verdict is exempt from the neighbour demand, so this avoids hiding the obligation until the turn after repair. */
   repairWouldOwe?: readonly string[];
 }

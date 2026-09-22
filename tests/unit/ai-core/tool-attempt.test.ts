@@ -1559,6 +1559,32 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(JSON.stringify(replayed)).not.toContain('held_draft_repair_state');
   });
 
+  // An oversized held-draft section is truncated to its byte share; the whole-list collapse engages only when truncation is not enough.
+  it('truncates an oversized held-draft section to its byte share instead of collapsing the whole list', async () => {
+    const oversized = 's'.repeat(60_000);
+    const { replayed } = await replayAfterRejection({
+      input: { column_flow: [{ from_col: 'A', to_col: 'B' }] },
+      envelope: rejectionEnvelope({ reason: 'Flow entry 0 is incomplete.', detail: [{ path: 'column_flow.0' }] }),
+      presentResultRepairDraftContext: () => ({
+        sections: [
+          { label: 'Small A', text: 'KEEP-SMALL-A' },
+          { label: 'Small B', text: 'KEEP-SMALL-B' },
+          { label: 'Huge', text: oversized },
+        ],
+      }),
+    });
+
+    const heldDraft = String(replayed[1].content);
+    expect(Buffer.byteLength(heldDraft)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
+    expect(heldDraft).toContain('KEEP-SMALL-A');
+    expect(heldDraft).toContain('KEEP-SMALL-B');
+    // Truncated, not dropped: a bounded prefix of the oversized section survives...
+    expect(heldDraft).toContain('s'.repeat(100));
+    // ...but never the untruncated body, and the whole-list collapse never engages.
+    expect(heldDraft).not.toContain(oversized);
+    expect(heldDraft).not.toContain('"collapsed":true');
+  });
+
   // m16: the stored-rejection budget collapse (`boundStoredRejections` retaining
   // `essentialCurrentRejection` when even the single newest rejection does not fit) used to drop
   // `correctionFragments` outright, so `boundedCorrectionArgs(undefined)` rendered `{}` here —
@@ -1755,6 +1781,43 @@ describe('executeToolGenerationAttempt — present_result repair-budget exemptio
 // (g) unproductive-resend pre-check: no strike for a resend that changed nothing
 // ---------------------------------------------------------------------------
 
+/**
+ * Replays a fixed generation queue through `executeToolAttempt` + `recordToolAttempt`, exactly as
+ * the graph replays a rejected submission across attempts. `draftHeld` mirrors the graph holding a
+ * `present_result` repair draft between a rejected submission and its repair, as the repair-turn
+ * prevalidation-exemption describe block below reuses this same sequencer.
+ */
+async function runAttemptSequence(
+  generations: readonly ScriptedGeneration[],
+  tools: readonly ScriptedTool[],
+  draftHeld = false,
+): Promise<{ state: ToolPhaseAttemptState; results: readonly ToolAttemptResult[] }> {
+  const { registry } = scriptedRegistry(tools);
+  const port = new ScriptedModelPort(generations);
+  const { sink } = collectingSink();
+  const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: registry.getTools().map((tool) => tool.name) };
+  const plan: ConverseInstructionPlan = {
+    kind: 'converse',
+    context,
+    frame: { phase: 'active' },
+    input: {
+      messages: [modelUserMessage('Present the final result.')],
+      registry,
+      sink,
+      phase: 'active',
+      instructionContext: context,
+    },
+  };
+  let state = initialToolPhaseAttemptState('active');
+  const results: ToolAttemptResult[] = [];
+  for (let index = 0; index < generations.length; index++) {
+    const result = await executeToolAttempt(port, plan, { priorState: state, presentResultRepairDraftHeld: draftHeld });
+    results.push(result);
+    state = recordToolAttempt(state, result);
+  }
+  return { state, results };
+}
+
 describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-resend pre-check', () => {
   /** Canonical `present_result`-shaped failure envelope, `repairFields` and issue path included. */
   function presentResultRejectionEnvelope(fields: {
@@ -1771,37 +1834,6 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
       repairFields: fields.repairFields,
       detail: [{ path: fields.issuePath }],
     });
-  }
-
-  /** Replays a fixed generation queue through `executeToolAttempt` + `recordToolAttempt`, exactly as the graph replays a rejected submission across attempts. */
-  async function runAttemptSequence(
-    generations: readonly ScriptedGeneration[],
-    tools: readonly ScriptedTool[],
-  ): Promise<{ state: ToolPhaseAttemptState; results: readonly ToolAttemptResult[] }> {
-    const { registry } = scriptedRegistry(tools);
-    const port = new ScriptedModelPort(generations);
-    const { sink } = collectingSink();
-    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: registry.getTools().map((tool) => tool.name) };
-    const plan: ConverseInstructionPlan = {
-      kind: 'converse',
-      context,
-      frame: { phase: 'active' },
-      input: {
-        messages: [modelUserMessage('Present the final result.')],
-        registry,
-        sink,
-        phase: 'active',
-        instructionContext: context,
-      },
-    };
-    let state = initialToolPhaseAttemptState('active');
-    const results: ToolAttemptResult[] = [];
-    for (let index = 0; index < generations.length; index++) {
-      const result = await executeToolAttempt(port, plan, { priorState: state });
-      results.push(result);
-      state = recordToolAttempt(state, result);
-    }
-    return { state, results };
   }
 
   it('answers a cross-attempt resend of an accepted read with an uncharged duplicate_read envelope instead of a silent replay', async () => {
@@ -2294,40 +2326,9 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
 // ---------------------------------------------------------------------------
 
 describe('executeToolAttempt — repair-turn prevalidation exemption is bounded', () => {
-  /**
-   * Replays a fixed generation queue through `executeToolAttempt` + `recordToolAttempt` with a
-   * held `present_result` repair draft — the state the graph holds between a rejected submission
-   * and its repair — exactly as the graph replays attempts across one repair turn.
-   */
-  async function runRepairTurnSequence(
-    generations: readonly ScriptedGeneration[],
-    tools: readonly ScriptedTool[],
-  ): Promise<{ state: ToolPhaseAttemptState; results: readonly ToolAttemptResult[] }> {
-    const { registry } = scriptedRegistry(tools);
-    const port = new ScriptedModelPort(generations);
-    const { sink } = collectingSink();
-    const context = { kind: 'converse' as const, templateKeys: [], memorySections: [], toolNames: registry.getTools().map((tool) => tool.name) };
-    const plan: ConverseInstructionPlan = {
-      kind: 'converse',
-      context,
-      frame: { phase: 'active' },
-      input: {
-        messages: [modelUserMessage('Present the final result.')],
-        registry,
-        sink,
-        phase: 'active',
-        instructionContext: context,
-      },
-    };
-    let state = initialToolPhaseAttemptState('active');
-    const results: ToolAttemptResult[] = [];
-    for (let index = 0; index < generations.length; index++) {
-      const result = await executeToolAttempt(port, plan, { priorState: state, presentResultRepairDraftHeld: true });
-      results.push(result);
-      state = recordToolAttempt(state, result);
-    }
-    return { state, results };
-  }
+  /** Runs {@link runAttemptSequence} with a held `present_result` repair draft, as one repair turn does. */
+  const runRepairTurnSequence = (generations: readonly ScriptedGeneration[], tools: readonly ScriptedTool[]) =>
+    runAttemptSequence(generations, tools, true);
 
   /** One schema-invalid `present_result` call as SDK prevalidation rejects it, payload attached. */
   function invalidPresentResult(callId: string, input: unknown) {
