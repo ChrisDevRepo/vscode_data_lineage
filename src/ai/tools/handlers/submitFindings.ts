@@ -150,7 +150,8 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         }, normalizedInput);
       }
 
-      // Hold-and-amend restores authored prose when only routing/column completeness needed a retry.
+      // Hold-and-amend restores authored prose when only routing/column completeness or a field-scoped
+      // reference needed a retry.
       const finding = engine.applyHeldContent(parsed.data);
 
       // The agreement-phase gate locks `sess.classification`. The finding's

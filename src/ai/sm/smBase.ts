@@ -1,5 +1,5 @@
 import { columnCarryFromRoute, columnCarryOf, DEFAULT_SM_START_DEPTH, EngineAspectMode, INHERIT_CARRY, InvalidRoute, type DepthIntent } from './smTypes';
-import { buildRouteValidationRejection, FULL_RESUBMIT_ORDER, isAbsentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
+import { buildRouteValidationRejection, FULL_RESUBMIT_ORDER, isAbsentKind, isContentKind, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { buildIncompleteRejection, computeUnaccounted } from './smCompleteness';
 import { checkActiveScopeAdmission, DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX } from '../tools/toolSchemas';
@@ -521,7 +521,8 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * Non-null means the prior `submit_findings` failed only on a field-scoped, correctable defect
-   * (route/column completeness, or a field over its length cap).
+   * (route/column completeness, a column/route/prune reference the detail names, or a field over its
+   * length cap).
    */
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();
@@ -2618,11 +2619,14 @@ export class NavigationEngine implements IHopStateMachine {
     // `prune_neighbors` candidate (`prune_would_orphan`) and the required neighbours it leaves
     // unaccounted (`missing_required_route`) — are held back for the second pass after the
     // neighbor-completeness branch, which reports the two together.
-    const contentErrors = invalidRoutes.filter(r => !isAbsentKind(r.kind)
-      && r.kind !== 'prune_would_orphan' && r.kind !== 'missing_required_route');
+    const contentErrors = invalidRoutes.filter(r => isContentKind(r.kind));
     if (contentErrors.length > 0) {
       this.lastRoutedRejected = contentErrors.length;
       for (const r of contentErrors) this.memory.recordRejection(r.id, r.reason, this.hopCount);
+      // Field-scoped: the authored sections and summary are valid, only a named reference is not.
+      // Holding them lets the correction carry the structured fields alone, so captured findings are
+      // not lost to a from-scratch re-author.
+      this.heldFindingDraft.hold(structuredClone(finding));
       return buildRouteValidationRejection(contentErrors);
     }
 
