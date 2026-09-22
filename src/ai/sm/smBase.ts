@@ -218,6 +218,25 @@ function cloneAgendaEntry(entry: AgendaEntry): AgendaEntry {
   };
 }
 
+/** Everything {@link NavigationEngine.submitFindings} validated and staged, handed to the commit step unchanged. */
+interface ValidatedHop {
+  focusId: string;
+  finding: HopSubmission;
+  routeRequests: NonNullable<HopSubmission['route_requests']>;
+  routeOutcomes: RouteOutcome[];
+  acceptedNids: Set<string>;
+  scopeAddNids: Set<string>;
+  deferredRoutes: Array<{ nodeId: string; schema: string; question: string; reason: 'schema' | 'depth' | 'schema_and_depth'; depth: number | undefined }>;
+  prunedNeighborNids: Set<string>;
+  routeColumnsByNode: Map<string, Set<string>>;
+  stagedSections: Parameters<AiMemoryManager['storeDetail']>[1];
+  stagedDetailChars: number;
+  stagedSummaryChars: number;
+  stagedColumnEdges: ColumnEdge[];
+  stagedCtNodeStates: Array<{ nodeId: string; action: SmNodeAction; source: SmNodeStateSource; reason: SmNodeStateReason; meta: { columns?: string[]; viaNodeId?: string; atHop?: number } }>;
+  stagedColumnFlowEntries: number;
+}
+
 /**
  * Unified Navigation Engine — the core state machine for all exploration modes.
  *
@@ -2041,27 +2060,13 @@ export class NavigationEngine implements IHopStateMachine {
 
     const acceptedNids = new Set<string>();
     const scopeAddNids = new Set<string>();
-    const deferredRoutes: Array<{
-      nodeId: string;
-      schema: string;
-      question: string;
-      reason: 'schema' | 'depth' | 'schema_and_depth';
-      depth: number | undefined;
-    }> = [];
+    const deferredRoutes: ValidatedHop['deferredRoutes'] = [];
     const prunedNeighborNids = new Set<string>();
-    // Populated at commit, keyed by upstream node id, so each routed hop's own AgendaEntry carries only the questions opened for it.
-    let lineageQuestionsByNode: Map<string, string[]> | undefined;
-    let stagedSections: Parameters<AiMemoryManager['storeDetail']>[1] = [];
+    let stagedSections: ValidatedHop['stagedSections'] = [];
     let stagedDetailChars = 0;
     let stagedSummaryChars = 0;
     const stagedColumnEdges: ColumnEdge[] = [];
-    const stagedCtNodeStates: Array<{
-      nodeId: string;
-      action: SmNodeAction;
-      source: SmNodeStateSource;
-      reason: SmNodeStateReason;
-      meta: { columns?: string[]; viaNodeId?: string; atHop?: number };
-    }> = [];
+    const stagedCtNodeStates: ValidatedHop['stagedCtNodeStates'] = [];
     const stagedColumnFlowEntries = this.tracer
       ? finding.column_flow?.length ?? 0
       : 0;
@@ -2417,6 +2422,34 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    return this.applyValidatedHop({
+      focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
+      routeColumnsByNode, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges, stagedCtNodeStates,
+      stagedColumnFlowEntries,
+    });
+    } catch (err: unknown) {
+      this.log('error', '[Engine] Exception in submitFindings', err);
+      this._status = 'error';
+      return {
+        error: 'engine_crash',
+        hint: 'The engine crashed while processing findings. Call start_exploration to restart the session.',
+        detail: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
+   * Commits a hop whose submission passed every validation guard: route deferrals, scope growth,
+   * neighbour prunes, the focus verdict and the accepted routes, each exactly once.
+   */
+  private applyValidatedHop(staged: ValidatedHop): SubmitResult {
+    const {
+      focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
+      routeColumnsByNode, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges, stagedCtNodeStates,
+      stagedColumnFlowEntries,
+    } = staged;
+    // Populated at commit, keyed by upstream node id, so each routed hop's own AgendaEntry carries only the questions opened for it.
+    let lineageQuestionsByNode: Map<string, string[]> | undefined;
     // All validation has passed. From here on, apply the staged hop exactly once.
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
@@ -2576,16 +2609,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.heldFindingDraft.clear();
     const outcomes = routeOutcomes.length > 0 ? { route_outcomes: routeOutcomes } : {};
 
-      return { ok: true, ...outcomes };
-    } catch (err: unknown) {
-      this.log('error', '[Engine] Exception in submitFindings', err);
-      this._status = 'error';
-      return {
-        error: 'engine_crash',
-        hint: 'The engine crashed while processing findings. Call start_exploration to restart the session.',
-        detail: err instanceof Error ? err.message : String(err),
-      };
-    }
+    return { ok: true, ...outcomes };
   }
 
   /**
