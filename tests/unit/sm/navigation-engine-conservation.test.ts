@@ -397,7 +397,7 @@ describe("Navigation Engine — node conservation", () => {
 
   const focus3 = engine.getHopContext();
   expect('focus_node' in focus3 && focus3.focus_node?.id === 'b', 'third focus is b').toBe(true);
-  const result = engine.submitFindings({ focus_node_id: 'b', sections: [{ angle: 'business' as const, text: 'b' }], summary: 'b', verdict: 'prune' }) as any;
+  const result = engine.submitFindings({ focus_node_id: 'b', sections: [], summary: 'b', verdict: 'prune' }) as any;
   expect('ok' in result, 'the self-prune of b commits — c is neither noted nor queued, so no orphan guard fires').toBe(true);
 
   const smResult = engine.getResult();

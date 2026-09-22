@@ -66,7 +66,7 @@ const forbidden = [
   // required-file list — these two patterns are what makes their absence PROVEN rather than assumed.
   { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
   { pattern: /^stubs\//u, label: 'dependency stub directory' },
-  { pattern: /^(?:\.agents|\.codex|\.claude|\.gemini|\.cursor|\.continue|\.glm-skills)\//u, label: 'internal agent directory' },
+  { pattern: /^(?:\.agents|\.muse|\.codex|\.claude|\.gemini|\.cursor|\.continue|\.glm-skills)\//u, label: 'internal agent directory' },
   { pattern: /^(?:\.env(?:\..*)?|\.?CLAUDE[^/]*|\.?GEMINI[^/]*|\.?GLM[^/]*|\.?AGENTS[^/]*|\.?CODEX[^/]*|\.cursorrules|\.aider[^/]*)$/iu, label: 'environment/agent-instruction file' },
   { pattern: /(?:^|\/)[^/]*internal[^/]*(?:\/|$)/iu, label: '"internal" marker path' },
   { pattern: /(?:^|\/)debug[^/]*\.txt$/iu, label: 'debug*.txt artifact' },

@@ -10,11 +10,13 @@
  * the author happened to format a paragraph is not a rule. It is replaced by
  * `prune_declared_kept_focus`, which keys off what the engine itself told that hop, not off prose.
  *
- * What did NOT change, and is pinned below: an ordinary self-prune commits — with no sections, or
- * with a plain rationale, or with sections that would once have tripped the lexical probe. The two
- * topology refusals (`prune_origin_forbidden`, `prune_would_orphan_noted`) are untouched. And a CT
- * focus that DOES carry a traced column may still prune itself, which is what keeps
+ * What did NOT change, and is pinned below: a bare self-prune (no sections) commits, and a CT
+ * focus that DOES carry a traced column may still prune itself bare, which is what keeps
  * `prune_declared_kept_focus` narrow: it is about a focus the engine declared kept, not about CT.
+ * What DID change: a prune carrying sections is refused (`prune_with_sections`) — those sections
+ * archived to `prunedDetails`, which synthesis never reads, so the content was silently lost.
+ * A prune owes no account; findings belong on `analyze`. The two topology refusals
+ * (`prune_origin_forbidden`, `prune_would_orphan_noted`) are untouched.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
@@ -92,18 +94,21 @@ describe("submitFindings — the prune verdict is unchanged outside the declared
     expect(state.removedSet.includes('mid'), 'mid is recorded as removed').toBe(true);
   });
 
-  it("(b2) BB: a prune submission with a plain rationale section (no captured artifact) is still accepted, unchanged", () => {
-    // Matches the established convention across this suite: a one-line "why this is off-path"
-    // rationale, with no `$$` formula, fenced block, or qualifying inline span.
+  it("(b2) BB: a prune submission carrying any section — even a plain rationale — is refused", () => {
+    // A prune owes no account of the focus: its sections archive where synthesis never reads
+    // them, so the boundary refuses the shape instead of silently losing the content. The
+    // rationale belongs on an analyze verdict, or the prune goes bare.
     const engine = bbEngineAtMid();
-    const accepted = engine.submitFindings({
+    const rejected = engine.submitFindings({
       focus_node_id: 'mid',
       sections: [{ angle: 'business' as const, text: 'Off the trace — display-only, no revenue link.' }],
       summary: 'off the answer path',
       verdict: 'prune',
       prune_neighbors: ['leaf'],
-    });
-    expect('ok' in accepted && accepted.ok === true, `expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
+    }) as { error?: string; hint?: string };
+    expect(rejected.error, `expected prune_with_sections, got ${JSON.stringify(rejected)}`).toBe('prune_with_sections');
+    expect(rejected.hint ?? '', 'the refusal offers both recoveries').toContain("verdict='analyze'");
+    expect(engine.toJSON().removedSet.includes('mid'), 'the refused prune removes nothing').toBe(false);
   });
 
   it("(c1) BB: pruning the origin still rejects with prune_origin_forbidden, unaffected by the new check", () => {
@@ -173,31 +178,51 @@ describe("submitFindings — the prune verdict is unchanged outside the declared
     expect('ok' in accepted && accepted.ok === true, `CT expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
   });
 
-  it("(a) BB: a prune whose sections carry a captured formula now COMMITS — formatting is not a verdict rule", () => {
+  it("(a) BB: a prune whose sections carry a captured formula is refused — findings belong on analyze", () => {
+    // The captured formula is exactly the content synthesis never sees on a prune verdict
+    // (it archives to prunedDetails, outside the synthesis-visible archive). Refusing the shape
+    // keeps it in the answer: resubmitted as analyze, the formula commits to a detail slot.
     const engine = bbEngineAtMid();
-    const accepted = engine.submitFindings({
+    const rejected = engine.submitFindings({
       focus_node_id: 'mid',
       sections: [{ angle: 'business' as const, text: CAPTURED_FORMULA_TEXT }],
       summary: 'display dead end',
       verdict: 'prune',
       prune_neighbors: ['leaf'],
+    }) as { error?: string };
+    expect(rejected.error, `expected prune_with_sections, got ${JSON.stringify(rejected)}`).toBe('prune_with_sections');
+    const asAnalyze = bbEngineAtMid().submitFindings({
+      focus_node_id: 'mid',
+      sections: [{ angle: 'business' as const, text: CAPTURED_FORMULA_TEXT }],
+      summary: 'display dead end',
+      verdict: 'analyze',
+      prune_neighbors: ['leaf'],
     });
-    expect('ok' in accepted && accepted.ok === true, `expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
+    expect('ok' in asAnalyze, `the analyze recovery commits the formula (got ${JSON.stringify(asAnalyze)})`).toBe(true);
   });
 
-  it("(d1) CT: a focus that DOES carry a traced column may still prune itself", () => {
-    // `mid` declares [amount] and the origin's column_flow routed it here, so this hop's active
-    // set is non-empty and `prune_declared_kept_focus` must not fire. This is the assertion that
-    // keeps the new rule narrow: it is scoped to a focus the engine declared kept, not to CT.
+  it("(d1) CT: a focus that DOES carry a traced column may still prune itself — but only bare", () => {
+    // `mid` declares [amount] and the origin's column_flow routed it here; the prune verdict
+    // itself stays available (a traced-column carrier can still be judged off-path), but the
+    // sections it carried now refuse like in BB — the rule is verdict-level, not mode-level.
     const engine = ctEngineAtMid();
-    const accepted = engine.submitFindings({
+    const rejected = engine.submitFindings({
       focus_node_id: 'mid',
       sections: [{ angle: 'business' as const, text: 'Off the trace — display-only.' }],
       summary: 'off the answer path',
       verdict: 'prune',
       column_flow: [],
       prune_neighbors: ['leaf'],
+    }) as { error?: string };
+    expect(rejected.error, `CT expected prune_with_sections, got ${JSON.stringify(rejected)}`).toBe('prune_with_sections');
+    const bare = ctEngineAtMid().submitFindings({
+      focus_node_id: 'mid',
+      sections: [],
+      summary: 'off the answer path',
+      verdict: 'prune',
+      column_flow: [],
+      prune_neighbors: ['leaf'],
     });
-    expect('ok' in accepted && accepted.ok === true, `CT expected ok:true, got ${JSON.stringify(accepted)}`).toBe(true);
+    expect('ok' in bare, `CT bare prune commits (got ${JSON.stringify(bare)})`).toBe(true);
   });
 });

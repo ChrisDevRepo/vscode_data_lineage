@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
+import { BOOKMARK_SOURCE_COLORS, BOOKMARK_SOURCE_LABELS } from '../engine/shared/bridgeContract';
 import { Tooltip } from './ui/Tooltip';
 import { ColumnViewToggle } from './ColumnViewToggle';
 
@@ -20,25 +21,9 @@ interface BookmarkBannerProps {
   onToggleColumnView?: (columnView: boolean) => void;
 }
 
-/**
- * Human-readable labels for the different sources of bookmarked views.
- */
-const SOURCE_LABELS: Record<NonNullable<FilterProfile['source']>, string> = {
-  ai: 'AI',
-  trace: 'Trace',
-  analysis: 'Analysis',
-  user: 'View',
-};
-
-/**
- * Border and text colors corresponding to different bookmark sources.
- */
-const SOURCE_COLORS: Record<NonNullable<FilterProfile['source']>, string> = {
-  ai: 'var(--ln-analysis-border)',
-  trace: 'var(--ln-warning-border)',
-  analysis: 'var(--ln-analysis-border)',
-  user: 'var(--ln-border)',
-};
+/** Local aliases; the contract owns the values. */
+const SOURCE_LABELS = BOOKMARK_SOURCE_LABELS;
+const SOURCE_COLORS = BOOKMARK_SOURCE_COLORS;
 
 /**
  * A persistent banner displayed at the top of the graph canvas when an "Advanced Bookmark"

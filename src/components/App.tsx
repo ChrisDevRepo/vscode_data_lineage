@@ -20,7 +20,7 @@ import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import { reconcileAiView } from './aiViewReconcile';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
 import { notifyUser } from '../utils/notify';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
@@ -1097,21 +1097,21 @@ export function App() {
   // ── Message handler (stats + projects-list) ─────────────────────────────────
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      const parsed = ExtensionToWebviewMsgSchema.safeParse(e.data);
-      if (!parsed.success) return;
-      // Host→webview frames are stamped unconditionally by the `postValidated` send choke point, so
-      // anything that parses as a contract message but carries the wrong (or no) version came from
-      // a host bundle this view cannot trust. Fail loudly through the existing error funnel rather
-      // than rendering a message whose shape we are only guessing at.
-      const version = (e.data as BridgeEnvelope | undefined)?.protocolVersion;
-      if (version !== BRIDGE_PROTOCOL_VERSION) {
-        window.vscode?.postMessage({
-          type: 'error',
-          error: `[Bridge] Protocol mismatch on "${parsed.data.type}": host sent v${String(version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
-        });
+      const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, e.data);
+      if (!frame.ok) {
+        // Host→webview frames are stamped unconditionally by the `postValidated` send choke point, so
+        // anything that parses as a contract message but carries the wrong (or no) version came from
+        // a host bundle this view cannot trust. Fail loudly through the existing error funnel rather
+        // than rendering a message whose shape we are only guessing at.
+        if (frame.reason === 'version') {
+          window.vscode?.postMessage({
+            type: 'error',
+            error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
+          });
+        }
         return;
       }
-      const msg = parsed.data;
+      const msg = frame.data;
       if (msg.type === 'detail-closed') {
         setIsDetailOpen(false);
       } else if (msg.type === 'projects-list') {

@@ -172,7 +172,9 @@ business_capture:
     business lock it is the only body.
 
     <section_skeleton>
-    A detailed business section, in this order:
+    A detailed business section, in this order: state each DDL fact once, as
+    its business effect — what the values mean and what changes downstream —
+    and never restate statements, predicates, join keys, or load shapes.
     1. Purpose — the domain role in one line, and the decision the rule serves.
     2. Rules and branches — every declared value of a mode, status or strategy
        switch (parameter allow-list, CASE ladder, IF set) and what it changes
@@ -249,7 +251,9 @@ technical_capture:
     technical lock it is the only body. The archive has no length cap.
 
     <section_skeleton>
-    A detailed technical section, in this order:
+    A detailed technical section, in this order: state each DDL fact once, as
+    mechanism — the statements run, the predicates and join keys, the load
+    shape — and never restate business meaning.
     1. Purpose — the execution role in one line.
     2. Rules and branches — each declared value of a parameter allow-list, CASE
        ladder or IF set, and the statement it runs; one commented out or absent

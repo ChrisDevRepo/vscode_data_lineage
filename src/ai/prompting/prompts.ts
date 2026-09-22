@@ -296,7 +296,7 @@ export function buildPresentationDetailContract(
       ]
       : [
         '- Preserve captured decision triggers and predicates, thresholds, fallback order, lifecycle/status transitions, audit-trail meaning, and downstream business impact. Keep exact node IDs, parameter names, and formulas intact through every compression — drop whole items that do not help answer <original_question>, never fields within a kept item.',
-        '- Every ⚠️ risk or caveat, every formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body, verbatim for the predicate — a captured risk is never one of the whole items the compression rule above may drop.',
+        '- Every ⚠️ risk or caveat, every formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body, verbatim for the predicate and character-for-character for every formula literal the archive serves with backticks (a served expression such as COALESCE(SUM(col), 0) is repeated exactly, never compressed into prose such as \'aggregates with SUM\') — a captured risk is never one of the whole items the compression rule above may drop.',
         '- Regroup for question-first clarity and graph linking. Compress repeated phrasing while retaining every grounded evidence item — expressions a switch selects between are one item per branch, not one item per concept — different expressions of the same concept are not repeated phrasing, an aggregated form and its non-aggregated sibling are different branches even when they share a column, and every branch\'s expression reappears.',
         headingRule,
       ];
@@ -399,7 +399,7 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     'Group QUESTION-FIRST: choose sections that best answer the user\'s question and produce a clear narrative.',
     '- Final sections are the only authoritative graph/detail link surface.',
     '- Hop `badge_label` values are advisory hints only; use them when useful, but final labels are authored here.',
-    '- Keep business/technical separation in the text only when it materially improves clarity.',
+    '- Keep business/technical separation in the text only when it materially improves clarity. The two angles captured the same DDL: serve each fact once, under the angle whose question it answers, and merge rather than restating it in both.',
     '',
     'Result: section topology is determined by question clarity first, with angle split as optional structure when useful.',
     '',

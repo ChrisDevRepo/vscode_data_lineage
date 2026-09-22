@@ -58,7 +58,7 @@ describe("submitFindings — a prune verdict's own route_requests commit before 
 
     const pruneResult = engine.submitFindings({
       focus_node_id: 'mid',
-      sections: [{ angle: 'business' as const, text: 'off the trace' }],
+      sections: [],
       summary: 'off the trace',
       verdict: 'prune',
       route_requests: [{ nodeId: 'keeper', question: 'what feeds this?' }],

@@ -5,7 +5,7 @@ import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 
 /**
  * Configuration options for the detail view, typically synchronized from VS Code settings.
@@ -75,19 +75,19 @@ export function DetailApp() {
      */
     function handler(e: MessageEvent) {
       // Single validated inbound dispatcher — host→detail messages are Zod-checked here, never read raw.
-      const parsed = ExtensionToDetailMsgSchema.safeParse(e.data);
-      if (!parsed.success) return;
-      // `postToDetail` stamps every frame, so a missing or different version means the host bundle
-      // and this view disagree about the contract — report it instead of half-rendering.
-      const version = (e.data as BridgeEnvelope | undefined)?.protocolVersion;
-      if (version !== BRIDGE_PROTOCOL_VERSION) {
-        vscodeApi.current.postMessage({
-          type: 'error',
-          error: `[Detail] Bridge protocol mismatch on "${parsed.data.type}": host sent v${String(version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
-        });
+      const frame = validateBridgeFrame(ExtensionToDetailMsgSchema, e.data);
+      if (!frame.ok) {
+        // `postToDetail` stamps every frame, so a missing or different version means the host bundle
+        // and this view disagree about the contract — report it instead of half-rendering.
+        if (frame.reason === 'version') {
+          vscodeApi.current.postMessage({
+            type: 'error',
+            error: `[Detail] Bridge protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
+          });
+        }
         return;
       }
-      const msg = parsed.data;
+      const msg = frame.data;
 
       if (msg.type === 'detail-update') {
         // Reset statistics state when the node changes.

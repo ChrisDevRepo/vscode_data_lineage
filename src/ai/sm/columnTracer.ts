@@ -1,6 +1,7 @@
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { resolveModelNodeId } from '../support/inputNormalization';
+import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
@@ -132,9 +133,9 @@ export class ColumnTracer {
    * A row-role `none` is a different case: it is the model's own routing statement for the
    * candidate, and this method still returns the full committed spine over it whenever one is
    * called at `smBase.ts`'s `getHopContext` dispatch-time bind — the one place in the engine that
-   * still promotes a node past a stated `'none'` onto its committed columns. That call site's own
-   * remarks record why it is still there (the reverse-order conflict's re-ask half is not yet
-   * wired) and why it is not simply removed.
+   * binds a node past a stated `'none'` onto its committed columns. That call site's own remarks
+   * record why: the committed edge is another hop's demand, and its continuation question reaches
+   * the node on the same dispatch.
    *
    * - spine-derived empty (candidate's upstream edges not yet staged — freshly-routed first
    *   appearance, e.g. a terminal source) → trust `entryColumns` so the node is still dispatched.
@@ -200,14 +201,19 @@ export class ColumnTracer {
     const byNode = new Map<string, string[]>();
     if (hopEdges.length === 0) return byNode;
 
-    const seen = new Set<string>();
-
+    // One question per supplier column, naming every column it feeds at this hop — a source column
+    // converging into several traced columns is asked about once, without dropping the others.
+    const fedByKey = new Map<string, { edge: ColumnEdge; toCols: string[] }>();
     for (const edge of hopEdges) {
       const key = `${edge.from_node}.${edge.from_col}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const group = fedByKey.get(key);
+      if (!group) fedByKey.set(key, { edge, toCols: [edge.to_col] });
+      else if (!group.toCols.some(c => normalizeColName(c) === normalizeColName(edge.to_col))) group.toCols.push(edge.to_col);
+    }
 
-      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into \`${edge.to_col}\` at \`${edge.hop_node}\` — determine its origin here.`;
+    for (const { edge, toCols } of fedByKey.values()) {
+      const fed = toCols.map(c => `\`${c}\``).join(', ');
+      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into ${fed} at \`${edge.hop_node}\` — determine its origin here.`;
       const existing = byNode.get(edge.from_node);
       if (existing) existing.push(question);
       else byNode.set(edge.from_node, [question]);
@@ -309,6 +315,26 @@ export class ColumnTracer {
         invalidRoutes.push({ kind: 'absent_contributor', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to target "${entry.writes_to.node}" is absent from the loaded model.` });
         continue;
       }
+      // A downstream reader is never a write destination. When every model edge from
+      // the focus to the writes_to target reads the focus (verb 'read' — the same verb
+      // served on the wire neighbor), the payload mislabels a consumer as the write
+      // target; refused with recovery instead of staging a mis-pointed edge. A genuine
+      // write redirect (verb 'write' on any focus→target edge, or no model edge at all)
+      // keeps the existing to_col validation below.
+      if (entry.writes_to && toNodeObj && toNodeId && toNodeId.toLowerCase() !== focusId.toLowerCase()) {
+        const focusLower = focusId.toLowerCase();
+        const toLower = toNodeId.toLowerCase();
+        const verbs = new Set<string>();
+        for (const e of model.edges) {
+          if (e.source.toLowerCase() === focusLower && e.target.toLowerCase() === toLower) {
+            verbs.add(edgeApiType(e.type, focusNode.type));
+          }
+        }
+        if (verbs.size > 0 && [...verbs].every((v) => v === 'read')) {
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node; declare consumers in route_requests when the question asks for them.` });
+          continue;
+        }
+      }
       const toCol = entry.writes_to?.col ?? entry.out_col;
       if (toNodeObj && toNodeObj.type !== 'procedure' && toNodeObj.type !== 'function') {
         const toCols = new Set<string>((getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
@@ -351,6 +377,14 @@ export class ColumnTracer {
           continue;
         }
 
+        // A T-SQL literal (single-quoted / N-quoted string, bare integer or decimal) can never name
+        // a column on any neighbour, so it is refused with the literal repair before any
+        // column-surface check — one reason whether or not the neighbour declares columns.
+        if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
+          continue;
+        }
+
         if (continuationNeighbors) {
           // Continuation contract: the entry must name a neighbour on the focus's carrier side —
           // a producer for an upstream trace, a consumer for a downstream one. The col value is
@@ -388,14 +422,6 @@ export class ColumnTracer {
         } else {
           const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
           if (validNeighborCols.size === 0) {
-            // A T-SQL literal (single-quoted / N-quoted string, bare integer or decimal) can
-            // never name a column, so it is refused deterministically instead of staging an
-            // edge to a node that cannot answer the spawned continuation question. Genuine
-            // identifiers keep the unverified tolerance below.
-            if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
-              invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
-              continue;
-            }
             log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — neighbour declares no columns, accepting unverified`);
           } else if (!validNeighborCols.has(normalizeColName(cont.col))) {
             invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });

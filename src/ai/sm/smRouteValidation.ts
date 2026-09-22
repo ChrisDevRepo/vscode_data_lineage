@@ -44,6 +44,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Account for each required neighbor listed in detail by adding it to `route_requests`.',
   self_loop_column:
     'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (see detail for the offending node.col). Keep the rest of column_flow, sections, and summary as submitted.',
+  bad_writes_to_target:
+    'Point writes_to at the node and column this hop actually writes — usually the focus itself, so omit writes_to and let it default. A downstream reader is never a write destination: remove that node from writes_to and declare it in route_requests instead when the question asks for consumers. Keep the rest of column_flow, sections, and summary as submitted.',
   pruned_contributor:
     'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
   prune_absent:
@@ -120,6 +122,7 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   non_writer_continuation: 'continuation_not_writer',
   missing_required_route: 'missing_required_route',
   self_loop_column: 'column_self_loop',
+  bad_writes_to_target: 'writes_to_names_reader',
   pruned_contributor: 'pruned_contributor',
   prune_absent: 'route_validation_failed',
   prune_noop_removed: 'route_validation_failed',
@@ -206,6 +209,12 @@ export interface SubmissionFaults {
   originPrune?: { focusId: string; keepClause: string };
   /** `verdict:'prune'` whose removal would disconnect a protected node from the origin. */
   focusOrphan?: { focusId: string; orphanId: string; keepClause: string };
+  /**
+   * `verdict:'prune'` carrying non-empty `sections`. A prune archives to `prunedDetails`,
+   * which synthesis never reads, so authored findings on a prune verdict are silently lost;
+   * a prune owes no account and findings belong on `analyze`.
+   */
+  pruneSections?: { focusId: string; sectionCount: number };
   /** CT column-chain completeness: tracked columns the payload left unaccounted. */
   columnChain?: { focusId: string; unaccounted: string[]; available: string[]; contradicted: readonly string[] };
   /**
@@ -241,7 +250,8 @@ export function buildSubmissionRejection(
   faults: SubmissionFaults,
 ): { rejection: SubmitResult & { error: string }; hold: boolean } | null {
   const familyCount = (faults.routes.length > 0 ? 1 : 0)
-    + (faults.originPrune ? 1 : 0) + (faults.focusOrphan ? 1 : 0) + (faults.columnChain ? 1 : 0);
+    + (faults.originPrune ? 1 : 0) + (faults.focusOrphan ? 1 : 0) + (faults.columnChain ? 1 : 0)
+    + (faults.pruneSections ? 1 : 0);
   if (familyCount === 0) return null;
   const single = familyCount === 1;
 
@@ -258,6 +268,11 @@ export function buildSubmissionRejection(
     const { focusId, orphanId, keepClause } = faults.focusOrphan;
     codes.push(REJECTION_CODES.pruneWouldOrphanNoted);
     hints.push(`Use verdict='passthrough' to keep it without pruning. Marking [${focusId}] prune would orphan node [${orphanId}], which nothing else keeps reachable from the origin.${keepClause}`);
+  }
+  if (faults.pruneSections) {
+    const { focusId, sectionCount } = faults.pruneSections;
+    codes.push('prune_with_sections');
+    hints.push(`A prune verdict carries no analysis — its sections are never served to synthesis. [${focusId}] arrived with ${sectionCount} section(s): resubmit with verdict='analyze' to keep them as findings, or resubmit the prune with sections: [] to drop them and remove this focus bare.`);
   }
   if (faults.routes.length > 0) {
     const envelope = buildRouteValidationRejection(faults.routes, single);
@@ -282,7 +297,13 @@ export function buildSubmissionRejection(
   // valid whether one family fired or three. Holding across a co-report is the point of the
   // co-report: a model told about two faults at once must not pay to re-author prose it already
   // wrote because the second fault arrived with the first.
-  const holdEligible = (faults.originPrune === undefined && faults.focusOrphan === undefined)
+  // `pruneSections` is excluded like the other verdict-level faults: the refused content IS
+  // the authored sections, so holding the draft would merge them back into a bare-prune retry
+  // via `applyHeldContent` (which restores held sections when the retry sends `sections: []`)
+  // and resurrect exactly what was refused. Nothing is held; the resubmission order is the
+  // full one.
+  const holdEligible = (faults.originPrune === undefined && faults.focusOrphan === undefined
+    && faults.pruneSections === undefined)
     && (faults.routes.length === 0
       || faults.routes.every(r => isContentKind(r.kind))
       || faults.routes.every(r => r.kind === 'missing_required_route'));

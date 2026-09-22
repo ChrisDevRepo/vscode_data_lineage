@@ -461,10 +461,10 @@ describe("Submit Findings Handler", () => {
   // `summary` and `verdict`, so both halves are pinned: the handler accepts each shape the
   // echo has to render, and the composition rule that reads them.
   it.each([
-    { label: 'an analyze commit with a summary', summary: 'Not on the path.', verdict: 'analyze' as const },
-    { label: 'a prune commit, which the echo marks', summary: 'Not on the path.', verdict: 'prune' as const },
-    { label: 'an empty summary, which the echo skips', summary: '', verdict: 'prune' as const },
-  ])('the handler accepts $label', ({ summary, verdict }) => {
+    { label: 'an analyze commit with a summary', summary: 'Not on the path.', verdict: 'analyze' as const, sections: [{ angle: 'business', text: 'Nothing relevant here.' }] as Array<{ angle: 'business'; text: string }> },
+    { label: 'a prune commit, which the echo marks', summary: 'Not on the path.', verdict: 'prune' as const, sections: [] as Array<{ angle: 'business'; text: string }> },
+    { label: 'an empty summary, which the echo skips', summary: '', verdict: 'prune' as const, sections: [] as Array<{ angle: 'business'; text: string }> },
+  ])('the handler accepts $label', ({ summary, verdict, sections }) => {
   const { engine, services, result } = setup();
   executeSubmitFindings({
     focus_node_id: 'origin',
@@ -479,7 +479,7 @@ describe("Submit Findings Handler", () => {
   expect(focus?.id !== undefined, 'a second hop is dispatched to submit against').toBe(true);
   executeSubmitFindings({
     focus_node_id: focus!.id,
-    sections: [{ angle: 'business', text: 'Nothing relevant here.' }],
+    sections,
     summary,
     verdict,
   }, services);

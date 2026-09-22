@@ -851,7 +851,7 @@ function driveSinkWalk(routeFromConsumer?: string): {
     if (pruneAtFocus.has(focusId)) {
       engine.submitFindings({
         focus_node_id: focusId,
-        sections: [{ angle: 'business' as const, text: `logging sink, off the traced column's answer path` }],
+        sections: [],
         summary: `${focusId} is a logging sink`,
         verdict: 'prune',
       });
@@ -1025,7 +1025,7 @@ function drivePassthroughWalk(archiveFlow: FlowEntry[]): SmResult {
       // is off the traced column's answer path and prunes at its own focus, as in BB.
       const prune = engine.submitFindings({
         focus_node_id: focusId,
-        sections: [{ angle: 'business' as const, text: `log writer, off the traced column's answer path` }],
+        sections: [],
         summary: `${focusId} is a log writer`,
         verdict: 'prune',
       }) as SubmitOk;

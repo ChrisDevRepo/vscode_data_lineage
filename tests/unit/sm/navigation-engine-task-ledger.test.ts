@@ -170,7 +170,7 @@ describe("Navigation Engine Task Ledger", () => {
   expect(mHop.focus_node?.id === 'm', 'm is dispatched as the next focus').toBe(true);
   const pruned = engine.submitFindings({
     focus_node_id: mHop.focus_node.id,
-    sections: [{ angle: 'business', text: 'm is off the trace' }],
+    sections: [],
     summary: 'm',
     verdict: 'prune',
   });
@@ -213,7 +213,7 @@ describe("Navigation Engine Task Ledger", () => {
   const activeIds = engine.getCurrentTasks().map(task => task.id);
   const result = engine.submitFindings({
     focus_node_id: 'm',
-    sections: [{ angle: 'business', text: 'm is outside the useful chain' }],
+    sections: [],
     summary: 'm pruned',
     verdict: 'prune',
   });

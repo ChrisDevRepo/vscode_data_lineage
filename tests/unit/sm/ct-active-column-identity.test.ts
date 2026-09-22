@@ -65,7 +65,6 @@ function walkToConsumer(engine: NavigationEngine): void {
       column_flow: [{
         out_col: DECLARED,
         upstream_columns: [{ node: SOURCE, col: 'OrderAmount' }],
-        writes_to: { node: CONSUMER, col: DECLARED },
       }],
       // The consumer is routed with the seed's node-qualified spelling stated explicitly as its
       // `columns` decision — the same identity the origin's own BFS seed already carried for that

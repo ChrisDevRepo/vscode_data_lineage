@@ -243,3 +243,76 @@ describe('CT is BB plus columns: same trace, same node set', () => {
     expect(ct, 'CT graph equals BB graph').toEqual(bb);
   });
 });
+
+describe('CT carrier continuation on a bidirectional trace', () => {
+  const writerProc: LineageNode = makeNode({ id: 'writerproc', schema: 'dbo', name: 'writerproc', type: 'procedure' });
+  const readerProc: LineageNode = makeNode({ id: 'readerproc', schema: 'dbo', name: 'readerproc', type: 'procedure' });
+  const strangerProc: LineageNode = makeNode({ id: 'strangerproc', schema: 'dbo', name: 'strangerproc', type: 'procedure' });
+  const factTable: LineageNode = makeNode({
+    id: 'facttable', schema: 'dbo', name: 'facttable', type: 'table',
+    columns: [{ name: 'Margin', type: 'decimal', nullable: 'NULL', extra: '' }],
+  });
+  const nodes = [writerProc, factTable, readerProc, strangerProc];
+  const edges: Array<[string, string]> = [['writerproc', 'facttable'], ['facttable', 'readerproc']];
+  const model: DatabaseModel = {
+    ...makeModel(nodes, edges, ['dbo']),
+    neighborIndex: {
+      writerproc: { in: [], out: ['facttable'] },
+      facttable: { in: ['writerproc'], out: ['readerproc'] },
+      readerproc: { in: ['facttable'], out: [] },
+      strangerproc: { in: [], out: [] },
+    },
+  };
+
+  function originEngine(): NavigationEngine {
+    const engine = new NavigationEngine(model, makeGraph(nodes, edges), () => {}, {});
+    engine.init({ origin: 'facttable', question: 'trace Margin both ways', direction: 'bidirectional', analysisMode: 'ct', targetColumns: ['Margin'] });
+    const hop = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    expect(hop.focus_node?.id, 'the table origin is the first focus').toBe('facttable');
+    return engine;
+  }
+
+  it('a table origin continues at its writer in column_flow and reaches its reader through route carry', () => {
+    const engine = originEngine();
+    const result = engine.submitFindings({
+      focus_node_id: 'facttable',
+      sections: [{ angle: 'business' as const, text: 'Margin is written by writerproc and read by readerproc' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      route_requests: [
+        { nodeId: 'writerproc', question: 'how is Margin written?', columns: ['Margin'] },
+        { nodeId: 'readerproc', question: 'how is Margin consumed?', columns: ['Margin'] },
+      ],
+      column_flow: [{ out_col: 'Margin', upstream_columns: [{ node: 'writerproc', col: 'Margin' }] }],
+    });
+    expect('error' in result ? result : null, 'producing-side continuation plus a carried reader route is accepted').toBeNull();
+    const seen = new Map<string, string[]>();
+    for (let hop = 0; hop < 4; hop++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      const id = ctx.focus_node.id;
+      seen.set(id, [...(engine.columnAspect?.active_columns ?? [])]);
+      engine.submitFindings({
+        focus_node_id: id,
+        sections: [{ angle: 'business' as const, text: id }],
+        summary: id,
+        verdict: 'analyze',
+        column_flow: [{ out_col: 'Margin', upstream_columns: [] }],
+      });
+    }
+    expect(seen.get('writerproc'), 'the writer is dispatched carrying Margin').toEqual(['Margin']);
+    expect(seen.get('readerproc'), 'the reader is dispatched carrying Margin — downstream continues through route carry').toEqual(['Margin']);
+  });
+
+  it('a table origin refuses a reader named in column_flow: that side continues through route carry', () => {
+    const engine = originEngine();
+    const result = engine.submitFindings({
+      focus_node_id: 'facttable',
+      sections: [{ angle: 'business' as const, text: 'Margin' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Margin', upstream_columns: [{ node: 'readerproc', col: 'Margin' }] }],
+    });
+    expect(JSON.stringify(result), 'a reader-side continuation edge is refused').toContain('continuation_not_writer');
+  });
+});

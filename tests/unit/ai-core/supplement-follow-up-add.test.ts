@@ -66,7 +66,11 @@ function seedCompletedSession(options: { excludeNodeIds?: string[] } = {}): { se
 }
 
 /** Drives `lineage_start_exploration` the way the model does — one payload through the handler. */
-async function supplement(session: AiSession, nodeIds: string[]): Promise<Record<string, unknown>> {
+async function supplement(
+  session: AiSession,
+  nodeIds: string[],
+  mode: Record<string, unknown> = { analysisMode: 'bb' },
+): Promise<Record<string, unknown>> {
   let returned: Record<string, unknown> = {};
   const services = {
     getSession: () => session,
@@ -83,7 +87,7 @@ async function supplement(session: AiSession, nodeIds: string[]): Promise<Record
     toolError: (_tool: string, error: unknown) => { throw error; },
   } as unknown as ToolServices;
 
-  await executeStartExploration({ supplement: { nodeIds }, analysisMode: 'bb' }, services);
+  await executeStartExploration({ supplement: { nodeIds }, ...mode } as Parameters<typeof executeStartExploration>[0], services);
   return returned;
 }
 
@@ -114,5 +118,16 @@ describe('a follow-up adds the object the user asked for', () => {
     const skipped = (res.supplement as { skippedDetails: Array<{ nodeId: string; reason: string }> }).skippedDetails;
     expect(skipped).toEqual([{ nodeId: CLEANER, reason: 'excluded' }]);
     expect(engine.toJSON().scopeNodeIds.includes(CLEANER), 'the excluded object stays out of the graph').toBe(false);
+  });
+
+  it('a supplement stating analysisMode "ct" without columns keeps the running mode — the schema gate on origin is not a hole', async () => {
+    const { session, engine } = seedCompletedSession();
+    expect(engine.columnAspect, 'the seeded run is BB').toBeFalsy();
+
+    const res = await supplement(session, [CLEANER], { analysisMode: 'ct' });
+
+    expect(res.error, `the add itself is accepted (got ${JSON.stringify(res)})`).toBeUndefined();
+    expect(session.stateMachine === engine, 'the same engine runs the add').toBe(true);
+    expect(engine.columnAspect, 'no column trace is started without columns').toBeFalsy();
   });
 });

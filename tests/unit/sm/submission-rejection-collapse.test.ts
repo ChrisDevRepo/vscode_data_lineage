@@ -151,7 +151,7 @@ describe('submitFindings composes one rejection from every fault the payload car
 
     const outcome = engine.submitFindings({
       focus_node_id: 'mid',
-      sections: [{ angle: 'business' as const, text: 'mid only writes an audit trail' }],
+      sections: [],
       summary: 'mid',
       verdict: 'prune',
     }) as Outcome;

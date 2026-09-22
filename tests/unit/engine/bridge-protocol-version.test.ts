@@ -7,6 +7,8 @@
  * through the same predicate shape rather than by booting React — what must not regress is the
  * decision (stamped-and-equal passes, anything else is rejected), not the JSX around it.
  */
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { postToDetail, postToWebview } from '../../../src/bridge/host';
@@ -15,6 +17,7 @@ import {
   ExtensionToDetailMsgSchema,
   ExtensionToWebviewMsgSchema,
   type BridgeEnvelope,
+  validateBridgeFrame,
 } from '../../../src/engine/shared/bridgeContract';
 import { Logger } from '../../../src/utils/log';
 
@@ -101,5 +104,22 @@ describe('bridge protocol envelope', () => {
   it('keeps the protocol version a positive integer so comparisons stay exact', () => {
     expect(Number.isInteger(BRIDGE_PROTOCOL_VERSION)).toBe(true);
     expect(BRIDGE_PROTOCOL_VERSION).toBeGreaterThan(0);
+  });
+
+  it('validateBridgeFrame accepts a stamped frame and names the reason for a rejected one', () => {
+    const ok = validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'detail-closed', protocolVersion: BRIDGE_PROTOCOL_VERSION });
+    expect(ok.ok).toBe(true);
+    const skew = validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'detail-closed', protocolVersion: BRIDGE_PROTOCOL_VERSION + 1 });
+    expect(skew).toMatchObject({ ok: false, reason: 'version', msgType: 'detail-closed' });
+    expect(validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'not-a-message' })).toMatchObject({ ok: false, reason: 'parse' });
+  });
+
+  it('routes every webview receive site through validateBridgeFrame — one home for the check', () => {
+    const sites = ['../../../src/components/App.tsx', '../../../src/detail/DetailApp.tsx', '../../../src/hooks/useDacpacLoader.ts'];
+    for (const site of sites) {
+      const source = readFileSync(new URL(site, import.meta.url), 'utf8');
+      expect(source, site).toContain('validateBridgeFrame(');
+      expect(source, site).not.toMatch(/MsgSchema\.safeParse\(/u);
+    }
   });
 });

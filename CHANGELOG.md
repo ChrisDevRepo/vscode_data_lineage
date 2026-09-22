@@ -1,11 +1,18 @@
 # Changelog
 
-## [1.1.1] - 2026-09-06
+## [1.2.0] - 2026-09-21
 
 ### Added
 - **Column Detail** — column-level findings of an AI analysis, shown as a second rendering of the same objects; procedures and scalar functions appear as compact hubs. Replaces the always-on column-flow tooltip on objects.
 - The assistant reads what is on screen, and can recall a saved AI view's findings and open questions in later chats.
 - AI answers check SQL comments against the statement they annotate, and render formulas as mathematics.
+- Column-trace continuation: a body-less CT focus grows continuation edges instead of stalling; truncated retries are non-chargeable; whole-or-omitted echo.
+- CT prompts compose as BB plus a column rider, and synthesis renders the same full depth in both modes — column tracing adds provenance, never thins object detail.
+- Every CT route states its column decision with no engine fallback; a submission that contradicts itself about which columns travel is refused.
+- Hop decisions are disclosed, faults co-reported, orphaned nodes retained.
+- Follow-ups add the requested object into the graph already presented, and render amendments patch the committed report instead of re-authoring it.
+- Golden-sync manifest plus a gate assert step pins prompt text against drift.
+- Per-phase stream text ceilings in the model port; in-phase repair retries are announced in chat with a Retry hint.
 
 ### Changed
 - Security: the extension now declares limited untrusted-workspace support — workspace values for `parseRulesFile`, `dmvQueriesFile`, `excludePatterns`, and `ai.outputTemplateFile` are ignored until the workspace is trusted, so a cloned repository cannot supply SQL, regexes, or prompt templates.
@@ -15,6 +22,11 @@
 - Column trace is the same exploration as object analysis plus columns: an object that only shapes which rows the answer returns stays in the result.
 - Copilot Chat `LanguageModelChatToolMode.Required` is single-tool: the two-tool active hop sends Auto; synthesis still sends Required.
 - The longest-chain report follows chains through circular dependencies (up to 25, deepest first).
+- Prune protection covers BB as well as CT: an accepted route — including a same-submit staged column-flow endpoint — refuses `prune_neighbors` for the rest of the run.
+- `submit_findings` section angles narrow to the locked classification; each branch assigning the same column gets its own formula line; aggregated and non-aggregated sibling formulas stay separate synthesis items.
+- Discovery runs first for free text; over-budget rejections answer with a partial-payload referral and a user-visible notice.
+- Rejection handling: one repeated-error guard with one disposition; self-repair for array-boundary breaks; one home for every rejection code; synthesis envelope escaping; rejected `present_result` calls are never replayed as empty input.
+- Callouts are delivered as a sidecar with missing-field repair; remaining silent drops log instead of vanishing.
 
 ### Fixed
 - Remaining silent drops of model-authored hop content (duplicate section identity, discovery-turn discard, CT spine bind) now log instead of vanishing.
@@ -25,6 +37,10 @@
 - Display: large graphs stay responsive while dragging, a view past the render limit reports it, and saved views fit the graph on restore.
 - Column Detail: trace add/remove buttons are no longer clipped by the card, a column thread can be pinned with Enter or Space, and the context menu shows the object's full name and external link.
 - Assistant stability: a very broad or catastrophically backtracking SQL code search no longer exhausts memory or hangs the extension host; `BEGIN TRAN` no longer shifts the IF/WHILE condition reported for a match.
+- A degenerate streamed repetition loop stops at the 3rd identical substantial line; the hop-distance `get_scope_bundle` already computes is served; column carry, border, and declared routes stay on the traced lineage.
+- Search: `search_ddl` hits report the enclosing IF/WHILE predicate; a bare match-all wildcard with a schema scope lists that schema; bounded `search_ddl` memory and ReDoS probe.
+- Webview: detail-search hits keep their pending zoom; Refresh is a canvas reset that cannot hang; AI description overlay drops the copy/raw-markdown buttons.
+- Deterministic gate drops the retired hook suites; template `schemaVersion` stays 2 for additions and wording.
 
 ## [1.1.0] - 2026-08-20
 

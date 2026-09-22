@@ -806,6 +806,56 @@ describe("Column Flow Validation", () => {
   expect(engine.columnAspect?.edges.length ?? -1, 'engine: no edge staged for the rejected self-loop submission — session left unmutated').toBe(0);
 });
 
+  it("writes_to naming a downstream reader is refused with recovery, a real write redirect still stages", () => {
+  // T8S shape: focus view, writes_to names a procedure that only reads the focus
+  // (model edge view→proc, verb 'read'). Legit shape: writer proc redirecting to a
+  // table it inserts (edge proc→table, verb 'write'). No model edge at all keeps the
+  // old to_col validation (regression guard for the existing redirect test).
+  const readerModel: DatabaseModel = {
+    nodes: [], schemas: [], catalog: {}, neighborIndex: {}, dbPlatform: 'SQL Server',
+    edges: [{ source: 'vwfocus', target: 'spreader', type: 'body' }],
+  };
+  const tracer = new ColumnTracer(['C']);
+  const nodeMap = new Map<string, any>([
+    ['vwfocus', { id: 'vwfocus', type: 'view', columns: [{ name: 'C' }] }],
+    ['spreader', { id: 'spreader', type: 'procedure' }],
+    ['srcnode', { id: 'srcnode', type: 'table', columns: [{ name: 'C' }] }],
+  ]);
+  const mislabeled = tracer.validateColumnFlow('vwfocus', {
+    verdict: 'analyze' as const, summary: 's', sections: [],
+    column_flow: [{
+      out_col: 'C',
+      writes_to: { node: 'spreader', col: 'C' },
+      upstream_columns: [{ node: 'srcnode', col: 'C' }],
+    }],
+  } as any, nodeMap, readerModel, null);
+  expect(mislabeled.invalidRoutes.some(r => r.kind === 'bad_writes_to_target'), 'reader-as-writes_to refused').toBe(true);
+  expect(mislabeled.stagedEdges.length, 'no mis-pointed edge staged').toBe(0);
+  const route = mislabeled.invalidRoutes.find(r => r.kind === 'bad_writes_to_target');
+  expect(!!route && /route_requests/.test(route.reason) && /mit writes_to|Omit writes_to/.test(route.reason), 'reason names the recovery (omit / route_requests)').toBe(true);
+
+  // Same payload shape, but the target genuinely receives writes (verb 'write').
+  const writerModel: DatabaseModel = {
+    nodes: [], schemas: [], catalog: {}, neighborIndex: {}, dbPlatform: 'SQL Server',
+    edges: [{ source: 'spwriter', type: 'body', target: 'facttable' }],
+  };
+  const writerMap = new Map<string, any>([
+    ['spwriter', { id: 'spwriter', type: 'procedure' }],
+    ['facttable', { id: 'facttable', type: 'table', columns: [{ name: 'C' }] }],
+    ['srcnode', { id: 'srcnode', type: 'table', columns: [{ name: 'C' }] }],
+  ]);
+  const legit = tracer.validateColumnFlow('spwriter', {
+    verdict: 'analyze' as const, summary: 's', sections: [],
+    column_flow: [{
+      out_col: 'C',
+      writes_to: { node: 'facttable', col: 'C' },
+      upstream_columns: [{ node: 'srcnode', col: 'C' }],
+    }],
+  } as any, writerMap, writerModel, null);
+  expect(legit.invalidRoutes.filter(r => r.kind === 'bad_writes_to_target').length, 'real write redirect is not flagged').toBe(0);
+  expect(legit.stagedEdges.length, 'real write redirect still stages its edge').toBe(1);
+});
+
   it("every real upstream column edge stages and spawns its own continuation question", () => {
   // validateColumnFlow() only ever reads model.neighborIndex (and only for 'procedure'-typed
   // upstream contributors, none of which appear in this test), so an empty makeModel() is a

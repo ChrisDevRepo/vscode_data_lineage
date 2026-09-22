@@ -384,10 +384,10 @@ The reverse order — a `'none'` contradicted by an edge committed at an EARLIER
 hop — is not a contradiction in one payload: each statement was correct when it
 was made. `routeCarryFor` honours the stated `'none'` and enqueues it as
 submitted. The committed column is not dropped: the dispatch-time spine bind in
-`getHopContext` still binds it, and that bind is the one remaining place the
-engine resolves a column disagreement on the model's behalf. It stands until
-the outstanding column can be booked and re-asked; removing it first would drop
-the column silently rather than ask about it later.
+`getHopContext` binds it (logged as `[Normalize] dispatch carry`), and the
+committed edge's continuation question is dispatched with it, so the node that
+owns the answer is asked about the column on its own hop. A route's column
+decision describes that one edge; it never narrows a demand another edge placed.
 
 A column edge carries an optional multi-select transform classification.
 `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts` is the

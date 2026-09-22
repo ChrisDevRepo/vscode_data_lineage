@@ -188,7 +188,9 @@ export function driveEngine(
     const supplier = columnFlow?.[id];
     engine.submitFindings({
       focus_node_id: id,
-      sections: [{ angle: 'business', text: `analysis for ${label}` }],
+      // A prune verdict carries no sections — the submit boundary refuses them — so the
+      // simulated walk sends bare prunes, as the model must.
+      sections: verdict === 'prune' ? [] : [{ angle: 'business', text: `analysis for ${label}` }],
       summary: label,
       verdict,
       ...(columnFlow

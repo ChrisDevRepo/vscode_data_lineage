@@ -70,7 +70,6 @@ function walkToConsumer(engine: NavigationEngine): void {
       column_flow: [{
         out_col: DECLARED,
         upstream_columns: [{ node: SOURCE, col: 'OrderAmount' }],
-        writes_to: { node: CONSUMER, col: DECLARED },
       }],
       route_requests: [...new Set([...engine.requiredNeighborIds(ORIGIN), CONSUMER])].map(id => ({
         nodeId: id, question: `What does ${id} do with ${DECLARED}?`,

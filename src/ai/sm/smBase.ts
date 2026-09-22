@@ -2014,13 +2014,12 @@ export class NavigationEngine implements IHopStateMachine {
    * accumulated `column_flow` edges, bound to the node's own declared columns) as the single
    * override: it replaces either base when it resolves non-empty. No other fallback applies.
    *
-   * This is the one remaining place a stated `row_role_only` (a route's own `columns: 'none'`) can
-   * still be promoted to a column dispatch against the model's own word — {@link routeCarryFor}'s
-   * matching enqueue-time promotion is gone, deliberately, and this dispatch-time one is left
-   * standing: it is the "re-ask later" half of the reverse-order case
-   * ({@link InvalidRouteKind} has no member for it — the pair is left unresolved, not rejected),
-   * and pulling it without first landing where that re-ask books and bounds itself would silently
-   * drop the committed column instead of asking about it, the worse of the two outcomes.
+   * This is the one place a stated `row_role_only` (a route's own `columns: 'none'`) is bound to
+   * committed columns — the reverse-order case, where an EARLIER hop's committed edge names the
+   * node as a supplier. Both statements hold: a route's column decision describes that one edge
+   * and never narrows a demand another edge placed. The bind is NORMALIZE-WITH-LOG, and the
+   * committed edge's continuation question travels on the same agenda entry, so the node that owns
+   * the answer is asked about the column on its own hop (`ct-inplace-wide-rowrole.test.ts`).
    *
    * @returns Context data mapped for the AI router.
    */
@@ -2354,13 +2353,24 @@ export class NavigationEngine implements IHopStateMachine {
     let originPruneFault: SubmissionFaults['originPrune'];
     let focusOrphanFault: SubmissionFaults['focusOrphan'];
     let columnChainFault: SubmissionFaults['columnChain'];
+    let pruneSectionsFault: SubmissionFaults['pruneSections'];
     if (finding.verdict === 'prune') {
       if (focusId === this.originNodeId) {
         originPruneFault = { focusId, keepClause: passthroughColumnClause };
       }
+      // A prune owes no account of the focus: its sections archive to `prunedDetails`, which
+      // synthesis never reads, so authored findings on a prune verdict are silently lost. The
+      // verdict carries no sections — findings belong on `analyze`, a prune is bare. Structural
+      // shape only (sections present or not); the prose itself is never judged. Verdict-level,
+      // like the origin/orphan faults above — never a per-reference route kind — so a refused
+      // prune still names no rejected reference and leaves the counter and every other engine
+      // field exactly as the submission found it.
+      if ((finding.sections ?? []).length > 0) {
+        pruneSectionsFault = { focusId, sectionCount: (finding.sections ?? []).length };
+      }
       // Nothing else is checked here, and that is deliberate. The AI decides WHAT is pruned; the
-      // engine decides only whether removing it is structurally valid — the origin above, and the
-      // orphan/route-conflict topology below.
+      // engine decides only whether removing it is structurally valid — the origin above, the
+      // bare-prune shape above, and the orphan/route-conflict topology below.
       //
       // Two kinds of check are permanently out of bounds at this point, because both answer a
       // question the engine cannot see the evidence for. Reading the submission's own prose for
@@ -2775,6 +2785,7 @@ export class NavigationEngine implements IHopStateMachine {
       originPrune: originPruneFault,
       focusOrphan: focusOrphanFault,
       columnChain: columnChainFault,
+      pruneSections: pruneSectionsFault,
       // Disclosure, not a fault: the neighbour demand a prune verdict is exempt from.
       ...(finding.verdict === 'prune' && requiredNodeIds.length > 0 ? { repairWouldOwe: requiredNodeIds } : {}),
     });

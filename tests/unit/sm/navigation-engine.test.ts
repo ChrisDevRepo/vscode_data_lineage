@@ -251,7 +251,7 @@ describe("NavigationEngine Robustness", () => {
   expect(beyondSeed.focus_node?.id === 'child_b', 'beyond-seed route becomes active agenda work').toBe(true);
   const pruned = engine.submitFindings({
     focus_node_id: 'child_b',
-    sections: [{ angle: 'business' as const, text: 'not relevant after inspection' }],
+    sections: [],
     summary: 'not relevant',
     verdict: 'prune',
   });

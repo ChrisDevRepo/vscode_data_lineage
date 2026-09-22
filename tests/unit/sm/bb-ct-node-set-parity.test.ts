@@ -144,3 +144,63 @@ describe('BB <-> CT node-set parity', () => {
     }
   });
 });
+
+/**
+ * Second shape: a bidirectional trace of two columns at a middle view. `mart.amount` comes from
+ * `fact.amount`; `mart.currency` is a hardcoded literal and terminates at `mart`; `dash` reads
+ * `mart` downstream. Same node set in both arms.
+ */
+describe('BB <-> CT node-set parity: two columns, one literal, bidirectional', () => {
+  const cols = [
+    { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' },
+    { name: 'currency', type: 'char(3)', nullable: 'NOT NULL', extra: '' },
+  ];
+  const nodes: LineageNode[] = [
+    makeNode({ id: 'fact', schema: 'dbo', name: 'fact', type: 'view', columns: [cols[0]] }),
+    makeNode({ id: 'mart', schema: 'dbo', name: 'mart', type: 'view', columns: cols }),
+    makeNode({ id: 'dash', schema: 'dbo', name: 'dash', type: 'view', columns: cols }),
+  ];
+  const edges: Array<[string, string]> = [['fact', 'mart'], ['mart', 'dash']];
+  const model = makeModel(nodes, edges, ['dbo']);
+
+  function run(mode: 'bb' | 'ct'): string[] {
+    const engine = new NavigationEngine(model, makeGraph(nodes, edges), () => {}, {});
+    const init = engine.init({
+      origin: 'mart', question: 'trace amount and currency', direction: 'bidirectional',
+      depthIntent: { kind: 'explicit', levels: 2 },
+      ...(mode === 'ct' ? { analysisMode: 'ct' as const, targetColumns: ['amount', 'currency'] } : { analysisMode: 'bb' as const }),
+    });
+    expect('ok' in init, `${mode} init must succeed`).toBe(true);
+    for (let hop = 0; hop < 10; hop++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      const id = ctx.focus_node.id;
+      const base = { focus_node_id: id, sections: [{ angle: 'business' as const, text: id }], summary: id, verdict: 'analyze' as const };
+      const ct = mode === 'ct';
+      const outcome = id === 'mart'
+        ? engine.submitFindings({
+          ...base,
+          route_requests: [
+            { nodeId: 'fact', question: 'where does amount come from', ...(ct ? { columns: ['amount'] } : {}) },
+            { nodeId: 'dash', question: 'who consumes amount and currency', ...(ct ? { columns: ['amount', 'currency'] } : {}) },
+          ],
+          ...(ct ? { column_flow: [
+            { out_col: 'amount', upstream_columns: [{ node: 'fact', col: 'amount' }] },
+            { out_col: 'currency', upstream_columns: [] },
+          ] } : {}),
+        })
+        : engine.submitFindings({
+          ...base,
+          ...(ct ? { column_flow: engine.columnAspect!.active_columns.map((out_col) => ({ out_col, upstream_columns: [] })) } : {}),
+        });
+      expect((outcome as { error?: string }).error, `${mode} hop on ${id} must commit`).toBeUndefined();
+    }
+    return engine.getResult().fullNodes.map(n => n.id).sort();
+  }
+
+  it('BB and CT keep the same node set', () => {
+    const bb = run('bb');
+    expect(bb, 'BB reaches both sides').toEqual(['dash', 'fact', 'mart']);
+    expect(run('ct'), 'CT node set equals BB').toEqual(bb);
+  });
+});

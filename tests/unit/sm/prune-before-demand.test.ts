@@ -197,7 +197,7 @@ describe('PRUNE-BEFORE-DEMAND', () => {
     expect('focus_node' in focus2 && focus2.focus_node?.id === 'decoy', 'decoy is dispatched first').toBe(true);
     const decoyPrune = engine.submitFindings({
       focus_node_id: 'decoy',
-      sections: [{ angle: 'business' as const, text: 'decoy is a dead-end filter, contributes nothing' }],
+      sections: [],
       summary: 'decoy prunes itself',
       verdict: 'prune',
     }) as { ok?: unknown; error?: string };
@@ -298,7 +298,7 @@ describe('PRUNE-BEFORE-DEMAND', () => {
     // legitimate CT pruning (verdict:'prune' is exempt from column accounting) and MUST commit.
     const hop3 = engine.submitFindings({
       focus_node_id: 'longGone',
-      sections: [{ angle: 'business' as const, text: 'longGone contributes nothing after all' }],
+      sections: [],
       summary: 'longGone prunes itself',
       verdict: 'prune',
     }) as { ok?: unknown; error?: string };

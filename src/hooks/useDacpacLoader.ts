@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '../engine/types';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
 /**
@@ -146,20 +146,20 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       // Single validated inbound dispatcher — host→webview messages are Zod-checked here, never read raw.
-      const parsed = ExtensionToWebviewMsgSchema.safeParse(event.data);
-      if (!parsed.success) return;
-      // Same protocol-version gate as the App.tsx and DetailApp.tsx listeners: a frame with the
-      // wrong (or no) version came from a host bundle this view cannot trust — reject it instead
-      // of applying a model whose shape we are only guessing at.
-      const version = (event.data as BridgeEnvelope | undefined)?.protocolVersion;
-      if (version !== BRIDGE_PROTOCOL_VERSION) {
-        window.vscode?.postMessage({
-          type: 'error',
-          error: `[Bridge] Protocol mismatch on "${parsed.data.type}": host sent v${String(version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
-        });
+      const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, event.data);
+      if (!frame.ok) {
+        // Same protocol-version gate as the App.tsx and DetailApp.tsx listeners: a frame with the
+        // wrong (or no) version came from a host bundle this view cannot trust — reject it instead
+        // of applying a model whose shape we are only guessing at.
+        if (frame.reason === 'version') {
+          window.vscode?.postMessage({
+            type: 'error',
+            error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
+          });
+        }
         return;
       }
-      const msg = parsed.data;
+      const msg = frame.data;
 
       const applyConfig = (raw: Partial<ExtensionConfig>) => {
         onConfigReceived({
