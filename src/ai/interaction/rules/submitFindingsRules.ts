@@ -1,28 +1,31 @@
 import type { ClassificationValue } from '../../session/classification';
-import type { CapturedSection, CaptureAngle } from '../../session/memoryManager';
+import { CLASSIFICATION_KEPT_ANGLES } from '../../session/classification';
+import type { CapturedSection } from '../../session/memoryManager';
 import type { Verdict } from '../../sm/smTypes';
 import type { InteractionRuleResult } from '../types';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /**
- * Required section angles by locked classification. Off-classification angles are
- * not stored: `filterSectionsForClassification` drops them deterministically at
- * commit so a business-only answer cannot leak technical sections (and vice versa).
+ * Required section angles by locked classification, read from the same
+ * {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema
+ * (`tools/toolSchemas.ts`) narrows `sections[].angle` to. An off-lock angle can no
+ * longer be authored at all — it fails that schema before this validator ever runs —
+ * so this rule only ever catches a locked angle that is missing, not a surplus one.
  */
 const SECTION_RULES: Record<ClassificationValue, {
-  required: CaptureAngle[];
+  required: readonly ('business' | 'technical')[];
   missingMsg: string;
 }> = {
   business: {
-    required: ['business'],
+    required: CLASSIFICATION_KEPT_ANGLES.business,
     missingMsg: 'classification=business requires at least one section with angle="business".',
   },
   technical: {
-    required: ['technical'],
+    required: CLASSIFICATION_KEPT_ANGLES.technical,
     missingMsg: 'classification=technical requires at least one section with angle="technical".',
   },
   both: {
-    required: ['business', 'technical'],
+    required: CLASSIFICATION_KEPT_ANGLES.both,
     missingMsg: 'classification=both requires sections with angle="business" and angle="technical".',
   },
 };
@@ -57,35 +60,6 @@ export function validateSectionsAgainstClassification(
     if (!angles.has(req)) return rule.missingMsg;
   }
   return null;
-}
-
-/**
- * Drops sections whose angle the locked classification did not request.
- *
- * @remarks
- * Runs at commit, after `validateSectionsAgainstClassification` accepted the
- * submission — a deterministic drop instead of a rejection, because a surplus
- * section is not a field-scoped defect the held-draft repair flow could patch
- * without re-requesting the full payload. Multiple sections of a requested
- * angle are preserved; `both` (and an unlocked classification) drop nothing.
- *
- * @param sections - The captured sections accepted for this submission.
- * @param classification - The locked classification for the session.
- * @returns The kept sections plus the angles of any dropped sections.
- */
-export function filterSectionsForClassification(
-  sections: CapturedSection[],
-  classification: ClassificationValue | undefined,
-): { kept: CapturedSection[]; droppedAngles: CaptureAngle[] } {
-  if (!classification) return { kept: sections, droppedAngles: [] };
-  const allowed = new Set(SECTION_RULES[classification].required);
-  const kept: CapturedSection[] = [];
-  const droppedAngles: CaptureAngle[] = [];
-  for (const section of sections) {
-    if (allowed.has(section.angle)) kept.push(section);
-    else droppedAngles.push(section.angle);
-  }
-  return { kept, droppedAngles };
 }
 
 /**

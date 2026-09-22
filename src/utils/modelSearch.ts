@@ -50,6 +50,19 @@ export interface BodyMatch extends DdlMatch {
    * commented match is reported like any other and the reading is left to the consumer.
    */
   commented?: true;
+  /**
+   * The innermost `IF`/`WHILE` condition whose `BEGIN…END` block contains the matched line, or the
+   * single statement it governs when written without `BEGIN…END`. Omitted when the match is not
+   * inside such a block.
+   *
+   * @remarks
+   * The reported context is a few lines wide, so a hit's controlling condition sits outside the
+   * window whenever it is more than a line or two away — the normal case in T-SQL. This restores
+   * that one structural bit for `IF`/`WHILE`, the same way {@link scanComments} restores it for a
+   * comment block; `CASE`, a `WHERE`-clause guard and `GOTO` flow are out of scope and stay
+   * unexpressed.
+   */
+  enclosingPredicate?: string;
 }
 
 /** Context lines placed around a match by {@link searchBodyScripts} — the one governor; both callers take it. */
@@ -342,11 +355,14 @@ export function searchBodyScripts(
     const comments = (): Uint8Array => (commentMask ??= scanComments(lines, lineStarts, body.length));
     let deadMask: Uint8Array | null = null;
     const deadLines = (): Uint8Array => (deadMask ??= markDeadLines(lines, lineStarts, comments()));
+    let predicateMask: (string | undefined)[] | null = null;
+    const predicates = (): (string | undefined)[] =>
+      (predicateMask ??= deriveEnclosingPredicates(lines, lineStarts, comments()));
 
     if (scanner === null) {
       const idx = body.toLowerCase().indexOf(lower);
       if (idx < 0) continue;
-      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, comments(), deadLines()));
+      matches.push(makeMatch(node, lines, lineStarts, idx, query as string, contextLines, lineCap, comments(), deadLines(), predicates()));
       if (matches.length >= cap) break;
       continue;
     }
@@ -358,7 +374,7 @@ export function searchBodyScripts(
       // A zero-length match (`x*`, `^`) advances nothing on its own: skip the position rather than
       // the node, or the first empty match hides every real match later in the same body.
       if (hit[0].length === 0) { scanner.lastIndex++; continue; }
-      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, comments(), deadLines()));
+      matches.push(makeMatch(node, lines, lineStarts, hit.index, hit[0], contextLines, lineCap, comments(), deadLines(), predicates()));
       if (matches.length >= cap) { capped = true; break; }
     }
     if (capped) break;
@@ -399,6 +415,7 @@ function makeMatch(
   lineCap: number,
   commentMask: Uint8Array,
   deadLine: Uint8Array,
+  predicateAt: (string | undefined)[],
 ): BodyMatch {
   const matchLine = lineIndexAt(lineStarts, index);
   const match: BodyMatch = {
@@ -407,8 +424,10 @@ function makeMatch(
     text:    lines[matchLine].trimEnd(),
     snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap, deadLine),
   };
-  // Set only when true: an executable match keeps the shape it has always had.
+  // Set only when true/present: an executable, unconditional match keeps the shape it has always had.
   if (commentMask[index] === 1) match.commented = true;
+  const predicate = predicateAt[matchLine];
+  if (predicate !== undefined) match.enclosingPredicate = predicate;
   return match;
 }
 
@@ -470,6 +489,97 @@ function scanComments(lines: string[], lineStarts: number[], length: number): Ui
     }
   }
   return mask;
+}
+
+/** Matches an `IF`/`WHILE` keyword opening a line, capturing the rest of the line as its condition. */
+const IF_WHILE_LINE_RE = /^(IF|WHILE)\b(.*)$/i;
+
+/** Every `BEGIN`, `END` or `CASE` keyword on a line, live-code only — see {@link deriveEnclosingPredicates}. */
+const BLOCK_KEYWORD_RE = /\b(BEGIN|END|CASE)\b/gi;
+
+/**
+ * Derives, per line, the innermost `IF`/`WHILE` condition governing that line.
+ *
+ * @param lines - The body split on newlines, as {@link searchBodyScripts} already holds it.
+ * @param lineStarts - Start offset of each line, as {@link buildLineStarts} computes it.
+ * @param commentMask - The per-character mask {@link scanComments} already produced for this body.
+ * @returns One entry per line: the text of the nearest enclosing `IF`/`WHILE`, or `undefined` when
+ *   the line sits outside any such condition.
+ *
+ * @remarks
+ * The same reasoning as {@link scanComments}, applied to control flow instead of comments: the
+ * context window a match ships with is a few lines wide, so a hit's governing `IF`/`WHILE` sits
+ * outside it whenever the condition is more than a line or two away — the ordinary case in T-SQL.
+ *
+ * A single pass tracks a stack of open blocks. `BEGIN` and `CASE` each open a frame (matching the
+ * `END` that later closes it); only a `BEGIN` immediately preceded by an `IF`/`WHILE` carries that
+ * condition as its frame's predicate — a bare `BEGIN` (a procedure body, `BEGIN TRY`/`BEGIN CATCH`,
+ * an unconditional block) and a `CASE` frame carry none, so a predicate never leaks past the block
+ * it actually governs. `CASE` is tracked only so its own `END` cannot be mistaken for closing an
+ * outer `BEGIN`; a `CASE WHEN` condition is not itself reported — it guards one expression, not a
+ * statement, which is a different fact than this one. An `IF`/`WHILE` written without `BEGIN…END`
+ * governs exactly the next live line and is then spent, the same reading a T-SQL batch gives it.
+ * Text inside a comment (per `commentMask`) or a string/bracketed literal is never scanned for a
+ * keyword, so a comment or a literal containing the word "BEGIN" cannot open a block.
+ */
+function deriveEnclosingPredicates(
+  lines: string[],
+  lineStarts: number[],
+  commentMask: Uint8Array,
+): (string | undefined)[] {
+  const result = new Array<string | undefined>(lines.length);
+  /** One entry per open `BEGIN`/`CASE` frame; the predicate it carries, or `undefined`. */
+  const stack: (string | undefined)[] = [];
+  /** An `IF`/`WHILE` condition captured but not yet attached to a `BEGIN`, or spent on one line. */
+  let pending: string | undefined;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const base = lineStarts[i];
+    // The live-only view of the line: comment/string content replaced with spaces so a keyword
+    // inside either can neither open a block nor be mistaken for the line's own condition.
+    let live = '';
+    for (let c = 0; c < line.length; c++) live += commentMask[base + c] === 1 ? ' ' : line[c];
+    const trimmed = live.trim();
+    const isLive = trimmed.length > 0;
+
+    const ifWhile = IF_WHILE_LINE_RE.exec(trimmed);
+    const ownPredicate = ifWhile ? trimmed.replace(/\bBEGIN\b\s*$/i, '').trim() : undefined;
+    let ownConsumed = false;
+    let pendingConsumed = false;
+
+    BLOCK_KEYWORD_RE.lastIndex = 0;
+    let token: RegExpExecArray | null;
+    while ((token = BLOCK_KEYWORD_RE.exec(live)) !== null) {
+      const keyword = token[1].toUpperCase();
+      if (keyword === 'CASE') {
+        stack.push(undefined);
+      } else if (keyword === 'BEGIN') {
+        if (ownPredicate !== undefined && !ownConsumed) { stack.push(ownPredicate); ownConsumed = true; }
+        else if (pending !== undefined && !pendingConsumed) { stack.push(pending); pendingConsumed = true; }
+        else stack.push(undefined);
+      } else if (stack.length > 0) {
+        stack.pop();
+      }
+    }
+
+    // A hit on this line is governed by the innermost open frame, or — when no frame is open and a
+    // prior IF/WHILE is still pending a BEGIN that never came — the single live statement it governs.
+    let applicable = stack.length > 0 ? stack[stack.length - 1] : undefined;
+    if (applicable === undefined && !ownPredicate && pending !== undefined && !pendingConsumed && isLive) {
+      applicable = pending;
+    }
+    result[i] = applicable;
+
+    if (ownPredicate !== undefined && !ownConsumed) {
+      pending = ownPredicate; // awaits a BEGIN on a later line, or governs the next live line alone
+    } else if (pendingConsumed) {
+      pending = undefined;
+    } else if (pending !== undefined && isLive) {
+      pending = undefined; // spent on this line's single statement (or this line just opened its own IF)
+    }
+  }
+  return result;
 }
 
 /**

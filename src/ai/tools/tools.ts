@@ -855,6 +855,10 @@ function toLineRanges(lines: number[]): string {
  * nothing extra. Marked, never filtered — a comment can hold the answer, and the few context lines
  * a hit ships with cannot show the block it sits in.
  *
+ * A hit inside an `IF`/`WHILE` block carries `enclosing_predicate` with that condition's text; a hit
+ * outside any such block carries nothing extra — the same window that hides a comment block also
+ * hides a controlling condition sitting more than a line or two away.
+ *
  * `by_object` is the one per-object home: every object that produced a hit, with its `hits` total
  * and — where anything is dead — `commented_hits` and the commented lines as ranges. A per-row
  * value is read row by row, while an answer composed by theme merges rows from several places into
@@ -913,6 +917,7 @@ export function searchDdl(
     text:    m.text,
     context: m.snippet,
     ...(m.commented ? { commented: true as const } : {}),
+    ...(m.enclosingPredicate ? { enclosing_predicate: m.enclosingPredicate } : {}),
   }));
 
   // What was actually read, so a zero-match answer is a fact about the search rather than advice

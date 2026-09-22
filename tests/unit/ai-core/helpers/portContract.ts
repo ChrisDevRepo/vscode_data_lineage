@@ -130,6 +130,12 @@ export function describePortContract(harness: PortContractHarness): void {
         });
         expect(result.content, testCase.label).toEqual([{ type: 'tool-call', call: result.toolCalls[0] }]);
         expect(raw, testCase.label).toEqual(testCase.input);
+        // `toolAttempt.ts`'s pre-dispatch repair replay (`rejectionFromInvalid` /
+        // `wholeCallFragments`) has no held draft to fall back on for a rejected call: the rejected
+        // call's own `input` is its only source for the bounded whole-call replay a schema-invalid
+        // rejection carries. A port that omits `input` here starves that replay down to `{}`
+        // regardless of how much of the original call was valid.
+        expect((result.toolCalls[0] as { input?: unknown }).input, testCase.label).toEqual(testCase.input);
       }
     });
 

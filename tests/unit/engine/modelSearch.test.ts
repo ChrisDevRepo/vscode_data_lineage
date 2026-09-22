@@ -368,6 +368,130 @@ describe('model search — commented matches', () => {
   });
 });
 
+/**
+ * The innermost `IF`/`WHILE` predicate governing a hit is reported (IB3-T3-PREDICATE, D-049).
+ *
+ * The reported context is a 3-line window, so a hit's controlling condition sits outside it
+ * whenever it is more than a line or two away — the normal case in T-SQL. The marker is additive,
+ * the same shape as `commented`: present only when a governing condition exists.
+ */
+describe('model search — enclosing predicate', () => {
+  /** Runs `pattern` over one body and returns `[line, enclosingPredicate]` for every hit, in order. */
+  function hits(bodyScript: string, pattern: string): [number, string | undefined][] {
+    const compiled = compileSearchRegex(pattern);
+    if (!compiled.ok) throw new Error(`${pattern} must compile`);
+    const body: SearchableNode[] = [{
+      id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript,
+    }];
+    return searchBodyScripts(body, compiled.regex).map(h => [h.line, h.enclosingPredicate]);
+  }
+
+  it('reports the IF predicate for a hit several lines inside its BEGIN…END block', () => {
+    const hit = hits([
+      'CREATE PROCEDURE dbo.p',                    // 1
+      'AS',                                        // 2
+      'BEGIN',                                     // 3
+      '    IF @ForceReimport = 0',                 // 4
+      '    BEGIN',                                 // 5
+      '        -- dedup pass',                     // 6
+      '        DELETE rb FROM #RawBatch rb',       // 7
+      '        INNER JOIN Target t',                // 8
+      '            ON t.OrderDate = rb.OrderDate',  // 9 — 5 lines below the opener
+      '    END',                                   // 10
+      'END',                                       // 11
+    ].join('\n'), 'ON t\\.OrderDate');
+    expect(hit).toEqual([[9, 'IF @ForceReimport = 0']]);
+  });
+
+  it('reports the innermost predicate when IF blocks nest', () => {
+    const hit = hits([
+      'BEGIN',                                     // 1
+      '    IF @Outer = 1',                         // 2
+      '    BEGIN',                                 // 3
+      '        IF @Inner = 1',                     // 4
+      '        BEGIN',                             // 5
+      '            SELECT Target',                 // 6
+      '        END',                               // 7
+      '    END',                                   // 8
+      'END',                                       // 9
+    ].join('\n'), 'Target');
+    expect(hit).toEqual([[6, 'IF @Inner = 1']]);
+  });
+
+  it('reports nothing for a hit outside any IF/WHILE block', () => {
+    const hit = hits([
+      'CREATE PROCEDURE dbo.p',    // 1
+      'AS',                        // 2
+      'BEGIN',                     // 3
+      '    SELECT Target',         // 4
+      'END',                       // 5
+    ].join('\n'), 'Target');
+    expect(hit).toEqual([[4, undefined]]);
+  });
+
+  it('leaves a hit before the governing IF unmarked — the exact D-049 shape', () => {
+    // The verification SELECT is ungated; the IF that follows it gates only the warning after it.
+    // A hit on the SELECT must not inherit the later IF's predicate.
+    const hit = hits([
+      'BEGIN',                                          // 1
+      '    SELECT @VerifyCount = COUNT(*)',              // 2
+      '    FROM Target',                                 // 3
+      '    IF @VerifyCount <> @ProcessedRows AND @DryRun = 0', // 4
+      '    BEGIN',                                       // 5
+      '        PRINT ' + "'mismatch'",                   // 6
+      '    END',                                         // 7
+      'END',                                              // 8
+    ].join('\n'), 'FROM Target');
+    expect(hit).toEqual([[3, undefined]]);
+  });
+
+  it('governs exactly the next live line for an IF written without BEGIN…END', () => {
+    const hit = hits([
+      'BEGIN',                    // 1
+      '    IF @Flag = 1',         // 2
+      '        SELECT Target',    // 3 — single statement, no BEGIN
+      '    SELECT Target',        // 4 — back outside the IF
+      'END',                      // 5
+    ].join('\n'), 'Target');
+    expect(hit).toEqual([[3, 'IF @Flag = 1'], [4, undefined]]);
+  });
+
+  it('reports WHILE the same as IF', () => {
+    const hit = hits([
+      'BEGIN',                       // 1
+      '    WHILE @i < 10',           // 2
+      '    BEGIN',                   // 3
+      '        SELECT Target',       // 4
+      '    END',                     // 5
+      'END',                         // 6
+    ].join('\n'), 'Target');
+    expect(hit).toEqual([[4, 'WHILE @i < 10']]);
+  });
+
+  it('does not mistake a CASE…END expression for closing an outer BEGIN', () => {
+    const hit = hits([
+      'BEGIN',                                           // 1
+      '    IF @Flag = 1',                                 // 2
+      '    BEGIN',                                        // 3
+      "        SELECT CASE WHEN x = 1 THEN 'a' ELSE 'b' END AS Col", // 4 — CASE...END on one line
+      '        SELECT Target',                            // 5 — still inside the IF block
+      '    END',                                          // 6
+      'END',                                               // 7
+    ].join('\n'), 'Target');
+    expect(hit).toEqual([[5, 'IF @Flag = 1']]);
+  });
+
+  it('leaves a hit with no governing block byte-identical to the shape before the field existed', () => {
+    const compiled = compileSearchRegex('Target');
+    if (!compiled.ok) throw new Error('Target must compile');
+    const [live] = searchBodyScripts(
+      [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT Target' }],
+      compiled.regex,
+    );
+    expect('enclosingPredicate' in live, 'the field is omitted, not undefined-but-present').toBe(false);
+  });
+});
+
 describe('regexRejectHint', () => {
   /** Compiles `pattern`, asserts it was refused, and returns the hint derived from that refusal. */
   function hintFor(pattern: string): string {

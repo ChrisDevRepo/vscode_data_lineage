@@ -1194,6 +1194,29 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(replayedToolArgs(replayed)).toEqual(input);
   });
 
+  it('replays the whole submit_findings call when a missing required array field flags a bare root, instead of empty arguments', async () => {
+    // A dropped required `column_flow` rejects with issuePaths=["column_flow"] — a bare root, no
+    // `.N` index — so `correctionFragments()`'s array-entry projection cannot match it and the
+    // fallback must be the whole bounded call carrying every other field the model already sent;
+    // a `{}` replay leaves the model resending without `column_flow` again.
+    const input = {
+      focus_node_id: '[ct].[vwSurchargedSales]',
+      verdict: 'analyze',
+      summary: 'SUMMARY-CARRIED',
+      sections: [{ label: 'Formula', text: 'SECTION-CARRIED' }],
+      route_requests: ['[ct].[Orders]'],
+    };
+    const { replayed, first } = await replayAfterInvalidCall({
+      toolName: 'lineage_submit_findings',
+      input,
+      reason: 'column_flow: Invalid input: expected array, received undefined',
+      issuePaths: ['column_flow'],
+    });
+
+    expect(first.rejections[0].issuePaths).toEqual(['column_flow']);
+    expect(replayedToolArgs(replayed)).toEqual(input);
+  });
+
   it('renders the held present_result repair draft as its own labeled message before the correction', async () => {
     const { replayed } = await replayAfterRejection({
       input: { column_flow: [{ from_col: 'A', to_col: 'B' }] },

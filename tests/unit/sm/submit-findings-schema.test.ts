@@ -220,6 +220,80 @@ describe("Submit Findings Schema", () => {
   expect(!bb.safeParse({ focus_node_id: '[dbo].[vSales]' }).success, 'host-advertised BB form rejects an incomplete non-repair submission').toBe(true);
 });
 
+  it("business lock's advertised schema rejects a technical section with a kept-angle hint, not a silent drop", () => {
+  // ANGLE-LOCK-SCHEMA: a surplus off-lock angle used to be silently dropped at commit
+  // (`filterSectionsForClassification`, removed). It now fails at the per-dispatch schema the
+  // model is actually shown, and the rejection message names the kept angle and tells the model
+  // to fold the content in rather than submit a second section.
+  const bb = submitFindingsSchemaForMode('bb', 'business');
+  const technicalOnly = bb.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'technical', text: 'technical-only content' }],
+    summary: 'ok',
+    verdict: 'analyze',
+  });
+  expect(!technicalOnly.success, 'a business lock rejects a technical-angle section').toBe(true);
+  const message = technicalOnly.success ? '' : technicalOnly.error.issues.map(i => i.message).join(' | ');
+  expect(message.includes('classification=business keeps only angle="business"'), 'the rejection names the kept angle').toBe(true);
+  expect(message.toLowerCase().includes('fold'), 'the rejection tells the model to fold the content into the kept section').toBe(true);
+
+  const mixed = bb.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [
+      { angle: 'business', text: 'kept' },
+      { angle: 'technical', text: 'surplus' },
+    ],
+    summary: 'ok',
+    verdict: 'analyze',
+  });
+  expect(!mixed.success, 'a business lock rejects a surplus technical section even alongside a valid business one').toBe(true);
+});
+
+  it("technical lock's advertised schema mirrors the business lock, symmetrically", () => {
+  const ct = submitFindingsSchemaForMode('ct', 'technical');
+  const businessOnly = ct.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'business-only content' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [],
+  });
+  expect(!businessOnly.success, 'a technical lock rejects a business-angle section').toBe(true);
+  const message = businessOnly.success ? '' : businessOnly.error.issues.map(i => i.message).join(' | ');
+  expect(message.includes('classification=technical keeps only angle="technical"'), 'the rejection names the kept angle').toBe(true);
+});
+
+  it("business lock's advertised schema accepts a business-only submission", () => {
+  const bb = submitFindingsSchemaForMode('bb', 'business');
+  const parsed = bb.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+  });
+  expect(parsed.success, 'business lock accepts a business-only section').toBe(true);
+});
+
+  it("both lock's advertised schema accepts both angles, same as the unlocked schema", () => {
+  const both = submitFindingsSchemaForMode('bb', 'both');
+  expect(both === SubmitFindingsBbInputSchema, "a 'both' lock keeps every angle, so it is the unnarrowed mode schema").toBe(true);
+  const parsed = both.safeParse({
+    focus_node_id: '[dbo].[vSales]',
+    sections: [
+      { angle: 'business', text: 'b' },
+      { angle: 'technical', text: 't' },
+    ],
+    summary: 'ok',
+    verdict: 'analyze',
+  });
+  expect(parsed.success, 'both lock accepts both angles').toBe(true);
+});
+
+  it("an unlocked (classification-omitted) dispatch keeps the unnarrowed mode schema", () => {
+  expect(submitFindingsSchemaForMode('bb') === SubmitFindingsBbInputSchema, 'no classification argument selects the plain BB schema').toBe(true);
+  expect(submitFindingsSchemaForMode('ct') === SubmitFindingsCtInputSchema, 'no classification argument selects the plain CT schema').toBe(true);
+});
+
   it("host-advertised CT form carries prune_neighbors but still rejects the repair protocol", () => {
   const ct = submitFindingsSchemaForMode('ct');
   const withPruneNeighbors = ct.safeParse({

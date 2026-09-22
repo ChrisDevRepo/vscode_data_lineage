@@ -21,7 +21,7 @@ describe("Submit Findings Handler", () => {
     schemas: ['dbo'],
     dbPlatform: 'SQL Server',
   } as any;
-  function setup() {
+  function setup(classification: 'business' | 'technical' | 'both' = 'business') {
     const graph = makeGraph(nodes, [['origin', 'a'], ['origin', 'b']]);
     const engine = new NavigationEngine(model, graph, () => {}, {});
     engine.init({ origin: 'origin', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
@@ -29,7 +29,7 @@ describe("Submit Findings Handler", () => {
     let returned: Record<string, unknown> = {};
     const session = {
       stateMachine: engine,
-      classification: 'business',
+      classification,
       memory: { getUserQuestion: () => 'trace' },
       storeSmResult: () => {},
     };
@@ -105,6 +105,75 @@ describe("Submit Findings Handler", () => {
   expect(engine.toJSON().memory.detailSlots.origin !== undefined, 'accepted full finding commits authored detail').toBe(true);
   expect(raw.focus_node_id, 'normalization does not mutate the raw focus identity').toBe('ORIGIN');
   expect(raw.route_requests[0].nodeId, 'normalization does not mutate raw route identities').toBe('A');
+});
+
+  // ANGLE-LOCK-SCHEMA: the handler must validate with the SAME mode-and-classification-locked
+  // schema `instructionPlan.ts` advertised (`submitFindingsSchemaForMode(mode, sess.classification)`),
+  // not just the mode-only base schema — otherwise a provider that ignores the advertised schema
+  // could still submit an off-lock angle, which would pass Zod and (with the old silent-drop
+  // filter removed) commit off-classification content into the archive undetected.
+  it("a business lock rejects a technical section through the real handler, with the kept-angle hint, and commits nothing", () => {
+  const { engine, services, result } = setup('business');
+  const before = engine.toJSON();
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'technical', text: 'Off-lock technical content that must not be silently dropped.' }],
+    summary: 'Origin dispatches both paths.',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+  const rejected = result() as { error?: string; hint?: string };
+  expect(rejected.error, 'a business lock rejects a technical section through the same schema the model was offered').toBe('invalid_input');
+  expect(rejected.hint, 'the rejection names the kept angle').toContain('classification=business keeps only angle="business"');
+  expect(rejected.hint?.toLowerCase(), 'the rejection tells the model to fold the content into the kept section').toContain('fold');
+  const after = engine.toJSON();
+  expect(Object.keys(after.memory.detailSlots).length, 'the off-lock section commits nothing — it never reached the engine').toBe(Object.keys(before.memory.detailSlots).length);
+  expect(after.agenda.length, 'no agenda mutation from the rejected submission').toBe(before.agenda.length);
+});
+
+  // The actual leak vector `filterSectionsForClassification`'s removal opened: a submission
+  // carrying BOTH the required business section AND a surplus technical one satisfies
+  // `validateSectionsAgainstClassification` (the required angle is present), so only the
+  // per-dispatch schema narrowing stands between this payload and a committed technical leak.
+  // Reproduces the defect the reviewer found: validating with the mode-only base schema instead
+  // of `submitFindingsSchemaForMode(mode, sess.classification)` let this exact payload commit both
+  // sections, with the off-lock one going straight into the archive.
+  it("a business lock rejects a mixed business+technical submission — the surplus angle never commits", () => {
+  const { engine, services, result } = setup('business');
+  const before = engine.toJSON();
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [
+      { angle: 'business', text: 'Origin dispatches both paths (business angle).' },
+      { angle: 'technical', text: 'Off-lock technical content that must not leak in.' },
+    ],
+    summary: 'Origin dispatches both paths.',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+  const rejected = result() as { error?: string; hint?: string };
+  expect(rejected.error, 'the required business section present does not excuse the surplus technical one').toBe('invalid_input');
+  expect(rejected.hint, 'the rejection names the kept angle').toContain('classification=business keeps only angle="business"');
+  const after = engine.toJSON();
+  expect(Object.keys(after.memory.detailSlots).length, 'nothing commits — not even the valid business section — until the model resubmits clean').toBe(Object.keys(before.memory.detailSlots).length);
+});
+
+  it("a both lock accepts a submission carrying both angles through the real handler", () => {
+  const { engine, services, result } = setup('both');
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [
+      { angle: 'business', text: 'Origin dispatches both paths (business angle).' },
+      { angle: 'technical', text: 'Origin dispatches both paths (technical angle).' },
+    ],
+    summary: 'Origin dispatches both paths.',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+  const accepted = result() as { error?: string };
+  expect(accepted.error, 'a both lock accepts a submission carrying both angles').toBeUndefined();
+  const slot = engine.toJSON().memory.detailSlots.origin as { sections?: Array<{ angle: string }> };
+  expect(slot?.sections?.map(s => s.angle).sort(), 'both authored sections are committed').toEqual(['business', 'technical']);
 });
 
   // `badge_label` and `column_flow[].upstream_columns[].note` carry their cap on the model-facing

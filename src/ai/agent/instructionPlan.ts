@@ -340,7 +340,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (stage.kind === 'active') {
     schemaOverrides.set(
       'lineage_submit_findings',
-      submitFindingsSchemaForMode(stage.mode === 'sm_ct' ? 'ct' : 'bb'),
+      submitFindingsSchemaForMode(stage.mode === 'sm_ct' ? 'ct' : 'bb', frozenFacts?.classification),
     );
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;

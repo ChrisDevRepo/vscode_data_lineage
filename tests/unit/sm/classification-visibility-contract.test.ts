@@ -1,8 +1,8 @@
 /**
- * Classification contract: the one scope field that discards captured analysis must be stated
- * to the model that picks it. Hop-by-hop filtering is `filterSectionsForClassification` at commit
- * and the gated capture keys — not the approval-card markdown, which is user-facing plan copy and
- * is not replayed into later hops.
+ * Classification contract: the one scope field that constrains captured analysis must be stated
+ * to the model that picks it. Hop-by-hop enforcement is the per-dispatch `submit_findings` schema
+ * (`submitFindingsSchemaForMode` narrowing `sections[].angle`) and the gated capture keys — not the
+ * approval-card markdown, which is user-facing plan copy and is not replayed into later hops.
  *
  * `buildSectionsShape` narrows the per-hop capture to a single angle before commit. A wrong value
  * therefore deletes work rather than reshaping it. Two surfaces have to carry the field for that
