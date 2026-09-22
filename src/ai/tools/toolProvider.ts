@@ -166,7 +166,7 @@ class ToolHandler implements ToolServices {
     return g;
   }
 
-  public logAndReturn(toolName: string, data: object, input?: unknown): string {
+  public logAndReturn(toolName: ToolName, data: object, input?: unknown): string {
     const sess = this.getSession();
     const json = JSON.stringify(data);
     const chars = json.length;
@@ -272,7 +272,7 @@ class ToolHandler implements ToolServices {
       if (!parsed.ok) return this.logAndReturn('lineage_get_context', parsed.error, input);
       const sess = this.getSession();
       const ctx = getContext(this.requireModel(), sess.filter, sess.projectName);
-      return this.logAndReturn('get_context', ctx, input);
+      return this.logAndReturn('lineage_get_context', ctx, input);
     } catch (err) { return this.toolError('get_context', err); }
   }
 
@@ -286,7 +286,7 @@ class ToolHandler implements ToolServices {
       const { ids, filter } = parsed.data;
       if (ids || filter) {
         const nodeMap = getModelNodeMap(model);
-        return this.logAndReturn('get_screen_state', presentRunRecall({
+        return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
           liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
@@ -306,7 +306,7 @@ class ToolHandler implements ToolServices {
         getStoredRun: this.getStoredRun,
         getDdl,
       });
-      return this.logAndReturn('get_screen_state', screen, input);
+      return this.logAndReturn('lineage_get_screen_state', screen, input);
     } catch (err) { return this.toolError('get_screen_state', err); }
   }
 
@@ -315,7 +315,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
       const { query, types, schemas, mode } = parsed.data;
-      return this.logAndReturn('search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter), input);
+      return this.logAndReturn('lineage_search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter), input);
     } catch (err) { return this.toolError('search_objects', err); }
   }
 
@@ -331,7 +331,7 @@ class ToolHandler implements ToolServices {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
       if (!Array.isArray(bundle.nodes) || !Array.isArray(bundle.edges) || typeof bundle.origin !== 'string') {
-        return this.logAndReturn('get_scope_bundle', bundle, input);
+        return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
       }
       const nodeIds = bundle.nodes.flatMap((node) => {
         if (!node || typeof node !== 'object') return [];
@@ -348,9 +348,9 @@ class ToolHandler implements ToolServices {
         edges,
       }, this.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return this.logAndReturn('get_scope_bundle', { error: REJECTION_CODES.staleTurn, hint: 'The turn no longer owns this session. Do not render this scope.' }, input);
+        return this.logAndReturn('lineage_get_scope_bundle', { error: REJECTION_CODES.staleTurn, hint: 'The turn no longer owns this session. Do not render this scope.' }, input);
       }
-      return this.logAndReturn('get_scope_bundle', bundle, input);
+      return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
   }
 
@@ -375,7 +375,7 @@ class ToolHandler implements ToolServices {
       const { id } = parsed.data;
       const detail = getObjectDetail(this.requireModel(), id, sess.columnStore) as Record<string, unknown>;
 
-      return this.logAndReturn('get_object_detail', detail, input);
+      return this.logAndReturn('lineage_get_object_detail', detail, input);
     } catch (err) { return this.toolError('get_object_detail', err); }
   }
 
@@ -388,7 +388,7 @@ class ToolHandler implements ToolServices {
       const resolvedMinDegree = min_degree ?? anaCfg.get<number>('analysis.hubMinDegree');
       const resolvedMaxSize   = max_size   ?? anaCfg.get<number>('analysis.islandMaxSize');
       const resolvedLongestPath = anaCfg.get<number>('analysis.longestPathMinNodes');
-      return this.logAndReturn('detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
+      return this.logAndReturn('lineage_detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
     } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
 
@@ -397,7 +397,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('search_ddl', searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg)), input);
+      return this.logAndReturn('lineage_search_ddl', searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg)), input);
     } catch (err) { return this.toolError('search_ddl', err); }
   }
 
@@ -416,25 +416,25 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) {
-        return this.logAndReturn('get_neighbor_columns', {
+        return this.logAndReturn('lineage_get_neighbor_columns', {
           error: REJECTION_CODES.noActiveSession,
           hint: 'No active exploration. Call lineage_start_exploration first.',
         }, input);
       }
 
       const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('get_neighbor_columns', parsed.error, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_neighbor_columns', parsed.error, input);
 
       const invalidIds = engine.validateNeighborIds(parsed.data.ids);
       if (invalidIds.length > 0) {
-        return this.logAndReturn('get_neighbor_columns', {
+        return this.logAndReturn('lineage_get_neighbor_columns', {
           error: 'out_of_scope_or_not_neighbor',
           invalid_ids: invalidIds,
           hint: `These ids are not direct neighbors of the current focus node and/or not in the active scope: ${invalidIds.join(', ')}. This tool only inspects direct neighbors for pruning verification.`,
         }, input);
       }
 
-      return this.logAndReturn('get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
+      return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
     } catch (err) { return this.toolError('get_neighbor_columns', err); }
   }
 

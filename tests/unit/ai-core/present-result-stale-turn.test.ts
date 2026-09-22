@@ -264,7 +264,7 @@ describe('executePresentResult — turn-lease enforcement', () => {
     expect(session.lastPresentResultHighlightGroups).toBeNull();
     expect(session.presentResultRepairDraft.hasRepairableDraft()).toBe(false);
     expect(JSON.stringify(resultGraph)).toBe(graphBefore);
-    expect(probe.logged.map((entry) => entry.toolName)).toEqual(['present_result']);
+    expect(probe.logged.map((entry) => entry.toolName)).toEqual(['lineage_present_result']);
   });
 
   it('returns stale_turn from the commit guard when the turn is superseded mid-handler', async () => {

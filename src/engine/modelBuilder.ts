@@ -120,6 +120,9 @@ export function buildModel(
   } else if (uniqueNodes.length === 0) {
     warnings.push('No tables, views, or stored procedures found.');
   }
+  if (stats.cappedRules) {
+    warnings.push(`${stats.cappedRules.length} parse rule(s) stopped at the match limit; some dependencies may be missing.`);
+  }
 
   return {
     nodes: uniqueNodes, edges, schemas, catalog, neighborIndex,
@@ -565,6 +568,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
     const onRuleFire = makeParseTraceCallback(node, ctx);
     const parsed = parseSqlBody(node.bodyScript, onRuleFire);
     const spLabel = `${node.schema}.${node.name}`;
+    recordCappedRules(parsed.cappedRules, spLabel, ctx.stats);
     const spInRefs: string[] = [];
     const spUnrelated: string[] = [];
 
@@ -621,6 +625,12 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 }
 
+/** Records each rule that stopped at the parser's match cap for `label`'s body. */
+function recordCappedRules(cappedRules: readonly string[], label: string, stats: ParseStats): void {
+  if (cappedRules.length === 0) return;
+  (stats.cappedRules ??= []).push(...cappedRules.map(rule => `${label}: ${rule}`));
+}
+
 /**
  * Orchestrates edge creation for stored procedures using regex-based script analysis.
  *
@@ -633,6 +643,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
   const onRuleFire = makeParseTraceCallback(node, ctx);
   const parsed = parseSqlBody(node.bodyScript!, onRuleFire);
   const spLabel = `${node.schema}.${node.name}`;
+  recordCappedRules(parsed.cappedRules, spLabel, ctx.stats);
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
   const spUnrelated: string[] = [];

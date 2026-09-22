@@ -6,6 +6,7 @@ import { type AiSession } from '../ai/session/session';
 import {
   Logger,
   trunc,
+  LOG_TRUNC_LIST,
   sanitizeForLog,
   safeStringifyForLog,
   LOG_TRUNC_JSON,
@@ -561,7 +562,7 @@ export function createMessageHandlers(
           const schemas = project.connection.schemas;
 
           if (schemas && schemas.length > 0) {
-            host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
+            host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
             const { elements, dspName } = await extractSchemaPreview(data);
             const logger = Logger.create(outputChannel, 'Parse');
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
@@ -1241,6 +1242,9 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
     logger.info(`Phase 2 Result: Parsing Complete — ${spCount} objects scripted, ${stats.parsedRefs} refs found, ${stats.resolvedEdges} refs resolved`);
     if (stats.droppedRefs.length > 0) {
       logger.info(`Phase 2 Result: Dropped — ${stats.droppedRefs.length} refs unrelated (aliases/built-ins)`);
+    }
+    if (stats.cappedRules) {
+      logger.warn(`Phase 2 Result: Match limit hit — ${stats.cappedRules.length} rule(s), dependencies past the limit are missing: ${trunc(stats.cappedRules, LOG_TRUNC_LIST)}`);
     }
   }
 

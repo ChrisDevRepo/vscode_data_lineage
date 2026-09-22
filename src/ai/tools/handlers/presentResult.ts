@@ -165,7 +165,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const turnEpoch = s.turnEpoch(sess);
       const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
       if (attemptWrite.kind !== 'accepted') {
-        return s.logAndReturn('present_result', {
+        return s.logAndReturn('lineage_present_result', {
           error: REJECTION_CODES.staleTurn,
           hint: 'The turn no longer owns this session. Do not render this result.',
         }, rawInput);
@@ -182,7 +182,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const reject = (failure: object, opts: { clearDraft?: boolean } = {}): string => {
         if (opts.clearDraft) sess.presentResultRepairDraft.clear();
         notePresentResultFailure(sess, turnEpoch, failure);
-        return s.logAndReturn('present_result', failure, rawInput);
+        return s.logAndReturn('lineage_present_result', failure, rawInput);
       };
 
       // L1 encoding-only: unwrap a JSON-string-encoded is_update before the pre-Zod repair gate,
@@ -592,7 +592,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           sess.presentResultRepairDraft.clear();
         }
         notePresentResultFailure(sess, turnEpoch, validation);
-        return s.logAndReturn('present_result', validation, rawInput);
+        return s.logAndReturn('lineage_present_result', validation, rawInput);
       }
 
       // The approved exploration this render belongs to; a discovery-turn render, which never passed
@@ -647,7 +647,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const repeatedSuccess = sess.presentResultCalledThisTurn;
       const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
       if (successWrite.kind !== 'accepted') {
-        return s.logAndReturn('present_result', {
+        return s.logAndReturn('lineage_present_result', {
           error: REJECTION_CODES.staleTurn,
           hint: 'The result was not committed because the turn no longer owns this session.',
         }, rawInput);
@@ -688,6 +688,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       s.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
-      return s.logAndReturn('present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
+      return s.logAndReturn('lineage_present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
     } catch (err) { return s.toolError('present_result', err); }
 }

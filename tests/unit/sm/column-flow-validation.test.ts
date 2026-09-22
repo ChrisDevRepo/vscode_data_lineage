@@ -257,7 +257,7 @@ describe("Column Flow Validation", () => {
       verdict: 'analyze' as const, summary: 's', sections: [],
       column_flow: [{ out_col: 'GhostCol', upstream_columns: [] }],
     };
-    const res = tracer.validateColumnFlow('origin', finding as any, nodeMap, ctModel, null);
+    const res = tracer.validateColumnFlow('origin', finding as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
     expect(res.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'tracked-but-undeclared out_col is reported as bad_out_col').toBe(true);
     expect(res.invalidRoutes.every(r => r.kind !== 'untracked_out_col'), 'a column absent from the node never takes the untracked split').toBe(true);
     const envelope = buildRouteValidationRejection(res.invalidRoutes);
@@ -323,7 +323,7 @@ describe("Column Flow Validation", () => {
       } as never,
       nodeMap,
       model,
-      null,
+      null, undefined, undefined, 'upstream',
     );
     expect(invalidRoutes.some(r => r.kind === 'bad_contributor_col'), 'the invalid contributor is reported').toBe(true);
     expect(stagedEdges.length, 'no edge is staged for a rejected upstream column').toBe(0);
@@ -334,7 +334,7 @@ describe("Column Flow Validation", () => {
     // can never be reported unaccounted by the other, which would retry the identical payload until
     // the semantic breaker ends the turn.
     const tracer = new ColumnTracer(['amount']);
-    expect(tracer.unaccountedActiveColumns([{ out_col: ' "Amount" ', upstream_columns: [] }] as never).length, 'a padded/quoted out_col accounts for its active column').toBe(0);
+    expect(tracer.unaccountedActiveColumns([{ out_col: ' "Amount" ', upstream_columns: [] }] as never, 'upstream').length, 'a padded/quoted out_col accounts for its active column').toBe(0);
   });
 
   it("valid column_flow accumulates edge and marks table pass-through", () => {
@@ -601,20 +601,20 @@ describe("Column Flow Validation", () => {
     }],
   });
 
-  const ok = tracer.validateColumnFlow('spwriter', writeTo('TotalRevenue') as any, nodeMap, ctModel, null);
+  const ok = tracer.validateColumnFlow('spwriter', writeTo('TotalRevenue') as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(ok.invalidRoutes.length, 'valid writes_to.col: no rejection').toBe(0);
   expect(ok.stagedEdges.length, 'valid writes_to.col: edge staged').toBe(1);
   expect(ok.stagedEdges[0].to_col, 'valid writes_to.col: to_col carried through').toBe('TotalRevenue');
 
-  const empty = tracer.validateColumnFlow('spwriter', writeTo('') as any, nodeMap, ctModel, null);
+  const empty = tracer.validateColumnFlow('spwriter', writeTo('') as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(empty.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'empty writes_to.col → bad_out_col (no .min(1) needed)').toBe(true);
   expect(empty.stagedEdges.length, 'empty writes_to.col: no empty edge staged').toBe(0);
 
-  const wrong = tracer.validateColumnFlow('spwriter', writeTo('Nonexistent') as any, nodeMap, ctModel, null);
+  const wrong = tracer.validateColumnFlow('spwriter', writeTo('Nonexistent') as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(wrong.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'wrong writes_to.col → bad_out_col').toBe(true);
   expect(wrong.stagedEdges.length, 'wrong writes_to.col: no edge staged').toBe(0);
 
-  const unknown = tracer.validateColumnFlow('spwriter', writeTo('TotalRevenue', 'ghosttable') as any, nodeMap, ctModel, null);
+  const unknown = tracer.validateColumnFlow('spwriter', writeTo('TotalRevenue', 'ghosttable') as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(unknown.invalidRoutes.some(r => r.kind === 'absent_contributor'), 'unknown writes_to.node → absent_contributor').toBe(true);
   expect(unknown.stagedEdges.length, 'unknown writes_to.node: no edge staged').toBe(0);
 });
@@ -642,7 +642,7 @@ describe("Column Flow Validation", () => {
   const logCalls: Array<[string, string]> = [];
   const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
 
-  const res = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null, log);
+  const res = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null, log, undefined, 'upstream');
   expect(res.invalidRoutes.length, 'zero-column neighbour: no rejection').toBe(0);
   expect(res.stagedEdges.length, 'zero-column neighbour: contributor edge still staged').toBe(1);
   expect(res.stagedEdges[0]?.from_node, 'zero-column neighbour: staged edge names the neighbour').toBe('zerocolsrc');
@@ -654,7 +654,7 @@ describe("Column Flow Validation", () => {
   expect(debugCall?.[1].includes('AnyClaimedColumn'), 'log names the claimed column').toBe(true);
 
   // Omitting `log` entirely must not throw or change behavior.
-  const resNoLog = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null);
+  const resNoLog = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(resNoLog.stagedEdges.length, 'no-log call: contributor still accepted').toBe(1);
 });
 
@@ -677,7 +677,7 @@ describe("Column Flow Validation", () => {
         upstream_columns: [{ node: 'zerocolsrc', col: literal }],
       }],
     };
-    const res = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null);
+    const res = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
     expect(res.invalidRoutes.length, `literal ${literal}: one rejection`).toBe(1);
     expect(res.invalidRoutes[0]?.kind, `literal ${literal}: bad_contributor_col`).toBe('bad_contributor_col');
     expect(res.stagedEdges.length, `literal ${literal}: no edge staged`).toBe(0);
@@ -690,7 +690,7 @@ describe("Column Flow Validation", () => {
       upstream_columns: [{ node: 'zerocolsrc', col: 'RegionName' }],
     }],
   };
-  const okRes = tracer.validateColumnFlow('vwtarget', okFinding as any, nodeMap, ctModel, null);
+  const okRes = tracer.validateColumnFlow('vwtarget', okFinding as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(okRes.invalidRoutes.length, 'identifier: still accepted unverified').toBe(0);
   expect(okRes.stagedEdges.length, 'identifier: edge still staged').toBe(1);
   });
@@ -756,7 +756,7 @@ describe("Column Flow Validation", () => {
         { node: 'srcnode', col: 'Rev' },
       ],
     }],
-  } as any, nodeMap, ctModel, null);
+  } as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(mixed.invalidRoutes.some(r => r.kind === 'self_loop_column'), 'self-loop upstream contributor rejected').toBe(true);
   expect(mixed.stagedEdges.length, 'only the legitimate srcnode contributor is staged').toBe(1);
   expect(mixed.stagedEdges[0]?.from_node, 'staged edge is the legitimate one, not the self-loop').toBe('srcnode');
@@ -772,7 +772,7 @@ describe("Column Flow Validation", () => {
       writes_to: { node: 'facttable', col: 'TotalRevenue' },
       upstream_columns: [{ node: 'srcnode', col: 'Rev' }],
     }],
-  } as any, nodeMap, ctModel, null);
+  } as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(legit.invalidRoutes.filter(r => r.kind === 'self_loop_column').length, 'legitimate writes_to redirect is not flagged as self-loop').toBe(0);
   expect(legit.stagedEdges.length, 'legitimate writes_to redirect still stages its edge').toBe(1);
 
@@ -784,7 +784,7 @@ describe("Column Flow Validation", () => {
       out_col: 'TotalRevenue',
       upstream_columns: [{ node: 'facttable', col: 'TotalRevenue' }],
     }],
-  } as any, nodeMap, ctModel, null);
+  } as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(selfFocus.invalidRoutes.some(r => r.kind === 'self_loop_column'), 'upstream == focus with same column (writes_to omitted) is also a self-loop').toBe(true);
   expect(selfFocus.stagedEdges.length, 'no edge staged for the focus self-loop').toBe(0);
 });
@@ -832,7 +832,7 @@ describe("Column Flow Validation", () => {
       writes_to: { node: 'spreader', col: 'C' },
       upstream_columns: [{ node: 'srcnode', col: 'C' }],
     }],
-  } as any, nodeMap, readerModel, null);
+  } as any, nodeMap, readerModel, null, undefined, undefined, 'upstream');
   expect(mislabeled.invalidRoutes.some(r => r.kind === 'bad_writes_to_target'), 'reader-as-writes_to refused').toBe(true);
   expect(mislabeled.stagedEdges.length, 'no mis-pointed edge staged').toBe(0);
   const route = mislabeled.invalidRoutes.find(r => r.kind === 'bad_writes_to_target');
@@ -855,7 +855,7 @@ describe("Column Flow Validation", () => {
       writes_to: { node: 'facttable', col: 'C' },
       upstream_columns: [{ node: 'srcnode', col: 'C' }],
     }],
-  } as any, writerMap, writerModel, null);
+  } as any, writerMap, writerModel, null, undefined, undefined, 'upstream');
   expect(legit.invalidRoutes.filter(r => r.kind === 'bad_writes_to_target').length, 'real write redirect is not flagged').toBe(0);
   expect(legit.stagedEdges.length, 'real write redirect still stages its edge').toBe(1);
 });
@@ -881,7 +881,7 @@ describe("Column Flow Validation", () => {
       ],
     }],
   };
-  const res = tracer.validateColumnFlow('focusview', finding as any, nodeMap, ctModel, null);
+  const res = tracer.validateColumnFlow('focusview', finding as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(res.stagedEdges.length, 'both real upstream column edges are staged').toBe(2);
   for (const e of res.stagedEdges) e.hop = 1;
   tracer.state.edges.push(...res.stagedEdges);
@@ -904,7 +904,7 @@ describe("Column Flow Validation", () => {
     verdict: 'analyze' as const, summary: 's', sections: [],
     column_flow: [{ out_col: '[amount]', upstream_columns: [{ node: 'src', col: '[raw]' }] }],
   };
-  const res = tracer.validateColumnFlow('origin', finding as any, nodeMap, ctModel, null);
+  const res = tracer.validateColumnFlow('origin', finding as any, nodeMap, ctModel, null, undefined, undefined, 'upstream');
   expect(res.invalidRoutes.length, 'Part A: bracketed [amount]/[raw] match DDL via normalizeColName (no false bad_out_col)').toBe(0);
   expect(res.stagedEdges.length, 'Part A: bracketed names still stage the edge').toBe(1);
 });
@@ -914,11 +914,11 @@ describe("Column Flow Validation", () => {
   // A prior bodied hop declared UnitPrice ← pricemaster.ListPrice → edge with from_node=pricemaster.
   tracer.state.edges.push({ hop: 1, hop_node: 'vwpricelist', to_node: 'vwpricelist', to_col: 'UnitPrice', from_node: 'pricemaster', from_col: 'ListPrice' });
   // The model over-declared pricemaster's route columns; only ListPrice is on the tracked spine.
-  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode']);
+  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode'], undefined, undefined, 'upstream');
   expect(bounded.length, 'Part B: over-declared siblings dropped to the on-trace spine').toBe(1);
   expect(bounded[0]?.toLowerCase() === 'listprice', 'Part B: the on-trace ListPrice is kept').toBe(true);
   // Bracketed entry still intersects (Part A normalization inside the bound).
-  const boundedBr = tracer.determineActiveColumnsForCandidate('pricemaster', ['[ListPrice]', 'RegionCode']);
+  const boundedBr = tracer.determineActiveColumnsForCandidate('pricemaster', ['[ListPrice]', 'RegionCode'], undefined, undefined, 'upstream');
   expect(boundedBr.length, 'Part B+A: bracketed [ListPrice] matches the unbracketed spine').toBe(1);
 });
 
@@ -928,14 +928,14 @@ describe("Column Flow Validation", () => {
   const logCalls: Array<[string, string]> = [];
   const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
 
-  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode'], undefined, log);
+  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode'], undefined, log, 'upstream');
   expect(bounded, 'the returned spine is unchanged by adding the log param').toEqual(['ListPrice']);
   const debugCall = logCalls.find(([level]) => level === 'debug');
   expect(!!debugCall, 'the off-spine drop is logged at debug level').toBe(true);
   expect(debugCall?.[1].includes('pricemaster'), 'log names the candidate node').toBe(true);
   expect(debugCall?.[1].includes('EffectiveFrom') && debugCall?.[1].includes('RegionCode'), 'log names both dropped off-spine columns').toBe(true);
 
-  const boundedNoLog = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode']);
+  const boundedNoLog = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode'], undefined, undefined, 'upstream');
   expect(boundedNoLog).toEqual(['ListPrice']);
 });
 
@@ -945,7 +945,7 @@ describe("Column Flow Validation", () => {
   const logCalls: Array<[string, string]> = [];
   const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
 
-  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice'], undefined, log);
+  const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice'], undefined, log, 'upstream');
   expect(bounded).toEqual(['ListPrice']);
   expect(logCalls.length, 'nothing was actually dropped, so nothing is logged').toBe(0);
 });
@@ -1744,7 +1744,7 @@ describe("CT active columns through contracted tables", () => {
     });
 
     // Contract: a candidate with no edge of its own falls through to the unfiltered entryColumns by design; bounding that output is `resolveActiveColumnsForNode`'s job at the enqueueHop/contractThroughPassNode call sites, not this function's.
-    const writerCols = tracer.determineActiveColumnsForCandidate('writer_proc', ['Discount', 'OrderAmount']);
+    const writerCols = tracer.determineActiveColumnsForCandidate('writer_proc', ['Discount', 'OrderAmount'], undefined, undefined, 'upstream');
     expect([...writerCols].sort().join(','), `writer_proc resolves to the unfiltered entryColumns here — actual: [${writerCols.join(',')}]`).toBe(['Discount', 'OrderAmount'].sort().join(','));
   });
 
@@ -1983,7 +1983,7 @@ describe("column_chain_incomplete names the repair the validator accepts", () =>
   const TERMINAL_REPAIR = /upstream_columns:\s*\[\]/;
 
   it('states the terminal entry shape when the empty-flow escape is open', () => {
-    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount']);
+    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount'], undefined, undefined, 'upstream');
     const hint = ('hint' in rejection && rejection.hint) || '';
     expect(TERMINAL_REPAIR.test(hint), 'the hint names the field and the value that account for a source column')
       .toBe(true);
@@ -1991,7 +1991,7 @@ describe("column_chain_incomplete names the repair the validator accepts", () =>
   });
 
   it('states the terminal entry shape when the focus declares the column and the escape is closed', () => {
-    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount'], ['Discount']);
+    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount'], ['Discount'], undefined, 'upstream');
     const hint = ('hint' in rejection && rejection.hint) || '';
     expect(TERMINAL_REPAIR.test(hint), 'the one open repair still names the accepted terminal value')
       .toBe(true);

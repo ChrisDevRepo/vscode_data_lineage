@@ -87,6 +87,48 @@ function makeGateSink() {
   return { events, sink, nextGate };
 }
 
+/** The two tools every round below offers: a search fallback plus the gated entry point. */
+function standardRegistry() {
+  return scriptedRegistry([
+    { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
+    { name: 'lineage_start_exploration', result: GATE_RESULT },
+  ]).registry;
+}
+
+/**
+ * Runs a `/trace` turn to its gate and holds it — the shared first half of every "next turn drops
+ * or claims the hold" case below.
+ */
+async function holdFreshProposal(
+  session: AiSession,
+  epoch: number,
+  threadId: string,
+): Promise<{ heldGate: NativeGateEvent; events: readonly TurnEvent[] }> {
+  const model = new ScriptedModelPort([{
+    toolCalls: [validCall('start-1', 'lineage_start_exploration', {
+      origin: '[ai].[FactSalesReport]',
+      analysisMode: 'bb',
+      classification: 'business',
+    })],
+  }]);
+  const holdTurn = makeGateSink();
+  const runtime = new AgentRuntime({
+    threadId,
+    getSession: () => session,
+    model: model as unknown as ModelPort,
+    registry: standardRegistry(),
+    sink: holdTurn.sink,
+    turnEpoch: epoch,
+    maxRounds: 1,
+  });
+  const holding = runtime.run('/trace [ai].[FactSalesReport]');
+  const heldGate = await holdTurn.nextGate();
+  runtime.resumeGate(heldGate.gateId, { kind: 'hold' });
+  await expect(holding).resolves.toBe('ok');
+  expect(session.pendingExploration).not.toBeNull();
+  return { heldGate, events: holdTurn.events };
+}
+
 describe('revision-bound gate refinement runtime', () => {
   it('re-emits the unchanged proposal after provider failure and keeps lookup available', async () => {
     const session = new AiSession();
@@ -107,16 +149,12 @@ describe('revision-bound gate refinement runtime', () => {
         providerError: { phase: 'sm_entry', name: 'Error', message: 'provider unavailable' },
       },
     ]);
-    const { registry } = scriptedRegistry([
-      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
-      { name: 'lineage_start_exploration', result: GATE_RESULT },
-    ]);
     const { events, sink, nextGate } = makeGateSink();
     const runtime = new AgentRuntime({
       threadId: 'refine-provider-failure',
       getSession: () => session,
       model: model as unknown as ModelPort,
-      registry,
+      registry: standardRegistry(),
       sink,
       turnEpoch: epoch,
       maxRounds: 1,
@@ -153,41 +191,14 @@ describe('revision-bound gate refinement runtime', () => {
     const firstEpoch = session.beginTurn();
     seedProposal(session, firstEpoch);
 
-    const holdModel = new ScriptedModelPort([
-      {
-        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
-          origin: '[ai].[FactSalesReport]',
-          analysisMode: 'bb',
-          classification: 'business',
-        })],
-      },
-    ]);
-    const { registry } = scriptedRegistry([
-      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
-      { name: 'lineage_start_exploration', result: GATE_RESULT },
-    ]);
-    const holdTurn = makeGateSink();
-    const holdRuntime = new AgentRuntime({
-      threadId: 'hold-turn',
-      getSession: () => session,
-      model: holdModel as unknown as ModelPort,
-      registry,
-      sink: holdTurn.sink,
-      turnEpoch: firstEpoch,
-      maxRounds: 1,
-    });
-
-    const holding = holdRuntime.run('/trace [ai].[FactSalesReport]');
-    const heldGate = await holdTurn.nextGate();
-    expect(holdRuntime.resumeGate(heldGate.gateId, { kind: 'hold' })).toBe(true);
+    const { heldGate, events } = await holdFreshProposal(session, firstEpoch, 'hold-turn');
 
     // The turn closes cleanly so VS Code releases the chat input, and the reviewed proposal
     // survives with the session still parked on the gate.
-    await expect(holding).resolves.toBe('ok');
     expect(session.pendingExploration?.revision).toBe(1);
     expect(session.phase.kind).toBe('awaiting_gate');
     expect(session.stateMachine).toBeNull();
-    expect(holdTurn.events).toContainEqual({
+    expect(events).toContainEqual({
       type: 'text',
       delta: '\n\nType the scope change below and send it — the proposal above stays pending until then.',
     });
@@ -207,7 +218,7 @@ describe('revision-bound gate refinement runtime', () => {
       threadId: 'refine-turn',
       getSession: () => session,
       model: refineModel as unknown as ModelPort,
-      registry,
+      registry: standardRegistry(),
       sink: refineTurn.sink,
       turnEpoch: refineEpoch,
       maxRounds: 1,
@@ -233,34 +244,7 @@ describe('revision-bound gate refinement runtime', () => {
     const holdEpoch = session.beginTurn();
     seedProposal(session, holdEpoch);
 
-    const holdModel = new ScriptedModelPort([
-      {
-        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
-          origin: '[ai].[FactSalesReport]',
-          analysisMode: 'bb',
-          classification: 'business',
-        })],
-      },
-    ]);
-    const { registry } = scriptedRegistry([
-      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
-      { name: 'lineage_start_exploration', result: GATE_RESULT },
-    ]);
-    const holdTurn = makeGateSink();
-    const holdRuntime = new AgentRuntime({
-      threadId: 'hold-then-slash',
-      getSession: () => session,
-      model: holdModel as unknown as ModelPort,
-      registry,
-      sink: holdTurn.sink,
-      turnEpoch: holdEpoch,
-      maxRounds: 1,
-    });
-    const holding = holdRuntime.run('/trace [ai].[FactSalesReport]');
-    const heldGate = await holdTurn.nextGate();
-    holdRuntime.resumeGate(heldGate.gateId, { kind: 'hold' });
-    await expect(holding).resolves.toBe('ok');
-    expect(session.pendingExploration).not.toBeNull();
+    await holdFreshProposal(session, holdEpoch, 'hold-then-slash');
 
     const slashEpoch = session.beginTurn();
     const slashModel = new ScriptedModelPort([
@@ -272,7 +256,7 @@ describe('revision-bound gate refinement runtime', () => {
       threadId: 'slash-turn',
       getSession: () => session,
       model: slashModel as unknown as ModelPort,
-      registry,
+      registry: standardRegistry(),
       sink: makeGateSink().sink,
       turnEpoch: slashEpoch,
       maxRounds: 1,
@@ -293,34 +277,7 @@ describe('revision-bound gate refinement runtime', () => {
     // the transcript above the proposal stays clickable while the gate is parked.
     session.recordDiscovery('[ai].[FactSalesReport]', 2, 'What feeds FactSalesReport?', 'DimCalendar feeds it.');
 
-    const holdModel = new ScriptedModelPort([
-      {
-        toolCalls: [validCall('start-1', 'lineage_start_exploration', {
-          origin: '[ai].[FactSalesReport]',
-          analysisMode: 'bb',
-          classification: 'business',
-        })],
-      },
-    ]);
-    const { registry } = scriptedRegistry([
-      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
-      { name: 'lineage_start_exploration', result: GATE_RESULT },
-    ]);
-    const holdTurn = makeGateSink();
-    const holdRuntime = new AgentRuntime({
-      threadId: 'hold-then-pill',
-      getSession: () => session,
-      model: holdModel as unknown as ModelPort,
-      registry,
-      sink: holdTurn.sink,
-      turnEpoch: holdEpoch,
-      maxRounds: 1,
-    });
-    const holding = holdRuntime.run('/trace [ai].[FactSalesReport]');
-    const heldGate = await holdTurn.nextGate();
-    holdRuntime.resumeGate(heldGate.gateId, { kind: 'hold' });
-    await expect(holding).resolves.toBe('ok');
-    expect(session.pendingExploration).not.toBeNull();
+    await holdFreshProposal(session, holdEpoch, 'hold-then-pill');
 
     // The host expands the pill sentinel exactly as the participant does before the turn starts.
     const pillPrompt = expandRunTracePrompt(RUN_TRACE_TRIGGER, session);
@@ -336,7 +293,7 @@ describe('revision-bound gate refinement runtime', () => {
       threadId: 'pill-turn',
       getSession: () => session,
       model: pillModel as unknown as ModelPort,
-      registry,
+      registry: standardRegistry(),
       sink: makeGateSink().sink,
       turnEpoch: pillEpoch,
       maxRounds: 1,

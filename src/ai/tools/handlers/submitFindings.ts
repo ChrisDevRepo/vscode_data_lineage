@@ -37,7 +37,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
       const sess = s.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
-      if (!engine) return s.logAndReturn('submit_findings', {
+      if (!engine) return s.logAndReturn('lineage_submit_findings', {
         error: REJECTION_CODES.noActiveSession,
         hint: 'No active exploration. Call lineage_start_exploration first.',
         next_action: 'start_exploration',
@@ -50,7 +50,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
       // Pre-Zod mode guard — fires before schema parse so the AI gets an unambiguous mode-specific error rather than a generic `.strict()` failure.
       if (!engine.columnAspect && rawInput.column_flow !== undefined) {
-        return s.logAndReturn('submit_findings', {
+        return s.logAndReturn('lineage_submit_findings', {
           error: REJECTION_CODES.bbFieldUnknown,
           hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional route_requests/prune_neighbors.',
         }, rawInput);
@@ -102,7 +102,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           typeof rawFocus === 'string' ? sess.memory.getArchivedAngles(rawFocus) : undefined,
         );
         const hint = [summary, repairHint, angleHint].filter(Boolean).join(' ');
-        return s.logAndReturn('submit_findings', {
+        return s.logAndReturn('lineage_submit_findings', {
           error: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
           hint,
         }, normalizedInput);
@@ -116,7 +116,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
       const violation = validateSectionsAgainstClassification(finding.sections, sess.classification, finding.verdict, archivedAngles);
       if (violation) {
-        return s.logAndReturn('submit_findings', {
+        return s.logAndReturn('lineage_submit_findings', {
           error: 'classification_lock_violation',
           hint: violation,
         }, normalizedInput);
@@ -133,9 +133,9 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         }
 
         const guardEnvelope = mapSubmitFindingsEngineGuard(result);
-        if (guardEnvelope) return s.logAndReturn('submit_findings', guardEnvelope, normalizedInput);
+        if (guardEnvelope) return s.logAndReturn('lineage_submit_findings', guardEnvelope, normalizedInput);
 
-        return s.logAndReturn('submit_findings', result, normalizedInput);
+        return s.logAndReturn('lineage_submit_findings', result, normalizedInput);
       }
 
       if ('done' in result && result.done && result.result) {
@@ -148,7 +148,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           node_states: result.result.node_states,
           detail_slots: result.result.detail_slots,
         };
-        return s.logAndReturn('submit_findings', { ...result, result: lmResult }, normalizedInput);
+        return s.logAndReturn('lineage_submit_findings', { ...result, result: lmResult }, normalizedInput);
       }
 
       const diag = engine.getHopDiagnostics();
@@ -174,10 +174,10 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           sess.memory.getUserQuestion(),
           sess.stateMachine?.deferredQuestions ?? [],
         );
-        return s.logAndReturn('submit_findings', envelope, normalizedInput);
+        return s.logAndReturn('lineage_submit_findings', envelope, normalizedInput);
       }
       // Minimal ack only: the next worker user message's <hop_context> is the single carrier of the full hop payload — returning nextHop here too doubled the focus DDL+neighbors every hop.
-      return s.logAndReturn('submit_findings', {
+      return s.logAndReturn('lineage_submit_findings', {
         ok: true,
         done: false,
         accepted_focus: finding.focus_node_id,

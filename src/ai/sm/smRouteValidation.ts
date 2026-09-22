@@ -89,7 +89,7 @@ const HELD_CORRECTION_ORDER =
  * envelope, where the same stricter policy applies for the same reason: another repair is
  * riding along, so the held-draft shortcut is not offered.
  */
-export const FULL_RESUBMIT_ORDER =
+const FULL_RESUBMIT_ORDER =
   'Nothing is held here: resend submit_findings whole, carrying your sections and summary over unchanged alongside both repairs.';
 /**
  * Resubmission order for a rejection carrying several fault families at once, all of them
@@ -105,7 +105,7 @@ const MULTI_FAULT_HELD_ORDER =
  * incompleteness nor a prune-topology fact. The engine holds the finding draft for a rejection made
  * only of these, and {@link buildRouteValidationRejection} states that hold.
  */
-export function isContentKind(kind: InvalidRouteKind): boolean {
+function isContentKind(kind: InvalidRouteKind): boolean {
   return !isAbsentKind(kind) && kind !== 'prune_would_orphan' && kind !== 'missing_required_route';
 }
 

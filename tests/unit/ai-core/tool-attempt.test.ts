@@ -749,6 +749,33 @@ describe('renderToolAttemptContext — held observations render whole', () => {
     expect(rendered).toContain('X'.repeat(10_000));
   });
 
+  it('drops bulk detail as the final shrink axis while keeping hint and issue paths — a single rejection, no summary branch', () => {
+    // Distinct from the case above: exactly one rejection takes the `length > 1 ? ... : []` false
+    // arm, so no rejectionSummary is prepended — essentialCurrentRejection alone must still shrink.
+    const state: ToolPhaseAttemptState = {
+      phase: 'active',
+      providerCalls: 1,
+      semanticFailures: 1,
+      observations: [],
+      rejections: [{
+        callId: 'call-0',
+        toolName: 'lineage_submit_findings',
+        code: 'validation',
+        reason: 'Flow entries are malformed.',
+        hint: 'Resend column_flow entry 3 with both endpoints.',
+        detail: { padding: `BULK-DETAIL-${'p'.repeat(60_000)}` },
+        issuePaths: ['column_flow.3'],
+      }],
+      stopReason: null,
+    };
+    const rendered = renderToolAttemptContext(state);
+
+    expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
+    expect(rendered).not.toContain('BULK-DETAIL-');
+    expect(rendered).toContain('Resend column_flow entry 3 with both endpoints.');
+    expect(rendered).toContain('column_flow.3');
+  });
+
   it('preserves the newest correction in full while collapsing older rejection envelopes', () => {
     const state: ToolPhaseAttemptState = {
       phase: 'active',
@@ -773,31 +800,6 @@ describe('renderToolAttemptContext — held observations render whole', () => {
     // The correction the model must act on next survives verbatim.
     expect(rendered).toContain(`HINT-19-${'h'.repeat(200)}`);
     expect(rendered).toContain('column_flow.19');
-  });
-
-  it('drops bulk detail as the final shrink axis while keeping hint and issue paths', () => {
-    const state: ToolPhaseAttemptState = {
-      phase: 'active',
-      providerCalls: 1,
-      semanticFailures: 1,
-      observations: [],
-      rejections: [{
-        callId: 'call-0',
-        toolName: 'lineage_submit_findings',
-        code: 'validation',
-        reason: 'Flow entries are malformed.',
-        hint: 'Resend column_flow entry 3 with both endpoints.',
-        detail: { padding: `BULK-DETAIL-${'p'.repeat(60_000)}` },
-        issuePaths: ['column_flow.3'],
-      }],
-      stopReason: null,
-    };
-    const rendered = renderToolAttemptContext(state);
-
-    expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(MAX_ATTEMPT_CONTEXT_BYTES);
-    expect(rendered).not.toContain('BULK-DETAIL-');
-    expect(rendered).toContain('Resend column_flow entry 3 with both endpoints.');
-    expect(rendered).toContain('column_flow.3');
   });
 
   it('stores an accepted body whole and keeps its read-dedupe identity', () => {

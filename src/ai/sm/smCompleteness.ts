@@ -39,8 +39,7 @@ export function computeUnaccounted(required: readonly string[], accounted: Itera
  * the standalone envelope's own held-draft order.
  * @param traceDirection - Upstream names the missing column directly as `out_col`; downstream
  * accounts for it inside `upstream_columns` since the focus's own `out_col` may be a
- * rename/derivation. Defaults to `upstream` to keep every pre-existing call site's wording
- * byte-identical.
+ * rename/derivation.
  */
 export function buildIncompleteRejection(
   focusId: string,
@@ -48,7 +47,7 @@ export function buildIncompleteRejection(
   available: string[],
   contradicted: readonly string[] = [],
   appendHeldOrder = true,
-  traceDirection: 'upstream' | 'downstream' = 'upstream',
+  traceDirection: 'upstream' | 'downstream',
 ): SubmitResult {
   const held = `Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`;
   const entryRepair = traceDirection === 'downstream'

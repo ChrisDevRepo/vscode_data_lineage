@@ -63,21 +63,13 @@ describe('get_scope_bundle origin node serves an explicit in/out split (N-14)', 
     expect(res.edges.length).toBe(2);
   });
 
-  it("origin node entry carries an explicit in/out split naming which side each neighbor is on", () => {
+  it("origin node entry carries an explicit in/out split naming which side each neighbor is on — recoverable from the split alone, ignoring res.edges entirely", () => {
     expect(Array.isArray(originPayload.in), 'origin payload has an in[] array').toBe(true);
     expect(Array.isArray(originPayload.out), 'origin payload has an out[] array').toBe(true);
     const inIds = (originPayload.in as Array<Record<string, unknown>>).map(n => n.id);
     const outIds = (originPayload.out as Array<Record<string, unknown>>).map(n => n.id);
     expect(inIds, 'origin in[] names its upstream neighbor').toEqual(['[ai].[spimportorders]']);
     expect(outIds, 'origin out[] names its downstream neighbor').toEqual(['[ai].[spcleanorders]']);
-  });
-
-  it('a consumer reading only the origin in/out split (never edge-tuple position) recovers the correct side', () => {
-    // Derives direction from the split alone, ignoring `res.edges` entirely.
-    const inIds = new Set((originPayload.in as Array<Record<string, unknown>>).map(n => n.id));
-    const outIds = new Set((originPayload.out as Array<Record<string, unknown>>).map(n => n.id));
-    expect(inIds.has('[ai].[spimportorders]'), 'the write-source neighbor is recoverable as upstream from the split alone').toBe(true);
-    expect(outIds.has('[ai].[spcleanorders]'), 'the read-target neighbor is recoverable as downstream from the split alone').toBe(true);
   });
 
   it('origin in[] neighbor entry carries edge direction/type metadata in the same shape as buildHopFocusNode (id/s/n/t/e)', () => {

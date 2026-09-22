@@ -16,6 +16,7 @@ import type { StoredRunReader } from '../../session/runStore';
 import type { ModelPort } from '../../model/modelPort';
 import type { TurnTokenBudget } from '../../support/tokenBudget';
 import type { ExtensionToWebviewMsg } from '../../../engine/shared/bridgeContract';
+import type { ToolName } from '../toolDefs';
 
 /** The one webview message a tool handler may hand to the host for delivery. */
 export type AiViewPreviewMessage = Extract<ExtensionToWebviewMsg, { type: 'ai-view-preview' }>;
@@ -61,7 +62,7 @@ export interface ToolServices {
   /** Returns the loaded graphology graph, throwing the standard no-model error when none is loaded. */
   requireGraph(): Graph;
   /** Logs the tool call to the hop log + channel, then returns the result — the standard return path. */
-  logAndReturn(toolName: string, data: object, input?: unknown): string;
+  logAndReturn(toolName: ToolName, data: object, input?: unknown): string;
   /** Materializes the session's partial filter into a fully-defaulted filter for engine construction. */
   buildActiveFilter(sess: AiSession): SerializedFilterState;
   /** Wraps a thrown error as an `internal_error` result; the `present_result` branch bumps failure counters. */

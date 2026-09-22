@@ -62,16 +62,15 @@ type BundleResult = {
 describe('get_scope_bundle serves per-node hop distance from the origin (uh/dh)', () => {
   const model = makeHopModel();
   const graph = buildBareGraph(model);
+  const bidirectionalInput: GetScopeBundleInput = {
+    origin: ORIGIN,
+    direction: 'bidirectional',
+    upstream_depth: 2,
+    downstream_depth: 1,
+  } as GetScopeBundleInput;
+  const res = getScopeBundle(model, graph, bidirectionalInput, BUDGET) as BundleResult;
 
   it('a node two hops upstream carries uh:2 and no dh', () => {
-    const input: GetScopeBundleInput = {
-      origin: ORIGIN,
-      direction: 'bidirectional',
-      upstream_depth: 2,
-      downstream_depth: 1,
-    } as GetScopeBundleInput;
-    const res = getScopeBundle(model, graph, input, BUDGET) as BundleResult;
-
     const upstreamTwo = res.nodes.find(n => n.id === UPSTREAM_TWO)!;
     expect(upstreamTwo, 'the two-hop node is in scope').toBeDefined();
     expect(upstreamTwo.uh, 'two hops upstream of the origin').toBe(2);
@@ -83,56 +82,26 @@ describe('get_scope_bundle serves per-node hop distance from the origin (uh/dh)'
   });
 
   it('a node reachable on both sides carries both uh and dh', () => {
-    const input: GetScopeBundleInput = {
-      origin: ORIGIN,
-      direction: 'bidirectional',
-      upstream_depth: 2,
-      downstream_depth: 1,
-    } as GetScopeBundleInput;
-    const res = getScopeBundle(model, graph, input, BUDGET) as BundleResult;
-
     const both = res.nodes.find(n => n.id === BOTH_SIDES)!;
     expect(both.uh, 'reached one hop upstream').toBe(1);
     expect(both.dh, 'reached one hop downstream').toBe(1);
   });
 
   it('the origin carries 0 on both sides', () => {
-    const input: GetScopeBundleInput = {
-      origin: ORIGIN,
-      direction: 'bidirectional',
-      upstream_depth: 2,
-      downstream_depth: 1,
-    } as GetScopeBundleInput;
-    const res = getScopeBundle(model, graph, input, BUDGET) as BundleResult;
-
     const originPayload = res.nodes.find(n => n.id === ORIGIN)!;
     expect(originPayload.uh, 'origin is distance 0 upstream of itself').toBe(0);
     expect(originPayload.dh, 'origin is distance 0 downstream of itself').toBe(0);
   });
 
   it('upstream_depth: 1 still returns only distance-1 upstream nodes — no behaviour change at depth 1', () => {
-    const input: GetScopeBundleInput = {
-      origin: ORIGIN,
-      direction: 'bidirectional',
-      upstream_depth: 1,
-      downstream_depth: 1,
-    } as GetScopeBundleInput;
-    const res = getScopeBundle(model, graph, input, BUDGET) as BundleResult;
+    const shallow = getScopeBundle(model, graph, { ...bidirectionalInput, upstream_depth: 1 }, BUDGET) as BundleResult;
 
-    expect(res.nodes.find(n => n.id === UPSTREAM_TWO), 'two-hop node excluded at upstream_depth 1').toBeUndefined();
-    const upstreamOne = res.nodes.find(n => n.id === UPSTREAM_ONE)!;
+    expect(shallow.nodes.find(n => n.id === UPSTREAM_TWO), 'two-hop node excluded at upstream_depth 1').toBeUndefined();
+    const upstreamOne = shallow.nodes.find(n => n.id === UPSTREAM_ONE)!;
     expect(upstreamOne.uh).toBe(1);
   });
 
   it('edges[] and the origin in/out split are unchanged for the same input', () => {
-    const input: GetScopeBundleInput = {
-      origin: ORIGIN,
-      direction: 'bidirectional',
-      upstream_depth: 2,
-      downstream_depth: 1,
-    } as GetScopeBundleInput;
-    const res = getScopeBundle(model, graph, input, BUDGET) as BundleResult;
-
     expect(res.edges.sort()).toEqual(
       [
         [UPSTREAM_TWO, UPSTREAM_ONE, 'read'],

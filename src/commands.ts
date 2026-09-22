@@ -6,6 +6,7 @@ import { postToWebview } from './bridge/host';
 import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
 import { searchCatalog } from './utils/modelSearch';
+import { markGitIgnored } from './utils/gitIgnoredDir';
 import { applyModelToSession, buildExtensionConfig } from './bridge/messageHandlers';
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 
@@ -138,6 +139,7 @@ export function registerCommands(
         }
         const dir = vscode.Uri.joinPath(wsFolder.uri, 'tmp', 'sm-dumps');
         await vscode.workspace.fs.createDirectory(dir);
+        await markGitIgnored(dir.fsPath);
         const fileUri = vscode.Uri.joinPath(dir, `sm-${ts}.json`);
         await vscode.workspace.fs.writeFile(fileUri, Buffer.from(dump, 'utf-8'));
         aiLogger.debug(`SM state dumped to ${fileUri.fsPath}`);

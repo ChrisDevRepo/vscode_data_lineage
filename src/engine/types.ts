@@ -118,6 +118,8 @@ export interface ParseStats {
   droppedRefs: string[];
   /** Detailed breakdown for each analyzed script. */
   spDetails: SpParseDetail[];
+  /** `schema.name: rule` for every body whose rule stopped at the parser's per-rule match cap; absent when none did. */
+  cappedRules?: string[];
 }
 
 /**

@@ -144,7 +144,7 @@ describe('ColumnTracer.determineActiveColumnsForCandidate — downstream spine f
     const upstreamOnSupplier = tracer.determineActiveColumnsForCandidate('salesstaging', [], new Set(), undefined, 'upstream');
     expect(upstreamOnSupplier, 'upstream: still keys off from_node/from_col, byte-identical to today').toEqual(['OrderAmount']);
 
-    const upstreamOnSupplierDefaultParam = tracer.determineActiveColumnsForCandidate('salesstaging', []);
+    const upstreamOnSupplierDefaultParam = tracer.determineActiveColumnsForCandidate('salesstaging', [], undefined, undefined, 'upstream');
     expect(upstreamOnSupplierDefaultParam, 'omitting traceDirection keeps the pre-existing upstream default').toEqual(['OrderAmount']);
   });
 });

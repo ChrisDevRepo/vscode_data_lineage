@@ -69,7 +69,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           isRefining,
         );
         if (alreadyStarted) {
-          return s.logAndReturn('start_exploration', alreadyStarted, loggedInput);
+          return s.logAndReturn('lineage_start_exploration', alreadyStarted, loggedInput);
         }
       }
 
@@ -89,7 +89,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         : input;
       const parsed = StartExplorationInputSchema.safeParse(parseInput);
       if (!parsed.success) {
-        return s.logAndReturn('start_exploration', buildStartExplorationReject(parsed.error, normalizedStart.input), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', buildStartExplorationReject(parsed.error, normalizedStart.input), loggedInput);
       }
       const data = parsed.data;
       if (data.mission_brief !== undefined) {
@@ -118,7 +118,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         const priorEngine = sess.stateMachine as NavigationEngine | null;
         const supplementPrereq = evaluateSupplementPrereqRule(priorEngine?.status ?? null);
         if (supplementPrereq) {
-          return s.logAndReturn('start_exploration', supplementPrereq, loggedInput);
+          return s.logAndReturn('lineage_start_exploration', supplementPrereq, loggedInput);
         }
         // `evaluateSupplementPrereqRule` rejects a null status with the same envelope, so reaching here already proves `priorEngine` non-null.
         if (!priorEngine) {
@@ -127,12 +127,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         // Screened before `supplementAgenda`, which widens the allowlist and extends the agenda, so a refusal after it would leave those mutations behind.
         if (data.analysisMode === 'ct' && data.targetColumns?.length) {
           const columnTargetReject = priorEngine.checkColumnTargets(data.targetColumns);
-          if (columnTargetReject) return s.logAndReturn('start_exploration', columnTargetReject, loggedInput);
+          if (columnTargetReject) return s.logAndReturn('lineage_start_exploration', columnTargetReject, loggedInput);
         }
         const supplementIds = data.supplement.nodeIds ?? [];
         // Admission happens inside `supplementAgenda`, past its last reject — the one ordering that keeps the reject side-effect-free.
         const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
-        if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
+        if ('error' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
         const admittedIds = supplementIds.filter(
           id => !res.skippedDetails.some(skip => skip.nodeId.toLowerCase() === id.toLowerCase()),
         );
@@ -144,12 +144,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           : '';
         s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}${skippedIdsSuffix}`);
         const hopCtx = priorEngine.getHopContext();
-        return s.logAndReturn('start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }
 
       // Fresh exploration path: origin is required.
       if (!data.origin && data.proposalRevision === undefined) {
-        return s.logAndReturn('start_exploration', {
+        return s.logAndReturn('lineage_start_exploration', {
           error: REJECTION_CODES.missingField,
           hint: "Field 'origin' is required for a fresh exploration. Supply 'supplement' with nodeIds only when extending a completed prior exploration (follow-up phase).",
         }, loggedInput);
@@ -160,13 +160,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       // Refinement replaces the reviewable proposal. No active engine exists before approval.
       if (data.proposalRevision !== undefined && !isRefining) {
-        return s.logAndReturn('start_exploration', {
+        return s.logAndReturn('lineage_start_exploration', {
           error: REJECTION_CODES.staleProposalRevision,
           hint: 'proposalRevision is valid only while refining the matching pending approval gate.',
         }, loggedInput);
       }
       if (isRefining && data.proposalRevision !== sess.pendingExploration!.revision) {
-        return s.logAndReturn('start_exploration', {
+        return s.logAndReturn('lineage_start_exploration', {
           error: REJECTION_CODES.staleProposalRevision,
           hint: `Refine proposal revision ${sess.pendingExploration!.revision}; do not reuse an older gate revision.`,
         }, loggedInput);
@@ -174,7 +174,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       const parallelViolation = evaluateParallelStartRule(sess.startExplorationRoundId, sess.currentRoundId);
       if (parallelViolation && !isRefining) {
-        return s.logAndReturn('start_exploration', parallelViolation, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', parallelViolation, loggedInput);
       }
       // A completed result remains authoritative while a fresh replacement is reviewed — replaced only by exact-revision approval; supplements above are the explicit no-gate continuation path.
       if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
@@ -189,7 +189,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           prior.sessionId === sess.id,
           isRefining,
         );
-        if (alreadyStarted) return s.logAndReturn('start_exploration', alreadyStarted, loggedInput);
+        if (alreadyStarted) return s.logAndReturn('lineage_start_exploration', alreadyStarted, loggedInput);
       }
 
       // A scope revision is a patch to the reviewed proposal, not a fresh read of mutable GUI state.
@@ -235,7 +235,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const bbTargetConflict = refineAnalysisMode === 'bb'
         ? evaluateBbTargetColumnsRule(data.targetColumns)
         : null;
-      if (bbTargetConflict) return s.logAndReturn('start_exploration', bbTargetConflict, loggedInput);
+      if (bbTargetConflict) return s.logAndReturn('lineage_start_exploration', bbTargetConflict, loggedInput);
       // An explicit BB refine replaces CT-only snapshot columns after validation succeeds.
       const refineTargetColumns = refineAnalysisMode === 'ct'
         ? (data.targetColumns ?? (isRefining ? pendingInit?.targetColumns : undefined))
@@ -264,7 +264,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const initResult = engine.init(proposalInit);
 
       // The preview engine is never published. Rejected proposals leave the pending proposal intact.
-      if ('error' in initResult) return s.logAndReturn('start_exploration', initResult, loggedInput);
+      if ('error' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
       const maxRounds = s.maxRounds;
       const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
       // Pathological breadth only: object lineage can fan out past the sliding-memory budget even at a shallow depth (hub nodes); recovery is structural narrowing / prune / ask-user, never an engine-invented depth number.
@@ -272,12 +272,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (scopeViolation) {
         const scopeOrigin = engine.currentOrigin ?? data.origin;
         s.logger.debug(`[ScopeBudget] origin=${scopeOrigin} scope=${initResult.scopeSize} safe_max=${safeMax}`);
-        return s.logAndReturn('start_exploration', scopeViolation, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', scopeViolation, loggedInput);
       }
 
       const classification = data.classification ?? sess.pendingExploration?.classification;
       if (!classification) {
-        return s.logAndReturn('start_exploration', { error: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', { error: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }, loggedInput);
       }
       engine.classification = classification;
       // Native approval Markdown is the review surface, so every in-scope object must be visible.
@@ -290,14 +290,14 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       };
       if (isRefining && sess.pendingExploration && sameExplorationProposal(nextProposal, sess.pendingExploration)) {
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
-        return s.logAndReturn('start_exploration', {
+        return s.logAndReturn('lineage_start_exploration', {
           error: 'no_op_refine',
           hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change.',
         }, loggedInput);
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('start_exploration', { error: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', { error: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
       // Captured once, before the discovery-memo round-trip below: the card, memo attachment and gate all name the revision that was reviewed, whatever a later refine does.
@@ -355,7 +355,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         const hint = isRefining
           ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
           : 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.';
-        return s.logAndReturn('start_exploration', {
+        return s.logAndReturn('lineage_start_exploration', {
           error: REJECTION_CODES.actionRequired,
           ...gate,
           hint,
@@ -363,7 +363,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       }
 
       const hopResult = engine.getHopContext();
-      return s.logAndReturn('start_exploration', { ...initResult, ...hopResult }, loggedInput);
+      return s.logAndReturn('lineage_start_exploration', { ...initResult, ...hopResult }, loggedInput);
     } catch (err) {
       // An abort thrown out of the discovery-summary compose call must reach the dispatcher as a thrown cancellation, never a toolError envelope, or a user Stop silently becomes an `internal_error` result.
       if (isCancellationOutcome(err, s.signal)) throw err;

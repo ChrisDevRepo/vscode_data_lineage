@@ -139,6 +139,27 @@ describe('emitDiscoveryBudgetNotice', () => {
   });
 });
 
+/** Builds the runtime shared by every reroute case below. */
+function buildRuntime(
+  threadId: string,
+  session: AiSession,
+  epoch: number,
+  model: ScriptedModelPort,
+  registry: ReturnType<typeof scriptedRegistry>['registry'],
+  sink: TurnEventSink,
+  maxRounds: number,
+): AgentRuntime {
+  return new AgentRuntime({
+    threadId,
+    getSession: () => session,
+    model: model as unknown as ModelPort,
+    registry,
+    sink,
+    turnEpoch: epoch,
+    maxRounds,
+  });
+}
+
 describe('oversized discovery cuts to the approval process', () => {
   it('reroutes to SM entry and opens the consent gate instead of answering inline', async () => {
     const session = new AiSession();
@@ -167,15 +188,7 @@ describe('oversized discovery cuts to the approval process', () => {
       { name: 'lineage_start_exploration', result: GATE_RESULT },
     ]);
     const { sink, events, nextGate } = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'budget-reroute-discovery',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink,
-      turnEpoch: epoch,
-      maxRounds: 4,
-    });
+    const runtime = buildRuntime('budget-reroute-discovery', session, epoch, model, registry, sink, 4);
 
     const running = runtime.run(`/search What feeds ${ORIGIN}?`);
     const gate = await nextGate();
@@ -207,15 +220,7 @@ describe('oversized discovery cuts to the approval process', () => {
       { name: 'lineage_start_exploration', result: GATE_RESULT },
     ]);
     const { sink, nextGate } = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'budget-reroute-slash-trace',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink,
-      turnEpoch: epoch,
-      maxRounds: 2,
-    });
+    const runtime = buildRuntime('budget-reroute-slash-trace', session, epoch, model, registry, sink, 2);
 
     const running = runtime.run(`/trace ${commandTail}`);
     const gate = await nextGate();
@@ -260,15 +265,7 @@ describe('oversized discovery cuts to the approval process', () => {
       { name: 'lineage_start_exploration', result: GATE_RESULT },
     ]);
     const { sink, nextGate } = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'budget-reroute-free-text-column-trace',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink,
-      turnEpoch: epoch,
-      maxRounds: 4,
-    });
+    const runtime = buildRuntime('budget-reroute-free-text-column-trace', session, epoch, model, registry, sink, 4);
 
     const running = runtime.run(`review the obj. ${ORIGIN} the all way up what sources and explain business logic.`);
     const gate = await nextGate();

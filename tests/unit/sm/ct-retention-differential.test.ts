@@ -2133,25 +2133,13 @@ function driveNarrowWalk(decision: ForkColumns): Map<string, string[]> {
 }
 
 describe('CT per-neighbour column carry — a stated subset is not an inherit', () => {
-  it('not stated is row_role_only, never an inherited session target set', () => {
-    expect(
-      driveNarrowWalk(undefined).get(NARROW_GATE),
-      'an omitted decision carries no active column — the same dispatch a stated "none" produces',
-    ).toEqual([]);
-  });
-
+  // The fork suite above already proves omitted/`none` dispatch empty on a single-column trace;
+  // the one new claim two traced columns can prove that a single column cannot is the subset case.
   it('carries only the stated subset, never the wider set it was queued under', () => {
     expect(
       driveNarrowWalk(['GateFlag']).get(NARROW_GATE),
       'the router named one of the two traced columns and that is what the neighbour is asked about',
     ).toEqual(['GateFlag']);
-  });
-
-  it('carries nothing when the route states none', () => {
-    expect(
-      driveNarrowWalk('none').get(NARROW_GATE),
-      'a row-role neighbour declaring both traced columns is still dispatched with neither',
-    ).toEqual([]);
   });
 });
 

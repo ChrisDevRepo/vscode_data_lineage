@@ -119,6 +119,9 @@ export const LOG_TRUNC_CONTENT = 200;
 /** Truncation cap for JSON payloads (tool I/O, webview messages) — logging.md truncation table. */
 export const LOG_TRUNC_JSON = 300;
 
+/** Items shown when a log line previews a list. */
+export const LOG_TRUNC_LIST = 10;
+
 /**
  * Truncation cap for tool-rejection diagnostics (reason and remediation hint).
  *

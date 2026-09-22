@@ -97,11 +97,10 @@ export class ColumnTracer {
    * the PREVIOUS node. A non-empty result means the chain was left incomplete and the engine rejects.
    *
    * @param columnFlow - The column flow entries submitted by the AI.
-   * @param traceDirection - Trace direction of the owning exploration. Defaults to `upstream` so
-   * every pre-existing call site keeps today's behaviour shape byte-identical.
+   * @param traceDirection - Trace direction of the owning exploration.
    * @returns An array of active columns that were not accounted for.
    */
-  unaccountedActiveColumns(columnFlow: ColumnFlowEntry[], traceDirection: 'upstream' | 'downstream' = 'upstream'): string[] {
+  unaccountedActiveColumns(columnFlow: ColumnFlowEntry[], traceDirection: 'upstream' | 'downstream'): string[] {
     const accounted = traceDirection === 'downstream'
       ? columnFlow.flatMap(e => [e.out_col, ...e.upstream_columns.map(r => r.col)])
       : columnFlow.map(e => e.out_col);
@@ -124,15 +123,15 @@ export class ColumnTracer {
    * @param log - Optional logger; the caller (`smBase.ts`) supplies the one it already holds.
    * @param traceDirection - Trace direction of the owning exploration. `from_node`/`from_col` name
    * the supplier side (next node, upstream); `to_node`/`to_col` name the write target (next node,
-   * downstream). Defaults to `upstream` so every pre-existing call site keeps today's behaviour shape.
+   * downstream).
    * @returns The resolved active columns for the candidate node.
    */
   determineActiveColumnsForCandidate(
     candidateNodeId: string,
     entryColumns: string[],
     writtenCarrierIds: ReadonlySet<string> = new Set(),
-    log?: TracerLogFn,
-    traceDirection: 'upstream' | 'downstream' = 'upstream',
+    log: TracerLogFn | undefined,
+    traceDirection: 'upstream' | 'downstream',
   ): string[] {
     const spineByNorm = new Map<string, string>();
     for (const e of this.aspect.edges) {
@@ -224,9 +223,9 @@ export class ColumnTracer {
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
     store: ColumnStore | null,
-    log?: TracerLogFn,
-    removedSet?: ReadonlySet<string>,
-    traceDirection: 'upstream' | 'downstream' = 'upstream',
+    log: TracerLogFn | undefined,
+    removedSet: ReadonlySet<string> | undefined,
+    traceDirection: 'upstream' | 'downstream',
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];

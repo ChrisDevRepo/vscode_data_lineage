@@ -130,98 +130,117 @@ function commitStubPresentation(session: AiSession, epoch: number): string {
   return JSON.stringify({ ok: true });
 }
 
-describe('synthesis breaker salvage (run level)', () => {
-  it('renders the held draft instead of failing when the third strike is a notes-only repairable rejection', async () => {
-    const session = new AiSession();
-    seedSingleNodeLineage(session);
-    const epoch = session.beginTurn();
-    seedProposal(session, epoch);
+/**
+ * Runs the shared salvage scenario: origin analyzed, then `MAX_TOOL_SEMANTIC_FAILURES`
+ * present_result strikes, the last holding `notes` (as given) behind a notes-only repairable
+ * rejection — the m18-close-azure-foundry/run-T8S shape. Shared by both cases below; only the
+ * held notes and the logger differ.
+ */
+async function runSalvageScenario(notes: Array<{ node_id: string; text: string }>, logger?: Logger): Promise<{
+  session: AiSession;
+  outcome: string;
+  model: ScriptedModelPort;
+  script: unknown[];
+  invocations: ReturnType<typeof scriptedRegistry>['invocations'];
+}> {
+  const session = new AiSession();
+  seedSingleNodeLineage(session);
+  const epoch = session.beginTurn();
+  seedProposal(session, epoch);
 
-    let presentCalls = 0;
-    const { registry, invocations } = scriptedRegistry([
-      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
-      { name: 'lineage_start_exploration', result: GATE_RESULT },
-      {
-        name: 'lineage_submit_findings',
-        result: (): string => {
-          const engine = session.stateMachine!;
-          const result = engine.submitFindings({
-            focus_node_id: engine.currentFocus!,
-            sections: [{ angle: 'business', text: 'origin analyzed' }],
-            summary: 'origin analyzed',
-            verdict: 'analyze',
-          });
-          if (!('error' in result)) engine.getHopContext();
-          return JSON.stringify(result);
-        },
+  let presentCalls = 0;
+  const { registry, invocations } = scriptedRegistry([
+    { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
+    { name: 'lineage_start_exploration', result: GATE_RESULT },
+    {
+      name: 'lineage_submit_findings',
+      result: (): string => {
+        const engine = session.stateMachine!;
+        const result = engine.submitFindings({
+          focus_node_id: engine.currentFocus!,
+          sections: [{ angle: 'business', text: 'origin analyzed' }],
+          summary: 'origin analyzed',
+          verdict: 'analyze',
+        });
+        if (!('error' in result)) engine.getHopContext();
+        return JSON.stringify(result);
       },
-      {
-        name: 'lineage_present_result',
-        result: (input: unknown): string => {
-          const isSalvagePatch = typeof input === 'object' && input !== null
-            && (input as Record<string, unknown>).is_update === true;
-          if (isSalvagePatch) {
-            // The engine's own repair, dispatched directly — never through another model round.
-            return commitStubPresentation(session, epoch);
-          }
-          presentCalls += 1;
-          if (presentCalls < MAX_TOOL_SEMANTIC_FAILURES) {
-            return JSON.stringify({
-              success: false,
-              errors: [`sections.0: Unrecognized key: "},{" (attempt ${presentCalls})`],
-              hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
-            });
-          }
-          // Third strike: a fully assembled draft, rejected only on one narrow, scoped field —
-          // the exact m18-close-azure-foundry/run-T8S shape.
-          session.presentResultRepairDraft.hold(
-            {
-              name: 'vwDiscountCalc Discount trace',
-              summary: 'Discount is computed from SalesStaging and discount rules.',
-              sections: [{ label: 'Sources', text: 'CustomerMaster supplies the tier used in the lookup.' }],
-              highlight_groups: [{ label: 'Sources', color: 'source', node_ids: ['[ai].[Origin]'] }],
-              notes: [{ node_id: '[ai].[vwraworders]', text: 'unlinkable caption' }],
-            } as unknown as PresentResultInput,
-            ['notes'],
-          );
+    },
+    {
+      name: 'lineage_present_result',
+      result: (input: unknown): string => {
+        const isSalvagePatch = typeof input === 'object' && input !== null
+          && (input as Record<string, unknown>).is_update === true;
+        if (isSalvagePatch) {
+          // The engine's own repair, dispatched directly — never through another model round.
+          return commitStubPresentation(session, epoch);
+        }
+        presentCalls += 1;
+        if (presentCalls < MAX_TOOL_SEMANTIC_FAILURES) {
           return JSON.stringify({
             success: false,
-            errors: ['notes[].node_id names IDs the result graph cannot link: `[ai].[vwraworders]`'],
-            hint: 'Fix notes only. Resend only these fields: notes. You may repair the held draft by '
-              + 'calling lineage_present_result with is_update:true and only these corrected fields: notes.',
+            errors: [`sections.0: Unrecognized key: "},{" (attempt ${presentCalls})`],
+            hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
           });
-        },
+        }
+        // Third strike: a fully assembled draft, rejected only on one narrow, scoped field.
+        session.presentResultRepairDraft.hold(
+          {
+            name: 'vwDiscountCalc Discount trace',
+            summary: 'Discount is computed from SalesStaging and discount rules.',
+            sections: [{ label: 'Sources', text: 'CustomerMaster supplies the tier used in the lookup.' }],
+            highlight_groups: [{ label: 'Sources', color: 'source', node_ids: ['[ai].[Origin]'] }],
+            notes,
+          } as unknown as PresentResultInput,
+          ['notes'],
+        );
+        return JSON.stringify({
+          success: false,
+          errors: ['notes[].node_id names IDs the result graph cannot link: `[ai].[vwraworders]`'],
+          hint: 'Fix notes only. Resend only these fields: notes. You may repair the held draft by '
+            + 'calling lineage_present_result with is_update:true and only these corrected fields: notes.',
+        });
       },
+    },
+  ]);
+
+  const script = [
+    { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
+    { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: 'origin analyzed', verdict: 'analyze' })] },
+    ...Array.from({ length: MAX_TOOL_SEMANTIC_FAILURES }, (_, i) => (
+      { toolCalls: [validCall(`present-${i}`, 'lineage_present_result', { attempt: i })] }
+    )),
+  ];
+  const model = new ScriptedModelPort(script);
+  const turn = makeGateSink();
+  const runtime = new AgentRuntime({
+    threadId: 'synthesis-salvage',
+    getSession: () => session,
+    model: model as unknown as ModelPort,
+    registry,
+    sink: turn.sink,
+    turnEpoch: epoch,
+    maxRounds: 10,
+    ...(logger ? { logger } : {}),
+  });
+
+  const running = runtime.run('/trace [ai].[Origin]');
+  const gate = await turn.nextGate();
+  expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
+  const outcome = await running;
+  return { session, outcome, model, script, invocations };
+}
+
+describe('synthesis breaker salvage (run level)', () => {
+  it('renders the held draft instead of failing when the third strike is a notes-only repairable rejection', async () => {
+    const { session, outcome, model, script, invocations } = await runSalvageScenario([
+      { node_id: '[ai].[vwraworders]', text: 'unlinkable caption' },
     ]);
-
-    const script = [
-      { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
-      { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: 'origin analyzed', verdict: 'analyze' })] },
-      ...Array.from({ length: MAX_TOOL_SEMANTIC_FAILURES }, (_, i) => (
-        { toolCalls: [validCall(`present-${i}`, 'lineage_present_result', { attempt: i })] }
-      )),
-    ];
-    const model = new ScriptedModelPort(script);
-    const turn = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'synthesis-salvage',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink: turn.sink,
-      turnEpoch: epoch,
-      maxRounds: 10,
-    });
-
-    const running = runtime.run('/trace [ai].[Origin]');
-    const gate = await turn.nextGate();
-    expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
-    const outcome = await running;
 
     // RED before the fix: the turn ended 'error' with a `semantic_failures` stop and the draft
     // discarded — see the run-T8S evidence this test pins. GREEN after the fix: the held draft is
     // salvaged and the turn completes.
-    expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
+    expect(outcome).toBe('ok');
     expect(session.presentResultCalledThisTurn).toBe(true);
     // The salvage patch dispatched once more than the model was ever asked for — through the
     // registry directly, never a fourth provider round.
@@ -243,76 +262,6 @@ describe('synthesis breaker salvage (run level)', () => {
   // in scope: the decision is now named out loud as a full REJECT of `notes[]`, with the discarded
   // count, per `.claude/rules/ai-surface.md` — never a silent narrowing.
   it('logs the discarded note count and names the decision as a REJECT, not a silent narrowing', async () => {
-    const session = new AiSession();
-    seedSingleNodeLineage(session);
-    const epoch = session.beginTurn();
-    seedProposal(session, epoch);
-
-    let presentCalls = 0;
-    const { registry } = scriptedRegistry([
-      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
-      { name: 'lineage_start_exploration', result: GATE_RESULT },
-      {
-        name: 'lineage_submit_findings',
-        result: (): string => {
-          const engine = session.stateMachine!;
-          const result = engine.submitFindings({
-            focus_node_id: engine.currentFocus!,
-            sections: [{ angle: 'business', text: 'origin analyzed' }],
-            summary: 'origin analyzed',
-            verdict: 'analyze',
-          });
-          if (!('error' in result)) engine.getHopContext();
-          return JSON.stringify(result);
-        },
-      },
-      {
-        name: 'lineage_present_result',
-        result: (input: unknown): string => {
-          const isSalvagePatch = typeof input === 'object' && input !== null
-            && (input as Record<string, unknown>).is_update === true;
-          if (isSalvagePatch) return commitStubPresentation(session, epoch);
-          presentCalls += 1;
-          if (presentCalls < MAX_TOOL_SEMANTIC_FAILURES) {
-            return JSON.stringify({
-              success: false,
-              errors: [`sections.0: Unrecognized key: "},{" (attempt ${presentCalls})`],
-              hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
-            });
-          }
-          // Two held notes — one genuinely unlinkable, one a valid caption — both get discarded by
-          // the blanket `notes: []` salvage; the log must now say so.
-          session.presentResultRepairDraft.hold(
-            {
-              name: 'vwDiscountCalc Discount trace',
-              summary: 'Discount is computed from SalesStaging and discount rules.',
-              sections: [{ label: 'Sources', text: 'CustomerMaster supplies the tier used in the lookup.' }],
-              highlight_groups: [{ label: 'Sources', color: 'source', node_ids: ['[ai].[Origin]'] }],
-              notes: [
-                { node_id: '[ai].[vwraworders]', text: 'unlinkable caption' },
-                { node_id: '[ai].[Origin]', text: 'a valid caption discarded alongside it' },
-              ],
-            } as unknown as PresentResultInput,
-            ['notes'],
-          );
-          return JSON.stringify({
-            success: false,
-            errors: ['notes[].node_id names IDs the result graph cannot link: `[ai].[vwraworders]`'],
-            hint: 'Fix notes only. Resend only these fields: notes.',
-          });
-        },
-      },
-    ]);
-
-    const script = [
-      { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
-      { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: 'origin analyzed', verdict: 'analyze' })] },
-      ...Array.from({ length: MAX_TOOL_SEMANTIC_FAILURES }, (_, i) => (
-        { toolCalls: [validCall(`present-${i}`, 'lineage_present_result', { attempt: i })] }
-      )),
-    ];
-    const model = new ScriptedModelPort(script);
-    const turn = makeGateSink();
     const debugLines: string[] = [];
     const logger = {
       debug: (msg: string): void => { debugLines.push(msg); },
@@ -320,21 +269,13 @@ describe('synthesis breaker salvage (run level)', () => {
       warn: (): void => undefined,
       error: (): void => undefined,
     } as unknown as Logger;
-    const runtime = new AgentRuntime({
-      threadId: 'synthesis-salvage-log',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink: turn.sink,
-      turnEpoch: epoch,
-      maxRounds: 10,
-      logger,
-    });
 
-    const running = runtime.run('/trace [ai].[Origin]');
-    const gate = await turn.nextGate();
-    expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
-    await running;
+    // Two held notes — one genuinely unlinkable, one a valid caption — both get discarded by the
+    // blanket `notes: []` salvage; the log must now say so.
+    await runSalvageScenario([
+      { node_id: '[ai].[vwraworders]', text: 'unlinkable caption' },
+      { node_id: '[ai].[Origin]', text: 'a valid caption discarded alongside it' },
+    ], logger);
 
     const salvageLog = debugLines.find(line => line.includes('synthesis breaker tripped'));
     expect(salvageLog, debugLines.join('\n')).toBeDefined();

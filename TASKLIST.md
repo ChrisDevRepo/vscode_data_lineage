@@ -19,13 +19,15 @@ committed as `c305d5da4`.
 
 | # | Item | State | Next |
 |---|---|---|---|
-| O1 | Follow-up prune: `prompts.ts:455-459` "omitted section is a deleted section" contradicts retain contract `toolSchemas.ts:946` (825d1cc27); harness follow-up m60 also stopped 3× `Detail slot(s) reached no section: spimportorders, vwexternalorders` (`test-results/e2e/m60-followup-prune/2026-09-21T19-13-06-929Z-azure-foundry/run-1/host.log:295-296`) | hop read re-dispatched 2026-09-22 (queue `o1-followup-prune-slots`); old package lost from /tmp; prior agent was mid hop read of 2nd recording `…19-43-59-594Z…` | were the two nodes pruned (engine demands slots of pruned nodes → code) or kept (prompt contradiction → one-pair screen at the follow-up gen) |
+| O1 | Follow-up stop `Detail slot(s) reached no section` (m60 19-13-06 only; other 2 recordings do not reproduce) | hop read DONE 2026-09-22: kept nodes, no prompt contradiction — convergent repair 12→7→2 killed by `MAX_TOOL_SEMANTIC_FAILURES=3` (`toolAttempt.ts:60`, charge sites ~1808/1843/1894); issue `followup-prune-slots` | CODE owner: a validation reject whose violation set is a strict subset of the prior attempt's is not charged; red→green in `tool-attempt.test.ts`. fix dispatched 2026-09-22 |
 | O1b | Harness `--followup` (repeatable) in `internal-tests/tools/e2e-run.mjs` + harness — written by the agent, untracked internal-tests | builds (tsc exit 0, 2026-09-22) | reuse for O2/O4 |
 | O2 | Playground proof owed for follow-up wording `a4e7d559e`, `d73db5898` | on an O1 follow-up recording | one pair each |
 | O4 | `follow-up-explore-next-autosupplement` — headless only (row no-pm-retest) | not run | `--followup "Explore related objects"` then a pick: turn 2 lists + asks, turn 3 supplements |
 | O5 | `ct-edge-transform-classes` (`c3c2babde`) | measured by final capture | close on capture |
 | R1 | Code-review cleanup rest (plan `~/.claude/plans/robust-popping-dusk.md`) | DONE 2026-09-22 | landed: comment batches 1–7, `d951a7616`, `d45849de9` columnTraceDirection/required traceDirection/runStore trunc, `d9f8d630e` + `d5587b95c` sm/session comment pass, `98f217f0d` useTraceNeighborPicker + GraphCanvas latest-refs (no render test: React Flow needs browser APIs jsdom lacks), `f02eeaf4f` toolErrorEnvelope. Closed no-change: `modelSearch` sweep merge (+16), `tools.ts` regex guard (+12), `toolAttempt` (+5), `memoryManager` (+7), generic `nodeDecoration` memo (−4, less readable). Left: large-function splits, after the green baseline, one per commit |
-| T1 | AI-runtime test trim (PM 2026-09-21): pass 2 in flight 2026-09-22 (3 sonnet agents: ai-core / sm ct+prune / sm rest); pass 1 committed — 17 files folded or deleted, 0 lost `src/**` coverage; stopped on the usage limit, far short of the ≥40% target | pass 2 open | per-file unique coverage (0-unique files are the candidates: rerun the per-file coverage map); fold each red→green proof's decisive assertion into its owner file; biggest targets are `tool-attempt.test.ts`, `column-flow-validation.test.ts`, `ct-retention-differential.test.ts`, the `navigation-engine-*`, `prune-*`, `present-result-*` and `completion-envelope-*` families; parser/engine never |
+| H1 | `bad_contributor_col` hint states a READS-only rule the validator enforces for procedures only (`columnTracer.ts:467`, `smRouteValidation.ts:35`) → wrong repairs, extra rejections | OPEN, issue `bad-contributor-col-hint-scope` | model-facing text: hop read of a run that hit it (`rendered_prompt.py find "bad_contributor_col" <run>`) → owner; prompt owner → one-pair playground → `/prompt-change`; primary item (rejection reduction) |
+| H2 | Four "analysis is held" templates in inconsistent format (`smCompleteness.ts:75`, `smRouteValidation.ts:78,85,101`) | OPEN, secondary | wire text changes → only with hop evidence + playground; not before H1 |
+| S1 | Split `submitFindings` (`smBase.ts:1965`, 625 lines) at its existing seam `smBase.ts:2420` "All validation has passed": move the apply phase (~160 lines) into `private applyValidatedHop(staged)` with the locals it reads as one typed object; no logic change | after L2 green baseline | before: coverage of the moved range (measured 2026-09-22 by `test:runtime`: apply 80/80 statements, validate 232/235) + runtime/parser/bfs green; after: same suites green, `tsc` proves every local is passed (no closure), diff is a move only; then `executePresentResult` repair-draft branch (`presentResult.ts:234`), one commit each |
 | L2 | New green baseline | after O1/O2/O4 + peer sessions done | `capture_wt.py <label> --lane azure-foundry --prompts T2,T3,T4,T5,T6,T7,T8,T8S,T25 --parallel 3 --against test-results/facts/agg-45cc1ab49-azure-foundry.json` (sandbox off; clean the capture worktree first if pin fails) → compare both → `baseline`, commit, push |
 
 ## Done this release
@@ -36,18 +38,15 @@ derived column (smoke m59 ok) · `611c212ad` classification-lock hint names the 
 CT reopen credited its archived angles, one rejection names every gap · Q25 price callout closed
 SPORADIC (bonus only) · T8 SUM/dedup loss traced to the reopen rejection chain (fixed above).
 Earlier: A1 `.muse` out of VSIX `3ee3db61a` · A3 loader via `validateBridgeFrame` `ca650597e` ·
-R1 release verification `6d6784712`.
+R1 release verification `6d6784712`. · T1 AI-runtime test trim closed at pass 2 (`c305d5da4`, `37a680135`; 0 coverage lost; regression tests kept, row regression-tests-kept) · `coverage:core` green again `635de5b74`.
+Code-review follow-ups 2026-09-22: A4 parser cap now reported `cdaca2a78` · A5 trace/SM-dump dirs git-ignored `7a5bbf34f` · B7 one tool-name spelling `5217ada9d` · B8 unexported `44eafbe37` · traceDirection required `609f59bb0`.
 
 ## Backlog (not this release)
 
-- A4 parser 10,000-match cap unlogged (`sqlBodyParser.ts:568`) — report in parse stats; protected tier.
-- A5 AI trace / SM dumps in `<workspace>/tmp/` unguarded (`commands.ts` ~92) — write `tmp/.gitignore`.
-- B6 `AiMemoryManager.prunedDetails` written, never read — wire a reader or drop the write.
-- B7 tool name logged two ways (`toolProvider.ts`) — one spelling; check trace-tool keys first.
-- B8 `FULL_RESUBMIT_ORDER`, `isContentKind` exported unused (`smRouteValidation.ts`) — drop `export`.
+(empty)
 
 ## Closed — no change (re-raise only with new evidence)
 
-A2 render-state deps · B1 DACPAC decompression cap · B2 longest-path O(k²) · B3 `load-project` path
+B6 `prunedDetails` kept: archive awaiting an approved read path, used as the prune oracle by 3 tests · A2 render-state deps · B1 DACPAC decompression cap · B2 longest-path O(k²) · B3 `load-project` path
 check · B4 `]]` in CTE bracket skip · B5 edge dedup ignores type · A6 trace-write catches (already
 reported via `onWriteFailure`, `extensionRuntime.ts:82-86`) · B9 cosmetics.

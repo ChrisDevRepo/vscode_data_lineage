@@ -8,9 +8,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const openMock = vi.hoisted(() => vi.fn());
+const writeFileMock = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('node:fs/promises', () => ({
   open: openMock,
   mkdir: vi.fn(async () => undefined),
+  writeFile: writeFileMock,
 }));
 
 import { AiTraceWriter } from '../../../src/ai/observability/aiTraceWriter';
@@ -282,5 +284,13 @@ describe('AiTraceWriter resilience', () => {
     await closing;
     expect(handle.close).toHaveBeenCalled();
     expect(writer.isEnabled()).toBe(false);
+  });
+
+  it('marks its trace directory git-ignored so a workspace commit never picks up a trace', async () => {
+    openMock.mockResolvedValue(fakeHandle());
+    const writer = new AiTraceWriter();
+    await writer.enable('/ws');
+    expect(writeFileMock).toHaveBeenCalledWith(expect.stringMatching(/lm-trace[\\/]\.gitignore$/), '*\n', { flag: 'wx' });
+    await writer.close();
   });
 });

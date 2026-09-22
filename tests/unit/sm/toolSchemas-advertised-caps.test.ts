@@ -43,40 +43,13 @@ function at(schema: Node, path: readonly string[]): Node {
   return node;
 }
 
-/** Every content cap, with the `.max()` form its projection must stay identical to. */
-const CAPPED_FIELDS: Array<{
-  name: string;
-  path: readonly string[];
-  keyword: 'maxLength' | 'maxItems';
-  limit: number;
-  /** The pre-`advertisedMax` declaration, rebuilt here as the parity reference. */
-  reference: z.ZodType;
-}> = [
-  { name: 'present_result name', path: ['name'], keyword: 'maxLength', limit: PRESENT_RESULT_NAME_MAX, reference: z.string().max(PRESENT_RESULT_NAME_MAX).describe('Short name for the generated lineage view — aim for ~60 chars.') },
-  { name: 'present_result title', path: ['title'], keyword: 'maxLength', limit: PRESENT_RESULT_TITLE_MAX, reference: z.string().max(PRESENT_RESULT_TITLE_MAX).describe('Optional report heading.') },
-  { name: 'present_result sections[].label', path: ['sections', '[]', 'label'], keyword: 'maxLength', limit: PRESENT_RESULT_SECTION_LABEL_MAX, reference: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).describe('Section heading and graph badge for every linked node.') },
-  { name: 'present_result highlight_groups[].label', path: ['highlight_groups', '[]', 'label'], keyword: 'maxLength', limit: PRESENT_RESULT_HIGHLIGHT_LABEL_MAX, reference: z.string().max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.') },
-];
-
+// present_result's own label-ceiling projection (name/title/section label/highlight label,
+// highlight_groups maxItems/minItems, and the dispatch-path-never-rejects-oversize invariant) is
+// pinned in present-result-limits.test.ts — not repeated here. This file keeps only the
+// submit_findings-specific caps and the shared mechanism present-result-limits does not cover.
 describe('advertised caps — the JSON schema the model reads', () => {
-  const presentResult = toModelJsonSchema(PresentResultModelSchema) as Node;
   const submitFindings = toModelJsonSchema(SubmitFindingsBbInputSchema) as Node;
   const submitFindingsCt = toModelJsonSchema(SubmitFindingsCtInputSchema) as Node;
-
-  it.each(CAPPED_FIELDS)('$name projects its ceiling exactly as .max() did', ({ path, keyword, limit, reference }) => {
-    const projected = at(presentResult, path);
-    expect(projected[keyword], 'the ceiling matches the exported constant').toBe(limit);
-    // Same keywords and same values as the `.max()` declaration produced. Key ORDER differs —
-    // `.meta()` merges after the type keywords — which JSON Schema does not distinguish.
-    expect(projected).toEqual(toModelJsonSchema(reference));
-  });
-
-  it('present_result highlight_groups projects maxItems exactly as .max() did, and keeps its structural floor', () => {
-    const projected = presentResult.properties as Record<string, Node>;
-    const field = projected.highlight_groups;
-    expect(field.maxItems).toBe(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX);
-    expect(field.minItems, 'the floor is structural and stays a real parse-time check').toBe(1);
-  });
 
   it('submit_findings badge_label and column_flow note project their ceilings', () => {
     expect(at(submitFindings, ['badge_label']).maxLength).toBe(SUBMIT_FINDINGS_BADGE_LABEL_MAX);
@@ -109,7 +82,10 @@ describe('advertised caps — no schema on the dispatch path parses one', () => 
     ...over,
   });
 
-  it('every present_result stage projection accepts an over-size value', () => {
+  // present-result-limits.test.ts pins PresentResultModelSchema's own oversize-accepted
+  // invariant; this pins the two forms it does not cover — the synthesis-stage schema and the
+  // held-draft repair patch — so a repair turn is never rejected for the size it is repairing.
+  it('the synthesis-stage present_result schema and its repair patch accept an over-size value', () => {
     const overSize = presentPayload({
       name: 'n'.repeat(PRESENT_RESULT_NAME_MAX + 1),
       title: 't'.repeat(PRESENT_RESULT_TITLE_MAX + 1),

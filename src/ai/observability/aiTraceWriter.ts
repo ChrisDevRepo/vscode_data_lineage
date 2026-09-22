@@ -2,6 +2,7 @@ import { open, mkdir, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { TurnEvent } from '../runtime/turnEventSink';
 import { safeTraceStringify, type WireRecord } from './wireLog';
+import { markGitIgnored } from '../../utils/gitIgnoredDir';
 
 /**
  * One lifecycle record in the session-scoped AI diagnostic trace.
@@ -357,6 +358,7 @@ export class AiTraceWriter {
   private async openTrace(logRoot: string): Promise<string> {
     const directory = join(logRoot, 'lm-trace');
     await mkdir(directory, { recursive: true });
+    await markGitIgnored(directory);
     const iso = new Date().toISOString().replace(/[:.]/g, '-');
     const filePath = join(directory, `trace-${iso}.ndjson`);
     const opening = open(filePath, 'a', 0o600).then(async (handle) => {

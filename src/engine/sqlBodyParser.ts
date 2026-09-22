@@ -56,6 +56,8 @@ interface ParsedDependencies {
    * Tracked for cross-DB lineage analysis.
    */
   crossDbTargets: string[];
+  /** Extraction rules that stopped at {@link MAX_MATCHES_PER_RULE}; references past the cap are missing. */
+  cappedRules: string[];
 }
 
 /**
@@ -443,6 +445,7 @@ export function parseSqlBody(
   const execCalls = new Set<string>();
   const crossDbSources = new Set<string>();
   const crossDbTargets = new Set<string>();
+  const cappedRules = new Set<string>();
 
   // Step 2: Extraction rules
   const udfSources = new Set<string>();
@@ -459,15 +462,14 @@ export function parseSqlBody(
       execCalls;
 
     const before = dest.size;
-    collectMatches(clean, regex, dest);
+    if (collectMatches(clean, regex, dest)) cappedRules.add(rule.name);
     const added = dest.size - before;
 
     // Also collect 3-part+ names (cross-DB refs)
-    if (rule.category === 'source' || rule.name === 'extract_udf_calls') {
-      collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbSources);
-    } else if (rule.category === 'target') {
-      collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbTargets);
-    }
+    const crossDbDest = rule.category === 'source' || rule.name === 'extract_udf_calls' ? crossDbSources
+      : rule.category === 'target' ? crossDbTargets
+      : null;
+    if (crossDbDest && collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbDest)) cappedRules.add(rule.name);
 
     if (onRuleFire && added > 0) onRuleFire(rule.name, rule.category, added);
   }
@@ -483,6 +485,7 @@ export function parseSqlBody(
     execCalls: Array.from(execCalls),
     crossDbSources: Array.from(crossDbSources),
     crossDbTargets: Array.from(crossDbTargets),
+    cappedRules: Array.from(cappedRules),
   };
 }
 
@@ -496,29 +499,31 @@ const MAX_MATCHES_PER_RULE = 10_000;
  * @param regex - Regular expression to execute.
  * @param out - Set to store the normalized matches.
  * @param normalize - Function to normalize the raw string.
+ * @returns `true` when {@link MAX_MATCHES_PER_RULE} stopped the scan before the last match.
  */
 function collectMatchesWith(
   sql: string,
   regex: RegExp,
   out: Set<string>,
   normalize: (raw: string) => string | null,
-): void {
+): boolean {
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
   let iterations = 0;
 
   while ((match = regex.exec(sql)) !== null) {
     if (match[0].length === 0) { regex.lastIndex++; continue; }
-    if (++iterations > MAX_MATCHES_PER_RULE) break;
+    if (++iterations > MAX_MATCHES_PER_RULE) return true;
     const raw = match[1];
     if (!raw) continue;
     const normalized = normalize(raw);
     if (normalized !== null) out.add(normalized);
   }
+  return false;
 }
 
-function collectMatches(sql: string, regex: RegExp, out: Set<string>): void {
-  collectMatchesWith(sql, regex, out, normalizeCaptured);
+function collectMatches(sql: string, regex: RegExp, out: Set<string>): boolean {
+  return collectMatchesWith(sql, regex, out, normalizeCaptured);
 }
 
 /**
@@ -571,8 +576,8 @@ function normalizeCrossDb(raw: string): string | null {
  * @param regex - Regular expression to execute.
  * @param out - Set to store the normalized cross-DB matches.
  */
-function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>): void {
-  collectMatchesWith(sql, regex, out, normalizeCrossDb);
+function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>): boolean {
+  return collectMatchesWith(sql, regex, out, normalizeCrossDb);
 }
 
 /**

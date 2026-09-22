@@ -64,7 +64,7 @@ describe('CT carrier continuation', () => {
         out_col: 'Margin',
         upstream_columns: [{ node: 'writera', col: 'Margin' }],
       }],
-    } as any, nodeMap, carrierModel, null);
+    } as any, nodeMap, carrierModel, null, undefined, undefined, 'upstream');
     expect(result.invalidRoutes, 'continuation at the writer is not a rejection').toEqual([]);
     expect(result.stagedEdges.length, 'continuation stages exactly one edge').toBe(1);
     expect(result.stagedEdges[0], 'edge runs writer -> carrier with the tracked column').toMatchObject({
@@ -79,7 +79,7 @@ describe('CT carrier continuation', () => {
         out_col: 'Margin',
         upstream_columns: [{ node: 'stranger', col: 'Margin' }],
       }],
-    } as any, nodeMap, carrierModel, null);
+    } as any, nodeMap, carrierModel, null, undefined, undefined, 'upstream');
     expect(result.invalidRoutes.some((r) => r.kind === 'non_writer_continuation'), 'non-writer continuation rejected').toBe(true);
     const route = result.invalidRoutes.find((r) => r.kind === 'non_writer_continuation');
     expect(route?.available_routes, 'rejection lists the true writers').toEqual(['writera', 'writerb']);
@@ -96,7 +96,7 @@ describe('CT carrier continuation', () => {
           { node: 'writerb', col: 'Margin' },
         ],
       }],
-    } as any, nodeMap, carrierModel, null);
+    } as any, nodeMap, carrierModel, null, undefined, undefined, 'upstream');
     expect(result.invalidRoutes, 'multi-writer fan-out is not a rejection').toEqual([]);
     expect(result.stagedEdges.length, 'one edge per writer').toBe(2);
   });
@@ -108,7 +108,7 @@ describe('CT carrier continuation', () => {
         out_col: 'Margin',
         upstream_columns: [{ node: 'writera', col: 'Margin' }],
       }],
-    } as any, nodeMap, carrierModel, null, undefined, new Set(['writera']));
+    } as any, nodeMap, carrierModel, null, undefined, new Set(['writera']), 'upstream');
     expect(result.invalidRoutes.some((r) => r.kind === 'pruned_contributor'), 'prune-before-demand wins').toBe(true);
     expect(result.invalidRoutes.some((r) => r.kind === 'non_writer_continuation'), 'no continuation kind alongside').toBe(false);
   });
@@ -166,7 +166,7 @@ describe('CT carrier continuation', () => {
         out_col: 'Margin',
         upstream_columns: [{ node: 'stranger', col: 'NoSuchColumn' }],
       }],
-    } as any, procMap, procModel, null);
+    } as any, procMap, procModel, null, undefined, undefined, 'upstream');
     expect(
       result.invalidRoutes.some((r) => r.kind === 'bad_contributor_col'),
       'invented inbound column on a bodied focus still rejected',

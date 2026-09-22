@@ -17,7 +17,7 @@ describe('CT literal named as a contributor column', () => {
         const res = new ColumnTracer(['Currency']).validateColumnFlow('rpt', {
           verdict: 'analyze' as const, summary: 's', sections: [],
           column_flow: [{ out_col: 'Currency', upstream_columns: [{ node, col: literal }] }],
-        } as any, nodeMap, model, null);
+        } as any, nodeMap, model, null, undefined, undefined, 'upstream');
         expect(res.stagedEdges).toEqual([]);
         expect(res.invalidRoutes[0]?.reason, 'the reason names the literal repair').toContain('is a literal, not a column reference');
       });

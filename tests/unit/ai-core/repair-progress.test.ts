@@ -145,6 +145,26 @@ const statusLabels = (events: readonly TurnEvent[]): string[] =>
 const textDeltas = (events: readonly TurnEvent[]): string[] =>
   events.filter((e): e is Extract<TurnEvent, { type: 'text' }> => e.type === 'text').map(e => e.delta);
 
+/** Builds the runtime shared by every case below, over the given scripted model and registry. */
+function buildRuntime(
+  threadId: string,
+  session: AiSession,
+  epoch: number,
+  registry: ReturnType<typeof scriptedRegistry>['registry'],
+  model: ScriptedModelPort,
+  turn: ReturnType<typeof makeGateSink>,
+): AgentRuntime {
+  return new AgentRuntime({
+    threadId,
+    getSession: () => session,
+    model: model as unknown as ModelPort,
+    registry,
+    sink: turn.sink,
+    turnEpoch: epoch,
+    maxRounds: 10,
+  });
+}
+
 describe('repair-progress chat emissions', () => {
   it('announces a visual-preview semantic-failure retry with the repair suffix and cause line', async () => {
     const session = new AiSession();
@@ -176,15 +196,7 @@ describe('repair-progress chat emissions', () => {
     ];
     const model = new ScriptedModelPort(script);
     const turn = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'repair-visual-preview',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink: turn.sink,
-      turnEpoch: epoch,
-      maxRounds: 10,
-    });
+    const runtime = buildRuntime('repair-visual-preview', session, epoch, registry, model, turn);
 
     const outcome = await runtime.run(PREVIEW_REQUEST_MARKER);
     expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
@@ -247,15 +259,7 @@ describe('repair-progress chat emissions', () => {
     ];
     const model = new ScriptedModelPort(script);
     const turn = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'repair-active-hop',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink: turn.sink,
-      turnEpoch: epoch,
-      maxRounds: 10,
-    });
+    const runtime = buildRuntime('repair-active-hop', session, epoch, registry, model, turn);
 
     const running = runtime.run('/trace [ai].[Origin]');
     const gate = await turn.nextGate();
@@ -314,15 +318,7 @@ describe('repair-progress chat emissions', () => {
     ];
     const model = new ScriptedModelPort(script);
     const turn = makeGateSink();
-    const runtime = new AgentRuntime({
-      threadId: 'single-hop-header',
-      getSession: () => session,
-      model: model as unknown as ModelPort,
-      registry,
-      sink: turn.sink,
-      turnEpoch: epoch,
-      maxRounds: 10,
-    });
+    const runtime = buildRuntime('single-hop-header', session, epoch, registry, model, turn);
 
     const running = runtime.run('/trace [ai].[Origin]');
     const gate = await turn.nextGate();
