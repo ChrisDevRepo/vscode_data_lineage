@@ -148,15 +148,18 @@ export function buildScreenStateSlot(screen: string): string[] {
  * YAML template guidance is injected separately by `resolveStagePrompt`.
  *
  * @param phase - The runtime phase whose protocol block to render.
+ * @param analysisMode - Hop or session analysis mode. Active and synthesis compose CT as the
+ *   BB protocol plus a column rider; omitted (and `'bb'`) ship the shared protocol alone.
  * @returns The phase-specific protocol text.
  */
 export function buildPhasePrompt(
   phase: PromptPhase,
+  analysisMode: 'bb' | 'ct' = 'bb',
 ): string {
   if (phase === 'discover') return buildDiscoveryPrompt();
   if (phase === 'visual_preview') return buildVisualPreviewPrompt();
-  if (phase === 'active') return buildActivePhasePrompt();
-  if (phase === 'synthesis') return buildSynthesisPrompt();
+  if (phase === 'active') return buildActivePhasePrompt(analysisMode);
+  if (phase === 'synthesis') return buildSynthesisPrompt(analysisMode);
   return buildFollowUpPrompt();
 }
 
@@ -215,10 +218,17 @@ function buildDiscoveryPrompt(): string {
  * @remarks
  * This hop sees one focus node. Full-catalog inline delivery is a discovery-tool
  * payload decision and is intentionally not an execution mode here.
- *
- * @returns A formatted system instruction for the active phase.
+ * CT appends the attributed-columns rider; BB ships the shared neighbor-flag
+ * paragraph alone.
  */
-function buildActivePhasePrompt(): string {
+function buildActivePhasePrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
+  const neighborFlags =
+    'Each `neighbors[]` entry carries the decisions already taken about it. `prune_protected`: an accepted route or `column_flow` named it earlier, so pruning it is refused for the rest of the run and the refusal costs a correction. `already_visited` / `already_removed`: a prune of either is dropped as a no-op.';
+  const attributedColumnsRider =
+    '`attributed_columns`: a committed `column_flow` edge already attributes these columns to it, so a route stating them continues that chain in one hop, and `"none"` for a neighbor THIS submission also names in `column_flow[].upstream_columns` is refused as a self-contradiction.';
+  const neighborParagraph = analysisMode === 'ct'
+    ? `${neighborFlags} ${attributedColumnsRider} Read them before choosing an action.`
+    : `${neighborFlags} Read them before choosing an action.`;
   return [
     '# Active Exploration Protocol',
     'This hop is the current focus node.',
@@ -228,7 +238,7 @@ function buildActivePhasePrompt(): string {
     '3. FILE: Submit `sections[]` in capture-recipe shape (long memory) and a one-sentence `summary` (short-term memory).',
     '4. OPEN: For each routed neighbor, write a self-contained `route_requests[].question` — it becomes that node\'s `<current_task>`.',
     '',
-    'Each `neighbors[]` entry carries the decisions already taken about it. `prune_protected`: an accepted route or `column_flow` named it earlier, so pruning it is refused for the rest of the run and the refusal costs a correction. `already_visited` / `already_removed`: a prune of either is dropped as a no-op. `attributed_columns`: a committed `column_flow` edge already attributes these columns to it, so a route stating them continues that chain in one hop, and `"none"` for a neighbor THIS submission also names in `column_flow[].upstream_columns` is refused as a self-contradiction. Read them before choosing an action.',
+    neighborParagraph,
   ].join('\n');
 }
 
@@ -348,15 +358,38 @@ function buildVisualPreviewPrompt(): string {
  * (description, badge numbering, object link headers) are explicitly named so
  * the model never tries to write them.
  *
- * @returns A string containing the synthesis-phase cue.
+ * CT is BB plus the column-chain rider: the shared protocol always ships, and a
+ * CT session additionally names the Column Trace Chain evidence surface and the
+ * chain-linking contract. BB does not see those sentences.
  */
-function buildSynthesisPrompt(): string {
-  return [
-    '# Synthesis Protocol',
-    'The archive is closed. The last tool result may contain three evidence surfaces:',
+function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
+  const isCt = analysisMode === 'ct';
+  const evidenceIntro = isCt
+    ? 'The archive is closed. The last tool result may contain three evidence surfaces:'
+    : 'The archive is closed. The last tool result may contain two evidence surfaces:';
+  const evidenceSurfaces = [
     '- `detail_slots[]`: explanatory text captured for nodes with analyzed detail.',
     '- `node_states[]`: lifecycle facts for graph nodes (`analyze`, `passthrough`, `prune`) and why the engine/AI/user made that decision.',
-    '- the "Column Trace Chain" block in `synthesis_reminder`: CT provenance edges when tracing columns.',
+    ...(isCt
+      ? ['- the "Column Trace Chain" block in `synthesis_reminder`: CT provenance edges when tracing columns.']
+      : []),
+  ];
+  const detailEvidence = isCt
+    ? 'The detailed walkthrough belongs in `sections[].text`. Use `detail_slots[]` for analyzed-node explanation; the kept-passthrough flow facts and the "Column Trace Chain" block carry the nodes without detail text.'
+    : 'The detailed walkthrough belongs in `sections[].text`. Use `detail_slots[]` for analyzed-node explanation; the kept-passthrough flow facts carry the nodes without detail text.';
+  const suggestedSections =
+    'Use `suggested_sections` from the completion result as a starting skeleton when present.';
+  const ctChainContract =
+    'In CT, every terminal source node named in the "Column Trace Chain" block that `scope.node_ids` carries must appear in a section\'s `node_ids[]` and that section\'s `text` whenever the archive captured a formula or predicate for it; a table with no captured formula may instead be a `source` highlight or a `notes[].node_id` — because a column trace without its origins does not answer the question; a chain node `scope.node_ids` does not carry belongs in `sections[].text` prose only, because the render cannot link an id outside it. The same holds for every other node named in that block that `scope.node_ids` carries: a node with a captured formula or predicate stays on a section; a table without one may use a source highlight or a `notes[].node_id`.';
+  const deferredQuestions =
+    'Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.';
+  const closingLine = isCt
+    ? `${suggestedSections} ${ctChainContract} ${deferredQuestions}`
+    : `${suggestedSections} ${deferredQuestions}`;
+  return [
+    '# Synthesis Protocol',
+    evidenceIntro,
+    ...evidenceSurfaces,
     '',
     'Your job: call `lineage_present_result` with `summary`, `title`, `intro`, **`sections[]`**, and **`highlight_groups[]`**. `notes` is optional per-node captioning; `closing` follows the closing template when it is rendered. The engine assembles the rendered document (section numbering, badge chips, object link headers, verbatim section bodies) deterministically from your structural decisions.',
     '',
@@ -370,13 +403,13 @@ function buildSynthesisPrompt(): string {
     '',
     'For each section:',
     '- `node_ids[]`: a passthrough VERDICT does not disqualify a node — a raw source or target table is usually passthrough yet is exactly what the answer is about; link and color it by its flow role.',
-    buildPresentationDetailContract('The detailed walkthrough belongs in `sections[].text`. Use `detail_slots[]` for analyzed-node explanation; the kept-passthrough flow facts and the "Column Trace Chain" block carry the nodes without detail text.', 'synthesis'),
+    buildPresentationDetailContract(detailEvidence, 'synthesis'),
     '',
     '## Other parts',
     '- `summary` (REQUIRED, one line), `title`, `intro`, `closing`: content and style are owned by each field\'s template rendered below — follow the template; on contradiction the template wins. Put the detailed walkthrough in `sections[].text`, not `intro`.',
     '- `highlight_groups[]`: scheme choice and glow selectivity are owned by the highlights template.',
     '',
-    'Use `suggested_sections` from the completion result as a starting skeleton when present. In CT, every terminal source node named in the "Column Trace Chain" block that `scope.node_ids` carries must appear in a section\'s `node_ids[]`, in a `source` highlight group, or as a `notes[].node_id` — including tables without detail slots — because a column trace without its origins does not answer the question; a chain node `scope.node_ids` does not carry belongs in `sections[].text` prose only, because the render cannot link an id outside it. The same holds for every other node named in that block that `scope.node_ids` carries, endpoints and hop nodes alike, on any one of those three surfaces. Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
+    closingLine,
   ].join('\n');
 }
 

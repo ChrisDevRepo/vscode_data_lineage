@@ -91,4 +91,13 @@ describe("findUnrenderedDetailSlotIds — observe unsectioned detail slots, neve
     const input: any = { sections: [{ label: 'S', node_ids: [], text: 't' }] };
     expect(findUnrenderedDetailSlotIds([], input).length).toBe(0);
   });
+
+  it("a slot covered only via notes[] is still unrendered — notes are not the walkthrough", () => {
+    const slotNodeIds = ['[ai].[a]', '[ai].[b]'];
+    const input: any = {
+      sections: [{ label: 'S', node_ids: ['[ai].[a]'], text: 't' }],
+      notes: [{ node_id: '[ai].[b]', text: 'One-line caption.' }],
+    };
+    expect(findUnrenderedDetailSlotIds(slotNodeIds, input)).toEqual(['[ai].[b]']);
+  });
 });

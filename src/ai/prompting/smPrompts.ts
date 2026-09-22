@@ -427,6 +427,31 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: Readonly
   ];
 }
 
+/** Projects node-level `[from, to, kind]` edges to the `{from, to}` flow the shared buckets read. */
+function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ from: string; to: string }> {
+  return edges.map(([from, to]) => ({ from, to }));
+}
+
+/**
+ * One renderer for the flow-role heading plus direction lines. BB synthesis is exactly this
+ * block. CT reuses the same highlight and direction helpers (and {@link asFlowEdges}) rather
+ * than cloning the buckets; it assembles them around the column-chain rider.
+ */
+function renderFlowRoleAndDirection(
+  originNodeId: string,
+  flowEdges: ReadonlyArray<{ from: string; to: string }>,
+  presentedNodeIds: ReadonlySet<string> | null,
+  hopNodes?: ReadonlySet<string>,
+): string {
+  const groups = computeFlowRoleGroups(originNodeId, flowEdges, hopNodes);
+  return [
+    '## Flow-Role Highlights',
+    ...buildFlowRoleHighlightLines(groups, presentedNodeIds),
+    '',
+    ...buildDirectionLines(originNodeId, computeDirectionGroups(originNodeId, flowEdges)),
+  ].join('\n');
+}
+
 /**
  * BB-mode counterpart to {@link buildCtSynthesisBlock}: grounds the `highlight_groups` buckets in the
  * traced node edges so BB source-bucketing is a transcription, not a guess (matches CT's fidelity).
@@ -441,14 +466,7 @@ export function buildBbSynthesisBlock(
   edges: ReadonlyArray<[string, string, string]>,
   presentedNodeIds: ReadonlySet<string> | null = null,
 ): string {
-  const flowEdges = edges.map(([from, to]) => ({ from, to }));
-  const groups = computeFlowRoleGroups(originNodeId, flowEdges);
-  return [
-    '## Flow-Role Highlights',
-    ...buildFlowRoleHighlightLines(groups, presentedNodeIds),
-    '',
-    ...buildDirectionLines(originNodeId, computeDirectionGroups(originNodeId, flowEdges)),
-  ].join('\n');
+  return renderFlowRoleAndDirection(originNodeId, asFlowEdges(edges), presentedNodeIds);
 }
 
 /**
@@ -486,7 +504,7 @@ export function buildCtSynthesisBlock(
   // there and real upstream sources render as side branches. The node edges carry the proc's write,
   // and using them is also what makes BB and CT state direction identically.
   const directionEdges = nodeEdges.length > 0
-    ? nodeEdges.map(([from, to]) => ({ from, to }))
+    ? asFlowEdges(nodeEdges)
     : edges.map(e => ({ from: e.from_node, to: e.to_node }));
   const direction = computeDirectionGroups(originNodeId, directionEdges);
   lines.push(...buildDirectionLines(originNodeId, direction));

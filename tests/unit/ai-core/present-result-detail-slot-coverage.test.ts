@@ -4,11 +4,12 @@
  * @remarks
  * `findUnrenderedDetailSlotIds` (`presentResult.ts`) reports which `detail_slots[]` — the model's
  * own captured technical findings, the richest material the synthesis call received — reached no
- * `sections[].node_ids` and no `notes[].node_id`. These tests pin that report to a real rejection:
- * a `sections[].node_ids` link or a `notes[].node_id` caption each independently satisfy it,
- * because both carry a slot's prose to the delivered answer; a `highlight_groups[]` color never
- * does, because a color carries no prose at all. The check runs in both BB and CT mode: it is
- * keyed on "a detail slot was captured", never on the trace mode's name (CLAUDE.md, "Branch on the
+ * `sections[].node_ids`. These tests pin that report to a real rejection: only a
+ * `sections[].node_ids` link satisfies it, because that is the walkthrough. A `notes[]` caption
+ * is a one-line chip and a `highlight_groups[]` color carries no captured findings; accepting
+ * either as coverage is what let a CT render park formula-bearing hops on notes and ship a chain
+ * table in place of the BB walkthrough. The check runs in both BB and CT mode: it is keyed on
+ * "a detail slot was captured", never on the trace mode's name (CLAUDE.md, "Branch on the
  * aspect's presence, never on the mode's name").
  */
 import { describe, expect, it } from 'vitest';
@@ -129,10 +130,10 @@ describe('executePresentResult — detail-slot section coverage', () => {
 
     expect(result.success).toBe(false);
     expect(errorText(result)).toContain(LOADER);
-    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section or note/);
+    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section/);
   });
 
-  it('accepts a notes[] caption as coverage for a detail slot', async () => {
+  it('does not accept a notes[] caption as coverage for a detail slot', async () => {
     const result = await run(seedBbSession(), {
       name: 'Order Load',
       summary: 'Raw orders load into staging and feed the consolidated view.',
@@ -141,7 +142,9 @@ describe('executePresentResult — detail-slot section coverage', () => {
       notes: [{ node_id: LOADER, text: 'Loads staging from raw orders.' }],
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(errorText(result)).toContain(LOADER);
+    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section/);
   });
 
   it('does not accept a highlight_groups[] color alone as coverage for a detail slot', async () => {
@@ -153,10 +156,10 @@ describe('executePresentResult — detail-slot section coverage', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section or note/);
+    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section/);
   });
 
-  it('names sections and notes as the authorized repair fields for this violation', async () => {
+  it('names sections as the authorized repair field for this violation', async () => {
     const result = await run(seedBbSession(), {
       name: 'Order Load',
       summary: 'Raw orders load into staging and feed the consolidated view.',
@@ -165,8 +168,10 @@ describe('executePresentResult — detail-slot section coverage', () => {
       notes: [{ node_id: RAW, text: 'Origin of raw orders.' }],
     });
 
-    expect(result.repairFields).toEqual(['sections', 'notes']);
+    expect(result.repairFields).toEqual(['sections']);
     expect(result.hint).toContain('Fix detail-slot coverage only');
+    expect(result.hint).toContain('sections[].node_ids');
+    expect(result.hint).not.toContain('notes[].node_id');
   });
 
   it('accepts the slot once its node id is linked in sections[].node_ids', async () => {
@@ -183,8 +188,7 @@ describe('executePresentResult — detail-slot section coverage', () => {
   it('fires in CT mode too, independently of the CT column-chain check', async () => {
     // Chain coverage (RAW/STAGING) is fully satisfied and LOADER/CONSUMER are chain-exempt as
     // slotted nodes; only the detail-slot check on LOADER is left to fail — proves this is not
-    // reached only via the CT chain branch. LOADER is deliberately absent from notes[] here (a
-    // notes[] caption would now satisfy it) so the violation still fires.
+    // reached only via the CT chain branch. A notes[] caption does not satisfy the slot check.
     const result = await run(seedCtSession(), {
       name: 'OrderAmount Trace',
       summary: 'OrderAmount flows from vwRawOrders into vwConsolidatedSales.',
@@ -196,10 +200,10 @@ describe('executePresentResult — detail-slot section coverage', () => {
     expect(result.success).toBe(false);
     expect(errorText(result)).not.toMatch(/CT column-chain node\(s\) missing/);
     expect(errorText(result)).toContain(LOADER);
-    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section or note/);
+    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section/);
   });
 
-  it('accepts a CT detail slot covered only via notes[].node_id', async () => {
+  it('does not accept a CT detail slot covered only via notes[].node_id', async () => {
     const result = await run(seedCtSession(), {
       name: 'OrderAmount Trace',
       summary: 'OrderAmount flows from vwRawOrders into vwConsolidatedSales.',
@@ -208,7 +212,9 @@ describe('executePresentResult — detail-slot section coverage', () => {
       notes: [{ node_id: LOADER, text: 'Loads staging.' }],
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(errorText(result)).toContain(LOADER);
+    expect(errorText(result)).toMatch(/Detail slot\(s\) reached no section/);
   });
 
   it('leaves a fully covered CT presentation untouched', async () => {

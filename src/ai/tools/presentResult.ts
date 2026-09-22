@@ -678,33 +678,31 @@ export function findBareNonPrunedNodes(
  * `highlight_groups[].node_ids[]`, because a highlight color is a legitimate way to place a
  * passthrough node that never had analyzed detail to begin with. A `detail_slots[]` entry is
  * different: it is the model's own captured technical findings for that node, the richest
- * material the synthesis call received, and only `sections[].text` or a `notes[]` caption carries
- * prose anywhere in the delivered answer — a highlight color or a bare badge carries none of it.
- * Folding this into `findBareNonPrunedNodes`'s highlight-tolerant, all-rendered-nodes check would
- * hide exactly the loss this function exists to name, so it stays a second, narrower computation
- * rather than an extra parameter on the first. The caller (`executePresentResult`) reports every
- * returned id as a {@link PresentResultViolation} whose `repairFields`/`paths` name `sections` and
- * `notes` — the two surfaces this function itself accepts — but never `highlight_groups`, which
- * never satisfies it.
+ * material the synthesis call received. Only a `sections[].node_ids[]` link places that prose in
+ * the walkthrough (`sections[].text`); a `notes[]` caption is a one-line orientation chip and a
+ * highlight color carries no captured findings at all. Accepting notes as coverage is what let a
+ * CT render park every formula-bearing hop on a caption and ship a chain table in place of the BB
+ * walkthrough. Folding this into `findBareNonPrunedNodes`'s highlight-tolerant check would hide
+ * exactly that loss, so it stays a second, narrower computation. The caller
+ * (`executePresentResult`) reports every returned id as a {@link PresentResultViolation} whose
+ * `repairFields`/`paths` name `sections` only — never `notes` or `highlight_groups`.
  *
  * @param slotNodeIds - Delivered `detail_slots[].nodeId` values — slots whose node is in the
  *   current result graph. The caller intersects `sess.memory.notedNodeIds` with the rendered id
  *   set; a slot whose node the render dropped cannot be linked, so requiring coverage of it
  *   contradicts the node-id check.
  * @param input - The (already auto-fixed) present payload. Read-only.
- * @returns The slot ids linked in neither `sections[].node_ids[]` nor `notes[].node_id`, in
- *   `slotNodeIds` order; empty when there are no authored sections (update-style calls) or every
- *   slot reached prose.
+ * @returns The slot ids absent from every `sections[].node_ids[]`, in `slotNodeIds` order; empty
+ *   when there are no authored sections (update-style calls) or every slot is section-linked.
  */
 export function findUnrenderedDetailSlotIds(
   slotNodeIds: readonly string[],
   input: PresentResultInput,
 ): string[] {
   if (slotNodeIds.length === 0 || !input.sections || input.sections.length === 0) return [];
-  const proseNodeIds = new Set<string>();
-  for (const sec of input.sections) for (const id of sec.node_ids ?? []) proseNodeIds.add(id);
-  for (const note of input.notes ?? []) proseNodeIds.add(note.node_id);
-  return slotNodeIds.filter(id => !proseNodeIds.has(id));
+  const sectionNodeIds = new Set<string>();
+  for (const sec of input.sections) for (const id of sec.node_ids ?? []) sectionNodeIds.add(id);
+  return slotNodeIds.filter(id => !sectionNodeIds.has(id));
 }
 
 /**

@@ -240,9 +240,11 @@ describe('prompt composition', () => {
     expect(synthesis).not.toContain('lower-relevance');
     // findMissingCtTerminalSources rejects a CT synthesis whose terminal sources are absent from
     // sections[].node_ids and source highlight groups — the prompt must word that as the
-    // requirement it is, not as an identification aid.
-    expect(synthesis).toMatch(/terminal source node .* must appear/);
-    expect(synthesis).not.toContain('block to identify terminal source');
+    // requirement it is, not as an identification aid. BB never sees the chain rider.
+    const ctSynthesis = buildPhasePrompt('synthesis', 'ct');
+    expect(ctSynthesis).toMatch(/terminal source node .* must appear/);
+    expect(ctSynthesis).not.toContain('block to identify terminal source');
+    expect(synthesis).not.toMatch(/terminal source node .* must appear/);
   });
 
   // The follow-up protocol's prompt must not claim that the archive and the rendered sections ride
@@ -557,6 +559,35 @@ describe('prompt composition', () => {
       expect(ct).toContain(line);
     }
     expect(ct).not.toContain('prune non-relevant neighbors via `prune_neighbors`');
+  });
+
+  // CT is BB plus a column rider at the TS protocol surface too — the hop SM protocol already
+  // composes this way; the active job card and the synthesis cue must not restate a second
+  // CT-only contract inside the shared block.
+  it('composes the active job card as BB plus the attributed-columns rider', () => {
+    const bb = buildPhasePrompt('active', 'bb');
+    const ct = buildPhasePrompt('active', 'ct');
+    expect(bb).toContain('prune_protected');
+    expect(ct).toContain('prune_protected');
+    expect(bb).not.toContain('attributed_columns');
+    expect(ct).toContain('attributed_columns');
+    expect(ct).toContain('column_flow[].upstream_columns');
+    expect(bb).toContain('Read them before choosing an action');
+    expect(ct).toContain('Read them before choosing an action');
+  });
+
+  it('composes the synthesis cue as BB plus the column-chain rider', () => {
+    const bb = buildPhasePrompt('synthesis', 'bb');
+    const ct = buildPhasePrompt('synthesis', 'ct');
+    expect(bb).toContain('## sections[] — REQUIRED');
+    expect(ct).toContain('## sections[] — REQUIRED');
+    expect(bb).toContain('two evidence surfaces');
+    expect(ct).toContain('three evidence surfaces');
+    expect(bb).not.toContain('Column Trace Chain');
+    expect(ct).toContain('Column Trace Chain');
+    expect(ct).toContain('every terminal source node named');
+    expect(bb).toContain('Deferred-questions, if present');
+    expect(ct).toContain('Deferred-questions, if present');
   });
 
   // CT is BB's verdict definition plus a column rider, never a replacement — a node applying

@@ -100,8 +100,13 @@ function classificationGatedKeys(result: StagePromptResult): string[] {
 }
 
 /** Assembles a phase system prompt: the grounded stage base followed by the ordered non-empty blocks. */
-function assemblePhaseSystem(stage: AgentStage, ctx: StagePromptContext, blocks: ReadonlyArray<string | null | undefined>): string {
-  return [buildHostStageSystemPrompt(stage, ctx), ...blocks].filter(Boolean).join('\n');
+function assemblePhaseSystem(
+  stage: AgentStage,
+  ctx: StagePromptContext,
+  blocks: ReadonlyArray<string | null | undefined>,
+  analysisMode: 'bb' | 'ct' = 'bb',
+): string {
+  return [buildHostStageSystemPrompt(stage, ctx, analysisMode), ...blocks].filter(Boolean).join('\n');
 }
 
 /** Stage system prompt plus the YAML + memory provenance used by the InstructionPlan compiler. */
@@ -169,7 +174,7 @@ export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext,
   // volatile content (current task + capture recipe + rolling memory) rides in the worker user
   // message (buildActiveHopInstruction), and the focus DDL is handed via buildWorkerHopMessage — never here.
   return {
-    system: assemblePhaseSystem('active', ctx, [smProtocol, stageBlock.prompt, ...stableContext.blocks]),
+    system: assemblePhaseSystem('active', ctx, [smProtocol, stageBlock.prompt, ...stableContext.blocks], hopMode),
     templateKeys: stageBlock.shippedKeys,
     memorySections: stableContext.memorySections,
     classificationGatedKeys: classificationGatedKeys(stageBlock),
@@ -303,8 +308,13 @@ export function buildSynthesisInstruction(sess: AiSession, ctx: StagePromptConte
   // sections (detail_slots / node_states / deferred_questions) are the call's user message,
   // declared inline at that call site — not assembled by this builder.
   const stableContext = buildStableContextBlocks(sess, engine);
+  // Session tracer, not hop mode: synthesis authors the closed archive. A CT run still
+  // reaches BB-shaped hops, but the completion envelope carries the column chain whenever
+  // the tracer recorded edges — so the protocol rider follows `columnAspect`, matching
+  // `buildSmCompletionEnvelope`.
+  const analysisMode: 'bb' | 'ct' = engine?.columnAspect ? 'ct' : 'bb';
   return {
-    system: assemblePhaseSystem('synthesis', ctx, [stage.prompt, ...stableContext.blocks]),
+    system: assemblePhaseSystem('synthesis', ctx, [stage.prompt, ...stableContext.blocks], analysisMode),
     templateKeys: stage.shippedKeys,
     memorySections: stableContext.memorySections,
     classificationGatedKeys: classificationGatedKeys(stage),

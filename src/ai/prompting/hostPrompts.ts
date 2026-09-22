@@ -123,11 +123,17 @@ export function deriveStagePromptContext(
  *
  * @param phase - The lifecycle phase whose protocol to render.
  * @param ctx - The grounding context (see {@link deriveStagePromptContext}).
+ * @param analysisMode - Hop or session analysis mode forwarded to {@link buildPhasePrompt} so
+ *   active and synthesis compose CT as BB plus a column rider.
  * @returns The assembled system-prompt string.
  */
-export function buildHostStageSystemPrompt(phase: PromptPhase, ctx: StagePromptContext): string {
+export function buildHostStageSystemPrompt(
+  phase: PromptPhase,
+  ctx: StagePromptContext,
+  analysisMode: 'bb' | 'ct' = 'bb',
+): string {
   const base = buildGeneralSystemPrompt(phase, ctx);
-  const phaseSpecific = buildPhasePrompt(phase);
+  const phaseSpecific = buildPhasePrompt(phase, analysisMode);
   return [base, phaseSpecific].filter(Boolean).join('\n\n');
 }
 

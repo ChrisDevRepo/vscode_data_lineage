@@ -1327,8 +1327,7 @@ export class NavigationEngine implements IHopStateMachine {
    * what is pruned, and an empty active set is neither a keep nor a removal.
    */
   public get currentHopAnalysisMode(): 'bb' | 'ct' {
-    if (!this.tracer) return 'bb';
-    return this.tracer.activeColumns.length > 0 ? 'ct' : 'bb';
+    return this.hopModeFromColumnList(this.tracer?.activeColumns);
   }
 
   /**
@@ -3681,9 +3680,13 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns `ct` when the branch may still carry a traced column, `bb` when it carries none.
    */
   private carryAnalysisMode(carry: ColumnCarry): 'bb' | 'ct' {
+    return this.hopModeFromColumnList(carry.kind === 'row_role_only' ? [] : carry.columns);
+  }
+
+  /** Empty or absent columns (or no tracer) dispatch as BB; a named column set is CT. */
+  private hopModeFromColumnList(columns: readonly string[] | undefined): 'bb' | 'ct' {
     if (!this.tracer) return 'bb';
-    if (carry.kind === 'row_role_only') return 'bb';
-    return carry.columns.filter(Boolean).length > 0 ? 'ct' : 'bb';
+    return (columns?.filter(Boolean).length ?? 0) > 0 ? 'ct' : 'bb';
   }
 
   /**

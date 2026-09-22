@@ -498,10 +498,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       // A detail slot is the model's own captured technical findings for that node — the richest
-      // material the synthesis call received for it — and sections[].text or a notes[] caption are
-      // the only surfaces that carry prose. A slot this misses is not "bare" in the
-      // findBareNonPrunedNodes sense (a highlight color carries none of the slot's content);
-      // reported below as a real violation (see findUnrenderedDetailSlotIds).
+      // material the synthesis call received for it — and only a sections[].node_ids link places
+      // that prose in the walkthrough. A notes[] caption or a highlight color does not. A slot
+      // this misses is not "bare" in the findBareNonPrunedNodes sense; reported below as a real
+      // violation (see findUnrenderedDetailSlotIds).
       const renderedNodeIds = new Set(resolvedNodeIds);
       const unrenderedSlotIds = findUnrenderedDetailSlotIds(
         sess.memory.notedNodeIds.filter(id => renderedNodeIds.has(id)),
@@ -516,8 +516,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (presentInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
         // CT results carry a validated column chain the BB contract has no counterpart for; the
-        // engine renders it as a deterministic table so the CT document is visibly a column trace,
-        // not a BB narrative with formulas. No edges — no preface (undefined keeps BB output unchanged).
+        // engine prepends it as a deterministic table so the CT document is BB's walkthrough plus
+        // the column spine. No edges — no preface (undefined keeps BB output unchanged).
         const columnChainPreface = resultGraph.columnAspect
           ? buildColumnChainPreface(resultGraph.columnAspect.edges)
           : undefined;
@@ -566,21 +566,21 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           soleHint: 'Fix CT node coverage only. Keep existing section text where possible; add each named node to a section, a highlight group, or notes[].',
         });
       }
-      // A detail slot's captured prose lives in sections[].text or a notes[] caption, in either
-      // mode — the aspect this repairs is "a slot was captured", never "the trace is CT", so it
-      // runs unconditionally alongside the CT chain check above rather than branching on
-      // resultGraph source/columnAspect. A highlight color never satisfies it (it carries no
-      // prose); repair may add the missing id to either surface.
+      // A detail slot's captured prose lives in the section that links its node, in either mode —
+      // the aspect this repairs is "a slot was captured", never "the trace is CT", so it runs
+      // unconditionally alongside the CT chain check above rather than branching on resultGraph
+      // source/columnAspect. A notes[] caption or a highlight color never satisfies it (neither
+      // carries the slot's walkthrough); repair adds the missing id to sections[].node_ids.
       if (unrenderedSlotIds.length > 0) {
         externalViolations.push({
           field: 'sections',
           messages: [
-            `Detail slot(s) reached no section or note: ${quoteIds(unrenderedSlotIds, 5)}.`,
-            'For each one, add its id to a sections[].node_ids or give it a grounded notes[].node_id caption so the captured findings render — a highlight color alone does not carry a detail slot\'s prose.',
+            `Detail slot(s) reached no section: ${quoteIds(unrenderedSlotIds, 5)}.`,
+            'For each one, add its id to a sections[].node_ids so the captured findings render in that section\'s text — a notes[] caption or a highlight color does not carry a detail slot\'s prose.',
           ],
-          repairFields: ['sections', 'notes'],
-          paths: ['sections', 'notes'],
-          soleHint: 'Fix detail-slot coverage only. Keep existing section text where possible; add each named node to a sections[].node_ids or a notes[].node_id caption.',
+          repairFields: ['sections'],
+          paths: ['sections'],
+          soleHint: 'Fix detail-slot coverage only. Keep existing section text where possible; add each named node to a sections[].node_ids.',
         });
       }
 

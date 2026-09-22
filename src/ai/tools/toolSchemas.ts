@@ -100,12 +100,15 @@ function refineAsymmetricDepthDirection(
  * supplied node ids are appended to the agenda, run through the SM hop loop, and new
  * `DetailSlot` entries merge into the existing archive for follow-up continuation.
  */
+const ANALYSIS_MODE_DESCRIPTION =
+  'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
+
 export const StartExplorationInputSchema = z.object({
   origin: z.string().min(1).optional().describe('Canonical object ID that anchors a fresh exploration.'),
   question: z.string().optional().describe('The user question this exploration must answer.'),
   proposalRevision: z.number().int().positive().optional().describe('Required when refining a pending approval proposal; copy the revision shown by the gate.'),
   analysisMode: z.enum(['bb', 'ct']).optional().describe(
-    'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
+    ANALYSIS_MODE_DESCRIPTION,
   ),
   targetColumns: coercedStringArray(ColumnIdentifierSchema).optional().describe(
     'CT only: user-named columns to trace. BB forbids this property; a raw provider empty BB array may normalize to absence.',
@@ -234,7 +237,7 @@ const StartFreshBbProviderSchema = z.object({
   ...StartPatchFields,
   origin: StartOriginSchema,
   analysisMode: z.literal('bb').describe(
-    'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
+    ANALYSIS_MODE_DESCRIPTION,
   ),
   classification: ClassificationValueSchema,
   targetColumns: EmptyBbTargetColumnsSchema,
@@ -245,7 +248,7 @@ const StartFreshCtProviderSchema = z.object({
   ...StartPatchFields,
   origin: StartOriginSchema,
   analysisMode: z.literal('ct').describe(
-    'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
+    ANALYSIS_MODE_DESCRIPTION,
   ),
   classification: ClassificationValueSchema,
   targetColumns: NamedCtTargetColumnsSchema,
@@ -256,7 +259,7 @@ const StartRefineProviderSchema = z.object({
   ...StartPatchFields,
   proposalRevision: z.number().int().positive().describe('Revision shown by the pending approval gate.'),
   analysisMode: z.enum(['bb', 'ct']).optional().describe(
-    'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
+    ANALYSIS_MODE_DESCRIPTION,
   ),
   targetColumns: coercedStringArray(ColumnIdentifierSchema).optional().describe(
     'CT only: user-named columns to trace. BB forbids this property; a raw provider empty BB array may normalize to absence.',
@@ -290,7 +293,7 @@ export const StartExplorationFreshProviderInputSchema = z.object({
   ...StartPatchFields,
   origin: StartOriginSchema,
   analysisMode: z.enum(['bb', 'ct']).describe(
-    'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.',
+    ANALYSIS_MODE_DESCRIPTION,
   ),
   classification: ClassificationValueSchema,
   targetColumns: coercedStringArray(ColumnIdentifierSchema).optional().describe(
