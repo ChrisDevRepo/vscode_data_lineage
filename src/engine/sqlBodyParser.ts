@@ -16,6 +16,7 @@
 
 import { splitSqlName, stripBrackets } from '../utils/sql';
 import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
+import { SQL_BLOCK_COMMENT, sqlCommentMask } from './shared/sqlSpans';
 import {
   QUALIFIED_NAME, ANY_IDENT, KEYWORDS_RE,
   PASS1_CLEANSE_RE, TABLE_REF_WITH_ALIAS, FROM_TERMINATOR_RE
@@ -379,75 +380,21 @@ function normalizeAnsiCommaJoins(sql: string): string {
 }
 
 /**
- * Removes block comments from SQL text using a nested-aware counter scan.
- *
- * @remarks
- * Regex cannot easily handle nested comments (e.g., `/* ... /* ... *\/ ... *\/`).
- * This O(n) scan handles nested block comments without relying on recursive regular expressions.
- * It runs before string literals are neutralised, so it skips literals and line comments itself;
- * otherwise a wildcard storage path would open a comment that never closes and the unterminated
- * remainder of the body would be discarded.
+ * Removes every block comment, nested ones included, leaving line comments and literals in place.
  *
  * @param sql - Raw SQL text.
  * @returns SQL with all block comments removed.
  */
 function removeBlockComments(sql: string): string {
-  const parts: string[] = [];
-  let i = 0;
-  let depth = 0;
-  let start = 0; // start of current non-comment range
-  while (i < sql.length) {
-    // Outside a comment, a string literal and a line comment are opaque: a storage path
-    // such as '.../2024/01/*.parquet' contains `/*` and does not open a comment. Inside a
-    // comment the same characters are plain text, so both skips are gated on depth 0.
-    if (depth === 0 && sql[i] === "'") {
-      i++;
-      while (i < sql.length) {
-        if (sql[i] !== "'") { i++; continue; }
-        if (sql[i + 1] === "'") { i += 2; continue; } // '' is an escaped quote, not the end
-        i++; break;
-      }
-      continue;
-    }
-    // A double-quoted identifier (SET QUOTED_IDENTIFIER ON) is opaque the same way: a name such
-    // as "My/*Table" must not open a comment either.
-    if (depth === 0 && sql[i] === '"') {
-      i++;
-      while (i < sql.length) {
-        if (sql[i] !== '"') { i++; continue; }
-        if (sql[i + 1] === '"') { i += 2; continue; } // "" is an escaped quote, not the end
-        i++; break;
-      }
-      continue;
-    }
-    // A bracketed identifier is opaque the same way, and it is the common case: `[Bob's Table]`
-    // must not open a string literal, and `[my/*table]` must not open a comment.
-    if (depth === 0 && sql[i] === '[') {
-      i++;
-      while (i < sql.length) {
-        if (sql[i] !== ']') { i++; continue; }
-        if (sql[i + 1] === ']') { i += 2; continue; } // ]] is an escaped bracket, not the end
-        i++; break;
-      }
-      continue;
-    }
-    if (depth === 0 && sql[i] === '-' && sql[i + 1] === '-') {
-      while (i < sql.length && sql[i] !== '\n') i++;
-      continue;
-    }
-    if (sql[i] === '/' && sql[i + 1] === '*') {
-      if (depth === 0) parts.push(sql.substring(start, i));
-      depth++; i += 2; continue;
-    }
-    if (sql[i] === '*' && sql[i + 1] === '/' && depth > 0) {
-      depth--; i += 2;
-      if (depth === 0) start = i;
-      continue;
-    }
-    i++;
+  const mask = sqlCommentMask(sql);
+  let out = '';
+  let start = -1;
+  for (let i = 0; i <= sql.length; i++) {
+    const keep = i < sql.length && mask[i] !== SQL_BLOCK_COMMENT;
+    if (keep && start < 0) start = i;
+    else if (!keep && start >= 0) { out += sql.substring(start, i); start = -1; }
   }
-  if (depth === 0) parts.push(sql.substring(start, i));
-  return parts.join('');
+  return out;
 }
 
 /**

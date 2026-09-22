@@ -1,4 +1,5 @@
 import type { ObjectType, ColumnDef } from '../engine/types';
+import { SQL_CODE, sqlCommentMask } from '../engine/shared/sqlSpans';
 
 /** Node fields required by catalog, DDL, and column search. */
 export interface SearchableNode {
@@ -58,7 +59,7 @@ export interface BodyMatch extends DdlMatch {
    * @remarks
    * The reported context is a few lines wide, so a hit's controlling condition sits outside the
    * window whenever it is more than a line or two away — the normal case in T-SQL. This restores
-   * that one structural bit for `IF`/`WHILE`, the same way {@link scanComments} restores it for a
+   * that one structural bit for `IF`/`WHILE`, the same way {@link sqlCommentMask} restores it for a
    * comment block; `CASE`, a `WHERE`-clause guard and `GOTO` flow are out of scope and stay
    * unexpressed.
    */
@@ -464,7 +465,7 @@ function bodyMatcher(
     if (lines === null) {
       lines = body.split('\n');
       lineStarts = buildLineStarts(lines);
-      commentMask = scanComments(lines, lineStarts, body.length);
+      commentMask = sqlCommentMask(body);
       deadMask = markDeadLines(lines, lineStarts, commentMask);
       predicateMask = deriveEnclosingPredicates(lines, lineStarts, commentMask);
     }
@@ -537,70 +538,10 @@ function makeMatch(
     snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap, deadLine),
   };
   // Set only when true/present: an executable, unconditional match keeps the shape it has always had.
-  if (commentMask[index] === 1) match.commented = true;
+  if (commentMask[index] !== SQL_CODE) match.commented = true;
   const predicate = predicateAt[matchLine];
   if (predicate !== undefined) match.enclosingPredicate = predicate;
   return match;
-}
-
-/**
- * Marks every character of a body that lies inside a SQL comment.
- *
- * @param lines - The body split on newlines, as {@link searchBodyScripts} already holds it.
- * @param lineStarts - Start offset of each line, so a flag lands at the body offset a match uses.
- * @param length - Length of the body the offsets index into.
- * @returns One byte per body character: `1` inside a comment, `0` outside.
- *
- * @remarks
- * The context window a match is reported with is a few lines wide, so a match deep inside a long
- * comment block arrives indistinguishable from live code — the whole comment structure sits outside
- * the window. This pass restores that one bit, per character rather than per line, so a match after
- * a trailing `--` is marked while live code on the same line is not.
- *
- * Enough T-SQL to be right about where a comment starts and ends: block comments nest, a `--` runs
- * to end of line, and a string literal or a bracketed identifier hides both delimiters. Doubled
- * `''` and `]]` escapes need no case of their own — closing and immediately reopening leaves the
- * same state with nothing between. Quoted `"` identifiers are not tracked: both readings of `"` are
- * delimiters, but a lone `"` is the more common typo and tracking it would swallow the rest of a
- * body. An unterminated block comment marks the remainder, which is how a reader takes it too.
- */
-function scanComments(lines: string[], lineStarts: number[], length: number): Uint8Array {
-  const mask = new Uint8Array(length);
-  /** `/*` nesting depth; T-SQL nests block comments and requires them balanced. */
-  let depth = 0;
-  /** The character that closes the open literal or identifier, or `''` when none is open. */
-  let closer = '';
-  for (let l = 0; l < lines.length; l++) {
-    const line = lines[l];
-    const base = lineStarts[l];
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      const next = line[i + 1];
-      if (depth > 0) {
-        mask[base + i] = 1;
-        if (ch === '/' && next === '*') { depth++; mask[base + ++i] = 1; }
-        else if (ch === '*' && next === '/') { depth--; mask[base + ++i] = 1; }
-        continue;
-      }
-      if (closer !== '') {
-        if (ch === closer) closer = '';
-        continue;
-      }
-      if (ch === '-' && next === '-') {
-        mask.fill(1, base + i, base + line.length);
-        break;
-      }
-      if (ch === '/' && next === '*') {
-        depth = 1;
-        mask[base + i] = 1;
-        mask[base + ++i] = 1;
-        continue;
-      }
-      if (ch === '\'') closer = '\'';
-      else if (ch === '[') closer = ']';
-    }
-  }
-  return mask;
 }
 
 /** Matches an `IF`/`WHILE` keyword opening a line, capturing the rest of the line as its condition. */
@@ -619,12 +560,12 @@ const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|C
  *
  * @param lines - The body split on newlines, as {@link searchBodyScripts} already holds it.
  * @param lineStarts - Start offset of each line, as {@link buildLineStarts} computes it.
- * @param commentMask - The per-character mask {@link scanComments} already produced for this body.
+ * @param commentMask - The per-character mask {@link sqlCommentMask} already produced for this body.
  * @returns One entry per line: the text of the nearest enclosing `IF`/`WHILE`, or `undefined` when
  *   the line sits outside any such condition.
  *
  * @remarks
- * The same reasoning as {@link scanComments}, applied to control flow instead of comments: the
+ * The same reasoning as {@link sqlCommentMask}, applied to control flow instead of comments: the
  * context window a match ships with is a few lines wide, so a hit's governing `IF`/`WHILE` sits
  * outside it whenever the condition is more than a line or two away — the ordinary case in T-SQL.
  *
@@ -656,7 +597,7 @@ function deriveEnclosingPredicates(
     // The live-only view of the line: comment content replaced with spaces so a keyword inside a
     // comment can neither open a block nor be mistaken for the line's own condition.
     let live = '';
-    for (let c = 0; c < line.length; c++) live += commentMask[base + c] === 1 ? ' ' : line[c];
+    for (let c = 0; c < line.length; c++) live += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
     const trimmed = live.trim();
     const isLive = trimmed.length > 0;
 
@@ -776,7 +717,7 @@ function buildSnippet(
  *
  * @param lines - The body split on newlines.
  * @param lineStarts - Start offset of each line, as {@link buildLineStarts} computes it.
- * @param commentMask - The per-character mask {@link scanComments} already produced for this body.
+ * @param commentMask - The per-character mask {@link sqlCommentMask} already produced for this body.
  * @returns One byte per line: `1` when the line carries content and every non-whitespace character
  *   of it lies inside a comment, `0` otherwise.
  *
@@ -796,7 +737,7 @@ function markDeadLines(lines: string[], lineStarts: number[], commentMask: Uint8
       const ch = line.charCodeAt(c);
       if (ch === 32 || ch === 9 || ch === 13) continue;
       content = true;
-      if (commentMask[base + c] !== 1) { allInComment = false; break; }
+      if (commentMask[base + c] === SQL_CODE) { allInComment = false; break; }
     }
     dead[i] = content && allInComment ? 1 : 0;
   }

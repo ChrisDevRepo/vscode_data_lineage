@@ -399,6 +399,15 @@ describe('model search — commented matches', () => {
       .toEqual([[2, true], [3, false]]);
   });
 
+  it('reads a double-quoted identifier the way the parser does', () => {
+    expect(hits([
+      'SELECT "odd /* name" AS a',   // 1 — the quoted identifier opens no block
+      'SELECT Target FROM t',        // 2 — so this is live
+      'SELECT "x -- y", Target',     // 3 — nor does it start a line comment
+    ].join('\n'), 'Target'))
+      .toEqual([[2, false], [3, false]]);
+  });
+
   it('leaves a live match byte-identical to the shape before the marker existed', () => {
     const compiled = compileSearchRegex('Target');
     if (!compiled.ok) throw new Error('Target must compile');
