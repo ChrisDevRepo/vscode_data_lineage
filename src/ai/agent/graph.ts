@@ -1985,18 +1985,38 @@ export function canSalvageSynthesisDraft(repairFields: readonly PresentResultRep
  * Dispatched only when {@link canSalvageSynthesisDraft} allows it, so the one patch sent is always
  * `{ is_update: true, notes: [] }`: the held draft's sole outstanding repair field, resent empty.
  * The result graph, sections, badges, and highlight groups the model already authored render
- * unchanged; only the unlinkable note caption is dropped, and this is logged, never silent (the
- * repo's normalize-with-log contract, `.claude/rules/ai-surface.md`).
+ * unchanged; every note caption — including one that was a valid risk callout — is dropped with
+ * it, and this is logged with the discarded count, never silent (the repo's normalize-with-log
+ * contract, `.claude/rules/ai-surface.md`).
+ *
+ * @remarks
+ * This is a blanket REJECT of `notes[]`, not the finer NORMALIZE-WITH-LOG repair of resending the
+ * held notes minus only the reported offending ones: `validatePresentResult`
+ * (`src/ai/tools/presentResult.ts`) computes which note indexes/ids failed (`issuePaths`,
+ * `pathUnlinkableIds`) and states them in the rejection `hint`/`detail`, but neither survives past
+ * that one rejection round — `RepairDraftStore.hold` (`repairDraftStore.ts`) only carries the held
+ * draft and its authorized *field* list (`PresentResultRepairField[]`, e.g. `['notes']`), and the
+ * session's own failure record (`AiSession.presentResultLastFailureReasonThisTurn`) is a
+ * truncated, human-readable string, not the structured per-note indexes. Re-deriving "which note is
+ * unlinkable" independently here would need the same resolved-node-id/state context
+ * `validatePresentResult` holds and this call site does not — inventing that would be a second,
+ * divergence-prone copy of the validator's own node-resolution logic, not a fix. Precise resend is
+ * therefore out of this repair's reach without plumbing the offending indexes onto the held draft
+ * (a `presentResult.ts`/`session.ts` change outside this fix's scope); until that lands, the whole
+ * `notes[]` collection is the correct, honestly-logged REJECT rather than a silently narrower one.
  *
  * @param deps - Graph dependencies (registry dispatch surface, logger).
- * @param sess - The live session, read for the held draft's authorization.
+ * @param sess - The live session, read for the held draft's authorization and note count.
  * @returns Whether the salvage patch was accepted — `sess.presentResultCalledThisTurn` flips true.
  */
 async function trySalvageSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): Promise<boolean> {
   if (!canSalvageSynthesisDraft(sess.presentResultRepairDraft.getAuthorization())) return false;
+  const discardedNoteCount = sess.presentResultRepairDraft.get()?.notes?.length ?? 0;
   deps.logger?.debug(
     '[AI] [Repair] synthesis breaker tripped with a held, notes-only-repairable draft — salvaging '
-    + 'via one deterministic notes:[] patch through the existing repair-patch path instead of discarding the render.',
+    + `via one deterministic notes:[] patch (discarding all ${discardedNoteCount} held note(s), offending `
+    + 'indexes not reachable at this call site — REJECT of notes[], not a per-note repair) through the '
+    + 'existing repair-patch path instead of discarding the render.',
   );
   let resultText: string;
   try {

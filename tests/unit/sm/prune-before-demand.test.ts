@@ -252,7 +252,9 @@ describe('PRUNE-BEFORE-DEMAND', () => {
       verdict: 'analyze',
     }) as { ok?: unknown; error?: string };
     expect('ok' in hop2, `BB: no column aspect, no pruned-contributor check, commits as before: ${JSON.stringify(hop2)}`).toBe(true);
-    expect(engine.toJSON().ctDeclaredRouteIds, 'BB snapshot carries no CT-only declaration set').toBeUndefined();
+    // Only the column_flow half of the declaration is CT-only; `source` was routed, and an
+    // accepted route declares its target in both modes.
+    expect(engine.toJSON().ctDeclaredRouteIds, 'the route declaration is mode-independent').toEqual(['source']);
   });
 
   it('(d) non-regression: a node already declared as a supplier may still prune ITSELF at its own ordinary dispatch — refutes a self-prune refusal as the fix', () => {

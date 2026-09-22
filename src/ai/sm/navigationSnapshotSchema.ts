@@ -349,7 +349,10 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     if (init?.analysisMode === 'ct') issue('BB snapshot cannot carry CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
     if (snapshot.lineageQuestionsLastHop !== undefined) issue('BB snapshot cannot carry lineage questions', ['lineageQuestionsLastHop']);
     if (snapshot.ctPrunedNodeIds !== undefined) issue('BB snapshot cannot carry CT pruned nodes', ['ctPrunedNodeIds']);
-    if (snapshot.ctDeclaredRouteIds !== undefined) issue('BB snapshot cannot carry CT declared routes', ['ctDeclaredRouteIds']);
+    // `ctDeclaredRouteIds` is deliberately absent from this BB-purity list: an accepted route is a
+    // routing decision, not a column fact, so the declared-route prune protection it feeds is
+    // mode-independent and a BB checkpoint carries it too. The `ct` key name is legacy — renaming
+    // it would break every stored run written under the current snapshotVersion.
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
       if (task.kind === 'column_lineage') issue('BB snapshot cannot carry column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
     });

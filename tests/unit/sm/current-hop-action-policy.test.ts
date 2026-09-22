@@ -68,6 +68,47 @@ describe('current-hop action policy', () => {
       reason: expect.stringContaining('already queued'),
     })]);
   });
+
+  it('protects a queued neighbour that is not in scope — the promise is unconditional', () => {
+    // A priority-3 enqueue (origin, or an admitted supplement target) takes an agenda slot
+    // without a scope entry, so "queued" and "in scope" are independent facts. Reading the queued
+    // check only inside the in-scope branch let every out-of-scope queued node fall through to the
+    // unconditional accept, which is not what `prune_neighbors does not pull queued work` says.
+    const result = evaluateCurrentHopActionPolicy({
+      originId: 'origin',
+      routeTargets: [],
+      pruneTargets: [{ raw: 'queued-out-of-scope', resolved: 'queued-out-of-scope', path: 'prune_neighbors.0' }],
+      scopeNodeIds: new Set(['unrelated']),
+      visitedIds: new Set(),
+      removedIds: new Set(),
+      notedIds: new Set(),
+      agendaIds: new Set(['queued-out-of-scope']),
+    });
+
+    expect(result.acceptedPruneIds).toEqual([]);
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.notices).toEqual([expect.objectContaining({
+      kind: 'prune_noop_queued',
+      id: 'queued-out-of-scope',
+      reason: expect.stringContaining('already queued'),
+    })]);
+  });
+
+  it('still accepts the prune of an out-of-scope neighbour nothing has claimed', () => {
+    const result = evaluateCurrentHopActionPolicy({
+      originId: 'origin',
+      routeTargets: [],
+      pruneTargets: [{ raw: 'out-of-scope', resolved: 'out-of-scope', path: 'prune_neighbors.0' }],
+      scopeNodeIds: new Set(['unrelated']),
+      visitedIds: new Set(),
+      removedIds: new Set(),
+      notedIds: new Set(),
+      agendaIds: new Set(['something-else']),
+    });
+
+    expect(result.acceptedPruneIds).toEqual(['out-of-scope']);
+    expect(result.notices).toEqual([]);
+  });
 });
 
 describe('current-hop prune accounting — the refused-prune hint reads the resolved id', () => {

@@ -227,4 +227,38 @@ describe('droppedKeyPaths', () => {
     expect(droppedKeyPaths(raw, parsed)).toEqual(['column_flow.0.bogus']);
     expect(droppedKeyPaths(parsed, parsed)).toEqual([]);
   });
+
+  // D-2 (m19-review-code, opus review): when `repairArrayBoundaryArtifacts` splices recovered
+  // sibling elements into an array, the parsed array is longer than the raw one. The naive
+  // index-zipped walk compared every element after the splice point against the wrong sibling,
+  // (a) never named the recovery itself (`.claude/rules/ai-surface.md`'s NORMALIZE-WITH-LOG "add"
+  // half), and (b) reported spurious drops for real fields the misaligned comparison couldn't see.
+  it('(D-2) names the rejoin itself and stays aligned past a splice — no spurious drop for the element after it', () => {
+    const raw = [
+      { label: 'A', text: 'ta', '},{': 'label":"B","text":"tb"}],' },
+      { label: 'C', text: 'tc', footnote: 'kept' },
+    ];
+    // Simulates the post-repair, post-strict-parse result: the artifact key rejoined into a new
+    // sibling section (B), and every field on C — including `footnote` — survived untouched.
+    const parsed = [
+      { label: 'A', text: 'ta' },
+      { label: 'B', text: 'tb' },
+      { label: 'C', text: 'tc', footnote: 'kept' },
+    ];
+    const paths = droppedKeyPaths(raw, parsed);
+    // The vacated artifact key is still reported as a drop, same as the equal-length case.
+    expect(paths).toContain('0.},{');
+    // The recovery is now named too — never silent.
+    expect(paths).toContain('0.},{ (rejoined 1 sibling element(s))');
+    // Misaligned code would compare raw[1] (C, with `footnote`) against parsed[1] (B, without
+    // `footnote`) and wrongly report `footnote` dropped even though it reached parsed[2] intact.
+    expect(paths).not.toContain('1.footnote');
+    expect(paths).toEqual(['0.},{', '0.},{ (rejoined 1 sibling element(s))']);
+  });
+
+  it('(D-2) an unrecoverable (vestigial) artifact keeps the equal-length, index-zipped path unchanged', () => {
+    const raw = [{ label: 'A', text: 'ta', ',': ',' }, { label: 'B', text: 'tb' }];
+    const parsed = [{ label: 'A', text: 'ta' }, { label: 'B', text: 'tb' }];
+    expect(droppedKeyPaths(raw, parsed)).toEqual(['0.,']);
+  });
 });

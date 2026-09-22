@@ -305,7 +305,11 @@ describe("Navigation Engine — node conservation", () => {
   expect(!state.removedSet.includes('b'), 'the refused prune leaves b unremoved').toBe(true);
   expect(JSON.stringify(state.memory.detailSlots.a) === detailBefore, 'the refused prune does not replace committed detail').toBe(true);
   expect(logLines.filter((l) => l.includes('[Reject]')).length, 'no dispatch-layer [Reject] line is emitted for the per-candidate prune refusal').toBe(0);
-  expect(logLines.some((l) => l.includes('[Prune] prune_neighbor refused') && l.includes('reason=would_orphan_noted') && l.includes('id=b')), 'the refusal logs under [Prune], carrying the same fields').toBe(true);
+  // `b` was named in an accepted route_request at the previous hop, so the declared-route check
+  // refuses it before the per-candidate topology walk is reached; the walk stays the refusal for
+  // anything never declared (see "A genuinely out-of-scope neighbor…" below and
+  // prune-would-orphan-endpoint.test.ts).
+  expect(logLines.some((l) => l.includes('[Prune] prune_neighbor refused') && l.includes('reason=declared_route_protected') && l.includes('id=b')), 'the refusal logs under [Prune], carrying the same fields').toBe(true);
 });
 
   it("A genuinely out-of-scope neighbor retains the prior topology-safe prune behavior.", () => {

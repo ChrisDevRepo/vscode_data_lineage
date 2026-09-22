@@ -36,8 +36,8 @@ export interface CurrentHopActionPolicyResult {
   fatalErrors: InvalidRoute[];
   /** Nonfatal refused/unknown actions recorded for the next hop. */
   notices: InvalidRoute[];
-  /** Out-of-scope prune targets, and in-scope ones not already visited, queued, noted, or
-   * removed — all eligible for topology (don't-orphan) validation. */
+  /** Prune targets — in scope or out — that are not already visited, queued, noted or
+   * removed, all eligible for declared-route and topology (don't-orphan) validation. */
   acceptedPruneIds: string[];
 }
 
@@ -95,23 +95,23 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       notices.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: `\`${id}\` is already recorded as an analyzed node.` });
       continue;
     }
-    if (input.scopeNodeIds.has(id)) {
-      // The hop-level prune decision: an in-scope neighbour the model has decided is off
-      // the answer path is pruned at the hop, like any out-of-scope one. Queued work is the one
-      // protection — a prune may not pull a neighbour that already owns a pending hop; the
-      // don't-orphan topology check governs every accepted prune after this.
-      if (input.agendaIds.has(id)) {
-        notices.push({
-          kind: 'prune_noop_queued',
-          id,
-          path: target.path,
-          reason: `\`${id}\` is already queued for a hop of its own; prune_neighbors does not pull queued work.`,
-        });
-        continue;
-      }
-      acceptedPruneIds.push(id);
+    // Queued work is the one protection, and it is unconditional: a prune may not pull a
+    // neighbour that already owns a pending hop, whether or not that neighbour is in scope
+    // (a priority-3 origin/supplement enqueue takes an agenda slot without a scope entry).
+    // Reading it only for in-scope targets left every out-of-scope queued node unprotected,
+    // which is not what this notice's reason promises.
+    if (input.agendaIds.has(id)) {
+      notices.push({
+        kind: 'prune_noop_queued',
+        id,
+        path: target.path,
+        reason: `\`${id}\` is already queued for a hop of its own; prune_neighbors does not pull queued work.`,
+      });
       continue;
     }
+    // The hop-level prune decision: an in-scope neighbour the model has decided is off the
+    // answer path is pruned at the hop, like any out-of-scope one. The declared-route check and
+    // the don't-orphan topology check govern every accepted prune after this.
     acceptedPruneIds.push(id);
   }
 

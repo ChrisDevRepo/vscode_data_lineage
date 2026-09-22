@@ -291,20 +291,23 @@ export class NavigationEngine implements IHopStateMachine {
   /** Focus nodes the AI pruned via `verdict=prune` in CT mode. Surfaced as `ctPrunedNodeIds`. */
   protected ctPrunedFocusIds = new Set<string>();
   /**
-   * CT only: neighbour ids named in an accepted `route_requests` entry — declared by the tracer as
-   * part of the traced-column continuation. A non-bodied target is *contracted* by the bipartite
-   * agenda rule ({@link enqueueHop}) the instant it is enqueued, so it gets no agenda
-   * entry and no detail slot — the two sources {@link committedConnectedIds} otherwise reads — and
-   * an unrelated later hop's `prune_neighbors` can remove it with nothing left to refuse the prune.
-   * The AI sees one hop at a time and cannot itself keep a contracted declaration
-   * reachable past it; this set is the backend's record of the declaration, consulted both by
-   * {@link committedConnectedIds} (indirect orphan protection for anything committed behind the
-   * declared node) and directly by `submitFindings`'s `prune_neighbors` admission (direct
-   * self-target protection — a declared dead end with no further bodied neighbor orphans nothing
-   * else and so never trips the topology walk on its own).
-   * Populated only when {@link tracer} is set, so BB's prune-protection set stays byte-identical.
+   * Neighbour ids an accepted `route_requests` entry declared part of the traced path, plus — in
+   * CT — the nodes a `column_flow` entry names for a traced column. A non-bodied target is
+   * *contracted* by the bipartite agenda rule ({@link enqueueHop}) the instant it is enqueued, so
+   * it gets no agenda entry and no detail slot — the two sources {@link committedConnectedIds}
+   * otherwise reads — and an unrelated later hop's `prune_neighbors` can remove it with nothing
+   * left to refuse the prune. The AI sees one hop at a time and cannot itself keep a contracted
+   * declaration reachable past it; this set is the backend's record of the declaration, consulted
+   * both by {@link committedConnectedIds} (indirect orphan protection for anything committed
+   * behind the declared node) and directly by `submitFindings`'s `prune_neighbors` admission
+   * (direct self-target protection — a declared dead end with no further bodied neighbor orphans
+   * nothing else and so never trips the topology walk on its own).
+   *
+   * Mode-independent by invariant: an accepted route is an accepted route, and a node BB deletes
+   * while CT keeps it is the CT-is-BB-plus-columns divergence, not a column feature. Persisted
+   * under the legacy `ctDeclaredRouteIds` snapshot key, which predates that convergence.
    */
-  protected ctDeclaredRouteIds = new Set<string>();
+  protected declaredRouteIds = new Set<string>();
   /**
    * Nodes the last {@link getResult} removed from the render as undispositioned sinks. Surfaced as
    * `renderDroppedNodeIds`: the render records its own disposition instead of leaving a reader to
@@ -2476,25 +2479,25 @@ export class NavigationEngine implements IHopStateMachine {
     // The pure policy has already selected the accepted prune targets, in scope or out
     // (`prune_neighbors` may carry in-scope neighbors off the answer path); topology conservation
     // is the final guard, and all mutations stay staged until completeness also passes.
-    // A node the tracer declared — via an accepted route_request OR a column_flow entry naming
-    // it (upstream_columns contributor or writes_to target) for a traced column — is refused as a
-    // prune candidate outright, split out ahead of the topology walk below — a declared dead end
-    // (no further bodied neighbor to contract to) orphans nothing else, so it never trips
-    // `firstDisconnectedAfterPrune`'s reachability check on its own. CT only; empty in BB, so
-    // `prunablePruneIds` equals `actionPolicy.acceptedPruneIds` there.
-    const declaredPruneIds = this.tracer
-      ? actionPolicy.acceptedPruneIds.filter((nid) => this.ctDeclaredRouteIds.has(nid))
-      : [];
+    // A declared node — named in an accepted route_request, or (CT) in a column_flow entry as an
+    // upstream_columns contributor or writes_to target — is refused as a prune candidate outright,
+    // split out ahead of the topology walk below: a declared dead end (no further bodied neighbor
+    // to contract to) orphans nothing else, so it never trips `firstDisconnectedAfterPrune`'s
+    // reachability check on its own, and that walk is undirected, so a carrier with any second
+    // path to the origin reads as safe to delete however central it is to the answer.
+    // Mode-independent: gating this on the tracer let BB delete a routed, contracted carrier that
+    // CT keeps on the identical question — the divergence `CT is BB plus columns` forbids.
+    const declaredPruneIds = actionPolicy.acceptedPruneIds.filter((nid) => this.declaredRouteIds.has(nid));
     for (const nid of declaredPruneIds) {
-      this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${nid} reason=ct_declared_protected`);
+      this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${nid} reason=declared_route_protected`);
       invalidRoutes.push({
         kind: 'prune_would_orphan',
         id: nid,
-        reason: `Pruning \`${nid}\` is refused: an earlier accepted route_request or column_flow entry already declared it part of the traced-column continuation, so it stays reachable for the rest of the run.`,
+        reason: `Pruning \`${nid}\` is refused: an earlier accepted route_request or column_flow entry already declared it part of the traced path, so it stays reachable for the rest of the run.`,
       });
     }
     const prunablePruneIds = declaredPruneIds.length > 0
-      ? actionPolicy.acceptedPruneIds.filter((nid) => !this.ctDeclaredRouteIds.has(nid))
+      ? actionPolicy.acceptedPruneIds.filter((nid) => !this.declaredRouteIds.has(nid))
       : actionPolicy.acceptedPruneIds;
     if (prunablePruneIds.length > 0) {
       const requiredConnectedIds = this.committedConnectedIds();
@@ -2880,8 +2883,8 @@ export class NavigationEngine implements IHopStateMachine {
         // target the border/depth admission deferred or excluded rather than accepted. One
         // protected set, fed from both declaration surfaces.
         for (const e of stagedColumnEdges) {
-          this.ctDeclaredRouteIds.add(e.from_node);
-          this.ctDeclaredRouteIds.add(e.to_node);
+          this.declaredRouteIds.add(e.from_node);
+          this.declaredRouteIds.add(e.to_node);
         }
         // Group continuation questions NOW (focusId + hopCount still match these edges) by the
         // upstream node that must answer each; the route loop below hands each group to that
@@ -2938,10 +2941,11 @@ export class NavigationEngine implements IHopStateMachine {
         const targetNode = this.nodeMap.get(nid);
         const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
         const wasAlreadyVisited = this.visited.has(nid);
-        // The tracer declares nid part of the traced-column continuation the moment this
-        // route is admitted — before `enqueueHop` runs, since a non-bodied target ends that call
-        // contracted, with no agenda entry left for anything downstream to protect it.
-        if (this.tracer) this.ctDeclaredRouteIds.add(nid);
+        // An accepted route declares nid part of the traced path the moment it is admitted —
+        // before `enqueueHop` runs, since a non-bodied target ends that call contracted, with no
+        // agenda entry left for anything downstream to protect it. Both modes: the declaration is
+        // the model's routing decision, not a column fact.
+        this.declaredRouteIds.add(nid);
         const routeColumns = routeColumnsByNode.get(nid);
         const isFreshExpansion = freshlyExpandedIds.delete(nid);
         // reactivated is always false here: a `supplementAgenda` re-analysis is the only caller
@@ -3162,7 +3166,7 @@ export class NavigationEngine implements IHopStateMachine {
    * disconnected it (its id survives in scope but `getResult`'s reachability recompute drops it). K
    * makes the queued node visible to the orphan guard so the prune is rejected instead.
    *
-   * A `ctDeclaredRouteIds` member counts only when it is in `scopeNodeIds`: the reachability walk
+   * A `declaredRouteIds` member counts only when it is in `scopeNodeIds`: the reachability walk
    * this set feeds is scope-bounded (`bfsReachable`), so an out-of-scope `column_flow` endpoint —
    * the border sink `columnEndpointsOutsideRender` withholds from the render — would read as
    * disconnected after every prune and refuse unrelated ones. A direct prune of a declared node
@@ -3171,12 +3175,10 @@ export class NavigationEngine implements IHopStateMachine {
   private committedConnectedIds(): Set<string> {
     const ids = new Set<string>(this.memory.notedNodeIds);
     for (const e of this._agenda.entries) ids.add(e.nodeId);
-    // A CT declaration — a route the bipartite rule contracted away (no agenda entry, no detail
-    // slot), or a column_flow entry naming a node for a traced column — still counts as committed,
-    // protecting anything reachable only behind it. Empty in BB, so this widening is additive-only.
-    if (this.tracer) {
-      for (const id of this.ctDeclaredRouteIds) if (this.scopeNodeIds.has(id)) ids.add(id);
-    }
+    // A declaration — a route the bipartite rule contracted away (no agenda entry, no detail
+    // slot), or (CT) a column_flow entry naming a node for a traced column — still counts as
+    // committed, protecting anything reachable only behind it, in both modes.
+    for (const id of this.declaredRouteIds) if (this.scopeNodeIds.has(id)) ids.add(id);
     return ids;
   }
 
@@ -3926,13 +3928,15 @@ export class NavigationEngine implements IHopStateMachine {
       engineInternals: this.serializeInternals(),
       // Mode-independent: the sink trim bounds the render in BB and CT alike.
       ...(this.renderDroppedIds.size > 0 ? { renderDroppedNodeIds: Array.from(this.renderDroppedIds) } : {}),
+      // Mode-independent: an accepted route declares its target in BB and CT alike, so the prune
+      // protection this set feeds has to survive a checkpoint in both. Legacy `ct`-prefixed key.
+      ctDeclaredRouteIds: Array.from(this.declaredRouteIds),
       ...(this.tracer ? {
         // The in-flight hop's own questions (set from its AgendaEntry at dispatch), not a fresh
         // recompute against `currentFocusNodeId` — that would describe the just-committed hop,
         // not the one a mid-hop resume needs to keep showing.
         lineageQuestionsLastHop: [...this._pendingLineageQuestions],
         ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds),
-        ctDeclaredRouteIds: Array.from(this.ctDeclaredRouteIds),
       } : {}),
     };
     try {
@@ -4097,7 +4101,7 @@ export class NavigationEngine implements IHopStateMachine {
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
     // Absent on a checkpoint written before this set was persisted — restores as empty, which is
     // today's live-engine-only protection rather than inventing declarations.
-    engine.ctDeclaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
+    engine.declaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
     // Absent on a checkpoint written before the field existed, and on one whose last render dropped
     // nothing — both mean "no recorded drop".
     engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);

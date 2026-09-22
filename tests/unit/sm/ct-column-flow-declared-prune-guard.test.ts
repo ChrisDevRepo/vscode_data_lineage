@@ -143,9 +143,11 @@ describe('CT column_flow-declared prune guard', () => {
       prune_neighbors: ['sink'],
     }) as any;
 
-    expect('ok' in hop2, 'BB: sink was never declared by any CT-only mechanism — no protection leaks into BB').toBe(true);
+    expect('ok' in hop2, 'BB: sink was never declared by a route or a column_flow entry, so nothing refuses the prune').toBe(true);
     const state = engine.toJSON();
     expect(state.removedSet.includes('sink'), 'BB behavior is unchanged: sink is pruned').toBe(true);
-    expect(state.ctDeclaredRouteIds, 'BB snapshot does not persist a CT-only declaration set').toBeUndefined();
+    // The column_flow half of the declaration is CT-only — BB has no such field. The route half is
+    // not: `source` was routed here, so a BB checkpoint carries it exactly as a CT one would.
+    expect(state.ctDeclaredRouteIds, 'the route declaration is mode-independent').toEqual(['source']);
   });
 });

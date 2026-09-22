@@ -1007,8 +1007,10 @@ export interface SmState {
    */
   ctPrunedNodeIds?: string[];
   /**
-   * Neighbour ids named in an accepted `route_requests` entry while the column aspect was active
-   * (`ctDeclaredRouteIds` on the live engine). Present only when `columnAspect` is non-null.
+   * Neighbour ids named in an accepted `route_requests` entry, plus the nodes a CT `column_flow`
+   * entry named for a traced column (`declaredRouteIds` on the live engine). Present in both
+   * modes — an accepted route is a routing decision, not a column fact — under a `ct`-prefixed key
+   * kept for compatibility with runs stored before the two modes converged.
    * Absent on a checkpoint written before the field was persisted; restore treats that as empty.
    */
   ctDeclaredRouteIds?: string[];

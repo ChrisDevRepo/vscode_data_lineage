@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
+import type { Logger } from '../../../src/utils/log';
 import { TurnEventSink, type NativeGateEvent, type TurnEvent } from '../../../src/ai/runtime/turnEventSink';
 import { AiSession } from '../../../src/ai/session/session';
 import type { PresentationArtifact } from '../../../src/ai/session/types';
@@ -231,5 +232,113 @@ describe('synthesis breaker salvage (run level)', () => {
     expect(salvageCall.input).toEqual({ is_update: true, notes: [] });
     // The held draft's usefulness is over either way — salvaged or not.
     expect(session.presentResultRepairDraft.hasRepairableDraft()).toBe(false);
+  });
+
+  // D-4 (m19-review-code, opus review): the salvage sends `notes: []` unconditionally, discarding
+  // every held caption — including a valid one, like a risk callout — with nothing but a debug
+  // log naming the decision. The offending note indexes `validatePresentResult` reports at
+  // rejection time are not plumbed onto the held draft (`RepairDraftStore` carries only the
+  // repair-field list, `['notes']`), so a precise "resend minus the offenders" repair is out of
+  // this call site's reach without a plumbing change outside this fix's scope. This pins what IS
+  // in scope: the decision is now named out loud as a full REJECT of `notes[]`, with the discarded
+  // count, per `.claude/rules/ai-surface.md` — never a silent narrowing.
+  it('logs the discarded note count and names the decision as a REJECT, not a silent narrowing', async () => {
+    const session = new AiSession();
+    seedSingleNodeLineage(session);
+    const epoch = session.beginTurn();
+    seedProposal(session, epoch);
+
+    let presentCalls = 0;
+    const { registry } = scriptedRegistry([
+      { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
+      { name: 'lineage_start_exploration', result: GATE_RESULT },
+      {
+        name: 'lineage_submit_findings',
+        result: (): string => {
+          const engine = session.stateMachine!;
+          const result = engine.submitFindings({
+            focus_node_id: engine.currentFocus!,
+            sections: [{ angle: 'business', text: 'origin analyzed' }],
+            summary: 'origin analyzed',
+            verdict: 'analyze',
+          });
+          if (!('error' in result)) engine.getHopContext();
+          return JSON.stringify(result);
+        },
+      },
+      {
+        name: 'lineage_present_result',
+        result: (input: unknown): string => {
+          const isSalvagePatch = typeof input === 'object' && input !== null
+            && (input as Record<string, unknown>).is_update === true;
+          if (isSalvagePatch) return commitStubPresentation(session, epoch);
+          presentCalls += 1;
+          if (presentCalls < MAX_TOOL_SEMANTIC_FAILURES) {
+            return JSON.stringify({
+              success: false,
+              errors: [`sections.0: Unrecognized key: "},{" (attempt ${presentCalls})`],
+              hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
+            });
+          }
+          // Two held notes — one genuinely unlinkable, one a valid caption — both get discarded by
+          // the blanket `notes: []` salvage; the log must now say so.
+          session.presentResultRepairDraft.hold(
+            {
+              name: 'vwDiscountCalc Discount trace',
+              summary: 'Discount is computed from SalesStaging and discount rules.',
+              sections: [{ label: 'Sources', text: 'CustomerMaster supplies the tier used in the lookup.' }],
+              highlight_groups: [{ label: 'Sources', color: 'source', node_ids: ['[ai].[Origin]'] }],
+              notes: [
+                { node_id: '[ai].[vwraworders]', text: 'unlinkable caption' },
+                { node_id: '[ai].[Origin]', text: 'a valid caption discarded alongside it' },
+              ],
+            } as unknown as PresentResultInput,
+            ['notes'],
+          );
+          return JSON.stringify({
+            success: false,
+            errors: ['notes[].node_id names IDs the result graph cannot link: `[ai].[vwraworders]`'],
+            hint: 'Fix notes only. Resend only these fields: notes.',
+          });
+        },
+      },
+    ]);
+
+    const script = [
+      { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
+      { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: 'origin analyzed', verdict: 'analyze' })] },
+      ...Array.from({ length: MAX_TOOL_SEMANTIC_FAILURES }, (_, i) => (
+        { toolCalls: [validCall(`present-${i}`, 'lineage_present_result', { attempt: i })] }
+      )),
+    ];
+    const model = new ScriptedModelPort(script);
+    const turn = makeGateSink();
+    const debugLines: string[] = [];
+    const logger = {
+      debug: (msg: string): void => { debugLines.push(msg); },
+      info: (): void => undefined,
+      warn: (): void => undefined,
+      error: (): void => undefined,
+    } as unknown as Logger;
+    const runtime = new AgentRuntime({
+      threadId: 'synthesis-salvage-log',
+      getSession: () => session,
+      model: model as unknown as ModelPort,
+      registry,
+      sink: turn.sink,
+      turnEpoch: epoch,
+      maxRounds: 10,
+      logger,
+    });
+
+    const running = runtime.run('/trace [ai].[Origin]');
+    const gate = await turn.nextGate();
+    expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
+    await running;
+
+    const salvageLog = debugLines.find(line => line.includes('synthesis breaker tripped'));
+    expect(salvageLog, debugLines.join('\n')).toBeDefined();
+    expect(salvageLog).toContain('discarding all 2 held note(s)');
+    expect(salvageLog).toContain('REJECT of notes[], not a per-note repair');
   });
 });

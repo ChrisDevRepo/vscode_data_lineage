@@ -210,8 +210,9 @@ describe("Scope Extension + Hold-and-Amend", () => {
     makeNode({ id: 'h',   schema: 'dbo', name: 'h',   type: 'procedure' }),
     makeNode({ id: 'tbl', schema: 'dbo', name: 'tbl', type: 'table' }),
     makeNode({ id: 'v',   schema: 'dbo', name: 'v',   type: 'view' }),
+    makeNode({ id: 'w',   schema: 'dbo', name: 'w',   type: 'table' }),
   ];
-  const nrEdges: Array<[string, string]> = [['h', 'tbl'], ['tbl', 'v'], ['h', 'v']];
+  const nrEdges: Array<[string, string]> = [['h', 'tbl'], ['tbl', 'v'], ['h', 'v'], ['v', 'w']];
   const nrModel: DatabaseModel = makeModel(nrNodes, nrEdges, ['dbo']);
   const nrGraph = makeGraph(nrNodes, nrEdges);
 
@@ -236,14 +237,17 @@ describe("Scope Extension + Hold-and-Amend", () => {
     sections: [{ angle: 'business' as const, text: 'v' }],
     summary: 'v',
     verdict: 'analyze',
-    prune_neighbors: ['tbl'],
+    prune_neighbors: ['w'],
   }) as any;
   // Untouched in-scope work: the hop-level prune executes once the don't-orphan guard
-  // clears it — h stays reachable through its direct h→v edge without tbl.
+  // clears it — w is a leaf, so removing it disconnects nothing committed.
   expect(!('error' in ok), 'the in-scope prune commits once don\u2019t-orphan clears it').toBe(true);
   const after = engine.toJSON();
-  expect(after.removedSet.includes('tbl'), 'the executed hop-level prune removed tbl').toBe(true);
-  expect(!after.memory.recentRejections.some((r) => r.nodeId === 'tbl'), 'an executed prune is no refusal notice').toBe(true);
+  expect(after.removedSet.includes('w'), 'the executed hop-level prune removed w').toBe(true);
+  expect(!after.memory.recentRejections.some((r) => r.nodeId === 'w'), 'an executed prune is no refusal notice').toBe(true);
+  // tbl was named in an accepted route_request at the previous hop and the bipartite rule
+  // contracted it away; that declaration keeps it out of every later prune_neighbors.
+  expect(!after.removedSet.includes('tbl'), 'a declared, contracted route target stays in the graph').toBe(true);
 });
 
   it("Test 4: a complete full resend is deliberate re-authoring; held prose does not overwrite it.", () => {

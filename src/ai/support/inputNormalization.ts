@@ -169,11 +169,44 @@ export function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
  * forms logs this list so a dropped parameter is never silent. Walks objects and arrays in step and
  * stops where the parse changed a value's kind (a decoded JSON string, a coerced scalar). A raw
  * `null` is not reported: {@link nullAsAbsent} maps it to absence by contract.
+ *
+ * An array whose parsed length exceeds its raw length is never a plain kind change — the only
+ * repair in this module that changes an array's length is {@link repairArrayBoundaryArtifacts}
+ * splicing recovered sibling elements in immediately after the raw element that carried the
+ * artifact-boundary key. Index-zipping raw and parsed in that case would compare each element
+ * against the wrong sibling from the splice point on and report every one of them as a spurious
+ * drop. Instead the walk keeps an independent parsed-side cursor that advances past exactly the
+ * recovered elements a re-derivation of that same rejoin produces (a pure, deterministic replay of
+ * the repair's own extraction, not a second source of truth for what was recovered), and reports the
+ * rejoin itself as a distinct entry — `NORMALIZE-WITH-LOG`'s "add" half, alongside the vacated
+ * artifact key the object-level walk already reports as a drop.
  */
 export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): string[] {
   const at = (key: string | number) => (path ? `${path}.${key}` : String(key));
   if (Array.isArray(raw)) {
-    return Array.isArray(parsed) ? raw.flatMap((item, i) => droppedKeyPaths(item, parsed[i], at(i))) : [];
+    if (!Array.isArray(parsed)) return [];
+    if (parsed.length === raw.length) {
+      return raw.flatMap((item, i) => droppedKeyPaths(item, parsed[i], at(i)));
+    }
+    const paths: string[] = [];
+    let parsedIndex = 0;
+    for (let rawIndex = 0; rawIndex < raw.length; rawIndex++) {
+      const rawItem = raw[rawIndex];
+      paths.push(...droppedKeyPaths(rawItem, parsed[parsedIndex], at(rawIndex)));
+      parsedIndex++;
+      if (!isPlainObject(rawItem)) continue;
+      const artifactKey = Object.keys(rawItem).find((key) => ARRAY_BOUNDARY_ARTIFACT_KEY.test(key));
+      if (artifactKey === undefined) continue;
+      const rawValue = rawItem[artifactKey];
+      const recovered = typeof rawValue === 'string'
+        ? extractBalancedJsonObjects(`${artifactKey}"${rawValue}`)
+        : null;
+      if (recovered && recovered.length > 0) {
+        paths.push(`${at(rawIndex)}.${artifactKey} (rejoined ${recovered.length} sibling element(s))`);
+        parsedIndex += recovered.length;
+      }
+    }
+    return paths;
   }
   if (!raw || typeof raw !== 'object' || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
   return Object.entries(raw as Record<string, unknown>).flatMap(([key, value]) => {
@@ -318,9 +351,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * real key is a word. A key matching this is never authored content; it is where a tokenizer landed
  * after a raw array-element boundary token (the `},{` that should close one element and open the
  * next, or a bare separator `,`) got swept into a quoted key instead of staying unquoted JSON
- * structure, with whatever followed swallowed into that key's string value.
+ * structure, with whatever followed swallowed into that key's string value. Whitespace around or
+ * between the structural characters is tolerated (`}, {`, `},\n{`) — a provider that pretty-prints
+ * tool-call arguments emits the identical defect with insignificant whitespace inside the swept
+ * key, and this is the general defect class, not one compact-JSON provider's spacing; at least one
+ * structural character is still required, so a whitespace-only key never matches.
  */
-const ARRAY_BOUNDARY_ARTIFACT_KEY = /^[{}[\],:]+$/;
+const ARRAY_BOUNDARY_ARTIFACT_KEY = /^[{}[\],:\s]*[{}[\],:][{}[\],:\s]*$/;
 
 /**
  * Finds the end index (inclusive) of the balanced `{...}` object literal starting at `text[start]`,
@@ -415,8 +452,10 @@ function extractBalancedJsonObjects(text: string): Record<string, unknown>[] | n
  * nothing balanced can be extracted (the value carries no further object content), only the
  * artifact key is removed — never the element's own real fields, and the element itself is never
  * evicted from the array. Either way, the vacated key surfaces to the caller's `droppedKeyPaths`
- * diff exactly as {@link hoistSectionNotes}'s relocations do, so neither the recovery nor the drop is
- * silent. A key whose text is not solely structural punctuation, or a value that cannot be rejoined
+ * diff exactly as {@link hoistSectionNotes}'s relocations do; when elements were also recovered,
+ * that same diff separately names the rejoin (element count and the artifact-key path it came
+ * from), so recovery is `NORMALIZE-WITH-LOG`, never a silent splice — neither the recovery nor the
+ * drop is silent. A key whose text is not solely structural punctuation, or a value that cannot be rejoined
  * into balanced object literals, passes through untouched so `.strict()`'s own
  * `Unrecognized key` rejection still applies — this never widens what an unknown key is allowed to
  * mean. Transparent to `z.toJSONSchema` (`io: 'input'`): this operates on the parsed JS value before
@@ -430,7 +469,11 @@ function extractBalancedJsonObjects(text: string): Record<string, unknown>[] | n
 export function repairArrayBoundaryArtifacts(value: unknown): unknown {
   if (Array.isArray(value)) {
     const walked = value.map(repairArrayBoundaryArtifacts);
-    let changed = false;
+    // A repair made strictly inside an element (nested array/object) replaces that element's
+    // reference without adding or removing an artifact key at THIS level — `changed` must catch
+    // that too, or the nested repair is silently discarded when this level rebuilds `rebuilt` from
+    // `walked` but then returns the ORIGINAL `value` because nothing looked different from here.
+    let changed = walked.some((item, index) => item !== value[index]);
     const rebuilt: unknown[] = [];
     for (const item of walked) {
       const artifactKey = isPlainObject(item)
