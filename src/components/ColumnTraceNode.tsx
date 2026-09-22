@@ -9,7 +9,9 @@ import {
   COLUMN_ROW_HEIGHT,
   COLUMN_ROW_DIM_OPACITY,
   COLUMN_TRANSFORM_NODE_WIDTH,
-  COLUMN_TRANSFORM_NODE_MIN_HEIGHT,
+  COLUMN_TRANSFORM_CIRCLE_DIAMETER,
+  COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
+  COLUMN_TRANSFORM_NODE_HEIGHT,
   COLUMN_TRANSFORM_PORT_SPREAD,
   type ColumnTraceRow,
   type ColumnLineState,
@@ -44,37 +46,30 @@ function lineStateColor(state: ColumnLineState | undefined): string {
  */
 const ROW_TRANSITION = 'background-color 120ms ease, opacity 120ms ease';
 
-/** Diameter of the gear circle drawn for a transform super node. */
-const TRANSFORM_CIRCLE_INSET = 14;
-
-/** Height of the name strip beneath a transform super node's circle. */
-const TRANSFORM_NAME_STRIP_HEIGHT = 20;
+/** Tint of a row on the active column thread — the lit-edge colour, softened behind the text. */
+const THREAD_ROW_BACKGROUND = 'color-mix(in srgb, var(--ln-focus-border) 18%, transparent)';
 
 function rowCenter(index: number): number {
   return COLUMN_NODE_HEADER_HEIGHT + index * COLUMN_ROW_HEIGHT + COLUMN_ROW_HEIGHT / 2;
 }
 
 /**
- * Handle anchor and gear-circle geometry for a transform super node.
+ * Handle anchor and circle geometry for a transform super node.
  *
  * @remarks
- * The circle is the node's whole body, so the invisible port handles are fanned across its arc —
- * each column edge through the hub lands at its own point on the circle instead of stacking at one
- * midpoint. The vertical spread is clamped to the arc's usable span so every handle sits ON the
- * circle; `left` places the handle at the arc's x for that row, which is what makes the line meet
- * the visible stroke rather than stopping at the invisible box edge.
+ * The circle is the node's whole body and has a fixed size, so the invisible port handles are fanned
+ * across its arc — at {@link COLUMN_TRANSFORM_PORT_SPREAD} apart while that fits, closer when more
+ * ports run through the hub — so every handle sits ON the circle and each column edge meets the
+ * visible stroke rather than the invisible box edge.
  */
 function transformPortGeometry(portCount: number, width: number, height: number) {
   const cx = width / 2;
-  const usableHeight = height - TRANSFORM_NAME_STRIP_HEIGHT;
-  const cy = usableHeight / 2;
-  const radius = Math.min(width, usableHeight) / 2 - TRANSFORM_CIRCLE_INSET / 2;
+  const cy = (height - COLUMN_TRANSFORM_NAME_STRIP_HEIGHT) / 2;
+  const radius = COLUMN_TRANSFORM_CIRCLE_DIAMETER / 2;
   const arcSpan = radius * 0.86;
-  const first = cy - ((portCount - 1) * COLUMN_TRANSFORM_PORT_SPREAD) / 2;
-  return { cx, cy, radius, portY: (index: number) => {
-    const raw = first + index * COLUMN_TRANSFORM_PORT_SPREAD;
-    return Math.min(cy + arcSpan, Math.max(cy - arcSpan, raw));
-  } };
+  const spread = portCount > 1 ? Math.min(COLUMN_TRANSFORM_PORT_SPREAD, (2 * arcSpan) / (portCount - 1)) : 0;
+  const first = cy - ((portCount - 1) * spread) / 2;
+  return { cx, cy, radius, portY: (index: number) => first + index * spread };
 }
 
 /** Half the rendered handle box (`w-2 h-2`), subtracted so the anchor point sits at its centre. */
@@ -93,7 +88,7 @@ const HANDLE_HALF = 4;
 function portHandleStyle(view: ColumnTraceNodeData['view'], index: number, side: 'source' | 'target'): CSSProperties {
   if (!view.isTransformNode) return { top: rowCenter(index) };
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
-  const height = view.height || COLUMN_TRANSFORM_NODE_MIN_HEIGHT;
+  const height = view.height || COLUMN_TRANSFORM_NODE_HEIGHT;
   const { cx, cy, radius, portY } = transformPortGeometry(view.rows.length, width, height);
   const y = portY(index);
   const dx = Math.sqrt(Math.max(radius * radius - (y - cy) ** 2, 0));
@@ -136,13 +131,13 @@ function ColumnTraceRowLine({
     gap: 6,
     padding: '0 8px',
     opacity: isDeemphasised ? COLUMN_ROW_DIM_OPACITY : 1,
-    backgroundColor: isHoveredRow ? 'var(--ln-hover-bg)' : 'transparent',
-    // Focus only — a pointer user already has the hover background and weight to go by, and
-    // painting the focus indicator on hover would also let a mouse move clear a keyboard position.
-    // The pinned row is the exception: it is a standing selection, not a transient position, and it
-    // carries the same yellow the object view gives a clicked node.
+    // A row on the thread takes the colour its lit edges carry, so rows and lines read as one thread.
+    backgroundColor: isHoveredRow ? THREAD_ROW_BACKGROUND : 'transparent',
+    // Focus ring for the keyboard position; the pinned row keeps the yellow the object view gives a
+    // clicked node, marking where the thread starts; every other thread row gets the thread's bar.
     boxShadow: focused ? 'inset 0 0 0 2px var(--ln-focus-border)'
       : isPinnedRow ? 'inset 0 0 0 2px var(--ln-highlight-yellow)'
+      : isHoveredRow ? 'inset 3px 0 0 var(--ln-focus-border)'
       : undefined,
     transition: ROW_TRANSITION,
   };
@@ -202,22 +197,23 @@ function ColumnTraceRowLine({
   );
 }
 
-/** State-of-the-art cog: one stroked gear body plus its hub, reading as "machine logic" at 22px. */
+/** Process cog in the Lucide "settings" silhouette, lightly filled so it reads at 18px. */
 function GearGlyph() {
   return (
     <svg
-      width={22}
-      height={22}
+      width={18}
+      height={18}
       viewBox="0 0 24 24"
-      fill="none"
+      fill="currentColor"
+      fillOpacity={0.18}
       stroke="currentColor"
-      strokeWidth={1.9}
+      strokeWidth={1.8}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <circle cx="12" cy="12" r={3.2} />
-      <path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9M18.5 18.5l-1.9-1.9M7.4 7.4L5.5 5.5" />
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" fill="var(--ln-bg-elevated)" fillOpacity={1} />
     </svg>
   );
 }
@@ -240,7 +236,7 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
   boxShadow: string | undefined;
 }) {
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
-  const height = view.height || COLUMN_TRANSFORM_NODE_MIN_HEIGHT;
+  const height = view.height || COLUMN_TRANSFORM_NODE_HEIGHT;
   const { cx, cy, radius } = transformPortGeometry(view.rows.length, width, height);
   const schemaColor = getSchemaColor(view.schema);
 
@@ -255,7 +251,7 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
           width: radius * 2,
           height: radius * 2,
           borderRadius: '50%',
-          border: `1.5px solid ${strokeColor}`,
+          border: `1px solid ${strokeColor}`,
           background: `color-mix(in srgb, ${schemaColor} 10%, var(--ln-bg-elevated))`,
           boxShadow,
           display: 'flex',
@@ -273,7 +269,7 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
           left: 0,
           right: 0,
           bottom: 0,
-          height: TRANSFORM_NAME_STRIP_HEIGHT,
+          height: COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -356,11 +352,15 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   // object view's dim rather than staying at full weight with only its rows faded.
   const offThread = !!threadPath && !view.rows.some(r => threadPath.has(columnRowKey(id, r.name)));
   // The card holding the clicked row takes the object view's yellow click-highlight, so a click at
-  // column level reads exactly like a click at object level one level up.
+  // column level reads exactly like a click at object level one level up; every other card the
+  // pinned thread runs through takes the thread's blue.
   const ownsPin = !!pinnedRow && view.rows.some(r => columnRowKey(id, r.name) === pinnedRow);
+  const onPinnedThread = !!pinnedRow && !!threadPath && !offThread;
   // Shared with CustomNode via resolveNodeHighlightStyle, so a node reads the same in both views.
-  const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, transform, zIndex } =
-    resolveNodeHighlightStyle(ownsPin ? 'yellow' : data.highlighted, data.aiHighlight, data.dimmed || offThread);
+  // The scale it adds is dropped here: edges attach to row handles, and a scaled card moves its rows
+  // off the lines that end on them.
+  const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, zIndex } =
+    resolveNodeHighlightStyle(ownsPin ? 'yellow' : onPinnedThread || data.highlighted, data.aiHighlight, data.dimmed || offThread);
 
   return (
     <>
@@ -387,7 +387,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         width: view.width || (view.isTransformNode ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH),
         height: view.height,
         opacity,
-        transform,
         zIndex,
       }}
     >

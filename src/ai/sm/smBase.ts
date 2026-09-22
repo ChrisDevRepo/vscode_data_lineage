@@ -2107,6 +2107,7 @@ export class NavigationEngine implements IHopStateMachine {
           candidate.activeColumns ?? [],
           this.writtenCarrierIds(candidate.nodeId),
           this.log,
+          this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream',
         );
         const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
         const statedRowRole = candidate.columnCarry?.kind === 'row_role_only';
@@ -2622,9 +2623,11 @@ export class NavigationEngine implements IHopStateMachine {
     // `column_flow` is optional on the wire (a prune verdict commonly omits it);
     // `validateColumnFlow` reads it as required, so the call is guarded on presence the same way
     // every other `column_flow`-conditional branch here already is.
+    // A bidirectional trace continues a column on its producing side, same as an upstream one.
+    // Hoisted (not only computed inside the block below) so the completeness guard further down —
+    // a separate `if`, same submit — reads the identical direction the edges were staged under.
+    const traceDirection = this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream';
     if (this.tracer && finding.column_flow) {
-      // A bidirectional trace continues a column on its producing side, same as an upstream one.
-      const traceDirection = this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream';
       const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection);
       if (valResult.error) {
         return valResult.error;
@@ -2785,13 +2788,14 @@ export class NavigationEngine implements IHopStateMachine {
       const contradicted = declaredActiveColumns;
       const declaresNoTrackedColumns =
         finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
-      const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow);
+      const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow, traceDirection);
       if (unaccounted.length > 0) {
         columnChainFault = {
           focusId,
           unaccounted,
           available: [...this.tracer.activeColumns],
           contradicted: [...contradicted],
+          traceDirection,
         };
       }
       if (declaresNoTrackedColumns) {
@@ -3227,7 +3231,7 @@ export class NavigationEngine implements IHopStateMachine {
   private contractThroughPassNode(entry: AgendaEntry): void {
     // Bound carried columns to this pass node's on-trace spine before propagation.
     const spineBound = this.tracer
-      ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [], new Set(), this.log)
+      ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [], new Set(), this.log, this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream')
       : entry.activeColumns;
     // Spine-empty candidates fall back to the requested set verbatim (determineActiveColumnsForCandidate
     // above) — bound that result to the pass node's own declared columns too, same predicate as enqueueHop.
@@ -3867,7 +3871,7 @@ export class NavigationEngine implements IHopStateMachine {
       // attributed columns and avoid it. Empty (never `[]` on the wire; see the neighbor spread
       // below) when nothing is staged.
       const attributedColumns = this.tracer
-        ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log)
+        ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log, this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream')
         : [];
       const neighbor: HopNeighborDisclosure = {
         id: nid, s: n.schema, n: n.name, t: n.type,

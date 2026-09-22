@@ -195,6 +195,32 @@ describe('ColumnTraceNode', () => {
     expect(document.querySelectorAll('.react-flow__handle')).toHaveLength(6);
   });
 
+  it('keeps a pinned card unscaled so its rows stay on the lines that end on them', () => {
+    mountNode(['A', 'B']);
+    act(() => rows()[0].click());
+    const box = rows()[0].closest('[role="list"]')!.parentElement!.parentElement as HTMLElement;
+    expect(box.style.transform, 'no scale on the card holding the pin').toBe('');
+    expect(rows()[0].getAttribute('aria-current')).toBe('true');
+  });
+
+  it('fans every port of a many-column hub onto the fixed circle', () => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="ai.spbuildsalesreport" data={makeTransformData(12)} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const circle = [...host.querySelectorAll<HTMLElement>('div[aria-hidden="true"]')].find(el => el.style.borderRadius === '50%')!;
+    const radius = parseFloat(circle.style.width) / 2;
+    const cy = parseFloat(circle.style.top) + radius;
+    expect(radius * 2, 'the circle does not grow with the port count').toBe(40);
+    for (const handle of document.querySelectorAll<HTMLElement>('.react-flow__handle')) {
+      const y = parseFloat(handle.style.top) + 4;
+      expect(Math.abs(y - cy), 'handle on the arc').toBeLessThanOrEqual(radius);
+    }
+  });
+
   it('is a single tab stop however many columns it traces', () => {
     mountNode(['A', 'B', 'C', 'D', 'E']);
     const focusable = rows().filter(r => r.getAttribute('tabindex') === '0');

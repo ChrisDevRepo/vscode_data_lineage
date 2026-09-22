@@ -45,14 +45,50 @@ describe("Submit Findings Rules", () => {
   const violation = validateSectionsAgainstClassification([
     { angle: 'technical', text: 'technical only' },
   ], 'business', 'analyze');
-  expect(violation === 'classification=business requires at least one section with angle="business".', 'business lock still requires business section').toBe(true);
+  expect(violation?.startsWith('classification=business requires at least one section with angle="business".'), 'business lock still requires business section').toBe(true);
 });
 
   it("both lock still requires both required angles", () => {
   const violation = validateSectionsAgainstClassification([
     { angle: 'business', text: 'business only' },
   ], 'both', 'analyze');
-  expect(violation === 'classification=both requires sections with angle="business" and angle="technical".', 'both lock still requires both required angles').toBe(true);
+  expect(violation?.startsWith('classification=both requires sections with angle="business" and angle="technical".'), 'both lock still requires both required angles').toBe(true);
+});
+
+  it("a both-lock rejection names the missing angle and keeps the angle already sent", () => {
+  // m57-close-azure-azure-foundry run-T8 host.log:180-187: the reopened [ai].[spcleanorders] hop
+  // sent business only, got the bare rule back, resent technical only, and the third rejection
+  // stopped the exploration with the hop's OrderAmount column_flow never committed. The rule
+  // alone never said which angle was absent or that the sent one stays.
+  const violation = validateSectionsAgainstClassification([
+    { angle: 'business', text: 'business only' },
+  ], 'both', 'analyze') ?? '';
+  expect(violation, 'the hint names the missing angle').toContain('missing angle="technical"');
+  expect(violation, 'the hint keeps the angle already sent').toContain('keep the angle="business" section already sent');
+  expect(violation.includes('missing angle="business"'), 'the present angle is never named as missing').toBe(false);
+});
+
+  it("a both-lock reopen is satisfied by an angle already archived from the earlier visit", () => {
+  // m57-close-azure-azure-foundry run-T8 host.log:151-187: spCleanOrders was analyzed at hop 5
+  // with both angles accepted (and therefore archived), then reopened at hop 9 by `[CT] reopen`
+  // and refused three times for missing angles the archive already held from hop 5. storeDetail
+  // appends a revisit's sections after the earlier visit's — it never replaces them — so a
+  // reopen submission carrying only the angle it is adding should not be held to re-carry the
+  // angle the archive already covers.
+  const reopenBusinessOnly = validateSectionsAgainstClassification(
+    [{ angle: 'business', text: 'reopen business note' }],
+    'both',
+    'analyze',
+    new Set(['technical']),
+  );
+  expect(reopenBusinessOnly === null, 'technical already archived satisfies the both lock on reopen').toBe(true);
+
+  const reopenNoArchive = validateSectionsAgainstClassification(
+    [{ angle: 'business', text: 'reopen business note' }],
+    'both',
+    'analyze',
+  );
+  expect(reopenNoArchive?.startsWith('classification=both requires sections with angle="business" and angle="technical".'), 'a first visit with no archive still requires both angles').toBe(true);
 });
 
   it("a prune verdict is exempt from the angle requirement under a both lock", () => {

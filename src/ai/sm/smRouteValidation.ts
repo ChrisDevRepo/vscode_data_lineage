@@ -216,7 +216,7 @@ export interface SubmissionFaults {
    */
   pruneSections?: { focusId: string; sectionCount: number };
   /** CT column-chain completeness: tracked columns the payload left unaccounted. */
-  columnChain?: { focusId: string; unaccounted: string[]; available: string[]; contradicted: readonly string[] };
+  columnChain?: { focusId: string; unaccounted: string[]; available: string[]; contradicted: readonly string[]; traceDirection?: 'upstream' | 'downstream' };
   /**
    * Required neighbours a non-prune repair of this payload would bring into play. Stated because a
    * `verdict:'prune'` payload is exempt from the neighbour demand: repairing the verdict is what
@@ -284,8 +284,8 @@ export function buildSubmissionRejection(
     }
   }
   if (faults.columnChain) {
-    const { focusId, unaccounted, available, contradicted } = faults.columnChain;
-    const envelope = buildIncompleteRejection(focusId, unaccounted, available, contradicted, single);
+    const { focusId, unaccounted, available, contradicted, traceDirection } = faults.columnChain;
+    const envelope = buildIncompleteRejection(focusId, unaccounted, available, contradicted, single, traceDirection);
     if ('error' in envelope) {
       codes.push(envelope.error);
       if (envelope.hint) hints.push(envelope.hint);

@@ -57,6 +57,11 @@ export function computeUnaccounted(required: readonly string[], accounted: Itera
  * @param appendHeldOrder - False when the caller merges this envelope with another fault family
  * and states the resubmission order itself once, covering both; true (default) preserves
  * the standalone envelope's own held-draft order.
+ * @param traceDirection - Trace direction of the owning exploration. Upstream: the missing column
+ * is named directly as `out_col`. Downstream: the focus's own `out_col` may be a rename/derivation
+ * of the missing column, which is instead accounted for by naming it inside `upstream_columns` —
+ * so the repair text differs. Defaults to `upstream` so every pre-existing call site keeps today's
+ * wording byte-identical.
  * @returns The narrow held-content retry envelope.
  */
 export function buildIncompleteRejection(
@@ -65,9 +70,12 @@ export function buildIncompleteRejection(
   available: string[],
   contradicted: readonly string[] = [],
   appendHeldOrder = true,
+  traceDirection: 'upstream' | 'downstream' = 'upstream',
 ): SubmitResult {
   const held = `Your analysis is held: resend submit_findings with sections:[] and only the corrected column_flow to reuse your original sections and summary verbatim.`;
-  const entryRepair = `Add a column_flow entry for each: out_col is the column, upstream_columns its real upstream columns — or upstream_columns: [] where the column originates here`;
+  const entryRepair = traceDirection === 'downstream'
+    ? `Account for each by naming it in an upstream_columns entry whose out_col is the column this node derives or renames it into (out_col need not equal the missing column when this node transforms or renames it) — or add an entry with out_col equal to the column and upstream_columns: [] where it passes through unchanged`
+    : `Add a column_flow entry for each: out_col is the column, upstream_columns its real upstream columns — or upstream_columns: [] where the column originates here`;
   const repair = contradicted.length > 0
     ? `${entryRepair}. ${focusId} declares [${contradicted.join(', ')}], so it carries the column and verdict:'passthrough' with column_flow:[] is not available here.`
     : `${entryRepair}, or return verdict:'passthrough' with column_flow:[].`;

@@ -100,16 +100,26 @@ export class ColumnTracer {
    * (an entry with `upstream_columns: []`). A node producing none of the tracked columns
    * submits `column_flow:[]` and is retained: only its column chain is empty, and it is kept in
    * the answer for what it does to the row set (it never prunes itself).
-   * An entry's `out_col` is how the AI accounts for that column, so
-   * the result is the pure set-difference `active_columns − {out_col}`. A non-empty
+   * An entry's `out_col` is how the AI accounts for that column in an UPSTREAM trace, so the
+   * result there is the pure set-difference `active_columns − {out_col}`. A DOWNSTREAM trace
+   * accounts for an active column the same way `validateColumnFlow` stages its edge: the active
+   * column lives on the PREVIOUS node and is named by an `upstream_columns[].col` ref, while
+   * `out_col` is the focus's own (possibly renamed/derived) column that becomes the next active
+   * column — so downstream accounting is the set-difference against `out_col` UNION every
+   * `upstream_columns[].col` this submission names. A non-empty
    * result means the chain was left incomplete; the engine rejects and the worker
    * re-asks. No content judgment — column names only.
    *
    * @param columnFlow - The column flow entries submitted by the AI.
+   * @param traceDirection - Trace direction of the owning exploration. Defaults to `upstream` so
+   * every pre-existing call site keeps today's behaviour shape byte-identical.
    * @returns An array of active columns that were not accounted for.
    */
-  unaccountedActiveColumns(columnFlow: ColumnFlowEntry[]): string[] {
-    return computeUnaccounted(this.aspect.active_columns, columnFlow.map(e => e.out_col));
+  unaccountedActiveColumns(columnFlow: ColumnFlowEntry[], traceDirection: 'upstream' | 'downstream' = 'upstream'): string[] {
+    const accounted = traceDirection === 'downstream'
+      ? columnFlow.flatMap(e => [e.out_col, ...e.upstream_columns.map(r => r.col)])
+      : columnFlow.map(e => e.out_col);
+    return computeUnaccounted(this.aspect.active_columns, accounted);
   }
 
   /**
@@ -153,6 +163,11 @@ export class ColumnTracer {
    * @param entryColumns - The columns declared for entry by the AI.
    * @param writtenCarrierIds - Non-bodied carriers the candidate writes; empty when it writes none.
    * @param log - Optional logger; the caller (`smBase.ts`) supplies the one it already holds.
+   * @param traceDirection - Trace direction of the owning exploration. An edge's `from_node`/
+   * `from_col` name the SUPPLIER side (the next node to dispatch, upstream); `to_node`/`to_col`
+   * name the node a column was written onto (the next node to dispatch, downstream — a writer's
+   * `writes_to` target). Defaults to `upstream` so every pre-existing call site keeps today's
+   * behaviour shape byte-identical.
    * @returns The resolved active columns for the candidate node.
    */
   determineActiveColumnsForCandidate(
@@ -160,12 +175,15 @@ export class ColumnTracer {
     entryColumns: string[],
     writtenCarrierIds: ReadonlySet<string> = new Set(),
     log?: TracerLogFn,
+    traceDirection: 'upstream' | 'downstream' = 'upstream',
   ): string[] {
     const spineByNorm = new Map<string, string>();
     for (const e of this.aspect.edges) {
-      if (!e.from_col || (e.from_node !== candidateNodeId && !writtenCarrierIds.has(e.from_node))) continue;
-      const key = normalizeColName(e.from_col);
-      if (!spineByNorm.has(key)) spineByNorm.set(key, e.from_col);
+      const nodeKey = traceDirection === 'downstream' ? e.to_node : e.from_node;
+      const colVal = traceDirection === 'downstream' ? e.to_col : e.from_col;
+      if (!colVal || (nodeKey !== candidateNodeId && !writtenCarrierIds.has(nodeKey))) continue;
+      const key = normalizeColName(colVal);
+      if (!spineByNorm.has(key)) spineByNorm.set(key, colVal);
     }
     if (spineByNorm.size === 0) return entryColumns;
     const spine = [...spineByNorm.values()];
@@ -287,22 +305,49 @@ export class ColumnTracer {
 
     for (let entryIndex = 0; entryIndex < columnFlow.length; entryIndex++) {
       const entry = columnFlow[entryIndex];
-      if (!activeNorm.includes(normalizeColName(entry.out_col))) {
+      const outNorm = normalizeColName(entry.out_col);
+      // Upstream: out_col names an already-tracked active column — the model is continuing a
+      // column it was handed. Downstream: out_col is the focus's OWN resulting column, possibly a
+      // rename or a derivation of the column tracked on the PREVIOUS node (named in this entry's
+      // own upstream_columns, checked below), so it is never required to already be active —
+      // existence on the focus (the direction-neutral check that follows) is the whole test.
+      if (traceDirection === 'upstream' && !activeNorm.includes(outNorm)) {
         // `available_columns` names the tracked set and nothing else. Falling back to the node's
         // own DDL columns listed the rejected value itself as a valid one, so the envelope
         // contradicted its own reason and no rewrite of it could succeed. A column that is on the
         // node yet off the tracked spine gets its own kind so the repair (pick a tracked column)
         // stays distinguishable from naming a column the node does not carry at all; when the node
         // declares no columns, existence is unverifiable and the not-on-node code stands.
-        const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(normalizeColName(entry.out_col));
+        const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
         invalidRoutes.push(existsOnNode
           ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, available_columns: [...this.aspect.active_columns] }
           : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns] });
         continue;
       }
 
-      if (validFocusCols.size > 0 && !validFocusCols.has(normalizeColName(entry.out_col))) {
+      if (validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
           invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, available_columns: Array.from(validFocusCols).sort() });
+        continue;
+      }
+
+      // Downstream constraint parity with upstream's "out_col must be active" gate: upstream
+      // checks that gate directly on out_col (above); downstream's out_col is the focus's OWN
+      // (possibly renamed/derived) column, so the equivalent check is on the OTHER side of the
+      // entry — a non-terminal entry (upstream_columns non-empty, i.e. the chain continues rather
+      // than terminating here) must carry the active column forward by naming it in at least one
+      // upstream_columns[].col. An entry whose refs name only untracked columns accounts for
+      // nothing tracked and would otherwise silently pass a derivation through with no active
+      // column behind it — the same class of checkably-false claim `untracked_out_col` already
+      // catches on the upstream side, so it is reused here rather than a new kind.
+      if (traceDirection === 'downstream' && entry.upstream_columns.length > 0
+        && !entry.upstream_columns.some((ref) => activeNorm.includes(normalizeColName(ref.col)))) {
+        invalidRoutes.push({
+          kind: 'untracked_out_col',
+          id: focusId,
+          path: `column_flow.${entryIndex}.upstream_columns`,
+          reason: `column_flow.${entryIndex} continues the trace (upstream_columns is non-empty) into out_col "${entry.out_col}", but none of its upstream_columns[].col names an active tracked column — one contributor must carry the column this hop received before deriving "${entry.out_col}", or upstream_columns: [] if it originates here`,
+          available_columns: [...this.aspect.active_columns],
+        });
         continue;
       }
 

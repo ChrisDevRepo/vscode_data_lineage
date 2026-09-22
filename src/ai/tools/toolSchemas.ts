@@ -568,12 +568,14 @@ const ColumnRefSchema = z.object({
   node: z.string().describe('Canonical upstream node ID.'),
   col: z.string().describe('Real upstream column name.'),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
-    'How this upstream column reaches out_col. Multi-select — list every class that applies, since one ' +
-    'edge is often several. Omit the field entirely when the DDL does not determine it; never guess. ' +
-    'pass_through: rename, SELECT *, synonym, straight copy. compute: formula, CASE, COALESCE, cast, ' +
-    'concat, string/date function. aggregate: SUM/COUNT/MIN/MAX, GROUP BY, window function, PIVOT. ' +
-    'combine: JOIN, UNION/EXCEPT/INTERSECT, APPLY, UNPIVOT. filter: WHERE, HAVING, join ON predicate, ' +
-    'TOP, DISTINCT.',
+    'How THIS upstream column\'s value reaches out_col, judged end to end: ignore intermediate copies into ' +
+    'temp tables or variables, and list every class this column\'s own role proves — usually one. Omit the ' +
+    'field entirely when the DDL does not determine it; never guess. pass_through: out_col is this column\'s ' +
+    'value unchanged (rename, SELECT *, synonym, straight copy). compute: out_col is an expression over this ' +
+    'column (formula, CASE, COALESCE, cast, concat, string/date function). aggregate: this column is ' +
+    'summarised into out_col (SUM/COUNT/MIN/MAX, GROUP BY, window function, PIVOT). combine: this column is ' +
+    'itself a join key, or is merged by UNION/EXCEPT/INTERSECT, APPLY, UNPIVOT. filter: this column itself ' +
+    'appears in a WHERE, HAVING, join ON predicate, TOP or DISTINCT.',
   ),
   note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(
     'One short grounded clause naming the rule or expression behind the transforms — e.g. ' +

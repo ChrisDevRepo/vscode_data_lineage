@@ -49,7 +49,9 @@ import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBu
 import { ColumnTraceNode } from './ColumnTraceNode';
 import {
   buildColumnTraceView,
+  buildColumnThreadIndex,
   columnRowKey,
+  columnThread,
   resolveRowLineStates,
   type ColumnTraceViewObject,
   type ColumnLineState,
@@ -806,6 +808,8 @@ export function GraphCanvas({
       // a node in no section keeps the plain deselect.
       const matches = sectionsForNode(aiSections, node.id);
       setActiveSection(matches[0] ?? null);
+      // An object click replaces a pinned column thread, as a column click replaces the object.
+      setPinnedColumn(null);
       onNodeClick(node.id);
     },
     [graphMode, onNodeClick, onSchemaNodeSelect, aiSections]
@@ -1225,64 +1229,22 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  /**
-   * Row-key adjacency of the column view's edges, undirected.
-   *
-   * @remarks
-   * Keyed on `columnRowKey` and built once per view rather than per hover. The reachability walk
-   * below used to rescan every column edge for each row it popped, so one pointer move across a
-   * wide table cost a full edge sweep per row crossed — work that is identical every time because
-   * it depends only on the view.
-   */
-  const columnRowAdjacency = useMemo((): Map<string, string[]> => {
-    const adjacency = new Map<string, string[]>();
-    if (!columnTraceView) return adjacency;
-    const link = (from: string, to: string): void => {
-      const neighbors = adjacency.get(from);
-      if (neighbors) neighbors.push(to);
-      else adjacency.set(from, [to]);
-    };
-    for (const edge of columnTraceView.edges) {
-      const from = columnRowKey(edge.source, edge.sourceColumn);
-      const to = columnRowKey(edge.target, edge.targetColumn);
-      link(from, to);
-      link(to, from);
-    }
-    // A hop that renames the column lands the thread on two of its own ports with no edge between
-    // them — the transform circle says the change happens there. Without the bridge the walk stops
-    // at the port it arrived on and the thread appears to end at the procedure.
-    for (const bridge of columnTraceView.portBridges) {
-      const from = columnRowKey(bridge.nodeId, bridge.fromColumn);
-      const to = columnRowKey(bridge.nodeId, bridge.toColumn);
-      link(from, to);
-      link(to, from);
-    }
-    return adjacency;
-  }, [columnTraceView]);
+  // Built once per view rather than per hover: one pointer move across a wide table would otherwise
+  // re-index every column edge for each row crossed.
+  const columnThreadIndex = useMemo(
+    () => (columnTraceView ? buildColumnThreadIndex(columnTraceView) : null),
+    [columnTraceView],
+  );
 
   /**
-   * Node-and-column keys reachable from the hovered row in either direction.
-   *
-   * @remarks
-   * Traversal walks the column edges and the hops' inside port bridges as one undirected graph, so
-   * the whole thread lights up — not just its upstream or downstream half, and not only as far as
-   * the procedure that renamed it.
+   * The active row's trace cone — its upstream sources and downstream consumers, never a sibling
+   * input it merely shares an output with. See {@link columnThread}.
    */
   const hoveredColumnPath = useMemo((): Set<string> | null => {
     const active = pinnedColumn ?? hoveredColumn;
-    if (!active || !columnTraceView) return null;
-    const seen = new Set<string>([columnRowKey(active.nodeId, active.column)]);
-    const stack = [...seen];
-    while (stack.length > 0) {
-      const current = stack.pop()!;
-      for (const next of columnRowAdjacency.get(current) ?? []) {
-        if (seen.has(next)) continue;
-        seen.add(next);
-        stack.push(next);
-      }
-    }
-    return seen;
-  }, [pinnedColumn, hoveredColumn, columnTraceView, columnRowAdjacency]);
+    if (!active || !columnThreadIndex) return null;
+    return columnThread(columnThreadIndex, columnRowKey(active.nodeId, active.column));
+  }, [pinnedColumn, hoveredColumn, columnThreadIndex]);
 
   // Full-model graph backing the shared prune-safety guard; scope is bounded per call.
   const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
@@ -1315,9 +1277,23 @@ export function GraphCanvas({
     setHoveredColumn(column === null ? null : { nodeId, column });
   }, []);
 
+  // One selection channel at a time: a pinned column takes the focus from a selected object or a
+  // focused report section, whose dims would otherwise hide parts of the thread.
   const handleColumnSelect = useCallback((nodeId: string, column: string) => {
+    setActiveSection(null);
+    onClearSelection?.();
     setPinnedColumn(current => (current?.nodeId === nodeId && current.column === column ? null : { nodeId, column }));
-  }, []);
+  }, [onClearSelection]);
+
+  // Escape releases a pinned thread, the same gesture that closes any other transient focus.
+  useEffect(() => {
+    if (!pinnedColumn) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPinnedColumn(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pinnedColumn]);
 
   const columnHover = useMemo((): ColumnHoverState => ({
     hoveredPath: hoveredColumnPath,

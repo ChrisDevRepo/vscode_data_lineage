@@ -7,6 +7,7 @@
  * registry wrapper.
  */
 import { NavigationEngine } from '../../sm/smBase';
+import type { Verdict } from '../../sm/smTypes';
 import { sanitizeForLog } from '../../../utils/log';
 import {
   submitFindingsSchemaForMode,
@@ -19,6 +20,7 @@ import {
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import {
+  extractRawSectionAngles,
   mapSubmitFindingsEngineGuard,
   validateSectionsAgainstClassification,
 } from '../../interaction/rules/submitFindingsRules';
@@ -109,7 +111,22 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         // applies to every other invalid_tool_input reject, so an omitted required field states the
         // addition repair here too instead of a second, drifting implementation of the same gap.
         const repairHint = zodFieldRepairHint(parsed.error, normalizedInput);
-        const hint = repairHint ? `${summary} ${repairHint}` : summary;
+        // Collect the classification-lock angle gap in the same pass instead of waiting for a
+        // second, separate rejection after the schema issue above is fixed: a submission missing
+        // both a well-formed section shape and a locked angle would otherwise cost the model two
+        // rejections for one root-cause submission (m57-close-azure-azure-foundry run-T8
+        // host.log:151-187 — a stray `sections[].#` key and a missing angle="technical" section,
+        // refused once for the key, resent, then refused again for the angle).
+        const rawAngles = extractRawSectionAngles((normalizedInput as { sections?: unknown }).sections);
+        const rawVerdict = (normalizedInput as { verdict?: unknown }).verdict;
+        const rawFocus = (normalizedInput as { focus_node_id?: unknown }).focus_node_id;
+        const angleHint = validateSectionsAgainstClassification(
+          rawAngles,
+          sess.classification,
+          typeof rawVerdict === 'string' ? rawVerdict as Verdict : undefined,
+          typeof rawFocus === 'string' ? sess.memory.getArchivedAngles(rawFocus) : undefined,
+        );
+        const hint = [summary, repairHint, angleHint].filter(Boolean).join(' ');
         return s.logAndReturn('submit_findings', {
           error: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
           hint,
@@ -123,8 +140,13 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       // The agreement-phase gate locks `sess.classification`. `submitFindingsSchemaForMode`
       // (`toolSchemas.ts`) already narrowed the dispatched `sections[].angle` enum to the angle(s)
       // this lock keeps, so an off-lock angle fails Zod parsing above and never reaches here — this
-      // check only catches a locked angle the model omitted (e.g. `both` submitted business only).
-      const violation = validateSectionsAgainstClassification(finding.sections, sess.classification, finding.verdict);
+      // check only catches a locked angle the model omitted (e.g. `both` submitted business only)
+      // and not already archived from an earlier visit.
+      // A CT reopen revisits a node `storeDetail` already wrote once; credit the angles that
+      // earlier visit archived (appended, never replaced) so this submission is not held to
+      // re-carry an angle the archive already holds for this focus node.
+      const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
+      const violation = validateSectionsAgainstClassification(finding.sections, sess.classification, finding.verdict, archivedAngles);
       if (violation) {
         return s.logAndReturn('submit_findings', {
           error: 'classification_lock_violation',

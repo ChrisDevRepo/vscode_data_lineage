@@ -215,18 +215,27 @@ export const COLUMN_NODE_WIDTH = 214;
  */
 export const COLUMN_TRANSFORM_NODE_WIDTH = 150;
 
-/**
- * Minimum height of a transform super node — room for the circle, the name strip beneath it, and
- * one port even when the trace records a single column through the node.
- */
-export const COLUMN_TRANSFORM_NODE_MIN_HEIGHT = 96;
+/** Diameter of a transform super node's circle, fixed however many ports run through it. */
+export const COLUMN_TRANSFORM_CIRCLE_DIAMETER = 40;
+
+/** Height of the name strip beneath a transform super node's circle. */
+export const COLUMN_TRANSFORM_NAME_STRIP_HEIGHT = 20;
 
 /**
- * Vertical distance between consecutive port handles on a transform super node. The handles stay
- * the edges' attachment points (invisible, fanned across the circle), so the spread — not the
- * circle's radius — decides how far apart two lines through the same hub land.
+ * Height of a transform super node — the circle, a small margin, and the name strip beneath it.
+ *
+ * @remarks
+ * Fixed rather than grown with the port count: a procedure is a process step between datasets, and
+ * lineage tools draw it as one small icon node. The ports compress along the circle's arc instead.
  */
-export const COLUMN_TRANSFORM_PORT_SPREAD = 26;
+export const COLUMN_TRANSFORM_NODE_HEIGHT = COLUMN_TRANSFORM_CIRCLE_DIAMETER + 8 + COLUMN_TRANSFORM_NAME_STRIP_HEIGHT;
+
+/**
+ * Largest vertical distance between consecutive port handles on a transform super node. The
+ * handles are the edges' attachment points on the circle; when more ports run through the hub than
+ * this spacing fits on the arc, the spacing shrinks so every handle stays on the stroke.
+ */
+export const COLUMN_TRANSFORM_PORT_SPREAD = 10;
 
 /** Height of a column-trace node header. */
 export const COLUMN_NODE_HEADER_HEIGHT = 28;
@@ -307,6 +316,64 @@ export function columnHandleId(column: string, side: 'source' | 'target'): strin
  */
 export function columnRowKey(nodeId: string, column: string): string {
   return `${nodeId.toLowerCase()}.${normalizeColName(column)}`;
+}
+
+/** Row-key adjacency of a column view, one map per direction the value flows. */
+export interface ColumnThreadIndex {
+  /** Row key → the row keys it feeds. */
+  down: Map<string, string[]>;
+  /** Row key → the row keys it is fed by. */
+  up: Map<string, string[]>;
+}
+
+/**
+ * Indexes a column view's edges and port bridges by direction, once per view.
+ *
+ * @remarks
+ * A port bridge runs `fromColumn → toColumn`, the way the value crosses the hop, so it is indexed
+ * like an edge: without it a thread entering a renaming procedure would stop at its inbound port.
+ */
+export function buildColumnThreadIndex(view: Pick<ColumnTraceView, 'edges' | 'portBridges'>): ColumnThreadIndex {
+  const index: ColumnThreadIndex = { down: new Map(), up: new Map() };
+  const link = (from: string, to: string): void => {
+    const down = index.down.get(from);
+    if (down) down.push(to); else index.down.set(from, [to]);
+    const up = index.up.get(to);
+    if (up) up.push(from); else index.up.set(to, [from]);
+  };
+  for (const edge of view.edges) link(columnRowKey(edge.source, edge.sourceColumn), columnRowKey(edge.target, edge.targetColumn));
+  for (const bridge of view.portBridges) link(columnRowKey(bridge.nodeId, bridge.fromColumn), columnRowKey(bridge.nodeId, bridge.toColumn));
+  return index;
+}
+
+/**
+ * Row keys in the trace cone of one row: everything it is derived from plus everything derived
+ * from it.
+ *
+ * @remarks
+ * Two walks from the start row, one upstream and one downstream, each confined to its own
+ * direction. A single undirected walk would turn around at a fan-in — from `Qty` down to
+ * `TotalRevenue`, then back up into `UnitPrice` — and light inputs that have nothing to do with
+ * the clicked column.
+ *
+ * @param index - Directed adjacency from {@link buildColumnThreadIndex}.
+ * @param startKey - Row key from {@link columnRowKey}.
+ */
+export function columnThread(index: ColumnThreadIndex, startKey: string): Set<string> {
+  const cone = new Set<string>([startKey]);
+  for (const adjacency of [index.up, index.down]) {
+    const seen = new Set<string>([startKey]);
+    const stack = [startKey];
+    while (stack.length > 0) {
+      for (const next of adjacency.get(stack.pop()!) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        cone.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  return cone;
 }
 
 /**
@@ -642,11 +709,9 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       isTransformNode: isTransform,
       rows,
       width: isTransform ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH,
-      // A table card sizes to its header and rows; a transform super node sizes to a circle with the
-      // port spread fanned across it, so the box stays compact and symmetric however few ports run
-      // through it.
+      // A table card sizes to its header and rows; a transform super node is one fixed-size circle.
       height: isTransform
-        ? Math.max(COLUMN_TRANSFORM_NODE_MIN_HEIGHT, rows.length * COLUMN_TRANSFORM_PORT_SPREAD + 34)
+        ? COLUMN_TRANSFORM_NODE_HEIGHT
         : COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
       position: { x: 0, y: 0 },
     };

@@ -5,9 +5,11 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  buildColumnThreadIndex,
   buildColumnTraceView,
   columnHandleId,
   columnRowKey,
+  columnThread,
   resolveRowLineStates,
   resolveVerdictLineState,
   COLUMN_NODE_BORDER_WIDTH,
@@ -20,7 +22,7 @@ import {
   type ColumnTraceViewObject,
   COLUMN_NODE_WIDTH,
   COLUMN_TRANSFORM_NODE_WIDTH,
-  COLUMN_TRANSFORM_NODE_MIN_HEIGHT,
+  COLUMN_TRANSFORM_NODE_HEIGHT,
   COLUMN_AI_ANNOTATION_BAND,
 } from '../../../src/engine/columnTraceView';
 import { DEFAULT_CONFIG, type ExtensionConfig } from '../../../src/engine/types';
@@ -303,8 +305,7 @@ describe('columnTraceView', () => {
 
     const node = findNode(buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }), 'dbo.p');
     expect(node.width).toBe(COLUMN_TRANSFORM_NODE_WIDTH);
-    // One port: the box holds at its floor rather than shrinking to the row-card height.
-    expect(node.height).toBe(COLUMN_TRANSFORM_NODE_MIN_HEIGHT);
+    expect(node.height).toBe(COLUMN_TRANSFORM_NODE_HEIGHT);
     expect(node.isTransformNode).toBe(true);
   });
 });
@@ -591,5 +592,51 @@ describe('columnTraceView AI annotation band', () => {
     const view = buildColumnTraceView({ relations, objects, config: tight, layoutDirection: 'LR' });
 
     expect(siblingGap(view)).toBe(4 + COLUMN_AI_ANNOTATION_BAND);
+  });
+});
+
+/**
+ * Lane for the column thread a click pins: the clicked column's trace cone — what it is derived
+ * from and what is derived from it — never a sibling input that merely shares an output with it.
+ */
+describe('columnThread — directed trace cone', () => {
+  const objects = mkObjects(
+    mkObj('ai.SalesStaging'), mkObj('ai.vwConsolidatedSales', 'view'), mkObj('ai.PriceMaster'),
+    mkObj('ai.vwPriceList', 'view'), mkObj('ai.spBuildSalesReport', 'procedure'), mkObj('ai.FactSalesReport'),
+  );
+  // The shape of the reported trace: Qty and UnitPrice both feed TotalRevenue through the procedure.
+  const relations: ColumnTraceRelation[] = [
+    { hopNode: 'ai.vwConsolidatedSales', fromNode: 'ai.SalesStaging', fromCol: 'OrderQty', toNode: 'ai.vwConsolidatedSales', toCol: 'Qty' },
+    { hopNode: 'ai.vwPriceList', fromNode: 'ai.PriceMaster', fromCol: 'ListPrice', toNode: 'ai.vwPriceList', toCol: 'UnitPrice' },
+    { hopNode: 'ai.spBuildSalesReport', fromNode: 'ai.vwConsolidatedSales', fromCol: 'Qty', toNode: 'ai.FactSalesReport', toCol: 'TotalRevenue' },
+    { hopNode: 'ai.spBuildSalesReport', fromNode: 'ai.vwPriceList', fromCol: 'UnitPrice', toNode: 'ai.FactSalesReport', toCol: 'TotalRevenue' },
+  ];
+  const index = buildColumnThreadIndex(buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }));
+
+  it('follows a column up to its sources and down to its consumers without turning around at a fan-in', () => {
+    const cone = columnThread(index, columnRowKey('ai.vwConsolidatedSales', 'Qty'));
+    expect(cone.has(columnRowKey('ai.SalesStaging', 'OrderQty')), 'upstream source').toBe(true);
+    expect(cone.has(columnRowKey('ai.spBuildSalesReport', 'TotalRevenue')), 'across the renaming hop').toBe(true);
+    expect(cone.has(columnRowKey('ai.FactSalesReport', 'TotalRevenue')), 'downstream consumer').toBe(true);
+    expect(cone.has(columnRowKey('ai.vwPriceList', 'UnitPrice')), 'sibling input of TotalRevenue').toBe(false);
+    expect(cone.has(columnRowKey('ai.PriceMaster', 'ListPrice'))).toBe(false);
+  });
+
+  it('lights every input of a column clicked at the fan-in', () => {
+    const cone = columnThread(index, columnRowKey('ai.FactSalesReport', 'TotalRevenue'));
+    for (const [node, col] of [['ai.vwConsolidatedSales', 'Qty'], ['ai.SalesStaging', 'OrderQty'], ['ai.vwPriceList', 'UnitPrice'], ['ai.PriceMaster', 'ListPrice']]) {
+      expect(cone.has(columnRowKey(node, col)), `${node}.${col}`).toBe(true);
+    }
+  });
+
+  it('terminates on a cycle', () => {
+    const cyclic = buildColumnThreadIndex({
+      edges: [
+        { source: 'a', sourceColumn: 'x', target: 'b', targetColumn: 'x' },
+        { source: 'b', sourceColumn: 'x', target: 'a', targetColumn: 'x' },
+      ] as ColumnTraceViewEdge[],
+      portBridges: [],
+    });
+    expect(columnThread(cyclic, columnRowKey('a', 'x')).size).toBe(2);
   });
 });

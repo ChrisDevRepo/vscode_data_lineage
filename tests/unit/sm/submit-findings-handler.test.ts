@@ -21,7 +21,7 @@ describe("Submit Findings Handler", () => {
     schemas: ['dbo'],
     dbPlatform: 'SQL Server',
   } as any;
-  function setup(classification: 'business' | 'technical' | 'both' = 'business') {
+  function setup(classification: 'business' | 'technical' | 'both' = 'business', archived: ReadonlyArray<'business' | 'technical'> = []) {
     const graph = makeGraph(nodes, [['origin', 'a'], ['origin', 'b']]);
     const engine = new NavigationEngine(model, graph, () => {}, {});
     engine.init({ origin: 'origin', question: 'trace', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 1 } });
@@ -30,7 +30,7 @@ describe("Submit Findings Handler", () => {
     const session = {
       stateMachine: engine,
       classification,
-      memory: { getUserQuestion: () => 'trace' },
+      memory: { getUserQuestion: () => 'trace', getArchivedAngles: () => new Set(archived) },
       storeSmResult: () => {},
     };
     const services = {
@@ -68,7 +68,7 @@ describe("Submit Findings Handler", () => {
     const session = {
       stateMachine: engine,
       classification: 'business',
-      memory: { getUserQuestion: () => 'trace amount' },
+      memory: { getUserQuestion: () => 'trace amount', getArchivedAngles: () => new Set() },
       storeSmResult: () => {},
     };
     const services = {
@@ -156,6 +156,40 @@ describe("Submit Findings Handler", () => {
   expect(rejected.hint, 'the rejection names the kept angle').toContain('classification=business keeps only angle="business"');
   const after = engine.toJSON();
   expect(Object.keys(after.memory.detailSlots).length, 'nothing commits — not even the valid business section — until the model resubmits clean').toBe(Object.keys(before.memory.detailSlots).length);
+});
+
+  // m57-close-azure-azure-foundry run-T8 host.log:151-187: a both-lock reopen sent one section
+  // with a stray key plus no technical section. The Zod `.strict()` reject named only the key,
+  // so the resend (business only, key dropped) then hit a SECOND rejection for the angle the
+  // first response never mentioned — two rejections for one root-cause submission. The handler
+  // now folds the angle-lock check into the same Zod-failure pass so both problems are named once.
+  it("a both-lock submission with a stray section key and a missing angle names both problems in one rejection", () => {
+  const { services, result } = setup('both');
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Reopen business note.', '#': 'temporary' }],
+    summary: 'Reopen business note.',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+  const rejected = result() as { error?: string; hint?: string };
+  expect(rejected.error, 'the strict-schema reject keeps its established code').toBe('invalid_input');
+  expect(rejected.hint ?? '', 'the hint still names the unrecognized key').toContain('Unrecognized key');
+  expect(rejected.hint ?? '', 'the SAME rejection also names the missing angle, instead of a second round-trip').toContain('missing angle="technical"');
+});
+
+  it("a reopen's stray-key rejection does not claim an angle the earlier visit already archived", () => {
+  const { services, result } = setup('both', ['technical']);
+  executeSubmitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'Reopen business note.', '#': 'temporary' }],
+    summary: 'Reopen business note.',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'a', question: 'Trace A.' }, { nodeId: 'b', question: 'Trace B.' }],
+  }, services);
+  const rejected = result() as { error?: string; hint?: string };
+  expect(rejected.hint ?? '', 'the hint names the unrecognized key').toContain('Unrecognized key');
+  expect(rejected.hint ?? '', 'an archived angle is never named as missing').not.toContain('missing angle');
 });
 
   it("a both lock accepts a submission carrying both angles through the real handler", () => {

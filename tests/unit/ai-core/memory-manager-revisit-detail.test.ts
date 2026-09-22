@@ -32,6 +32,22 @@ describe('AiMemoryManager — revisit keeps first-visit detail', () => {
     mem.storeDetail(node, sections, 'only summary');
     expect(mem.toJSON().detailSlots[node.id].sections).toEqual(sections);
   });
+
+  it('getArchivedAngles reports the angles a prior visit already committed, ahead of a reopen', () => {
+    // m57-close-azure-azure-foundry run-T8 host.log:151-187: hop 5 committed both angles for
+    // spCleanOrders; the CT reopen at hop 9 needs to see that coverage before storeDetail runs
+    // again, so the classification-lock check can credit it instead of demanding a re-send.
+    const mem = new AiMemoryManager();
+    const node = makeNode('spCleanOrders');
+    expect(mem.getArchivedAngles(node.id)).toEqual(new Set());
+
+    mem.storeDetail(node, [
+      { angle: 'business', text: 'Business note from hop 5.' },
+      { angle: 'technical', text: 'Technical note from hop 5.' },
+    ], 'hop 5 summary');
+
+    expect(mem.getArchivedAngles(node.id)).toEqual(new Set(['business', 'technical']));
+  });
 });
 
 describe('appendUniqueSectionText — column_flow notes reach the slot', () => {

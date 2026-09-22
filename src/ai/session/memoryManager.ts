@@ -384,6 +384,24 @@ export class AiMemoryManager {
   }
 
   /**
+   * Capture angles already archived for `nodeId` from an earlier visit, read before this
+   * submission's own sections are merged in by {@link storeDetail}.
+   *
+   * @remarks
+   * A CT reopen re-enqueues a node `storeDetail` already wrote once; that earlier write's
+   * sections stay in the archive (appended, never replaced — see `storeDetail`'s remarks), so a
+   * revisit submission does not need to re-carry an angle the archive already holds for this
+   * node. Callers use this to credit the archive when checking classification-locked angle
+   * coverage (`interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`).
+   *
+   * @param nodeId - Node id to look up in the detail archive.
+   * @returns The set of angles already archived for `nodeId`; empty for a first visit.
+   */
+  public getArchivedAngles(nodeId: string): Set<CaptureAngle> {
+    return new Set(this.detailSlots.get(nodeId)?.sections.map(s => s.angle) ?? []);
+  }
+
+  /**
    * Retains a self-pruned focus node's already-captured content instead of discarding it.
    *
    * @param node - The node the findings describe.
