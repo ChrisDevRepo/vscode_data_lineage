@@ -201,6 +201,22 @@ export function getContext(
 const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]}.';
 
 /**
+ * Bare tokens that mean "match everything" in whichever wildcard idiom a caller reaches for —
+ * SQL `%`, shell/glob `*`, regex `.*` — independent of the `mode` sent alongside them.
+ *
+ * @remarks
+ * Recognized only together with an explicit `schemas[]` scope, where "list everything in this
+ * schema" is the one meaning available (the same precondition `listAllInSchemas` already uses
+ * for an empty query); without a schema scope "everything" is unbounded and the token is left to
+ * fail exactly as any other invalid pattern would. Three recorded terminal discovery failures
+ * (search-objects-hint) reached this exact token from regex mode (`invalid_regex`, `*` has
+ * nothing to repeat) and from substring mode (`query_not_a_name`, punctuation matches no name)
+ * before the rejection hint could steer the caller to the empty-query shape — an unambiguous
+ * request should not need two rejections to resolve.
+ */
+const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
+
+/**
  * Validates a substring-mode search query for sanity.
  *
  * @remarks
@@ -273,26 +289,33 @@ export function searchObjects(
     schemas && schemas.length > 0
       ? schemas
       : (normalizedQuery.schemaHint ? [normalizedQuery.schemaHint] : undefined);
+  const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
+  // See WILDCARD_ALL_TOKENS: a bare match-everything token has exactly one meaning once a schema
+  // scope pins what "everything" ranges over, so it is normalized onto the list-all path below
+  // before either the regex-length/compile gate or the substring-punctuation gate can reject it.
+  const isWildcardAllQuery = (appliedSchemaFilter?.length ?? 0) > 0
+    && WILDCARD_ALL_TOKENS.has((isRegex ? query : normalizedQuery.query).trim());
 
-  if (normalizedQuery.query.length > REGEX_MAX_LENGTH) {
+  if (!isWildcardAllQuery && normalizedQuery.query.length > REGEX_MAX_LENGTH) {
     return { error: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
-  const effectiveQuery = isRegex ? normalizedQuery.query : normalizedQuery.query.trim();
+  const effectiveQuery = isWildcardAllQuery ? '' : (isRegex ? normalizedQuery.query : normalizedQuery.query.trim());
   // An unusable pattern is named, never answered with an empty list: `searchCatalog` swallows a
   // compile failure and returns [], which reads to the model as "no such object exists".
-  if (isRegex) {
+  if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
       return { error: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) };
     }
   }
-  const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
   // Empty query WITH an explicit schema scope is a legitimate "list everything in schema X"
   // ask — there is no name fragment to search, so enumerate the schema directly instead of
   // rejecting (query_too_short) or handing an empty string to searchCatalog (which matches
   // nothing). Case-insensitive so the model's `ai` matches a node schema stored as `ai`/`AI`.
-  const listAllInSchemas = !isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
+  // A recognized wildcard-all token takes the same path regardless of `mode` (isWildcardAllQuery
+  // already requires the schema scope).
+  const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
 
   if (!isRegex && !listAllInSchemas) {
     const validation = validateQuery(normalizedQuery.query);

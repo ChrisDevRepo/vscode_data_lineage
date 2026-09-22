@@ -105,4 +105,39 @@ describe('search-objects-listall', () => {
     const results = res.results as Array<Record<string, unknown>>;
     expect(results.length, 'substring search preserves explicit non-empty type filtering').toBe(0);
   });
+
+  // search-objects-hint: a bare wildcard-all token ('*' regex, '*' substring, SQL '%') combined
+  // with an explicit schemas[] scope has exactly one meaning and must resolve on the first call,
+  // never a rejection steering the caller toward the same list-all path it already reached for.
+  // Three recorded terminal discovery runs (b8af21c55, cc132a1b1 x2) died sending '*' this way.
+
+  it('bare "*" in regex mode + schema scope lists the schema instead of invalid_regex', () => {
+    const res = searchObjects(model, '*', undefined, ['ai'], 'regex') as Record<string, unknown>;
+    expect(res.error, '"*" is not left to fail regex compilation once a schema scope is present').toBeUndefined();
+    const results = res.results as Array<Record<string, unknown>>;
+    expect(results.length, 'lists all 3 objects in the [ai] schema').toBe(3);
+    expect(results.every(r => r.match === 'schema'), 'labelled as schema enumeration, not a name/pattern match').toBe(true);
+  });
+
+  it('bare "*" in substring mode + schema scope lists the schema instead of query_not_a_name', () => {
+    const res = searchObjects(model, '*', undefined, ['ai'], 'substring') as Record<string, unknown>;
+    expect(res.error, '"*" is not left to fail as punctuation-only once a schema scope is present').toBeUndefined();
+    const results = res.results as Array<Record<string, unknown>>;
+    expect(results.length, 'lists all 3 objects in the [ai] schema').toBe(3);
+  });
+
+  it('bare "%" (SQL wildcard idiom) + schema scope also lists the schema', () => {
+    const res = searchObjects(model, '%', undefined, ['ai']) as Record<string, unknown>;
+    expect('error' in res, 'SQL % wildcard is recognized as list-all alongside a schema scope').toBe(false);
+    const results = res.results as Array<Record<string, unknown>>;
+    expect(results.length).toBe(3);
+  });
+
+  it('"*" WITHOUT a schema scope is unaffected — still fails, in the mode-appropriate way', () => {
+    const regexRes = searchObjects(model, '*', undefined, undefined, 'regex') as Record<string, unknown>;
+    expect(regexRes.error, 'no schema scope means no list-all meaning; still an invalid pattern in regex mode').toBe('invalid_regex');
+
+    const substringRes = searchObjects(model, '*', undefined, undefined, 'substring') as Record<string, unknown>;
+    expect(substringRes.error, 'no schema scope means no list-all meaning; still punctuation-only in substring mode').toBe('query_not_a_name');
+  });
 });
