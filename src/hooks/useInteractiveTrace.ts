@@ -1,8 +1,7 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import type { CustomNodeData } from '../components/CustomNode';
-import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel } from '../engine/types';
+import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel, type CustomNodeData } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
 import { buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode } from '../engine/traceScope';
 import { directNeighborIds } from '../engine/graphGuards';

@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-// Release gate: `assets/aiOutputTemplates.yaml` may not change without bumping
+// Release gate: the STRUCTURE of `assets/aiOutputTemplates.yaml` may not change without bumping
 // AI_TEMPLATE_SCHEMA_VERSION.
 //
 // A user's custom overlay (dataLineageViz.ai.outputTemplateFile) is applied only when its
 // schemaVersion equals the constant. That gate is what produces the Output-channel warning and the
-// fallback to built-in templates on upgrade — but it only fires if someone remembers to bump the
-// number. Editing the shipped instructions while leaving the version alone means a previous
-// release's overlay still matches, is accepted, and keeps instructing the model against the current
-// validator. Nothing about that failure is visible at runtime, so it is caught here instead.
+// fallback to built-in templates on upgrade — and it only fires if someone remembers to bump the
+// number. Its single purpose is crash-avoidance: a template key renamed or removed, a field added,
+// removed, or retyped, changes the shape the loader and renderer read, and an older overlay that
+// still clears the version gate would be applied against a shape it no longer fits.
 //
-// Content is the trigger, not just structure: an instruction that changes a rule
-// `validatePresentResult` enforces breaks an old overlay exactly as a renamed key would.
+// Structure is the trigger, not content. Wording inside `instruction` / `example` is the tuning
+// surface the YAML exists for; an older overlay with different prose parses and renders exactly as
+// before, so a wording-only change passes here and never forces users to re-scaffold. The
+// structure comparison lives in `templateStructure.mjs` (shared with its unit test).
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { structureDiff, templateStructure } from './templateStructure.mjs';
 
 const ASSET = 'assets/aiOutputTemplates.yaml';
 const TYPES = 'src/ai/session/types.ts';
@@ -90,6 +93,17 @@ if (baselineAsset === currentAsset) {
   process.exit(0);
 }
 
+const baselineStructure = templateStructure(baselineAsset);
+const currentStructure = templateStructure(currentAsset);
+if (JSON.stringify(baselineStructure) === JSON.stringify(currentStructure)) {
+  console.log(
+    `PASS  ${ASSET} wording changed since ${tag}; template structure unchanged, ` +
+    `schemaVersion ${assetVersion} still correct (an older overlay still fits this shape).`,
+  );
+  process.exit(0);
+}
+const changes = structureDiff(baselineStructure, currentStructure).map((line) => `      ${line}`).join('\n');
+
 // Only the changed path needs the baseline constant, and it is the rare path. Reading it above
 // would spawn a `git show` on every gate run that leaves the templates asset alone — which is most.
 const baselineTypes = showAtTag(tag, TYPES);
@@ -101,15 +115,16 @@ if (baselineTypes === undefined) {
 const baselineVersion = readVersion(baselineTypes, VERSION_RE, `AI_TEMPLATE_SCHEMA_VERSION at ${tag}`);
 if (baselineVersion === constantVersion) {
   console.error(
-    `FAIL  ${ASSET} changed since ${tag} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}.\n` +
-    `      A ${tag} custom overlay will match this version, be accepted, and apply stale instructions\n` +
-    `      with no warning and no fallback. Bump the constant in ${TYPES} and schemaVersion in ${ASSET},\n` +
-    `      then record the change in CHANGELOG.md.`,
+    `FAIL  ${ASSET} structure changed since ${tag} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
+    `${changes}\n` +
+    `      A ${tag} custom overlay will match this version, be accepted, and be read against a shape it\n` +
+    `      no longer fits, with no warning and no fallback. Bump the constant in ${TYPES} and\n` +
+    `      schemaVersion in ${ASSET}, then record the change in CHANGELOG.md.`,
   );
   process.exit(1);
 }
 
 console.log(
-  `PASS  ${ASSET} changed since ${tag} and AI_TEMPLATE_SCHEMA_VERSION was bumped ` +
-  `${baselineVersion} → ${constantVersion}; stale overlays fall back to built-in templates.`,
+  `PASS  ${ASSET} structure changed since ${tag} and AI_TEMPLATE_SCHEMA_VERSION was bumped ` +
+  `${baselineVersion} → ${constantVersion}; stale overlays fall back to built-in templates.\n${changes}`,
 );

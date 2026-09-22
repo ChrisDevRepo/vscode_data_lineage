@@ -81,6 +81,124 @@ export function coercedStringArray<T extends z.ZodType>(
 }
 
 /**
+ * Preprocess that decodes a string-encoded JSON `null` literal (`"null"`) into real `null` before
+ * validation.
+ *
+ * @remarks
+ * Nullable sibling of {@link coercedStringArray} for the local OpenAI-compatible (Qwen/oMLX and
+ * LM Studio) lanes, which emit JSON `null` arguments as the string literal `"null"`
+ * (`{"targetColumns": "null"}`). This is encoding-only normalization per the middleware contract:
+ * only the exact string `"null"` is unwrapped; every other value (including a genuine `null`, an
+ * array, or any other string) passes through untouched so the wrapped schema's own rejection
+ * surfaces normally. Transparent to `z.toJSONSchema` (`io: 'input'`), so the model-facing tool
+ * schema is unchanged.
+ *
+ * @param schema - Schema to wrap; typically a nullable array or scalar schema.
+ * @returns The preprocess-wrapped schema; output type is identical to the wrapped schema.
+ */
+export function coercedStringNull<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value) => (value === 'null' ? null : value), schema);
+}
+
+/**
+ * Preprocess that treats a genuine JSON `null` (or its string-encoded literal `"null"`) as
+ * property absence before an optional schema parses.
+ *
+ * @remarks
+ * Sibling of {@link coercedStringNull} for an `.optional()` (non-nullable) field the engine
+ * already treats as absence-equivalent: a provider sending `column_flow.0.writes_to: null` is
+ * rejected as `expected object, received null` and can run the turn into the semantic-failure
+ * breaker (`writes_to` is a `.strict()` object schema with `.optional()`, never `.nullable()`).
+ * The two engine readers of this field
+ * (`src/ai/sm/columnTracer.ts`, `src/ai/sm/smBase.ts`) already read `entry.writes_to?.node` /
+ * `?.col` with optional chaining, so `null` and `undefined` already mean the same thing
+ * ("no redirect") to every consumer — only the schema was stricter than its readers. Encoding-only
+ * normalization per the middleware contract: only a genuine `null` or the exact string `"null"` is
+ * mapped to `undefined`; every other value (including a genuine object) passes through untouched
+ * so the wrapped schema's own rejection surfaces normally. Transparent to `z.toJSONSchema`
+ * (`io: 'input'`), so the model-facing tool schema is unchanged.
+ *
+ * @param schema - Optional schema to wrap; typically a `.strict()` object schema carrying its own
+ * `.optional()`.
+ * @returns The preprocess-wrapped schema; output type is identical to `schema`.
+ */
+export function nullAsAbsent<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value) => (value === null || value === 'null' ? undefined : value), schema);
+}
+
+/**
+ * Preprocess that drops keys the wrapped object schema does not declare, before it parses.
+ *
+ * @remarks
+ * Sibling of {@link nullAsAbsent} for the `column_flow` entry shape (`src/ai/tools/toolSchemas.ts`),
+ * where a surplus key is absence-equivalent to every reader: the engine reads named fields off the
+ * parsed entry (`src/ai/sm/columnTracer.ts`, `src/ai/sm/smBase.ts`) and no consumer can see a key
+ * the schema never declared. Only the entry envelope is normalized — the values of the declared
+ * fields pass through untouched so their own rejections surface normally. Removes the
+ * provider-prevalidation rejection an unknown key raised (`vscodeModelPort` parses the registered
+ * union before the handler runs), so the payload reaches the handler and the schema strips there
+ * instead; the advertised contract is unchanged — `.strict()` is retained, so
+ * `additionalProperties: false` still tells the model not to send surplus keys, and the
+ * model-facing JSON Schema is byte-identical (`z.toJSONSchema`, `io: 'input'`, is transparent to
+ * `z.preprocess`).
+ *
+ * @param schema - The object schema whose declared keys define what survives.
+ * @returns The preprocess-wrapped schema; output type is identical to `schema`.
+ */
+export function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
+  const declared = new Set(Object.keys(schema.shape));
+  return z.preprocess((value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+    const entries = Object.entries(value as Record<string, unknown>).filter(([key]) => declared.has(key));
+    return entries.length === Object.keys(value as Record<string, unknown>).length
+      ? value
+      : Object.fromEntries(entries);
+  }, schema);
+}
+
+/**
+ * Attempts to decode a JSON-string-encoded object (e.g. `"{\"upstream\": 1}"`) back into the
+ * object.
+ *
+ * @returns The decoded plain object, or `undefined` when the value is not a string or does not
+ * parse to a JSON object (the caller keeps the original value so Zod's own error surfaces).
+ */
+function parseStringEncodedObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Object schema that deterministically unwraps a JSON-string-encoded object before validation.
+ *
+ * @remarks
+ * Object sibling of {@link coercedStringArray} for the local OpenAI-compatible (Qwen/oMLX)
+ * lane, which can emit object-typed tool arguments as JSON strings — observed 2026-08-30 on
+ * that lane: `depth: "{\"upstream\": 1, \"downstream\": 1}"` was rejected three
+ * times as `invalid_tool_input`, stopping the turn on cumulative semantic failures, although
+ * every other argument was valid and the provider repeats the identical encoding on every
+ * repair attempt (the model cannot see or fix a transport-side re-encoding). Encoding-only
+ * normalization per the middleware contract: a string is unwrapped ONLY when it parses to a
+ * JSON object; any other value (including a JSON scalar such as `"2"`, the literal `"all"`, a
+ * non-JSON string, or a genuine object/array) passes through untouched so the wrapped schema's
+ * own rejection surfaces normally. Transparent to `z.toJSONSchema` (`io: 'input'`), so the
+ * model-facing tool schema is unchanged.
+ *
+ * @param schema - Schema to wrap; typically a strict object schema or a union carrying one.
+ * @returns The preprocess-wrapped schema; output type is identical to the wrapped schema.
+ */
+export function coercedStringObject<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value) => parseStringEncodedObject(value) ?? value, schema);
+}
+
+/**
  * Decodes a JSON-string-encoded boolean literal (`"true"`/`"True"`/`"false"`/`"False"`) back
  * into its boolean value.
  *

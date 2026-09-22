@@ -22,12 +22,17 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  *
  * @remarks
  * Authoritative — any `stages:` field in the YAML (user overlay or shipped
- * default) is informational for human readers. If an overlay disagrees with
- * this map the loader warns and uses this routing.
+ * default) is informational for human readers only. The loader never reads it
+ * (`AiOutputTemplatesConfigSchema` passes it through and only `instruction` is
+ * overlaid), so an overlay that disagrees with this map is silently routed by
+ * this map with no warning.
  *
- * Capture keys (`business_capture`, `technical_capture`) fire at active phase;
- * render keys fire at synthesis. There are no synthesis-side mirrors of the
- * capture keys — the slot body is the canonical surface.
+ * Capture keys (`business_capture`, `technical_capture`, `structural_callouts`) fire at active phase;
+ * render keys fire at synthesis. The slot body is the canonical surface, but not
+ * the only one: the `general` render key states its own rule over what capture
+ * produced — every captured ⚠️ callout carried through exactly once, its
+ * significance settled at capture and not re-judged — so callout wording changed
+ * in a capture key is checked against `general` as well.
  *
  * `description` is intentionally absent — it is engine output (built by
  * `orderAndAssemble` in `presentResult.ts` from title + intro + sections[] + closing),
@@ -49,6 +54,7 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   notes:                ['synthesis'],
   business_capture:     ['active'],
   technical_capture:    ['active'],
+  structural_callouts:  ['active'],
   structural_summary:   ['active'],
   general:              ['discover', 'synthesis'],
   loading_pattern:      ['synthesis'],
@@ -90,6 +96,7 @@ const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
 const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
   'technical_capture',
+  'structural_callouts',
   'structural_summary',
 ]);
 
@@ -142,9 +149,13 @@ export function resolveStagePrompt(
    */
   render: StageRenderScope = { scope: 'stable' },
 ): StagePromptResult {
-  // `closing` is only useful when the analysis spans 5+ sections (per the YAML
-  // instruction itself). Skip it on small graphs to save ~140 tokens.
-  const CLOSING_MIN_SLOTS = 5;
+  // `closing` wraps up an analysis with named detail; below this many captured slots the
+  // wrap-up has nothing to summarize and the tokens buy no content. Replay evidence
+  // (test-results/replay/p1-89d-closing-min-slots-n8, 8 pairs on a 3-slot case): admitting
+  // `closing` at slotCount 3 raised its presence from 4/8 to 7/8 and dropped no node, section
+  // or highlight-group member on any pair — the one variant run that omitted the column table
+  // is matched by the same omission on the pair where both arms rendered identically.
+  const CLOSING_MIN_SLOTS = 3;
 
   const allKeys = Object.keys(STAGE_BY_KEY) as (keyof AiOutputTemplates)[];
   const gatedOut: StagePromptResult['gatedOut'] = [];
@@ -183,7 +194,7 @@ export function resolveStagePrompt(
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }
-      if ((key === 'business_capture' || key === 'technical_capture') && render.focusKind === 'non_bodied') {
+      if ((key === 'business_capture' || key === 'technical_capture' || key === 'structural_callouts') && render.focusKind === 'non_bodied') {
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }

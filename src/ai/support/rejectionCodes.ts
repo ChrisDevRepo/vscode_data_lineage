@@ -19,4 +19,20 @@ export const REJECTION_CODES = {
   duplicateCallId: 'duplicate_call_id',
   /** Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport artifact, never charged to the model's semantic budget. */
   emptyGeneration: 'empty_generation',
+  /** A read call identical (after key canonicalization) to one accepted in an earlier attempt of the same phase; its result is already in the observations. Never charged. */
+  duplicateRead: 'duplicate_read',
+  /** `lineage_get_screen_state` recall query while no AI run is stored for the applied view. */
+  noRunMemory: 'no_run_memory',
+  /** A session write arrived after the turn lease moved on, so nothing was stored, rendered or committed. */
+  staleTurn: 'stale_turn',
+  /** Tool input failed its schema or the engine's argument contract; the hint names the offending field. */
+  invalidInput: 'invalid_input',
+  /** CT `submit_findings` failed its schema; the hint names the offending field. Same family as `invalidInput`. */
+  ctFieldRequired: 'ct_field_required',
+  /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
+  notFound: 'not_found',
+  /** `supplement` was requested without a prior exploration in `complete` status to extend. */
+  supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
+  /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
+  invalidRegex: 'invalid_regex',
 } as const;

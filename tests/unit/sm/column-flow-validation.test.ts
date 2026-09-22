@@ -1,11 +1,15 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
+import { buildIncompleteRejection } from '../../../src/ai/sm/smCompleteness';
 import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
+import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { activeModeOf } from '../../../src/ai/tools/toolPolicy';
+import { SubmitFindingsCtInputSchema } from '../../../src/ai/tools/toolSchemas';
 import type { LogFn } from '../../../src/engine/graphGuards';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
-import { assert, assertEq, makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("Column Flow Validation", () => {
   const originNode: LineageNode = makeNode({
@@ -37,6 +41,10 @@ describe("Column Flow Validation", () => {
     engine.getHopContext();
     return engine;
   }
+  // D1 convergence: CT is held to BB's neighbour accounting, so scripted submits route every
+  // required neighbour the guard demands — exactly what `<required_neighbors>` renders to a model.
+  const requiredRoutes = (engine: NavigationEngine, focusId = 'origin') =>
+    engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: 'what does this contribute?' }));
   function durableCtSnapshot(engine: NavigationEngine): string {
     const state = JSON.parse(JSON.stringify(engine.toJSON())) as {
       memory: { recentRejections: unknown[] };
@@ -57,9 +65,23 @@ describe("Column Flow Validation", () => {
     summary: 'x',
     verdict: 'passthrough',
     column_flow: [],
+    route_requests: requiredRoutes(engine),
   });
-  assert('error' in result && result.error === 'column_chain_incomplete', 'CT: empty column_flow with active columns → column_chain_incomplete (no self-prune)');
+  expect('error' in result && result.error === 'column_chain_incomplete', 'CT: empty column_flow with active columns → column_chain_incomplete (no self-prune)').toBe(true);
 });
+
+  it('a column_flow contributor omitted from route_requests still conflicts with prune_neighbors', () => {
+    const engine = ctEngine();
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'amount comes from base_table' }],
+      summary: 'amount from base_table',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount' }] }],
+      prune_neighbors: ['base_table'],
+    });
+    expect('error' in result && result.error === 'prune_route_conflict', 'auto-injected column_flow contributor vs prune is prune_route_conflict').toBe(true);
+  });
 
   it("Test 3b: qualified target columns resolve to the declared bare name (2026-07-03 P3 stall)", () => {
   // Models qualify freely ("dbo.origin_view.amount", "[origin_view].[amount]") — the active spine
@@ -67,38 +89,34 @@ describe("Column Flow Validation", () => {
   // "not an active tracked column" and the session collapses to a zero-trace.
   for (const requested of ['dbo.origin_view.amount', 'origin_view.amount', '[origin_view].[AMOUNT]']) {
     const engine = ctEngine([requested]);
-    assertEq(
-      engine.columnAspect?.active_columns.join(','),
-      'amount',
-      `CT: qualified target "${requested}" resolves to the declared column name`,
-    );
+    expect(engine.columnAspect?.active_columns.join(','), `CT: qualified target "${requested}" resolves to the declared column name`).toBe('amount');
   }
 });
 
   it("one-node result; init rejects so the model names a real column or omits targetColumns for BB.", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   const result = engine.init({ origin: 'origin', question: 'test', direction: 'upstream', targetColumns: ['missing_col'] });
-  assert('error' in result && result.error === 'unknown_columns', 'CT: target column not on origin → init rejects unknown_columns (no zero-trace)');
-  assert('error' in result && typeof result.hint === 'string' && result.hint.length > 0, 'CT: unknown_columns reject carries a corrective hint');
+  expect('error' in result && result.error === 'unknown_columns', 'CT: target column not on origin → init rejects unknown_columns (no zero-trace)').toBe(true);
+  expect('error' in result && typeof result.hint === 'string' && result.hint.length > 0, 'CT: unknown_columns reject carries a corrective hint').toBe(true);
 });
 
   it("Test 3b: explicit BB mode rejects any targetColumns property before mutation", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   const result = engine.init({ origin: 'origin', question: 'test', direction: 'upstream', analysisMode: 'bb', targetColumns: ['amount'] });
-  assert('error' in result && result.error === 'ct_field_forbidden_in_bb', 'BB with named targetColumns rejects');
-  assert(engine.status === 'created' && !engine.columnAspect, 'named-target rejection leaves engine untouched');
+  expect('error' in result && result.error === 'ct_field_forbidden_in_bb', 'BB with named targetColumns rejects').toBe(true);
+  expect(engine.status === 'created' && !engine.columnAspect, 'named-target rejection leaves engine untouched').toBe(true);
   const emptyResult = engine.init({ origin: 'origin', question: 'test', direction: 'upstream', analysisMode: 'bb', targetColumns: [] });
-  assert('error' in emptyResult && emptyResult.error === 'ct_field_forbidden_in_bb', 'direct engine BB with empty target property also rejects');
-  assert(engine.status === 'created', 'empty-target rejection leaves engine untouched');
+  expect('error' in emptyResult && emptyResult.error === 'ct_field_forbidden_in_bb', 'direct engine BB with empty target property also rejects').toBe(true);
+  expect(engine.status === 'created', 'empty-target rejection leaves engine untouched').toBe(true);
 });
 
   it("Test 3c: rejected BB refine is atomic; successful CT→BB clears CT state", () => {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   const initial = engine.init({ origin: 'origin', question: 'trace amount', direction: 'upstream', analysisMode: 'ct', targetColumns: ['amount'] });
-  assert('ok' in initial, 'CT session initializes before transition checks');
+  expect('ok' in initial, 'CT session initializes before transition checks').toBe(true);
   const ctSnapshot = engine.toJSON();
   const restoredCt = NavigationEngine.fromJSON(JSON.parse(JSON.stringify(ctSnapshot)), model, graph, () => {});
-  assert(JSON.stringify(restoredCt.toJSON()) === JSON.stringify(ctSnapshot), 'current CT checkpoint round-trips without loss');
+  expect(JSON.stringify(restoredCt.toJSON()) === JSON.stringify(ctSnapshot), 'current CT checkpoint round-trips without loss').toBe(true);
   const ctWithoutTargets = JSON.parse(JSON.stringify(ctSnapshot));
   ctWithoutTargets.columnAspect.target_columns = [];
   let missingTargetsRejected = false;
@@ -107,24 +125,24 @@ describe("Column Flow Validation", () => {
   } catch {
     missingTargetsRejected = true;
   }
-  assert(missingTargetsRejected, 'CT snapshot without target columns rejects');
+  expect(missingTargetsRejected, 'CT snapshot without target columns rejects').toBe(true);
   const ctTaskIds = new Set(ctSnapshot.engineInternals?.investigationTasks?.map(task => task.id) ?? []);
   const beforeReject = JSON.stringify(engine.getScopeSummary());
   const rejected = engine.init({ origin: 'origin', question: 'switch badly', direction: 'upstream', analysisMode: 'bb', targetColumns: ['amount'] });
-  assert('error' in rejected && rejected.error === 'ct_field_forbidden_in_bb', 'inherited/live engine BB conflict rejects');
-  assert(JSON.stringify(engine.getScopeSummary()) === beforeReject, 'rejected BB refine preserves the complete engine snapshot');
+  expect('error' in rejected && rejected.error === 'ct_field_forbidden_in_bb', 'inherited/live engine BB conflict rejects').toBe(true);
+  expect(JSON.stringify(engine.getScopeSummary()) === beforeReject, 'rejected BB refine preserves the complete engine snapshot').toBe(true);
   const switched = engine.init({ origin: 'origin', question: 'switch cleanly', direction: 'upstream', analysisMode: 'bb' });
-  assert('ok' in switched, 'valid explicit CT→BB transition succeeds');
+  expect('ok' in switched, 'valid explicit CT→BB transition succeeds').toBe(true);
   const summary = engine.getScopeSummary();
-  assert(summary.analysisMode === 'bb' && summary.targetColumns === undefined && !engine.columnAspect, 'successful CT→BB transition clears prior CT columns');
+  expect(summary.analysisMode === 'bb' && summary.targetColumns === undefined && !engine.columnAspect, 'successful CT→BB transition clears prior CT columns').toBe(true);
   const bbSnapshot = engine.toJSON();
   const bbTasks = bbSnapshot.engineInternals?.investigationTasks ?? [];
   const bbTaskIds = new Set(bbTasks.map(task => task.id));
-  assert(bbTasks.every(task => task.kind !== 'column_lineage' && task.activeColumns === undefined), 'successful CT→BB transition purges CT task shape');
-  assert(bbTasks.every(task => !ctTaskIds.has(task.id)), 'successful CT→BB transition purges all prior ledger identities');
-  assert(bbTasks.every(task => task.parentTaskId === undefined || bbTaskIds.has(task.parentTaskId)), 'replacement BB tasks have no dangling parent task ids');
+  expect(bbTasks.every(task => task.kind !== 'column_lineage' && task.activeColumns === undefined), 'successful CT→BB transition purges CT task shape').toBe(true);
+  expect(bbTasks.every(task => !ctTaskIds.has(task.id)), 'successful CT→BB transition purges all prior ledger identities').toBe(true);
+  expect(bbTasks.every(task => task.parentTaskId === undefined || bbTaskIds.has(task.parentTaskId)), 'replacement BB tasks have no dangling parent task ids').toBe(true);
   const bbRoot = bbTasks.find(task => task.kind === 'root');
-  assert(!!bbRoot && bbTasks.filter(task => task.id !== bbRoot.id).every(task => task.parentTaskId === bbRoot.id), 'replacement seed tasks are explicitly parented to the new BB root');
+  expect(!!bbRoot && bbTasks.filter(task => task.id !== bbRoot.id).every(task => task.parentTaskId === bbRoot.id), 'replacement seed tasks are explicitly parented to the new BB root').toBe(true);
 });
 
   it("Test 3d: an absent upstream node is dropped with a notice and stages no edge", () => {
@@ -135,10 +153,11 @@ describe("Column Flow Validation", () => {
     summary: 'interaction',
     verdict: 'analyze',
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 't_raw', col: 'raw_amount' }] }],
+    route_requests: requiredRoutes(engine),
   });
-  assert('ok' in result, 'CT: absent upstream node is nonfatal');
-  assertEq(engine.columnAspect?.edges.length ?? -1, 0, 'CT: absent upstream stages zero column edges');
-  assert(engine.toJSON().memory.recentRejections.some((r) => r.nodeId === 't_raw'), 'CT: absent upstream notice is recorded');
+  expect('ok' in result, 'CT: absent upstream node is nonfatal').toBe(true);
+  expect(engine.columnAspect?.edges.length ?? -1, 'CT: absent upstream stages zero column edges').toBe(0);
+  expect(engine.toJSON().memory.recentRejections.some((r) => r.nodeId === 't_raw'), 'CT: absent upstream notice is recorded').toBe(true);
 });
 
   it("Test 4: out_col not in active_columns → out_col_not_on_node (guided order + valid set)", () => {
@@ -149,17 +168,63 @@ describe("Column Flow Validation", () => {
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [{ out_col: 'wrong_col', upstream_columns: [] }],
+    route_requests: requiredRoutes(engine),
   });
-  assert('error' in result && result.error === 'out_col_not_on_node', 'out_col not active → out_col_not_on_node');
+  expect('error' in result && result.error === 'out_col_not_on_node', 'out_col not active → out_col_not_on_node').toBe(true);
   if ('error' in result) {
     const hint = result.hint ?? '';
-    assert(/declare column_flow only for an active tracked column/i.test(hint), 'hint is a verb-led order');
-    assert(!/\bdo not\b|\bnever\b|\bdon't\b/i.test(hint), 'hint avoids negative framing');
+    expect(/declare column_flow only for an active tracked column/i.test(hint), 'hint is a verb-led order').toBe(true);
+    expect(!/\bdo not\b|\bnever\b|\bdon't\b/i.test(hint), 'hint avoids negative framing').toBe(true);
     const detail = JSON.stringify('detail' in result ? result.detail : '');
-    assert(detail.includes('wrong_col'), 'detail names the offending out_col');
-    assert(detail.includes('amount'), 'detail lists the valid active column as data');
+    expect(detail.includes('wrong_col'), 'detail names the offending out_col').toBe(true);
+    expect(detail.includes('amount'), 'detail lists the valid active column as data').toBe(true);
+    // The empty-flow escape is open only where the focus declares none of the active columns;
+    // offering it unconditionally spends a generation to land on column_chain_incomplete, so the
+    // order names the per-column repair first and conditions the escape.
+    expect(/Every active tracked column still needs its own entry/.test(hint), 'hint names the per-column repair').toBe(true);
+    expect(/Submit column_flow: \[\] only where this node declares none of them/.test(hint), 'hint conditions the empty-flow escape on what the node declares').toBe(true);
   }
 });
+
+  it("P1-16: out_col existing on the node but off the tracked spine → out_col_not_tracked (verb-led order + tracked set)", () => {
+    const engine = ctEngine(['amount']); // active = ['amount']; origin also declares 'region'
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'region', upstream_columns: [] }],
+      route_requests: requiredRoutes(engine),
+    });
+    expect('error' in result && result.error === 'out_col_not_tracked', 'on-node but untracked out_col → out_col_not_tracked').toBe(true);
+    if ('error' in result) {
+      const hint = result.hint ?? '';
+      expect(/^Set column_flow\[\]\.out_col to a tracked column/i.test(hint), 'hint is a verb-led order naming the repair').toBe(true);
+      expect(!/\bdo not\b|\bnever\b|\bdon't\b/i.test(hint), 'hint avoids negative framing').toBe(true);
+      const detail = JSON.stringify('detail' in result ? result.detail : '');
+      expect(detail.includes('region'), 'detail names the offending on-node out_col').toBe(true);
+      expect(detail.includes('amount'), 'detail lists the tracked column as data').toBe(true);
+    }
+  });
+
+  it("P1-16: out_col the node does not carry at all stays out_col_not_on_node, including a tracked name the node never declares", () => {
+    // 'GhostCol' is on the tracked spine but absent from the node's DDL, so it passes the
+    // active-columns gate and is caught by the existence gate — still case (a): not on the node.
+    const ctModel: DatabaseModel = makeModel([], [], ['dbo']);
+    const tracer = new ColumnTracer(['GhostCol']);
+    const nodeMap = new Map<string, any>([
+      ['origin', { id: 'origin', type: 'view', columns: [{ name: 'amount' }] }],
+    ]);
+    const finding = {
+      verdict: 'analyze' as const, summary: 's', sections: [],
+      column_flow: [{ out_col: 'GhostCol', upstream_columns: [] }],
+    };
+    const res = tracer.validateColumnFlow('origin', finding as any, nodeMap, ctModel, null);
+    expect(res.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'tracked-but-undeclared out_col is reported as bad_out_col').toBe(true);
+    expect(res.invalidRoutes.every(r => r.kind !== 'untracked_out_col'), 'a column absent from the node never takes the untracked split').toBe(true);
+    const envelope = buildRouteValidationRejection(res.invalidRoutes);
+    expect('error' in envelope && envelope.error === 'out_col_not_on_node', 'single-kind envelope keeps the out_col_not_on_node machine code').toBe(true);
+  });
 
   it("Test 6: upstream node absent from model → drop-with-notice", () => {
   const engine = ctEngine(['amount']);
@@ -172,11 +237,12 @@ describe("Column Flow Validation", () => {
       out_col: 'amount',
       upstream_columns: [{ node: 'nonexistent_table', col: 'any_col' }],
     }],
+    route_requests: requiredRoutes(engine),
   });
-  assert('ok' in result, 'absent upstream node does not consume the retry budget');
+  expect('ok' in result, 'absent upstream node does not consume the retry budget').toBe(true);
   const edges = engine.columnAspect?.edges ?? [];
-  assert(edges.length === 0, 'no dangling edge staged for the unresolved upstream node');
-  assert(engine.toJSON().memory.recentRejections.some((r) => r.nodeId === 'nonexistent_table'), 'absent upstream notice remains visible');
+  expect(edges.length === 0, 'no dangling edge staged for the unresolved upstream node').toBe(true);
+  expect(engine.toJSON().memory.recentRejections.some((r) => r.nodeId === 'nonexistent_table'), 'absent upstream notice remains visible').toBe(true);
 });
 
   it("Test 7: upstream column not on source → contributor_col_not_on_source (lists columns)", () => {
@@ -192,13 +258,13 @@ describe("Column Flow Validation", () => {
       upstream_columns: [{ node: 'base_table', col: 'wrong_col' }],
     }],
   });
-  assert('error' in result && result.error === 'contributor_col_not_on_source', 'upstream column not on source → contributor_col_not_on_source');
+  expect('error' in result && result.error === 'contributor_col_not_on_source', 'upstream column not on source → contributor_col_not_on_source').toBe(true);
   if ('error' in result) {
     const hint = result.hint ?? '';
-    assert(/set upstream_columns\[\]\.col to a real upstream column/i.test(hint), 'hint is a verb-led order');
-    assert(/Do not use literals, NULLs, parameters, generated values, or filter-only columns/i.test(hint), 'hint keeps non-column semantics in sections');
+    expect(/set upstream_columns\[\]\.col to a real upstream column/i.test(hint), 'hint is a verb-led order').toBe(true);
+    expect(/Do not use literals, NULLs, parameters, generated values, or filter-only columns/i.test(hint), 'hint keeps non-column semantics in sections').toBe(true);
     const detail = JSON.stringify('detail' in result ? result.detail : '');
-    assert(detail.includes('raw_amount'), 'detail lists the valid source column as data');
+    expect(detail.includes('raw_amount'), 'detail lists the valid source column as data').toBe(true);
   }
 });
 
@@ -221,8 +287,8 @@ describe("Column Flow Validation", () => {
       model,
       null,
     );
-    assert(invalidRoutes.some(r => r.kind === 'bad_contributor_col'), 'the invalid contributor is reported');
-    assertEq(stagedEdges.length, 0, 'no edge is staged for a rejected upstream column');
+    expect(invalidRoutes.some(r => r.kind === 'bad_contributor_col'), 'the invalid contributor is reported').toBe(true);
+    expect(stagedEdges.length, 'no edge is staged for a rejected upstream column').toBe(0);
   });
 
   it("an out_col that differs only by padding or quoting is accounted for, not reported incomplete", () => {
@@ -230,11 +296,7 @@ describe("Column Flow Validation", () => {
     // can never be reported unaccounted by the other, which would retry the identical payload until
     // the semantic breaker ends the turn.
     const tracer = new ColumnTracer(['amount']);
-    assertEq(
-      tracer.unaccountedActiveColumns([{ out_col: ' "Amount" ', upstream_columns: [] }] as never).length,
-      0,
-      'a padded/quoted out_col accounts for its active column',
-    );
+    expect(tracer.unaccountedActiveColumns([{ out_col: ' "Amount" ', upstream_columns: [] }] as never).length, 'a padded/quoted out_col accounts for its active column').toBe(0);
   });
 
   it("Test 8: valid column_flow accumulates edge and marks table pass-through", () => {
@@ -249,16 +311,16 @@ describe("Column Flow Validation", () => {
       upstream_columns: [{ node: 'base_table', col: 'raw_amount' }],
     }],
   });
-  assert('ok' in result && result.ok === true, 'valid column_flow accepted');
+  expect('ok' in result && result.ok, 'valid column_flow accepted').toBe(true);
   const edges = engine.columnAspect?.edges ?? [];
-  assert(edges.length === 1, 'one upstream column edge accumulated');
-  assert(edges[0]?.from_node === 'base_table', 'accumulated edge from_node is base_table');
-  assert(edges[0]?.to_col === 'amount', 'accumulated edge to_col is amount');
+  expect(edges.length === 1, 'one upstream column edge accumulated').toBe(true);
+  expect(edges[0]?.from_node === 'base_table', 'accumulated edge from_node is base_table').toBe(true);
+  expect(edges[0]?.to_col === 'amount', 'accumulated edge to_col is amount').toBe(true);
   const state = engine.toJSON() as { nodeStates: Array<{ nodeId: string; action: string; reason: string; columns?: string[] }> };
   const baseState = state.nodeStates.find(s => s.nodeId === 'base_table');
-  assert(baseState?.action === 'passthrough', 'CT upstream table gets pass lifecycle state');
-  assert(baseState?.reason === 'non_bodied_passthrough', 'CT upstream table reason is non-bodied passthrough');
-  assert(baseState?.columns?.includes('raw_amount') ?? false, 'CT upstream table lifecycle carries source column');
+  expect(baseState?.action === 'passthrough', 'CT upstream table gets pass lifecycle state').toBe(true);
+  expect(baseState?.reason === 'non_bodied_passthrough', 'CT upstream table reason is non-bodied passthrough').toBe(true);
+  expect(baseState?.columns?.includes('raw_amount') ?? false, 'CT upstream table lifecycle carries source column').toBe(true);
 });
 
   it("Test 8a: a partially valid CT flow rejects atomically, then commits exactly once", () => {
@@ -274,20 +336,16 @@ describe("Column Flow Validation", () => {
       { out_col: 'region', upstream_columns: [{ node: 'base_table', col: 'wrong_col' }] },
     ],
   });
-  assert('error' in rejected && rejected.error === 'contributor_col_not_on_source', 'CT partial invalid flow rejects');
+  expect('error' in rejected && rejected.error === 'contributor_col_not_on_source', 'CT partial invalid flow rejects').toBe(true);
   if ('error' in rejected) {
     const detail = 'detail' in rejected ? rejected.detail : undefined;
     const invalidContributor = Array.isArray(detail) ? detail[0] as { path?: string } : undefined;
-    assertEq(invalidContributor?.path, 'column_flow.1.upstream_columns.0.col', 'CT rejection preserves the exact invalid column_flow path');
-    assertEq(
-      rejected.hint,
-      'Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
-      'CT rejection preserves the existing corrective hint verbatim',
-    );
-    assert(!JSON.stringify(rejected).includes('mixed flow'), 'CT rejection excludes authored sections and summary');
+    expect(invalidContributor?.path, 'CT rejection preserves the exact invalid column_flow path').toBe('column_flow.1.upstream_columns.0.col');
+    expect(rejected.hint, 'CT rejection preserves the existing corrective hint verbatim').toBe('Set upstream_columns[].col to a real upstream column. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.');
+    expect(!JSON.stringify(rejected).includes('mixed flow'), 'CT rejection excludes authored sections and summary').toBe(true);
   }
-  assertEq(durableCtSnapshot(engine), beforeReject, 'CT rejection preserves all durable engine state');
-  assert(engine.getHopDiagnostics().routedRejected > 0, 'CT rejection may update routed-rejection diagnostics');
+  expect(durableCtSnapshot(engine), 'CT rejection preserves all durable engine state').toBe(beforeReject);
+  expect(engine.getHopDiagnostics().routedRejected > 0, 'CT rejection may update routed-rejection diagnostics').toBe(true);
 
   const accepted = engine.submitFindings({
     focus_node_id: 'origin',
@@ -299,18 +357,131 @@ describe("Column Flow Validation", () => {
       { out_col: 'region', upstream_columns: [] },
     ],
   });
-  assert('ok' in accepted && accepted.ok === true, 'corrected CT flow commits');
+  expect('ok' in accepted && accepted.ok, 'corrected CT flow commits').toBe(true);
   const committed = engine.toJSON();
-  assertEq(committed.columnAspect?.edges.length ?? -1, 1, 'corrected CT flow commits its edge once');
-  assertEq(Object.keys(committed.memory.detailSlots).length, 1, 'corrected CT flow stores one detail slot');
-  assertEq(committed.memory.verdictCounts.analyze, 1, 'corrected CT flow increments the verdict tally once');
-  assertEq(committed.engineInternals?.lastHopColumnFlowEntries ?? -1, 2, 'corrected CT flow commits its entry count once');
-  assertEq(committed.nodeStates.filter(state => state.nodeId === 'base_table').length, 1, 'corrected CT flow commits one source node state');
+  expect(committed.columnAspect?.edges.length ?? -1, 'corrected CT flow commits its edge once').toBe(1);
+  expect(Object.keys(committed.memory.detailSlots).length, 'corrected CT flow stores one detail slot').toBe(1);
+  expect(committed.memory.verdictCounts.analyze, 'corrected CT flow increments the verdict tally once').toBe(1);
+  expect(committed.engineInternals?.lastHopColumnFlowEntries ?? -1, 'corrected CT flow commits its entry count once').toBe(2);
+  expect(committed.nodeStates.filter(state => state.nodeId === 'base_table').length, 'corrected CT flow commits one source node state').toBe(1);
 });
 
+  it("P1-40: prune_origin_forbidden names the column_flow its passthrough repair must carry", () => {
+  const engine = ctEngine(['amount']);
+  const rejected = engine.submitFindings({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business' as const, text: 'off the trace' }],
+    summary: 'off the trace',
+    verdict: 'prune',
+  });
+  expect('error' in rejected && rejected.error === 'prune_origin_forbidden', 'pruning the CT origin rejects').toBe(true);
+  const hint = 'error' in rejected && typeof rejected.hint === 'string' ? rejected.hint : '';
+  expect(hint.includes('column_flow entry for each of them'), 'the passthrough repair names the column_flow it must carry').toBe(true);
+  expect(hint.includes('[amount]'), 'the hint names the tracked column the focus declares').toBe(true);
+  expect(hint.includes("column_flow:[] is refused here"), 'the empty-flow escape is closed explicitly').toBe(true);
+  expect(hint.trim() !== 'The exploration origin is immutable. Submit a complete analyze or passthrough finding for this focus.', 'a bare analyze/passthrough is no longer the whole repair').toBe(true);
+});
+
+  it("P1-40: prune_would_orphan_noted names the column_flow its passthrough repair must carry", () => {
+  const col = { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' };
+  const orphanOrigin: LineageNode = makeNode({ id: 'orphan_origin', schema: 'dbo', name: 'orphan_origin', type: 'view', columns: [col] });
+  const orphanMid: LineageNode = makeNode({ id: 'orphan_mid', schema: 'dbo', name: 'orphan_mid', type: 'view', columns: [col] });
+  const orphanLeaf: LineageNode = makeNode({ id: 'orphan_leaf', schema: 'dbo', name: 'orphan_leaf', type: 'view', columns: [col] });
+  const n: LineageNode[] = [orphanOrigin, orphanMid, orphanLeaf];
+  const e: Array<[string, string]> = [['orphan_mid', 'orphan_origin'], ['orphan_leaf', 'orphan_mid']];
+  const engine = new NavigationEngine(makeModel(n, e, ['dbo']), makeGraph(n, e), () => {}, {});
+  engine.init({ origin: 'orphan_origin', question: 'trace amount', direction: 'upstream', targetColumns: ['amount'], depthIntent: { kind: 'explicit', levels: 3 } });
+  engine.getHopContext();
+  engine.submitFindings({
+    focus_node_id: 'orphan_origin',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'orphan_mid', col: 'amount' }] }],
+    route_requests: [{ nodeId: 'orphan_leaf', question: 'trace amount to the leaf' }],
+  });
+  // orphan_leaf is committed and reaches the origin only through orphan_mid, so pruning the mid hop
+  // is refused on topology — and the passthrough it offers instead is itself refused unless it
+  // carries the tracked column orphan_mid declares.
+  let rejected: unknown = null;
+  for (let hop = 0; hop < 6; hop++) {
+    const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+    if (ctx.done || !ctx.focus_node) break;
+    const id = ctx.focus_node.id;
+    if (id === 'orphan_mid') {
+      rejected = engine.submitFindings({
+        focus_node_id: id,
+        sections: [{ angle: 'business' as const, text: 'off the trace' }],
+        summary: 'off the trace',
+        verdict: 'prune',
+      });
+      break;
+    }
+    engine.submitFindings({
+      focus_node_id: id,
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'amount', upstream_columns: [] }],
+    });
+  }
+  const result = rejected as { error?: string; hint?: string } | null;
+  expect(result?.error === 'prune_would_orphan_noted', `pruning orphan_mid rejects on topology (got ${JSON.stringify(rejected)})`).toBe(true);
+  const hint = typeof result?.hint === 'string' ? result.hint : '';
+  expect(hint.includes("Use verdict='passthrough' to keep it without pruning."), 'the topology repair is preserved verbatim').toBe(true);
+  expect(hint.includes('column_flow entry for each of them'), 'the passthrough repair names the column_flow it must carry').toBe(true);
+  expect(hint.includes('[amount]'), 'the hint names the tracked column orphan_mid declares').toBe(true);
+  expect(!hint.trim().endsWith("Use verdict='passthrough' to keep it without pruning."), 'passthrough alone is no longer the whole repair').toBe(true);
+});
+
+  it("P1-40: rejection precedence — a submit that is both contradicted and prune-shaped reports the contradicted verdict", () => {
+    const col = { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' };
+    const topoOrigin: LineageNode = makeNode({ id: 'topo_origin', schema: 'dbo', name: 'topo_origin', type: 'view', columns: [col] });
+    const topoMid: LineageNode = makeNode({ id: 'topo_mid', schema: 'dbo', name: 'topo_mid', type: 'view', columns: [col] });
+    const topoLeaf: LineageNode = makeNode({ id: 'topo_leaf', schema: 'dbo', name: 'topo_leaf', type: 'view', columns: [col] });
+    const n: LineageNode[] = [topoOrigin, topoMid, topoLeaf];
+    const e: Array<[string, string]> = [['topo_mid', 'topo_origin'], ['topo_leaf', 'topo_mid']];
+    const engine = new NavigationEngine(makeModel(n, e, ['dbo']), makeGraph(n, e), () => {}, {});
+    engine.init({ origin: 'topo_origin', question: 'trace amount', direction: 'upstream', targetColumns: ['amount'], depthIntent: { kind: 'explicit', levels: 3 } });
+    engine.getHopContext();
+    // Hop 1 commits the origin and routes only the mid; the leaf stays in scope from the seed,
+    // unvisited and unqueued, so at hop 2 it is a required neighbour the mid must account for.
+    engine.submitFindings({
+      focus_node_id: 'topo_origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'topo_mid', col: 'amount' }] }],
+      route_requests: [{ nodeId: 'topo_mid', question: 'trace amount to the mid' }],
+    });
+    const ctx = engine.getHopContext() as { focus_node?: { id: string } };
+    expect(ctx.focus_node?.id, 'the mid is dispatched next').toBe('topo_mid');
+    expect(engine.requiredNeighborIds('topo_mid'), 'the unrouted leaf is a required neighbour of the mid').toContain('topo_leaf');
+
+    // The mid declares the tracked column but submits column_flow: [] (checkably false) AND leaves
+    // its required neighbour unaccounted — the prune branch's missing_required_route shape. The
+    // column contradiction is the content falsehood, so it outranks the prune verdict.
+    const rejected = engine.submitFindings({
+      focus_node_id: 'topo_mid',
+      sections: [{ angle: 'business' as const, text: 'off the trace' }],
+      summary: 'off the trace',
+      verdict: 'analyze',
+      column_flow: [],
+    });
+    expect('error' in rejected && rejected.error === 'column_chain_incomplete',
+      `contradicted outranks the prune verdict (got ${JSON.stringify(rejected)})`).toBe(true);
+    if ('error' in rejected) {
+      const detail = JSON.stringify('detail' in rejected ? rejected.detail : '');
+      expect(detail.includes('topo_leaf'), 'the unaccounted neighbour is not the headline verdict').toBe(false);
+      const declaredHere = ('detail' in rejected ? (rejected.detail as { declared_here?: string[] }).declared_here : undefined);
+      expect(JSON.stringify(declaredHere), 'the rejection names the declared column that contradicts the empty flow').toBe(JSON.stringify(['amount']));
+      expect(rejected.hint ?? '', 'the repair names the column_flow entry to add').toContain('Add a column_flow entry for each');
+    }
+  });
+
   it("tool set in toolPolicy.", () => {
-  assert(activeModeOf(true) === 'sm_ct', 'activeModeOf(hasColumnAspect=true) === sm_ct');
-  assert(activeModeOf(false) === 'sm_bb', 'activeModeOf(hasColumnAspect=false) === sm_bb');
+  expect(activeModeOf(true) === 'sm_ct', 'activeModeOf(hasColumnAspect=true) === sm_ct').toBe(true);
+  expect(activeModeOf(false) === 'sm_bb', 'activeModeOf(hasColumnAspect=false) === sm_bb').toBe(true);
 });
 
   it("Test 10: supplementAgenda with CT — supplemented node inherits target_columns", () => {
@@ -344,11 +515,11 @@ describe("Column Flow Validation", () => {
   });
   // SM mode signals completion via getHopContext() draining the empty agenda
   const doneCtx = engine.getHopContext();
-  assert(doneCtx.done === true, 'exploration completed (done=true)');
+  expect(doneCtx.done === true, 'exploration completed (done=true)').toBe(true);
 
   // Supplement with second_view
   const suppResult = engine.supplementAgenda(['second_view']);
-  assert('ok' in suppResult && suppResult.ok === true, 'supplementAgenda ok');
+  expect('ok' in suppResult && suppResult.ok, 'supplementAgenda ok').toBe(true);
 
   // Advance to second_view hop and verify active_columns = target_columns
   engine.getHopContext();
@@ -363,9 +534,9 @@ describe("Column Flow Validation", () => {
     }],
   });
   // column_flow accepted confirms active_columns was set to ['amount'] from supplement
-  assert(!('error' in r2 && r2.error === 'column_flow_required'), 'supplement node has column context (no column_flow_required)');
+  expect(!('error' in r2 && r2.error === 'column_flow_required'), 'supplement node has column context (no column_flow_required)').toBe(true);
   const diag = engine.getHopDiagnostics();
-  assert(diag.activeColumnCount === 1, 'supplemented node has activeColumnCount=1');
+  expect(diag.activeColumnCount === 1, 'supplemented node has activeColumnCount=1').toBe(true);
 });
 
   it("are skipped by design.", () => {
@@ -389,21 +560,97 @@ describe("Column Flow Validation", () => {
   });
 
   const ok = tracer.validateColumnFlow('spwriter', writeTo('TotalRevenue') as any, nodeMap, ctModel, null);
-  assertEq(ok.invalidRoutes.length, 0, 'WS2 valid writes_to.col: no rejection');
-  assertEq(ok.stagedEdges.length, 1, 'WS2 valid writes_to.col: edge staged');
-  assertEq(ok.stagedEdges[0].to_col, 'TotalRevenue', 'WS2 valid writes_to.col: to_col carried through');
+  expect(ok.invalidRoutes.length, 'WS2 valid writes_to.col: no rejection').toBe(0);
+  expect(ok.stagedEdges.length, 'WS2 valid writes_to.col: edge staged').toBe(1);
+  expect(ok.stagedEdges[0].to_col, 'WS2 valid writes_to.col: to_col carried through').toBe('TotalRevenue');
 
   const empty = tracer.validateColumnFlow('spwriter', writeTo('') as any, nodeMap, ctModel, null);
-  assert(empty.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'WS2 empty writes_to.col → bad_out_col (no .min(1) needed)');
-  assertEq(empty.stagedEdges.length, 0, 'WS2 empty writes_to.col: no empty edge staged');
+  expect(empty.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'WS2 empty writes_to.col → bad_out_col (no .min(1) needed)').toBe(true);
+  expect(empty.stagedEdges.length, 'WS2 empty writes_to.col: no empty edge staged').toBe(0);
 
   const wrong = tracer.validateColumnFlow('spwriter', writeTo('Nonexistent') as any, nodeMap, ctModel, null);
-  assert(wrong.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'WS2 wrong writes_to.col → bad_out_col');
-  assertEq(wrong.stagedEdges.length, 0, 'WS2 wrong writes_to.col: no edge staged');
+  expect(wrong.invalidRoutes.some(r => r.kind === 'bad_out_col'), 'WS2 wrong writes_to.col → bad_out_col').toBe(true);
+  expect(wrong.stagedEdges.length, 'WS2 wrong writes_to.col: no edge staged').toBe(0);
 
   const unknown = tracer.validateColumnFlow('spwriter', writeTo('TotalRevenue', 'ghosttable') as any, nodeMap, ctModel, null);
-  assert(unknown.invalidRoutes.some(r => r.kind === 'absent_contributor'), 'WS2 unknown writes_to.node → absent_contributor');
-  assertEq(unknown.stagedEdges.length, 0, 'WS2 unknown writes_to.node: no edge staged');
+  expect(unknown.invalidRoutes.some(r => r.kind === 'absent_contributor'), 'WS2 unknown writes_to.node → absent_contributor').toBe(true);
+  expect(unknown.stagedEdges.length, 'WS2 unknown writes_to.node: no edge staged').toBe(0);
+});
+
+  it("a zero-column neighbour still accepts the claimed contributor column, logging it as unverifiable", () => {
+  // Procedures/scalar functions legitimately declare no columns, so a non-procedure neighbour with
+  // an empty declared-columns list can't be checked against a real list either. The guard must
+  // still accept the claimed column (no rejection, no change to staged edges) and — since this is
+  // the only place such a contributor is invisible to verification — record it at debug level via
+  // the optional `log` callback rather than accepting it silently.
+  const ctModel: DatabaseModel = makeModel([], [], ['dbo']);
+  const tracer = new ColumnTracer(['TotalRevenue']);
+  const nodeMap = new Map<string, any>([
+    ['vwtarget', { id: 'vwtarget', type: 'view', columns: [{ name: 'TotalRevenue' }] }],
+    // zero-column, non-procedure neighbour: no `columns` key at all.
+    ['zerocolsrc', { id: 'zerocolsrc', type: 'table' }],
+  ]);
+  const finding = {
+    verdict: 'analyze' as const, summary: 's', sections: [],
+    column_flow: [{
+      out_col: 'TotalRevenue',
+      upstream_columns: [{ node: 'zerocolsrc', col: 'AnyClaimedColumn' }],
+    }],
+  };
+  const logCalls: Array<[string, string]> = [];
+  const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
+
+  const res = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null, log);
+  expect(res.invalidRoutes.length, 'zero-column neighbour: no rejection').toBe(0);
+  expect(res.stagedEdges.length, 'zero-column neighbour: contributor edge still staged').toBe(1);
+  expect(res.stagedEdges[0]?.from_node, 'zero-column neighbour: staged edge names the neighbour').toBe('zerocolsrc');
+  expect(res.stagedEdges[0]?.from_col, 'zero-column neighbour: claimed column carried through unverified').toBe('AnyClaimedColumn');
+
+  const debugCall = logCalls.find(([level]) => level === 'debug');
+  expect(!!debugCall, 'unverifiable contributor is logged at debug level').toBe(true);
+  expect(debugCall?.[1].includes('zerocolsrc'), 'log names the neighbour node').toBe(true);
+  expect(debugCall?.[1].includes('AnyClaimedColumn'), 'log names the claimed column').toBe(true);
+
+  // Omitting `log` entirely must not throw or change behavior.
+  const resNoLog = tracer.validateColumnFlow('vwtarget', finding as any, nodeMap, ctModel, null);
+  expect(resNoLog.stagedEdges.length, 'no-log call: contributor still accepted').toBe(1);
+});
+
+  it("engine wiring: NavigationEngine forwards its own logger into validateColumnFlow, so the zero-column unverifiable notice reaches the host log, not just an inline tracer call", () => {
+  // The tracer-level test above pins validateColumnFlow's own behavior when a `log` callback is
+  // handed to it directly. This pins the wiring one layer up: smBase's sole call site passes
+  // `this.log` through, so the notice actually surfaces on the running engine's logger and not just
+  // when a test constructs a bare ColumnTracer by hand.
+  const zcNodes: LineageNode[] = [
+    makeNode({ id: 'ctorigin2', schema: 'dbo', name: 'ctorigin2', type: 'view', columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    // zero-column, non-procedure upstream neighbour: no `columns` key at all.
+    makeNode({ id: 'zerocolsrc', schema: 'dbo', name: 'zerocolsrc', type: 'table' }),
+  ];
+  const zcEdges: Array<[string, string]> = [['zerocolsrc', 'ctorigin2']];
+  const zcModel: DatabaseModel = makeModel(zcNodes, zcEdges, ['dbo']);
+  const zcGraph = makeGraph(zcNodes, zcEdges);
+
+  const logCalls: Array<[string, string]> = [];
+  const log: LogFn = (level, msg) => { logCalls.push([level, msg]); };
+
+  const engine = new NavigationEngine(zcModel, zcGraph, log, {});
+  const init = engine.init({ origin: 'ctorigin2', question: 'trace amount upstream', direction: 'upstream', targetColumns: ['amount'] });
+  expect('ok' in init, 'engine wiring: CT session initializes').toBe(true);
+  engine.getHopContext();
+  const result = engine.submitFindings({
+    focus_node_id: 'ctorigin2',
+    sections: [{ angle: 'business' as const, text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'zerocolsrc', col: 'AnyClaimedColumn' }] }],
+    route_requests: engine.requiredNeighborIds('ctorigin2').map(id => ({ nodeId: id, question: `what does ${id} contribute?` })),
+  });
+  expect(!('error' in result), `engine wiring: zero-column contributor is accepted through the full submit path, not rejected (${'error' in result ? result.error : ''})`).toBe(true);
+
+  const debugCall = logCalls.find(([, msg]) => msg.includes('unverifiable'));
+  expect(!!debugCall, 'engine wiring: the unverifiable-contributor line reaches the engine\'s own logger').toBe(true);
+  expect(debugCall?.[1].includes('zerocolsrc'), 'engine wiring: emitted line names the neighbour').toBe(true);
+  expect(debugCall?.[1].includes('AnyClaimedColumn'), 'engine wiring: emitted line names the claimed column').toBe(true);
 });
 
   it("from-node+col) is a content error (`self_loop_column`), never a valid rename/passthrough edge.", () => {
@@ -431,11 +678,11 @@ describe("Column Flow Validation", () => {
       ],
     }],
   } as any, nodeMap, ctModel, null);
-  assert(mixed.invalidRoutes.some(r => r.kind === 'self_loop_column'), 'WS5: self-loop upstream contributor rejected');
-  assertEq(mixed.stagedEdges.length, 1, 'WS5: only the legitimate srcnode contributor is staged');
-  assertEq(mixed.stagedEdges[0]?.from_node, 'srcnode', 'WS5: staged edge is the legitimate one, not the self-loop');
+  expect(mixed.invalidRoutes.some(r => r.kind === 'self_loop_column'), 'WS5: self-loop upstream contributor rejected').toBe(true);
+  expect(mixed.stagedEdges.length, 'WS5: only the legitimate srcnode contributor is staged').toBe(1);
+  expect(mixed.stagedEdges[0]?.from_node, 'WS5: staged edge is the legitimate one, not the self-loop').toBe('srcnode');
   const loopRoute = mixed.invalidRoutes.find(r => r.kind === 'self_loop_column');
-  assert(!!loopRoute && loopRoute.reason.includes('facttable.TotalRevenue'), 'WS5: reason names the offending node.col');
+  expect(!!loopRoute && loopRoute.reason.includes('facttable.TotalRevenue'), 'WS5: reason names the offending node.col').toBe(true);
 
   // A legitimate writes_to redirect (writer proc → a DIFFERENT target table) still stages cleanly
   // (regression guard — the new check must not false-positive on real writer-proc edges).
@@ -447,8 +694,8 @@ describe("Column Flow Validation", () => {
       upstream_columns: [{ node: 'srcnode', col: 'Rev' }],
     }],
   } as any, nodeMap, ctModel, null);
-  assertEq(legit.invalidRoutes.filter(r => r.kind === 'self_loop_column').length, 0, 'WS5: legitimate writes_to redirect is not flagged as self-loop');
-  assertEq(legit.stagedEdges.length, 1, 'WS5: legitimate writes_to redirect still stages its edge');
+  expect(legit.invalidRoutes.filter(r => r.kind === 'self_loop_column').length, 'WS5: legitimate writes_to redirect is not flagged as self-loop').toBe(0);
+  expect(legit.stagedEdges.length, 'WS5: legitimate writes_to redirect still stages its edge').toBe(1);
 
   // writes_to omitted (defaults to focus) with an upstream contributor equal to the focus itself —
   // a node can't be its own upstream for the same column either; the same check catches it.
@@ -459,8 +706,8 @@ describe("Column Flow Validation", () => {
       upstream_columns: [{ node: 'facttable', col: 'TotalRevenue' }],
     }],
   } as any, nodeMap, ctModel, null);
-  assert(selfFocus.invalidRoutes.some(r => r.kind === 'self_loop_column'), 'WS5: upstream == focus with same column (writes_to omitted) is also a self-loop');
-  assertEq(selfFocus.stagedEdges.length, 0, 'WS5: no edge staged for the focus self-loop');
+  expect(selfFocus.invalidRoutes.some(r => r.kind === 'self_loop_column'), 'WS5: upstream == focus with same column (writes_to omitted) is also a self-loop').toBe(true);
+  expect(selfFocus.stagedEdges.length, 'WS5: no edge staged for the focus self-loop').toBe(0);
 });
 
   it("WS6: self-loop rejected through the full engine submit path — session left unmutated", () => {
@@ -471,16 +718,17 @@ describe("Column Flow Validation", () => {
     summary: 'ok',
     verdict: 'analyze',
     column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'origin', col: 'amount' }] }],
+    route_requests: requiredRoutes(engine),
   });
-  assert('error' in result && result.error === 'column_self_loop', 'engine: self-loop column_flow rejected as column_self_loop');
+  expect('error' in result && result.error === 'column_self_loop', 'engine: self-loop column_flow rejected as column_self_loop').toBe(true);
   if ('error' in result) {
     const hint = result.hint ?? '';
-    assert(/writes_to/i.test(hint) && /identical/i.test(hint), 'engine: hint names the corrective action (writes_to / omit)');
-    assert(!/prune_neighbors/i.test(hint), 'engine: hint is CT-only, no BB prune vocabulary leaks in');
+    expect(/writes_to/i.test(hint) && /identical/i.test(hint), 'engine: hint names the corrective action (writes_to / omit)').toBe(true);
+    expect(!/prune_neighbors/i.test(hint), 'engine: hint is CT-only, no BB prune vocabulary leaks in').toBe(true);
     const detail = JSON.stringify('detail' in result ? result.detail : '');
-    assert(detail.includes('origin'), 'engine: detail names the offending node');
+    expect(detail.includes('origin'), 'engine: detail names the offending node').toBe(true);
   }
-  assertEq(engine.columnAspect?.edges.length ?? -1, 0, 'engine: no edge staged for the rejected self-loop submission — session left unmutated');
+  expect(engine.columnAspect?.edges.length ?? -1, 'engine: no edge staged for the rejected self-loop submission — session left unmutated').toBe(0);
 });
 
   it("SQL mechanics live in sections[].text; every upstream real column edge is eligible for continuation.", () => {
@@ -505,13 +753,13 @@ describe("Column Flow Validation", () => {
     }],
   };
   const res = tracer.validateColumnFlow('focusview', finding as any, nodeMap, ctModel, null);
-  assertEq(res.stagedEdges.length, 2, 'WS4a: both real upstream column edges are staged');
+  expect(res.stagedEdges.length, 'WS4a: both real upstream column edges are staged').toBe(2);
   for (const e of res.stagedEdges) e.hop = 1;
   tracer.state.edges.push(...res.stagedEdges);
 
-  const questions = tracer.getColumnLineageQuestions('focusview', 1);
-  assertEq(questions.length, 2, 'WS4a: every real upstream column edge spawns a continuation question');
-  assert(questions.some(q => q.includes('valuesrc')) && questions.some(q => q.includes('filtersrc')), 'WS4a: both upstream nodes are represented');
+  const questions = Array.from(tracer.getColumnLineageQuestionsByNode('focusview', 1).values()).flat();
+  expect(questions.length, 'WS4a: every real upstream column edge spawns a continuation question').toBe(2);
+  expect(questions.some(q => q.includes('valuesrc')) && questions.some(q => q.includes('filtersrc')), 'WS4a: both upstream nodes are represented').toBe(true);
 });
 
   it("false-reject as bad_out_col. Strictly additive: unbracketed names behaved identically before.", () => {
@@ -528,21 +776,21 @@ describe("Column Flow Validation", () => {
     column_flow: [{ out_col: '[amount]', upstream_columns: [{ node: 'src', col: '[raw]' }] }],
   };
   const res = tracer.validateColumnFlow('origin', finding as any, nodeMap, ctModel, null);
-  assertEq(res.invalidRoutes.length, 0, 'Part A: bracketed [amount]/[raw] match DDL via normalizeColName (no false bad_out_col)');
-  assertEq(res.stagedEdges.length, 1, 'Part A: bracketed names still stage the edge');
+  expect(res.invalidRoutes.length, 'Part A: bracketed [amount]/[raw] match DDL via normalizeColName (no false bad_out_col)').toBe(0);
+  expect(res.stagedEdges.length, 'Part A: bracketed names still stage the edge').toBe(1);
 });
 
   it("through a non-bodied passthrough, so siblings can't leak downstream.", () => {
   const tracer = new ColumnTracer(['TotalRevenue']);
   // A prior bodied hop declared UnitPrice ← pricemaster.ListPrice → edge with from_node=pricemaster.
-  tracer.state.edges.push({ hop: 1, hop_node: 'vwpricelist', to_node: 'vwpricelist', to_col: 'UnitPrice', from_node: 'pricemaster', from_col: 'ListPrice' } as any);
+  tracer.state.edges.push({ hop: 1, hop_node: 'vwpricelist', to_node: 'vwpricelist', to_col: 'UnitPrice', from_node: 'pricemaster', from_col: 'ListPrice' });
   // The model over-declared pricemaster's route columns; only ListPrice is on the tracked spine.
   const bounded = tracer.determineActiveColumnsForCandidate('pricemaster', ['ListPrice', 'EffectiveFrom', 'RegionCode']);
-  assertEq(bounded.length, 1, 'Part B: over-declared siblings dropped to the on-trace spine');
-  assert(bounded[0]?.toLowerCase() === 'listprice', 'Part B: the on-trace ListPrice is kept');
+  expect(bounded.length, 'Part B: over-declared siblings dropped to the on-trace spine').toBe(1);
+  expect(bounded[0]?.toLowerCase() === 'listprice', 'Part B: the on-trace ListPrice is kept').toBe(true);
   // Bracketed entry still intersects (Part A normalization inside the bound).
   const boundedBr = tracer.determineActiveColumnsForCandidate('pricemaster', ['[ListPrice]', 'RegionCode']);
-  assertEq(boundedBr.length, 1, 'Part B+A: bracketed [ListPrice] matches the unbracketed spine');
+  expect(boundedBr.length, 'Part B+A: bracketed [ListPrice] matches the unbracketed spine').toBe(1);
 });
 
   const ctForwardNodes: LineageNode[] = [
@@ -555,7 +803,7 @@ describe("Column Flow Validation", () => {
   function ctForwardRoutedEngine(log: LogFn = () => {}) {
     const engine = new NavigationEngine(ctForwardModel, ctForwardGraph, log, {});
     const init = engine.init({ origin: 'ct_origin', question: 'trace amount downstream', direction: 'downstream', analysisMode: 'ct', targetColumns: ['amount'] });
-    assert('ok' in init, 'Defect B: downstream CT session initializes');
+    expect('ok' in init, 'Defect B: downstream CT session initializes').toBe(true);
     engine.getHopContext();
     const result = engine.submitFindings({
       focus_node_id: 'ct_origin',
@@ -565,7 +813,7 @@ describe("Column Flow Validation", () => {
       column_flow: [{ out_col: 'amount', upstream_columns: [] }],
       route_requests: [{ nodeId: 'ct_down', question: 'Does ct_down forward amount unchanged?' }],
     });
-    assert(!('error' in result), 'Defect B: route to a bodied downstream neighbor with no column_flow back-reference is accepted');
+    expect(!('error' in result), 'Defect B: route to a bodied downstream neighbor with no column_flow back-reference is accepted').toBe(true);
     return engine;
   }
   it("Test 1: toJSON() succeeds; the routed agenda entry's activeColumns == tracer targetColumns", () => {
@@ -577,27 +825,23 @@ describe("Column Flow Validation", () => {
   } catch {
     threw = true;
   }
-  assert(!threw, 'Defect B: toJSON() succeeds after routing a CT neighbor with columns omitted (was issuePaths=[agenda.0.activeColumns])');
+  expect(!threw, 'Defect B: toJSON() succeeds after routing a CT neighbor with columns omitted (was issuePaths=[agenda.0.activeColumns])').toBe(true);
   const downEntry = snapshot?.agenda.find(e => e.nodeId === 'ct_down');
-  assert(!!downEntry, 'Defect B: ct_down was enqueued');
-  assert(!!downEntry?.activeColumns?.length, 'Defect B: ct_down agenda entry carries a non-empty activeColumns projection');
-  assertEq(
-    JSON.stringify(downEntry?.activeColumns),
-    JSON.stringify(engine.columnAspect?.target_columns),
-    'Defect B: the projected activeColumns equal the tracer targetColumns fallback',
-  );
+  expect(!!downEntry, 'Defect B: ct_down was enqueued').toBe(true);
+  expect(!!downEntry?.activeColumns?.length, 'Defect B: ct_down agenda entry carries a non-empty activeColumns projection').toBe(true);
+  expect(JSON.stringify(downEntry?.activeColumns), 'Defect B: the projected activeColumns equal the tracer targetColumns fallback').toBe(JSON.stringify(engine.columnAspect?.target_columns));
 });
 
   it("a BB snapshot with any agenda activeColumns still REJECTS (regression pin, mirrors Test 3c)", () => {
   const engine = ctForwardRoutedEngine();
   const ctSnapshot = engine.toJSON();
   const restored = NavigationEngine.fromJSON(JSON.parse(JSON.stringify(ctSnapshot)), ctForwardModel, ctForwardGraph, () => {});
-  assert(JSON.stringify(restored.toJSON()) === JSON.stringify(ctSnapshot), 'Defect B: CT checkpoint with a fallback-projected agenda entry round-trips without loss');
+  expect(JSON.stringify(restored.toJSON()) === JSON.stringify(ctSnapshot), 'Defect B: CT checkpoint with a fallback-projected agenda entry round-trips without loss').toBe(true);
 
   const bbEngine = new NavigationEngine(ctForwardModel, ctForwardGraph, () => {}, {});
   bbEngine.init({ origin: 'ct_origin', question: 'bb baseline', direction: 'downstream' });
   const bbSnapshot = JSON.parse(JSON.stringify(bbEngine.toJSON())) as { agenda: Array<{ activeColumns?: string[] }> };
-  assert(bbSnapshot.agenda.length > 0, 'Defect B: BB baseline seeds at least one agenda entry to corrupt');
+  expect(bbSnapshot.agenda.length > 0, 'Defect B: BB baseline seeds at least one agenda entry to corrupt').toBe(true);
   bbSnapshot.agenda[0].activeColumns = ['not_allowed_in_bb'];
   let bbRejected = false;
   try {
@@ -605,7 +849,49 @@ describe("Column Flow Validation", () => {
   } catch {
     bbRejected = true;
   }
-  assert(bbRejected, 'Defect B: a BB snapshot carrying agenda activeColumns still rejects (BB superRefine untouched)');
+  expect(bbRejected, 'Defect B: a BB snapshot carrying agenda activeColumns still rejects (BB superRefine untouched)').toBe(true);
+});
+
+  it("a BB snapshot carrying either per-neighbour column field REJECTS, on the same axis as activeColumns", () => {
+  // `columnCarry` (the router's authored decision) and `columnRole` (the role the dispatching hop
+  // realized) are the CT column channel in its per-neighbour form, so the BB checkpoint refuses
+  // them exactly as it refuses `activeColumns`. Both are asserted from a real BB snapshot, one
+  // field at a time, so a refinement that only covers one of them is not hidden by the other.
+  const bbEngine = new NavigationEngine(ctForwardModel, ctForwardGraph, () => {}, {});
+  bbEngine.init({ origin: 'ct_origin', question: 'bb baseline', direction: 'downstream' });
+  bbEngine.getHopContext();
+  bbEngine.submitFindings({
+    focus_node_id: 'ct_origin',
+    sections: [{ angle: 'business' as const, text: 'origin analysis' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    route_requests: [{ nodeId: 'ct_down', question: 'what does ct_down do with this?' }],
+  });
+  const clean = JSON.parse(JSON.stringify(bbEngine.toJSON())) as {
+    agenda: Array<Record<string, unknown>>;
+    nodeStates: Array<Record<string, unknown>>;
+  };
+  expect(clean.agenda.length > 0, 'the BB baseline queues an entry to corrupt').toBe(true);
+  expect(clean.nodeStates.length > 0, 'the BB baseline records a node state to corrupt').toBe(true);
+
+  const restores = (mutate: (snapshot: typeof clean) => void): boolean => {
+    const copy = JSON.parse(JSON.stringify(clean)) as typeof clean;
+    mutate(copy);
+    try {
+      NavigationEngine.fromJSON(copy as never, ctForwardModel, ctForwardGraph, () => {});
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  expect(restores(() => {}), 'the untouched BB snapshot restores — the corruptions below are what fail').toBe(true);
+  expect(restores(s => { s.agenda[0].columnCarry = { kind: 'row_role_only' }; }),
+    'a BB agenda entry cannot carry a per-neighbour column decision').toBe(false);
+  expect(restores(s => { s.agenda[0].columnCarry = { kind: 'carry', columns: ['amount'] }; }),
+    'not even a carry that names a real column of the BB origin').toBe(false);
+  expect(restores(s => { s.nodeStates[0].columnRole = 'carrier'; }),
+    'a BB node state cannot carry a column role').toBe(false);
 });
 
   it("throw path (toJSON()'s own catch) logs the issuePaths diagnostic, not just the generic message", () => {
@@ -616,22 +902,888 @@ describe("Column Flow Validation", () => {
   // invariant, and exercises toJSON()'s own catch/log path for any future write that reintroduces it.
   const rawEntries = (engine as unknown as { _agenda: { entries: Array<{ nodeId: string; activeColumns?: string[] }> } })._agenda.entries;
   const downEntry = rawEntries.find(e => e.nodeId === 'ct_down');
-  assert(!!downEntry, 'Defect B: ct_down agenda entry exists to corrupt');
+  expect(!!downEntry, 'Defect B: ct_down agenda entry exists to corrupt').toBe(true);
 
   if (downEntry) downEntry.activeColumns = undefined;
   let threwUndefined = false;
   try { engine.toJSON(); } catch { threwUndefined = true; }
-  assert(threwUndefined, 'Defect B: CT agenda entry with activeColumns=undefined still rejects at toJSON()');
+  expect(threwUndefined, 'Defect B: CT agenda entry with activeColumns=undefined still rejects at toJSON()').toBe(true);
 
+  // The empty projection is legal and is asserted here as the counterpart to the case above: a CT
+  // agenda entry must CARRY its projection, and "none of the traced columns resolve on this node"
+  // is a resolved projection, not a missing one. Overturned deliberately — the earlier `.min(1)`
+  // forced the engine to re-pad the frozen target set onto a node declaring none of it.
   if (downEntry) downEntry.activeColumns = [];
   let threwEmpty = false;
   try { engine.toJSON(); } catch { threwEmpty = true; }
-  assert(threwEmpty, 'Defect B: CT agenda entry with activeColumns=[] still rejects at toJSON() (NonEmptyStrings.min(1))');
+  expect(threwEmpty, 'CT agenda entry with activeColumns=[] serializes: an empty projection is a determined answer, not a missing one').toBe(false);
 
-  assert(
-    logs.some(m => m.includes('[Checkpoint] serialize rejected') && m.includes('agenda') && m.includes('activeColumns')),
-    'Defect B: toJSON() rejection logs the issuePaths diagnostic (not just the generic InvalidEngineCheckpointError message)',
-  );
+  expect(logs.some(m => m.includes('[Checkpoint] serialize rejected') && m.includes('agenda') && m.includes('activeColumns')), 'Defect B: toJSON() rejection logs the issuePaths diagnostic (not just the generic InvalidEngineCheckpointError message)').toBe(true);
 });
 
+  // J16-1: <lineage_questions> must reach the AgendaEntry they were opened for, never whichever
+  // node happens to dequeue next, and must be labelled by the column active at that node.
+  const lqNodes: LineageNode[] = [
+    makeNode({ id: 'lq_origin', schema: 'dbo', name: 'lq_origin', type: 'view', columns: [{ name: 'TargetCol', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    makeNode({ id: 'lq_node_a', schema: 'dbo', name: 'lq_node_a', type: 'view', columns: [{ name: 'ColA', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+    makeNode({ id: 'lq_node_b', schema: 'dbo', name: 'lq_node_b', type: 'view', columns: [{ name: 'ColB', type: 'int', nullable: 'NOT NULL', extra: '' }] }),
+  ];
+  const lqEdges: Array<[string, string]> = [['lq_node_a', 'lq_origin'], ['lq_node_b', 'lq_origin']];
+  const lqModel: DatabaseModel = makeModel(lqNodes, lqEdges, ['dbo']);
+  const lqGraph = makeGraph(lqNodes, lqEdges);
+  function lqRoutedEngine() {
+    const engine = new NavigationEngine(lqModel, lqGraph, () => {}, {});
+    const init = engine.init({ origin: 'lq_origin', question: 'trace TargetCol upstream', direction: 'upstream', analysisMode: 'ct', targetColumns: ['TargetCol'] });
+    expect('ok' in init, 'J16-1: upstream CT session initializes').toBe(true);
+    engine.getHopContext();
+    const result = engine.submitFindings({
+      focus_node_id: 'lq_origin',
+      sections: [{ angle: 'business' as const, text: 'origin analysis' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'TargetCol',
+        upstream_columns: [
+          { node: 'lq_node_a', col: 'ColA' },
+          { node: 'lq_node_b', col: 'ColB' },
+        ],
+      }],
+      route_requests: [
+        { nodeId: 'lq_node_a', question: 'Does lq_node_a compute ColA directly?' },
+        { nodeId: 'lq_node_b', question: 'Does lq_node_b compute ColB directly?' },
+      ],
+    });
+    expect(!('error' in result), 'J16-1: routing two real upstream column contributors is accepted').toBe(true);
+    return engine;
+  }
+
+  it("J16-1: lineage questions reach the hop for the node they were routed to, not the next dequeued node", () => {
+  const engine = lqRoutedEngine();
+
+  const firstHop = engine.getHopContext() as { done?: boolean };
+  expect(!firstHop.done, 'J16-1: a second hop is dispatched').toBe(true);
+  const firstFocus = engine.currentFocus;
+  expect(firstFocus === 'lq_node_a' || firstFocus === 'lq_node_b', 'J16-1: dispatch lands on one of the two routed nodes').toBe(true);
+  const otherNode = firstFocus === 'lq_node_a' ? 'lq_node_b' : 'lq_node_a';
+  const ownCol = firstFocus === 'lq_node_a' ? 'ColA' : 'ColB';
+  const otherCol = firstFocus === 'lq_node_a' ? 'ColB' : 'ColA';
+
+  const firstQuestions = engine.pendingLineageQuestions;
+  expect(firstQuestions.length, `J16-1: ${firstFocus} sees exactly its own continuation, not both`).toBe(1);
+  expect(firstQuestions[0].includes(ownCol), `J16-1: ${firstFocus}'s question names its own column ${ownCol}`).toBe(true);
+  expect(!firstQuestions[0].includes(otherCol), `J16-1: ${firstFocus}'s question does not name the other node's column ${otherCol}`).toBe(true);
+  expect(firstQuestions[0].includes('TargetCol'), 'J16-1: question names the column it continues the trace into (label uses the traced column)').toBe(true);
+
+  // Terminal submission at the first-dequeued node — accounts for its sole active column.
+  const firstResult = engine.submitFindings({
+    focus_node_id: firstFocus!,
+    sections: [{ angle: 'business' as const, text: 'terminal' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: ownCol, upstream_columns: [] }],
+  });
+  expect(!('error' in firstResult), `J16-1: terminal submission at ${firstFocus} is accepted`).toBe(true);
+
+  const secondHop = engine.getHopContext() as { done?: boolean };
+  expect(!secondHop.done, 'J16-1: the second routed node still dispatches').toBe(true);
+  expect(engine.currentFocus, 'J16-1: the remaining routed node dequeues next').toBe(otherNode);
+
+  const secondQuestions = engine.pendingLineageQuestions;
+  expect(secondQuestions.length, `J16-1: ${otherNode} sees exactly its own continuation`).toBe(1);
+  expect(secondQuestions[0].includes(otherCol), `J16-1: ${otherNode}'s question names its own column ${otherCol}`).toBe(true);
+  expect(!secondQuestions[0].includes(ownCol), `J16-1: ${otherNode}'s question does not carry over ${firstFocus}'s column`).toBe(true);
+});
+
+  it("J16-1: no pending lineage questions renders no <lineage_questions> block", () => {
+  const withQuestions = buildCurrentTaskBlock(
+    [{ kind: 'root', question: 'Trace TargetCol' }],
+    ['TargetCol'],
+    ['Column `ColA` at `lq_node_a`: continues the trace into `TargetCol` at `lq_origin` — determine its origin here.'],
+  );
+  expect(withQuestions.includes('<lineage_questions>'), 'J16-1: a non-empty list renders the block').toBe(true);
+
+  const noneUndefined = buildCurrentTaskBlock([{ kind: 'root', question: 'Trace TargetCol' }], ['TargetCol'], undefined);
+  expect(!noneUndefined.includes('<lineage_questions>'), 'J16-1: an omitted list renders no block').toBe(true);
+
+  const noneEmpty = buildCurrentTaskBlock([{ kind: 'root', question: 'Trace TargetCol' }], ['TargetCol'], []);
+  expect(!noneEmpty.includes('<lineage_questions>'), 'J16-1: an empty list renders no block').toBe(true);
+});
+});
+
+describe("J23 — CT active columns through contracted tables (red reproductions)", () => {
+  // T8-shaped fixture: a view (origin_view) fed by a table (staging, contracted — non-bodied) and a
+  // second table (rules). staging has both an upstream WRITER (writer_proc, the true source of
+  // staging.OrderAmount) and an unrelated downstream READER (reader_proc, which consumes staging and
+  // writes archive). Because `directionalNeighbors` under `direction: 'bidirectional'` returns
+  // `graph.neighbors()` — every adjacent node regardless of edge direction — `enqueueHop`'s non-bodied
+  // contraction branch (smBase.ts `enqueueHop`, the `directionalNeighbors(targetId, this._direction)`
+  // loop) forwards staging's active columns to writer_proc AND reader_proc alike, with no data-flow
+  // direction test. The reproductions below pin that leak at three observation points: the dispatched
+  // hop's live active columns (RC1/RC2), the durable `toJSON()` agenda snapshot (RC3), the resulting
+  // `column_chain_incomplete` hint (RC4), and the isolated `ColumnTracer` unit (RC5).
+  const j23Nodes: LineageNode[] = [
+    makeNode({
+      id: 'origin_view', schema: 'ai', name: 'origin_view', type: 'view',
+      columns: [
+        { name: 'Discount', type: 'decimal(5,2)', nullable: 'NOT NULL', extra: '' },
+        { name: 'BaseAmt', type: 'decimal(18,2)', nullable: 'NOT NULL', extra: '' },
+      ],
+    }),
+    makeNode({
+      id: 'staging', schema: 'ai', name: 'staging', type: 'table',
+      columns: [
+        { name: 'OrderAmount', type: 'decimal(18,2)', nullable: 'NOT NULL', extra: '' },
+        { name: 'OrderDate', type: 'date', nullable: 'NOT NULL', extra: '' },
+      ],
+    }),
+    makeNode({ id: 'writer_proc', schema: 'ai', name: 'writer_proc', type: 'procedure', columns: [] }),
+    makeNode({ id: 'reader_proc', schema: 'ai', name: 'reader_proc', type: 'procedure', columns: [] }),
+    makeNode({
+      id: 'archive', schema: 'ai', name: 'archive', type: 'table',
+      columns: [{ name: 'OrderAmount', type: 'decimal(18,2)', nullable: 'NOT NULL', extra: '' }],
+    }),
+    makeNode({
+      id: 'rules', schema: 'ai', name: 'rules', type: 'table',
+      columns: [{ name: 'DiscountPct', type: 'decimal(5,2)', nullable: 'NOT NULL', extra: '' }],
+    }),
+    makeNode({ id: 'consumer_proc', schema: 'ai', name: 'consumer_proc', type: 'procedure', columns: [] }),
+  ];
+  const j23Edges: Array<[string, string]> = [
+    ['staging', 'origin_view'],
+    ['rules', 'origin_view'],
+    ['writer_proc', 'staging'],
+    ['staging', 'reader_proc'],
+    ['reader_proc', 'archive'],
+    ['origin_view', 'consumer_proc'],
+  ];
+  const j23Model: DatabaseModel = makeModel(j23Nodes, j23Edges, ['ai']);
+  const j23Graph = makeGraph(j23Nodes, j23Edges);
+
+  /**
+   * Builds a fresh engine, dispatches origin_view, and commits its column_flow (Discount ←
+   * staging.OrderAmount + rules.DiscountPct) with route_requests to all three direct neighbors.
+   * Fresh per test — no cross-test state coupling.
+   */
+  function j23OriginCommittedEngine(): NavigationEngine {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    expect('ok' in init, 'J23: CT session initializes at origin_view').toBe(true);
+    const hop = engine.getHopContext() as { done?: boolean };
+    expect(!hop.done && engine.currentFocus === 'origin_view', 'J23: first dispatched hop is origin_view').toBe(true);
+    const result = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount is computed from staging.OrderAmount and rules.DiscountPct' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'Discount',
+        upstream_columns: [
+          { node: 'staging', col: 'OrderAmount' },
+          { node: 'rules', col: 'DiscountPct' },
+        ],
+      }],
+      route_requests: [
+        { nodeId: 'staging', question: 'Trace OrderAmount as upstream input for Discount.' },
+        { nodeId: 'rules', question: 'Trace DiscountPct as upstream input for Discount.' },
+        { nodeId: 'consumer_proc', question: 'Does consumer_proc consume Discount unchanged?' },
+      ],
+    });
+    expect(!('error' in result), `J23: origin_view commit accepted (${'error' in result ? result.error : ''})`).toBe(true);
+    return engine;
+  }
+
+  // D1 convergence: CT is held to BB's neighbour accounting, so every scripted submit routes
+  // the required set the guard demands — the same list `<required_neighbors>` renders to a model.
+  const j23RequiredRoutes = (engine: NavigationEngine, focusId: string) =>
+    engine.requiredNeighborIds(focusId).map(id => ({ nodeId: id, question: `What does ${id} decide about the rows ${focusId} admits?` }));
+
+  /** Terminal submission covering every column the engine reports active at the current focus. */
+  function j23TerminalSubmit(engine: NavigationEngine, focusId: string) {
+    const cols = engine.columnAspect?.active_columns ?? [];
+    return engine.submitFindings({
+      focus_node_id: focusId,
+      sections: [{ angle: 'business' as const, text: 'terminal' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: cols.map((c) => ({ out_col: c, upstream_columns: [] })),
+      route_requests: j23RequiredRoutes(engine, focusId),
+    });
+  }
+
+  /** Drives `getHopContext()` forward, terminal-submitting any hop that is not `targetId`. */
+  function j23DispatchUntil(engine: NavigationEngine, targetId: string, maxHops = 6): void {
+    for (let i = 0; i < maxHops; i++) {
+      const hop = engine.getHopContext() as { done?: boolean };
+      expect(!hop.done, `J23: exploration completed before reaching ${targetId}`).toBe(true);
+      if (engine.currentFocus === targetId) return;
+      const focusId = engine.currentFocus!;
+      const submitted = j23TerminalSubmit(engine, focusId);
+      expect(!('error' in submitted), `J23: terminal submission at ${focusId} accepted while routing to ${targetId} (${'error' in submitted ? submitted.error : ''})`).toBe(true);
+    }
+    throw new Error(`J23: ${targetId} not reached within ${maxHops} hops`);
+  }
+
+  it("RC1: writer_proc — the true upstream producer of staging.OrderAmount — must dispatch with exactly ['OrderAmount'], not the seed target plus the routed column", () => {
+    const engine = j23OriginCommittedEngine();
+    j23DispatchUntil(engine, 'writer_proc');
+    const active = [...(engine.columnAspect?.active_columns ?? [])].sort();
+    expect(active.join(','), `J23 RC1: writer_proc's dispatched active_columns must equal exactly ['OrderAmount'] — today it also carries 'Discount', forwarded at seed time (init()'s seedAgenda walks origin_view's bidirectional neighbors before any column_flow exists) through staging's non-bodied contraction, then merged (AgendaManager.push unions activeColumns) with the later real 'OrderAmount' route`).toBe('OrderAmount');
+  });
+
+  /**
+   * Contract: the `enqueueHop` non-bodied contraction bound ({@link NavigationEngine.resolveActiveColumnsForNode})
+   * BINDS a seed-time or route-admission contraction at any carrier that does not declare the
+   * routed column, so neither `writer_proc` nor `reader_proc` inherits `Discount` en route to
+   * their own `OrderAmount` agenda entry — and it binds only. The walk continues past the carrier
+   * with an empty projection, so the node behind it is reached in CT exactly as it is in BB, and
+   * merges its real column when the route arrives.
+   */
+  it("RC2: the origin-resolved target column no longer leaks through the carrier's SEED-time contraction (writer_proc, pure-inbound chain) — symmetric with its later route-admission (reader_proc, contraction-extension)", () => {
+    // Stage 1 — immediately after init()+one getHopContext() (origin_view dispatched), BEFORE any
+    // column_flow has run: staging (the carrier) never declares 'Discount', so the seed-time
+    // contraction stops at staging and neither sibling gets an entry yet.
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    expect('ok' in init, 'J23 RC2: CT session initializes at origin_view').toBe(true);
+    const firstHop = engine.getHopContext() as { done?: boolean };
+    expect(!firstHop.done && engine.currentFocus === 'origin_view', 'J23 RC2: first dispatched hop is origin_view').toBe(true);
+
+    const seedSnap = engine.toJSON() as { agenda: Array<{ nodeId: string; activeColumns?: string[] }> };
+    const seedWriter = seedSnap.agenda.find((e) => e.nodeId === 'writer_proc');
+    const seedReader = seedSnap.agenda.find((e) => e.nodeId === 'reader_proc');
+    // GREEN: writer_proc is on the pure-inbound BFS chain, so the contraction at staging reaches it
+    // exactly as a BB walk would. staging never declares 'Discount', so the bound empties the
+    // projection rather than forwarding it — the entry exists and carries [], not ['Discount'].
+    // Nothing leaked and nothing was lost: both halves are asserted here as one pair.
+    expect(seedWriter !== undefined, `J23 RC2 stage 1: writer_proc HAS a seed-time agenda entry — the contraction at 'staging' binds the projection, it does not stop the walk`).toBe(true);
+    expect((seedWriter?.activeColumns ?? ['MISSING']).join(','), `J23 RC2 stage 1: writer_proc's seed-time projection is empty, not the leaked seed target — 'staging' never declares 'Discount' (found: ${JSON.stringify(seedWriter)})`).toBe('');
+    // GREEN (documentary): reader_proc sits on a mixed in-then-out path relative to
+    // origin_view, so computeBfsScope's inbound/outbound split never reaches it — it has no
+    // seed-time entry to leak into at all, confirmed here rather than assumed.
+    expect(seedReader === undefined, `J23 RC2 stage 1 (documented, green): reader_proc has no seed-time agenda entry (found: ${JSON.stringify(seedReader)}) — it is outside the initial bidirectional BFS scope until routed`).toBe(true);
+
+    // Stage 2 — commit origin_view's column_flow naming staging.OrderAmount as the sole real
+    // upstream contributor to Discount. `staging` itself is auto-added from the upstream_columns
+    // reference (routeQuestionsByNode), which contracts through to both writer_proc and
+    // reader_proc, both newly admitted. D1 convergence: the remaining required neighbours
+    // (`rules`, `consumer_proc`) are routed explicitly, as the guard now demands in CT too.
+    const commit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount is computed from staging.OrderAmount' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] }],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
+    });
+    expect(!('error' in commit), `J23 RC2 stage 2: origin_view commit accepted (${'error' in commit ? commit.error : ''})`).toBe(true);
+
+    const routedSnap = engine.toJSON() as { agenda: Array<{ nodeId: string; activeColumns?: string[] }> };
+    const routedWriter = routedSnap.agenda.find((e) => e.nodeId === 'writer_proc');
+    const routedReader = routedSnap.agenda.find((e) => e.nodeId === 'reader_proc');
+    expect([...(routedWriter?.activeColumns ?? [])].sort().join(','), `J23 RC2 stage 2b (GREEN, mirrors 2c): writer_proc's activeColumns after the staging.OrderAmount route must deep-equal ['OrderAmount'] — actual: [${(routedWriter?.activeColumns ?? []).join(',')}]`).toBe('OrderAmount');
+    expect([...(routedReader?.activeColumns ?? [])].sort().join(','), `J23 RC2 stage 2c (GREEN control, pins the asymmetry): reader_proc's freshly route-admitted activeColumns already deep-equal ['OrderAmount'] — no prior seed entry existed to merge a leaked 'Discount' into; actual: [${(routedReader?.activeColumns ?? []).join(',')}]`).toBe('OrderAmount');
+
+    // Stage 3 — dispatch reader_proc (terminal-submitting writer_proc first if it dequeues ahead,
+    // since both tie at priority=2) and submit its sole legitimate column, OrderAmount. GREEN
+    // control: reader_proc's clean active-column set (stage 2c) fully accounts for the hop.
+    j23DispatchUntil(engine, 'reader_proc');
+    const readerResult = engine.submitFindings({
+      focus_node_id: 'reader_proc',
+      sections: [{ angle: 'business' as const, text: 'reader_proc forwards staging.OrderAmount into archive' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'reader_proc'),
+    });
+    expect(!('error' in readerResult), `J23 RC2 stage 3 (GREEN control): reader_proc submitting only its legitimate OrderAmount contribution is accepted, not rejected — actual: ${'error' in readerResult ? `${readerResult.error}: ${readerResult.hint ?? ''}` : 'ok'}`).toBe(true);
+  });
+
+  it("RC3: an entry the contraction bound to [] dispatches with no active columns — the seed spelling is not re-padded at dispatch onto a node with no column surface", () => {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    expect('ok' in init, 'J23 RC3: CT session initializes at origin_view').toBe(true);
+    const hop = engine.getHopContext() as { done?: boolean };
+    expect(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC3: first dispatched hop is origin_view').toBe(true);
+    // No upstream_columns names staging.OrderAmount here, so no OrderAmount route ever merges
+    // into writer_proc's seed-time entry — the entry the seed-time contraction bound to [] reaches
+    // dispatch exactly as bound, with nothing to test the fallback's re-padding against but itself.
+    const commit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'terminal' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Discount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
+    });
+    expect(!('error' in commit), `J23 RC3: origin_view commit accepted (${'error' in commit ? commit.error : ''})`).toBe(true);
+    j23DispatchUntil(engine, 'writer_proc');
+    expect([...(engine.columnAspect?.active_columns ?? [])].join(','), 'J23 RC3: writer_proc dispatches with no active columns — the contraction bound its entry to [], and the dispatch-time fallback must not re-pad the stale seed spelling Discount onto a node the router already excluded').toBe('');
+  });
+
+  it("green pin: a carrier-adjacent node with no declared columns array forwards the candidate active-column set unchanged (existence exemption preserved, not itself a defect)", () => {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount'] });
+    // resolveActiveColumnsForNode has no public accessor; this test exercises it directly, not through a dispatched hop.
+    const resolved = (engine as unknown as {
+      resolveActiveColumnsForNode(nodeId: string, columns?: string[]): string[] | undefined;
+    }).resolveActiveColumnsForNode('writer_proc', ['Discount', 'OrderAmount']);
+    expect([...(resolved ?? [])].sort().join(','), "J23 green pin: writer_proc declares no columns (columns: []), so resolveActiveColumnsForNode's existence exemption ('if (nodeColumns.length === 0) return columns' — smBase.ts) must forward the candidate set unchanged rather than filtering it to empty. This is deliberate (a procedure may write columns elsewhere with no local column surface to filter against) and must survive any fix to the RC2 seed-time Discount leak — the fix belongs in what gets forwarded (seedAgenda/enqueueHop), not in this exemption.").toBe(['Discount', 'OrderAmount'].sort().join(','));
+  });
+
+  it("RC4: writer_proc rejects with column_chain_incomplete when a routed column is left unaccounted, and rejects again on resubmission of the same escape", () => {
+    // A1a's dispatch-scope fix pins writer_proc to exactly its routed contributor columns
+    // (RC1/RC2), so the single-target 'Discount' commit j23OriginCommittedEngine() performs no
+    // longer leaves anything unaccounted at writer_proc — that premise moved elsewhere. Re-based on
+    // a second origin target column: Discount routes through staging.OrderAmount and BaseAmt routes
+    // through staging.OrderDate, so `routeColumnsByNode` (smBase.ts) forwards both staging columns
+    // through the contraction, and writer_proc — declaring no columns of its own, forwarded
+    // unfiltered by the existence exemption (green pin) — dispatches with both. Submitting only one
+    // reproduces a genuine column_chain_incomplete here, independent of the RC1/RC2 leak.
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    expect('ok' in init, 'J23 RC4: CT session initializes at origin_view').toBe(true);
+    const hop = engine.getHopContext() as { done?: boolean };
+    expect(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC4: first dispatched hop is origin_view').toBe(true);
+    const originCommit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
+    });
+    expect(!('error' in originCommit), `J23 RC4: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`).toBe(true);
+    j23DispatchUntil(engine, 'writer_proc');
+    expect([...(engine.columnAspect?.active_columns ?? [])].sort().join(','), 'J23 RC4: writer_proc dispatches with both routed columns (OrderAmount, OrderDate) — the genuine premise for this rejection').toBe(['OrderAmount', 'OrderDate'].sort().join(','));
+
+    const result = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc produces staging.OrderAmount' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
+    });
+    expect('error' in result && result.error === 'column_chain_incomplete', 'J23 RC4: OrderDate left unaccounted at writer_proc → column_chain_incomplete (genuine premise)').toBe(true);
+
+    // The stall this used to pin is closed. The overturned contract, restated: resubmitting
+    // `verdict:'passthrough'` with `column_flow:[]` returned `column_chain_incomplete` again, so the
+    // hint's own literal escape did not resolve the hop and the model had no way out. It now
+    // commits — the declaration is the account (P1-36).
+    const again = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
+    });
+    expect('ok' in again && again.ok, "J23 RC4: resubmitting verdict:'passthrough', column_flow:[] at writer_proc commits — the hint's literal suggested escape resolves the hop").toBe(true);
+  });
+
+  it("RC4e: both CT-completeness admissions emit a parseable [Admit] line — a guard that stops rejecting must still leave a record", () => {
+    // P1-39. The engine logged richly on reject and almost nothing on admit, so a fix whose whole
+    // purpose is to stop producing a rejection was indistinguishable in the artifacts from a code
+    // path never taken. That cost two wrong "branch never exercised" records for 120cba46 before a
+    // hand grep of wave-b8731fc7 disproved them. The line carries the same kv shape as [Reject] so
+    // evidence_review.facts_host_log buckets it without a second parser.
+    const logs: string[] = [];
+    const engine = new NavigationEngine(j23Model, j23Graph, (_level, message) => logs.push(message), {});
+    engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    engine.getHopContext();
+
+    // Init resolves the target columns on the origin — the admit counterpart of `unknown_columns`.
+    expect(logs.some(m => m.includes('[Admit] guard=ct_target_columns') && m.includes('phase=init') && m.includes('active=2')),
+      'J23 RC4e: target-column resolution records what it admitted').toBe(true);
+
+    engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
+    });
+    // Branch one: every active column accounted for.
+    expect(logs.some(m => m.includes('[Admit] guard=ct_completeness') && m.includes('reason=all_accounted') && m.includes('focus=origin_view')),
+      'J23 RC4e: a complete chain records that completeness was admitted').toBe(true);
+
+    j23DispatchUntil(engine, 'writer_proc');
+    logs.length = 0;
+    const declared = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc carries none of the traced columns' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
+    });
+    expect(!('error' in declared), 'J23 RC4e: the declaration commits').toBe(true);
+    // Branch two: the P1-36 escape. This is the line that made 120cba46 attributable at all.
+    const admit = logs.find(m => m.includes('[Admit] guard=ct_completeness') && m.includes('reason=declares_none'));
+    expect(admit !== undefined, 'J23 RC4e: the chain-ends-here admission is recorded').toBe(true);
+    expect(admit?.includes('focus=writer_proc'), 'J23 RC4e: the admission names the focus it admitted').toBe(true);
+    // One admission is never also an all_accounted admission — the two branches are exclusive.
+    expect(logs.filter(m => m.includes('[Admit] guard=ct_completeness')).length,
+      'J23 RC4e: exactly one completeness admission per hop').toBe(1);
+  });
+
+  it("RC4c: a focus declaring none of the active columns commits with verdict:'passthrough' and column_flow:[] — the escape the hint offers, on a node the engine cannot check", () => {
+    // The live shape (wave-2320d530-local-mlx/run-T8, P1-36): the traced column is bound to a
+    // procedure that never carried it. A procedure declares no columns, so
+    // `resolveActiveColumnsForNode` passes every requested column through (smBase.ts:893) — absence
+    // of metadata is not evidence of absence — and the completeness guard then demanded a chain the
+    // node never had. The model cannot invent a terminal entry for a column that is not there
+    // without fabricating a column origin, which is the hallucination class the CT guards exist to
+    // stop; in the live run it declined three times, tripped the semantic-failures breaker and the
+    // answer was salvaged from four hops. The engine cannot check the claim, so it accepts and logs.
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    expect('ok' in init, 'J23 RC4c: CT session initializes at origin_view').toBe(true);
+    const hop = engine.getHopContext() as { done?: boolean };
+    expect(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC4c: first dispatched hop is origin_view').toBe(true);
+    const originCommit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
+    });
+    expect(!('error' in originCommit), `J23 RC4c: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`).toBe(true);
+    j23DispatchUntil(engine, 'writer_proc');
+    expect((engine.columnAspect?.active_columns ?? []).length > 0, 'J23 RC4c: writer_proc dispatches with a non-empty active set — the premise the guard fired on').toBe(true);
+
+    const declared = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc carries none of the traced columns; it writes the row set' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
+    });
+    expect(!('error' in declared), `J23 RC4c: the declaration commits (${'error' in declared ? declared.error : ''})`).toBe(true);
+
+    // The guard is not disarmed: an `analyze` verdict still owes an account for every active column.
+    const engine2 = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    engine2.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    engine2.getHopContext();
+    engine2.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+      route_requests: j23RequiredRoutes(engine2, 'origin_view'),
+    });
+    j23DispatchUntil(engine2, 'writer_proc');
+    const analyzed = engine2.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc analysed' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [],
+      route_requests: j23RequiredRoutes(engine2, 'writer_proc'),
+    });
+    expect('error' in analyzed && analyzed.error === 'column_chain_incomplete', "J23 RC4c: verdict:'analyze' with an empty column_flow still owes an account — the escape is the passthrough declaration, not the empty array").toBe(true);
+  });
+
+  it("RC4d: the incomplete-chain hint offers the passthrough escape only where the engine will accept it", () => {
+    // P1-37, the named residual of P1-36. The escape `verdict:'passthrough'` with `column_flow:[]`
+    // is refused where the focus declares one of the active columns, so at those focuses the hint
+    // must stop naming it — a rejection that prescribes a repair the engine rejects spends another
+    // generation and teaches nothing. Two focuses, one fixture, opposite halves of the branch.
+
+    // Declares them: origin_view carries both Discount and BaseAmt. Submitting only Discount leaves
+    // BaseAmt unaccounted, and the escape is not available here.
+    const declaring = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    expect('ok' in declaring.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] }), 'J23 RC4d: CT session initializes at origin_view').toBe(true);
+    declaring.getHopContext();
+    const declared = declaring.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount derives from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] }],
+      route_requests: j23RequiredRoutes(declaring, 'origin_view'),
+    });
+    expect('error' in declared && declared.error === 'column_chain_incomplete', 'J23 RC4d: BaseAmt left unaccounted at origin_view → column_chain_incomplete').toBe(true);
+    const declaredHint = ('error' in declared && declared.hint) || '';
+    expect(/or return verdict:'passthrough' with column_flow:\[\]/.test(declaredHint), "J23 RC4d: origin_view declares the active columns, so the hint no longer offers verdict:'passthrough' with column_flow:[] as a repair — the engine would refuse it").toBe(false);
+    expect(/is not available here/.test(declaredHint), 'J23 RC4d: the hint says so outright rather than staying silent, so the model does not re-derive the refusal by spending a generation on it').toBe(true);
+    expect(/BaseAmt/.test(declaredHint) && /origin_view declares \[/.test(declaredHint), 'J23 RC4d: the hint names the unaccounted column and the columns the focus itself declares').toBe(true);
+    expect(/Add a column_flow entry for each/.test(declaredHint), 'J23 RC4d: the one open repair is still stated as a verb-led order').toBe(true);
+    const declaredDetail = ('error' in declared && declared.detail) as { declared_here?: string[] } | undefined;
+    expect((declaredDetail?.declared_here ?? []).map(c => c.toLowerCase()).sort().join(','), 'J23 RC4d: detail.declared_here carries the contradicting columns, so the repair is machine-readable too').toBe(['baseamt', 'discount'].sort().join(','));
+
+    // Declares none: writer_proc is a procedure with no column metadata, so the escape is open and
+    // the hint must keep offering it — the wording P1-36 made true (RC4 proves it commits).
+    const silent = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    expect('ok' in silent.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] }), 'J23 RC4d: second session initializes at origin_view').toBe(true);
+    silent.getHopContext();
+    expect(!('error' in silent.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+      route_requests: j23RequiredRoutes(silent, 'origin_view'),
+    })), 'J23 RC4d: origin_view commit accepted').toBe(true);
+    j23DispatchUntil(silent, 'writer_proc');
+    const undeclared = silent.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: 'writer_proc produces staging.OrderAmount' }],
+      summary: 'ok',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(silent, 'writer_proc'),
+    });
+    expect('error' in undeclared && undeclared.error === 'column_chain_incomplete', 'J23 RC4d: OrderDate left unaccounted at writer_proc → column_chain_incomplete').toBe(true);
+    const undeclaredHint = ('error' in undeclared && undeclared.hint) || '';
+    expect(/verdict:'passthrough' with column_flow:\[\]/.test(undeclaredHint), 'J23 RC4d: writer_proc declares none of them, so the hint still offers the escape it will honour').toBe(true);
+    expect(/declares \[/.test(undeclaredHint), 'J23 RC4d: nothing is declared here, so the hint states no contradiction').toBe(false);
+  });
+
+  /**
+   * The rejection itself is an executable repair: `detail.unaccounted` and `detail.available_columns`
+   * alone are enough to rebuild a committing column_flow, `heldFindingFocus` pins the hold to the
+   * right node, and `applyHeldContent` restores the authored prose byte-identical on the amend — all
+   * without ever asserting on the hint's wording (a separate, still-open change).
+   */
+  it("RC4b: the column_chain_incomplete rejection at writer_proc is itself an executable repair — unaccounted + available_columns alone rebuild a commit, and applyHeldContent restores the authored prose verbatim", () => {
+    const engine = new NavigationEngine(j23Model, j23Graph, () => {}, {});
+    const init = engine.init({ origin: 'origin_view', question: 'trace', direction: 'bidirectional', targetColumns: ['Discount', 'BaseAmt'] });
+    expect('ok' in init, 'J23 RC4b: CT session initializes at origin_view').toBe(true);
+    const hop = engine.getHopContext() as { done?: boolean };
+    expect(!hop.done && engine.currentFocus === 'origin_view', 'J23 RC4b: first dispatched hop is origin_view').toBe(true);
+    const originCommit = engine.submitFindings({
+      focus_node_id: 'origin_view',
+      sections: [{ angle: 'business' as const, text: 'Discount and BaseAmt both derive from staging' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'Discount', upstream_columns: [{ node: 'staging', col: 'OrderAmount' }] },
+        { out_col: 'BaseAmt', upstream_columns: [{ node: 'staging', col: 'OrderDate' }] },
+      ],
+      route_requests: j23RequiredRoutes(engine, 'origin_view'),
+    });
+    expect(!('error' in originCommit), `J23 RC4b: origin_view commit accepted (${'error' in originCommit ? originCommit.error : ''})`).toBe(true);
+    j23DispatchUntil(engine, 'writer_proc');
+
+    const authoredText = 'writer_proc produces staging.OrderAmount — the true source of the downstream OrderAmount edge.';
+    const result = engine.submitFindings({
+      focus_node_id: 'writer_proc',
+      sections: [{ angle: 'business' as const, text: authoredText }],
+      summary: 'writer_proc summary',
+      verdict: 'passthrough',
+      column_flow: [{ out_col: 'OrderAmount', upstream_columns: [] }],
+      route_requests: j23RequiredRoutes(engine, 'writer_proc'),
+    });
+    expect('error' in result && result.error === 'column_chain_incomplete', 'J23 RC4b: OrderDate left unaccounted at writer_proc → column_chain_incomplete').toBe(true);
+    if (!('error' in result)) throw new Error('J23 RC4b: unreachable — rejection asserted above');
+    const detail = result.detail as { unaccounted: string[]; available_columns: string[] };
+    expect(detail.unaccounted.join(','), 'J23 RC4b: the rejection names the omitted column').toBe('OrderDate');
+    expect(detail.available_columns.join(','), 'J23 RC4b: the rejection exposes the full active set').toBe(['OrderAmount', 'OrderDate'].join(','));
+    expect(engine.heldFindingFocus === 'writer_proc', 'J23 RC4b: the draft is held at writer_proc').toBe(true);
+
+    // The repair uses only `unaccounted` and `available_columns` from the rejection envelope above —
+    // never the original submission — so it needs no memory of what that submission already covered.
+    // A terminal entry for every column in `available_columns` trivially accounts for `unaccounted`
+    // too, since `unaccounted` is always a subset of `available_columns`.
+    const repairedColumnFlow = detail.available_columns.map((col) => ({ out_col: col, upstream_columns: [] }));
+    const merged = engine.applyHeldContent({
+      focus_node_id: 'writer_proc',
+      sections: [],
+      summary: '',
+      verdict: 'passthrough',
+      column_flow: repairedColumnFlow,
+    });
+    const retry = SubmitFindingsCtInputSchema.parse(merged);
+    expect(retry.sections.length === 1 && retry.sections[0].text === authoredText, 'J23 RC4b: held sections are restored byte-identical on the empty-sections retry').toBe(true);
+    expect(retry.summary === 'writer_proc summary', 'J23 RC4b: held summary is restored byte-identical').toBe(true);
+
+    // D1 convergence: the guard runs in CT too, so the amended resubmit carries the same required
+    // routing the original submission did.
+    const committed = engine.submitFindings({ ...retry, route_requests: j23RequiredRoutes(engine, 'writer_proc') });
+    expect('ok' in committed && committed.ok, 'J23 RC4b: the amended hop commits').toBe(true);
+    expect(engine.heldFindingFocus === null, 'J23 RC4b: the hold clears once the amendment commits').toBe(true);
+  });
+
+  it("RC5: ColumnTracer.determineActiveColumnsForCandidate cannot tell a genuine upstream producer from an unrelated contracted neighbor when neither has a recorded edge of its own — inert by design, the enqueueHop contraction bound never lets its unfiltered output reach an agenda entry unbounded", () => {
+    const tracer = new ColumnTracer(['Discount']);
+    tracer.edges.push({
+      hop: 1, hop_node: 'origin_view', to_node: 'origin_view', to_col: 'Discount',
+      from_node: 'staging', from_col: 'OrderAmount',
+    });
+
+    // Contract: a candidate with no edge of its own falls through to the unfiltered entryColumns by design; bounding that output is `resolveActiveColumnsForNode`'s job at the enqueueHop/contractThroughPassNode call sites, not this function's.
+    const writerCols = tracer.determineActiveColumnsForCandidate('writer_proc', ['Discount', 'OrderAmount']);
+    expect([...writerCols].sort().join(','), `J23 RC5 (documented, not red): writer_proc resolves to the unfiltered entryColumns here — actual: [${writerCols.join(',')}]`).toBe(['Discount', 'OrderAmount'].sort().join(','));
+  });
+
+  // A non-bodied carrier that declares none of the forwarded columns ends the contraction. That is
+  // correct — a bodied neighbour cannot be dispatched with a column the carrier cannot carry — but
+  // the trace then stops short, and with no lead the truncation was invisible: the user saw a chain
+  // that simply ended, with no record of which carrier broke it.
+  it("a carrier declaring none of the forwarded columns leaves a contracted-scope lead", () => {
+    // amount flows origin ← carrier (a table carrying only unrelated_col) ← deep_view.
+    const originNode: LineageNode = makeNode({
+      id: 'origin', schema: 'dbo', name: 'origin_view', type: 'view',
+      columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }],
+    });
+    const carrier: LineageNode = makeNode({
+      id: 'carrier', schema: 'dbo', name: 'carrier', type: 'table',
+      columns: [{ name: 'unrelated_col', type: 'int', nullable: 'NULL', extra: '' }],
+    });
+    const deepView: LineageNode = makeNode({
+      id: 'deep_view', schema: 'dbo', name: 'deep_view', type: 'view',
+      columns: [{ name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' }],
+    });
+    const n: LineageNode[] = [originNode, carrier, deepView];
+    const e: Array<[string, string]> = [['carrier', 'origin'], ['deep_view', 'carrier']];
+    const engine = new NavigationEngine(makeModel(n, e, ['dbo']), makeGraph(n, e), () => {}, {});
+    engine.init({ origin: 'origin', question: 'trace amount', direction: 'upstream', targetColumns: ['amount'] });
+
+    engine.getHopContext();
+    engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'carrier', col: 'unrelated_col' }] }],
+    });
+
+    const leads = engine.pendingLeads.filter(l => l.nodeId.toLowerCase() === 'carrier');
+    expect(leads.some(l => l.reason === 'contracted_scope'), `the broken carrier is recorded as a contracted-scope lead (got ${JSON.stringify(engine.pendingLeads.map(l => [l.nodeId, l.reason]))})`).toBe(true);
+  });
+});
+
+describe("CT target boundary: object references are never columns", () => {
+  // Class: the model names an OBJECT (schema-qualified id) in targetColumns. The value passes the
+  // Zod wildcard-only guard, and a column-less procedure origin (procedures may write columns
+  // elsewhere, so absence of a local surface is not proof of anything) would otherwise adopt the
+  // object id as its sole active tracked column — an unwinnable session: every real column the
+  // model submits then rejects out_col_not_on_node. The boundary class is the Zod wildcard
+  // reject's ("this value can never be a column"); the fix rejects at the CT adoption sites.
+  const loadProc: LineageNode = makeNode({
+    id: '[dbo].[load_proc]', schema: 'dbo', name: 'load_proc', type: 'procedure', columns: [],
+  });
+  const srcTable: LineageNode = makeNode({
+    id: '[dbo].[src_table]', schema: 'dbo', name: 'src_table', type: 'table',
+    columns: [{ name: 'order_id', type: 'int', nullable: 'NOT NULL', extra: '' }],
+  });
+  const nodes: LineageNode[] = [loadProc, srcTable];
+  const edgePairs: Array<[string, string]> = [['[dbo].[src_table]', '[dbo].[load_proc]']];
+  const model: DatabaseModel = makeModel(nodes, edgePairs, ['dbo']);
+  const graph = makeGraph(nodes, edgePairs);
+
+  it("init rejects a targetColumns entry that resolves to a node id, side-effect-free", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: '[dbo].[load_proc]', question: 'trace', direction: 'upstream', analysisMode: 'ct', targetColumns: ['[dbo].[load_proc]'] });
+    expect('error' in result && result.error === 'target_columns_name_objects', 'CT: object id as target column → target_columns_name_objects').toBe(true);
+    expect('error' in result && typeof result.hint === 'string' && result.hint.includes('"bb"'), 'CT: object-id reject points to the BB alternative').toBe(true);
+    expect(engine.status === 'created' && !engine.columnAspect, 'rejected object-id start leaves the engine untouched').toBe(true);
+  });
+
+  it("init rejects an unbracketed object spelling as well (exact resolution, not a string match)", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: '[dbo].[load_proc]', question: 'trace', direction: 'upstream', analysisMode: 'ct', targetColumns: ['dbo.src_table'] });
+    expect('error' in result && result.error === 'target_columns_name_objects', 'CT: unbracketed object spelling is rejected through canonical resolution').toBe(true);
+  });
+
+  it("a bare column name on a column-less procedure still passes (written-elsewhere bypass preserved)", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const result = engine.init({ origin: '[dbo].[load_proc]', question: 'trace', direction: 'upstream', analysisMode: 'ct', targetColumns: ['order_id'] });
+    expect('ok' in result, 'CT: bare column name on a procedure origin still seeds (no zero-trace fallback)').toBe(true);
+    expect(engine.columnAspect?.active_columns.join(','), 'CT: bare column name adopted verbatim as the active column').toBe('order_id');
+  });
+
+  it("setColumnTargets refuses object references and still adopts real columns", () => {
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const reject = engine.setColumnTargets(['[dbo].[src_table]']);
+    expect(reject !== null && reject.error === 'target_columns_name_objects', 'setColumnTargets: object reference refused').toBe(true);
+    expect(!engine.columnAspect, 'setColumnTargets: refused call adopts no column aspect').toBe(true);
+    const ok = engine.setColumnTargets(['order_id']);
+    expect(ok === null, 'setColumnTargets: real column accepted').toBe(true);
+    expect(engine.columnAspect?.active_columns.join(','), 'setColumnTargets: real column adopted').toBe('order_id');
+  });
+
+  it("checkColumnTargets reports the same reject without adopting anything", () => {
+    // The supplement path widens the allowlist and extends the agenda before it applies follow-up
+    // context, so it screens the target list with this side-effect-free check first; a reject
+    // raised only by `setColumnTargets` would land after those mutations.
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const reject = engine.checkColumnTargets(['[dbo].[src_table]']);
+    expect(reject !== null && reject.error === 'target_columns_name_objects', 'checkColumnTargets: object reference reported').toBe(true);
+    expect(reject?.hint, 'checkColumnTargets: hint is the single owned envelope').toBe(engine.setColumnTargets(['[dbo].[src_table]'])?.hint);
+    expect(engine.checkColumnTargets(['order_id']), 'checkColumnTargets: real column reports no reject').toBeNull();
+    expect(!engine.columnAspect, 'checkColumnTargets: neither call adopts a column aspect').toBe(true);
+  });
+});
+
+describe("Column transform classification", () => {
+  const originNode: LineageNode = makeNode({
+    id: 'origin',
+    schema: 'dbo',
+    name: 'origin_view',
+    type: 'view',
+    columns: [
+      { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' },
+      { name: 'region', type: 'nvarchar(50)', nullable: 'NULL', extra: '' },
+    ],
+  });
+  const baseTable: LineageNode = makeNode({
+    id: 'base_table',
+    schema: 'dbo',
+    name: 'base_table',
+    type: 'table',
+    columns: [
+      { name: 'raw_amount', type: 'int', nullable: 'NOT NULL', extra: '' },
+      { name: 'raw_region', type: 'nvarchar(50)', nullable: 'NULL', extra: '' },
+    ],
+  });
+  const ctNodes: LineageNode[] = [originNode, baseTable];
+  const ctEdgePairs: Array<[string, string]> = [['base_table', 'origin']];
+  const ctModel: DatabaseModel = makeModel(ctNodes, ctEdgePairs, ['dbo']);
+  const ctGraph = makeGraph(ctNodes, ctEdgePairs);
+  function ctEngine(targetColumns = ['amount']): NavigationEngine {
+    const engine = new NavigationEngine(ctModel, ctGraph, () => {}, {});
+    engine.init({ origin: 'origin', question: 'test', direction: 'upstream', targetColumns });
+    engine.getHopContext();
+    return engine;
+  }
+  const submission = (upstream: unknown) => ({
+    focus_node_id: 'origin',
+    sections: [{ angle: 'business', text: 'ok' }],
+    summary: 'ok',
+    verdict: 'analyze',
+    column_flow: [{ out_col: 'amount', upstream_columns: [upstream] }],
+  });
+
+  it("accepts a multi-select classification and rejects an unknown value at the tool schema", () => {
+    const multi = SubmitFindingsCtInputSchema.safeParse(
+      submission({ node: 'base_table', col: 'raw_amount', transforms: ['aggregate', 'combine'] }),
+    );
+    expect(multi.success, 'multi-select transforms parse').toBe(true);
+
+    const bare = SubmitFindingsCtInputSchema.safeParse(
+      submission({ node: 'base_table', col: 'raw_amount' }),
+    );
+    expect(bare.success, 'an upstream column with no transforms still parses').toBe(true);
+    expect(bare.success && bare.data.column_flow[0].upstream_columns[0].transforms, 'omitted stays omitted').toBeUndefined();
+
+    const unknown = SubmitFindingsCtInputSchema.safeParse(
+      submission({ node: 'base_table', col: 'raw_amount', transforms: ['derive'] }),
+    );
+    expect(unknown.success, 'an unrecognised class is a Zod rejection, not a normalized value').toBe(false);
+  });
+
+  it("carries a multi-select classification through the hop onto the staged column edge", () => {
+    const engine = ctEngine(['amount']);
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'amount',
+        upstream_columns: [{ node: 'base_table', col: 'raw_amount', transforms: ['aggregate', 'filter'] }],
+      }],
+    });
+    expect('ok' in result && result.ok, 'classified column_flow accepted').toBe(true);
+    const edges = engine.columnAspect?.edges ?? [];
+    expect(edges.length, 'one edge staged').toBe(1);
+    expect(edges[0]?.transforms, 'both declared classes ride onto the edge, in order').toEqual(['aggregate', 'filter']);
+  });
+
+  it("stages no transforms when the model classified nothing — the engine never invents a class", () => {
+    const engine = ctEngine(['amount']);
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount' }] }],
+    });
+    expect('ok' in result && result.ok, 'unclassified column_flow accepted').toBe(true);
+    const edge = (engine.columnAspect?.edges ?? [])[0];
+    expect(edge && 'transforms' in edge, 'an unclassified edge carries no transforms key at all').toBe(false);
+  });
+
+  it("classifies each (out_col, upstream column) pair independently", () => {
+    const engine = ctEngine(['amount', 'region']);
+    const result = engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [
+        { out_col: 'amount', upstream_columns: [{ node: 'base_table', col: 'raw_amount', transforms: ['compute'] }] },
+        { out_col: 'region', upstream_columns: [{ node: 'base_table', col: 'raw_region', transforms: ['pass_through'] }] },
+      ],
+    });
+    expect('ok' in result && result.ok, 'per-pair classification accepted').toBe(true);
+    const edges = engine.columnAspect?.edges ?? [];
+    expect(edges.map(e => `${e.to_col}:${(e.transforms ?? []).join('+')}`).sort())
+      .toEqual(['amount:compute', 'region:pass_through']);
+  });
+
+  it("restores a classified edge through the strict checkpoint schema", () => {
+    const engine = ctEngine(['amount']);
+    engine.submitFindings({
+      focus_node_id: 'origin',
+      sections: [{ angle: 'business' as const, text: 'ok' }],
+      summary: 'ok',
+      verdict: 'analyze',
+      column_flow: [{
+        out_col: 'amount',
+        upstream_columns: [{ node: 'base_table', col: 'raw_amount', transforms: ['compute', 'combine'] }],
+      }],
+    });
+    const restored = NavigationEngine.fromJSON(
+      JSON.parse(JSON.stringify(engine.toJSON())),
+      ctModel,
+      ctGraph,
+      () => {},
+    );
+    expect(restored.columnAspect?.edges[0]?.transforms, 'the classification survives a checkpoint round-trip')
+      .toEqual(['compute', 'combine']);
+  });
+});
+
+describe("column_chain_incomplete names the repair the validator accepts", () => {
+  /** The accepted account for a column with no upstream source, as `unaccountedActiveColumns` reads it. */
+  const TERMINAL_REPAIR = /upstream_columns:\s*\[\]/;
+
+  it('states the terminal entry shape when the empty-flow escape is open', () => {
+    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount']);
+    const hint = ('hint' in rejection && rejection.hint) || '';
+    expect(TERMINAL_REPAIR.test(hint), 'the hint names the field and the value that account for a source column')
+      .toBe(true);
+    expect(/out_col/.test(hint), 'the hint names the field that carries the tracked column').toBe(true);
+  });
+
+  it('states the terminal entry shape when the focus declares the column and the escape is closed', () => {
+    const rejection = buildIncompleteRejection('origin_view', ['BaseAmt'], ['BaseAmt', 'Discount'], ['Discount']);
+    const hint = ('hint' in rejection && rejection.hint) || '';
+    expect(TERMINAL_REPAIR.test(hint), 'the one open repair still names the accepted terminal value')
+      .toBe(true);
+    expect(/or return verdict:'passthrough' with column_flow:\[\]/.test(hint),
+      'the closed escape is still not offered').toBe(false);
+  });
 });

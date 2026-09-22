@@ -16,12 +16,14 @@
  *
  * @remarks
  * SQL Server uses square brackets to escape identifiers that contain spaces
- * or are reserved keywords.
+ * or are reserved keywords. A literal `]` inside the name is written `]]`, so
+ * `[a]]b]` is the single identifier `a]b`; ending the name at the first `]`
+ * truncates it and leaves the rest of the statement misread.
  *
  * @constant
  * @readonly
  */
-const BRACKET_IDENT: RegExp = /\[[^\]]+\]/;
+const BRACKET_IDENT = /\[(?:[^\]]|\]\])+\]/;
 
 /**
  * Matches a plain word identifier (no brackets), consisting only of word characters.
@@ -33,7 +35,7 @@ const BRACKET_IDENT: RegExp = /\[[^\]]+\]/;
  * @constant
  * @readonly
  */
-const WORD_IDENT: RegExp = /\w+/;
+const WORD_IDENT = /\w+/;
 
 /**
  * Matches either a bracketed or plain identifier.
@@ -44,7 +46,7 @@ const WORD_IDENT: RegExp = /\w+/;
  * @constant
  * @readonly
  */
-export const ANY_IDENT: RegExp = new RegExp(`(?:${BRACKET_IDENT.source}|${WORD_IDENT.source})`);
+export const ANY_IDENT = new RegExp(`(?:${BRACKET_IDENT.source}|${WORD_IDENT.source})`);
 
 /**
  * Matches a schema-qualified name like `[s].[t]`, `s.t`, `[s].t`, or `s.[t]`.
@@ -56,7 +58,7 @@ export const ANY_IDENT: RegExp = new RegExp(`(?:${BRACKET_IDENT.source}|${WORD_I
  * @constant
  * @readonly
  */
-export const QUALIFIED_NAME: RegExp = new RegExp(
+export const QUALIFIED_NAME = new RegExp(
   `(?:${ANY_IDENT.source}\\.)+${ANY_IDENT.source}`
 );
 
@@ -87,7 +89,7 @@ const SQL_KEYWORDS: string[] = [
  * @constant
  * @readonly
  */
-export const KEYWORDS_RE: RegExp = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})\\b$`, 'i');
+export const KEYWORDS_RE = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})\\b$`, 'i');
 
 /**
  * Pass 1 Cleansing: leftmost-match pattern to neutralize strings and comments.
@@ -95,7 +97,8 @@ export const KEYWORDS_RE: RegExp = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})
  * @remarks
  * This regex is the core of the pre-processing pipeline. It identifies
  * structures that should be ignored or normalized before extraction rules run:
- * 1. Brackets: preserved (YAML rules need them for structure)
+ * 1. Brackets: preserved (YAML rules need them for structure), composed from
+ *    {@link BRACKET_IDENT} so the `]]` escape is honoured here too
  * 2. Double-quoted strings: identified for bracket conversion
  * 3. Single-quoted strings: identified for neutralization
  * 4. Comments: identified for removal
@@ -103,7 +106,9 @@ export const KEYWORDS_RE: RegExp = new RegExp(`^\\b(?:${SQL_KEYWORDS.join('|')})
  * @constant
  * @readonly
  */
-export const PASS1_CLEANSE_RE: RegExp = /\[[^\]]+\]|"[^"]*"|'(?:''|[^'])*'|--[^\r\n]*/g;
+export const PASS1_CLEANSE_RE = new RegExp(
+  `${BRACKET_IDENT.source}|"[^"]*"|'(?:''|[^'])*'|--[^\\r\\n]*`, 'g'
+);
 
 /**
  * ANSI-92 Comma Join pattern fragments.
@@ -115,7 +120,7 @@ export const PASS1_CLEANSE_RE: RegExp = /\[[^\]]+\]|"[^"]*"|'(?:''|[^'])*'|--[^\
  * @constant
  * @readonly
  */
-export const TABLE_REF_WITH_ALIAS: RegExp = new RegExp(
+export const TABLE_REF_WITH_ALIAS = new RegExp(
   `${ANY_IDENT.source}\\.${ANY_IDENT.source}(?:\\s+(?:AS\\s+)?${WORD_IDENT.source})?`
 );
 
@@ -146,6 +151,6 @@ const FROM_PUNCTUATION: string[] = [';', '\\)', '$'];
  * @constant
  * @readonly
  */
-export const FROM_TERMINATOR_RE: RegExp = new RegExp(
+export const FROM_TERMINATOR_RE = new RegExp(
   `\\s*(?:${FROM_KEYWORDS.map(k => k + '\\b').join('|')}|${FROM_PUNCTUATION.join('|')})`, 'i'
 );

@@ -1,3 +1,14 @@
 {
-  "chat.mcp.access": "none"
+  "chat.mcp.access": "none",
+  "git.openRepositoryInSubfolders": false,
+  "git.repositoryScanIgnoredFolders": [
+    "**/.git",
+    "**/node_modules",
+    "**/bower_components",
+    "**/.vscode-test",
+    "internal-tests",
+    ".glm-skills",
+    ".claude",
+    "test-results"
+  ]
 }

@@ -31,7 +31,7 @@ export interface AutocompleteNode {
 export function filterSuggestions(
   nodes: AutocompleteNode[],
   term: string,
-  limit: number = 10,
+  limit = 10,
 ): AutocompleteNode[] {
   if (term.length < 2) return [];
   return searchCatalog(nodes, term, undefined, undefined, limit);

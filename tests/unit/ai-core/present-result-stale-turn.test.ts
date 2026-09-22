@@ -12,9 +12,11 @@ import { describe, expect, it } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
+import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { DatabaseModel } from '../../../src/engine/types';
 import type { Logger } from '../../../src/utils/log';
+import { rejectionIssuePaths } from '../../../src/ai/support/toolErrorEnvelope';
 
 const ORIGIN_NODE = '[dbo].[Orders]';
 
@@ -54,7 +56,7 @@ const TEST_MODEL = {
 interface HandlerProbe {
   readonly services: ToolServices;
   readonly logged: Array<{ toolName: string; data: object }>;
-  panelReads: number;
+  deliveries: number;
   modelReads: number;
 }
 
@@ -63,27 +65,31 @@ interface HandlerProbe {
  *
  * @param session - Session the handler reads and writes.
  * @param capturedEpoch - Epoch the handler captures at entry (the turn's lease).
- * @param onPanelRead - Hook fired at the handler's panel lookup, the last seam before the commit guard.
+ * @param onDeliver - Hook fired at the handler's delivery call, the last seam before the commit guard.
+ * @param sent - Collector the delivery double pushes each message into; delivery ACKs when present.
  */
 function handlerProbe(
   session: AiSession,
   capturedEpoch: number,
-  onPanelRead?: () => void,
-  panel?: unknown,
+  onDeliver?: () => void,
+  sent?: unknown[],
 ): HandlerProbe {
   const logged: Array<{ toolName: string; data: object }> = [];
   const probe: HandlerProbe = {
     logged,
-    panelReads: 0,
+    deliveries: 0,
     modelReads: 0,
     services: {
       getSession: () => session,
-      getPanel: () => {
-        probe.panelReads += 1;
-        onPanelRead?.();
-        return panel as never;
+      deliverPreview: (message) => {
+        probe.deliveries += 1;
+        onDeliver?.();
+        sent?.push(message);
+        return Promise.resolve(sent !== undefined);
       },
       logger: SILENT_LOGGER,
+      budget: DEFAULT_TURN_TOKEN_BUDGET,
+      maxRounds: 50,
       turnEpoch: () => capturedEpoch,
       requireModel: () => {
         probe.modelReads += 1;
@@ -152,8 +158,11 @@ describe('executePresentResult — turn-lease enforcement', () => {
       add_node_ids: ['[dbo].[Other]'],
     }, probe.services));
 
-    expect(result.error).toBe('invalid_input');
-    expect(result.hint).toMatch(/strictly forbidden/);
+    // The stage projection the model was offered omits add_node_ids, so the boundary schema is what
+    // rejects it — no hand-written check after a permissive parse.
+    expect(result.success).toBe(false);
+    expect(String((result.errors as string[])[0])).toMatch(/add_node_ids/);
+    expect(rejectionIssuePaths(result.detail)).toContain('add_node_ids');
     expect(session.resultGraph).toBeNull();
   });
 
@@ -195,16 +204,28 @@ describe('executePresentResult — turn-lease enforcement', () => {
     expect(resultGraph.summary).toBe('How Orders is populated.');
   });
 
+  it('attaches runId and engine checkpoint to the artifact through the single guarded commit', async () => {
+    const session = new AiSession();
+    seedResultGraph(session);
+    const epoch = session.beginTurn();
+    const snapshot = { scopeNodeIds: [ORIGIN_NODE] };
+    session.stateMachine = { toJSON: () => snapshot } as never;
+    const probe = handlerProbe(session, epoch);
+
+    const result = parseResult(await executePresentResult(validPresentResultInput(), probe.services));
+
+    expect(result.success).toBe(true);
+    expect(session.presentationArtifact?.runId).toBe(session.id);
+    expect(session.presentationArtifact?.checkpoint).toBe(snapshot);
+    expect(session.presentationArtifact?.aiMetadata.runId).toBe(session.id);
+  });
+
   it('marks a result auto-dispatched only after the webview accepts it', async () => {
     const session = new AiSession();
     seedResultGraph(session);
     const epoch = session.beginTurn();
     const sent: unknown[] = [];
-    const panel = {
-      webview: { postMessage: (message: unknown) => { sent.push(message); return Promise.resolve(true); } },
-      reveal: () => undefined,
-    };
-    const probe = handlerProbe(session, epoch, undefined, panel);
+    const probe = handlerProbe(session, epoch, undefined, sent);
 
     const result = parseResult(await executePresentResult(validPresentResultInput(), probe.services));
 
@@ -229,8 +250,8 @@ describe('executePresentResult — turn-lease enforcement', () => {
       hint: 'The turn no longer owns this session. Do not render this result.',
     });
 
-    // No panel post: the handler never even reaches the panel lookup.
-    expect(probe.panelReads).toBe(0);
+    // No panel post: the handler never even reaches the delivery seam.
+    expect(probe.deliveries).toBe(0);
     // No model read: assembly never starts.
     expect(probe.modelReads).toBe(0);
     // No session mutation: counters, presentation state, and the result graph are untouched.
@@ -251,7 +272,7 @@ describe('executePresentResult — turn-lease enforcement', () => {
     const resultGraph = seedResultGraph(session);
     const epoch = session.beginTurn();
     const graphBefore = JSON.stringify(resultGraph);
-    // The panel lookup is the last seam before the commit guard; advancing the epoch there
+    // The delivery call is the last seam before the commit guard; advancing the epoch there
     // reproduces a turn superseded after assembly but before the presentation commit.
     const probe = handlerProbe(session, epoch, () => { session.beginTurn(); });
 
@@ -261,7 +282,7 @@ describe('executePresentResult — turn-lease enforcement', () => {
       error: 'stale_turn',
       hint: 'The result was not committed because the turn no longer owns this session.',
     });
-    expect(probe.panelReads).toBe(1);
+    expect(probe.deliveries).toBe(1);
     // The guarded presentation commit is dropped: no success is recorded for the superseding turn.
     expect(session.presentResultCalledThisTurn).toBe(false);
     expect(session.lastPresentResultSummary).toBeNull();

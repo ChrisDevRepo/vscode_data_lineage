@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SmState } from './smTypes';
+import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 
 /** Stable restore failure raised only by the strict navigation-checkpoint boundary. */
 export class InvalidEngineCheckpointError extends Error {
@@ -52,6 +53,12 @@ const ColumnEdgeSchema = z.object({
   from_col: NonEmptyString,
   to_node: NonEmptyString,
   to_col: NonEmptyString,
+  // Absent in a checkpoint written before the classifier existed, and absent whenever the model
+  // did not classify the edge; restores unclassified either way.
+  transforms: z.array(ColumnTransformClassSchema).optional(),
+  // Absent in a checkpoint written before the per-edge note existed, and absent whenever the model
+  // offered none; restores noteless either way. Surface text only — never parsed on restore.
+  note: z.string().optional(),
 }).strict();
 
 const ColumnAspectSchema = z.object({
@@ -73,6 +80,9 @@ const NodeStateSchema = z.object({
     'non_bodied_passthrough',
   ]),
   columns: z.array(NonEmptyString).optional(),
+  // Absent in a checkpoint written before the per-node column role existed, and absent on any node
+  // no hop has dispatched; restores roleless either way.
+  columnRole: z.enum(['carrier', 'row_role_only']).optional(),
   viaNodeId: NonEmptyString.optional(),
   atHop: NonNegativeInt.optional(),
 }).strict();
@@ -93,6 +103,8 @@ const MemorySnapshotSchema = z.object({
   detailSlots: z.record(z.string(), DetailSlotSchema),
   slotCount: NonNegativeInt,
   missionBrief: z.string(),
+  // Optional so a checkpoint written before scope notes existed still restores (tolerant read).
+  scopeNotes: z.array(z.string()).default([]),
   verdictCounts: z.object({
     analyze: NonNegativeInt,
     passthrough: NonNegativeInt,
@@ -165,12 +177,27 @@ const InitSnapshotSchema = z.discriminatedUnion('analysisMode', [
   }).strict(),
 ]);
 
+const ColumnCarrySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('inherit') }).strict(),
+  z.object({ kind: z.literal('carry'), columns: z.array(NonEmptyString) }).strict(),
+  z.object({ kind: z.literal('row_role_only') }).strict(),
+]);
+
 const AgendaEntrySchema = z.object({
   taskIds: NonEmptyStrings,
   nodeId: NonEmptyString,
   priority: NonNegativeInt,
   depth: NonNegativeInt,
-  activeColumns: NonEmptyStrings.optional(),
+  // Aligned with `ColumnAspectSchema.active_columns`, which already permits an empty set: a CT
+  // agenda entry records what the engine resolved on that node, and "none of them" is a resolved
+  // answer. The CT refinement below still requires the projection to be present.
+  activeColumns: z.array(NonEmptyString).optional(),
+  // The router's authored per-neighbor decision, kept beside the resolved projection because only
+  // it can say "this neighbor carries no traced value" — `activeColumns: []` is also what an
+  // engine-resolved empty bind looks like. Absent in a checkpoint written before per-neighbor carry
+  // existed, which restores as the `inherit` those checkpoints were written under.
+  columnCarry: ColumnCarrySchema.optional(),
+  lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
 
 const EngineInternalsSchema = z.object({
@@ -178,6 +205,12 @@ const EngineInternalsSchema = z.object({
   direction: z.enum(['upstream', 'downstream', 'bidirectional']),
   depthBudget: NonNegativeInt.nullable(),
   depthEnforcement: z.enum(['strict', 'soft', 'silent']),
+  // Per-side ceilings; `null` on a side means unbounded, since `Infinity` has no JSON form.
+  // Absent in a v1 checkpoint, which restores to seed-only routing instead.
+  depthLimits: z.object({
+    upstream: NonNegativeInt.nullable(),
+    downstream: NonNegativeInt.nullable(),
+  }).strict().optional(),
   depthFromOrigin: z.array(z.tuple([NonEmptyString, NonNegativeInt])),
   extendedDepthCap: NonNegativeInt,
   budgetExpansions: z.array(z.object({ nodeId: NonEmptyString, depth: NonNegativeInt, atHop: NonNegativeInt }).strict()),
@@ -185,6 +218,8 @@ const EngineInternalsSchema = z.object({
   totalNodes: NonNegativeInt,
   userSchemas: z.array(z.string()),
   sessionAllowedSchemas: z.array(z.string()),
+  // Absent in a checkpoint written before follow-up consent became id-level; restores as none.
+  sessionAllowedNodeIds: z.array(NonEmptyString).optional(),
   excludedTypes: z.array(NonEmptyString),
   excludedSchemas: z.array(NonEmptyString),
   excludedNodeIds: z.array(NonEmptyString),
@@ -210,7 +245,7 @@ const EngineInternalsSchema = z.object({
 }).strict().transform(({ qualityGuards: _legacyQualityGuards, ...internals }) => internals);
 
 /** Current fail-closed NavigationEngine persistence contract. */
-const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
+export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   snapshotVersion: z.literal(1),
   columnAspect: ColumnAspectSchema.nullable(),
   status: z.enum(['created', 'initialized', 'exploring', 'awaiting_findings', 'complete', 'error']),
@@ -227,6 +262,8 @@ const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   engineInternals: EngineInternalsSchema,
   lineageQuestionsLastHop: z.array(NonEmptyString).optional(),
   ctPrunedNodeIds: z.array(NonEmptyString).optional(),
+  ctDeclaredRouteIds: z.array(NonEmptyString).optional(),
+  renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict().superRefine((snapshot, ctx) => {
   const issue = (message: string, path: Array<string | number>) => ctx.addIssue({ code: 'custom', message, path });
   const unique = (values: ReadonlyArray<string>, path: Array<string | number>) => {
@@ -239,6 +276,8 @@ const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   unique(snapshot.scopeNodeIds, ['scopeNodeIds']);
   unique(snapshot.visited, ['visited']);
   unique(snapshot.removedSet, ['removedSet']);
+  unique(snapshot.renderDroppedNodeIds ?? [], ['renderDroppedNodeIds']);
+  unique(snapshot.ctDeclaredRouteIds ?? [], ['ctDeclaredRouteIds']);
   unique(snapshot.nodeStates.map(state => state.nodeId), ['nodeStates']);
   unique(snapshot.engineInternals.investigationTasks.map(task => task.id), ['engineInternals', 'investigationTasks']);
   unique(snapshot.engineInternals.pendingLeads.map(lead => lead.id), ['engineInternals', 'pendingLeads']);
@@ -304,14 +343,18 @@ const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     if (init?.analysisMode === 'ct') issue('BB snapshot cannot carry CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
     if (snapshot.lineageQuestionsLastHop !== undefined) issue('BB snapshot cannot carry lineage questions', ['lineageQuestionsLastHop']);
     if (snapshot.ctPrunedNodeIds !== undefined) issue('BB snapshot cannot carry CT pruned nodes', ['ctPrunedNodeIds']);
+    if (snapshot.ctDeclaredRouteIds !== undefined) issue('BB snapshot cannot carry CT declared routes', ['ctDeclaredRouteIds']);
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
       if (task.kind === 'column_lineage') issue('BB snapshot cannot carry column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
     });
     snapshot.nodeStates.forEach((state, i) => {
       if (state.columns !== undefined) issue('BB node state cannot carry column state', ['nodeStates', i, 'columns']);
+      if (state.columnRole !== undefined) issue('BB node state cannot carry a column role', ['nodeStates', i, 'columnRole']);
     });
     snapshot.agenda.forEach((entry, i) => {
       if (entry.activeColumns !== undefined) issue('BB agenda cannot carry active columns', ['agenda', i, 'activeColumns']);
+      if (entry.columnCarry !== undefined) issue('BB agenda cannot carry a column decision', ['agenda', i, 'columnCarry']);
+      if (entry.lineageQuestions !== undefined) issue('BB agenda cannot carry lineage questions', ['agenda', i, 'lineageQuestions']);
     });
   } else {
     if (init?.analysisMode !== 'ct') issue('CT snapshot requires CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
@@ -335,6 +378,7 @@ type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
  *
  * @param input - Untrusted checkpoint payload to validate.
  * @returns A strict current-format navigation snapshot.
+ * @throws {@link InvalidEngineCheckpointError} when `input` fails schema validation.
  */
 export function parseNavigationSnapshot(input: unknown): NavigationSnapshot {
   const result = NavigationSnapshotSchema.safeParse(input);

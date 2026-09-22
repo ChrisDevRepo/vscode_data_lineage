@@ -6,7 +6,9 @@
  * types from smBase) so it can be unit-tested without a live engine.
  */
 
+import type { ClassificationValue } from '../session/classification';
 import type { CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
+import type { ColumnTransformClass } from '../../engine/shared/bridgeContract';
 
 
 /**
@@ -60,6 +62,13 @@ export interface SmNodeState {
   source: SmNodeStateSource;
   reason: SmNodeStateReason;
   columns?: string[];
+  /**
+   * Column-trace role at the hop that dispatched this node — a carrier of traced columns, or a
+   * node that only decides which rows the answer returns. Absent in BB and on any node no hop has
+   * dispatched yet; `columns` cannot express it, because an empty column set and an unstated one
+   * are both dropped from the record.
+   */
+  columnRole?: SmNodeColumnRole;
   viaNodeId?: string;
   atHop?: number;
 }
@@ -106,6 +115,17 @@ interface ColumnRef {
   node: string;
   /** Name of the column in that neighbor (or `@param` for procedures). */
   col: string;
+  /**
+   * Optional transform classification for this contributor. Absent when the model did not classify
+   * it; the engine never substitutes a default.
+   */
+  transforms?: ColumnTransformClass[];
+  /**
+   * Optional one-clause model note for the contributor ("SUM of line totals"). Surface text the
+   * webview prints verbatim; nothing parses it, so an absent note degrades to the structural
+   * description.
+   */
+  note?: string;
 }
 
 /**
@@ -125,6 +145,16 @@ export interface ColumnEdge {
   to_node: string;
   /** Column name on the consumer. */
   to_col: string;
+  /**
+   * Transform classification carried verbatim from the submitting contributor. Absent when the
+   * model supplied none — an unclassified edge stays unclassified across the hop.
+   */
+  transforms?: ColumnTransformClass[];
+  /**
+   * One-clause model note carried verbatim beside {@link transforms}. Absent whenever the model
+   * offered none — the webview then describes the edge structurally instead.
+   */
+  note?: string;
 }
 
 
@@ -223,16 +253,16 @@ export interface HopFinding {
    * Captured sections — one per fired `*_capture` YAML template. The locked
    * classification defines required angles; off-classification sections are
    * dropped deterministically at the tool handler boundary before storage.
-   * Each stored section is lifted verbatim by synthesis as a peer entry in
-   * `present_result.sections[]`. Mechanically validated and filtered against
-   * the locked session classification at the tool handler boundary
+   * Each stored section is material the synthesis prompt instructs the model to carry
+   * into a peer entry of `present_result.sections[]`. Mechanically validated and filtered
+   * against the locked session classification at the tool handler boundary
    * (`interaction/rules/submitFindingsRules`: `validateSectionsAgainstClassification`
    * + `filterSectionsForClassification`).
    *
    * @remarks
    * Each entry is one fired `*_capture` template's output. The split lets
-   * prompts and synthesis treat each angle independently and lifts verbatim
-   * into a peer entry of `present_result.sections[]` at synthesis.
+   * prompts and synthesis treat each angle independently; the synthesis prompt
+   * instructs carrying each into a peer entry of `present_result.sections[]`.
    */
   sections: CapturedSection[];
   /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
@@ -246,7 +276,7 @@ export interface HopFinding {
    */
   route_requests?: RouteRequest[];
   /**
-   * BB-only requests to omit nodes outside the approved exploration scope. Unknown, already
+   * Requests to omit nodes outside the approved exploration scope, carried by both modes. Unknown, already
    * processed, and non-required in-scope targets are retained with a visible notice; required
    * in-scope targets remain subject to the missing-route guard. An out-of-scope target may be
    * accepted when topology-safe. Origin, same-submit route conflicts, and orphaning prunes are fatal.
@@ -256,8 +286,7 @@ export interface HopFinding {
   badge_label?: string;
   /**
    * Structured attribution of column-level data flow.
-   * Required (and validated) when the column aspect is active and `verdict === 'analyze'`.
-   * Ignored when the column aspect is inactive — submit only in column-trace sessions.
+   * Required (and validated) on every CT hop; ignored when the column aspect is inactive.
    */
   column_flow?: ColumnFlowEntry[];
 }
@@ -275,7 +304,80 @@ interface RouteRequest {
   nodeId: string;
   /** The specific question or sub-goal the AI intends to answer at this node. */
   question: string;
+  /**
+   * Per-neighbor column decision for this route, absent when the router states none.
+   * Wire spelling of {@link ColumnCarry}: omitted is `inherit`, a non-empty list is `carry`,
+   * and the literal `'none'` is `row_role_only`. Three states, never an empty array — an
+   * omitted field and an empty list would otherwise read alike.
+   */
+  columns?: RouteColumns;
 }
+
+/**
+ * Wire form of a route request's per-neighbor column decision.
+ *
+ * @remarks
+ * `'none'` is a word rather than `[]` on purpose: the model states a row role explicitly, and a
+ * reader of the payload never has to decide what an empty array means. Translated to
+ * {@link ColumnCarry} at the engine boundary by `columnCarryFromRoute`.
+ */
+export type RouteColumns = string[] | 'none';
+
+/**
+ * The per-neighbor column decision travelling with one queued hop.
+ *
+ * @remarks
+ * Three states, discriminated so no reader infers meaning from an empty array:
+ * `inherit` — the caller stated no column opinion, so the session's traced targets apply, which
+ * is the behavior every pre-existing caller relies on;
+ * `carry` — exactly these columns travel to the neighbor (an empty list is the engine's own
+ * resolution "none of the traced columns bind on this node", which the tracer may still recover
+ * at dispatch, exactly as before);
+ * `row_role_only` — the router judged the neighbor to shape rows and carry no traced value, so it
+ * is dispatched as a plain whole-object neighbor and no target set is padded back onto it.
+ */
+export type ColumnCarry =
+  | { readonly kind: 'inherit' }
+  | { readonly kind: 'carry'; readonly columns: readonly string[] }
+  | { readonly kind: 'row_role_only' };
+
+/** Shared `inherit` carry — the stateless default, safe to hand out by reference. */
+export const INHERIT_CARRY: ColumnCarry = { kind: 'inherit' };
+
+/** Shared `row_role_only` carry — the stateless row-role decision, safe to hand out by reference. */
+export const ROW_ROLE_ONLY_CARRY: ColumnCarry = { kind: 'row_role_only' };
+
+/**
+ * Lifts the legacy `string[] | undefined` column argument into a {@link ColumnCarry}.
+ *
+ * @param columns - Columns the caller resolved, or `undefined` when it has no column opinion.
+ * @returns `inherit` for `undefined`, otherwise `carry` over the given list.
+ */
+export function columnCarryOf(columns: readonly string[] | undefined): ColumnCarry {
+  return columns === undefined ? INHERIT_CARRY : { kind: 'carry', columns };
+}
+
+/**
+ * Translates one route request's wire column decision into a {@link ColumnCarry}.
+ *
+ * @param columns - The route request's `columns` field as submitted.
+ * @returns The discriminated carry decision; `inherit` when the field was omitted.
+ */
+export function columnCarryFromRoute(columns: RouteColumns | undefined): ColumnCarry {
+  if (columns === undefined) return INHERIT_CARRY;
+  if (columns === 'none') return ROW_ROLE_ONLY_CARRY;
+  return { kind: 'carry', columns };
+}
+
+/**
+ * How a node served the traced columns at the hop that dispatched it.
+ *
+ * @remarks
+ * Orthogonal to {@link SmNodeAction} and {@link SmNodeStateReason}, which answer what happened to
+ * the node and why. A node can be analyzed, passed through, or pruned under either role, so the
+ * role is its own field and survives a later, stronger verdict instead of being overwritten by it.
+ */
+export type SmNodeColumnRole = 'carrier' | 'row_role_only';
 
 /**
  * Per-route outcome in a successful `submitFindings` return.
@@ -297,13 +399,14 @@ export interface RouteOutcome {
   /**
    * Reason for deferral:
    * - `schema` — route target is outside the approved schema allowlist; user will see it as a follow-up offer.
+   * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
+   * - `schema_and_depth` — route target breaches both the schema allowlist and the stated depth border.
    * - `depth_contracted_beyond_budget` — route target was a non-bodied node (table) whose bipartite contraction reached bodied neighbours that fell outside the active BFS scope, so no hop was enqueued. The route is structurally valid but produced no new agenda item.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
-   * - `no_active_columns` — CT hop has no active column spine, so route requests are ignored and the hop can complete as zero-trace.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction.
    * - `excluded` — route target exists but is outside the user's approved exclude filters.
    */
-  reason?: 'schema' | 'depth_contracted_beyond_budget' | 'unresolved' | 'no_active_columns' | 'out_of_direction' | 'excluded';
+  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded';
 }
 
 /**
@@ -479,6 +582,18 @@ export interface ScopeSummary {
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
   activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
+  /**
+   * Analysis constraints the user stated that no filter field can express, verbatim from the
+   * model's reading. Echoed at the approval gate so the user can confirm the instruction landed
+   * before an autonomous run begins.
+   */
+  scopeNotes: string[];
+  /**
+   * Gate-locked mission-type verdict. Surfaced at the approval gate because it is the only
+   * scope field that discards captured analysis: sections whose angle it did not request are
+   * dropped at commit by `filterSectionsForClassification`. Undefined until the AI sets it.
+   */
+  classification?: ClassificationValue;
 }
 
 /**
@@ -615,6 +730,8 @@ export interface PendingLead {
 export interface ApprovedBorder {
   /** Lower-cased schemas in scope. */
   schemas: string[];
+  /** Individual node ids the user named in a follow-up; omitted when none has been admitted. */
+  node_ids?: string[];
   /** Effective depth ceiling including mode headroom and any session extensions, or null when no depth budget is set. */
   depth_cap: number | null;
 }
@@ -724,6 +841,8 @@ export interface NavigationInitParams {
   excludeSchemas?: string[];
   excludeNodeIds?: string[];
   passNodeIds?: string[];
+  /** Analysis constraints the user stated that no filter field expresses; carried verbatim. */
+  scopeNotes?: string[];
   mission_brief?: string;
 }
 
@@ -746,6 +865,8 @@ export interface EngineInternalsSnapshot {
   depthBudget: number | null;
   /** How strictly the depth budget is enforced. */
   depthEnforcement: 'strict' | 'soft' | 'silent';
+  /** Per-side ceilings, `null` where that side is unbounded; absent in a v1 checkpoint. */
+  depthLimits?: { upstream: number | null; downstream: number | null };
   /** BFS depth-from-origin, flattened to `[nodeId, depth]` pairs (insertion order preserved). */
   depthFromOrigin: Array<[string, number]>;
   /** Extra depth levels confirmed mid-session beyond the mode cap. */
@@ -760,6 +881,8 @@ export interface EngineInternalsSnapshot {
   userSchemas: string[];
   /** Session-scoped schema allowlist (grows via mid-session confirmations). */
   sessionAllowedSchemas: string[];
+  /** Node ids the user named in a follow-up; absent in a checkpoint written before id-level consent. */
+  sessionAllowedNodeIds?: string[];
   /** Object types the user excluded at init. */
   excludedTypes: string[];
   /** Schemas the user excluded at init. */
@@ -839,6 +962,10 @@ export interface SmState {
     depth: number;
     /** Column-trace columns of interest for this node. */
     activeColumns?: string[];
+    /** CT chain-continuation questions opened for this node by an earlier hop, owned by this entry. */
+    lineageQuestions?: string[];
+    /** Per-neighbour column-carry decision that survived contraction (`inherit` / `carry` / `row_role_only`). */
+    columnCarry?: ColumnCarry;
   }>;
   /** ID of the node currently under analysis, if any. */
   currentFocusNodeId: string | null;
@@ -853,17 +980,28 @@ export interface SmState {
    */
   engineInternals: EngineInternalsSnapshot;
   /**
-   * Engine-generated lineage sub-questions from the last successful hop (CT only).
-   * Populated from `getColumnLineageQuestions()` at dump time — shows what questions
-   * would be fed to the next hop, critical for diagnosing CT tracking failures.
+   * Lineage questions owned by the in-flight hop's own {@link AgendaEntry}, captured at
+   * dispatch time (CT only) — shows what questions would be fed to the next hop, critical
+   * for diagnosing CT tracking failures.
    */
   lineageQuestionsLastHop?: string[];
   /**
-   * Node IDs visited during CT exploration that contributed no column_flow edges.
-   * Computed at dump time from `columnAspect.edges` vs visited detail slots.
-   * Present only when `columnAspect` is non-null.
+   * Focus node IDs the AI pruned via `verdict=prune` while the column aspect was active
+   * (`ctPrunedFocusIds` on the live engine). Present only when `columnAspect` is non-null.
    */
   ctPrunedNodeIds?: string[];
+  /**
+   * Neighbour ids named in an accepted `route_requests` entry while the column aspect was active
+   * (`ctDeclaredRouteIds` on the live engine). Present only when `columnAspect` is non-null.
+   * Absent on a checkpoint written before the field was persisted; restore treats that as empty.
+   */
+  ctDeclaredRouteIds?: string[];
+  /**
+   * Node IDs the last `getResult` removed from the render as undispositioned write sinks.
+   * Present only when that call dropped something; a drop is a recorded disposition, not a gap
+   * between this snapshot's scope and the rendered node set for a reader to infer.
+   */
+  renderDroppedNodeIds?: string[];
 }
 
 /**
@@ -891,6 +1029,7 @@ export interface HopLogEntry {
 export type InvalidRouteKind = | 'absent_route'
       | 'absent_contributor'
       | 'bad_out_col'
+      | 'untracked_out_col'
       | 'bad_contributor_col'
       | 'missing_required_route'
       | 'self_loop_column'
@@ -898,7 +1037,7 @@ export type InvalidRouteKind = | 'absent_route'
       | 'prune_noop_removed'
       | 'prune_noop_visited'
       | 'prune_noop_analyzed'
-      | 'prune_noop_in_scope'
+      | 'prune_noop_queued'
       | 'prune_origin_forbidden'
       | 'prune_would_orphan'
       | 'prune_route_conflict';

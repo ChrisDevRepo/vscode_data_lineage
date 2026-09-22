@@ -1,6 +1,5 @@
 import { TaskLedger } from '../../../src/ai/sm/taskLedger';
-import { assert } from '../helpers/testUtils';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe("TaskLedger", () => {
   const leadInput = {
@@ -15,13 +14,13 @@ describe("TaskLedger", () => {
   const ledger = new TaskLedger();
   const first = ledger.ensureLead(leadInput);
   const again = ledger.ensureLead({ ...leadInput, valueToUser: 'refreshed value' });
-  assert(first.id === again.id, 'same identity tuple returns the same lead');
-  assert(again.valueToUser === 'refreshed value', 're-ensure refreshes valueToUser');
-  assert(ledger.pendingLeads.length === 1, 'dedupe stores exactly one lead');
+  expect(first.id === again.id, 'same identity tuple returns the same lead').toBe(true);
+  expect(again.valueToUser === 'refreshed value', 're-ensure refreshes valueToUser').toBe(true);
+  expect(ledger.pendingLeads.length === 1, 'dedupe stores exactly one lead').toBe(true);
 
   // Case-insensitive node identity, matching the engine's lowercased ids.
   const cased = ledger.ensureLead({ ...leadInput, nodeId: '[EXT].[TARGET]' });
-  assert(cased.id === first.id, 'node id casing does not split lead identity');
+  expect(cased.id === first.id, 'node id casing does not split lead identity').toBe(true);
 });
 
   it("a different reason is a different lead", () => {
@@ -29,9 +28,9 @@ describe("TaskLedger", () => {
   const first = ledger.ensureLead(leadInput);
   const otherReason = ledger.ensureLead({ ...leadInput, reason: 'depth_boundary' as const });
   const otherFrom = ledger.ensureLead({ ...leadInput, fromNodeId: '[dbo].[Other]' });
-  assert(first.id !== otherReason.id, 'a different reason is a different lead');
-  assert(first.id !== otherFrom.id, 'a different fromNode is a different lead');
-  assert(ledger.pendingLeads.length === 3, 'distinct identities store distinct leads');
+  expect(first.id !== otherReason.id, 'a different reason is a different lead').toBe(true);
+  expect(first.id !== otherFrom.id, 'a different fromNode is a different lead').toBe(true);
+  expect(ledger.pendingLeads.length === 3, 'distinct identities store distinct leads').toBe(true);
 });
 
   it("post-restore ensureLead resolves the restored identity", () => {
@@ -43,8 +42,8 @@ describe("TaskLedger", () => {
   // Restore must rebuild the identity map: a re-ensure of the same tuple dedupes to the
   // restored lead instead of throwing the fresh-id collision guard.
   const reEnsured = restored.ensureLead({ ...leadInput, valueToUser: 'post-restore value' });
-  assert(reEnsured.id === original.id, 'post-restore ensureLead resolves the restored identity');
-  assert(restored.pendingLeads.length === 1, 'post-restore dedupe stores no duplicate lead');
+  expect(reEnsured.id === original.id, 'post-restore ensureLead resolves the restored identity').toBe(true);
+  expect(restored.pendingLeads.length === 1, 'post-restore dedupe stores no duplicate lead').toBe(true);
 });
 
 });

@@ -14,7 +14,7 @@
  * @packageDocumentation
  */
 
-import { splitSqlName } from '../utils/sql';
+import { splitSqlName, stripBrackets } from '../utils/sql';
 import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
 import {
   QUALIFIED_NAME, ANY_IDENT, KEYWORDS_RE,
@@ -187,13 +187,13 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
   // `extractExternalRefs` scans with `exec` and never advances `lastIndex`, so it spins forever;
   // `collectMatchesWith` spins until its iteration cap; a preprocessing `replace` silently rewrites
   // only the first occurrence and under-cleans the body. One check covers all three.
-  if (!(r.flags as string).includes('g')) {
+  if (!r.flags.includes('g')) {
     return { valid: false, name, error: `${name}: flags '${r.flags}' must include 'g' — a non-global pattern hangs or silently under-matches` };
   }
 
   // Test-compile the regex and check for empty-match patterns
   try {
-    const testRegex = new RegExp(r.pattern as string, r.flags as string);
+    const testRegex = new RegExp(r.pattern, r.flags);
     if (testRegex.test('')) {
       return { valid: false, name, error: `${name}: regex matches empty string — this would cause infinite loops` };
     }
@@ -384,6 +384,9 @@ function normalizeAnsiCommaJoins(sql: string): string {
  * @remarks
  * Regex cannot easily handle nested comments (e.g., `/* ... /* ... *\/ ... *\/`).
  * This O(n) scan handles nested block comments without relying on recursive regular expressions.
+ * It runs before string literals are neutralised, so it skips literals and line comments itself;
+ * otherwise a wildcard storage path would open a comment that never closes and the unterminated
+ * remainder of the body would be discarded.
  *
  * @param sql - Raw SQL text.
  * @returns SQL with all block comments removed.
@@ -394,6 +397,44 @@ function removeBlockComments(sql: string): string {
   let depth = 0;
   let start = 0; // start of current non-comment range
   while (i < sql.length) {
+    // Outside a comment, a string literal and a line comment are opaque: a storage path
+    // such as '.../2024/01/*.parquet' contains `/*` and does not open a comment. Inside a
+    // comment the same characters are plain text, so both skips are gated on depth 0.
+    if (depth === 0 && sql[i] === "'") {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] !== "'") { i++; continue; }
+        if (sql[i + 1] === "'") { i += 2; continue; } // '' is an escaped quote, not the end
+        i++; break;
+      }
+      continue;
+    }
+    // A double-quoted identifier (SET QUOTED_IDENTIFIER ON) is opaque the same way: a name such
+    // as "My/*Table" must not open a comment either.
+    if (depth === 0 && sql[i] === '"') {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] !== '"') { i++; continue; }
+        if (sql[i + 1] === '"') { i += 2; continue; } // "" is an escaped quote, not the end
+        i++; break;
+      }
+      continue;
+    }
+    // A bracketed identifier is opaque the same way, and it is the common case: `[Bob's Table]`
+    // must not open a string literal, and `[my/*table]` must not open a comment.
+    if (depth === 0 && sql[i] === '[') {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] !== ']') { i++; continue; }
+        if (sql[i + 1] === ']') { i += 2; continue; } // ]] is an escaped bracket, not the end
+        i++; break;
+      }
+      continue;
+    }
+    if (depth === 0 && sql[i] === '-' && sql[i + 1] === '-') {
+      while (i < sql.length && sql[i] !== '\n') i++;
+      continue;
+    }
     if (sql[i] === '/' && sql[i + 1] === '*') {
       if (depth === 0) parts.push(sql.substring(start, i));
       depth++; i += 2; continue;
@@ -547,7 +588,7 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>): void {
  * @returns A normalized `[schema].[object]` string or `null` if invalid.
  */
 function normalizeCaptured(raw: string): string | null {
-  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const parts = splitSqlName(raw).map(p => stripBrackets(p));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
   if (parts.length < 2) return null;
@@ -569,7 +610,7 @@ function normalizeCaptured(raw: string): string | null {
  * @returns A normalized `db.schema.object` string or `null` if invalid.
  */
 function normalizeCrossDb(raw: string): string | null {
-  const parts = splitSqlName(raw).map(p => p.replace(/[\[\]"]/g, ''));
+  const parts = splitSqlName(raw).map(p => stripBrackets(p));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
   if (parts.length < 3) return null;

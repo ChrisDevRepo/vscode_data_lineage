@@ -1,5 +1,4 @@
-import type { CustomNodeData } from './CustomNode';
-import type { SchemaNodeData, GraphMode, TraceState } from '../engine/types';
+import type { CustomNodeData, SchemaNodeData, GraphMode, TraceState } from '../engine/types';
 import { schemaKey } from '../utils/sql';
 import { getSchemaColor, type SchemaColorMap } from '../utils/schemaColors';
 

@@ -46,6 +46,9 @@ CONTRIBUTING.md
 
 # Assistant session temp files must not leak into VSIX.
 tmpclaude-*
+# Electron/EDH crashpad noise dropped at repo root by a VS Code Extension Development Host run.
+# vsce ignores .gitignore, so a gitignored file at repo root still ships unless listed here.
+debug.log
 # Scratch files any tool drops beside the manifest. vsce ignores .gitignore, so untracked is not
 # the same as unpackaged; assert-package-contents.mjs rejects the same suffix as a backstop.
 *.tmp
@@ -54,19 +57,46 @@ tmpclaude-*
 # Code-audit workspace (tool output, inventories, classification artifacts).
 .audit/**
 
+# Package-verification scratch trees (.verify-tmp, .verify2, …). Each holds a full copy of the
+# repository, so an unignored one ships the whole source and test tree inside the VSIX.
+.verify*/**
+
 # KaTeX TTF fonts — never loaded by VS Code's webview (Chromium picks
 # woff2 > woff > ttf; TTF only matters for legacy browsers). Keep woff+woff2
 # as the actual delivery formats.
 dist/assets/KaTeX_*.ttf
 
+# Internal agent artifacts (gitignored, but vsce ignores .gitignore — each needs its own
+# entry). GLM.md is the agent orientation map, .glm-skills/ the vendored GLM skills catalog,
+# .agents/ the repo's agent skills and MCP config. None of these belong in a VSIX. Keep this
+# list in step with the agent-file block in .gitignore and the forbidden patterns in
+# tests/tools/assert-package-contents.mjs — .gitignore alone excludes nothing from a VSIX.
+GLM*
+.GLM*
+.glm-skills/**
+.agents/**
+CODEX*
+.CODEX*
+codex.md
+.codex/**
+.gemini/**
+.cursor/**
+.cursorrules
+.continue/**
+.aider*
+
+# A dacpac at the repo root is an internal model staged for a lane run (see .gitignore); the
+# shipped fixture is assets/demo.dacpac only. vsce globs do not cross `/`, so this is root-only.
+*.dacpac
+
 # Misc
 PLAN*.md
-AGENTS.md
-.AGENTS.md
-CLAUDE.md
-.CLAUDE.md
-GEMINI.md
-.GEMINI.md
+AGENTS*
+.AGENTS*
+CLAUDE*
+.CLAUDE*
+GEMINI*
+.GEMINI*
 SECURITY.md
 CODE_OF_CONDUCT.md
 *.vsix

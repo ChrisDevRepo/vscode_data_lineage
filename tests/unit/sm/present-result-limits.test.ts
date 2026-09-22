@@ -1,17 +1,18 @@
 import {
-  autoFixPresentResult,
   discoveryPreviewNarrative,
   findDiscoveryPreviewReuseViolations,
   validatePresentResult,
 } from '../../../src/ai/tools/presentResult';
 import {
   PresentResultBoundarySchema,
+  PresentResultModelSchema,
   PRESENT_RESULT_NAME_MAX,
   PRESENT_RESULT_TITLE_MAX,
   PRESENT_RESULT_SECTION_LABEL_MAX,
   PRESENT_RESULT_HIGHLIGHT_LABEL_MAX,
+  PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX,
 } from '../../../src/ai/tools/toolSchemas';
-import { assert, assertEq } from '../helpers/testUtils';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { describe, expect, it } from 'vitest';
 
 describe("present_result hard/soft text limits", () => {
@@ -21,29 +22,18 @@ describe("present_result hard/soft text limits", () => {
     sections: [{ label: 'Result', text: 'Grounded detail.' }],
   };
 
-  it("autoFix does not truncate", () => {
+  it("the boundary never truncates authored text", () => {
     const longName = 'n'.repeat(PRESENT_RESULT_NAME_MAX - 5);
     const longSummary = 's'.repeat(400);
-    const input = autoFixPresentResult({
+    const result = parse({
+      ...base,
       name: longName,
       title: 't'.repeat(PRESENT_RESULT_TITLE_MAX - 5),
       summary: longSummary,
-    } as never);
-    assertEq(input.name, longName, 'name within tolerance is passed through unmodified');
-    assertEq(input.summary, longSummary, 'summary is never truncated (content, not a GUI label)');
-  });
-
-  it("Regression: autoFix's double-escaped-newline unescape leaves a $$...$$ KaTeX macro like \\not intact", () => {
-    const mathBlock =
-      '$$IsValidated := 1 \\quad \\text{when } ValidationMessage \\text{ is NULL } '
-      + '\\lor ValidationMessage \\not\\text{ LIKE } \\%Unknown\\ region\\%$$';
-    const input = autoFixPresentResult({
-      ...base,
-      sections: [{ label: 'Result', text: `Prose line one.\\nProse line two.\n\n${mathBlock}` }],
-    } as never);
-    const text = input.sections![0].text;
-    assert(text.includes(mathBlock), 'the $$...$$ block round-trips byte-identical, no dropped `n`');
-    assert(text.startsWith('Prose line one.\nProse line two.'), 'a genuine double-escaped newline in prose is still unescaped');
+    });
+    expect(result.success, 'a payload within tolerance parses').toBe(true);
+    expect(result.data!.name, 'name within tolerance is passed through unmodified').toBe(longName);
+    expect(result.data!.summary, 'summary is never truncated (content, not a GUI label)').toBe(longSummary);
   });
 
   const textLimitCases: Array<{
@@ -88,16 +78,55 @@ describe("present_result hard/soft text limits", () => {
   ];
 
   it.each(textLimitCases)('$name accepts its hard cap', ({ name, max, char, input }) => {
-    assert(parse(input(char.repeat(max))).success, `${name} at the hard cap is accepted`);
+    expect(parse(input(char.repeat(max))).success, `${name} at the hard cap is accepted`).toBe(true);
   });
 
   it.each(textLimitCases)('$name rejects one character over its hard cap', ({ name, max, char, path, input }) => {
     const result = parse(input(char.repeat(max + 1)));
     if (result.success) throw new Error(`${name} over the hard cap should reject`);
-    assert(result.error.issues.some(issue => issue.path[0] === path), `${name} rejection points at ${path}`);
+    expect(result.error.issues.some(issue => issue.path[0] === path), `${name} rejection points at ${path}`).toBe(true);
   });
 
-  it("a 400-char summary is accepted (was truncated at 300 before)", () => { assert(parse({ ...base, name: 'ok', summary: 's'.repeat(400) }).success, 'a 400-char summary is accepted (was truncated at 300 before)'); });
+  it("a 400-char summary is accepted (was truncated at 300 before)", () => { expect(parse({ ...base, name: 'ok', summary: 's'.repeat(400) }).success, 'a 400-char summary is accepted (was truncated at 300 before)').toBe(true); });
+});
+
+// T-1 (tooltext sweep): `highlight_groups` advertised `min(1)` but hid the hard `max` that
+// `validatePresentResult` (presentResult.ts) rejects on, so a model could only learn the ceiling
+// by being rejected. The cap now lives on the model-facing schema itself (`.max()`), asserted here
+// against the exported constant rather than a literal 5 copied into the test — a future change to
+// PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX moves this test with it. `PresentResultBoundarySchema`
+// deliberately keeps no count cap (see its own remarks) so the runtime validator can still produce
+// a repairable hint; this pins the model-facing schema only.
+describe('present_result highlight_groups model-facing cap (T-1)', () => {
+  const buildGroups = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ label: `g${i}`, color: 'source' as const, node_ids: ['a'] }));
+  const base = {
+    name: 'ok',
+    summary: 'One-line purpose.',
+    sections: [{ label: 'Result', text: 'Grounded detail.' }],
+  };
+
+  it('accepts exactly the cap', () => {
+    const result = PresentResultModelSchema.safeParse({ ...base, highlight_groups: buildGroups(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX) });
+    expect(result.success, 'the model-facing schema accepts highlight_groups at the cap').toBe(true);
+  });
+
+  it('rejects one group over the cap at the model-facing schema, not only at validatePresentResult', () => {
+    const result = PresentResultModelSchema.safeParse({ ...base, highlight_groups: buildGroups(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX + 1) });
+    expect(!result.success, 'one group over the cap rejects at the Zod boundary the model is offered').toBe(true);
+    if (result.success) return;
+    expect(result.error.issues.some(issue => issue.path[0] === 'highlight_groups'), 'rejection points at highlight_groups').toBe(true);
+  });
+
+  it('the model-facing JSON Schema carries the enforced ceiling as a typed constraint', () => {
+    const projected = toModelJsonSchema(PresentResultModelSchema) as {
+      properties?: { highlight_groups?: { description?: string; maxItems?: number; minItems?: number } };
+    };
+    const field = projected.properties?.highlight_groups;
+    expect(field?.maxItems, 'JSON Schema maxItems matches the exported constant').toBe(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX);
+    expect(field?.minItems, 'the floor is still advertised').toBe(1);
+    expect(field?.description ?? '', 'the prose also states the range so a model reading only text still learns it').toMatch(/1-5/);
+  });
 });
 
 describe('discovery preview prose reuse', () => {
@@ -160,10 +189,10 @@ describe('present_result reports every defect class in one rejection', () => {
     name: 'Import flow',
     summary: 'One-line purpose.',
     sections: [
-      // `[ai].[raw]` is linked twice — the structural defect.
       { label: 'Validation', text: 'Source rows are validated.', node_ids: ['[ai].[raw]'] },
       { label: 'Dedup', text: 'Duplicates are removed.' },
-      { label: 'Failures', text: 'Failures go to ErrorLog.', node_ids: ['[ai].[raw]', '[ai].[errorlog]'] },
+      // `[ai].[ghost]` is in no result graph — the structural defect.
+      { label: 'Failures', text: 'Failures go to ErrorLog.', node_ids: ['[ai].[ghost]', '[ai].[errorlog]'] },
     ],
     // Skips the middle paragraph — the reuse defect.
     notes: [{ node_id: '[ai].[errorlog]', text: 'Source rows are validated. Failures go to ErrorLog.' }],
@@ -181,7 +210,7 @@ describe('present_result reports every defect class in one rejection', () => {
     );
     if (result.success) throw new Error('a payload with two defect classes must not validate');
     expect(result.errors.some(e => e.includes('unbroken span'))).toBe(true);
-    expect(result.errors.some(e => e.includes('already appears in section'))).toBe(true);
+    expect(result.errors.some(e => e.includes('[ai].[ghost]'))).toBe(true);
   });
 
   it('names the offending entries so a repair need not re-derive them', () => {
@@ -197,7 +226,7 @@ describe('present_result reports every defect class in one rejection', () => {
     expect(result.detail?.map(d => d.path)).toEqual(expect.arrayContaining(['notes.0', 'sections.2']));
   });
 
-  it('names the canonical section and the editable index for a node linked to two sections', () => {
+  it('names the section holding the unlinkable id so a repair need not re-derive it', () => {
     const result = validatePresentResult(
       submission,
       nodeIds,
@@ -207,14 +236,10 @@ describe('present_result reports every defect class in one rejection', () => {
       findDiscoveryPreviewReuseViolations(source.body, submission),
     );
     if (result.success) throw new Error('a payload with two defect classes must not validate');
-    const message = result.errors.find(e => e.includes('already appears in section'));
+    const message = result.errors.find(e => e.includes('[ai].[ghost]'));
     expect(message).toBeDefined();
-    // First-seen section ('Validation') is canonical; the later section ('Failures', sections[2])
-    // is the one the repair must edit — both are runtime values, not hardcoded trace text.
-    // Labels render through normalizePresentSectionLabel (lowercased) in this hint.
-    expect(message).toContain('already appears in section "validation"');
-    expect(message).toContain('remove it from section "failures"');
-    expect(message).toContain('sections[2].node_ids');
+    // The offending section label is a runtime value, not hardcoded trace text.
+    expect(message).toContain('Failures');
   });
 
   // An unknown-node-id rejection used to name the rule and nothing else. Several distinct rules

@@ -8,8 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { exportToDrawio, exportSchemaOverviewToDrawio } from '../../../src/export/drawioExporter';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import type { CustomNodeData } from '../../../src/components/CustomNode';
-import type { SchemaNodeData } from '../../../src/engine/types';
+import type { CustomNodeData, SchemaNodeData } from '../../../src/engine/types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -224,5 +223,53 @@ describe('Draw.io Exporter', () => {
     expect(countOccurrences(xml, 'edge='), 'mixed export includes edge to visible schema cluster').toBe(1);
     expect(xml.includes('rounded=1'), 'draw.io node and schema styles use the valid rounded property').toBe(true);
     expect(xml.includes('rounded-sm='), 'Tailwind utility names never leak into draw.io style properties').toBe(false);
+  });
+});
+
+/**
+ * The column view is a second rendering of the same scope in its own coordinate space, and the
+ * export is an object-view artifact. `GraphCanvas` therefore hands the exporter the object nodes and
+ * object-level edges it kept aside (`objectNodes()` / `localEdges`) rather than the mounted column
+ * nodes — pinned as source in graph-canvas-object-positions.test.ts. This is the other half: given
+ * that object-space input, the XML carries object geometry and object-level edges, and nothing from
+ * the column space.
+ */
+describe('Draw.io Exporter — column view exports the object graph', () => {
+  /** Distance the exporter shifts the whole graph right, so a source x maps to a known output x. */
+  const GRAPH_OFFSET_X = 300;
+  /** Distance the exporter shifts the whole graph down. */
+  const GRAPH_OFFSET_Y = 20;
+
+  it('emits the object positions and the object-level edge, never a column coordinate', () => {
+    const objectNodes = [
+      makeNode('sales.orderheader', 'OrderHeader', 'Sales', 0, 0),
+      makeNode('sales.orderdetail', 'OrderDetail', 'Sales', 500, 400),
+    ];
+    const objectEdges = [makeEdge('e1', 'sales.orderheader', 'sales.orderdetail')];
+
+    const xml = exportToDrawio(objectNodes, objectEdges, ['Sales']);
+
+    expect(xml, 'first object keeps its object-space position').toContain(
+      `x="${GRAPH_OFFSET_X}" y="${GRAPH_OFFSET_Y}"`,
+    );
+    expect(xml, 'second object keeps its object-space position').toContain(
+      `x="${500 + GRAPH_OFFSET_X}" y="${400 + GRAPH_OFFSET_Y}"`,
+    );
+    expect(countOccurrences(xml, '<object'), 'one element per object, not per column').toBe(2);
+    expect(countOccurrences(xml, 'edge='), 'one object-level edge, not one per column pair').toBe(1);
+  });
+
+  it('never emits a column-space coordinate for the same ids', () => {
+    // The same two ids as the column view would lay them out: a different, much tighter space.
+    const columnSpaceX = 214;
+    const objectNodes = [
+      makeNode('sales.orderheader', 'OrderHeader', 'Sales', 0, 0),
+      makeNode('sales.orderdetail', 'OrderDetail', 'Sales', 500, 400),
+    ];
+
+    const xml = exportToDrawio(objectNodes, [], ['Sales']);
+
+    expect(xml).not.toContain(`x="${columnSpaceX + GRAPH_OFFSET_X}"`);
+    expect(xml, 'column rows are not exported as their own cells').not.toContain('OrderID');
   });
 });

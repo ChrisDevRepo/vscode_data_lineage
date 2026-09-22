@@ -13,22 +13,28 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const vsceCli = path.join(repoRoot, 'node_modules', '@vscode', 'vsce', 'vsce');
-const result = spawnSync(process.execPath, [vsceCli, 'ls'], {
-  cwd: repoRoot,
-  encoding: 'utf8',
-  maxBuffer: 16 * 1024 * 1024,
-  shell: false,
-});
 
+function runVsce(extraArgs = []) {
+  return spawnSync(process.execPath, [vsceCli, 'ls', ...extraArgs], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    shell: false,
+  });
+}
+
+// The listing is taken the way `npm run package` builds the VSIX: `--no-dependencies`. The
+// extension ships its bundled `out/` and `dist/`, the lockfile owns dependency resolution, and
+// vsce's own `npm ls` pass would only reject the LangSmith `overrides` stub the containment
+// layer mandates.
+const result = runVsce(['--no-dependencies']);
 if (result.error) {
   console.error(`FATAL: could not run the local @vscode/vsce CLI: ${result.error.message}`);
   process.exit(2);
 }
-
 if (result.status !== 0) {
-  const output = (result.stderr || result.stdout || '').trim();
-  console.error('FAIL: `vsce ls` did not run successfully.');
-  console.error(output || '(no output captured)');
+  console.error('FAIL: `vsce ls --no-dependencies` did not run successfully.');
+  console.error((result.stderr || result.stdout || '').trim() || '(no output captured)');
   process.exit(result.status ?? 1);
 }
 
@@ -60,8 +66,8 @@ const forbidden = [
   // required-file list — these two patterns are what makes their absence PROVEN rather than assumed.
   { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
   { pattern: /^stubs\//u, label: 'dependency stub directory' },
-  { pattern: /^(?:\.agents|\.codex|\.claude|\.gemini|\.cursor|\.continue)\//u, label: 'internal agent directory' },
-  { pattern: /^(?:\.env(?:\..*)?|CLAUDE[^/]*|GEMINI[^/]*)$/iu, label: 'environment/agent-instruction file' },
+  { pattern: /^(?:\.agents|\.codex|\.claude|\.gemini|\.cursor|\.continue|\.glm-skills)\//u, label: 'internal agent directory' },
+  { pattern: /^(?:\.env(?:\..*)?|\.?CLAUDE[^/]*|\.?GEMINI[^/]*|\.?GLM[^/]*|\.?AGENTS[^/]*|\.?CODEX[^/]*|\.cursorrules|\.aider[^/]*)$/iu, label: 'environment/agent-instruction file' },
   { pattern: /(?:^|\/)[^/]*internal[^/]*(?:\/|$)/iu, label: '"internal" marker path' },
   { pattern: /(?:^|\/)debug[^/]*\.txt$/iu, label: 'debug*.txt artifact' },
   // `vsce` never reads .gitignore, so an untracked scratch file at the repo root is packaged
@@ -70,6 +76,11 @@ const forbidden = [
   { pattern: /\.tmp$/iu, label: 'stray .tmp scratch file' },
   { pattern: /(?:^|\/)evidence(?:\/|$)/iu, label: 'evidence/ artifact directory' },
   { pattern: /\.vsix$/iu, label: 'packaged .vsix artifact' },
+  // Mirrors .vscodeignore: `.verify*/**` (package-verification scratch trees) and `debug.log`.
+  { pattern: /(?:^|\/)\.verify[^/]*\//iu, label: 'package-verification scratch tree' },
+  { pattern: /(?:^|\/)debug\.log$/iu, label: 'debug.log artifact' },
+  // The only dacpac the VSIX ships is assets/demo.dacpac; one at the repo root is a staged internal model.
+  { pattern: /^[^/]+\.dacpac$/iu, label: 'root-level dacpac' },
 ];
 
 const missing = required.filter((file) => !files.includes(file));

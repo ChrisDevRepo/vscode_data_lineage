@@ -28,6 +28,33 @@ import {
 } from './schemaProjection';
 import { notifyUser } from '../utils/notify';
 
+/**
+ * Receives a diagnostic line raised while a graph is built or laid out.
+ *
+ * @param level - Severity, in the host log vocabulary.
+ * @param text - Ready-to-log line, already carrying its `[Category]` prefix.
+ */
+type GraphLogSink = (level: 'info' | 'debug' | 'warn', text: string) => void;
+
+/**
+ * Where this module's diagnostics go. Defaults to a no-op so the engine stays usable outside the
+ * webview — a host process, a test — without reaching for `window`.
+ */
+let logSink: GraphLogSink = () => {};
+
+/**
+ * Installs the sink this module logs through.
+ *
+ * @remarks
+ * Called once from the webview entry point, which owns the bridge to the host. Until then the
+ * default sink discards, which is what a non-webview caller gets today.
+ *
+ * @param sink - Receiver for every diagnostic this module raises.
+ */
+export function setGraphLogSink(sink: GraphLogSink): void {
+  logSink = sink;
+}
+
 /** Width of a standard graph node in pixels. */
 export const NODE_WIDTH = 220;
 /** Height of a standard graph node in pixels. */
@@ -56,48 +83,25 @@ const GRID_DEFAULT_COLS = 4;
 const GRID_CELL_PADDING = 40;
 
 /**
- * Collects edges between traced nodes with direction-aware filtering.
+ * Collects every edge whose endpoints both sit inside the traced node set.
+ *
+ * @remarks
+ * Direction governs which nodes a trace admits, not which edges are drawn between them. A
+ * one-direction trace previously filtered edges by the depth gradient as well, which hid real
+ * dependencies between two objects already on screen — an upstream-only trace holding both `A` and
+ * `S` omitted `A → S`. Bidirectional traces never applied that filter, and the AI scope bundle
+ * does not either, so the same scope was drawn two different ways. Membership is now the only
+ * rule, matching both.
  *
  * @param graph - The underlying computational graph.
  * @param nodeIds - Set of node identifiers within the trace scope.
- * @param upDepth - Upstream depth mapping.
- * @param downDepth - Downstream depth mapping.
- * @returns A set of edge identifiers that conform to the tracing directionality.
+ * @returns A set of edge identifiers connecting two traced nodes.
  */
-function collectTraceEdges(
-  graph: Graph,
-  nodeIds: Set<string>,
-  upDepth: Map<string, number>,
-  downDepth: Map<string, number>
-): Set<string> {
+function collectTraceEdges(graph: Graph, nodeIds: Set<string>): Set<string> {
   const edgeIds = new Set<string>();
-  const hasUp = upDepth.size > 1;
-  const hasDown = downDepth.size > 1;
 
   graph.forEachEdge((edge, _attrs, source, target) => {
-    if (!nodeIds.has(source) || !nodeIds.has(target)) return;
-
-    if (hasUp && hasDown) {
-      edgeIds.add(edge);
-      return;
-    }
-
-    if (hasUp) {
-      const sD = upDepth.get(source);
-      const tD = upDepth.get(target);
-      if (sD !== undefined && tD !== undefined && sD >= tD) {
-        edgeIds.add(edge);
-      }
-      return;
-    }
-
-    if (hasDown) {
-      const sD = downDepth.get(source);
-      const tD = downDepth.get(target);
-      if (sD !== undefined && tD !== undefined && tD >= sD) {
-        edgeIds.add(edge);
-      }
-    }
+    if (nodeIds.has(source) && nodeIds.has(target)) edgeIds.add(edge);
   });
 
   return edgeIds;
@@ -106,7 +110,7 @@ function collectTraceEdges(
 /**
  * Represents the structured result of graph compilation.
  */
-export interface GraphResult {
+interface GraphResult {
   /** Nodes formatted for React Flow. */
   flowNodes: FlowNode[];
   /** Edges formatted for React Flow. */
@@ -172,11 +176,11 @@ export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   for (const node of model.nodes) {
     if (!node.id) {
-      window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}` });
+      logSink('warn', `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}`);
       continue;
     }
     if (graph.hasNode(node.id)) {
-      window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Duplicate node ID skipped: ${node.id}` });
+      logSink('warn', `[Graph] Duplicate node ID skipped: ${node.id}`);
       continue;
     }
     graph.addNode(node.id, { ...node });
@@ -245,44 +249,6 @@ export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig
 }
 
 /**
- * Traces a node's lineage (upstream/downstream) through the graph.
- *
- * @param graph - computational graph.
- * @param nodeId - Origin node ID.
- * @param mode - Trace direction.
- * @returns Nodes and edges in the trace.
- */
-export function traceNode(
-  graph: Graph,
-  nodeId: string,
-  mode: 'upstream' | 'downstream' | 'both'
-): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
-
-  const nodeIds = new Set<string>([nodeId]);
-  const upDepth = new Map<string, number>();
-  const downDepth = new Map<string, number>();
-  if (mode !== 'downstream') upDepth.set(nodeId, 0);
-  if (mode !== 'upstream') downDepth.set(nodeId, 0);
-
-  if (mode === 'upstream' || mode === 'both') {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      nodeIds.add(node);
-      upDepth.set(node, depth);
-    }, { mode: 'inbound' });
-  }
-  if (mode === 'downstream' || mode === 'both') {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      nodeIds.add(node);
-      downDepth.set(node, depth);
-    }, { mode: 'outbound' });
-  }
-
-  const edgeIds = collectTraceEdges(graph, nodeIds, upDepth, downDepth);
-  return { nodeIds, edgeIds };
-}
-
-/**
  * Traces a node's lineage with separate upstream and downstream depth caps.
  *
  * @remarks
@@ -304,16 +270,11 @@ export function traceNodeWithLevels(
   if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
 
   const nodeIds = new Set<string>([nodeId]);
-  const upDepth = new Map<string, number>();
-  const downDepth = new Map<string, number>();
-  if (upstreamLevels > 0) upDepth.set(nodeId, 0);
-  if (downstreamLevels > 0) downDepth.set(nodeId, 0);
 
   if (upstreamLevels > 0) {
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       if (depth > upstreamLevels) return true;
       nodeIds.add(node);
-      upDepth.set(node, depth);
     }, { mode: 'inbound' });
   }
 
@@ -321,12 +282,10 @@ export function traceNodeWithLevels(
     bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
       if (depth > downstreamLevels) return true;
       nodeIds.add(node);
-      downDepth.set(node, depth);
     }, { mode: 'outbound' });
   }
 
-  const edgeIds = collectTraceEdges(graph, nodeIds, upDepth, downDepth);
-  return { nodeIds, edgeIds };
+  return { nodeIds, edgeIds: collectTraceEdges(graph, nodeIds) };
 }
 
 /**
@@ -373,9 +332,9 @@ function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<st
   return positions;
 }
 
-/** Emits a `[Trace] <msg>` log line through the webview→host bridge at `warn` level. */
+/** Emits a `[Trace] <msg>` log line through {@link setGraphLogSink} at `warn` level. */
 function logTraceWarn(msg: string): void {
-  window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Trace] ${msg}` });
+  logSink('warn', `[Trace] ${msg}`);
 }
 
 /** Trace modes that trigger synthesis of out-of-filter nodes and edges into the visible set. */
@@ -580,27 +539,44 @@ export function applyTraceToFlow(
   return { nodes, edges, graph: traceGraph };
 }
 
+/**
+ * Input to {@link dagreLayout}.
+ *
+ * @remarks
+ * `direction` and `sizeOf` exist for callers that lay out a non-object view — the column view
+ * carries its own direction and variable row heights. Both participate in the layout cache key.
+ */
 interface LayoutInput {
   nodeIds: string[];
   edges: Array<{ source: string; target: string }>;
   config: ExtensionConfig;
   ranker?: string;
+  /** Overrides `config.layout.direction`. */
+  direction?: string;
+  /** Per-node box; defaults to the uniform object-view node size. */
+  sizeOf?: (id: string) => { width: number; height: number };
 }
 
 const LAYOUT_CACHE_SIZE = 12;
 const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
 
-function layoutCacheKey(nodeIds: string[], edges: Array<{ source: string; target: string }>, config: ExtensionConfig, ranker?: string): string {
+function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf }: LayoutInput): string {
   const sortedNodes = [...nodeIds].sort();
   const sortedEdges = edges.map(e => `${e.source}→${e.target}`).sort();
-  return `${config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}`;
+  const sizes = sizeOf ? sortedNodes.map(id => { const s = sizeOf(id); return `${s.width}x${s.height}`; }).join(',') : '';
+  return `${direction ?? config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}|${sizes}`;
 }
 
 /**
  * Computes spatial positions using the Dagre layout engine with LRU caching.
+ *
+ * @param input - Nodes, edges, and layout configuration; see {@link LayoutInput}.
+ *
+ * @returns Top-left position per node, or an empty map when Dagre fails.
  */
-function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<string, { x: number; y: number }> {
-  const key = layoutCacheKey(nodeIds, edges, config, ranker);
+export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: number }> {
+  const { nodeIds, edges, config, ranker, direction, sizeOf } = input;
+  const key = layoutCacheKey(input);
   const cached = layoutCache.find(e => e.key === key);
   if (cached) {
     layoutCache.splice(layoutCache.indexOf(cached), 1);
@@ -610,7 +586,7 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
 
   const g = new dagre.graphlib.Graph();
   g.setGraph({
-    rankdir: config.layout.direction,
+    rankdir: direction ?? config.layout.direction,
     ranksep: config.layout.rankSeparation,
     nodesep: config.layout.nodeSeparation,
     ...(ranker && { ranker }),
@@ -619,7 +595,7 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
   });
   g.setDefaultEdgeLabel(() => ({}));
 
-  for (const id of nodeIds) g.setNode(id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  for (const id of nodeIds) g.setNode(id, sizeOf ? sizeOf(id) : { width: NODE_WIDTH, height: NODE_HEIGHT });
   for (const { source, target } of edges) g.setEdge(source, target);
 
   try {
@@ -627,14 +603,14 @@ function dagreLayout({ nodeIds, edges, config, ranker }: LayoutInput): Map<strin
   } catch (e) {
     // Dagre coordinate assignment crashes on disconnected graphs with longest-path ranker.
     // Return empty positions; toFlowResult falls back to {x:0,y:0} per-node.
-    window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}` });
+    logSink('warn', `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}`);
     return new Map();
   }
 
   const positions = new Map<string, { x: number; y: number }>();
   for (const id of g.nodes()) {
     const n = g.node(id);
-    if (n) positions.set(id, { x: n.x - NODE_WIDTH / 2, y: n.y - NODE_HEIGHT / 2 });
+    if (n) positions.set(id, { x: n.x - n.width / 2, y: n.y - n.height / 2 });
   }
 
   layoutCache.unshift({ key, positions });
@@ -799,7 +775,7 @@ export function buildSchemaGraph(
   } catch (e) {
     // Disconnected schema singletons can trigger the same longest-path crash as regular nodes.
     // Fall through: g.node() returns undefined per node → positions fallback to {x:0,y:0}.
-    window.vscode?.postMessage({ type: 'log', level: 'warn', text: `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}` });
+    logSink('warn', `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const nodes: FlowNode<SchemaNodeData>[] = schemaIds.map((schema) => {

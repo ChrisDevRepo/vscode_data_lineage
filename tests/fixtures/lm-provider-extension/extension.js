@@ -7,15 +7,15 @@ let requests = [];
 // This fixture is scripted-only, by design. It replays fixed text and tool calls through the real
 // `vscode.lm` provider API so the Extension Development Host lanes exercise registration,
 // selection, streaming, and the tool-result round-trip without inference and without a network
-// call. Inference is measured by `npm run test:live-provider`, which runs headless — see
-// docs/E2E_TESTING.md §Model tiers for why the two are deliberately separate surfaces.
+// call. Inference is measured internally, headless — see docs/EDH_TESTING.md §What the public
+// suite proves for why the two are deliberately separate surfaces.
 
 // ── Case scripting state ─────────────────────────────────────────────────────
 //
 // `null` reproduces the ORIGINAL fixed-sequence behavior byte-for-byte (structured_output ->
 // discovery/null, one lineage_search_objects round-trip keyed on 'search-001', one
 // lineage_present_result keyed on 'scripted-call-001', else 'SCRIPTED_RUNTIME_COMPLETE').
-// tests/integration/scripted-provider.test.ts asserts against exactly that sequence and never calls
+// The internal scripted lanes assert against exactly that sequence and never call
 // `lineageTestModel.setCase`, so the legacy path must stay byte-identical when no case is active.
 let activeCase = null;
 /** Monotonic per-active-hop counter, reset on every setCase/reset so callIds stay unique per turn. */
@@ -115,8 +115,8 @@ function normalizePart(part) {
  *
  * @remarks
  * An ACCEPTED tool observation carries back as a user-role `<runtime_tool_context>` text block
- * (see `renderObservationsContext`, tests/integration/scripted-provider.test.ts documents the same
- * check); a REJECTED one carries as a native assistant tool-call + tool-result pair
+ * (see `renderObservationsContext`; the internal scripted lanes document the same check); a
+ * REJECTED one carries as a native assistant tool-call + tool-result pair
  * (`renderRejectionExchange`, toolAttempt.ts:589). Checking only one shape lets a case's tool call
  * re-emit forever until the provider-call breaker trips.
  */
@@ -582,7 +582,7 @@ function activate(context) {
         return;
       }
 
-      // ── legacy fixed sequence (no active case — tests/integration/scripted-provider.test.ts) ───────────
+      // ── legacy fixed sequence (no active case — asserted by the internal scripted lanes) ─────────────
       // Must run BEFORE any case-scripted phase branch: the legacy discovery-phase request offers
       // both lineage_get_context and lineage_search_objects together (DISCOVERY_TOOLS), so a
       // get_context-keyed branch below would otherwise shadow this path when no case is active.
@@ -634,12 +634,13 @@ function activate(context) {
         hopSeq += 1;
         const callId = `${caseId}-hop-${hopSeq}`;
         const isCt = cfg.mode === 'ct';
-        // BB required-route accounting: the full 'all'-depth scope is precomputed at
-        // start_exploration, but BbStrategy.runRequiredNodesGuard (src/ai/sm/strategies.ts) still
-        // requires each hop to explicitly account for its own in-scope, not-yet-queued directional
-        // neighbors via route_requests (or prune_neighbors) — pre-seeding the scope does not queue
-        // it. Route every in-budget upstream neighbor forward; the engine dedupes an already-queued
-        // one, so over-routing is harmless.
+        // Required-route accounting, both modes: the full 'all'-depth scope is precomputed at
+        // start_exploration, but the engine's required-nodes guard (NavigationEngine.submitFindings,
+        // src/ai/sm/smBase.ts) still requires each hop to explicitly account for its own in-scope,
+        // not-yet-queued directional neighbors via route_requests (or prune_neighbors) —
+        // pre-seeding the scope does not queue it. CT is BB plus column tracking and is held to the
+        // same checklist. Route every in-budget upstream neighbor forward; the engine dedupes an
+        // already-queued one, so over-routing is harmless.
         const inBudgetUpstreamNeighbors = (hop && Array.isArray(hop.neighbors) ? hop.neighbors : [])
           .filter((n) => n && n.edge_direction === 'upstream' && n.in_budget && n.boundary !== 'cycle'
             && typeof n.id === 'string');
@@ -652,9 +653,8 @@ function activate(context) {
           sections: [{ angle: 'business', text: `Scripted ${caseId} analysis of ${focusId}.` }],
           summary: `${focusId} passes data through unchanged.`,
           verdict: 'analyze',
-          ...(isCt
-            ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) }
-            : (routeRequests.length > 0 ? { route_requests: routeRequests } : {})),
+          ...(isCt ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) } : {}),
+          ...(routeRequests.length > 0 ? { route_requests: routeRequests } : {}),
         };
         progress.report(new vscode.LanguageModelToolCallPart(callId, 'lineage_submit_findings', input));
         return;

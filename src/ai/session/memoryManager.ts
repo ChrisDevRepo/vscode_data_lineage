@@ -150,6 +150,8 @@ export interface MemoryStateSnapshot {
   slotCount: number;
   /** The AI-composed mission brief, surviving sliding-memory wipes. */
   missionBrief: string;
+  /** User-stated analysis constraints no filter expresses, surviving sliding-memory wipes. */
+  scopeNotes: string[];
   /** Running verdict tally. */
   verdictCounts: { analyze: number; passthrough: number; prune: number };
   /** Ring buffer (≤5) of recent route rejections surfaced in working memory. */
@@ -175,6 +177,7 @@ export class AiMemoryManager {
   private prunedDetails = new Map<string, DetailSlot>();
   private userQuestion = '';
   private missionBrief = '';
+  private scopeNotes: string[] = [];
   private verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
   private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
 
@@ -184,6 +187,7 @@ export class AiMemoryManager {
     this.prunedDetails.clear();
     this.userQuestion = '';
     this.missionBrief = '';
+    this.scopeNotes = [];
     this.verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
     this.recentRejections = [];
   }
@@ -238,6 +242,23 @@ export class AiMemoryManager {
   }
 
   /**
+   * Records the user-stated analysis constraints that no filter field expresses.
+   *
+   * @remarks
+   * Fixed once at `start_exploration` approval, so it is stable-prefix-safe: every hop renders the
+   * same bytes. Without this carrier an instruction like "ignore filter criteria" reaches the first
+   * hop only as conversation history and is dropped by the sliding-memory wipe.
+   */
+  public setScopeNotes(notes: readonly string[]): void {
+    this.scopeNotes = [...notes];
+  }
+
+  /** User-stated constraints carried verbatim to every hop. */
+  public getScopeNotes(): string[] {
+    return [...this.scopeNotes];
+  }
+
+  /**
    * Stores the technical findings for a single node in the detail archive.
    *
    * @param node - The node the findings describe.
@@ -247,7 +268,9 @@ export class AiMemoryManager {
    *
    * @remarks
    * Sections are stored verbatim — uniform downstream shape simplifies eval
-   * extraction and synthesis lift.
+   * extraction and the synthesis prompt's carry instruction. A revisit (a reopened column chain
+   * re-enqueues a visited node) appends its sections after the earlier visit's, so evidence the
+   * first visit captured stays in the archive; summary and metadata take the latest visit.
    */
   public storeDetail(
     node: LineageNode,
@@ -255,12 +278,13 @@ export class AiMemoryManager {
     summary: string,
     meta?: { badge_label?: string; reason_for_visit?: string },
   ): void {
+    const earlier = this.detailSlots.get(node.id)?.sections ?? [];
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
       name: node.name,
       type: node.type,
-      sections,
+      sections: [...earlier, ...sections],
       summary,
       badge_label: meta?.badge_label,
       reason_for_visit: meta?.reason_for_visit,
@@ -363,6 +387,7 @@ export class AiMemoryManager {
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
     return {
       userQuestion: this.userQuestion,
+      scopeNotes: [...this.scopeNotes],
       detailSlots: slots,
       slotCount: this.detailSlots.size,
       missionBrief: this.missionBrief,
@@ -387,6 +412,7 @@ export class AiMemoryManager {
     const m = new AiMemoryManager();
     m.userQuestion = snapshot.userQuestion;
     m.missionBrief = snapshot.missionBrief;
+    m.scopeNotes = [...snapshot.scopeNotes];
     m.verdictCounts = { ...snapshot.verdictCounts };
     m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
     // Object key order preserves insertion order for the non-integer node-id keys used here.
@@ -407,6 +433,7 @@ export class AiMemoryManager {
     this.detailSlots = restored.detailSlots;
     this.userQuestion = restored.userQuestion;
     this.missionBrief = restored.missionBrief;
+    this.scopeNotes = [...restored.scopeNotes];
     this.verdictCounts = restored.verdictCounts;
     this.recentRejections = restored.recentRejections;
   }
@@ -427,8 +454,8 @@ export class AiMemoryManager {
   }
 
   /**
-   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the system
-   * prompt `<short_term_memory>` block.
+   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the per-hop
+   * user message's `<short_term_memory>` block.
    *
    * @remarks
    * Same sliding window used by `getWorkingMemory` — exposed separately so prompt builders

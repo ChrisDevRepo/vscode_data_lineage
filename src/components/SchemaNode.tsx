@@ -99,7 +99,7 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
             gap: 4,
           }}
         >
-          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span title={d.schemaName} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {d.schemaName}
           </span>
           {canExpand && (

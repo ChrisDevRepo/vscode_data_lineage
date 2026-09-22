@@ -12,6 +12,7 @@ import {
   toVscodeMessage,
 } from '../../../src/ai/model/vscodeLangChainBridge';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
+import { isHostCancellationError } from '../../../src/ai/model/modelPort';
 import {
   describePortContract,
   type ContractPort,
@@ -98,10 +99,10 @@ describe('selected VS Code model bridge acceptance', () => {
 
     const bridge = new VscodeLangChainBridge({
       model: selected as never,
-      token: new vscode.CancellationTokenSource().token as never,
+      token: new vscode.CancellationTokenSource().token,
     });
     const chunks = [];
-    for await (const chunk of bridge._streamResponseChunks(messages, {} as never)) {
+    for await (const chunk of bridge._streamResponseChunks(messages, {})) {
       chunks.push(chunk);
     }
 
@@ -162,7 +163,7 @@ describe('selected VS Code model bridge acceptance', () => {
       const selected = selectedModel([new vscode.LanguageModelTextPart(testCase.label)]);
       const bridge = new VscodeLangChainBridge({
         model: selected as never,
-        token: new vscode.CancellationTokenSource().token as never,
+        token: new vscode.CancellationTokenSource().token,
       });
       await collect(bridge.bindTools([...testCase.tools], {
         tool_choice: testCase.choice,
@@ -182,7 +183,7 @@ describe('selected VS Code model bridge acceptance', () => {
     const selected = selectedModel([new vscode.LanguageModelTextPart('unused')]);
     const bridge = new VscodeLangChainBridge({
       model: selected as never,
-      token: new vscode.CancellationTokenSource().token as never,
+      token: new vscode.CancellationTokenSource().token,
     });
     const tools = [
       { name: 'lineage_first', description: 'first', inputSchema: { type: 'object' } },
@@ -233,11 +234,11 @@ describe('selected VS Code model bridge acceptance', () => {
     };
     const bridge = new VscodeLangChainBridge({
       model: selected as never,
-      token: new vscode.CancellationTokenSource().token as never,
+      token: new vscode.CancellationTokenSource().token,
     });
     const stream = bridge._streamResponseChunks(
       [new HumanMessage('cancel me')],
-      { signal: controller.signal } as never,
+      { signal: controller.signal },
     );
     await stream.next();
     controller.abort();
@@ -292,6 +293,49 @@ describe('selected VS Code model bridge acceptance', () => {
       phase: 'compose',
     })).rejects.toMatchObject({ code: portCode });
     expect(selected.sendRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['AbortError', 'Canceled', 'Cancelled'])(
+    'classifies host cancellation name "%s" identically in the bridge and the port',
+    async (name) => {
+      const named = () => Object.assign(new Error('host cancelled the request'), { name });
+      expect(isHostCancellationError(named())).toBe(true);
+
+      const forBridge = { ...modelIdentity(), sendRequest: vi.fn().mockRejectedValue(named()) };
+      const bridge = new VscodeLangChainBridge({
+        model: forBridge as never,
+        token: new vscode.CancellationTokenSource().token,
+      });
+      await expect(collect(Promise.resolve(
+        bridge._streamResponseChunks([new HumanMessage('cancel me')], {}),
+      ))).rejects.toMatchObject({ code: 'cancelled' });
+
+      const forPort = { ...modelIdentity(), sendRequest: vi.fn().mockRejectedValue(named()) };
+      const turn = await new VscodeModelPort(forPort as never).generateToolTurn({
+        messages: [new HumanMessage('cancel me')], tools: [], phase: 'discover',
+      });
+      expect(turn).toMatchObject({ status: 'cancelled' });
+    },
+  );
+
+  it('leaves a non-cancellation error name a provider failure on both surfaces', async () => {
+    const failure = () => Object.assign(new Error('provider failed'), { name: 'TypeError' });
+    expect(isHostCancellationError(failure())).toBe(false);
+
+    const forBridge = { ...modelIdentity(), sendRequest: vi.fn().mockRejectedValue(failure()) };
+    const bridge = new VscodeLangChainBridge({
+      model: forBridge as never,
+      token: new vscode.CancellationTokenSource().token,
+    });
+    await expect(collect(Promise.resolve(
+      bridge._streamResponseChunks([new HumanMessage('go')], {}),
+    ))).rejects.toMatchObject({ code: 'provider_error' });
+
+    const forPort = { ...modelIdentity(), sendRequest: vi.fn().mockRejectedValue(failure()) };
+    const turn = await new VscodeModelPort(forPort as never).generateToolTurn({
+      messages: [new HumanMessage('go')], tools: [], phase: 'discover',
+    });
+    expect(turn).toMatchObject({ status: 'error' });
   });
 
 });

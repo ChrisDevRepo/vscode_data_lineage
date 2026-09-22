@@ -34,7 +34,7 @@ describe('assertToolPairingWellFormed', () => {
       modelUserMessage('follow-up'),
     ];
 
-    expect(() => assertToolPairingWellFormed(messages)).not.toThrow();
+    expect(() => { assertToolPairingWellFormed(messages); }).not.toThrow();
   });
 
   it('rejects a tool message with no preceding assistant message', () => {
@@ -43,9 +43,9 @@ describe('assertToolPairingWellFormed', () => {
       modelToolResultMessage('a1', 'lineage_tool', 'r1'),
     ];
 
-    expect(() => assertToolPairingWellFormed(messages))
+    expect(() => { assertToolPairingWellFormed(messages); })
       .toThrow(MessageEnvelopeInvariantError);
-    expect(() => assertToolPairingWellFormed(messages))
+    expect(() => { assertToolPairingWellFormed(messages); })
       .toThrow(/messages\[1\] has no preceding assistant message/);
   });
 
@@ -59,7 +59,7 @@ describe('assertToolPairingWellFormed', () => {
       modelUserMessage('follow-up'),
     ];
 
-    expect(() => assertToolPairingWellFormed(messages))
+    expect(() => { assertToolPairingWellFormed(messages); })
       .toThrow(/tool_call_id="zz9" at messages\[3\] has no matching tool call on messages\[1\]/);
   });
 

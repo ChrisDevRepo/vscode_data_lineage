@@ -7,9 +7,7 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for precision in reasoning models.
  */
 
-import { z } from 'zod';
-import { CHAT_MARKDOWN_FORMAT } from './prompts';
-import { buildColumnAspectPrompt } from '../prompting/prompts';
+import { ANALYTICAL_LOGIC_VOCABULARY, buildColumnAspectPrompt } from '../prompting/prompts';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 
 
@@ -17,17 +15,46 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
  * Shared route-question requirement (DRY across BB and CT).
  *
  * @remarks
- * The per-hop sub-question drives capture depth. Its structural A→B part is
- * engine-derivable (CT auto-generates it via `getColumnLineageQuestions`); the analytical
+ * The structural A→B part is engine-derivable (CT auto-generates it via
+ * `getColumnLineageQuestionsByNode`, the per-node source of record); the analytical
  * part — what business/technical logic a node applies — is NOT derivable from metadata and
- * must be authored by the AI and carried hop-to-hop. This bullet is the single source for
+ * must be authored by the AI. This bullet is the single source for
  * that requirement, rendered in both the BB and CT decision contracts. In CT it feeds the
  * capture narration only; `column_flow[].upstream_columns` stays structural (see the CT-safety
  * bullet in {@link BLOCK.hopDecisionContractCt}) so it stays the sole structural channel for column
  * precision and the column-precision regression cannot re-enter.
  */
 const ANALYTICAL_ROUTE_QUESTION =
-  '- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (rules, transformations, thresholds, guards, lifecycle, and material data-quality risks) to produce the traced value — not only which columns or sources feed it. This analytical question persists hop-to-hop and drives the depth of the next hop\'s capture.';
+  `- Beyond the structural mapping, each route question must carry the analytical question the engine cannot derive from structure: what business/technical logic the routed node applies (${ANALYTICAL_LOGIC_VOCABULARY}) to produce the traced value — not only which columns or sources feed it.`;
+
+/**
+ * One resolution rule for `<required_neighbors>`, composed by both hop decision contracts so the
+ * rendered checklist can never drift from the guard the moment either wording changed. CT is BB
+ * plus column tracking — a neighbor that carries none of the traced columns still restricts the row
+ * set, and reading it is part of the trace, so CT resolves the same list.
+ */
+const REQUIRED_NEIGHBOR_RESOLUTION =
+  '- Resolve every ID in `<required_neighbors>` through `route_requests` this hop; they are approved in-scope continuation nodes.';
+
+/**
+ * The mode-neutral neighbor decision core, composed verbatim by BOTH hop contracts (same
+ * instruction, same pruning, same routing in BB and CT — each contract adds only its own framing
+ * line, its verdict wording, and its mode additions).
+ */
+const NEIGHBOR_DECISION_CORE = [
+  'Use mission/task metadata as source of truth; treat history prose as context only.',
+  '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
+  '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.',
+  REQUIRED_NEIGHBOR_RESOLUTION,
+  '- Retain-by-omission applies only to neighbors that are not in `<required_neighbors>`; a required ID always gets an explicit decision.',
+  '- For each other current-hop neighbor:',
+  '  - Route it when mission-relevant, using a concrete verification question.',
+  '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays.',
+  '  - Add it to `prune_neighbors` when current evidence proves it is off the answer path — outside the approved exploration scope, or inside it with nothing the answer needs. A neighbor that supplies no value but decides which rows the answer returns — a join, filter or predicate source — is not \"nothing the answer needs\": route or retain it. An executed prune must never orphan committed work.',
+  '- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.',
+  '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
+  ANALYTICAL_ROUTE_QUESTION,
+] as const;
 
 
 /**
@@ -36,12 +63,11 @@ const ANALYTICAL_ROUTE_QUESTION =
  * @remarks
  * Wording for the engine's non-bodied contraction (`enqueueHop` forwards the authored question
  * verbatim; this suffix is the one addition). The inherited text describes the passthrough table,
- * so the suffix names that provenance and points the question at the new focus. BB adds a
- * business-logic nudge — an inherited provenance framing otherwise thins BB capture depth by
- * making the focus re-answer column provenance instead of its own rules. CT keeps the plain
- * re-anchor: its depth comes from the per-column `<lineage_questions>`, and a nudge would pull
- * the column-trace worker off precise column grounding. The wording is a tuned lever — changes
- * go through prompt-change; the forwarding mechanics stay engine-owned.
+ * so the suffix names that provenance and points the question at the new focus. The
+ * business-logic nudge is the shared text — an inherited provenance framing otherwise thins
+ * capture depth by making the focus re-answer column provenance instead of its own rules, and CT
+ * is BB plus columns, so CT reads the same nudge and adds its column clause to it. The wording is
+ * a tuned lever — changes go through prompt-change; the forwarding mechanics stay engine-owned.
  *
  * @param passthroughId - The non-bodied node the question was inherited through.
  * @param focusId - The bodied neighbor the question re-anchors onto.
@@ -49,27 +75,86 @@ const ANALYTICAL_ROUTE_QUESTION =
  * @returns The suffix to append to the forwarded question (leading newline included).
  */
 export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct'): string {
-  return mode === 'ct'
-    ? `\n(Inherited through passthrough ${passthroughId}; re-anchor this question to ${focusId}.)`
-    : `\n(Inherited through passthrough ${passthroughId}; re-anchor this question to ${focusId}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.)`;
+  const reAnchor = `\n(Inherited through passthrough ${passthroughId}; re-anchor this question to ${focusId}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.`;
+  return mode === 'ct' ? `${reAnchor} Ground that in the traced column.)` : `${reAnchor})`;
 }
 
 
+/**
+ * The one `lineage_get_neighbor_columns` trigger, exported for the tool catalog so the BB/CT
+ * decision blocks and the `modelDescription` state it from this source alone. BB's role-opacity
+ * test is what feeds route and prune, so CT carries it verbatim and appends its column-specific
+ * case; narrowing CT to hidden column names alone dropped the role test CT still needs.
+ */
+export const NEIGHBOR_COLUMNS_TRIGGER = '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone';
+
+const PRUNE_VERDICT_TAIL = 'It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about.'; // shared by BB + CT verdict blocks so CT prunes the same sinks BB does
+
+/**
+ * The one prune trigger, byte-shared by the BB and CT verdict blocks and mirrored into the
+ * `submit_findings` schema description (`hopVerdictSchema`).
+ *
+ * @remarks
+ * CT stated a value test here instead ("the traced value never passes through this focus node"),
+ * which prunes a node that shapes which rows appear but carries no traced value — a node BB keeps.
+ * Same question, two graphs. CT is BB plus columns: it may add to this trigger, never replace it.
+ */
+export const PRUNE_VERDICT_LEAD = 'The node is not part of this lineage answer — remove it.';
+
+/** Passthrough lead and body, byte-shared by both verdict blocks; CT adds its column clauses. */
+const PASSTHROUGH_VERDICT_LEAD = 'The node is on the data path but applies no logic — a SELECT * or synonym, or a raw source / bridge / target table.';
+const PASSTHROUGH_VERDICT_BODY = 'Keep it in the lineage and link it by flow role (Source / Transform / Target); give it a one-line summary, not deep analysis. The trace continues *through* it — its neighbors carry the same question forward. A pure-data table is the canonical passthrough: there is no logic to analyze, yet it is usually the Source or Target the answer is about — always keep it.';
+
+/**
+ * The one verdict protocol. CT renders this text and appends {@link COLUMN_FLOW_VERDICT_RIDER};
+ * it never restates a verdict in column vocabulary, because a second definition of `analyze` or
+ * `passthrough` is a second graph for the same question.
+ */
+const VERDICT_CATEGORIES = [
+  '## Verdict Protocol — every focus node is one of three states',
+  '- analyze: The node applies business logic on the data path — a calculation, condition, status transition, or audit decision. Analyze it in depth and feature it in the answer. (Applies to logic-bearing bodied nodes; a non-bodied table focus follows the engine path — structural-summary, still kept.)',
+  `- passthrough: ${PASSTHROUGH_VERDICT_LEAD} ${PASSTHROUGH_VERDICT_BODY}`,
+  `- prune: ${PRUNE_VERDICT_LEAD} ${PRUNE_VERDICT_TAIL}`,
+].join('\n');
+
+/** The one sentence CT adds to {@link VERDICT_CATEGORIES}: the column aspect of any verdict. */
+const COLUMN_FLOW_VERDICT_RIDER =
+  '- Every verdict carries `column_flow`: the real upstream columns behind each tracked output, and `[]` when the value originates here or the node carries none.';
+
+/**
+ * The one hop decision contract, composed by both modes. CT renders it unchanged and appends
+ * {@link COLUMN_DECISION_ADDENDUM} — the frame line, the verdict line, the neighbor core, the
+ * derive-from-DDL rule and the tool boundary are the same instruction in both modes, so a CT
+ * paraphrase of any of them is a second contract, not a column aspect.
+ */
+const HOP_DECISION_CONTRACT = [
+  '## Neighbor Decision Contract (Current Hop Only)',
+  'BB is node-first: decide the focus node and each current-hop neighbor from the current task and current evidence.',
+  '- Emit explicit `verdict` for the focus node every hop.',
+  ...NEIGHBOR_DECISION_CORE,
+  '- Derive neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
+  `${NEIGHBOR_COLUMNS_TRIGGER}.`,
+] as const;
+
+/**
+ * The column aspect of the hop decision, appended to {@link HOP_DECISION_CONTRACT} in CT.
+ *
+ * @remarks
+ * `column_flow[].upstream_columns` stays the sole structural channel for column precision (see
+ * {@link ANALYTICAL_ROUTE_QUESTION}): it records the value path the engine continues, it opens no
+ * route, and the analytical answer belongs in the capture narration — the column-precision
+ * regression re-enters the moment a column is written there to satisfy a narrative.
+ */
+const COLUMN_DECISION_ADDENDUM = [
+  'CT is column-first on top of those same decisions — these add the column aspect:',
+  '- `column_flow[].upstream_columns` holds real upstream node+column refs only — the value path the engine carries to the next hop, derived from the DDL. It opens no route: name each contributor in `route_requests` too, and resolve hidden column names with `lineage_get_neighbor_columns`.',
+  '- `<lineage_questions>` already carries the column A→B continuation; the analytical answer goes in `sections[].text`.',
+] as const;
+
 const BLOCK = {
   /** Node classification protocol. */
-  verdictCategories: [
-    '## Verdict Protocol — every focus node is one of three states',
-    '- analyze: The node applies business logic on the data path — a calculation, condition, status transition, or audit decision. Analyze it in depth and feature it in the answer. (Applies to logic-bearing bodied nodes; a non-bodied table focus follows the engine path — structural-summary, still kept.)',
-    '- passthrough: The node is on the data path but applies no logic — a SELECT * or synonym, or a raw source / bridge / target table. Keep it in the lineage and link it by flow role (Source / Transform / Target); give it a one-line summary, not deep analysis. The trace continues *through* it — its neighbors carry the same question forward. A pure-data table is the canonical passthrough: there is no logic to analyze, yet it is usually the Source or Target the answer is about — always keep it.',
-    '- prune: The node is not part of this lineage answer — remove it. It is the only verdict that removes a node. Use it for an adjacent node off the answer path, or a sink the question does not ask about (see the capture guidance on logging/audit/retention sinks).',
-  ].join('\n'),
-  verdictCategoriesCt: [
-    '## Verdict Protocol — every focus node is one of three states',
-    '- analyze: The node transforms a tracked column or is its terminal source. Fill column_flow.',
-    '- passthrough: The column flows through unchanged — no logic here. Keep the node and continue the trace: fill column_flow with the real upstream_columns, or upstream_columns:[] when the column is produced here with no upstream real column. A raw source / bridge / target table is the canonical passthrough — always keep it.',
-    '- prune: The focus node is not part of this column trace — remove it. It is the only verdict that removes a node.',
-    '- If it is not a key transform and not off-trace, use `passthrough`; the node stays in the graph. The engine, not you, decides when the walk is done (it ends only when every scoped node has been visited).',
-  ].join('\n'),
+  verdictCategories: VERDICT_CATEGORIES,
+  verdictCategoriesCt: [VERDICT_CATEGORIES, COLUMN_FLOW_VERDICT_RIDER].join('\n'),
 
   /**
    * Section-shape contract — points at the YAML capture templates as the
@@ -96,46 +181,11 @@ const BLOCK = {
   badgeAndNote: [
     '## Current Hop Metadata',
     'Analyze the current `focus_node` for the current task only. Prior memory is context, not a final report plan.',
-    '- `badge_label`: optional hop-time grouping hint only; it is synthesis evidence, not rendered directly. Final graph labels and node captions are authored only in `lineage_present_result`.',
   ].join('\n'),
 
   /** Canonical hop-local routing/pruning contract (single source, no duplicates across surfaces). */
-  hopDecisionContract: [
-    '## Neighbor Decision Contract (Current Hop Only)',
-    'BB is node-first: decide the focus node and each current-hop neighbor from the current task and current evidence.',
-    'Use mission/task metadata as source of truth; treat history prose as context only.',
-    '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
-    '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route/prune from current-hop evidence.',
-    '- Emit explicit `verdict` for the focus node every hop.',
-    '- Resolve every ID in `<required_neighbors>` through `route_requests` — list each required ID explicitly; the retain-by-omission option below applies only to other neighbors.',
-    '- For each other current-hop neighbor:',
-    '  - Route it when mission-relevant, using a concrete verification question. The engine defers routes outside the approved schema/depth scope.',
-    '  - Retain it when it is already inside the approved exploration scope by omitting it from both action arrays; if later scheduled as focus, use its focus verdict.',
-    '  - Add it to `prune_neighbors` only when it is outside the approved exploration scope and current evidence proves it is off the answer path.',
-    '- Leave the origin and previously visited or removed nodes unchanged — the origin anchors the lineage and stays out of `prune_neighbors`; submit each neighbor in at most one action array.',
-    '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
-    ANALYTICAL_ROUTE_QUESTION,
-    '- Derive neighbor roles purely from the provided DDL whenever possible (e.g., explicit SELECT columns, WHERE clauses).',
-    '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where you cannot determine the neighbor\'s role from the DDL alone.',
-    '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
-  ].join('\n'),
-  hopDecisionContractCt: [
-    '## Neighbor Decision Contract (Current Hop Only)',
-    'CT is column-first: declare only real upstream columns needed to continue the active column chain.',
-    'Use mission/task metadata as source of truth; treat history prose as context only.',
-    '- Actionable set this hop = current `focus_node` + current-hop `neighbors[]` from tool results.',
-    '- History (`short_term_memory`, prior hop IDs, archived slots) is past context only; route from current-hop evidence.',
-    '- Emit explicit `verdict` for the focus node every hop (`analyze`, `passthrough`, or `prune` if the node is off the answer path).',
-    '- Put only real upstream table/view/procedure node+column refs in `column_flow[].upstream_columns`; the engine carries those columns to the next hop.',
-    '- For neighbors in CT, the engine already carries the column A→B continuation; add `route_requests` to carry the analytical question forward when the node applies logic worth capturing.',
-    '- Generic route prompts like "analyze this node" are invalid; each route question must name what to verify and what mission decision it resolves.',
-    ANALYTICAL_ROUTE_QUESTION,
-    '- The engine already supplies the column A→B continuation (`<lineage_questions>`); keep `column_flow[].upstream_columns` precise and structural, and answer the analytical question in your capture narration (`sections[].text`) — never invent columns to satisfy it.',
-    '- If a mission-relevant route is out of approved scope (schema/depth), still route it: engine defers it for post-synthesis follow-up.',
-    '- Derive column origins purely from the provided DDL whenever possible (e.g., explicit SELECT columns).',
-    '- Use `lineage_get_neighbor_columns({ids:["..."]})` exclusively for opaque DDL (e.g., `SELECT *`, dynamic SQL, or ambiguous JOINs) where the column names are hidden.',
-    '- Tool boundary in active phase: use only `lineage_submit_findings` and `lineage_get_neighbor_columns`.',
-  ].join('\n'),
+  hopDecisionContract: HOP_DECISION_CONTRACT.join('\n'),
+  hopDecisionContractCt: [...HOP_DECISION_CONTRACT, ...COLUMN_DECISION_ADDENDUM].join('\n'),
 } as const;
 
 
@@ -173,7 +223,7 @@ export function buildSmProtocol({
   );
 
   if (isColumnAspectActive) {
-    sections.push('', buildColumnAspectPrompt(targetColumns!));
+    sections.push('', buildColumnAspectPrompt(targetColumns));
   }
 
   return sections.join('\n');
@@ -184,27 +234,28 @@ export function buildSmProtocol({
  * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
  *
  * @remarks
- * Anchored on the user question at the highest-attention slot (long-context models attend
- * most strongly to the window edges). Re-asserts depth, formula carry-through, and per-node SQL-evidence
- * requirements that the model otherwise drops under pressure.
+ * Anchored on the user question at the highest-attention slot (long-context models attend most
+ * strongly to the window edges). It states the SKELETON of the document the model writes — which
+ * field is which part, what each part carries, and in what order — not a checklist of rules to
+ * obey. The engine facts that follow it (flow roles, edge direction, kept nodes with no detail
+ * slot, captured `$$` blocks) are the content; this block is the shape they go into. The final
+ * line is the document contract, not the chat contract: this render sits beside the graph, so its
+ * length follows the captured evidence rather than the question's phrasing.
  *
  * @param question - The user's original question, re-injected to anchor synthesis on intent.
  */
 function buildSynthesisReminder(question: string): string {
   return [
-    '## Synthesis Reminder — re-read before calling `lineage_present_result`',
+    '## The document beside the graph — the shape of `lineage_present_result`',
     `- User question: "${question}"`,
-    '- `sections[]` is REQUIRED — create final graph/detail links from the full result. Use `detail_slots[]` for analyzed-node detail, `node_states[]` for lifecycle facts, and the "Column Trace Chain" block for CT provenance. Write `text` for every section.',
-    '- `notes[]` — decoration follows documentation: link only nodes worth a badge in `sections[].node_ids[]`, and give each linked node one grounded caption. A highlighted node must be explained by a section link or a note; nodes left out of both preview surfaces stay bare.',
-    '- `highlight_groups[]` is REQUIRED — include at least one selective group using the Lineage palette. For zero-trace or single-node results, use a `target` group on the origin/result node.',
-    '- GROUP question-first: choose sections that best answer the question. `section.label` is final authority for report grouping/links; hop `badge_label` values are helper hints only. Keep business/technical split only when it improves clarity.',
-    '- Every linked node needs grounded evidence; choose business-first evidence in `business` mode, and add SQL-level evidence only when needed to clarify impact. In `technical`/`both`, include technical evidence as relevant.',
-    '- Formula/evidence policy: if captured business evidence contains formulas or explicit calculations for mission-critical nodes, keep them in section text. Compress prose, not evidence classes (rule triggers, thresholds, formulas, lifecycle effects, audit meaning).',
-    '- Formula rendering: write every formula as LaTeX `$$…$$` block math (e.g. `$$ NetAmountA = QtyA \\times PriceA $$`). Use `\\times`, `\\text{}`, `\\operatorname{COALESCE}`; avoid backticks, inline code, plain prose, unicode math symbols, and bare single `$` (collides with @params and dollar amounts).',
-    '- ⚠️ callout policy: include risk callouts only for significant decision-impacting issues grounded in captured evidence.',
-    '- For specific questions: answer directly; depth follows from the question. For broad questions: draw from the full captured detail. In both cases, write the text for every section.',
-    '- Anchor the `intro` to the user question and the locked Mission type; one paragraph, no headings.',
-    `${CHAT_MARKDOWN_FORMAT} Match length to the question. Tool calls and tool results remain structured data.`,
+    '- `intro`: one paragraph anchored to the question and the locked Mission type, no headings.',
+    '- `sections[]`: the body, in graph order — terminal sources, then each transform, then the origin and what reads it. `section.label` is the heading, `section.node_ids[]` links the nodes that section documents, and `section.text` carries, for each linked node, the rules it applies, the predicates that shape its rows, its `$$` formulas and its ⚠️ callouts, with the short SQL that grounds them — drawn from `detail_slots[]`, `node_states[]` and the engine facts below.',
+    '- `notes[]`: the caption line under a node — one sentence on what it does in this flow.',
+    '- `highlight_groups[]`: the Lineage palette over the flow roles below, at least a `target` group on the origin.',
+    '- `summary`: one sentence naming the answer.',
+    '- `result.scope.node_ids` is the id set this render accepts; `sections[].node_ids[]`, `notes[].node_id` and `highlight_groups[].node_ids[]` name ids from it, and any other object the evidence names is prose in `sections[].text`.',
+    '- Formulas are LaTeX math: `$...$` inline, `$$…$$` for a standalone block (e.g. `$$ NetFeeA = DaysA \\times RateA $$`), with `\\times`, `\\text{}`, `\\operatorname{COALESCE}`.',
+    'This is the document beside the graph, not a chat reply: Markdown only, no arbitrary HTML, SQL in fenced ```sql blocks. Length follows the captured evidence, not the question — every kept node keeps its rules, predicates and formulas.',
   ].join('\n');
 }
 
@@ -248,22 +299,88 @@ interface FlowRoleGroups {
  * @param originNodeId - The queried origin (becomes the sole `target`).
  * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
  * @param hopNodes - CT-only focus-node set excluded from the terminal-source set.
- * @param writtenNodes - CT-only nodes with an incoming node-level edge from within the traced chain.
  */
 function computeFlowRoleGroups(
   originNodeId: string,
   edges: ReadonlyArray<{ from: string; to: string }>,
   hopNodes?: ReadonlySet<string>,
-  writtenNodes?: ReadonlySet<string>,
 ): FlowRoleGroups {
   const toNodes = new Set(edges.map(e => e.to));
   const reached = new Set<string>([originNodeId]);
   for (const e of edges) { reached.add(e.from); reached.add(e.to); }
   const source = [...new Set(edges.map(e => e.from))]
-    .filter(n => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n) && !writtenNodes?.has(n));
+    .filter(n => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n));
   const sourceSet = new Set(source);
   const transform = [...reached].filter(n => n !== originNodeId && !sourceSet.has(n));
   return { source, target: [originNodeId], transform };
+}
+
+/**
+ * Buckets every traced node by its DIRECTED relation to the origin.
+ *
+ * @remarks
+ * The `## Column Trace Chain` list renders in hop order, which is not direction order, so direction
+ * cannot be inferred from a node's position in it — these buckets state it explicitly instead.
+ * `sideBranch` is the bucket that matters: a node that reads a traced node but lies on no path to or
+ * from the origin is neither upstream nor downstream, and calling it upstream inverts a real edge.
+ *
+ * @param originNodeId - The queried origin.
+ * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
+ */
+function computeDirectionGroups(
+  originNodeId: string,
+  edges: ReadonlyArray<{ from: string; to: string }>,
+): { upstream: string[]; downstream: string[]; sideBranch: string[] } {
+  const forward = new Map<string, string[]>();
+  const backward = new Map<string, string[]>();
+  const reached = new Set<string>([originNodeId]);
+  for (const e of edges) {
+    reached.add(e.from);
+    reached.add(e.to);
+    (forward.get(e.from) ?? forward.set(e.from, []).get(e.from)!).push(e.to);
+    (backward.get(e.to) ?? backward.set(e.to, []).get(e.to)!).push(e.from);
+  }
+  const walk = (adjacency: Map<string, string[]>): Set<string> => {
+    const seen = new Set<string>();
+    const stack = [originNodeId];
+    while (stack.length > 0) {
+      for (const next of adjacency.get(stack.pop()!) ?? []) {
+        if (!seen.has(next)) { seen.add(next); stack.push(next); }
+      }
+    }
+    seen.delete(originNodeId);
+    return seen;
+  };
+  const downstream = walk(forward);
+  const upstream = walk(backward);
+  const sideBranch = [...reached]
+    .filter(n => n !== originNodeId && !upstream.has(n) && !downstream.has(n));
+  return { upstream: [...upstream].sort(), downstream: [...downstream].sort(), sideBranch: sideBranch.sort() };
+}
+
+/**
+ * Renders the shared edge-direction lines from computed {@link computeDirectionGroups} buckets.
+ *
+ * @remarks
+ * The single direction statement BB and CT synthesis both use, so the two modes state direction
+ * identically — same rule as {@link computeFlowRoleGroups}, no per-mode clone.
+ *
+ * Takes the computed buckets rather than the edges: a caller that also reasons about a bucket reads
+ * the same object these lines state, so the rendered claim and the caller's branch cannot disagree.
+ *
+ * @param originNodeId - The queried origin the buckets are relative to.
+ * @param direction - Buckets from {@link computeDirectionGroups} for that origin.
+ */
+function buildDirectionLines(
+  originNodeId: string,
+  direction: ReturnType<typeof computeDirectionGroups>,
+): string[] {
+  return [
+    `Edge direction relative to ${originNodeId} — engine-computed and authoritative. Any list above is in HOP order, which is NOT direction order:`,
+    `- upstream (data flows INTO the origin): ${direction.upstream.join(', ') || '(none)'}`,
+    `- downstream (data flows OUT of the origin): ${direction.downstream.join(', ') || '(none)'}`,
+    `- side branches — these READ a traced node and lie on NO path to or from the origin, and consume the same data it consumes: ${direction.sideBranch.join(', ') || '(none)'}`,
+  ];
 }
 
 /**
@@ -273,12 +390,21 @@ function computeFlowRoleGroups(
  * Enumerates only mechanical facts (target, terminal-source candidates) — transform is
  * deliberately NOT enumerated: models transcribe enumerated lists verbatim, which defeats the
  * question-relative importance judgment the highlights template assigns to the AI.
+ *
+ * Candidates are bounded by the presented set: `highlight_groups[].node_ids` rejects anything the
+ * render does not carry, and the synthesis prompt makes linking a named terminal source mandatory,
+ * so naming a border-cut source here would order a call `present_result` refuses.
+ *
+ * @param groups - Mechanically computed flow-role buckets.
+ * @param presented - Ids the render carries; a bucket member outside it is dropped from the line.
+ *   `null` from a caller that holds no render set, which then bounds nothing.
  */
-function buildFlowRoleHighlightLines(groups: FlowRoleGroups): string[] {
+function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string> | null): string[] {
+  const linkable = (ids: readonly string[]): string[] => presented ? ids.filter(id => presented.has(id)) : [...ids];
   return [
     'Engine-computed graph facts for highlight_groups (mechanical candidates only — final coloring is your question-relative judgment per the highlights template):',
-    `- highlight_groups.target — the queried origin node: ${groups.target.join(', ')}`,
-    `- highlight_groups.source candidates — terminal data-origin nodes the trace reached (base feeds never written to within the trace); color the ones whose DATA feeds the answer, leave filter-only lookups bare: ${groups.source.join(', ') || '(none)'}`,
+    `- highlight_groups.target — the queried origin node: ${linkable(groups.target).join(', ')}`,
+    `- highlight_groups.source candidates — terminal data-origin nodes the trace reached (base feeds never written to within the trace); color the ones whose DATA feeds the answer, leave filter-only lookups bare: ${linkable(groups.source).join(', ') || '(none)'}`,
     "- highlight_groups.transform — not enumerated: choose the important transformations yourself — nodes that CREATE or CHANGE the answer's values (formula, condition, classification, status transition). Carry-through nodes (renames, SELECT * bridges, movement procs, plain storage tables, row filters) stay uncolored — they are still rendered, and are captioned in notes[].",
   ];
 }
@@ -289,12 +415,21 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups): string[] {
  *
  * @param originNodeId - The queried origin (the `target` node).
  * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
+ * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates; omitted by
+ *   a caller that holds no render set, which then bounds nothing.
  */
-export function buildBbSynthesisBlock(originNodeId: string, edges: ReadonlyArray<[string, string, string]>): string {
-  const groups = computeFlowRoleGroups(originNodeId, edges.map(([from, to]) => ({ from, to })));
+export function buildBbSynthesisBlock(
+  originNodeId: string,
+  edges: ReadonlyArray<[string, string, string]>,
+  presentedNodeIds: ReadonlySet<string> | null = null,
+): string {
+  const flowEdges = edges.map(([from, to]) => ({ from, to }));
+  const groups = computeFlowRoleGroups(originNodeId, flowEdges);
   return [
     '## Flow-Role Highlights',
-    ...buildFlowRoleHighlightLines(groups),
+    ...buildFlowRoleHighlightLines(groups, presentedNodeIds),
+    '',
+    ...buildDirectionLines(originNodeId, computeDirectionGroups(originNodeId, flowEdges)),
   ].join('\n');
 }
 
@@ -305,6 +440,10 @@ export function buildBbSynthesisBlock(originNodeId: string, edges: ReadonlyArray
  * @param edges - Validated column-flow edges accumulated by the engine.
  * @param ctPrunedNodeIds - CT focus nodes that were explicitly pruned as off-trace.
  * @param nodeEdges - Node-level flow edges used to distinguish written intermediates from base feeds.
+ * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates;
+ *   omitted by a caller that holds no render set, which then bounds nothing. The recorded edge list
+ *   itself is never bounded — the trace is the evidence, and an endpoint outside the render is
+ *   stated in prose.
  * @returns Markdown instructions/evidence for the final `lineage_present_result` turn.
  */
 export function buildCtSynthesisBlock(
@@ -312,6 +451,7 @@ export function buildCtSynthesisBlock(
   edges: ColumnEdge[],
   ctPrunedNodeIds?: string[],
   nodeEdges: ReadonlyArray<[string, string, string]> = [],
+  presentedNodeIds: ReadonlySet<string> | null = null,
 ): string {
   const lines = ['## Column Trace Chain'];
   if (edges.length === 0) {
@@ -322,35 +462,38 @@ export function buildCtSynthesisBlock(
   for (const e of edges) {
     lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})`);
   }
+  lines.push('');
+  // Direction is read off the NODE edges, not the column edges: a column chain that routes a hop
+  // through a writer proc records the proc only as a `to`, so origin-relative reachability breaks
+  // there and real upstream sources render as side branches. The node edges carry the proc's write,
+  // and using them is also what makes BB and CT state direction identically.
+  const directionEdges = nodeEdges.length > 0
+    ? nodeEdges.map(([from, to]) => ({ from, to }))
+    : edges.map(e => ({ from: e.from_node, to: e.to_node }));
+  const direction = computeDirectionGroups(originNodeId, directionEdges);
+  lines.push(...buildDirectionLines(originNodeId, direction));
   if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
     lines.push('');
     lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
-    lines.push('- Keep excluded branches out of the column chain narrative and sections[].');
   }
-  const ctNodeIds = new Set<string>([originNodeId]);
-  for (const edge of edges) {
-    ctNodeIds.add(edge.hop_node);
-    ctNodeIds.add(edge.from_node);
-    ctNodeIds.add(edge.to_node);
-  }
-  const writtenCtNodes = new Set(nodeEdges
-    .filter(([from, to]) => ctNodeIds.has(from) && ctNodeIds.has(to))
-    .map(([, to]) => to));
-  // hop_node excludes redirected writer procs; writtenCtNodes excludes their writes_to targets.
-  const groups = computeFlowRoleGroups(
-    originNodeId,
-    edges.map(e => ({ from: e.from_node, to: e.to_node })),
-    new Set(edges.map(e => e.hop_node)),
-    writtenCtNodes,
-  );
+  // Same edge source as the direction lines and as BB: node edges carry every reached node, so a
+  // node with node edges and no column edge keeps its BB bucket. hop_node exclusion repairs the
+  // writes_to artifact of the column projection and applies only when no node edges exist.
+  const groups = computeFlowRoleGroups(originNodeId, directionEdges,
+    nodeEdges.length > 0 ? undefined : new Set(edges.map(e => e.hop_node)));
   lines.push('');
+  lines.push('## Flow-Role Highlights');
   lines.push('Structure present_result using this CT chain:');
-  lines.push('- summary: one sentence naming origin column → traced path → terminal source');
-  lines.push('- intro: anchor to the column chain — name start node, key writers/transforms, terminal source');
   lines.push('- sections[]: group by the answer, not by every hop. Use short final labels and link nodes needed for the answer, including passthrough tables when they are source/target/bridge nodes in the column chain.');
-  lines.push('- Keep passthrough or tangential nodes compact unless they carry, persist, or terminate the traced column.');
-  lines.push(...buildFlowRoleHighlightLines(groups));
-  lines.push('  — terminal source = the deepest data origin in this trace; can be a table without a detail slot');
+  lines.push('- Link every node in the chain above; a node that does not carry, persist or terminate the traced column earns one line naming what it does to the rows — join, filter, predicate, set operation — because it decides which rows the answer returns.');
+  // Gated on the same downstream bucket the direction lines above state: on a purely upstream trace
+  // there is nothing downstream to name, and an unconditional invitation gets answered with an
+  // object outside the trace.
+  if (direction.downstream.length > 0) {
+    lines.push('- The downstream nodes named above consume the traced column: give each one a line stating what changes there when it changes.');
+  }
+  lines.push('- terminal source = the furthest-upstream object this trace reached; it can be a table without a detail slot, and it is as far as this trace got — never call it the system of record.');
+  lines.push(...buildFlowRoleHighlightLines(groups, presentedNodeIds));
   return lines.join('\n');
 }
 
@@ -417,9 +560,14 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * Facts only: writers/readers are derived purely from {@link SmResult.edges} (`written by` = the
  * `from` ends of edges INTO the node; `read by` = the `to` ends of edges FROM it); type is read
  * from {@link SmResult.fullNodes}, action from `node_states`. The base set is `fullNodes`, which
- * `getResult` already restricts to reachable, non-pruned nodes and — in CT — to the column-flow
- * scope, so pruned nodes never appear here (belt-and-suspenders: an explicit `prune` action is
- * also filtered). Deterministic: nodes and neighbor lists sort by id, ids lowercased.
+ * `getResult` already restricts to reachable, non-pruned nodes in both modes, so pruned nodes never
+ * appear here (belt-and-suspenders: an explicit `prune` action is also filtered). A CT dependency
+ * that carries no value into the traced column is kept and unslotted, so it surfaces here and earns
+ * its caption. Deterministic: nodes and neighbor lists sort by id, ids lowercased.
+ *
+ * A qualifying node with no `node_states` entry was never dispositioned — scope reachability alone
+ * put it in the render — so it lists under its own heading with `notes[]` as the only surface;
+ * section-linking it would state it as answer evidence it never earned.
  *
  * @param result - Completed SM result: `fullNodes` the rendered kept set, `detail_slots` the
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
@@ -438,18 +586,139 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
     .sort((a, b) => a.id.localeCompare(b.id));
   if (qualifying.length === 0) return '';
 
-  const lines = qualifying.map(n => {
+  const renderLine = (n: { id: string; type: string }): string => {
     const descriptor = [n.type, actionById.get(n.id)].filter(Boolean).join(', ');
     const prefix = descriptor ? ` — ${descriptor}` : '';
     return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id))}`;
-  });
+  };
+  const dispositioned = qualifying.filter(n => actionById.has(n.id));
+  const undispositioned = qualifying.filter(n => !actionById.has(n.id));
 
   return [
-    'Kept passthrough nodes (engine flow facts). Self-check before calling `lineage_present_result`: every id listed below must appear in `sections[].node_ids`, `highlight_groups[].node_ids`, or `notes[].node_id` — an uncovered kept node is the same class of gap as an unaccounted column, and the only way to drop one from the view is a prune verdict. A value-carrying store, staging table, or bridge that has no detail slot still earns one grounded, uncolored `notes[].node_id` caption built from its writer/reader facts:',
-    ...lines,
+    'Kept passthrough nodes (engine flow facts) — the kept nodes with no detail slot. Each one is a paragraph in the section its writer or reader documents — what it holds for this flow, the predicate it is read or written under, and the row grain it lands at, read off that writer\'s and reader\'s captured DML — and carries a `sections[].node_ids`, `highlight_groups[].node_ids` or `notes[].node_id` entry:',
+    ...dispositioned.map(renderLine),
+    ...(undispositioned.length > 0
+      ? [
+        'In scope but never dispositioned — no hop analyzed, routed to, contracted through or pruned these, so `notes[]` alone is their surface, not an answer section or a highlight group:',
+        ...undispositioned.map(renderLine),
+      ]
+      : []),
   ].join('\n');
 }
 
+
+/**
+ * One captured artifact in a detail slot: a `$$ … $$` block, a fenced block, or an inline
+ * backticked span — matched left to right, so a delimiter nested inside an outer one is part of
+ * that outer artifact and never a second entry. Group order is the render order: math, fence,
+ * inline; whichever group matched names the form the hop captured.
+ */
+const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
+
+/** An identifier immediately followed by `(` — the lexical mark of a call, hence of a computed value. */
+const CALL_TOKEN = /\w\(/;
+
+/** A whole DML/DDL statement: it performs an action, whatever it calls along the way. */
+const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|create|alter|drop|declare|select|with|if|begin|end)\b/i;
+
+/** The opening word of a filter condition — it decides which rows survive, whatever it is nested in. */
+const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
+
+/**
+ * True when `text` carries at least one {@link CAPTURED_ARTIFACT} that counts as evidence rather
+ * than prose — the same lexical bound {@link buildCapturedFormulaFacts} enumerates for the answer,
+ * asked as a yes/no question instead of a list. A `$$ … $$` math block always qualifies; a fenced
+ * or inline span qualifies only under the same {@link CALL_TOKEN} / {@link PREDICATE_START} /
+ * {@link STATEMENT_START} filter, so "captured" means the same thing at submission time as it does
+ * at synthesis time — one governor, asked twice.
+ *
+ * @param text - One `sections[].text` body to test.
+ * @returns Whether the text contains a qualifying artifact.
+ */
+export function sectionTextHasCapturedArtifact(text: string): boolean {
+  const collapse = (s: string): string => s.split(/\s+/).filter(Boolean).join(' ');
+  const isEnumerable = (artifact: string): boolean =>
+    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
+  for (const match of text.matchAll(CAPTURED_ARTIFACT)) {
+    const [, math, fenced, inline] = match;
+    if (math !== undefined) return true;
+    if (fenced !== undefined) {
+      if (fenced.split('\n').some(line => isEnumerable(collapse(line)))) return true;
+      continue;
+    }
+    if (isEnumerable(collapse(inline ?? ''))) return true;
+  }
+  return false;
+}
+
+/**
+ * Enumerates the value computations and filter conditions the hops captured — `$$ … $$` blocks plus
+ * the SQL that computes a value or filters rows — each keyed by the node whose detail slot holds it,
+ * in the same self-check shape {@link buildPassthroughFlowFacts} uses for kept node ids.
+ *
+ * @remarks
+ * The carry rule already exists in prose ("never fields within a kept item", and "every backticked
+ * SQL predicate … must reappear … verbatim", `buildPresentationDetailContract`), but every OTHER
+ * mandatory-carry class at synthesis is enumerated as a checklist — kept node ids, undispositioned
+ * ids, the column chain, terminal-source candidates — while formulas and predicates reach the model
+ * only inside slot prose it must re-scan; this closes that gap the same way.
+ *
+ * A hop writes the same fact as `$$`, as a fenced line or as an inline span, so the delimiter it
+ * reached for cannot decide what carries; the content does, under one lexical bound. A fenced line
+ * or an inline span is enumerated when it computes a value or filters rows — it carries a
+ * {@link CALL_TOKEN} or opens with a {@link PREDICATE_START} keyword, and is not a whole
+ * {@link STATEMENT_START} statement. A fenced block is read line by line, because one body mixes
+ * both classes.
+ *
+ * Enumeration only: this states evidence the engine already holds, sorted by capture order and
+ * de-duplicated per node so the block is byte-stable across runs. Which blocks belong in the answer
+ * stays the model's judgement — nothing here rejects, rewrites or compares a payload.
+ *
+ * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
+ * @returns A markdown checklist, or an empty string when no hop captured a formula.
+ */
+function buildCapturedFormulaFacts(result: SmResult): string {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  // Whitespace-collapsed so an artifact written across lines and the same one written inline are
+  // one entry, not two — the de-duplication key and the rendered line share this form.
+  const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
+  const isEnumerable = (artifact: string): boolean =>
+    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
+  for (const slot of result.detail_slots) {
+    const nodeId = slot.nodeId.toLowerCase();
+    const push = (formula: string, rendered: string): void => {
+      const key = `${nodeId}\u0000${formula}`;
+      if (formula.length === 0 || seen.has(key)) return;
+      seen.add(key);
+      lines.push(`- ${nodeId} — ${rendered}`);
+    };
+    for (const section of slot.sections) {
+      for (const match of section.text.matchAll(CAPTURED_ARTIFACT)) {
+        const [, math, fenced, inline] = match;
+        if (math !== undefined) {
+          const formula = collapse(math);
+          push(formula, `$$ ${formula} $$`);
+          continue;
+        }
+        if (fenced !== undefined) {
+          for (const line of fenced.split('\n')) {
+            const formula = collapse(line);
+            if (isEnumerable(formula)) push(formula, `\`\`\` ${formula} \`\`\``);
+          }
+          continue;
+        }
+        const formula = collapse(inline);
+        if (isEnumerable(formula)) push(formula, `\`${formula}\``);
+      }
+    }
+  }
+  if (lines.length === 0) return '';
+  return [
+    'Captured formulas (hop evidence). Each block belongs in the `sections[].text` of the section that links its node — a node you keep and link keeps its formulas too:',
+    ...lines,
+  ].join('\n');
+}
 
 /**
  * The tool-result envelope delivered to synthesis when SM exploration completes — "the last tool
@@ -462,7 +731,8 @@ export function buildPassthroughFlowFacts(result: SmResult): string {
  * rendered flow-role block — the only place the model is told which nodes are terminal sources;
  * those are not reconstructable from the raw archive fields. The block is the CT column chain when
  * column edges exist, else the BB node-edge flow-role buckets — both via the shared
- * {@link computeFlowRoleGroups}. Off-trace nodes (no edges) are excluded by the scope filter. The
+ * {@link computeFlowRoleGroups}. A kept node with no column edge is absent from the flow-role
+ * buckets by construction, so it is never offered as a terminal-source candidate. The
  * reminder then also carries the {@link buildPassthroughFlowFacts} digest — grounded writer/reader
  * facts for kept nodes with no detail slot, which otherwise have no semantic content to document.
  */
@@ -472,7 +742,7 @@ interface SmCompletionEnvelope {
   readonly result: {
     readonly status: SmResult['status'];
     readonly originNodeId: string;
-    readonly scope: { readonly nodes: number; readonly edges: number };
+    readonly scope: { readonly nodes: number; readonly edges: number; readonly node_ids: readonly string[] };
     readonly suggested_sections: SmResult['suggested_sections'];
     readonly node_states: SmResult['node_states'];
     readonly detail_slots: SmResult['detail_slots'];
@@ -482,38 +752,17 @@ interface SmCompletionEnvelope {
 }
 
 /**
- * Runtime guard for {@link SmCompletionEnvelope} — the synthesis evidence surface handed to the
- * model. Validates the envelope STRUCTURE (the fields synthesis depends on) at the boundary; leaf
- * element shapes are permissive (value enums are already enforced at the submit boundary), so this
- * catches real drift — a renamed/removed `detail_slots`/`node_states`/`result` field — without
- * re-litigating per-leaf vocabulary. Enforced via {@link buildSmCompletionEnvelope}.
- */
-const SmCompletionEnvelopeSchema = z.object({
-  ok: z.literal(true),
-  done: z.literal(true),
-  result: z.object({
-    status: z.literal('complete'),
-    originNodeId: z.string(),
-    scope: z.object({ nodes: z.number(), edges: z.number() }).strict(),
-    suggested_sections: z.array(z.object({ label: z.string(), node_ids: z.array(z.string()) }).passthrough()).optional(),
-    node_states: z.array(z.object({ nodeId: z.string(), action: z.string() }).passthrough()),
-    detail_slots: z.array(z.object({
-      nodeId: z.string(), schema: z.string(), name: z.string(), type: z.string(),
-      sections: z.array(z.object({ angle: z.string(), text: z.string() }).passthrough()),
-      summary: z.string(),
-    }).passthrough()),
-  }).strict(),
-  deferred_questions: z.array(z.object({ nodeId: z.string(), question: z.string() }).passthrough()),
-  synthesis_reminder: z.string(),
-}).strict();
-
-/**
  * Assembles the {@link SmCompletionEnvelope} from a completed engine result.
  *
  * @remarks
  * The CT chain block ({@link buildCtSynthesisBlock}) is appended only when column edges were recorded;
- * it carries the terminal-source facts CT synthesis depends on. Off-trace nodes are excluded upstream
- * by the CT scope filter; `ctPrunedNodeIds` lists focus nodes pruned via `verdict=prune` in CT.
+ * it carries the terminal-source facts CT synthesis depends on. `ctPrunedNodeIds` lists the focus
+ * nodes pruned via `verdict=prune` in CT.
+ *
+ * `result.fullNodes` is the render bound and therefore the id set `present_result` accepts: it is
+ * stated as `scope.node_ids`, and `node_states[]` plus the enumerated highlight candidates are
+ * filtered to it. An id the render dropped or the depth border cut still reaches the model through
+ * the recorded evidence (the column chain, the detail slots) — in prose, never in a `node_ids` field.
  *
  * @param result - The completed `engine.getResult()` archive (full `detail_slots` across all hops).
  * @param userQuestion - The verbatim mission question anchoring the synthesis reminder.
@@ -524,28 +773,30 @@ export function buildSmCompletionEnvelope(
   userQuestion: string,
   deferred: ReadonlyArray<DeferredQuestion>,
 ): SmCompletionEnvelope {
+  const presentedNodeIds = result.fullNodes.map(node => node.id);
+  const presented = new Set(presentedNodeIds);
   const flowBlock = result.columnAspect && result.columnAspect.edges.length > 0
-    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.ctPrunedNodeIds, result.edges)
+    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.ctPrunedNodeIds, result.edges, presented)
     : result.edges.length > 0
-      ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges)
+      ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
       : '';
   const passthroughFacts = buildPassthroughFlowFacts(result);
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
+  const formulaFacts = buildCapturedFormulaFacts(result);
+  const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
   const envelope: SmCompletionEnvelope = {
     ok: true,
     done: true,
     result: {
       status: result.status,
       originNodeId: result.originNodeId,
-      scope: { nodes: result.fullNodes.length, edges: result.edges.length },
+      scope: { nodes: presentedNodeIds.length, edges: result.edges.length, node_ids: presentedNodeIds },
       suggested_sections: result.suggested_sections,
-      node_states: result.node_states,
+      node_states: result.node_states.filter(state => presented.has(state.nodeId)),
       detail_slots: result.detail_slots,
     },
     deferred_questions: deferred,
-    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock,
+    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock,
   };
-  // Hard-fail on shape drift: surface an upstream bug loudly, not as silently-degraded model input.
-  SmCompletionEnvelopeSchema.parse(envelope);
   return envelope;
 }

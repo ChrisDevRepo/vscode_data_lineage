@@ -92,7 +92,7 @@ function configuredSecrets(): string[] {
 /** Returns a stable refusal reason without returning or serializing the sensitive value. */
 export function sensitiveTraceReason(value: unknown): 'forbidden_key' | 'secret_value' | undefined {
   const secrets = configuredSecrets();
-  const seen = new WeakSet<object>();
+  const seen = new WeakSet();
   const visit = (item: unknown): 'forbidden_key' | 'secret_value' | undefined => {
     if (typeof item === 'string') {
       return looksLikeSecretValue(item) || secrets.some(secret => item.includes(secret)) ? 'secret_value' : undefined;

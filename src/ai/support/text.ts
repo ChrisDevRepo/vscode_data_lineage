@@ -26,6 +26,23 @@ export interface ProviderErrorDiagnostic extends ProviderErrorCauseDiagnostic {
 }
 
 /**
+ * Escapes text for a dynamic prompt slot so it cannot open or close a prompt delimiter.
+ *
+ * @remarks
+ * Every value that reaches a system prompt from outside the prompt builder — the user question,
+ * mission brief, screen phrase — passes through here before interpolation.
+ *
+ * @param value - Untrusted text.
+ * @returns The text with `&`, `<` and `>` entity-escaped.
+ */
+export function escapePromptText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
  * Truncate `text` to `max` characters with a trailing ellipsis.
  *
  * @param text - The string to shorten (status labels, log previews).
@@ -221,53 +238,21 @@ function safeDiagnosticToken(value: string, fallback: string): string {
  * @remarks
  * `#focus-node:` links only resolve inside the graph webview's own React tree (they zoom/focus a
  * node on the canvas); a chat surface — the native Copilot panel — has no such target, so the link
- * markup would render as dead or broken-looking links.
+ * markup would render as dead or broken-looking links. The engine's `### Objects` transport line
+ * (a footnote in the webview renderer) is demoted to a small italic line so chat never renders a
+ * heading-scale object list.
  *
  * @param description - The full assembled markdown from `AiSession.lastPresentResultDescription`.
- * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label`.
+ * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label` and
+ *   the Objects footnote rendered as `*Objects: …*`.
  */
 export function sanitizeDescriptionForChat(description: string): string {
   return description
     .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => {
       const cleaned = tail.replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
-      return `### Objects ${cleaned}`;
+      return `*Objects: ${cleaned}*`;
     })
     .replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
-}
-
-/**
- * A complete verbatim span — content that must survive byte-identical: a fenced code block
- * (three or more backticks, closed by an equal run), a `~~~` fence, a `$$...$$` math block, or an
- * inline code span (a backtick run closed by an equal run on the same line).
- */
-const VERBATIM_SPAN_PATTERN = /(`{3,})[\s\S]*?\1|~~~[\s\S]*?~~~|\$\$[\s\S]*?\$\$|(`+)(?!`)[^`\n]*\2(?!`)/g;
-
-/**
- * Unescapes literal `\n` sequences a model double-escapes into a JSON tool-call string argument
- * (e.g. `\\n` survives `JSON.parse` as the two literal characters `\` + `n` instead of a real
- * newline), but only in prose — never inside a fenced code block, an inline code span, or a
- * `$$...$$` math block.
- *
- * @remarks
- * A KaTeX macro such as `\not`, `\neq`, or `\nabla` also starts with a literal backslash followed
- * by `n`; unescaping those unconditionally splits the macro into a real newline plus the trailing
- * letters (`\not` -> newline + `ot`) — the exact corruption this guards against. Inline code spans
- * are protected with the same equal-backtick-run closure rule `validateMarkdownFormat`
- * (`src/ai/tools/presentResult.ts`) enforces; an unclosed/malformed span is left as ordinary
- * prose, since that content is rejected by that validator regardless.
- *
- * @param text - Raw AI-submitted prose (intro/closing/summary/section text).
- * @returns The same text with literal `\n` in prose turned into a real newline; verbatim spans
- *   pass through unchanged.
- */
-export function unescapeProseNewlines(text: string): string {
-  let out = '';
-  let last = 0;
-  for (const match of text.matchAll(VERBATIM_SPAN_PATTERN)) {
-    out += text.slice(last, match.index).replace(/\\n/g, '\n') + match[0];
-    last = match.index + match[0].length;
-  }
-  return out + text.slice(last).replace(/\\n/g, '\n');
 }
 
 /**

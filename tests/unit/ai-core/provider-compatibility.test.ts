@@ -5,6 +5,7 @@ import { TurnEventSink, type TurnEvent } from '../../../src/ai/runtime/turnEvent
 import { AiSession } from '../../../src/ai/session/session';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
+import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { StructuredOutputError } from '../../../src/ai/providers/structuredOutput';
 import { z } from 'zod';
 
@@ -81,6 +82,7 @@ function emptyStructuredModel(): ModelPort {
   return {
     id: 'empty-structured',
     identity: { id: 'empty-structured', name: 'Empty Structured', vendor: 'test', family: 'test', version: '1' },
+    budget: DEFAULT_TURN_TOKEN_BUDGET,
     get modelCalls() { return calls; },
     async generateStructured<T>(): Promise<T> {
       calls += 1;
@@ -97,6 +99,7 @@ function evidenceRepairModel(): ModelPort {
   return {
     id: 'evidence-repair',
     identity: { id: 'evidence-repair', name: 'Evidence Repair', vendor: 'test', family: 'test', version: '1' },
+    budget: DEFAULT_TURN_TOKEN_BUDGET,
     get modelCalls() { return calls; },
     async generateStructured<T>(): Promise<T> {
       calls += 1;
@@ -148,5 +151,5 @@ function oneNodeModel(): DatabaseModel {
     nodes: [node], edges: [],
     schemas: [{ name: 'dbo', nodeCount: 1, types: { table: 1, view: 0, procedure: 0, function: 0, external: 0 } }],
     catalog: {}, neighborIndex: { [node.id]: { in: [], out: [] } }, dbPlatform: 'SQL Server',
-  } as DatabaseModel;
+  };
 }

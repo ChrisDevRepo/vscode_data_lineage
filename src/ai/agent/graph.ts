@@ -1,4 +1,4 @@
-import { END, START, StateGraph, interrupt, type BaseCheckpointSaver } from '@langchain/langgraph';
+import { END, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
 import {
   modelAssistantMessage,
   modelUserMessage,
@@ -13,13 +13,13 @@ import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
 import { PendingGateSchema, type PendingGate } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
-import type { SmState } from '../sm/smTypes';
 import { InvalidEngineCheckpointError } from '../sm/navigationSnapshotSchema';
 import { activeModeOf, type LmStage } from '../tools/toolPolicy';
 import {
   StartExplorationFreshProviderInputSchema,
   StartExplorationRefineProviderInputSchema,
   StartExplorationSupplementProviderInputSchema,
+  SubmitFindingsModelSchema,
 } from '../tools/toolSchemas';
 import {
   buildActiveContinuationAnchor,
@@ -33,7 +33,7 @@ import {
   tryBuildDeterministicContextAnswer,
   type StagePromptContext,
 } from '../prompting/hostPrompts';
-import { buildDiscoverySummaryComposePrompt, PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
+import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
 import { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
 import { buildPendingLeadMessages } from '../support/pendingLeadMessages';
 import { buildChatAnswer } from '../support/chatAnswer';
@@ -42,10 +42,10 @@ import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
-import { captureDiscoveryWalkFromObservations } from './discoveryCapture';
+import { captureDiscoveryWalkFromObservations, captureRejectedScopeOffer } from './discoveryCapture';
 import { discoveryPreviewNarrative } from '../tools/presentResult';
-import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, type ProviderErrorDiagnostic } from '../support/text';
+import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
+import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, trunc as truncStatusLabel, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -58,14 +58,15 @@ import { StructuredOutputError } from '../providers/structuredOutput';
 import {
   compileInstructionPlan,
   executeInstructionPlan,
+  explorationFacts,
   type ConversePlanDraft,
   type ConverseInstructionPlan,
   type InstructionPhase,
-  type InstructionPlanFacts,
 } from './instructionPlan';
 import {
   executeToolAttempt,
   initialToolPhaseAttemptState,
+  MAX_ABANDONED_HOPS_PER_RUN,
   MAX_TOOL_PROVIDER_CALLS,
   MAX_TOOL_SEMANTIC_FAILURES,
   recordToolAttempt,
@@ -126,58 +127,6 @@ const HOLD_GATE_NOTICE =
 
 /** Absolute floor for {@link turnRecursionLimit} so short-`maxRounds` turns keep generous headroom. */
 const RECURSION_LIMIT_FLOOR = 50;
-
-/** Validated boundary for the optional one-shot discovery-to-exploration memo. */
-// Nonblank only — model-authored content is never length-rejected (R006). Brevity (2–4 sentences)
-// is a prompt target, not a hard cap; the memo's length legitimately scales with the analysis it
-// summarizes.
-const DiscoverySummarySchema = z.string().trim().min(1);
-
-// One mechanical re-ask on a rejected compose reply (empty output or over the char cap) — mirrors
-// the reject-with-hint self-correction convention used at every other Zod boundary in this
-// pipeline. Not a policy cap: a single retry of a one-shot, no-tool text round.
-const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
-
-/**
- * @remarks
- * Compose is otherwise the only model call in the pipeline with no system key on the wire — the
- * memo it produces rides every later hop's stable prefix as established fact, so grounding and
- * formatting instructions belong at the system layer like every other stage.
- */
-export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
-  'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops — no user reads it.',
-  'Every clause must come from the supplied <original_question> and <discovery_answer>, because later hops treat this memo as established fact.',
-  'Plain prose only: no headings, bullets, or diagrams.',
-].join('\n');
-
-/** Provenance shared by both BB and CT members of an exploration-scoped facts value. */
-interface ExplorationFactsShared {
-  readonly classification?: ClassificationValue;
-  readonly templateKeys?: readonly string[];
-  readonly memorySections?: readonly string[];
-}
-
-/**
- * Builds the mode-correct {@link InstructionPlanFacts} union member for an exploration-scoped call,
- * so no call site restates the `analysisMode === 'ct' ? {…targetColumns} : {…}` branch.
- *
- * @param analysisMode - Approved mode for this call (from the engine or the gate decision).
- * @param targetColumns - Locked CT targets; required non-empty when `analysisMode` is `ct`, ignored for BB.
- * @param shared - Classification / YAML / memory provenance common to both modes.
- * @returns The discriminated facts member the compiler type-checks against the stage.
- */
-function explorationFacts(
-  analysisMode: 'bb' | 'ct',
-  targetColumns: readonly string[] | undefined,
-  shared: ExplorationFactsShared,
-): InstructionPlanFacts {
-  if (analysisMode === 'ct') {
-    // CT locks its targets at engine init; a missing set here is engine-state drift, not model input.
-    if (!targetColumns?.length) throw new Error('InstructionPlan: CT requires at least one target column.');
-    return { analysisMode: 'ct', targetColumns: targetColumns as readonly [string, ...string[]], ...shared };
-  }
-  return { analysisMode: 'bb', ...shared };
-}
 
 /**
  * LangGraph `recursionLimit` for one turn, derived from the graph shape and the provider-call cap so
@@ -246,17 +195,6 @@ export interface AgentGraphDeps {
    * dropped instead of corrupting the session a newer turn owns.
    */
   readonly turnEpoch: number;
-  /**
-   * Checkpointer backing the consent interrupt's pause/resume.
-   *
-   * @remarks
-   * Always undefined in production — no construction site supplies one — so `AgentRuntime` falls
-   * back to a fresh in-memory saver per turn. Pause/resume therefore works only across a single
-   * turn's consent interrupt, in-process; nothing is durable and nothing survives a host restart.
-   * The parameter exists so a durable saver *could* be injected, but cross-restart resume would
-   * additionally require serialized gate state (out of scope).
-   */
-  readonly checkpointer?: BaseCheckpointSaver;
   /** Optional logger for active-loop diagnostics (host wires it to the AI channel); off when undefined. */
   readonly logger?: Logger;
   /**
@@ -282,7 +220,7 @@ export interface AgentGraphDeps {
 export function buildAgentGraph(deps: AgentGraphDeps) {
   const maxRounds = deps.maxRounds ?? DEFAULT_MAX_ROUNDS;
   const getCtx = (state: AgentStateType): StagePromptContext =>
-    state.ctx ?? deriveStagePromptContext(deps.getSession().model, deps.getSession().filter);
+    state.ctx ?? deriveStagePromptContext(deps.getSession().model, deps.getSession().filter, deps.getSession().uiState);
 
   // `buildDiscoveryInstruction` is documented byte-identical for the whole discovery phase turn
   // (session + ctx are both fixed for this graph instance — one `buildAgentGraph` call is one
@@ -337,7 +275,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    */
   const failStopped = (
     stopped: { readonly reason: string; readonly message: string; readonly errorCode?: AgentErrorCode },
-  ): AgentStateUpdate => ({ ...fail(stopped.message, stopped.errorCode), activeStop: stopped.reason });
+    attempt: Pick<ToolPhaseAttemptState, 'phase' | 'providerCalls' | 'semanticFailures' | 'rejections'>,
+  ): AgentStateUpdate => {
+    const last = attempt.rejections[attempt.rejections.length - 1];
+    const lastPart = last
+      ? ` last=${last.toolName}:${last.code} reason=${trunc(sanitizeForLog(last.reason), LOG_TRUNC_REJECTION)}`
+      : '';
+    deps.logger?.error(
+      stopped.message,
+      `phase=${attempt.phase} reason=${stopped.reason} providerCalls=${attempt.providerCalls} semanticFailures=${attempt.semanticFailures}${lastPart}`,
+    );
+    return { ...fail(stopped.message, stopped.errorCode), activeStop: stopped.reason };
+  };
 
   /**
    * The one provider-failure exit every phase funnels through.
@@ -384,7 +333,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     res: ToolAttemptResult,
     phaseLabel: string,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res);
+    const nextAttempt = recordToolAttempt(priorAttempt, res, deps.model.budget, message => deps.logger?.debug(message));
     deps.logger?.debug(
       `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`,
     );
@@ -409,7 +358,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, subject, incompleteSuffix);
     if (stopped) {
       onStop?.();
-      return { ...failStopped(stopped), toolAttempt: nextAttempt };
+      return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     }
     return null;
   };
@@ -454,11 +403,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // repair-turn present_result prevalidation reject can be exempted from the semantic breaker.
     presentResultRepairDraftHeld: deps.getSession().presentResultRepairDraft.hasRepairableDraft(),
     // Live resolver (read fresh at each retry, never copied into frame/context state): surfaces the
-    // held draft's own sections/highlight_groups back to a repair-turn model so it can send a scoped
-    // patch instead of blindly re-authoring the full envelope from memory.
+    // held draft's own sections/notes/highlight_groups back to a repair-turn model so it can send a
+    // scoped patch instead of blindly re-authoring the full envelope from memory.
     presentResultRepairDraftContext: () => {
       const held = deps.getSession().presentResultRepairDraft.get();
-      return held ? { sections: held.sections, highlight_groups: held.highlight_groups } : null;
+      return held ? { sections: held.sections, notes: held.notes, highlight_groups: held.highlight_groups } : null;
     },
   });
 
@@ -538,7 +487,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   const detectEntryNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
     const sess = deps.getSession();
-    const ctx = deriveStagePromptContext(sess.model, sess.filter);
+    const ctx = deriveStagePromptContext(sess.model, sess.filter, sess.uiState);
     deps.sink.status('scoping', 'Scoping...');
     // Depth is entirely AI-owned through the lineage_start_exploration tool payload; the entry
     // detector does not extract it upfront.
@@ -550,27 +499,35 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     // Slash commands are the user STATING intent (command parsing, not language guessing) — the
     // only deterministic route. All free-prose intent goes to the structured detector below
-    // (engine-has-no-intent-authority rule): no regex over prose ever decides a route.
+    // (engine-has-no-intent-authority rule): no regex over prose decides a route, with one stated
+    // exception — the host-owned aggregate facts fast path in tryBuildDeterministicContextAnswer
+    // answers a platform/schema/count question from the snapshot without a model call. It matches
+    // English phrasing only; any other phrasing takes the detector.
     const slash = detectSlashRoute(state.prompt);
     const held = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration
       ? { gate: sess.phase.gate, revision: sess.pendingExploration.revision }
       : null;
+    // Deterministic re-entries the host owns: the SM-offer pill's seeded trace envelope and the
+    // post-discovery preview action, both matched on the host's own marker — no entry-detector model call.
+    // A follow-up pill stays clickable in the transcript while a later proposal is held, so it
+    // reaches this node under the same held state a slash command does.
+    const marker: 'trace' | 'preview' | null = state.prompt.startsWith(TRACE_REQUEST_MARKER)
+      ? 'trace'
+      : state.prompt.startsWith(PREVIEW_REQUEST_MARKER) ? 'preview' : null;
+    // A stated command and a host-owned pill both outrank a held proposal: drop the hold so the
+    // fresh route is not mistaken for a refine by the start_exploration handler's `isRefining`
+    // check, which would judge the new start against the abandoned proposal's revision.
+    if (held && (slash || marker)) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
     if (slash) {
-      // A stated command outranks a held proposal: drop the hold so the fresh route is not
-      // mistaken for a refine by the start_exploration handler's `isRefining` check.
-      if (held) observeWrite(sess.cancelPendingExploration(deps.turnEpoch));
       return { ctx, messages, entry: slash.entry, executionTrigger: slash.trigger, targetColumns: slash.targetColumns, phase: 'detect_entry' };
     }
-
-    // Deterministic deeper-analysis re-entry: the host seeds this prompt (our own marker) when the
-    // user clicks the SM-offer pill — route straight to SM, no entry-detector model call.
-    if (state.prompt.startsWith(TRACE_REQUEST_MARKER)) {
+    if (marker === 'trace') {
       return { ctx, messages, entry: 'discovery', executionTrigger: 'run_trace', targetColumns: null, phase: 'detect_entry' };
     }
-
-    // The explicit post-discovery preview action is host-owned, so it remains lightweight even
-    // though equivalent free-text visual intent restores origin/main's approval-gated SM route.
-    if (state.prompt.startsWith(PREVIEW_REQUEST_MARKER)) {
+    // The explicit post-discovery preview action carries its own mechanical execution trigger
+    // (preview_button); equivalent free-text visual intent carries none and runs the ordinary
+    // discovery loop instead (D-073) — render is an optional terminal step, never a route to SM.
+    if (marker === 'preview') {
       return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, phase: 'detect_entry' };
     }
 
@@ -595,7 +552,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (contextAnswer) {
       const assistantMessage = modelAssistantMessage(contextAnswer);
       deps.sink.stream(contextAnswer);
-      sess.appendDiscoveryTurn([
+      sess.appendDiscoveryTurn(deps.model.budget, [
         modelUserMessage(state.prompt),
         assistantMessage,
       ]);
@@ -618,10 +575,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (remainingProviderCalls < 1) {
       const exhaustedAttempt = priorAttempt.stopReason ? priorAttempt : recordToolAttempt(priorAttempt, {
         stop: 'continue', providerCalls: 0, semanticFailures: 0, observations: [], rejections: [],
-      });
+      }, deps.model.budget);
       const stopped = attemptStop(exhaustedAttempt, undefined, 'Entry detection', 'without a valid route');
       if (!stopped) throw new Error('Entry-detection graph-attempt guard failed to select a stop reason.');
-      return { ...failStopped(stopped), ctx, messages, toolAttempt: exhaustedAttempt };
+      return { ...failStopped(stopped, exhaustedAttempt), ctx, messages, toolAttempt: exhaustedAttempt };
     }
     // The structured entry-detector runs through executeInstructionPlan (generateStructured), not
     // executeToolAttempt, so graph-owned semantic repair remains explicit in this node.
@@ -629,7 +586,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? state.messages
       : [modelUserMessage(state.prompt)];
     const detectorMessages = priorAttempt.providerCalls > 0
-      ? [...base, modelUserMessage(renderToolAttemptContext(priorAttempt))]
+      ? [...base, modelUserMessage(renderToolAttemptContext(priorAttempt, deps.model.budget))]
       : base;
     const callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
@@ -662,7 +619,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           reason: error.reason,
           hint: 'Return exactly one object matching the entry-detection schema.',
         }],
-      });
+      }, deps.model.budget, message => deps.logger?.debug(message));
       deps.logger?.debug(
         `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} stop=${nextAttempt.stopReason ?? 'continue'}`,
       );
@@ -676,13 +633,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
               ...stopped,
               message: 'The selected model/provider returned empty arguments for a required tool call. Choose a model/provider with compatible JSON tool calling.',
               errorCode: 'incompatible_tool_call_format',
-            }),
+            }, nextAttempt),
             ctx,
             messages,
             toolAttempt: nextAttempt,
           };
         }
-        return { ...failStopped(stopped), ctx, messages, toolAttempt: nextAttempt };
+        return { ...failStopped(stopped, nextAttempt), ctx, messages, toolAttempt: nextAttempt };
       }
       return { ctx, messages, toolAttempt: nextAttempt, phase: 'detect_entry' };
     }
@@ -714,7 +671,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messages,
       system: discoveryInstruction.system,
       detectGate: detectGateFromToolResult,
-      detectReroute: detectOverBudgetFromResult,
+      // Oversized `get_scope_bundle` stays on this path: the envelope is an observation the model
+      // summarizes. `/trace` and column-trace still enter SM via entryRouting, not this overflow.
+      onToolResult: (toolName, input, _isError, resultText) => {
+        const seed = captureRejectedScopeOffer(toolName, input, resultText);
+        if (seed) {
+          deps.getSession().seedSmOfferFromRejectedOrigin(seed.origin, seed.walkCount, state.prompt, '');
+        }
+      },
       requiresToolEvidence: priorAttempt.observations.length === 0,
       proseGate: 'buffer-until-tool',
     }, ['Discovery failed', 'Discovery', 'without an answer']);
@@ -723,11 +687,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') {
       return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     }
-    if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'discover' };
     if (res.stop !== 'final') return { ...fail('Discovery ended without an accepted answer.'), toolAttempt: nextAttempt };
 
-    // A multi-object discovery walk enables the deeper-analysis suggestion.
+    // A multi-object discovery walk — or an oversized scope that stayed in chat — enables the SM-offer pill.
     const sess = deps.getSession();
     const scope = sess.discoveryScopeArtifact;
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
@@ -736,11 +699,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       sess.recordDiscovery(scope.origin, scope.nodeIds.length, state.prompt, res.text);
     } else if (walk) {
       sess.recordDiscovery(walk.origin, walk.walkCount, state.prompt, walk.answer);
+    } else if (sess.lastDiscoveryOrigin) {
+      sess.recordDiscovery(sess.lastDiscoveryOrigin, Math.max(sess.lastDiscoveryWalkCount, 2), state.prompt, res.text);
     }
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
       : [];
-    sess.appendDiscoveryTurn([
+    sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
     ], nextAttempt.observations);
@@ -794,7 +759,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const confirmation = 'Preview shown in the graph.';
     deps.sink.stream(`\n\n${confirmation}`);
     const assistantMessage = [modelAssistantMessage(confirmation)];
-    sess.appendDiscoveryTurn([
+    sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
     ], nextAttempt.observations);
@@ -831,7 +796,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     }
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration entry', 'without reaching the consent gate');
-    if (stopped) return { ...failStopped(stopped), toolAttempt: nextAttempt };
+    if (stopped) return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     if (res.stop !== 'continue') return fail('Exploration did not reach the consent gate.');
     return { toolAttempt: nextAttempt, phase: 'sm_entry' };
   };
@@ -870,7 +835,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     const refine = state.gateDecision.refine;
     deps.sink.status('scoping', 'Refining scope...');
-    const scopeMd = renderScopeSummaryMd(proposal.summary);
+    const scopeMd = renderScopeSummaryMd(proposal.summary, proposal.revision);
     const effectiveMode = refine.analysisMode ?? proposal.init.analysisMode ?? 'bb';
     const effectiveTargets = effectiveMode === 'ct'
       ? (refine.targetColumns ?? proposal.init.targetColumns ?? undefined)
@@ -925,6 +890,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const expectedRevision = state.gate.proposalRevision;
     if (!expectedRevision) return fail('Approved gate is missing its exploration proposal revision.');
     if (!sess.model || !sess.graph) return fail('Approved exploration cannot start without a loaded model and graph.');
+    // Captured before activation, which clears `pendingExploration` on success.
+    const cachedDiscoverySummary = sess.pendingExploration?.discoverySummary;
     const engineLog = toEngineLog(deps.logger);
     const activation = sess.activatePendingExploration(expectedRevision, deps.turnEpoch, (proposal) => {
       const candidate = new NavigationEngine(
@@ -951,17 +918,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const engine = activation.engine as NavigationEngine;
     applyGateClasses(state.gate, engine);
-    // Post-approval discovery-summary memo: composes the user's semantic intent into the third
-    // immutable stable-prefix field (<discovery_summary>) so it rides every hop + synthesis.
-    try {
-      await composeDiscoverySummary(deps, sess, engine);
-    } catch {
-      // composeDiscoverySummary re-throws only when deps.signal is aborted; surface as clean cancel.
-      sess.resetExploration();
-      return { outcome: 'cancelled', phase: 'done' };
-    }
+    // The memo was composed and reviewed at proposal time, never here — reuse verbatim.
+    if (cachedDiscoverySummary) engine.setDiscoverySummary(cachedDiscoverySummary);
     return {
-      messages: [modelUserMessage('Gate approved. Please proceed with the hop-by-hop analysis.')],
+      // The first hop is blinkered like every later one: the replayed participant history and the
+      // entry/gate exchange are dropped here, and hop 1 starts from the same continuation anchor
+      // that every committed hop reseeds (see the per-hop wipe in activeWorkerNode).
+      messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
       engineSnapshot: engine.toJSON(),
       phase: 'active_coordinator',
     };
@@ -1017,7 +980,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
 
     // Bounded backstop (the user's "no endless loop"): on the global step cap, STOP exploring and
-    // synthesise what we have — never self-error, never loop. getResult() assembles from the archive
+    // synthesise whatever has been gathered — never self-error, never loop. getResult() assembles from the archive
     // even when the engine is incomplete (partial coverage), so the user always gets a result.
     if (state.activeHopCount >= maxRounds) {
       return advanceToSynthesis(sess, engine);
@@ -1064,12 +1027,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const isCtMode = !!engine.columnAspect;
     const systemInstruction = getActiveInstructionCached(state, sess, getCtx(state), isCtMode, focusId);
 
-    // Status-only: emit the hop-progress counter (Hop X/Y). The worker buffers planning prose, so no
-    // worker chatter reaches the chat — only synthesis streams the single final answer. Y
-    // (`hopProgress.total`) shrinks as bodied nodes are pruned, so the denominator reflects the
-    // reducing graph. The PER-HOP prune delta (cumulative now − cumulative at the previous hop's start)
-    // is surfaced next to the updated Y so a drop in "Hop X/Y" is explained (e.g. "−2 pruned"). Show the
-    // bare object name, not the raw `[schema].[id]`, to match main's chat.
+    // Status-only: emit the hop-progress counter (Hop X/Y) here, and the prior hop's committed digest
+    // once it lands below. The worker still buffers planning prose, so no worker chatter reaches the
+    // chat — only the model's own already-committed `summary` is ever echoed, and only through the
+    // transient progress channel (never persisted into `ChatResponseTurn.response`, so it cannot be
+    // replayed back to the model via chat history on a later turn). Y (`hopProgress.total`) shrinks as
+    // bodied nodes are pruned, so the denominator reflects the reducing graph. The PER-HOP prune delta
+    // (cumulative now − cumulative at the previous hop's start) is surfaced next to the updated Y so a
+    // drop in "Hop X/Y" is explained (e.g. "−2 pruned"). Show the bare object name, not the raw
+    // `[schema].[id]`, to match main's chat.
     const progress = engine.hopProgress;
     const focusLabel = focusId.split('.').pop()?.replace(/[[\]]/g, '') ?? focusId;
     // Per-hop graph deltas from the previous hop's submit, shown so the changing "Hop X/Y" is explained:
@@ -1093,8 +1059,20 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     // generation. Read observations and compact rejections are projected into the next invocation;
     // provider-native assistant/tool messages are never retained or replayed.
     let submitted = false;
+    // Boxed (not a plain `let`) so the closure assignment below is visible at the read site — a bare
+    // `let` reassigned only inside `onToolResult` narrows to `never` there under TS's control-flow
+    // analysis. Captured only for the post-commit progress echo below — never stored past this hop.
+    const committedFinding: { value: { summary: string; verdict: z.infer<typeof SubmitFindingsModelSchema>['verdict'] } | null } = { value: null };
     const priorAttempt = attemptStateFor(state, 'active');
     const inputMessages = [...state.messages, hopMessage];
+
+    // The classification filter is the one drop in the prompt chain that is otherwise unrecorded:
+    // an excluded capture key means the model was never asked for that angle at all, which is
+    // indistinguishable downstream from having been asked and found nothing.
+    logClassificationGating(deps, 'active', classification, [
+      ...systemInstruction.classificationGatedKeys,
+      ...hopInstruction.classificationGatedKeys,
+    ]);
 
     const activeStage = { kind: 'active', mode: activeModeOf(isCtMode) } as const;
     const res = await withLmStage(activeStage, () => runToolAttempt(compileInstructionPlan({
@@ -1118,8 +1096,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       proseGate: 'buffer-until-tool',
       // A valid submit commits the hop atomically; rejected submits leave it open for a graph retry.
       isPhaseComplete: () => submitted,
-      onToolResult: (toolName, _input, isError) => {
-        if (toolName === 'lineage_submit_findings' && !isError) submitted = true;
+      onToolResult: (toolName, input, isError) => {
+        if (toolName === 'lineage_submit_findings' && !isError) {
+          submitted = true;
+          const finding = input as z.infer<typeof SubmitFindingsModelSchema>;
+          committedFinding.value = { summary: finding.summary, verdict: finding.verdict };
+        }
       },
     }), priorAttempt));
 
@@ -1157,6 +1139,33 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (deps.signal?.aborted) return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
     const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration active hop', 'without submitting findings');
     if (stopped) {
+      // A repeated semantic failure abandons THAT hop and continues the agenda — it does not end
+      // the run — as long as the run-level abandon budget is not exhausted and the engine accepts
+      // dropping this one focus (structural refusals like `prune_origin_forbidden` fall through to
+      // salvage below, same as any other stop this loop cannot recover from).
+      if (stopped.reason === 'semantic_failures' && countAbandonedHops(engine) < MAX_ABANDONED_HOPS_PER_RUN) {
+        if (tryAbandonStuckFocus(engine, focusId, stopped.reason)) {
+          const abandonedCount = countAbandonedHops(engine);
+          deps.logger?.debug(
+            `[AI] [Abandon] phase=active focus=${focusId} reason=${stopped.reason}`
+            + ` abandoned=${abandonedCount}/${MAX_ABANDONED_HOPS_PER_RUN} — exploration continues`,
+          );
+          deps.sink.status('scoping', `_⛔ ${focusLabel} skipped — repeated ${stopped.reason}, exploration continues_`);
+          const hop = safeHopCount(engine);
+          observeWrite(sess.recordMemoryWipeEvent(deps.turnEpoch, {
+            kind: 'sliding',
+            trigger: 'abandoned_hop',
+            hop,
+            messagesBefore: state.messages.length,
+          }));
+          return {
+            engineSnapshot: engine.toJSON(),
+            messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
+            toolAttempt: null,
+            phase: 'active_coordinator',
+          };
+        }
+      }
       if (shouldSalvageActiveStop(stopped.reason, state.activeHopCount)) {
         return salvageSubmittedHops(stopped.reason);
       }
@@ -1187,6 +1196,20 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messagesBefore: state.messages.length,
     }));
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
+    // Post-commit thinking line: the model's own one-line digest for the node just finished, hanging
+    // under the "Hop X/Y — analysing <focus>" counter emitted above. The two lines differ by role,
+    // not by an ornament: the counter is the status progress, the digest is the thinking info, so it
+    // carries no arrow glyph — italics alone set it apart. The progress channel renders markdown —
+    // VS Code wraps the plain string as an IMarkdownString (`MarkdownString.from`) and
+    // `ChatProgressContentPart` hands it to the markdown renderer — so `_…_` italicises, on top of
+    // the dimmed description foreground progress already uses. Codicons are unavailable here for the
+    // same reason — a plain string carries no `supportThemeIcons`, so `$(…)` would print literally.
+    // `⛔ pruned` survives because the verdict is genuinely new information. Skipped for a bare prune
+    // with nothing captured (`committedFinding.summary` empty) — nothing to show.
+    if (committedFinding.value && committedFinding.value.summary.trim()) {
+      const prunedMark = committedFinding.value.verdict === 'prune' ? '⛔ pruned — ' : '';
+      deps.sink.status('scoping', `_${prunedMark}${truncStatusLabel(committedFinding.value.summary, LOG_TRUNC_CONTENT)}_`);
+    }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {
       engineSnapshot: engine.toJSON(),
@@ -1212,6 +1235,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.resetExploration();
     observeWrite(sess.setHopCount(deps.turnEpoch, hopCount));
     sess.hopLog = hopLog;
+    deps.logger?.error(message, `phase=active reason=${stop} hop=${hopCount}`);
     return {
       outcome: 'error',
       error: message,
@@ -1262,6 +1286,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const synthesisInstruction = buildSynthesisInstruction(sess, getCtx(state));
     const priorAttempt = attemptStateFor(state, 'synthesis');
     const messages = [modelUserMessage(envelopeJson)];
+    logClassificationGating(deps, 'synthesis', classification, synthesisInstruction.classificationGatedKeys);
+
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'synthesis', {
       stage: { kind: 'synthesis' },
       // Read on every provider step: a repairable rejection in step N makes only step N+1 expose
@@ -1343,8 +1369,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     if (res.stop === 'reroute') {
       const live = sess.stateMachine as NavigationEngine | null;
+      // The hop cap is per exploration, not per turn: a supplement continues the same engine, so
+      // the graph counter resumes from the hops that engine has already run instead of from zero.
       return {
         engineSnapshot: live ? live.toJSON() : state.engineSnapshot,
+        activeHopCount: live ? safeHopCount(live) : state.activeHopCount,
         toolAttempt: null,
         phase: 'active_coordinator',
       };
@@ -1434,6 +1463,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     .addConditionalEdges(AGENT_NODES.activeWorker, routeAfterActiveWorker, [
       AGENT_NODES.activeWorker,
       AGENT_NODES.activeCoordinator,
+      AGENT_NODES.synthesis,
       END,
     ])
     .addConditionalEdges(AGENT_NODES.followUp, routeAfterFollowUp, [
@@ -1449,7 +1479,37 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       END,
     ]);
 
-  return graph.compile(deps.checkpointer ? { checkpointer: deps.checkpointer } : undefined);
+  // A fresh in-memory saver per compiled graph: the consent interrupt pauses and resumes through
+  // `Command({ resume })` within one turn, and nothing outlives it. Cross-turn state is `AiSession`
+  // — `docs/ARCHITECTURE.md` §Memory and state ownership.
+  return graph.compile({ checkpointer: new MemorySaver() });
+}
+
+/**
+ * Records the capture keys the locked classification excluded from one stage's prompt.
+ *
+ * @remarks
+ * Every other filter in the prompt chain announces itself — a stage or slot-count drop is inferable
+ * from the shipped keys, and an off-angle section dropped at commit is logged by the submit handler.
+ * Classification gating is the exception: the excluded key never reaches the model, so a run that
+ * was never asked for the business angle is indistinguishable from one that was asked and found
+ * nothing. Silent on the common path — nothing is logged when nothing was gated.
+ *
+ * @param deps - Graph dependencies carrying the optional logger.
+ * @param stage - Stage whose prompt was rendered.
+ * @param classification - Locked classification that produced the gating.
+ * @param gatedKeys - Keys excluded by that classification.
+ */
+function logClassificationGating(
+  deps: AgentGraphDeps,
+  stage: string,
+  classification: string,
+  gatedKeys: readonly string[],
+): void {
+  if (gatedKeys.length === 0) return;
+  deps.logger?.debug(
+    `[AI] [Prompt] classification gated capture key(s) — stage=${stage} classification=${sanitizeForLog(classification)} keys=${sanitizeForLog(gatedKeys.join(', '))}`,
+  );
 }
 
 function routeAfterDetectEntry(state: AgentStateType): string {
@@ -1468,7 +1528,6 @@ function routeAfterDetectEntry(state: AgentStateType): string {
 function routeAfterDiscovery(state: AgentStateType): string {
   if (state.outcome) return END;
   if (state.phase === 'discover' && state.toolAttempt?.phase === 'discover') return AGENT_NODES.discovery;
-  if (state.phase === 'visual_preview' && state.toolAttempt?.phase === 'visual_preview') return AGENT_NODES.visualPreview;
   if (state.gate) return AGENT_NODES.gate;
   if (state.phase === 'sm_entry') return AGENT_NODES.smEntry;
   return END;
@@ -1537,6 +1596,9 @@ function routeAfterActiveCoordinator(state: AgentStateType): string {
 
 function routeAfterActiveWorker(state: AgentStateType): string {
   if (state.outcome) return END;
+  // The worker reaches synthesis directly when a salvage hands it the archive; the coordinator's
+  // own hand-off uses the same phase, so both routers read it the same way.
+  if (state.phase === 'synthesis') return AGENT_NODES.synthesis;
   if (state.phase === 'active_worker' && state.toolAttempt?.phase === 'active') return AGENT_NODES.activeWorker;
   if (state.phase === 'active_coordinator') return AGENT_NODES.activeCoordinator;
   return END;
@@ -1566,7 +1628,26 @@ function detectGateFromToolResult(toolName: string, resultText: string): unknown
 /** The `checkScopeBudget` rejection envelope a discovery tool returns when the scope exceeds the caps. */
 const OverBudgetEnvelopeSchema = z.object({ reason: z.literal('over_discovery_budget') }).loose();
 
-function detectOverBudgetFromResult(_toolName: string, resultText: string): boolean {
+/**
+ * The one tool whose over-budget rejection means "this scope is too large to answer inline".
+ *
+ * @remarks
+ * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
+ * returns it for an oversized stored-run recall. Only an oversized *scope* request seeds the
+ * existing SM-offer pill; matching on the envelope alone turned "what did this run prune?" into a
+ * fresh exploration approval gate instead of the narrowing hint the rejection already carries.
+ */
+const OVER_BUDGET_SCOPE_TOOL = 'lineage_get_scope_bundle';
+
+/**
+ * Whether one tool result is an oversized `lineage_get_scope_bundle` request.
+ *
+ * @param toolName - Name of the tool that produced `resultText`.
+ * @param resultText - The tool's serialized result.
+ * @returns True only for an oversized scope-bundle request.
+ */
+export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
+  if (toolName !== OVER_BUDGET_SCOPE_TOOL) return false;
   try {
     return OverBudgetEnvelopeSchema.safeParse(JSON.parse(resultText)).success;
   } catch {
@@ -1586,7 +1667,7 @@ function ensureEngine(state: AgentStateType, deps: AgentGraphDeps): NavigationEn
   const sess = deps.getSession();
   const live = sess.stateMachine as NavigationEngine | null;
   if (live) return live;
-  const snapshot = state.engineSnapshot as SmState | null;
+  const snapshot = state.engineSnapshot;
   if (!snapshot) return null;
   if (!sess.model || !sess.graph) {
     throw new Error('Cannot restore exploration engine without a loaded model and graph.');
@@ -1644,6 +1725,10 @@ function safeHopCount(engine: NavigationEngine): number {
  * advances at focus dequeue and would salvage empty explorations. A truncation stop never
  * salvages: its `model_output_truncated` error exit and streamed truncation note must not be
  * followed by a success render.
+ *
+ * @param reason - The attempt-budget or truncation stop that ended the active hop.
+ * @param submittedHops - The graph's `activeHopCount` at the point of the stop.
+ * @returns Whether the turn should render the submitted hops instead of failing outright.
  */
 export function shouldSalvageActiveStop(
   reason: 'semantic_failures' | 'provider_calls' | 'output_limit',
@@ -1653,89 +1738,84 @@ export function shouldSalvageActiveStop(
 }
 
 /**
- * Composes the post-approval discovery-summary memo (one-shot, no-tool LM round) and stores it on
- * the engine as the third immutable stable-prefix field.
+ * Sentinel prefix on a force-abandoned focus's archived summary.
  *
  * @remarks
- * Skipped when SM started directly without a prior multi-object discovery walk (the
- * `lastDiscovery*` fields are null) — clean absence, never a hard failure. A captured walk seeds
- * these fields in {@link discoveryNode}; `enterExploring` preserves them across the gate.
- *
- * A composed reply that fails {@link DiscoverySummarySchema} (empty, or over the char cap) gets
- * one mechanical re-ask carrying the rejection reason back to the model. If the retry also fails,
- * or the round throws for a non-abort reason, this is a **documented, non-fatal degrade**: SM is
- * allowed to start without the memo (matching the "no prior discovery walk" clean-absence case
- * already established above), but — unlike routine per-hop AI self-correction, which stays at
- * DEBUG — losing one of the three SM stable-prefix fields to rejected model output remains DEBUG.
- * A thrown compose operation is ERROR because it is an implementation/provider failure rather
- * than output being self-corrected.
- * The AI itself receives no substitute memo; hop prompts simply omit the `<discovery_summary>`
- * block for this session.
+ * {@link countAbandonedHops} greps it back out of the engine's own pruned-detail archive
+ * ({@link NavigationEngine.getPrunedDetails}) so the run-level {@link MAX_ABANDONED_HOPS_PER_RUN}
+ * governor needs no dedicated state channel — the abandonment is already durable, engine-owned
+ * lifecycle data (a `DetailSlot`) the moment {@link tryAbandonStuckFocus} lands it, and it is
+ * carried into the run's own archive exactly like any other pruned node.
  */
-async function composeDiscoverySummary(
-  deps: AgentGraphDeps,
-  sess: AiSession,
-  engine: NavigationEngine,
-): Promise<void> {
-  if (!sess.lastDiscoveryQuestion || !sess.lastDiscoveryAnswer) return;
-  try {
-    const scope = engine.getScopeSummary();
-    const filters = scope.activeFilters;
-    const classification = sess.requireLockedClassification();
-    const analysisMode = engine.currentAnalysisMode;
-    const targetColumns = analysisMode === 'ct' ? (engine.currentTargetColumns ?? undefined) : undefined;
-    const contractSummary = [
-      `- origin: ${engine.currentOrigin ?? '(unset)'}`,
-      `- scope: ${scope.scopeCount} nodes`,
-      `- direction: ${engine.currentDirection}`,
-      `- analysisMode: ${analysisMode}`,
-      ...(analysisMode === 'ct' ? [`- targetColumns: ${(targetColumns ?? []).join(', ')}`] : []),
-      `- excludeTypes: ${filters.types.length ? filters.types.join(', ') : '(none)'}`,
-      `- excludeSchemas: ${filters.schemas.length ? filters.schemas.join(', ') : '(none)'}`,
-      `- excludeNodeIds: ${filters.nodeIds.length ? filters.nodeIds.join(', ') : '(none)'}`,
-      `- passNodeIds: ${filters.passNodeIds.length ? filters.passNodeIds.join(', ') : '(none)'}`,
-      `- classification: ${classification}`,
-    ].join('\n');
-    const composePrompt = buildDiscoverySummaryComposePrompt(
-      sess.lastDiscoveryQuestion,
-      sess.lastDiscoveryAnswer,
-      contractSummary,
-    );
-    let parsed: z.ZodSafeParseResult<string> | undefined;
-    let rejectReason = '';
-    for (let attempt = 1; attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS; attempt++) {
-      // Structural reject-with-hint retry: feeds the exact Zod issue back, same convention as
-      // every other self-correcting boundary in this pipeline — not new prompt wording/tuning.
-      const prompt = attempt === 1
-        ? composePrompt
-        : `${composePrompt}\n\n## Retry — previous reply rejected\nReason: ${rejectReason}\nReply again as text only: ONE paragraph, 2-4 sentences.`;
-      const composed = await executeInstructionPlan(deps.model, compileInstructionPlan({
-        kind: 'text',
-        phase: 'compose',
-        system: DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
-        // Compose folds three inputs into the memo: the discovery Q/A and the approved contract summary,
-        // declared inline at this — the sole — assembly site.
-        facts: explorationFacts(analysisMode, targetColumns, {
-          classification,
-          memorySections: ['discovery_question', 'discovery_answer', 'approved_contract'],
-        }),
-        messages: [modelUserMessage(prompt)],
-        signal: deps.signal,
-      }));
-      parsed = DiscoverySummarySchema.safeParse(composed);
-      if (parsed.success) break;
-      rejectReason = parsed.error.issues.map((issue: z.core.$ZodIssue) => issue.message).join('; ');
-      deps.logger?.debug(`[AI] [DiscoveryHandoff] attempt=${attempt} rejected reason=${sanitizeForLog(rejectReason)}`);
+export const ABANDONED_HOP_SUMMARY_PREFIX = '[engine-abandoned]';
+
+/**
+ * Counts hops this run has already force-abandoned for repeated semantic failure.
+ *
+ * @param engine - The live exploration engine.
+ * @returns The number of previously abandoned hops, read back via {@link ABANDONED_HOP_SUMMARY_PREFIX}.
+ */
+export function countAbandonedHops(engine: NavigationEngine): number {
+  return engine.getPrunedDetails().filter(
+    (detail) => detail.summary.startsWith(ABANDONED_HOP_SUMMARY_PREFIX),
+  ).length;
+}
+
+/**
+ * Force-abandons the engine's current focus after it exhausted {@link MAX_TOOL_SEMANTIC_FAILURES}
+ * within one hop, so a single unreachable node cannot end a run whose agenda still holds other
+ * work.
+ *
+ * @remarks
+ * Dispatches through the SAME `verdict: 'prune'` path the model's own `lineage_submit_findings`
+ * tool call uses ({@link NavigationEngine.submitFindings}) — no new engine mechanism, and no
+ * branch on CT vs. BB (the prune path is already mode-uniform). The engine may refuse
+ * structurally — `prune_origin_forbidden` on the immutable origin, `prune_would_orphan_noted`
+ * when the topology still needs this node reachable — and both are genuine "cannot make progress
+ * here" signals, so the caller falls back to the existing salvage-to-synthesis path on `false`.
+ * On success this also calls {@link NavigationEngine.getHopContext} to dequeue the next agenda
+ * entry immediately, mirroring the tool handler's own post-commit call (`submitFindings.ts`), so
+ * the coordinator sees a fresh focus — or a drained agenda — on its very next pass instead of
+ * re-offering the just-abandoned node.
+ *
+ * @remarks
+ * T7-DETAIL-SLOT-STARVATION: when the abandoned focus was the sole live bridge to an unvisited
+ * bodied subtree, draining the agenda here forecloses that subtree — its nodes stay `kept` from
+ * the initial BFS scope but never get hopped, so they never earn a detail slot. The focus's own
+ * {@link NavigationEngine.requiredNeighborIds} (the same directional-neighbor set `submitFindings`
+ * demands an account for) is captured before the forced prune and, only when the prune drains the
+ * agenda to `'complete'`, handed to {@link NavigationEngine.supplementAgenda} — the same
+ * host-initiated re-entry path `startExploration.ts`'s own `supplement` branch already uses — so
+ * the bipartite `enqueueHop` rule gives those successors the same one chance a normal routed hop
+ * would have. No new engine mechanism: both calls are pre-existing public API, and nothing changes
+ * when the agenda still holds other work (the case this repair does not need to touch).
+ *
+ * @param engine - The live exploration engine.
+ * @param focusId - The engine's current focus (the node that exhausted its semantic budget).
+ * @param reason - The attempt-stop reason driving the abandonment, folded into the archived note.
+ * @returns Whether the focus was abandoned and the agenda advanced.
+ */
+export function tryAbandonStuckFocus(engine: NavigationEngine, focusId: string, reason: string): boolean {
+  // Captured before the prune commits: a directional neighbor's own visited/agenda/removed status
+  // decides membership here, not the focus's, so pre- vs. post-prune capture is equivalent — but
+  // capturing before keeps this read beside the still-current focus, matching every other reader
+  // of `requiredNeighborIds` (the completeness guard inside `submitFindings` itself).
+  const strandedSuccessorIds = engine.requiredNeighborIds(focusId);
+  const result = engine.submitFindings({
+    focus_node_id: focusId,
+    sections: [],
+    summary: `${ABANDONED_HOP_SUMMARY_PREFIX} ${focusId} — repeated ${reason}, exploration continues without it`,
+    verdict: 'prune',
+  });
+  if ('error' in result) return false;
+  engine.getHopContext();
+  // Only the drained-to-complete case forecloses anything — otherwise the agenda already has
+  // other live work and these successors are no worse off than before this function ran.
+  if (engine.status === 'complete' && strandedSuccessorIds.length > 0) {
+    const supplement = engine.supplementAgenda(strandedSuccessorIds);
+    if ('ok' in supplement && supplement.agendaed + supplement.contracted > 0) {
+      engine.getHopContext();
     }
-    if (!parsed?.success) {
-      deps.logger?.debug(`[AI] [DiscoveryHandoff] status=degraded reason=invalid_summary_after_retry`);
-      return;
-    }
-    engine.setDiscoverySummary(parsed.data);
-    deps.logger?.debug(`[AI] [DiscoveryHandoff] status=composed chars=${parsed.data.length}`);
-  } catch (err) {
-    // Re-throw on abort so approveGateNode can surface a clean cancel; other errors are non-fatal.
-    if (deps.signal?.aborted) throw err;
-    deps.logger?.error('[AI] [DiscoveryHandoff] compose failed unexpectedly', err);
   }
+  return true;
 }

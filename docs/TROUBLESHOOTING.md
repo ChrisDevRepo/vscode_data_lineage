@@ -24,6 +24,8 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **Theme colours wrong after switching themes.** Reload the window.
 
+**Putting the graph or the AI report beside other work.** The graph webview is a normal VS Code editor tab: drag it to any editor group (left, right, below), split it, or right-click → **Move Editor into New Window** to get a standalone window — the AI report column travels with it. The chat view (including `@lineage`) docks the same way via its drag handle or the **View: Move Chat** command. Within the graph, the AI report is a docked column — the buttons in its header move it to the left, bottom or right edge, and it collapses to a slim rail. Its numbered section chips jump to a section: the chip also frames that section's objects on the graph and lights their labels while the other labels step back (click the chip again to clear, or click empty canvas to return everything to normal).
+
 ## `@lineage` chat participant
 
 **No response.** Load a graph first, then make sure a VS Code Language Model Chat provider is installed, configured, and available to Chat. [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) is one supported provider.
@@ -48,12 +50,19 @@ UI does not create a separate button for each deferred route.
 
 **Deep analysis stops before the whole scope is covered.** No error is shown: on reaching the hop cap the engine stops exploring and synthesizes what it already has, so the answer is a partial result rather than a failure. Narrow the scope or raise `dataLineageViz.ai.maxRounds`, then reload the window — the runtime reads that setting once at activation.
 
-**Model choice.** Per-hop latency and protocol compliance differ by model. Models running
-directly on Microsoft infrastructure — Copilot-native Anthropic Claude Sonnet and OpenAI GPT, or
-an Azure AI Foundry deployment — gave the best results in testing. Of several models tested via
-"Manage Models", most had latency and reliability issues; a few (e.g. MiniMax) produced acceptable
-results but were still slower. A long silence during deep analysis usually means the provider is
-still generating — the hop counter advances as hops complete — up to the zero-output limit below.
+**Model choice.** Per-hop latency and protocol compliance differ by model. Models running directly on Microsoft infrastructure — Copilot-native Anthropic Claude Sonnet and OpenAI GPT, or an Azure AI Foundry deployment — gave the best results in testing. The figures below are ballparks measured during development on a mid-size sample database. The reasoning level in effect is shown because rows at different levels are not comparable with each other. Where the provider reports reasoning tokens they were about 60k of the total on gpt-5.4-mini and 40k on deepseek-v4-flash. Quality is the scorecard of the same runs against golden answers: *good* means the discovery and object-trace answers were complete and the column-trace answer had minor omissions; *okay* means every answer was usable but each had omissions; *weak* would mean wrong or missing objects, and no listed model scored that.
+
+| Provider | Model | Reasoning | Quality | Duration¹ | Tokens¹ |
+|---|---|---|---|---|---|
+| GitHub Copilot | claude-sonnet-5 | high | good | ~9 min | not reported by the Copilot API |
+| Azure AI Foundry | gpt-5.4-mini | medium | good | ~9 min | ~310k |
+| Fireworks | deepseek-v4-flash-0731 | low | good | ~13 min | ~350k |
+| Google | gemini-3.8-flash | medium (the model default) | good | ~9 min | ~400k |
+| Local (oMLX on a MacBook M5 Pro) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~18 min | ~290k |
+
+¹ Total of three questions — one discovery, one object trace (BB) and one column trace (CT) — per run, averaged over completed runs only (10 for gpt-5.4-mini, 9 for gemini-3.8-flash, 3 for deepseek-v4-flash, 2 for Qwen3.6; one UAT session for Claude Sonnet).
+
+These numbers are snapshots of particular days and say nothing about what a given setup will do; they depend on model, region, load, reasoning settings and database size. Models reached through OpenRouter and Z.ai showed high or erratic latency and timeouts during testing and are not in the table. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete — up to the zero-output limit below.
 
 **"The language model produced no output within 600s; the request was aborted (first-output
 timeout)."** The provider accepted the request and then streamed nothing at all for ten minutes, so
@@ -68,8 +77,51 @@ usable for deep analysis; pick one from the Model choice guidance above and re-a
 - Profiling is live-DB only (no dacpac). See [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 - On SQL Server 2016 or 2017, set `dataLineageViz.tableStatistics.useApproxDistinct` to `false`; `APPROX_COUNT_DISTINCT` requires SQL Server 2019 or later.
 
+## Development environment
+
+**`Could not resolve "langsmith"` at bundle time.** The npm `overrides` entry that
+contains the LangSmith dependency (see [`ARCHITECTURE.md`](ARCHITECTURE.md)) can
+leave `node_modules/langsmith` as a dangling symlink on some npm 10.x releases.
+The `postinstall` hook (`scripts/repair-langsmith-stub.mjs`) repairs this
+automatically; if it was skipped — `node_modules` copied between machines,
+`--ignore-scripts` in effect — run `node scripts/repair-langsmith-stub.mjs`
+manually, or reinstall with `npm ci`.
+
+**`WARNING: a non-stub "langsmith" resolves from …` from that hook.** A real
+LangSmith package — not the inert stub — is resolving from somewhere in
+`node_modules` that the root stub cannot shadow (a tree copied between machines,
+an `overrides` entry temporarily reverted). The hook reports it instead of
+claiming success, because writing the root stub would not change what resolves.
+Delete `node_modules`, reinstall with `npm ci`, and confirm the `overrides`
+entry for `langsmith` in [`package.json`](../package.json) is intact. The
+`assert-no-langsmith` gate step is the fail-closed check that must stay green.
+
+**Bundle fails after pulling changes with a missing or wrong package version.**
+The `node_modules` tree predates the lockfile. Delete `node_modules` and run
+`npm ci`; a carried-over tree from another machine or OS (e.g. a Windows
+checkout moved to macOS) resolves stale package versions and cannot be
+incrementally repaired.
+
+**`vsce package` / `vsce publish` fails with `code ELSPROBLEMS`
+(`invalid: langsmith@…`).** npm `ls` misreports dependencies replaced by npm
+`overrides` as invalid — a false positive on this repo's intentional LangSmith
+containment stub, independent of the installed versions. Run
+`npm run package`, or pass `--no-dependencies` to a direct `vsce` invocation;
+all production dependencies are bundled into `out/` and `dist/` before
+packaging, so dependency resolution at package time is unnecessary.
+
+**Tests hang or crash on large graphs (`Maximum call stack size exceeded`).**
+The vitest workers need the enlarged stack configured in [`vitest.config.ts`](../vitest.config.ts)
+(`test.execArgv: ['--stack-size=8000']`) — layout tests with ≥1500 nodes
+overflow Node's default worker stack. If the config is edited, keep that entry
+top-level: Vitest 4 ignores `poolOptions.*.execArgv`.
+
 ## Bug reports
 
 Run **Data Lineage: Copy Debug Info** and include the relevant section from
-**Output → Data Lineage Viz**. Review and redact project, source, schema, object,
-filter, and model identifiers before sharing. Do not attach customer dacpacs.
+**Output → Data Lineage Viz**. For AI issues, **Data Lineage: Dump AI State Machine**
+writes the current exploration state to a JSON file under the workspace's `tmp/sm-dumps/`
+and opens it (an open workspace folder and an active hop-by-hop exploration are required;
+a bounded graph preview has no state machine to dump — use its AI NDJSON trace instead).
+Review and redact project, source, schema, object, filter, and model identifiers before
+sharing, and apply the same review to the dump. Do not attach customer dacpacs.

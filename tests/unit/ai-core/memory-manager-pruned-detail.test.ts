@@ -17,7 +17,7 @@ function makeNode(id: string): LineageNode {
     name: id,
     fullName: `[dbo].[${id}]`,
     type: 'table',
-  } as LineageNode;
+  };
 }
 
 describe('AiMemoryManager — pruned-node content retention (A31)', () => {

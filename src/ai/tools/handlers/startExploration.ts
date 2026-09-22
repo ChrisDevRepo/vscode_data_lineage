@@ -5,8 +5,6 @@
  * Proposal validation and preview construction stay local to this handler.
  * Turn-lease validation and effect serialization remain in the registry wrapper.
  */
-import * as vscode from 'vscode';
-import { DEFAULT_MAX_ROUNDS } from '../../core/agentCore';
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
 import {
@@ -25,6 +23,7 @@ import {
 } from '../../support/inputNormalization';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
+import { isCancellationOutcome } from '../../support/cancellation';
 import {
   buildStartExplorationReject,
   evaluateBbTargetColumnsRule,
@@ -36,6 +35,8 @@ import {
 } from '../../interaction/rules/startExplorationRules';
 import type { ToolServices } from './toolServices';
 import { AI_MAX_SCOPE_NODE_IDS } from '../../../engine/shared/bridgeContract';
+import { composeDiscoverySummaryText } from '../../support/discoverySummary';
+import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
 const SAFETY_RATIO = 0.7;
@@ -47,7 +48,7 @@ const SAFETY_RATIO = 0.7;
  * @param s - Host capabilities for the active tool session.
  * @returns The structured proposal, gate, hop context, or rejection envelope.
  */
-export function executeStartExploration(input: unknown, s: ToolServices): string {
+export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);
       const sess = s.getSession();
@@ -97,6 +98,8 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       }
 
       // Supplements retain the completed engine while updating the follow-up mission context.
+      // The CT target list is screened before the supplement mutates anything (see the
+      // `checkColumnTargets` call below), so by this point adoption cannot fail.
       const applyFollowUpContext = (engine: NavigationEngine): void => {
         if (data.analysisMode === 'ct' && data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
         if (data.classification) sess.setClassification(data.classification);
@@ -118,13 +121,29 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         if (supplementPrereq) {
           return s.logAndReturn('start_exploration', supplementPrereq, loggedInput);
         }
+        // `evaluateSupplementPrereqRule` rejects a null status with the same envelope, so
+        // reaching here already proves `priorEngine` non-null; this narrows the type for the
+        // engine calls below without a null check that could ever actually fire.
         if (!priorEngine) {
-          return s.logAndReturn('start_exploration', {
-            error: 'supplement_requires_complete_engine',
-            hint: "supplement requires a completed prior exploration. Current engine status: none. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
-          }, loggedInput);
+          throw new Error('[start_exploration] supplement prerequisite passed without a prior engine');
         }
-        const res = priorEngine.supplementAgenda(data.supplement.nodeIds ?? []);
+        // Screened before `admitSupplementTargets`/`supplementAgenda`: both widen the allowlist
+        // and extend the agenda of the completed engine, so a CT target list refused after them
+        // would leave those mutations behind and make the corrected resend a no-op supplement.
+        if (data.analysisMode === 'ct' && data.targetColumns?.length) {
+          const columnTargetReject = priorEngine.checkColumnTargets(data.targetColumns);
+          if (columnTargetReject) return s.logAndReturn('start_exploration', columnTargetReject, loggedInput);
+        }
+        const supplementIds = data.supplement.nodeIds ?? [];
+        // Admit-then-supplement, the same ordering the approve gate uses. `supplementAgenda` stays a
+        // side-effect-free reject, so without this step a schema-boundary lead was a dead end — the
+        // target came straight back as `out_of_allowlist` with nothing on this path able to admit
+        // it. `supplementIds` is model-supplied, so the admit step trusts none of it on its own: it
+        // opens only ids this run already deferred as a pending lead and named in the answer the
+        // user read. Anything else the model puts here is still refused on the allowlist axis, and
+        // exclusions stay a hard wall either way.
+        const admittedIds = priorEngine.admitSupplementTargets(supplementIds);
+        const res = priorEngine.supplementAgenda(supplementIds);
         if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
         applyFollowUpContext(priorEngine);
         // Unguarded by design: tool dispatch runs synchronously inside the owning turn's graph-owned
@@ -135,7 +154,7 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
           : '';
         s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}${skippedIdsSuffix}`);
         const hopCtx = priorEngine.getHopContext();
-        return s.logAndReturn('start_exploration', { ok: true, supplement: res, ...hopCtx }, loggedInput);
+        return s.logAndReturn('start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }
 
       // Fresh exploration path: origin is required.
@@ -173,13 +192,13 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
         s.logger.debug(`[AI] [Proposal] completed result preserved during replacement review origin=${sanitizeForLog(data.origin ?? '')}`);
       }
-      if (priorLive && prior!.sessionId && prior!.sessionId !== sess.id) {
+      if (priorLive && prior.sessionId && prior.sessionId !== sess.id) {
         sess.pendingUserNotice.add('A previous exploration was still running when you started this one. Its in-memory findings were discarded.');
         sess.resetExploration();
       } else if (priorLive) {
         const alreadyStarted = evaluateAlreadyStartedRule(
           priorLive,
-          prior!.sessionId === sess.id,
+          prior.sessionId === sess.id,
           isRefining,
         );
         if (alreadyStarted) return s.logAndReturn('start_exploration', alreadyStarted, loggedInput);
@@ -193,11 +212,10 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       const engineLog = toEngineLog(s.logger);
       // Proposal preview uses an unpublished engine with isolated memory. It is discarded after
       // computing the scope summary; approval is the sole site that creates active engine state.
-      // `classification` is intentionally left unset on this preview instance: it only reaches
-      // getScopeSummary(), never a hop dispatch (the getHopContext() fall-through below is
-      // unreachable for this path — phase/refine guards route here first), so
-      // shouldPreserveTechContext() never runs against it. Its unset default (preserve tech
-      // context) is the conservative choice, so an unreachable read would still be safe.
+      // `classification` is assigned once resolved below so the gate's `_Analysis:` stamp and the
+      // later hop-commit filter can read it; it never reaches a hop dispatch here (the
+      // getHopContext() fall-through is unreachable for this path — phase/refine guards route
+      // here first).
       const engine = new NavigationEngine(m, g, engineLog, { activeFilter }, sess.columnStore);
 
       engine.sessionId = sess.id;
@@ -210,6 +228,9 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       const excludeSchemas = stringArray(data.excludeSchemas, pendingInit?.excludeSchemas);
       const excludeNodeIds = stringArray(data.excludeNodeIds, pendingInit?.excludeNodeIds);
       const passNodeIds = stringArray(data.passNodeIds, pendingInit?.passNodeIds);
+      // Mechanically preserved across refine rounds like every other omitted field: a scope change
+      // must never silently drop a constraint the user already gave and confirmed.
+      const scopeNotes = stringArray(data.scopeNotes, pendingInit?.scopeNotes);
       // Refine mechanically preserves omitted proposal fields; the model does not re-author them.
       const refineOrigin = isRefining ? (data.origin ?? pendingInit?.origin ?? '') : (data.origin ?? '');
       const refineDirection = data.direction ?? (isRefining ? pendingInit?.direction : 'bidirectional');
@@ -255,14 +276,14 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         excludeSchemas,
         excludeNodeIds,
         passNodeIds,
+        scopeNotes,
         mission_brief: refineMissionBrief,
       } satisfies import('../../sm/smTypes').NavigationInitParams;
       const initResult = engine.init(proposalInit);
 
       // The preview engine is never published. Rejected proposals leave the prior proposal intact.
       if ('error' in initResult) return s.logAndReturn('start_exploration', initResult, loggedInput);
-      const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-      const maxRounds = aiCfg.get<number>('maxRounds', DEFAULT_MAX_ROUNDS);
+      const maxRounds = s.maxRounds;
       const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
       // Pathological breadth only: object lineage can fan out past the sliding-memory budget even
       // at a shallow depth (hub nodes). Recovery is structural narrowing / prune / ask-user — never
@@ -278,6 +299,7 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       if (!classification) {
         return s.logAndReturn('start_exploration', { error: 'missing_field', hint: 'classification is required for the exploration proposal.' }, loggedInput);
       }
+      engine.classification = classification;
       // Native approval Markdown is the review surface, so every in-scope object must be visible.
       const summary = engine.getScopeSummary(AI_MAX_SCOPE_NODE_IDS);
       const nextProposal = {
@@ -295,10 +317,13 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('start_exploration', { error: 'stale_turn', hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
+        return s.logAndReturn('start_exploration', { error: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
-      s.logger.debug(`[AI] [Proposal] revision=${sess.pendingExploration!.revision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
+      // Captured once, before the discovery-memo round-trip below: the card, the memo attachment
+      // and the gate all name the revision that was reviewed, whatever a later refine does.
+      const proposalRevision = sess.pendingExploration!.revision;
+      s.logger.debug(`[AI] [Proposal] revision=${proposalRevision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
 
       // Discovery is content-blind: always gate before any analysis runs.
       // Refine path: re-emit the gate with the new tree so the loop continues.
@@ -316,7 +341,27 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         }
 
         const classLabel = CLASSIFICATION_LABEL[classification] + (isCt ? ' (Column Trace)' : '');
-        const detail = `${renderScopeSummaryMd(summary)}\n\n_Analysis: ${classLabel}_`;
+        const baseDetail = `${renderScopeSummaryMd(summary, proposalRevision)}\n\n_Analysis: ${classLabel}_`;
+        // Composed once per shown revision, never recomposed at approval — the same cached string
+        // later rides verbatim into `NavigationEngine.setDiscoverySummary`. Missing discovery
+        // context or a degraded compose just omits the memo; it never blocks the approval card.
+        let discoverySummary: string | undefined;
+        if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
+          discoverySummary = await composeDiscoverySummaryText(
+            s.textModel,
+            s.signal,
+            s.logger,
+            sess.lastDiscoveryQuestion,
+            sess.lastDiscoveryAnswer,
+            classification,
+            engine,
+          );
+          if (discoverySummary) {
+            const attached = sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess));
+            if (attached.kind !== 'accepted') discoverySummary = undefined;
+          }
+        }
+        const detail = discoverySummary ? `${baseDetail}\n\n${discoverySummary}` : baseDetail;
         s.logger.debug(
           `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
           `scope_nodes=${summary.scopeCount} ` +
@@ -329,7 +374,7 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
           classes,
           nodeIds: [],
           detail,
-          proposalRevision: sess.pendingExploration!.revision,
+          proposalRevision,
         });
         const hint = isRefining
           ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
@@ -344,6 +389,10 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       const hopResult = engine.getHopContext();
       return s.logAndReturn('start_exploration', { ...initResult, ...hopResult }, loggedInput);
     } catch (err) {
+      // An abort thrown out of the discovery-summary compose call must reach the registry dispatcher
+      // as a thrown cancellation, never a toolError envelope — the generic catch would otherwise
+      // silently convert a user Stop into a normal `internal_error` result.
+      if (isCancellationOutcome(err, s.signal)) throw err;
       return s.toolError('start_exploration', err);
     }
 }

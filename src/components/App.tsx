@@ -14,7 +14,7 @@ import { deriveModeCapabilities } from '../engine/modeCapabilities';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, GraphMode } from '../engine/types';
+import type { ColumnTraceNodeData, DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, GraphMode } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
@@ -50,14 +50,6 @@ const DACPAC_TIMEOUT_MS = 20_000;
 const DB_TIMEOUT_MS = 60_000;
 /** Minimum time to show the loading spinner to prevent visual flickering. */
 const MIN_SPINNER_MS = 1200;
-
-/**
- * Viewport margins reserved when positioning the object context menu, so a menu opened
- * near the right/bottom edge stays fully on screen. Values approximate the menu's rendered
- * footprint; keep in sync with NodeContextMenu.
- */
-const OBJECT_CONTEXT_MENU_WIDTH = 200;
-const OBJECT_CONTEXT_MENU_HEIGHT = 250;
 
 /**
  * Computes the set of schemas that are immediate neighbors of a target schema.
@@ -464,7 +456,6 @@ export function App() {
   const preModFilterRef = useRef<FilterState | null>(null);
   /** Saved node positions from a bookmark — applied once after rebuild, then cleared. */
   const [pendingPositions, setPendingPositions] = useState<Record<string, { x: number; y: number }> | undefined>(undefined);
-  const [pendingViewport, setPendingViewport] = useState<{ x: number; y: number; zoom: number } | undefined>(undefined);
 
   /** Names of allowlist node IDs no longer present in the model (stale objects). */
   const bookmarkStaleNames = useMemo(() => {
@@ -605,6 +596,12 @@ export function App() {
     [model, vscodeApi, isDetailOpen, highlightedNodeId]
   );
 
+  /** Drops the node selection without selecting another — the canvas's click-away reset. */
+  const handleClearSelection = useCallback(() => {
+    setHighlightedNodeId(null);
+    setInfoBarNodeId(prev => (prev !== null ? null : prev));
+  }, []);
+
   const handleSchemaNodeSelect = useCallback(() => {
     setHighlightedNodeId(null);
     setInfoBarNodeId(null);
@@ -624,11 +621,30 @@ export function App() {
         setContextMenu(null);
         return;
       }
-      const data = node.data as Record<string, unknown>;
+      if (node.type === 'columnTraceNode') {
+        const { view } = node.data as ColumnTraceNodeData;
+        // Column rows carry no fullName/external fields of their own; resolve them from the loaded
+        // model so the menu matches what the object-view path shows for the same node.
+        const modelNode = model?.nodes.find(n => n.id === view.id);
+        setContextMenu({
+          kind: 'object',
+          x,
+          y,
+          nodeId: view.id,
+          nodeName: view.label,
+          schema: view.schema,
+          objectType: view.objectType as ObjectType,
+          externalType: modelNode?.externalType as ObjectContextMenuState['externalType'],
+          externalUrl: modelNode?.externalUrl,
+          fullName: modelNode?.fullName ?? view.id,
+        });
+        return;
+      }
+      const data = node.data;
       setContextMenu({
         kind: 'object',
-        x: Math.min(x, window.innerWidth - OBJECT_CONTEXT_MENU_WIDTH),
-        y: Math.min(y, window.innerHeight - OBJECT_CONTEXT_MENU_HEIGHT),
+        x,
+        y,
         nodeId: node.id,
         nodeName: String(data.label),
         schema: String(data.schema),
@@ -944,7 +960,6 @@ export function App() {
 
   const handlePendingPositionsApplied = useCallback(() => {
     setPendingPositions(undefined);
-    setPendingViewport(undefined);
   }, []);
 
   /** Removes a specific node from the current bookmark view. */
@@ -1019,7 +1034,6 @@ export function App() {
     const hasPositions = !!profile.positions && Object.keys(profile.positions).length > 0;
     if (hasPositions) {
       setPendingPositions(profile.positions);
-      setPendingViewport(profile.viewport);
     }
     if (isAdvanced) {
       if (!preModFilterRef.current) preModFilterRef.current = filter;
@@ -1057,7 +1071,7 @@ export function App() {
       if (msg.type === 'detail-closed') {
         setIsDetailOpen(false);
       } else if (msg.type === 'projects-list') {
-        const updatedProjects: Project[] = (msg.projects ?? []) as Project[];
+        const updatedProjects: Project[] = msg.projects ?? [];
         setProjects(updatedProjects);
         setLastOpenedId(msg.lastOpenedId ?? null);
         if (msg.lastWizardView) setLastWizardView(msg.lastWizardView as 'main' | 'projects');
@@ -1111,7 +1125,7 @@ export function App() {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;
         let unresolved: string[] = [];
-        let metadata = msg.aiMetadata as AIViewMetadata;
+        let metadata = msg.aiMetadata;
         if (renderModel) {
           const reconciled = reconcileAiView(msg.nodeIds, metadata, renderModel);
           resolvedIds = reconciled.nodeIds;
@@ -1295,7 +1309,6 @@ export function App() {
     nodeIds: string[],
     source: 'trace' | 'path',
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1307,7 +1320,6 @@ export function App() {
         allowlistNodeIds: nodeIds,
       },
       ...(positions ? { positions } : {}),
-      ...(viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
@@ -1317,7 +1329,6 @@ export function App() {
     name: string,
     nodeIds: string[],
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1329,7 +1340,6 @@ export function App() {
         allowlistNodeIds: nodeIds,
       },
       ...(positions ? { positions } : {}),
-      ...(viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
@@ -1339,7 +1349,6 @@ export function App() {
     name: string,
     withPositions: boolean,
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     if (!aiPreview) return;
     const profile: FilterProfile = {
@@ -1353,7 +1362,6 @@ export function App() {
       },
       aiMetadata: aiPreview.aiMetadata,
       ...(withPositions && positions ? { positions } : {}),
-      ...(withPositions && viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
   }, [filter, aiPreview, persistFilterProfile]);
@@ -1430,16 +1438,19 @@ export function App() {
     schemaOverviewRenderedCount: schemaNodes.length,
     expandedSchemaViewRenderedCount,
     scopedModeActive: isTraceActive || !!aiPreview,
+    scopedRenderedCount: tracedNodes.length,
   });
 
   if (displayMode === 'renderLimit') {
+    const countText = `${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()})`;
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center p-8 max-w-md" style={{ color: 'var(--ln-fg)' }}>
           <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
           <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)' }}>
-            The current filter selects {renderedCount.toLocaleString()} nodes (limit: {config.renderLimit.toLocaleString()}).
-            Select schema or type filters to reduce scope, or adjust the render limit in settings.
+            {isTraceActive || aiPreview
+              ? `This view selects ${countText}. Reduce the trace depth, narrow the path, or adjust the render limit in settings.`
+              : `The current filter selects ${countText}. Select schema or type filters to reduce scope, or adjust the render limit in settings.`}
           </div>
         </div>
       </div>
@@ -1519,6 +1530,7 @@ export function App() {
         isDetailSearchOpen={isDetailSearchOpen}
         onToggleDetailSearch={() => setIsDetailSearchOpen(prev => !prev)}
         onNodeClick={handleNodeClick}
+        onClearSelection={handleClearSelection}
         onSchemaNodeSelect={handleSchemaNodeSelect}
         onNodeContextMenu={handleNodeContextMenu}
         onStartTraceImmediate={startTraceImmediate}
@@ -1575,7 +1587,6 @@ export function App() {
         bookmarkStaleNames={bookmarkStaleNames}
         onExitAdvancedBookmark={handleExitAdvancedBookmark}
         pendingPositions={pendingPositions}
-        pendingViewport={pendingViewport}
         viewportPreserveVersion={viewportPreserveVersion}
         onPendingPositionsApplied={handlePendingPositionsApplied}
         useFullModel={useFullModel}
